@@ -3126,6 +3126,10 @@ pub struct App {
         std::sync::mpsc::Sender<crate::app::http::WsSendReply>,
         std::sync::mpsc::Receiver<crate::app::http::WsSendReply>,
     )>,
+    /// 2026-06-21 — target pane id stashed when `:ws.send_message`
+    /// opens its prompt, so the accept handler sends to the right
+    /// WS pane even if the user moved focus mid-prompt.
+    pub pending_ws_send_pane: Option<usize>,
     /// True while a chain run is in flight; gates double-submits.
     pub http_chain_in_flight: bool,
     /// Pending kill (SIGTERM) target for `:ai.agents_dashboard`'s
@@ -3628,6 +3632,7 @@ impl App {
             http_chain_chan: None,
             http_chain_in_flight: false,
             ws_send_chan: None,
+            pending_ws_send_pane: None,
             pending_kill_pid: None,
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,

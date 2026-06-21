@@ -125,10 +125,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         input_area,
     );
 
-    // Cursor on the input.
+    // Cursor on the input. Uses the actual `input_cursor` byte
+    // offset (chars before it), so Left/Right/Home/End work
+    // visibly. Was always at end-of-string. 2026-06-21 SEV-3 fix.
     if focused {
-        let cursor_x =
-            input_area.x + prompt_w + (p.input.chars().count() as u16).min(input_area.width);
+        let chars_before_cursor =
+            p.input[..p.input_cursor.min(p.input.len())].chars().count() as u16;
+        let cursor_x = input_area.x + prompt_w + chars_before_cursor.min(input_area.width);
         return Some((cursor_x, input_area.y));
     }
     None

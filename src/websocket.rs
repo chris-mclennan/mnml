@@ -134,6 +134,72 @@ impl WebsocketPane {
         let _ = self.tx_out.send(OutMsg::Close);
         self.state = WsState::Closing;
     }
+
+    /// Insert a char at the cursor. Handles UTF-8 (cursor moves by
+    /// `c.len_utf8()`). 2026-06-21 power-user-ws-git SEV-3 input-
+    /// cursor-dead: was push()-only, cursor was always at end.
+    pub fn input_insert(&mut self, c: char) {
+        self.input.insert(self.input_cursor, c);
+        self.input_cursor += c.len_utf8();
+    }
+
+    /// Backspace = delete char before cursor.
+    pub fn input_backspace(&mut self) {
+        if self.input_cursor == 0 || self.input.is_empty() {
+            return;
+        }
+        // Find the previous char boundary.
+        let mut i = self.input_cursor.saturating_sub(1);
+        while i > 0 && !self.input.is_char_boundary(i) {
+            i -= 1;
+        }
+        self.input.replace_range(i..self.input_cursor, "");
+        self.input_cursor = i;
+    }
+
+    /// Delete = remove char at cursor (vim x / VS Code Del).
+    pub fn input_delete(&mut self) {
+        if self.input_cursor >= self.input.len() {
+            return;
+        }
+        let mut i = self.input_cursor + 1;
+        while i < self.input.len() && !self.input.is_char_boundary(i) {
+            i += 1;
+        }
+        self.input.replace_range(self.input_cursor..i, "");
+    }
+
+    /// Move cursor left by one char.
+    pub fn input_left(&mut self) {
+        if self.input_cursor == 0 {
+            return;
+        }
+        let mut i = self.input_cursor - 1;
+        while i > 0 && !self.input.is_char_boundary(i) {
+            i -= 1;
+        }
+        self.input_cursor = i;
+    }
+
+    /// Move cursor right by one char.
+    pub fn input_right(&mut self) {
+        if self.input_cursor >= self.input.len() {
+            return;
+        }
+        let mut i = self.input_cursor + 1;
+        while i < self.input.len() && !self.input.is_char_boundary(i) {
+            i += 1;
+        }
+        self.input_cursor = i;
+    }
+
+    pub fn input_home(&mut self) {
+        self.input_cursor = 0;
+    }
+
+    pub fn input_end(&mut self) {
+        self.input_cursor = self.input.len();
+    }
 }
 
 /// Toggle non-blocking on the underlying TCP stream. tungstenite's

@@ -1873,9 +1873,32 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Backspace => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    if let Some(c) = p.input.pop() {
-                        p.input_cursor = p.input_cursor.saturating_sub(c.len_utf8());
-                    }
+                    p.input_backspace();
+                }
+            }
+            KeyCode::Delete => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.input_delete();
+                }
+            }
+            KeyCode::Left => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.input_left();
+                }
+            }
+            KeyCode::Right => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.input_right();
+                }
+            }
+            KeyCode::Home => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.input_home();
+                }
+            }
+            KeyCode::End => {
+                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+                    p.input_end();
                 }
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1898,8 +1921,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.input.push(c);
-                    p.input_cursor += c.len_utf8();
+                    p.input_insert(c);
                 }
             }
             _ => {}

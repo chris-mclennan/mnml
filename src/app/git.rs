@@ -1430,6 +1430,49 @@ impl App {
                 }) => {
                     self.apply_checkout_result(kind, from_branch, result);
                 }
+                Ok(GitResult::Merged { name, result }) => match result {
+                    Ok(()) => {
+                        self.toast(format!("merged {name}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("merge {name}: {e}")),
+                },
+                Ok(GitResult::Rebased { name, result }) => match result {
+                    Ok(()) => {
+                        self.toast(format!("rebased onto {name}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("rebase onto {name}: {e}")),
+                },
+                Ok(GitResult::BranchDeleted { name, result }) => match result {
+                    Ok(()) => {
+                        self.toast(format!("deleted branch {name}"));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("delete {name}: {e}")),
+                },
+                Ok(GitResult::WorktreeAdded {
+                    path,
+                    branch,
+                    result,
+                }) => match result {
+                    Ok(()) => {
+                        self.toast(format!(
+                            "worktree added at {} ({branch})",
+                            path.display()
+                        ));
+                        self.after_git_change();
+                        self.add_workspace_runtime(path, None);
+                    }
+                    Err(e) => self.toast(format!("worktree add: {e}")),
+                },
+                Ok(GitResult::WorktreeRemoved { path, result }) => match result {
+                    Ok(()) => {
+                        self.toast(format!("removed worktree {}", path.display()));
+                        self.after_git_change();
+                    }
+                    Err(e) => self.toast(format!("remove worktree {}: {e}", path.display())),
+                },
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.toast("git loader thread died");
@@ -2138,34 +2181,25 @@ impl App {
         self.open_picker(Picker::new(PickerKind::GitRebaseOnto, title, items));
     }
 
-    /// Accept handlers — called by the picker dispatcher. v1 runs
-    /// the git op synchronously; calls `after_git_change()` on
-    /// success so the git rail refreshes (2026-06-21
-    /// power-user-ws-git `no-refresh-after-mutations` SEV-2). Async
-    /// dispatch via `git_loader_tx` is a v2 — block-UI on merge /
-    /// rebase is the corresponding SEV-2 but bigger.
+    /// Accept handlers — called by the picker dispatcher. 2026-06-21
+    /// SEV-2 fix: dispatch via the git loader instead of blocking
+    /// the main thread. Result is applied in `drain_git_results`
+    /// which calls `after_git_change` on success so the git rail
+    /// refreshes.
     pub fn git_merge_branch(&mut self, name: String) {
         let repo = self.active_repo_path().to_path_buf();
         self.toast(format!("merging {name}…"));
-        match crate::git::branch::merge(&repo, &name) {
-            Ok(()) => {
-                self.toast(format!("merged {name}"));
-                self.after_git_change();
-            }
-            Err(e) => self.toast(format!("merge {name}: {e}")),
-        }
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Merge { repo, name });
     }
 
     pub fn git_rebase_onto(&mut self, name: String) {
         let repo = self.active_repo_path().to_path_buf();
         self.toast(format!("rebasing onto {name}…"));
-        match crate::git::branch::rebase(&repo, &name) {
-            Ok(()) => {
-                self.toast(format!("rebased onto {name}"));
-                self.after_git_change();
-            }
-            Err(e) => self.toast(format!("rebase onto {name}: {e}")),
-        }
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::Rebase { repo, name });
     }
 
     /// `:git.delete_branch` — picker over local branches. Accept
@@ -2211,13 +2245,10 @@ impl App {
             return;
         };
         let repo = self.active_repo_path().to_path_buf();
-        match crate::git::branch::delete_branch(&repo, &name) {
-            Ok(()) => {
-                self.toast(format!("deleted branch {name}"));
-                self.after_git_change();
-            }
-            Err(e) => self.toast(format!("delete {name}: {e}")),
-        }
+        self.toast(format!("deleting {name}…"));
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::DeleteBranch { repo, name });
     }
 
     /// `:git.worktree_add` — prompt for a path (where to create
@@ -2296,13 +2327,10 @@ impl App {
             return;
         };
         let repo = self.active_repo_path().to_path_buf();
-        match crate::git::branch::worktree_remove(&repo, &path) {
-            Ok(()) => {
-                self.toast(format!("removed worktree {}", path.display()));
-                self.after_git_change();
-            }
-            Err(e) => self.toast(format!("remove worktree {}: {e}", path.display())),
-        }
+        self.toast(format!("removing worktree {}…", path.display()));
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::WorktreeRemove { repo, path });
     }
 
     /// AddWorkspace prompt accept reroutes here when
@@ -2327,15 +2355,14 @@ impl App {
             return;
         };
         let repo = self.active_repo_path().to_path_buf();
-        match crate::git::branch::worktree_add(&repo, &path, &branch) {
-            Ok(()) => {
-                self.toast(format!("worktree added at {}", path.display()));
-                self.after_git_change();
-                // Optionally open the new worktree as a workspace.
-                self.add_workspace_runtime(path, None);
-            }
-            Err(e) => self.toast(format!("worktree add: {e}")),
-        }
+        self.toast(format!("adding worktree at {}…", path.display()));
+        let _ = self
+            .git_loader_tx
+            .send(crate::app::git_async::GitJob::WorktreeAdd {
+                repo,
+                path,
+                branch,
+            });
     }
 
     /// `:git.recent_branches` — picker over local branches sorted

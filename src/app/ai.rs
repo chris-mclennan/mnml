@@ -655,6 +655,23 @@ impl App {
     }
 
     /// Allocate a job id + fresh session id and spawn `claude -p --session-id …`
+    /// Precheck for the 4 new AI palette commands shipped this
+    /// session. Toasts + returns false if `$ANTHROPIC_API_KEY`
+    /// isn't set OR is empty. Was: each command fired a job, the
+    /// API call inside the worker thread failed with a 401 /
+    /// "key not set" message that took a few seconds to surface.
+    /// Now: 0ms fail-fast at the palette layer. 2026-06-21
+    /// power-user-ai SEV-3 fix.
+    pub(crate) fn ai_api_key_ready(&mut self, label: &str) -> bool {
+        match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(k) if !k.trim().is_empty() => true,
+            _ => {
+                self.toast(format!("{label}: $ANTHROPIC_API_KEY not set"));
+                false
+            }
+        }
+    }
+
     /// on a worker thread. Returns `(job_id, session_id, cancel_flag)` — set the
     /// flag to ask the worker to kill its child and bail.
     fn spawn_ai_job(
@@ -1947,6 +1964,9 @@ impl App {
     /// suggestion is seeded into a `BranchName` prompt where the
     /// user accepts or edits.
     pub fn request_ai_write_branch_name(&mut self) {
+        if !self.ai_api_key_ready("ai.write_branch_name") {
+            return;
+        }
         // 2026-06-21 power-user-ai SEV-3: unconditional
         // `self.prompt = Some(...)` clobbered an open
         // `AiToolConfirm` prompt, leaving an agent worker
@@ -2005,6 +2025,9 @@ impl App {
     /// rebase themselves — we deliberately don't mutate history
     /// from inside mnml since one wrong tweak loses commits.
     pub fn request_ai_recompose_branch(&mut self) {
+        if !self.ai_api_key_ready("ai.recompose_branch") {
+            return;
+        }
         if self.pending_recompose_branch_job.is_some() {
             self.toast("ai.recompose_branch: already in flight");
             return;
@@ -2108,6 +2131,9 @@ impl App {
     /// scratch. Useful before pushing a chunk you want a second
     /// reading of.
     pub fn request_ai_explain_diff(&mut self) {
+        if !self.ai_api_key_ready("ai.explain_diff") {
+            return;
+        }
         if self.pending_explain_diff_job.is_some() {
             self.toast("ai.explain_diff: already in flight");
             return;
@@ -2161,6 +2187,9 @@ impl App {
     /// 5 commits, give me something I can paste into the PR body"
     /// workflow.
     pub fn request_ai_pr_description(&mut self) {
+        if !self.ai_api_key_ready("ai.pr_desc") {
+            return;
+        }
         if self.pending_pr_desc_job.is_some() {
             self.toast("ai.pr_desc: already in flight");
             return;

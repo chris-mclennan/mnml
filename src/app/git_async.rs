@@ -63,6 +63,31 @@ pub enum GitJob {
         target: String,
         from_branch: Option<String>,
     },
+    /// 2026-06-21 power-user-ws-git SEV-2 merge-rebase-block-ui:
+    /// merge / rebase / delete-branch / worktree-add /
+    /// worktree-remove all sync-shell-out'd on the main app
+    /// thread, freezing UI for the duration. Now via the loader.
+    Merge {
+        repo: PathBuf,
+        name: String,
+    },
+    Rebase {
+        repo: PathBuf,
+        name: String,
+    },
+    DeleteBranch {
+        repo: PathBuf,
+        name: String,
+    },
+    WorktreeAdd {
+        repo: PathBuf,
+        path: PathBuf,
+        branch: String,
+    },
+    WorktreeRemove {
+        repo: PathBuf,
+        path: PathBuf,
+    },
 }
 
 /// Which checkout helper to call. The string carried in the job's
@@ -105,6 +130,27 @@ pub enum GitResult {
         kind: CheckoutKind,
         from_branch: Option<String>,
         result: Result<String, String>,
+    },
+    Merged {
+        name: String,
+        result: Result<(), String>,
+    },
+    Rebased {
+        name: String,
+        result: Result<(), String>,
+    },
+    BranchDeleted {
+        name: String,
+        result: Result<(), String>,
+    },
+    WorktreeAdded {
+        path: PathBuf,
+        branch: String,
+        result: Result<(), String>,
+    },
+    WorktreeRemoved {
+        path: PathBuf,
+        result: Result<(), String>,
     },
 }
 
@@ -188,6 +234,31 @@ pub fn spawn_git_loader() -> (Sender<GitJob>, Receiver<GitResult>) {
                             result,
                         }
                     }
+                    GitJob::Merge { repo, name } => GitResult::Merged {
+                        result: crate::git::branch::merge(&repo, &name),
+                        name,
+                    },
+                    GitJob::Rebase { repo, name } => GitResult::Rebased {
+                        result: crate::git::branch::rebase(&repo, &name),
+                        name,
+                    },
+                    GitJob::DeleteBranch { repo, name } => GitResult::BranchDeleted {
+                        result: crate::git::branch::delete_branch(&repo, &name),
+                        name,
+                    },
+                    GitJob::WorktreeAdd {
+                        repo,
+                        path,
+                        branch,
+                    } => GitResult::WorktreeAdded {
+                        result: crate::git::branch::worktree_add(&repo, &path, &branch),
+                        path,
+                        branch,
+                    },
+                    GitJob::WorktreeRemove { repo, path } => GitResult::WorktreeRemoved {
+                        result: crate::git::branch::worktree_remove(&repo, &path),
+                        path,
+                    },
                 };
                 if res_tx.send(result).is_err() {
                     // App dropped the receiver — exit cleanly.

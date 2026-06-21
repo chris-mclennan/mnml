@@ -561,7 +561,19 @@ impl App {
                 Ok(curl) => match crate::http::parse(&curl) {
                     Ok(parsed) => {
                         self.open_new_request_pane();
-                        let Some(cur) = self.active else { continue };
+                        // 2026-06-21 api-workflow SEV-2: was
+                        // `let Some(cur) = self.active else { continue };`
+                        // which silently dropped the AI-built curl
+                        // if open_new_request_pane somehow didn't
+                        // set self.active. Now: toast a clear
+                        // error and skip; the user knows Claude's
+                        // reply was lost.
+                        let Some(cur) = self.active else {
+                            self.toast(
+                                "http.ai_build: couldn't open a Request pane — reply dropped",
+                            );
+                            continue;
+                        };
                         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
                             rp.headers_buffer =
                                 crate::request_pane::headers_to_text(&parsed.headers);
@@ -576,6 +588,11 @@ impl App {
                             // immediately sees the curl Claude
                             // produced (auditable before re-firing).
                             rp.edit_tab = crate::request_pane::EditTab::Source;
+                        } else {
+                            self.toast(
+                                "http.ai_build: opened pane wasn't a Request pane — reply dropped",
+                            );
+                            continue;
                         }
                         self.toast("http.ai_build: ✓ ready (Source tab)");
                     }
@@ -603,13 +620,20 @@ impl App {
     /// `:ws.send_message` — open a Prompt for the message to send.
     /// The message goes to the focused `Pane::Websocket`.
     pub fn ws_send_message_prompt(&mut self) {
-        if !matches!(
-            self.active.and_then(|i| self.panes.get(i)),
-            Some(Pane::Websocket(_))
-        ) {
+        let Some(i) = self.active else {
+            self.toast("ws: focus a ws pane first");
+            return;
+        };
+        if !matches!(self.panes.get(i), Some(Pane::Websocket(_))) {
             self.toast("ws: focus a ws pane first");
             return;
         }
+        // 2026-06-21 api-workflow SEV-3: stash the WS pane index
+        // at prompt-open time so the accept handler sends to the
+        // right pane even if the user switched focus mid-prompt.
+        // Was: accept handler re-checked `self.active`; switching
+        // panes silently dropped the typed message.
+        self.pending_ws_send_pane = Some(i);
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::WsSendMessage,
             "Message to send:".to_string(),
@@ -640,6 +664,24 @@ impl App {
             self.toast("ws: URL can't be empty");
             return;
         }
+        // 2026-06-21 power-user-ws-git SEV-3: reject obviously
+        // non-WS schemes up front so the user doesn't end up
+        // staring at a zombie `· closed` tab while wondering
+        // what happened. http:// / https:// / file:// / etc. are
+        // dropped here; ws:// + wss:// pass through, and bare
+        // host:port goes through (tungstenite accepts the
+        // protocol-less form).
+        let lower = url.to_lowercase();
+        if !lower.starts_with("ws://") && !lower.starts_with("wss://") {
+            // Allow bare host:port (no scheme at all) but reject
+            // anything with a scheme that ISN'T ws/wss.
+            if lower.contains("://") {
+                self.toast(format!(
+                    "ws: only ws:// and wss:// URLs are supported (got {url})"
+                ));
+                return;
+            }
+        }
         let pane = Pane::Websocket(crate::websocket::WebsocketPane::connect(url.clone()));
         match self.active {
             Some(cur) => {
@@ -660,12 +702,19 @@ impl App {
 
     /// Accept handler — sends the typed message on the focused WS pane.
     pub fn ws_send_on_active(&mut self, message: &str) {
-        let Some(i) = self.active else {
+        // Prefer the pane we were focused on at prompt-open time
+        // (stashed in `pending_ws_send_pane`). Fall back to current
+        // focus for backward compat / direct callers.
+        let target = self
+            .pending_ws_send_pane
+            .take()
+            .or(self.active);
+        let Some(i) = target else {
             self.toast("ws: no focused pane");
             return;
         };
         let Some(Pane::Websocket(p)) = self.panes.get_mut(i) else {
-            self.toast("ws: focus a ws pane first");
+            self.toast("ws: focus a ws pane first (was the WS pane closed?)");
             return;
         };
         p.input = message.to_string();
@@ -3559,6 +3608,15 @@ impl App {
                         .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
                     {
                         if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
+                            // 2026-06-21 SEV-3 fix: capture any
+                            // prior Done into prev_response BEFORE
+                            // overwriting state with Streaming.
+                            if let RunState::Done(prev) = std::mem::replace(
+                                &mut rp.state,
+                                RunState::Sending,
+                            ) {
+                                rp.prev_response = Some(prev);
+                            }
                             rp.state = RunState::Streaming(Box::new(ResponseView {
                                 status,
                                 status_text,
@@ -3602,6 +3660,10 @@ impl App {
                     }
                 }
                 SseStreamMsg::Close { job_id } => {
+                    // prev_response was already captured at the
+                    // start of the stream (when we replaced any
+                    // prior Done with the new Streaming). Here we
+                    // just promote the in-flight Streaming → Done.
                     if let Some((pid, _)) = self
                         .panes
                         .iter()
