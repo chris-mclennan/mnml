@@ -201,6 +201,14 @@ pub enum PickerKind {
     /// `id` = branch name. Accept ⇒ `git rebase <name>` of the
     /// current branch onto the picked one.
     GitRebaseOnto,
+    /// `id` = absolute path to a linked worktree. Accept ⇒ open
+    /// that worktree as a workspace via `:open_workspace`. Useful
+    /// when you've parked work in another worktree and want to
+    /// jump into it without leaving mnml.
+    GitWorktreeOpen,
+    /// `id` = absolute path to a worktree to remove. Accept ⇒
+    /// `git worktree remove <path>` (confirm prompt first).
+    GitWorktreeRemove,
 }
 
 #[derive(Debug, Clone)]

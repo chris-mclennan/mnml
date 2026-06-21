@@ -3127,6 +3127,9 @@ pub struct App {
     /// prompt. Set when the GitDeleteBranch picker accepts; resolved
     /// on the confirm prompt accept.
     pub pending_branch_delete: Option<String>,
+    /// Pending worktree path for `:git.worktree_add` and
+    /// `:git.worktree_remove` confirm prompts.
+    pub pending_worktree_path: Option<std::path::PathBuf>,
     /// 2026-06-20 — theme picker live preview. Snapshot of the
     /// active theme name when the Themes picker opens; restored on
     /// Esc / cleared on Enter. Up/Down on the picker applies the
@@ -3594,6 +3597,7 @@ impl App {
             pending_kill_pid: None,
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,
+            pending_worktree_path: None,
             theme_preview_restore: None,
             pending_pr_desc_job: None,
             pending_explain_diff_job: None,

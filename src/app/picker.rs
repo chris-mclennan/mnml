@@ -694,6 +694,17 @@ impl App {
                 // etc. — git rebase takes those literally.
                 self.git_rebase_onto(item.id.clone());
             }
+            PickerKind::GitWorktreeOpen => {
+                self.git_open_worktree(std::path::PathBuf::from(item.id.clone()));
+            }
+            PickerKind::GitWorktreeRemove => {
+                let path = std::path::PathBuf::from(item.id.clone());
+                self.pending_worktree_path = Some(path.clone());
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::WorktreeRemoveConfirm,
+                    format!("type 'remove' to drop worktree {}", path.display()),
+                ));
+            }
             PickerKind::CookiesDelete => {
                 if let Some((host, name)) = item.id.split_once('\t') {
                     let removed = {
@@ -1035,7 +1046,6 @@ impl App {
                 if input.is_empty() {
                     return;
                 }
-                // Tilde-expand `~/...` for the typed-input path.
                 let path = if let Some(rest) = input.strip_prefix("~/") {
                     if let Some(home) = std::env::var_os("HOME") {
                         PathBuf::from(home).join(rest)
@@ -1045,6 +1055,18 @@ impl App {
                 } else {
                     PathBuf::from(input)
                 };
+                // Sentinel: `:git.worktree_add` set
+                // pending_worktree_path to an empty path before
+                // opening this prompt. Reroute the path to the
+                // worktree-add flow instead of opening a workspace.
+                if self
+                    .pending_worktree_path
+                    .as_ref()
+                    .is_some_and(|p| p.as_os_str().is_empty())
+                {
+                    self.git_worktree_add_path_chosen(path);
+                    return;
+                }
                 self.add_workspace_runtime(path, None);
             }
             crate::prompt::PromptKind::GitCommit => {
@@ -1310,6 +1332,18 @@ impl App {
                 match crate::git::branch::create(self.active_repo_path(), &name) {
                     Ok(()) => self.toast(format!("created + checked out {name}")),
                     Err(e) => self.toast(format!("branch {name}: {e}")),
+                }
+            }
+            crate::prompt::PromptKind::WorktreeBranchName => {
+                let branch = p.input.clone();
+                self.git_worktree_add_apply(branch);
+            }
+            crate::prompt::PromptKind::WorktreeRemoveConfirm => {
+                if p.input.trim().eq_ignore_ascii_case("remove") {
+                    self.git_worktree_remove_apply();
+                } else {
+                    self.pending_worktree_path = None;
+                    self.toast("worktree remove cancelled");
                 }
             }
             crate::prompt::PromptKind::GitDeleteBranchConfirm => {

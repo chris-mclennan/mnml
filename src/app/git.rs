@@ -2194,6 +2194,120 @@ impl App {
         }
     }
 
+    /// `:git.worktree_add` — prompt for a path (where to create
+    /// the worktree), then prompt for a branch name to check out.
+    /// Convenience for "park this branch in a sibling worktree
+    /// without touching my current one."
+    pub fn open_worktree_add_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::AddWorkspace,
+            "Worktree path (e.g. ../mnml-feature):".to_string(),
+        ));
+        // AddWorkspace already exists for the "Open folder…"
+        // flow — we'll reuse the path-prompt UI then re-prompt
+        // for branch when the path comes back.
+        self.pending_worktree_path = Some(std::path::PathBuf::new()); // sentinel: in-progress add
+    }
+
+    /// `:git.worktree_list` — picker over linked worktrees;
+    /// Enter opens the chosen worktree as a new workspace.
+    pub fn open_worktree_workspace_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let trees = crate::git::branch::worktrees(self.active_repo_path());
+        if trees.is_empty() {
+            self.toast("no linked worktrees");
+            return;
+        }
+        let items: Vec<PickerItem> = trees
+            .iter()
+            .map(|w| {
+                let path = w.path.to_string_lossy().to_string();
+                let marker = if w.is_current { "● " } else { "  " };
+                let label = format!("{marker}{}", path);
+                PickerItem::new(path.clone(), label, w.label.clone())
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::GitWorktreeOpen, "Open worktree", items));
+    }
+
+    /// `:git.worktree_remove` — picker over linked worktrees;
+    /// Enter opens a confirm prompt before `git worktree remove`.
+    /// The current worktree is excluded.
+    pub fn open_worktree_remove_picker(&mut self) {
+        use crate::picker::PickerItem;
+        let trees = crate::git::branch::worktrees(self.active_repo_path());
+        let items: Vec<PickerItem> = trees
+            .iter()
+            .filter(|w| !w.is_current)
+            .map(|w| {
+                let path = w.path.to_string_lossy().to_string();
+                PickerItem::new(path.clone(), path, w.label.clone())
+            })
+            .collect();
+        if items.is_empty() {
+            self.toast("no other worktrees to remove");
+            return;
+        }
+        self.open_picker(Picker::new(
+            PickerKind::GitWorktreeRemove,
+            "Remove worktree",
+            items,
+        ));
+    }
+
+    /// Open a worktree by path as a workspace.
+    pub fn git_open_worktree(&mut self, path: std::path::PathBuf) {
+        if !path.is_dir() {
+            self.toast(format!("worktree not on disk: {}", path.display()));
+            return;
+        }
+        self.add_workspace_runtime(path, None);
+    }
+
+    /// Confirm prompt → fire the remove.
+    pub fn git_worktree_remove_apply(&mut self) {
+        let Some(path) = self.pending_worktree_path.take() else {
+            return;
+        };
+        let repo = self.active_repo_path().to_path_buf();
+        match crate::git::branch::worktree_remove(&repo, &path) {
+            Ok(()) => self.toast(format!("removed worktree {}", path.display())),
+            Err(e) => self.toast(format!("remove worktree {}: {e}", path.display())),
+        }
+    }
+
+    /// AddWorkspace prompt accept reroutes here when
+    /// `pending_worktree_path` is set to the sentinel (empty path).
+    pub fn git_worktree_add_path_chosen(&mut self, path: std::path::PathBuf) {
+        self.pending_worktree_path = Some(path.clone());
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::WorktreeBranchName,
+            format!("Branch for {} (Enter to create):", path.display()),
+        ));
+    }
+
+    /// WorktreeBranchName prompt accept → fire `git worktree add`.
+    pub fn git_worktree_add_apply(&mut self, branch: String) {
+        let branch = branch.trim().to_string();
+        if branch.is_empty() {
+            self.toast("worktree: branch name empty");
+            self.pending_worktree_path = None;
+            return;
+        }
+        let Some(path) = self.pending_worktree_path.take() else {
+            return;
+        };
+        let repo = self.active_repo_path().to_path_buf();
+        match crate::git::branch::worktree_add(&repo, &path, &branch) {
+            Ok(()) => {
+                self.toast(format!("worktree added at {}", path.display()));
+                // Optionally open the new worktree as a workspace.
+                self.add_workspace_runtime(path, None);
+            }
+            Err(e) => self.toast(format!("worktree add: {e}")),
+        }
+    }
+
     /// `:git.recent_branches` — picker over local branches sorted
     /// by `committerdate` (newest first). Same accept handler as
     /// the standard branch picker (PickerKind::Branches with

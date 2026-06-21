@@ -867,6 +867,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.split_goto_definition(),
         },
         Command {
+            id: "lsp.peek_definition",
+            title: "LSP: peek definition in a horizontal split below the current pane",
+            group: "lsp",
+            // VS Code's Alt+F12 muscle memory: open the def below
+            // the editor without losing the call-site context.
+            // mnml uses a real pane (no floating overlay) — the
+            // split is closable like any other pane.
+            keys: &[],
+            run: |app| app.peek_definition(),
+        },
+        Command {
             id: "view.split_open_file_under_cursor",
             title: "Split + open file under cursor (vim `Ctrl+W f`)",
             group: "view",
@@ -2469,6 +2480,31 @@ fn builtin_commands() -> Vec<Command> {
             // behavior as merge.
             keys: &[],
             run: |app| app.open_rebase_picker(),
+        },
+        Command {
+            id: "git.worktree_add",
+            title: "Git: add a linked worktree (prompt for path + branch)",
+            group: "git",
+            // Two-stage prompt: first the path (with directory
+            // autocomplete from the AddWorkspace path-prompt UI),
+            // then the branch name. Creates the worktree and adds
+            // it as a workspace.
+            keys: &[],
+            run: |app| app.open_worktree_add_prompt(),
+        },
+        Command {
+            id: "git.worktree_list",
+            title: "Git: open another worktree as a workspace",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_worktree_workspace_picker(),
+        },
+        Command {
+            id: "git.worktree_remove",
+            title: "Git: remove a linked worktree (confirm prompt)",
+            group: "git",
+            keys: &[],
+            run: |app| app.open_worktree_remove_picker(),
         },
         Command {
             id: "git.delete_branch",

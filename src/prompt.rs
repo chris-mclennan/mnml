@@ -124,6 +124,14 @@ pub enum PromptKind {
     /// Pre-seeded with the AI's suggestion when the
     /// `AiBranchNameDescription` flow completes.
     BranchName,
+    /// Accept (any non-empty) ⇒ `git worktree add <pending_path> <input>`.
+    /// `App.pending_worktree_path` is set by `:git.worktree_add`
+    /// before the prompt opens. Input is the branch name to check
+    /// out in the new worktree.
+    WorktreeBranchName,
+    /// Accept (input == "remove") ⇒ `git worktree remove <pending_path>`.
+    /// Confirm prompt for the GitWorktreeRemove picker.
+    WorktreeRemoveConfirm,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

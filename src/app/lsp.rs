@@ -180,6 +180,16 @@ impl App {
         self.lsp_goto_definition();
     }
 
+    /// `:lsp.peek_definition` — like `split_goto_definition` but
+    /// docks the def below the current pane (horizontal split) so
+    /// you can see both at once without sideways layout. Equivalent
+    /// to VS Code's "Peek Definition" alt+F12 behavior, minus the
+    /// floating-overlay rendering (mnml uses a real pane instead).
+    pub fn peek_definition(&mut self) {
+        self.split_active(crate::layout::SplitDir::Horizontal);
+        self.lsp_goto_definition();
+    }
+
     /// If an outline pane is open and the now-active editor is a different
     /// file, retarget the outline to that file and re-fire `documentSymbol`.
     /// No-op when nothing's open, the active pane isn't an editor with a

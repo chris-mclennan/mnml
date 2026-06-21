@@ -187,6 +187,23 @@ pub fn rebase(workspace: &Path, branch: &str) -> Result<(), String> {
     run(workspace, &["rebase", "--", branch])
 }
 
+/// `git worktree add <path> <branch>` — create a linked worktree
+/// at `path` checked out to `branch`. If `branch` doesn't exist,
+/// uses `--detach` instead and the worktree will be in detached
+/// HEAD state at the named commit.
+pub fn worktree_add(workspace: &Path, path: &Path, branch: &str) -> Result<(), String> {
+    run(
+        workspace,
+        &[
+            "worktree",
+            "add",
+            "--",
+            &path.to_string_lossy(),
+            branch,
+        ],
+    )
+}
+
 /// `git worktree remove <path>` — drop a linked worktree. Same confirm-gating
 /// principle as branch delete.
 pub fn worktree_remove(workspace: &Path, path: &Path) -> Result<(), String> {
