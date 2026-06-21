@@ -71,6 +71,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     if inner.width < 30 || inner.height < 6 {
         return;
     }
+    // Register the pane's body so the global wheel dispatcher
+    // routes ScrollUp/ScrollDown events to this pane's
+    // move_up/move_down (see ClaudeAgents arm in dispatch.rs).
+    app.rects.editor_panes.push((inner, id));
 
     // Vertical layout: top-bar (2), rows (flex), detail (6).
     let topbar_h = 2u16;
