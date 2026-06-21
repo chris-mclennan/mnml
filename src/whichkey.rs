@@ -142,6 +142,87 @@ pub fn root() -> &'static Leader {
                         ],
                     ),
                 ),
+                // 2026-06-21 multilang SEV-3 runners-no-whichkey-group:
+                // language-specific runner family. Two-level prefix
+                // — `<leader>Lc` for cargo, `<leader>Ln` for npm,
+                // `<leader>Lp` for pytest, `<leader>Lg` for go. The
+                // generic `<leader>T` group (above) handles
+                // framework-agnostic test commands. `L` chosen to
+                // avoid the prior `<leader>r` accident — see comment
+                // below — and `R` (which read as redo). `L` reads
+                // as "language" + has no vim-canonical at root.
+                (
+                    'L',
+                    group(
+                        "+lang/run",
+                        vec![
+                            (
+                                'c',
+                                group(
+                                    "+cargo",
+                                    vec![
+                                        ('t', cmd("cargo.test", "cargo test")),
+                                        ('b', cmd("cargo.build", "cargo build")),
+                                        ('r', cmd("cargo.run", "cargo run")),
+                                        ('c', cmd("cargo.check", "cargo check")),
+                                        ('l', cmd("cargo.clippy", "cargo clippy")),
+                                        ('f', cmd("cargo.fmt", "cargo fmt")),
+                                    ],
+                                ),
+                            ),
+                            (
+                                'n',
+                                group(
+                                    "+npm",
+                                    vec![
+                                        ('t', cmd("npm.test", "npm test")),
+                                        ('b', cmd("npm.build", "npm run build")),
+                                        ('r', cmd("npm.run", "npm run dev")),
+                                        ('s', cmd("npm.start", "npm start")),
+                                        ('i', cmd("npm.install", "npm install")),
+                                        ('l', cmd("npm.lint", "npm run lint")),
+                                        (
+                                            'x',
+                                            cmd(
+                                                "npm.run_script",
+                                                "run an npm script (prompt)",
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                            ),
+                            (
+                                'p',
+                                group(
+                                    "+pytest",
+                                    vec![
+                                        ('t', cmd("pytest.run", "pytest")),
+                                        ('l', cmd("pytest.failed", "pytest --lf")),
+                                    ],
+                                ),
+                            ),
+                            (
+                                'g',
+                                group(
+                                    "+go",
+                                    vec![
+                                        ('t', cmd("go.test", "go test ./...")),
+                                        ('b', cmd("go.build", "go build")),
+                                        ('r', cmd("go.run", "go run .")),
+                                        ('v', cmd("go.vet", "go vet ./...")),
+                                        (
+                                            'p',
+                                            cmd(
+                                                "go.run_path",
+                                                "go run <path> (prompt)",
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                            ),
+                        ],
+                    ),
+                ),
                 (
                     'P',
                     group(
