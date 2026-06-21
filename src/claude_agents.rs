@@ -913,34 +913,44 @@ fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     rows
 }
 
-/// Codex CLI rows. The OpenAI codex stores session jsonl at
-/// `~/.codex/sessions/<sid>.jsonl` (best-effort detection — falls
-/// back to PID+cmdline-only rows when the directory doesn't exist).
-/// We don't claim drill-down parity with Claude: per-tool sidecars
-/// (TodoList, Bash, recent files) all stay empty for codex rows
-/// for now. If/when the codex transcript format stabilizes we can
-/// teach `parse_tail` about it.
+/// Codex CLI rows. The OpenAI codex stores sessions at
+/// `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<sid>.jsonl` — nested
+/// by date. We walk recursively to find them, then parse each via
+/// `parse_codex_tail` (codex's transcript format differs from
+/// Claude's — see that fn for the event shape). Codex sessions
+/// don't appear to emit Bash/Edit tool_use events in this version
+/// (v0.141.0); the drill-down's Files/Bash views stay empty for
+/// codex rows until that lands.
 fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     let mut rows: Vec<AgentRow> = Vec::new();
     let sessions_dir = std::env::var_os("HOME")
         .map(|h| PathBuf::from(h).join(".codex/sessions"));
 
-    // 1. Sessions on disk (Codex writes one .jsonl per session under
-    //    ~/.codex/sessions/ when present).
-    if let Some(dir) = sessions_dir.as_deref()
-        && let Ok(files) = std::fs::read_dir(dir)
-    {
-        for f in files.flatten() {
-            let p = f.path();
+    if let Some(dir) = sessions_dir.as_deref() {
+        for p in walk_codex_sessions(dir) {
             let name = match p.file_name().and_then(|s| s.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,
             };
-            let Some(session_id) = name.strip_suffix(".jsonl") else {
-                continue;
+            // Filename shape: rollout-<ts>-<UUIDv7>.jsonl. Session id
+            // is the trailing UUID (36 chars before the extension).
+            let stem = match name.strip_suffix(".jsonl") {
+                Some(s) => s,
+                None => continue,
             };
-            let session_id = session_id.to_string();
-            let Ok(meta) = f.metadata() else { continue };
+            let session_id = stem
+                .rsplit('-')
+                .take(5)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("-");
+            // Sanity: UUID is 36 chars with 4 dashes.
+            if session_id.len() != 36 || session_id.matches('-').count() != 4 {
+                continue;
+            }
+            let Ok(meta) = std::fs::metadata(&p) else { continue };
             let mtime = meta.modified().ok();
             if let Some(t) = mtime
                 && let Ok(age) = SystemTime::now().duration_since(t)
@@ -948,6 +958,7 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             {
                 continue;
             }
+            let stats = parse_codex_tail(&p);
             let pid = pids
                 .iter()
                 .find_map(|(sid, pid, _)| (sid == &session_id).then_some(*pid));
@@ -963,27 +974,44 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             } else {
                 AgentState::Ended
             };
-            // Try a generic last-line peek so the user sees SOMETHING
-            // in the detail panel for codex sessions. Best-effort.
-            let blurb = peek_last_text_line(&p);
+            let workspace = stats
+                .cwd
+                .as_deref()
+                .and_then(|c| std::path::Path::new(c).file_name())
+                .and_then(|s| s.to_str())
+                .map(String::from)
+                .unwrap_or_else(|| "?".to_string());
+            let cost = stats
+                .model
+                .as_deref()
+                .map(|m| {
+                    estimate_cost(
+                        m,
+                        stats.input_tokens,
+                        stats.output_tokens,
+                        0,
+                        stats.cache_read_tokens,
+                    )
+                })
+                .unwrap_or(0.0);
             rows.push(AgentRow {
                 source: AgentSource::Codex,
-                transcript_path: p,
+                transcript_path: p.clone(),
                 session_id,
-                workspace: "?".to_string(),
-                cwd: None,
+                workspace,
+                cwd: stats.cwd,
                 git_branch: None,
-                model: None,
+                model: stats.model,
                 last_activity: mtime,
-                tokens: 0,
-                input_tokens: 0,
-                output_tokens: 0,
+                tokens: stats.tokens,
+                input_tokens: stats.input_tokens,
+                output_tokens: stats.output_tokens,
                 cache_create_tokens: 0,
-                cache_read_tokens: 0,
-                cost_usd: 0.0,
-                event_count: 0,
-                last_user_msg: None,
-                last_assistant_msg: blurb,
+                cache_read_tokens: stats.cache_read_tokens,
+                cost_usd: cost,
+                event_count: stats.event_count,
+                last_user_msg: stats.last_user_msg,
+                last_assistant_msg: stats.last_assistant_msg,
                 pid,
                 state,
                 current_tool: None,
@@ -1046,6 +1074,166 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     rows
 }
 
+/// Walk `~/.codex/sessions/` recursively (codex nests sessions by
+/// `YYYY/MM/DD/`). Returns every `rollout-*.jsonl`. Bounded — only
+/// descends 3 levels (year/month/day).
+fn walk_codex_sessions(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    let Ok(years) = std::fs::read_dir(root) else { return out };
+    for y in years.flatten() {
+        let Ok(months) = std::fs::read_dir(y.path()) else { continue };
+        for m in months.flatten() {
+            let Ok(days) = std::fs::read_dir(m.path()) else { continue };
+            for d in days.flatten() {
+                let Ok(files) = std::fs::read_dir(d.path()) else { continue };
+                for f in files.flatten() {
+                    let p = f.path();
+                    if p.extension().is_some_and(|e| e == "jsonl") {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[derive(Default)]
+struct CodexTailStats {
+    cwd: Option<String>,
+    model: Option<String>,
+    tokens: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_read_tokens: u64,
+    event_count: usize,
+    last_user_msg: Option<String>,
+    last_assistant_msg: Option<String>,
+}
+
+/// Codex transcript tail-parse. Codex's format:
+///   { "timestamp": "...", "type": "session_meta",   "payload": {...} }
+///   { "timestamp": "...", "type": "turn_context",   "payload": {...} }
+///   { "timestamp": "...", "type": "response_item",  "payload": {
+///       "type": "message", "role": "user|assistant|developer",
+///       "content": [{"type": "input_text"|"output_text", "text": "..."}]
+///     } }
+///   { "timestamp": "...", "type": "event_msg",      "payload": {
+///       "type": "token_count",
+///       "info": { "total_token_usage": { input_tokens, output_tokens,
+///                                        cached_input_tokens,
+///                                        reasoning_output_tokens } }
+///     } }
+///
+/// We track the running token_count (total_token_usage is cumulative
+/// per-event, not per-turn, so the LAST seen value is the running
+/// total — we don't sum).
+fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
+    let mut stats = CodexTailStats::default();
+    let Ok(text) = read_tail(path, 256 * 1024) else {
+        return stats;
+    };
+    for line in text.lines() {
+        stats.event_count += 1;
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let payload = v.get("payload");
+        match ty {
+            "session_meta" => {
+                if let Some(c) = payload.and_then(|p| p.get("cwd")).and_then(|c| c.as_str()) {
+                    stats.cwd = Some(c.to_string());
+                }
+            }
+            "turn_context" => {
+                if let Some(c) = payload.and_then(|p| p.get("cwd")).and_then(|c| c.as_str()) {
+                    stats.cwd = Some(c.to_string());
+                }
+                if let Some(m) = payload.and_then(|p| p.get("model")).and_then(|m| m.as_str()) {
+                    stats.model = Some(m.to_string());
+                }
+            }
+            "response_item" => {
+                let inner_type = payload
+                    .and_then(|p| p.get("type"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                if inner_type != "message" {
+                    continue;
+                }
+                let role = payload
+                    .and_then(|p| p.get("role"))
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("");
+                let content = payload.and_then(|p| p.get("content")).and_then(|c| c.as_array());
+                let text = content
+                    .and_then(|arr| {
+                        arr.iter().find_map(|b| {
+                            let bt = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                            if bt == "input_text" || bt == "output_text" {
+                                b.get("text").and_then(|t| t.as_str()).map(String::from)
+                            } else {
+                                None
+                            }
+                        })
+                    });
+                let Some(text) = text else { continue };
+                let text = text.trim();
+                // Filter codex's internal context blocks that arrive
+                // tagged as user messages.
+                if text.starts_with("<environment_context>")
+                    || text.starts_with("<permissions instructions>")
+                    || text.starts_with("<task_complete>")
+                    || text.is_empty()
+                {
+                    continue;
+                }
+                match role {
+                    "user" => stats.last_user_msg = Some(truncate(text, 200)),
+                    "assistant" => stats.last_assistant_msg = Some(truncate(text, 200)),
+                    _ => {}
+                }
+            }
+            "event_msg" => {
+                let inner_type = payload
+                    .and_then(|p| p.get("type"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                if inner_type == "token_count"
+                    && let Some(info) = payload.and_then(|p| p.get("info"))
+                {
+                    let total = info.get("total_token_usage");
+                    let i = total
+                        .and_then(|t| t.get("input_tokens"))
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    let o = total
+                        .and_then(|t| t.get("output_tokens"))
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    let ro = total
+                        .and_then(|t| t.get("reasoning_output_tokens"))
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    let cached = total
+                        .and_then(|t| t.get("cached_input_tokens"))
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    // `total_token_usage` is cumulative — overwrite,
+                    // don't sum.
+                    stats.input_tokens = i;
+                    stats.output_tokens = o.saturating_add(ro);
+                    stats.cache_read_tokens = cached;
+                    stats.tokens = i.saturating_add(o).saturating_add(ro);
+                }
+            }
+            _ => {}
+        }
+    }
+    stats
+}
+
 /// Return the cwd of a running process. Uses `lsof -p PID` on macOS,
 /// `/proc/<pid>/cwd` on Linux. Best-effort; returns `None` on any
 /// failure.
@@ -1073,20 +1261,6 @@ fn read_pid_cwd(pid: u32) -> Option<String> {
         }
         None
     }
-}
-
-/// Quick peek at the last line of a Codex transcript — returns the
-/// first text field we can extract for the detail panel. Best-effort.
-fn peek_last_text_line(path: &std::path::Path) -> Option<String> {
-    let text = read_tail(path, 32 * 1024).ok()?;
-    let last = text.lines().last()?;
-    let v: serde_json::Value = serde_json::from_str(last).ok()?;
-    let content = v
-        .get("content")
-        .or_else(|| v.get("text"))
-        .or_else(|| v.get("message").and_then(|m| m.get("content")))
-        .and_then(|x| x.as_str())?;
-    Some(truncate(content, 200))
 }
 
 fn state_rank(s: AgentState) -> u8 {
@@ -1822,6 +1996,14 @@ fn price_per_mt(model: &str) -> (f64, f64, f64, f64) {
         "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" => (15.0, 75.0, 18.75, 1.50),
         "claude-sonnet-4-6" | "claude-sonnet-4-5" => (3.0, 15.0, 3.75, 0.30),
         "claude-haiku-4-5" | "claude-haiku-4-4" => (1.0, 5.0, 1.25, 0.10),
+        // OpenAI codex models — placeholders. Cache cells (3rd / 4th)
+        // are: write-rate / read-rate-per-MT. Codex's transcript
+        // doesn't separate cache-write from regular input; we map
+        // codex's `cached_input_tokens` to the cache-read column.
+        "gpt-5" | "gpt-5.5" => (5.0, 30.0, 0.0, 0.50),
+        "gpt-5-mini" | "gpt-5.5-mini" => (0.50, 2.0, 0.0, 0.05),
+        "gpt-4o" => (2.50, 10.0, 0.0, 1.25),
+        "gpt-4o-mini" => (0.15, 0.60, 0.0, 0.075),
         // Older / legacy / unknown.
         _ => (0.0, 0.0, 0.0, 0.0),
     }
@@ -1970,6 +2152,75 @@ mod tests {
         let stats = parse_tail(&p);
         assert!(stats.last_was_tool_call);
         assert_eq!(stats.last_assistant_msg.as_deref(), Some("⚙ Bash"));
+    }
+
+    #[test]
+    fn parse_codex_tail_extracts_user_assistant_tokens_and_model() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("rollout-2026-06-20T23-25-18-abc.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        use std::io::Write;
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-06-21T03:25:20.758Z","type":"session_meta","payload":{{"id":"x","cwd":"/Users/chrismclennan","cli_version":"0.141.0"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-06-21T03:25:20.763Z","type":"turn_context","payload":{{"model":"gpt-5.5","cwd":"/Users/chrismclennan"}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-06-21T03:25:21.0Z","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"hello"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-06-21T03:25:22.0Z","type":"response_item","payload":{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"Hello back"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"2026-06-21T03:25:22.145Z","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":12229,"cached_input_tokens":9600,"output_tokens":15,"reasoning_output_tokens":0,"total_tokens":12244}}}}}}}}"#
+        )
+        .unwrap();
+        let stats = parse_codex_tail(&p);
+        assert_eq!(stats.cwd.as_deref(), Some("/Users/chrismclennan"));
+        assert_eq!(stats.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(stats.last_user_msg.as_deref(), Some("hello"));
+        assert_eq!(stats.last_assistant_msg.as_deref(), Some("Hello back"));
+        assert_eq!(stats.input_tokens, 12229);
+        assert_eq!(stats.output_tokens, 15);
+        assert_eq!(stats.cache_read_tokens, 9600);
+        assert_eq!(stats.tokens, 12244);
+    }
+
+    #[test]
+    fn parse_codex_tail_filters_environment_context_blocks() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("rollout-x.jsonl");
+        let mut f = std::fs::File::create(&p).unwrap();
+        use std::io::Write;
+        writeln!(
+            f,
+            r#"{{"timestamp":"x","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"<environment_context>...</environment_context>"}}]}}}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"timestamp":"x","type":"response_item","payload":{{"type":"message","role":"user","content":[{{"type":"input_text","text":"real message"}}]}}}}"#
+        )
+        .unwrap();
+        let stats = parse_codex_tail(&p);
+        assert_eq!(stats.last_user_msg.as_deref(), Some("real message"));
+    }
+
+    #[test]
+    fn gpt_5_5_pricing_is_in_table() {
+        let (i, o, _, cr) = price_per_mt("gpt-5.5");
+        assert!(i > 0.0 && o > 0.0 && cr > 0.0);
+        assert!(o > i, "output should cost more than input");
     }
 
     #[test]
