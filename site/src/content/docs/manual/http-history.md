@@ -1,11 +1,11 @@
 ---
 title: HTTP history
-description: Every `:http.send` is appended to `.rqst/history.jsonl` — picker browse + re-fire any past request from a scratch `.curl` buffer.
+description: Every `:http.send` is logged to `<ws>/.rqst/history.jsonl` and mirrored into `~/.config/mnml/history-global.jsonl`. Picker-browse + re-fire any past request — workspace-scoped (`:http.history`) or cross-workspace (`:http.history_global`).
 ---
 
-mnml appends every completed HTTP send to `<workspace>/.rqst/history.jsonl` — one JSON line per request, OK or error, status or transport failure. It's a per-workspace forensic log: grep it from the shell, jq it for slow requests, or open the in-app picker (`:http.history`) and re-fire any of the last 100 with one Enter.
+mnml appends every completed HTTP send to two files: `<workspace>/.rqst/history.jsonl` (per-workspace) and `~/.config/mnml/history-global.jsonl` (cross-workspace, with a `workspace` field added). One JSON line per request, OK or error, status or transport failure. The workspace log is the day-to-day forensic surface; the global log is what `:http.history_global` reads when you remember a request but not which project you were in.
 
-The point: when you fired something interesting an hour ago and now you can't remember the exact URL parameters, the answer is there. Same when a 401 from earlier wasn't actually transient and you want to re-run it post-fix.
+The point: when you fired something interesting an hour ago and now you can't remember the exact URL parameters, the answer is there. Same when a 401 from earlier wasn't actually transient and you want to re-run it post-fix. And same when "earlier" was last week, in a different repo.
 
 ## The file
 
@@ -102,6 +102,77 @@ The re-fire happens at the source-buffer level, not as a direct `http.send` — 
 
 The 100-entry cap on the picker is a UI choice, not a data limit — the file still holds every entry. For older entries, grep / jq directly.
 
+## Cross-workspace recall — `:http.history_global`
+
+Workspace-scoped history is the common case, but there's a second log: every send also mirrors into `~/.config/mnml/history-global.jsonl` with a `workspace` field added. When you remember firing a specific request a week ago but not which project you were in, that's what `:http.history_global` is for.
+
+| Surface | Call |
+|---|---|
+| Palette | `HTTP: history picker across all workspaces (~/.config/mnml/history-global.jsonl)` |
+| Ex-command | `:http.history_global` |
+
+### The global file
+
+```text
+~/.config/mnml/history-global.jsonl
+```
+
+Same JSONL shape as the workspace log, with two extra fields:
+
+```json
+{"ts":1734652803123,"workspace":"acme-api","workspace_path":"/Users/me/code/acme-api","method":"POST","url":"https://api.example.com/users/42","status":401,"duration_ms":142,"body_bytes":98,"error":null}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `workspace` | string | The workspace directory's `file_name()` — short identifier. `?` if the path has no basename. |
+| `workspace_path` | string | The full absolute path to the workspace, for unambiguous re-identification when two workspaces share a basename. |
+
+Every other field matches the workspace log line-for-line — `ts`, `method`, `url`, `status`, `duration_ms`, `body_bytes`, `error`. So the same shell queries work, just against a different file:
+
+```bash
+# Every 401 across all workspaces today.
+grep '"status":401' ~/.config/mnml/history-global.jsonl | jq -c '{ts, workspace, url}'
+
+# Find every request you ever fired to a specific host.
+jq -c 'select(.url | contains("api.staging.example.com"))' \
+  ~/.config/mnml/history-global.jsonl
+```
+
+Best-effort append: if `$HOME` is unset, the parent directory can't be created, or the file can't be opened, the workspace log still lands — the global mirror just silently drops. The workspace log is canonical; the global file is opportunistic.
+
+### Test override
+
+The path is overridden by `$MNML_HISTORY_GLOBAL_PATH` when set — primarily so the test suite can write into a tempdir without polluting the real user log. You can set it yourself if you want a different cross-project log location, but the standard XDG-style default is what `:http.history_global` reads by default.
+
+### The picker
+
+Same shape as `:http.history`, with one difference — the detail line carries the workspace identifier:
+
+```text
+HTTP history · all workspaces
+  ▸ GET    api.example.com/users          acme-api · 200 · 56ms
+    POST   api.example.com/users/42       acme-api · 401 · 142ms
+    GET    api.staging.com/health         beta-svc · 200 · 8ms
+    PUT    api.example.com/orders/abc     acme-api · 204 · 89ms
+    GET    broken-host.example.com/       acme-api · FAILED · -
+```
+
+The detail format follows the `(status, duration)` shape from `:http.history`, prefixed with the workspace label:
+
+- `<workspace> · 200 · 56ms` — success.
+- `<workspace> · 200` — completed but duration missing (rare).
+- `<workspace> · FAILED · 142ms` — transport error with timing.
+- `<workspace> · FAILED` — transport error before timing was meaningful.
+
+Type to filter — the fuzzy match runs across method + short URL + the workspace-prefixed detail. So `acme-api` narrows to one project; `beta-svc 200` narrows to that project's successes.
+
+### Re-firing
+
+Enter on a row opens a `.curl` scratch in the **current** workspace — the same path `:http.history` takes. The re-fire happens here, not in the workspace where the original send fired, which is what you usually want (you've moved on to a different project and want to poke at this request).
+
+If the original send used `{{TOKEN}}`, the scratch carries the resolved value the original send used. To re-resolve against the *current* workspace's env, edit the buffer to re-introduce the `{{TOKEN}}` placeholder before sending — same caveat as in the workspace picker.
+
 ## When entries land
 
 A history entry is written from `App::drain_http_jobs` after a background HTTP worker finishes:
@@ -118,12 +189,13 @@ What's *not* logged:
 
 ## Where history fits
 
-History is the "what did I send and when?" log. Three sibling concepts:
+History is the "what did I send and when?" log. Four sibling concepts:
 
 | Concept | File | Records what |
 |---|---|---|
-| **History** | `.rqst/history.jsonl` | Every `http.send` (success + failure) |
-| **Captured** | `.rqst/captured/log.jsonl` | Every Network.requestWillBeSent the browser pane observed |
+| **History (workspace)** | `<ws>/.rqst/history.jsonl` | Every `http.send` from this workspace |
+| **History (global)** | `~/.config/mnml/history-global.jsonl` | Every `http.send` from any workspace, tagged with the source workspace |
+| **Captured** | `<ws>/.rqst/captured/log.jsonl` | Every `Network.requestWillBeSent` the browser pane observed |
 | **Mocks** | `<source>.curl.mock.json` | One frozen response per request file |
 
 They don't fight — they're observational logs at three different layers. The same URL can show up in history (because you `http.send`-d it) and in captured (because you also opened the browser pane and the page loaded it).

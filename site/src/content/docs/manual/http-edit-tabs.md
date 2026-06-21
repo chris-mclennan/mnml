@@ -292,6 +292,26 @@ Then headers, in arrival order, dimmed. Then the body — pretty-printed when th
 
 Below the body, when present: `✓` / `✗` rows per `@assert` directive, and `name = value` rows per `@capture` directive.
 
+### Schema-validation footer
+
+When a sibling `<request>.schema.json` exists, the Response view paints a one-line footer below the body summarising JSON Schema validation:
+
+```text
+   ✓ Schema valid (users.schema.json)
+```
+
+```text
+   ✗ Schema: 3 errors (users.schema.json) — :http.show_schema_errors
+```
+
+Green-bold on pass; red-bold on fail with the `:http.show_schema_errors` ex-command literally in the footer text so you can copy it. Yellow warnings render for the edge cases:
+
+- `⚠ Body isn't JSON — schema (file) skipped` — the response wasn't parseable JSON, so the schema couldn't run against it.
+- `⚠ Schema read error (file): <err>` — the sidecar exists but couldn't be read.
+- `⚠ Schema parse error (file): <err>` — the sidecar exists but isn't a valid JSON Schema document.
+
+No sidecar = no footer. The full mechanism (resolution order, the two `:http.show_schema_errors` / `:http.revalidate_schema` commands, edge cases) lives on its own page — [HTTP response schema validation](/manual/http-schema/).
+
 ### Response chords (Response-view focus)
 
 | Chord | Action |
@@ -420,7 +440,9 @@ Plus `http.cycle_method` (cycles to next verb) and the Method chip click (opens 
 ## Next
 
 - [HTTP client](/manual/http/) — the file-driven surface (`.http` / `.curl` / `.rest`, `http.send`, the response view)
+- [HTTP response schema validation](/manual/http-schema/) — the `.schema.json` sidecar that paints the footer + the two ex-commands that drill into it
 - [New request — Postman-style scratch pane](/manual/http-new-request/) — `:http.new`, paste-curl from clipboard, the empty-pane landing
+- [HTTP build from natural language](/manual/http-ai-build/) — `:http.ai_build` lands a parsed request on the Source tab
 - [HTTP envs & templating](/manual/http-envs/) — `{{var}}` resolution + the `:http.edit_env` picker the Vars tab points at
 - [HTTP helpers — JWT, bearer, cookies, SSE](/manual/http-helpers/) — clipboard tooling for tokens, cookies, and SSE diagnostics
 - [HTTP bench](/manual/http-bench/) — the histogram + percentile breakdown of `:http.bench`

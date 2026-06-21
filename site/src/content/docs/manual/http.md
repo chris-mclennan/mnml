@@ -225,12 +225,14 @@ A chain runs a sequence of requests; each step can extract values from its respo
 
 Each step's `request` is a path resolved against (in order) the chain file's directory → `<workspace>/.mnml/requests/` → the workspace root. `extract` binds a variable name to a `$.path` into the JSON response body (the same path syntax as `@assert json`). Captures from a step's own `@capture` directives flow into the running env too — `extract` is just a shorter way to spell the common case.
 
-Run with:
+Run from the CLI:
 
 ```bash
 mnml chain run .mnml/chains/auth-and-list.chain.json
 mnml chain run .mnml/chains/auth-and-list.chain.json --env staging
 ```
+
+Or from inside the editor: `:http.run_chain` opens a picker over `<workspace>/.mnml/chains/*.chain.json`; Enter spawns a worker that runs the chain in-process and lands the trace in a `[chain-trace]` scratch buffer. The picker is the editor surface for the same runner — see [HTTP chains](/manual/http-chains/).
 
 The chain stops at the first transport error, non-2xx/3xx status, failed `@assert`, or extraction that produces nothing — and prints a step-by-step trace so you can see which step broke and what the partial env looked like.
 
@@ -299,12 +301,15 @@ This is a smoke-test surface — you can run an end-to-end "log in, fetch users,
 Deep-dives on individual surfaces:
 
 - [HTTP Request pane — tabs & layout](/manual/http-edit-tabs/) — the three-panel layout, the colored Method chip, the six Edit tabs (Body / Headers / Params / Auth / Vars / Source), the AI strip, every chord that drives them
+- [HTTP response schema validation](/manual/http-schema/) — `.schema.json` sidecars, the Response-view footer, `:http.show_schema_errors`, `:http.revalidate_schema`
+- [HTTP build from natural language](/manual/http-ai-build/) — `:http.ai_build` describes a request in English; Claude returns a curl; mnml parses + opens it
+- [HTTP chains](/manual/http-chains/) — `:http.run_chain` picker over `.mnml/chains/*.chain.json` + the `[chain-trace]` scratch
 - [New request — Postman-style scratch pane](/manual/http-new-request/) — `:http.new`, paste-curl from clipboard, the field-aware right-click menu
 - [HTTP envs & templating](/manual/http-envs/) — the resolution chain (`--env` → `$MNML_ENV` → `.rqst/config`), the `.mnml/env/` over `.rqst/env/` precedence, every `{{$dynamic}}` builtin
 - [HTTP sync — sources.json](/manual/http-sync/) — batch-regenerate `.curl` stubs from multiple swagger sources via `:http.sync` or `mnml sync`
 - [HTTP bench](/manual/http-bench/) — 10× concurrent fire with p50 / p95 / p99 latency + ASCII histogram
 - [HTTP mocks](/manual/http-mocks/) — freeze a response to a sibling `.mock.json` and replay it offline
-- [HTTP history](/manual/http-history/) — `.rqst/history.jsonl`, the in-app picker, and shell-side grep / jq queries
+- [HTTP history](/manual/http-history/) — `.rqst/history.jsonl`, the global mirror at `~/.config/mnml/history-global.jsonl`, both pickers
 - [HTTP captured browser traffic](/manual/http-captured/) — auto-capture from the browser pane, `:http.capture_now`, and the headless `mnml proxy --url` CLI
 - [HTTP lookups](/manual/http-lookup/) — the 4-stage picker that fills env vars from real API responses
 - [HTTP helpers — JWT, bearer, cookies, SSE](/manual/http-helpers/) — `:jwt.decode`, `:auth.extract_bearer`, the `cookies.*` family, SSE streaming + parsing
