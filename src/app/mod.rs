@@ -8399,15 +8399,15 @@ impl App {
     /// message, token spend, and PID.
     pub fn open_claude_agents_pane(&mut self) {
         let anchor = self.workspace.clone();
+        // If the pane is already open, just focus it — don't
+        // rebuild. Rebuilding clobbers the user's sort key,
+        // filter state, multi-select, etc. They can press `r`
+        // inside the pane for a manual refresh.
         if let Some(id) = self
             .panes
             .iter()
             .position(|p| matches!(p, Pane::ClaudeAgents(_)))
         {
-            let fresh = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor.clone());
-            if let Some(Pane::ClaudeAgents(c)) = self.panes.get_mut(id) {
-                *c = fresh;
-            }
             self.reveal_pane(id);
             return;
         }
