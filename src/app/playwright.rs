@@ -130,7 +130,7 @@ impl App {
 
     /// Open a pty pane running `cargo <subcmd>` in the workspace.
     /// Used by the cargo.* family of palette commands. Toasts when
-    /// no Cargo.toml is found at the workspace root.
+    /// no Cargo.toml is found in the workspace or any parent.
     pub fn run_cargo_subcommand(&mut self, subcmd: &str) {
         self.run_manifest_command("Cargo.toml", "cargo", subcmd);
     }
@@ -142,14 +142,29 @@ impl App {
     }
 
     /// `pytest <args>`. Requires pyproject.toml OR setup.py OR
-    /// tests/ at the workspace root.
+    /// a `tests/` dir that actually contains `test_*.py` files
+    /// (a bare `tests/` dir is not enough — common in Rust
+    /// repos, where it'd false-positive into "this is a Python
+    /// project" and spawn pytest against Rust code).
     pub fn run_pytest(&mut self, args: &str) {
-        let has_pyproject = self.workspace.join("pyproject.toml").exists();
-        let has_setup = self.workspace.join("setup.py").exists();
-        let has_tests = self.workspace.join("tests").is_dir();
-        if !has_pyproject && !has_setup && !has_tests {
+        let root = find_manifest_dir(&self.workspace, &["pyproject.toml", "setup.py"])
+            .unwrap_or_else(|| self.workspace.clone());
+        let has_pyproject = root.join("pyproject.toml").exists();
+        let has_setup = root.join("setup.py").exists();
+        let has_real_tests = root.join("tests").is_dir()
+            && std::fs::read_dir(root.join("tests"))
+                .map(|rd| {
+                    rd.filter_map(|e| e.ok()).any(|e| {
+                        e.file_name()
+                            .to_string_lossy()
+                            .starts_with("test_")
+                            && e.file_name().to_string_lossy().ends_with(".py")
+                    })
+                })
+                .unwrap_or(false);
+        if !has_pyproject && !has_setup && !has_real_tests {
             self.toast(format!(
-                "pytest: no pyproject.toml / setup.py / tests/ at {}",
+                "pytest: no pyproject.toml / setup.py / tests/test_*.py at {}",
                 self.workspace.display()
             ));
             return;
@@ -160,11 +175,7 @@ impl App {
             format!("pytest {args}")
         };
         let label = cmdline.clone();
-        let profile = crate::pty_pane::BinaryProfile::task(
-            &label,
-            &cmdline,
-            self.workspace.clone(),
-        );
+        let profile = crate::pty_pane::BinaryProfile::task(&label, &cmdline, root);
         self.open_pty(profile);
     }
 
@@ -175,21 +186,29 @@ impl App {
     }
 
     fn run_manifest_command(&mut self, manifest: &str, bin: &str, subcmd: &str) {
-        let path = self.workspace.join(manifest);
-        if !path.exists() {
+        // 2026-06-21 multilang+lsp-cheat-test SEV-2: was checking
+        // only `self.workspace.join(manifest)`, so subdir of a
+        // monorepo (e.g. `/repo/cmd/server` with go.mod at /repo/)
+        // got "no manifest" even though Go itself would have
+        // found one. Walk up until we hit a manifest or the
+        // filesystem root.
+        let root = find_manifest_dir(&self.workspace, &[manifest])
+            .unwrap_or_else(|| self.workspace.clone());
+        if !root.join(manifest).exists() {
+            // Embedding the full `subcmd` (could be multi-word
+            // like "run dev" or "clippy --all-targets") into the
+            // command ID slug produced `npm.run dev: no package.json…`.
+            // Use just the first word.
+            let slug = subcmd.split_whitespace().next().unwrap_or(subcmd);
             self.toast(format!(
-                "{bin}.{subcmd}: no {manifest} at {}",
+                "{bin}.{slug}: no {manifest} found in {} or any parent",
                 self.workspace.display()
             ));
             return;
         }
         let label = format!("{bin} {subcmd}");
         let cmdline = format!("{bin} {subcmd}");
-        let profile = crate::pty_pane::BinaryProfile::task(
-            &label,
-            &cmdline,
-            self.workspace.clone(),
-        );
+        let profile = crate::pty_pane::BinaryProfile::task(&label, &cmdline, root);
         self.open_pty(profile);
     }
 
@@ -435,6 +454,24 @@ impl App {
         }
         if refresh_flaky {
             self.refresh_flaky_panes();
+        }
+    }
+}
+
+/// Walk up from `start` until we find a directory containing any
+/// of `manifests`. Returns the matching directory or `None`. Used
+/// by the npm/pytest/cargo/go runners to handle monorepo subdirs
+/// the way the tools themselves do (2026-06-21 SEV-2 fix).
+fn find_manifest_dir(start: &std::path::Path, manifests: &[&str]) -> Option<std::path::PathBuf> {
+    let mut cur = start.to_path_buf();
+    loop {
+        for m in manifests {
+            if cur.join(m).exists() {
+                return Some(cur);
+            }
+        }
+        if !cur.pop() {
+            return None;
         }
     }
 }

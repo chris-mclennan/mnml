@@ -26,6 +26,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + 2;
     let overlay = Rect::new(x, y, width, height);
+    // 2026-06-21 vscode SEV-2: store the overlay rect so the mouse
+    // dispatcher can treat clicks INSIDE as "consumed" (don't bleed
+    // through to the editor) and clicks OUTSIDE as "dismiss".
+    app.rects.peek_overlay = Some(overlay);
 
     frame.render_widget(Clear, overlay);
 

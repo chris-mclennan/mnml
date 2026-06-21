@@ -515,7 +515,7 @@ fn chain_subcommand(argv: Vec<String>) -> ExitCode {
         .or_else(|| file.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
     let mut out = String::new();
-    let result = mnml::http::chain::run(&file, &ws, env_name.as_deref(), &mut out);
+    let result = mnml::http::chain::run(&file, &ws, env_name.as_deref(), &mut out, None);
     print!("{out}");
     match result {
         Ok(()) => {

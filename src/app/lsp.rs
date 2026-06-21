@@ -196,8 +196,39 @@ impl App {
     /// move; Esc closes the overlay and the user is right back
     /// where they were.
     pub fn peek_definition_overlay(&mut self) {
+        // 2026-06-21 lsp-cheat-test SEV-2: clear the flag inline
+        // after firing if no LSP / no editor / no path — would
+        // otherwise leak into the next `gd` and turn a normal
+        // jump into an unwanted overlay. The GotoDefinition event
+        // handler also clears the flag, but that only runs if the
+        // request actually goes out.
         self.pending_peek_definition = true;
-        self.lsp_goto_definition();
+        let fired = self.lsp_goto_definition_returning_fired();
+        if !fired {
+            self.pending_peek_definition = false;
+        }
+    }
+
+    /// Same as `lsp_goto_definition` but returns true iff the LSP
+    /// request actually went out. Used by `peek_definition_overlay`
+    /// to clear its pending flag when no LSP is attached.
+    fn lsp_goto_definition_returning_fired(&mut self) -> bool {
+        let Some(b) = self.active_editor() else {
+            self.toast("no active editor");
+            return false;
+        };
+        let Some(path) = b.path.clone() else {
+            self.toast("LSP needs a saved file");
+            return false;
+        };
+        let text = b.editor.text().to_string();
+        let (row, col) = b.editor.row_col();
+        self.lsp.did_change(&path, &text);
+        let fired = self.lsp.goto_definition(&path, row as u32, col as u32);
+        if !fired {
+            self.toast("no language server for this file (peek)");
+        }
+        fired
     }
 
     /// If an outline pane is open and the now-active editor is a different

@@ -132,6 +132,12 @@ pub enum PromptKind {
     /// Accept (input == "remove") ⇒ `git worktree remove <pending_path>`.
     /// Confirm prompt for the GitWorktreeRemove picker.
     WorktreeRemoveConfirm,
+    /// Accept (input == "merge") ⇒ `git merge <pending_merge_source>`.
+    /// Confirm prompt for the GitMergeInto picker.
+    GitMergeConfirm,
+    /// Accept (input == "rebase") ⇒ `git rebase <pending_rebase_onto>`.
+    /// Confirm prompt for the GitRebaseOnto picker.
+    GitRebaseConfirm,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
     /// literal char to the clipboard so the user can paste it into

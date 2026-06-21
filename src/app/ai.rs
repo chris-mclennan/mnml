@@ -8,6 +8,28 @@
 
 use super::*;
 
+/// Slice the first `max_bytes` of `s` at a char boundary (so we
+/// never bisect a multi-byte UTF-8 codepoint). Returns the empty
+/// string when `s` is empty. 2026-06-21 — fixes the power-user-ai
+/// `utf8-truncation-panic` SEV-2 across :ai.explain_diff /
+/// :ai.write_pr_description / :ai.recompose_branch / commit-msg
+/// generation (4 sites, all hit by a 4-byte emoji at the boundary).
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // Walk backward from `max_bytes` until we find a byte that's a
+    // char boundary. UTF-8 continuation bytes are 0b10xxxxxx; the
+    // boundary is the first non-continuation byte at-or-before
+    // `max_bytes`. std has `floor_char_boundary` on nightly only;
+    // this 5-line impl works on stable.
+    let mut i = max_bytes;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    &s[..i]
+}
+
 /// Tidy a raw AI completion into ghost-text-insertable form. The model
 /// is told to output bare text but occasionally wraps it in a markdown
 /// fence or adds a stray leading newline — strip those. Caps the length
@@ -1851,7 +1873,10 @@ impl App {
         }
         // Keep the prompt from getting silly-long on huge diffs.
         let diff = if diff.len() > 24_000 {
-            format!("{}\n…(diff truncated)…", &diff[..24_000])
+            format!(
+                "{}\n…(diff truncated)…",
+                truncate_at_char_boundary(&diff, 24_000)
+            )
         } else {
             diff
         };
@@ -1901,6 +1926,13 @@ impl App {
             self.toast("ai.write_branch_name: empty description");
             return;
         }
+        // 2026-06-21 power-user-ai SEV-2 no-in-flight-guard: a rapid
+        // double-fire silently dropped the first reply (the job_id
+        // got overwritten) while still billing tokens.
+        if self.pending_branch_name_job.is_some() {
+            self.toast("ai.write_branch_name: already in flight");
+            return;
+        }
         let prompt = format!(
             "Suggest ONE git branch name for the following work. \
              Rules:\n\
@@ -1927,7 +1959,22 @@ impl App {
     /// rebase themselves — we deliberately don't mutate history
     /// from inside mnml since one wrong tweak loses commits.
     pub fn request_ai_recompose_branch(&mut self) {
-        let candidates = ["origin/main", "origin/master", "main", "master"];
+        if self.pending_recompose_branch_job.is_some() {
+            self.toast("ai.recompose_branch: already in flight");
+            return;
+        }
+        // 2026-06-21 power-user-ai SEV-3 base-ref-chain-misses-trunk-develop:
+        // also try `trunk` and `develop` for repos that use those.
+        let candidates = [
+            "origin/main",
+            "origin/master",
+            "origin/trunk",
+            "origin/develop",
+            "main",
+            "master",
+            "trunk",
+            "develop",
+        ];
         let base = candidates.iter().find(|r| {
             std::process::Command::new("git")
                 .args(["rev-parse", "--verify", "--quiet", r])
@@ -2011,6 +2058,10 @@ impl App {
     /// scratch. Useful before pushing a chunk you want a second
     /// reading of.
     pub fn request_ai_explain_diff(&mut self) {
+        if self.pending_explain_diff_job.is_some() {
+            self.toast("ai.explain_diff: already in flight");
+            return;
+        }
         // Prefer staged diff; fall back to working-tree diff.
         let staged = crate::git::stage::staged_diff(self.active_repo_path());
         let (diff, label) = if !staged.trim().is_empty() {
@@ -2031,7 +2082,10 @@ impl App {
             (working, "working tree")
         };
         let diff = if diff.len() > 32_000 {
-            format!("{}\n…(diff truncated)…", &diff[..32_000])
+            format!(
+                "{}\n…(diff truncated)…",
+                truncate_at_char_boundary(&diff, 32_000)
+            )
         } else {
             diff
         };
@@ -2057,9 +2111,23 @@ impl App {
     /// 5 commits, give me something I can paste into the PR body"
     /// workflow.
     pub fn request_ai_pr_description(&mut self) {
-        // Resolve a base ref. Try origin/main → origin/master →
-        // main → master, in that order.
-        let candidates = ["origin/main", "origin/master", "main", "master"];
+        if self.pending_pr_desc_job.is_some() {
+            self.toast("ai.pr_desc: already in flight");
+            return;
+        }
+        // Resolve a base ref. Try origin/{main,master,trunk,develop}
+        // then unqualified. Repos using trunk/develop don't fall
+        // through anymore (SEV-3 base-ref-chain-misses-trunk-develop).
+        let candidates = [
+            "origin/main",
+            "origin/master",
+            "origin/trunk",
+            "origin/develop",
+            "main",
+            "master",
+            "trunk",
+            "develop",
+        ];
         let base_ref = candidates.iter().find(|r| {
             std::process::Command::new("git")
                 .args(["rev-parse", "--verify", "--quiet", r])
@@ -2145,7 +2213,10 @@ impl App {
             return;
         }
         let diff = if diff.len() > 24_000 {
-            format!("{}\n…(diff truncated)…", &diff[..24_000])
+            format!(
+                "{}\n…(diff truncated)…",
+                truncate_at_char_boundary(&diff, 24_000)
+            )
         } else {
             diff
         };
@@ -2200,7 +2271,10 @@ impl App {
             }
         };
         let diff = if diff.len() > 24_000 {
-            format!("{}\n…(diff truncated)…", &diff[..24_000])
+            format!(
+                "{}\n…(diff truncated)…",
+                truncate_at_char_boundary(&diff, 24_000)
+            )
         } else {
             diff
         };

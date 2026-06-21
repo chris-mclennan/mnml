@@ -108,19 +108,26 @@ impl CheatsheetPane {
     /// no matching rows are omitted entirely; rows inside a kept section
     /// match against chord OR id OR title (case-insensitive substring).
     pub fn visible_sections(&self) -> Vec<CheatsheetSection> {
+        // 2026-06-21 lsp-cheat-test SEV-2: was checking collapsed
+        // BEFORE applying the filter, so `/save` couldn't surface
+        // matches that lived inside a collapsed section AND
+        // collapsed headers persisted with zero hits. Now: when a
+        // text filter is active, ignore collapse — the user is
+        // searching and they want everything in scope.
         let q = self.query.to_lowercase();
+        let filter_active = !q.is_empty();
         self.sections
             .iter()
             .filter_map(|sec| {
-                // Collapsed sections keep their header (rendered as
-                // a collapsed indicator) but contribute zero rows.
-                if self.collapsed.contains(&sec.group) {
+                // Collapsed sections (no active filter) keep their
+                // header but contribute zero rows.
+                if !filter_active && self.collapsed.contains(&sec.group) {
                     return Some(CheatsheetSection {
                         group: sec.group.clone(),
                         rows: Vec::new(),
                     });
                 }
-                let rows: Vec<_> = if q.is_empty() {
+                let rows: Vec<_> = if !filter_active {
                     sec.rows.clone()
                 } else {
                     sec.rows
@@ -133,7 +140,7 @@ impl CheatsheetPane {
                         .cloned()
                         .collect()
                 };
-                if rows.is_empty() && !q.is_empty() {
+                if rows.is_empty() && filter_active {
                     None
                 } else {
                     Some(CheatsheetSection {

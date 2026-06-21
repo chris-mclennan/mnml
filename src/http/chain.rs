@@ -86,6 +86,13 @@ pub fn run(
     workspace: &Path,
     env_name: Option<&str>,
     out: &mut String,
+    // 2026-06-21 api-workflow SEV-2 cookie-inject-missing-from-chain:
+    // optional jar. When present, each step's request gets a Cookie
+    // header injected if the host has a cookie + the request didn't
+    // already set one; Set-Cookie response headers are recorded.
+    // Threaded through from App::http_chain_run_path. CLI callers
+    // pass None — they don't have an App.
+    cookie_jar: Option<std::sync::Arc<std::sync::Mutex<crate::cookie_jar::CookieJar>>>,
 ) -> Result<(), String> {
     let text = std::fs::read_to_string(chain_file)
         .map_err(|e| format!("read {}: {e}", chain_file.display()))?;
@@ -141,7 +148,28 @@ pub fn run(
             req.method,
             req.url
         );
+        // Inject cookies for this URL before sending. Mirrors the
+        // single-request `App::spawn_http_job` cookie logic.
+        if let Some(jar_arc) = cookie_jar.as_ref()
+            && let Some(host) = crate::cookie_jar::CookieJar::host_of(&req.url)
+            && !req.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+            && let Ok(j) = jar_arc.lock()
+            && let Some(cookie) = j.cookie_header_for(&host)
+        {
+            req.headers.push(("Cookie".to_string(), cookie));
+        }
         let resp = super::send(&req).map_err(|e| format!("step {}: {e}", i + 1))?;
+        // Record any Set-Cookie headers from the response.
+        if let Some(jar_arc) = cookie_jar.as_ref()
+            && let Some(host) = crate::cookie_jar::CookieJar::host_of(&req.url)
+            && let Ok(mut j) = jar_arc.lock()
+        {
+            for (k, v) in &resp.headers {
+                if k.eq_ignore_ascii_case("set-cookie") {
+                    j.record_set_cookie(&host, v);
+                }
+            }
+        }
         let _ = writeln!(
             out,
             "  ← {} {}  ({} ms)",

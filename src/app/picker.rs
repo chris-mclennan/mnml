@@ -701,12 +701,25 @@ impl App {
                 self.git_delete_branch_confirm(item.id.clone());
             }
             PickerKind::GitMergeInto => {
-                self.git_merge_branch(item.id.clone());
+                // 2026-06-21 vscode-user SEV-2: was running merge
+                // unconditionally on accept, so a single mouse
+                // click fast-forwarded the current branch onto
+                // whatever was clicked — no confirm gate while
+                // sibling pickers (delete_branch, worktree_remove)
+                // do gate. Now mirrors those: stash the branch
+                // name + open a confirm prompt typed-`merge`.
+                self.pending_merge_source = Some(item.id.clone());
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::GitMergeConfirm,
+                    format!("type 'merge' to merge {} into current", item.id),
+                ));
             }
             PickerKind::GitRebaseOnto => {
-                // Remote branch ids come through as `origin/main`
-                // etc. — git rebase takes those literally.
-                self.git_rebase_onto(item.id.clone());
+                self.pending_rebase_onto = Some(item.id.clone());
+                self.prompt = Some(crate::prompt::Prompt::new(
+                    crate::prompt::PromptKind::GitRebaseConfirm,
+                    format!("type 'rebase' to rebase current onto {}", item.id),
+                ));
             }
             PickerKind::GitWorktreeOpen => {
                 self.git_open_worktree(std::path::PathBuf::from(item.id.clone()));
@@ -1041,6 +1054,8 @@ impl App {
         // stashes.
         self.pending_worktree_path = None;
         self.pending_branch_delete = None;
+        self.pending_merge_source = None;
+        self.pending_rebase_onto = None;
         self.pending_kill_pid = None;
         self.pending_kill_batch.clear();
         // 2026-06-19 — api-workflow-user SEV-3: Esc on a lookup
@@ -1362,6 +1377,26 @@ impl App {
             crate::prompt::PromptKind::WorktreeBranchName => {
                 let branch = p.input.clone();
                 self.git_worktree_add_apply(branch);
+            }
+            crate::prompt::PromptKind::GitMergeConfirm => {
+                if p.input.trim().eq_ignore_ascii_case("merge") {
+                    if let Some(branch) = self.pending_merge_source.take() {
+                        self.git_merge_branch(branch);
+                    }
+                } else {
+                    self.pending_merge_source = None;
+                    self.toast("merge cancelled");
+                }
+            }
+            crate::prompt::PromptKind::GitRebaseConfirm => {
+                if p.input.trim().eq_ignore_ascii_case("rebase") {
+                    if let Some(target) = self.pending_rebase_onto.take() {
+                        self.git_rebase_onto(target);
+                    }
+                } else {
+                    self.pending_rebase_onto = None;
+                    self.toast("rebase cancelled");
+                }
             }
             crate::prompt::PromptKind::WorktreeRemoveConfirm => {
                 if p.input.trim().eq_ignore_ascii_case("remove") {

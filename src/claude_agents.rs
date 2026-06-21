@@ -594,6 +594,18 @@ impl ClaudeAgentsPane {
         let mtime = std::fs::metadata(&path)
             .ok()
             .and_then(|m| m.modified().ok());
+        // 2026-06-21 claude-agents SEV-2 `token-flicker`: live tail
+        // ONLY sees the last 256 KB of the transcript. The full
+        // `lifetime_cache` is the right source of truth for long
+        // sessions. Was: tail values unconditionally overwrote
+        // tokens / cost, making chips oscillate every 500ms. Now:
+        // keep the higher of (lifetime, tail) so the user always
+        // sees monotonically-growing totals while still picking up
+        // freshly-streamed lifelike updates.
+        let lifetime = self
+            .lifetime_cache
+            .get(&self.rows[vi].session_id)
+            .cloned();
         if let Some(row) = self.rows.get_mut(vi) {
             if let Some(m) = stats.model.clone() {
                 row.model = Some(m);
@@ -604,12 +616,26 @@ impl ClaudeAgentsPane {
             if let Some(b) = stats.git_branch.clone() {
                 row.git_branch = Some(b);
             }
-            row.tokens = stats.tokens;
-            row.input_tokens = stats.input_tokens;
-            row.output_tokens = stats.output_tokens;
-            row.cache_create_tokens = stats.cache_create_tokens;
-            row.cache_read_tokens = stats.cache_read_tokens;
-            row.cost_usd = cost;
+            // Pick the larger of (lifetime cache, fresh tail).
+            let lt = lifetime.as_ref();
+            row.tokens = lt
+                .map(|l| l.tokens.max(stats.tokens))
+                .unwrap_or(stats.tokens);
+            row.input_tokens = lt
+                .map(|l| l.input_tokens.max(stats.input_tokens))
+                .unwrap_or(stats.input_tokens);
+            row.output_tokens = lt
+                .map(|l| l.output_tokens.max(stats.output_tokens))
+                .unwrap_or(stats.output_tokens);
+            row.cache_create_tokens = lt
+                .map(|l| l.cache_create_tokens.max(stats.cache_create_tokens))
+                .unwrap_or(stats.cache_create_tokens);
+            row.cache_read_tokens = lt
+                .map(|l| l.cache_read_tokens.max(stats.cache_read_tokens))
+                .unwrap_or(stats.cache_read_tokens);
+            row.cost_usd = lt
+                .map(|l| l.cost_usd.max(cost))
+                .unwrap_or(cost);
             row.event_count = stats.event_count;
             row.last_user_msg = stats.last_user_msg;
             row.last_assistant_msg = stats.last_assistant_msg;
@@ -708,13 +734,26 @@ impl ClaudeAgentsPane {
         self.multi_selected.retain(|sid| live_sids.contains(sid));
         self.merge_lifetime_totals();
         self.recompute_token_rates();
-        if let Some(sid) = prior_sid
-            && let Some(new_idx) = self
-                .visible_indices()
-                .iter()
-                .position(|&i| self.rows.get(i).map(|r| &r.session_id) == Some(&sid))
-        {
-            self.selected = new_idx;
+        // 2026-06-21 claude-agents SEV-2: when the prior session
+        // is no longer in the visible set (filter / rolloff /
+        // kill), `selected` used to stay at the stale out-of-bounds
+        // index — cursor invisible, j/k from a bogus origin. Now:
+        // if we find the prior session, jump to it; otherwise
+        // clamp to the new visible range.
+        let new_visible = self.visible_indices();
+        let resolved = prior_sid.and_then(|sid| {
+            new_visible.iter().position(|&i| {
+                self.rows.get(i).map(|r| &r.session_id) == Some(&sid)
+            })
+        });
+        self.selected = match resolved {
+            Some(idx) => idx,
+            None => 0,
+        };
+        // Belt-and-suspenders clamp: if filter+rolloff produced
+        // an empty visible set, leave selected at 0.
+        if !new_visible.is_empty() {
+            self.selected = self.selected.min(new_visible.len() - 1);
         }
     }
 

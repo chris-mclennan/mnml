@@ -453,6 +453,10 @@ impl App {
             .clone();
         let workspace = self.workspace.clone();
         let env_name = std::env::var("MNML_ENV").ok();
+        // 2026-06-21 — pass the cookie jar to the chain runner so
+        // multi-step authenticated flows (login → use session
+        // cookie) actually work.
+        let cookie_jar = self.cookie_jar.clone();
         self.http_chain_in_flight = true;
         self.toast(format!(
             "chain: running {}…",
@@ -465,8 +469,13 @@ impl App {
             .name("mnml-chain-run".into())
             .spawn(move || {
                 let mut trace = String::new();
-                let result =
-                    crate::http::chain::run(&chain_file, &workspace, env_name.as_deref(), &mut trace);
+                let result = crate::http::chain::run(
+                    &chain_file,
+                    &workspace,
+                    env_name.as_deref(),
+                    &mut trace,
+                    Some(cookie_jar),
+                );
                 let _ = tx.send((trace, result));
             })
             .ok();
@@ -3229,12 +3238,22 @@ impl App {
     /// rx" path covers the user-visible case (toast clears, "next
     /// thing please") without rearchitecting the worker shape.
     pub fn http_abort_all(&mut self) {
+        // 2026-06-21 api-workflow SEV-2 — was leaving
+        // http_chain_in_flight + http_ai_build_in_flight set, so a
+        // stalled chain or AI build was unrecoverable. Now resets
+        // both flags. The chain / ai-build workers themselves can't
+        // be killed mid-flight (std HTTP / Anthropic API are
+        // blocking), but the user can retry instead of waiting.
         let was_active = self.http_bench_rx.is_some()
             || self.http_sync_rx.is_some()
-            || self.lookup_fire_rx.is_some();
+            || self.lookup_fire_rx.is_some()
+            || self.http_chain_in_flight
+            || self.http_ai_build_in_flight;
         self.http_bench_rx = None;
         self.http_sync_rx = None;
         self.lookup_fire_rx = None;
+        self.http_chain_in_flight = false;
+        self.http_ai_build_in_flight = false;
         if was_active {
             self.toast("http: released UI tracking (worker finishes in background)");
         } else {

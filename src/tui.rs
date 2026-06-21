@@ -444,7 +444,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 }
                 return;
             }
-            _ => app.peek_overlay = None, // fall through
+            _ => {
+                // 2026-06-21 lsp-cheat-test SEV-2: was falling
+                // through to the editor, so in vim mode pressing
+                // `x` to dismiss the overlay also deleted the
+                // char under cursor. Now: close + EAT the
+                // keystroke. User can re-issue if they actually
+                // wanted to do something with it.
+                app.peek_overlay = None;
+                return;
+            }
         }
     }
     // An LSP hover popup is up: arrows / j / k / PgUp / PgDn scroll it; Esc
@@ -2199,11 +2208,19 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Char('Z') => {
+                // 2026-06-21 lsp-cheat-test SEV-2: was
+                // `is_empty? collapse_all : expand_all`, so after
+                // a single `z` the user's one collapsed section
+                // got wiped on `Z` instead of folding the rest.
+                // Now `Z` collapses everything when ANY section
+                // is expanded, and expands everything when all
+                // are collapsed.
                 if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
-                    if c.collapsed.is_empty() {
-                        c.collapse_all();
-                    } else {
+                    let total = c.sections.len();
+                    if c.collapsed.len() == total && total > 0 {
                         c.expand_all();
+                    } else {
+                        c.collapse_all();
                     }
                 }
             }
@@ -3269,6 +3286,38 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
+
+    // 2026-06-21 vscode SEV-2 peek-overlay-mouse-cannot-dismiss —
+    // when the peek overlay is showing, intercept all clicks
+    // FIRST. Click inside = no-op (don't bleed through to the
+    // editor). Click outside = dismiss the overlay. Wheel inside
+    // = scroll the overlay's content.
+    if let Some(rect) = app.rects.peek_overlay {
+        let inside =
+            x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+        match m.kind {
+            MouseEventKind::Down(_) => {
+                if !inside {
+                    app.peek_overlay = None;
+                }
+                // Either way, the editor underneath doesn't see it.
+                return;
+            }
+            MouseEventKind::ScrollUp if inside => {
+                if let Some(po) = &mut app.peek_overlay {
+                    po.scroll_up();
+                }
+                return;
+            }
+            MouseEventKind::ScrollDown if inside => {
+                if let Some(po) = &mut app.peek_overlay {
+                    po.scroll_down();
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
 
     // Hover-tooltip tracking — `MouseEventKind::Moved` (no button) updates
     // which clickable chip the mouse is over; the overlay renders after a

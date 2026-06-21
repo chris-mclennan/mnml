@@ -2080,6 +2080,14 @@ impl App {
     pub fn open_merge_branch_picker(&mut self) {
         use crate::picker::PickerItem;
         let cur = crate::git::branch::current(self.active_repo_path());
+        // 2026-06-21 power-user-ws-git SEV-2: on detached HEAD,
+        // `current()` returns None, the "exclude current" filter
+        // excluded nothing, and a merge into detached HEAD fails
+        // confusingly. Refuse up front.
+        if cur.is_none() {
+            self.toast("merge: detached HEAD — checkout a branch first");
+            return;
+        }
         let mut branches = crate::git::branch::local_branches(self.active_repo_path());
         if let Some(c) = cur.as_ref() {
             branches.retain(|b| b != c);
@@ -2105,6 +2113,10 @@ impl App {
     pub fn open_rebase_picker(&mut self) {
         use crate::picker::PickerItem;
         let cur = crate::git::branch::current(self.active_repo_path());
+        if cur.is_none() {
+            self.toast("rebase: detached HEAD — checkout a branch first");
+            return;
+        }
         let mut items: Vec<PickerItem> = Vec::new();
         for b in crate::git::branch::local_branches(self.active_repo_path()) {
             if Some(&b) == cur.as_ref() {
@@ -2126,12 +2138,20 @@ impl App {
         self.open_picker(Picker::new(PickerKind::GitRebaseOnto, title, items));
     }
 
-    /// Accept handlers — called by the picker dispatcher.
+    /// Accept handlers — called by the picker dispatcher. v1 runs
+    /// the git op synchronously; calls `after_git_change()` on
+    /// success so the git rail refreshes (2026-06-21
+    /// power-user-ws-git `no-refresh-after-mutations` SEV-2). Async
+    /// dispatch via `git_loader_tx` is a v2 — block-UI on merge /
+    /// rebase is the corresponding SEV-2 but bigger.
     pub fn git_merge_branch(&mut self, name: String) {
         let repo = self.active_repo_path().to_path_buf();
         self.toast(format!("merging {name}…"));
         match crate::git::branch::merge(&repo, &name) {
-            Ok(()) => self.toast(format!("merged {name}")),
+            Ok(()) => {
+                self.toast(format!("merged {name}"));
+                self.after_git_change();
+            }
             Err(e) => self.toast(format!("merge {name}: {e}")),
         }
     }
@@ -2140,7 +2160,10 @@ impl App {
         let repo = self.active_repo_path().to_path_buf();
         self.toast(format!("rebasing onto {name}…"));
         match crate::git::branch::rebase(&repo, &name) {
-            Ok(()) => self.toast(format!("rebased onto {name}")),
+            Ok(()) => {
+                self.toast(format!("rebased onto {name}"));
+                self.after_git_change();
+            }
             Err(e) => self.toast(format!("rebase onto {name}: {e}")),
         }
     }
@@ -2189,7 +2212,10 @@ impl App {
         };
         let repo = self.active_repo_path().to_path_buf();
         match crate::git::branch::delete_branch(&repo, &name) {
-            Ok(()) => self.toast(format!("deleted branch {name}")),
+            Ok(()) => {
+                self.toast(format!("deleted branch {name}"));
+                self.after_git_change();
+            }
             Err(e) => self.toast(format!("delete {name}: {e}")),
         }
     }
@@ -2271,7 +2297,10 @@ impl App {
         };
         let repo = self.active_repo_path().to_path_buf();
         match crate::git::branch::worktree_remove(&repo, &path) {
-            Ok(()) => self.toast(format!("removed worktree {}", path.display())),
+            Ok(()) => {
+                self.toast(format!("removed worktree {}", path.display()));
+                self.after_git_change();
+            }
             Err(e) => self.toast(format!("remove worktree {}: {e}", path.display())),
         }
     }
@@ -2301,6 +2330,7 @@ impl App {
         match crate::git::branch::worktree_add(&repo, &path, &branch) {
             Ok(()) => {
                 self.toast(format!("worktree added at {}", path.display()));
+                self.after_git_change();
                 // Optionally open the new worktree as a workspace.
                 self.add_workspace_runtime(path, None);
             }

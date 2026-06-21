@@ -2032,6 +2032,11 @@ pub struct PaneRects {
     /// One entry per split divider, with enough info to drag-resize it.
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,
+    /// 2026-06-21 vscode SEV-2 — the floating peek_definition overlay's
+    /// outer rect when shown. The mouse dispatcher uses this to consume
+    /// inside-clicks (instead of bleeding through to the editor) and
+    /// to dismiss the overlay on outside-clicks.
+    pub peek_overlay: Option<Rect>,
     /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
     pub picker_box: Option<Rect>,
     pub picker_items: Vec<(Rect, usize)>,
@@ -3138,6 +3143,10 @@ pub struct App {
     /// Pending worktree path for `:git.worktree_add` and
     /// `:git.worktree_remove` confirm prompts.
     pub pending_worktree_path: Option<std::path::PathBuf>,
+    /// Pending source branch for `:git.merge` confirm prompt.
+    pub pending_merge_source: Option<String>,
+    /// Pending target ref for `:git.rebase` confirm prompt.
+    pub pending_rebase_onto: Option<String>,
     /// 2026-06-20 — theme picker live preview. Snapshot of the
     /// active theme name when the Themes picker opens; restored on
     /// Esc / cleared on Enter. Up/Down on the picker applies the
@@ -3623,6 +3632,8 @@ impl App {
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,
             pending_worktree_path: None,
+            pending_merge_source: None,
+            pending_rebase_onto: None,
             theme_preview_restore: None,
             pending_pr_desc_job: None,
             pending_explain_diff_job: None,
