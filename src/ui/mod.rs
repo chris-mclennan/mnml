@@ -104,7 +104,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::App;
 use crate::focus::Focus;
@@ -503,6 +503,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // clicks would target deleted leaves.
     app.rects.split_tab_chips.clear();
     app.rects.split_tab_close.clear();
+    app.rects.split_strip_buttons.clear();
     let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
         welcome::draw(frame, app, body_area);
         None
@@ -2081,11 +2082,19 @@ fn paint_leaf_tab_strip(
     // so chips with short names don't squish to nothing.
     let chip_max_name_w: usize = 18;
 
+    // 2026-06-22 — VS Code-style split-editor buttons at the
+    // far right of the strip. Reserve 6 cells (` ⊟ ` + ` ⊞ `,
+    // 3 each) before laying tabs so chips don't overflow into
+    // the buttons. Tabs that don't fit get clipped per the
+    // existing chip_w logic.
+    const SPLIT_BTN_W: u16 = 3;
+    const SPLIT_BTNS_TOTAL: u16 = SPLIT_BTN_W * 2;
     let mut chip_x = strip.x;
     let strip_right = strip.x + strip.width;
+    let tabs_right = strip_right.saturating_sub(SPLIT_BTNS_TOTAL);
 
     for &id in tabs {
-        if chip_x >= strip_right {
+        if chip_x >= tabs_right {
             break;
         }
         let Some(pane) = app.panes.get(id) else {
@@ -2140,7 +2149,7 @@ fn paint_leaf_tab_strip(
         };
         let chip_w = 1 + icon_w + 1 + name_w + 1 + 1 + 1; // pad + icon + gap + name + gap + status + pad
         // Clip to remaining space.
-        let avail = strip_right.saturating_sub(chip_x);
+        let avail = tabs_right.saturating_sub(chip_x);
         let painted_w = chip_w.min(avail);
         if painted_w == 0 {
             break;
@@ -2203,6 +2212,37 @@ fn paint_leaf_tab_strip(
         chip_x = chip_x.saturating_add(painted_w);
         // 1-cell gap between chips (strip bg shows through).
         chip_x = chip_x.saturating_add(1);
+    }
+
+    // 2026-06-22 — VS Code-style split-editor buttons on the
+    // far right of the strip. Two glyphs (vertical-split,
+    // horizontal-split), each 1 glyph + 1 trailing pad in a
+    // 3-cell button (` <glyph> ` style). Click → focus this
+    // leaf + split_active(dir).
+    let btn_v_glyph = if nerd { "\u{eb56}" } else { "|+" };
+    let btn_h_glyph = if nerd { "\u{eb55}" } else { "_+" };
+    let dim_fg = t.comment;
+    let mut bx = strip_right.saturating_sub(SPLIT_BTNS_TOTAL);
+    for (glyph, dir) in [
+        (btn_v_glyph, crate::layout::SplitDir::Horizontal),
+        (btn_h_glyph, crate::layout::SplitDir::Vertical),
+    ] {
+        let btn_rect = Rect {
+            x: bx,
+            y: strip.y,
+            width: SPLIT_BTN_W,
+            height: 1,
+        };
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(strip_bg)),
+            Span::styled(glyph, Style::default().fg(dim_fg).bg(strip_bg)),
+            Span::styled(" ", Style::default().bg(strip_bg)),
+        ]);
+        frame.render_widget(Paragraph::new(line), btn_rect);
+        app.rects
+            .split_strip_buttons
+            .push((btn_rect, active, dir));
+        bx = bx.saturating_add(SPLIT_BTN_W);
     }
 }
 

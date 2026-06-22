@@ -1952,6 +1952,12 @@ pub struct PaneRects {
     /// Per-split tab close `×` chips. Same shape: (rect,
     /// leaf_active, tab_pane). Click → close that tab.
     pub split_tab_close: Vec<(Rect, PaneId, PaneId)>,
+    /// VS Code-style split-editor buttons at the far right of
+    /// each per-leaf tab strip — `(rect, leaf_active_pane,
+    /// dir)`. Click → focus that leaf + `split_active(dir)`.
+    /// 2026-06-22. Two entries per visible leaf (one Horizontal,
+    /// one Vertical). Cleared + repopulated every frame.
+    pub split_strip_buttons: Vec<(Rect, PaneId, crate::layout::SplitDir)>,
     /// The whole central split-tree area.
     pub body: Option<Rect>,
     /// `(text_area, pane_id)` per visible editor leaf — the editable region

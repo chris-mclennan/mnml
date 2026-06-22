@@ -4847,6 +4847,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.close_split_tab(leaf_active, tab_pane);
                 return;
             }
+            // 2026-06-22 — per-split split-editor buttons at the
+            // right of the strip. Focus the clicked leaf's active
+            // pane, then dispatch split_active(dir).
+            if let Some(&(_, leaf_active, dir)) = app
+                .rects
+                .split_strip_buttons
+                .iter()
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.active = Some(leaf_active);
+                app.focus = crate::focus::Focus::Pane;
+                app.split_active(dir);
+                return;
+            }
             if let Some(&(_, leaf_active, tab_pane)) = app
                 .rects
                 .split_tab_chips
