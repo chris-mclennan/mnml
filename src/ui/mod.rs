@@ -1049,18 +1049,20 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // icons + tab-page chips overlapped (rendered on top of each
     // other). Stage the fallback so the most-clicked chips
     // (launchers + close) stay visible the longest.
-    let palette_right_edge = x; // `x` is just past the dropdown chevron
-    let gap_px: u16 = 2; // visual breathing room between palette + cluster
+    // `x` at this point is the LEFT edge of the dropdown chevron
+    // (it wasn't bumped past the chevron after painting). The real
+    // right edge of the workspace cluster is `x + dropdown_w`.
+    let palette_right_edge = x + dropdown_w;
     let full_w = bufferline::right_cluster_width(app);
     let compact_w = bufferline::right_cluster_width_mode(app, false);
-    let cluster_left = |w: u16| area.x + area.width.saturating_sub(w);
-    let mode: Option<(u16, bool)> = if cluster_left(full_w) >= palette_right_edge + gap_px {
-        Some((full_w, true))
-    } else if cluster_left(compact_w) >= palette_right_edge + gap_px {
-        Some((compact_w, false))
-    } else {
-        None
-    };
+    let mode = bufferline::pick_cluster_mode(
+        area.x,
+        area.width,
+        palette_right_edge,
+        full_w,
+        compact_w,
+        4, // gap cells between palette + cluster
+    );
     if let Some((w, include_tabs)) = mode {
         let cluster_area = Rect {
             x: area.x + area.width.saturating_sub(w),

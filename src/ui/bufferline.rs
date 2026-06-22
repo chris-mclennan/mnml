@@ -446,6 +446,34 @@ pub fn right_cluster_width(app: &App) -> u16 {
     right_cluster_width_mode(app, true)
 }
 
+/// Pick the right-cluster mode for a palette bar of total width
+/// `area_w` starting at `area_x`, given a workspace chip that
+/// ends at `palette_right_edge` and a minimum visual gap of
+/// `gap` cells. Returns `(cluster_width, include_tab_pages)`,
+/// or `None` if even the compact cluster wouldn't fit.
+///
+/// Pure function — extracted so unit tests can exercise the
+/// stage transitions (full → compact → hidden) across widths
+/// without spinning up a full ratatui Terminal. Used by
+/// `draw_palette_bar` in `src/ui/mod.rs`.
+pub fn pick_cluster_mode(
+    area_x: u16,
+    area_w: u16,
+    palette_right_edge: u16,
+    full_w: u16,
+    compact_w: u16,
+    gap: u16,
+) -> Option<(u16, bool)> {
+    let cluster_left = |w: u16| area_x + area_w.saturating_sub(w);
+    if cluster_left(full_w) >= palette_right_edge + gap {
+        Some((full_w, true))
+    } else if cluster_left(compact_w) >= palette_right_edge + gap {
+        Some((compact_w, false))
+    } else {
+        None
+    }
+}
+
 /// Width in cells when the TABS label + per-tabpage chips are
 /// optionally hidden. 2026-06-22 — `include_tab_pages: false`
 /// drops `TABS` + numbered tab chips + the close on the active
@@ -747,5 +775,80 @@ mod tests {
             row.contains("beta.txt"),
             "tab strip missing beta.txt: {row:?}"
         );
+    }
+
+    // 2026-06-22 — narrow-width cluster-mode picker tests. The
+    // user reported that at narrow palette-bar widths the launcher
+    // icons + tab-page chips overlapped instead of either fitting
+    // cleanly or hiding the tab-page portion. These tests pin the
+    // 3-stage transition (full → compact → hidden) so that fix
+    // can't silently regress.
+    #[test]
+    fn pick_cluster_mode_picks_full_at_generous_width() {
+        // 200-col palette bar, workspace chip ends at col 60.
+        // Full cluster (50 cells) starts at col 150 — way past
+        // the workspace chip. Should pick full.
+        let mode = pick_cluster_mode(0, 200, 60, 50, 30, 4);
+        assert_eq!(mode, Some((50, true)));
+    }
+
+    #[test]
+    fn pick_cluster_mode_falls_back_to_compact_when_full_overlaps() {
+        // 100-col bar, chip right-edge at col 60. Full (50) would
+        // start at col 50 → overlaps the chip + gap (col 64).
+        // Compact (30) starts at col 70 → fits past 60+4=64.
+        // Should drop the tab-page section but keep launcher
+        // icons + theme + close.
+        let mode = pick_cluster_mode(0, 100, 60, 50, 30, 4);
+        assert_eq!(mode, Some((30, false)));
+    }
+
+    #[test]
+    fn pick_cluster_mode_hides_cluster_when_compact_also_overlaps() {
+        // 80-col bar, chip right-edge at col 60. Compact (30)
+        // would start at col 50 → still overlaps 60+4=64. Hide.
+        let mode = pick_cluster_mode(0, 80, 60, 50, 30, 4);
+        assert_eq!(mode, None);
+    }
+
+    #[test]
+    fn pick_cluster_mode_respects_area_x_offset() {
+        // Same 100-cell-of-space bar but offset to start at col 5
+        // (e.g. left margin). The math should respect area_x —
+        // chip_right_edge values are absolute screen columns, not
+        // relative to area_x. cluster_left = area_x + area_w - w.
+        // area_x=5, area_w=100 → bar occupies cols 5..105. Chip
+        // right edge at col 65 (= 60 relative to bar start).
+        // Full (50): cluster_left = 5 + 100 - 50 = 55 → < 65+4.
+        // Compact (30): cluster_left = 5 + 100 - 30 = 75 → ≥ 69.
+        let mode = pick_cluster_mode(5, 100, 65, 50, 30, 4);
+        assert_eq!(mode, Some((30, false)));
+    }
+
+    #[test]
+    fn pick_cluster_mode_gap_zero_lets_cluster_touch_palette() {
+        // gap=0: cluster_left just needs to be >= palette_right_edge,
+        // no breathing room required. At exactly the boundary,
+        // full mode wins.
+        // bar 100, chip end 50, full 50 → cluster_left = 50. With
+        // gap=0, 50 >= 50 → full picked.
+        let mode = pick_cluster_mode(0, 100, 50, 50, 30, 0);
+        assert_eq!(mode, Some((50, true)));
+    }
+
+    #[test]
+    fn pick_cluster_mode_saturating_sub_doesnt_crash_on_tiny_widths() {
+        // Pathological: bar narrower than even the compact cluster.
+        // saturating_sub clamps to 0, cluster_left = area_x.
+        // Should return None, not panic.
+        let mode = pick_cluster_mode(0, 10, 60, 50, 30, 4);
+        assert_eq!(mode, None);
+    }
+
+    #[test]
+    fn pick_cluster_mode_zero_width_returns_none() {
+        // Degenerate: 0-width bar, nothing fits.
+        let mode = pick_cluster_mode(0, 0, 0, 50, 30, 4);
+        assert_eq!(mode, None);
     }
 }
