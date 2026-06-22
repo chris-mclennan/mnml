@@ -867,8 +867,12 @@ fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
     let prefix = if drag.src_is_dir { "📁 " } else { "📄 " };
     let chip_w = label_w + 5; // " 📄 <name> "
     let area = frame.area();
-    let mut chip_x = cx.saturating_add(2);
-    let mut chip_y = cy.saturating_add(1);
+    // Paint the chip RIGHT next to the cursor (1 cell offset to
+    // avoid covering the cursor itself). User-feedback 2026-06-22
+    // — earlier (+2, +1) offset put the chip too far from the
+    // cursor, making it hard to align with the drop zone.
+    let mut chip_x = cx.saturating_add(1);
+    let mut chip_y = cy;
     if chip_x + chip_w > area.x + area.width {
         chip_x = (area.x + area.width).saturating_sub(chip_w);
     }
@@ -919,73 +923,29 @@ fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
         return;
     };
     let t = theme::cur();
-    // 2026-06-22 — VS Code-style drop overlay: the ACTIVE zone
-    // gets a SOLID bright fill (impossible to miss); inactive
-    // zones get thin outlines that hint at the other targets.
-    // Earlier iteration used identical-bg blocks for active vs
-    // inactive — user couldn't tell which was which during a
-    // drag.
-    let all_zones = [
-        DropZone::Left,
-        DropZone::Right,
-        DropZone::Top,
-        DropZone::Bottom,
-        DropZone::Center,
-    ];
-    for &zone in &all_zones {
-        let rect = zone_rect(body, zone);
-        if rect.width <= 1 || rect.height <= 1 {
-            continue;
-        }
-        let is_active = zone == active_zone;
-        if is_active {
-            // Solid blue fill across the whole zone — this is the
-            // "where will the file go" hint. Plus a bright white
-            // label centered in the zone.
-            let fill_style = Style::default().bg(t.blue);
-            frame.render_widget(
-                Paragraph::new("").style(fill_style),
-                rect,
-            );
-            // Border for definition (single line, white).
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Double)
-                .border_style(Style::default().fg(t.fg).bg(t.blue))
-                .style(fill_style);
-            let inner = block.inner(rect);
-            frame.render_widget(block, rect);
-            if inner.width > 0 && inner.height > 0 {
-                let label = match zone {
-                    DropZone::Center => "move here",
-                    DropZone::Left => "split left",
-                    DropZone::Right => "split right",
-                    DropZone::Top => "split top",
-                    DropZone::Bottom => "split bottom",
-                };
-                let cy = inner.y + inner.height / 2;
-                let row = Rect::new(inner.x, cy, inner.width, 1);
-                frame.render_widget(
-                    Paragraph::new(Span::styled(
-                        label,
-                        Style::default()
-                            .fg(t.fg)
-                            .bg(t.blue)
-                            .add_modifier(Modifier::BOLD),
-                    ))
-                    .alignment(ratatui::layout::Alignment::Center),
-                    row,
-                );
-            }
-        } else {
-            // Inactive zone — thin border outline, no fill (lets
-            // the editor content show through so the user can
-            // still read what's there). Single-line, dim.
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Plain)
-                .border_style(Style::default().fg(t.comment));
-            frame.render_widget(block, rect);
+    // 2026-06-22 — VS Code-style drop overlay. Only the ACTIVE
+    // zone gets painted; no outlines for the other zones, no
+    // labels. For Left/Right/Top/Bottom the overlay covers HALF
+    // the pane; for Center it covers the WHOLE pane. Style:
+    // translucent gray (preserve some readability of the
+    // underlying content). User-feedback 2026-06-22: earlier
+    // 5-zone outlined version with labels was too busy.
+    let rect = match active_zone {
+        DropZone::Center => body,
+        _ => zone_rect(body, active_zone),
+    };
+    if rect.width == 0 || rect.height == 0 {
+        return;
+    }
+    // The bright-blue VS Code drag overlay color — equivalent
+    // to its `editorGroup.dropBackground` token. Just a flat
+    // bg; the underlying text still shows through because
+    // ratatui renders fg-over-bg per cell.
+    let style = Style::default().bg(t.blue).fg(t.fg);
+    for y in rect.y..rect.y.saturating_add(rect.height) {
+        for x in rect.x..rect.x.saturating_add(rect.width) {
+            let cell_rect = Rect::new(x, y, 1, 1);
+            frame.render_widget(Paragraph::new(" ").style(style), cell_rect);
         }
     }
 }

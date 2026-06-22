@@ -204,6 +204,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // 2026-06-22 — Esc during an in-flight tree-file drag aborts
+    // the drag: clears tree_drag + the drop-zone overlay. User
+    // can release the mouse anywhere safely after that without
+    // triggering drag-to-split. Matches the VS Code / macOS
+    // convention of Esc-cancels-drag.
+    if key.code == KeyCode::Esc && app.tree_drag.is_some() {
+        app.tree_drag = None;
+        app.rects.tab_drop_target = None;
+        return;
+    }
     // AI ghost-text: while a suggestion is showing, bare `Tab` accepts
     // all of it, `Ctrl+Right` accepts the next word, `Ctrl+Down` the
     // next line (both leave the remainder as a ghost); any other key
@@ -5573,7 +5583,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .rects
                     .tree
                     .filter(|tr| crate::app::dispatch::contains(*tr, x, y));
-                if over_body && !src_is_dir {
+                // 2026-06-22 — when no editor pane is open
+                // (`pane_bodies` is empty), a drop anywhere
+                // outside the tree should still open the file.
+                // drop_tree_file_on_pane already falls back to
+                // open_path when there's no pane under the
+                // cursor; we just need to call it.
+                let empty_editor = app.rects.pane_bodies.is_empty()
+                    && tree_rect.is_none();
+                if (over_body || empty_editor) && !src_is_dir {
                     app.tree_drag = None;
                     app.drop_tree_file_on_pane(src_path, x, y);
                 } else if let Some(tr) = tree_rect {
