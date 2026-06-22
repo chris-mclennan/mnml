@@ -60,6 +60,30 @@ impl CheatsheetPane {
                 title,
             });
         }
+        // 2026-06-21 multilang SEV-3: also add leader-chord bindings
+        // from the whichkey trie. Was: leader chords (`<leader>Lct`
+        // = `cargo.test` etc.) were dispatched by `whichkey.rs`
+        // separately from the `Keymap` and didn't appear in
+        // `keymap.iter()`, so all leader-only commands fell into
+        // `(unbound)` — bloating it AND lying to the user about what
+        // they could chord-reach.
+        for (chord_path, id) in crate::whichkey::enumerate_leaves() {
+            // String id-owned: stash in bound_ids via a leaked &'static
+            // is overkill; track owned in a parallel set.
+            if reg.get(id).is_some() {
+                let owned: &'static str = id;
+                bound_ids.insert(owned);
+            }
+            let (group, title) = match reg.get(id) {
+                Some(c) => (c.group.to_string(), c.title.to_string()),
+                None => continue,
+            };
+            grouped.entry(group).or_default().push(CheatsheetRow {
+                chord: chord_path,
+                command_id: id.to_string(),
+                title,
+            });
+        }
         let mut sections: Vec<CheatsheetSection> = grouped
             .into_iter()
             .map(|(group, mut rows)| {

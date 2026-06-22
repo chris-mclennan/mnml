@@ -47,6 +47,34 @@ fn group(label: &'static str, kids: Vec<(char, Leader)>) -> Leader {
     }
 }
 
+/// 2026-06-21 multilang SEV-3 runners-npm-priority-no-disambiguation:
+/// walk the leader trie and emit `(chord_path, command_id)` for
+/// every leaf. The cheatsheet uses this to surface leader-chord
+/// bindings so they don't show up as `(unbound)`. Leader prefix
+/// is `<leader>` so a `<leader>Lct` binding for `cargo.test`
+/// emits `("<leader>L c t", "cargo.test")`.
+pub fn enumerate_leaves() -> Vec<(String, &'static str)> {
+    let mut out = Vec::new();
+    walk(root(), String::from("<leader>"), &mut out);
+    out
+}
+
+fn walk(node: &'static Leader, path: String, out: &mut Vec<(String, &'static str)>) {
+    match node {
+        Leader::Cmd { id, .. } => out.push((path, id)),
+        Leader::Group { children, .. } => {
+            for (ch, child) in children.iter() {
+                let next_path = if path == "<leader>" {
+                    format!("<leader>{ch}")
+                } else {
+                    format!("{path}{ch}")
+                };
+                walk(child, next_path, out);
+            }
+        }
+    }
+}
+
 /// The root of the leader trie (built once).
 pub fn root() -> &'static Leader {
     static ROOT: OnceLock<Leader> = OnceLock::new();
