@@ -107,29 +107,44 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
     // In standalone (Apple Terminal etc) this code path doesn't
     // run at all and mnml's launcher icons still render via its
     // own palette-bar paint.
-    // 2026-06-22 — user feedback: drop `+` newtab (tmnl has its
-    // own `+` add-integration chip immediately to the left; ours
-    // duplicated it visually) and `TABS` decorative label (too
-    // wordy; the numbered chips communicate the same thing). The
-    // chrome chip set is now just: tab pages + theme + close.
+    // 2026-06-22 — match the standalone palette bar exactly
+    // (user reference, image 17): ` + ` ` TABS ` ` 1 ` `× ` `2 ` `× `
+    // ` ●━ ` ` × `. Each chip carries 1-cell leading + trailing
+    // padding inside its bg color so the chip pills read as
+    // distinct visual elements. Same look users see in mnml
+    // standalone mode (Apple Terminal etc).
 
-    // 2026-06-22 user feedback: tab chips looked goofy with all
-    // the padding (` 1 ` + ` 2× ` + ` ●━ ` + ` × `). Drop the
-    // inner padding entirely — each chip is now just the glyph(s)
-    // + bg color. Distinct chip backgrounds give visual separation;
-    // adjacent same-bg chips (e.g. active tab + its close, both
-    // blue) read as one combined chip which is correct semantically.
+    // ` + ` new tab.
+    let plus_glyph = if nerd { "\u{F0415}".to_string() } else { "+".to_string() };
+    chips.push(ChromeChip {
+        id: "newtab".to_string(),
+        label: format!(" {plus_glyph} "),
+        glyph: String::new(),
+        fg: color_to_packed(t.fg),
+        bg: color_to_packed(t.bg2),
+        bold: false,
+    });
 
-    // Per-tab-page chips — `<n>` or `●<n>` for dirty. Active tab
-    // gets a separate `×` chip immediately after so the close
-    // hit-rect maps to `tabpage:<i>:close` distinctly.
+    // ` TABS ` decorative label.
+    chips.push(ChromeChip {
+        id: "_label_tabs".to_string(),
+        label: " TABS ".to_string(),
+        glyph: String::new(),
+        fg: color_to_packed(t.bg_darker),
+        bg: color_to_packed(t.fg),
+        bold: true,
+    });
+
+    // Per-tab-page chips — ` <n> ` or ` ●<n> ` for dirty. Active
+    // tab page gets a separate `× ` chip immediately after so the
+    // close hit-rect maps to `tabpage:<i>:close` distinctly.
     for i in 0..app.layouts.len() {
         let active = i == app.active_layout;
         let dirty = app.tab_has_dirty_buffer(i);
         let label_inner = if dirty {
-            format!("\u{25CF}{}", i + 1)
+            format!(" \u{25CF}{} ", i + 1)
         } else {
-            format!("{}", i + 1)
+            format!(" {} ", i + 1)
         };
         let (chip_fg, chip_bg) = if active {
             (t.bg_darker, t.blue)
@@ -148,7 +163,7 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
             let close = if nerd { "\u{F0156}".to_string() } else { "x".to_string() };
             chips.push(ChromeChip {
                 id: format!("tabpage:{i}:close"),
-                label: close,
+                label: format!("{close} "),
                 glyph: String::new(),
                 fg: color_to_packed(chip_fg),
                 bg: color_to_packed(chip_bg),
@@ -156,8 +171,8 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
             });
         }
     }
-    // Theme toggle — `●━` or `━●` (handle position tracks which
-    // theme is active). No inner padding.
+
+    // Theme toggle — ` ●━ ` or ` ━● ` (4 cells with padding).
     let on_alt = app
         .config
         .ui
@@ -165,9 +180,9 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
         .as_deref()
         .is_some_and(|alt| t.name.eq_ignore_ascii_case(alt));
     let pill = if on_alt {
-        "\u{2501}\u{25CF}"
+        " \u{2501}\u{25CF} "
     } else {
-        "\u{25CF}\u{2501}"
+        " \u{25CF}\u{2501} "
     };
     chips.push(ChromeChip {
         id: "theme_toggle".to_string(),
@@ -177,11 +192,12 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
         bg: color_to_packed(t.bg2),
         bold: false,
     });
-    // `×` window close — red bg + bold dark fg.
+
+    // ` × ` window close — 3 cells, red bg + bold dark fg.
     let close_glyph = if nerd { "\u{F0156}".to_string() } else { "x".to_string() };
     chips.push(ChromeChip {
         id: "window_close".to_string(),
-        label: close_glyph,
+        label: format!(" {close_glyph} "),
         glyph: String::new(),
         fg: color_to_packed(t.bg_darker),
         bg: color_to_packed(t.red),
