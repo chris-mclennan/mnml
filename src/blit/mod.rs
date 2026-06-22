@@ -67,10 +67,14 @@ enum BlitCommandEvent {
     Invoke(String),
     /// 2026-06-21 — `Message::ChromeChipClick { id }` — user
     /// clicked a chrome chip we projected onto tmnl chrome. Main
-    /// loop matches the id and fires the matching mnml action
-    /// (`launcher.click` / `tab.select N` / `theme.toggle` /
-    /// `app.quit` / `tab.new` / `tab.close N`).
+    /// loop matches the id and fires the matching mnml action.
     ChromeChipClick(String),
+    /// 2026-06-22 — host's reply Hello arrived. Carries the host's
+    /// caps bitmask so the main loop can gate v8+ messages on
+    /// capability negotiation. Without this, a v7 host would
+    /// disconnect when we send `Message::ChromeChips` because the
+    /// reader returns a decode error on unknown msg types — fatal.
+    HostCaps(tmnl_protocol::Caps),
 }
 
 pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
@@ -146,6 +150,14 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                         break;
                     }
                 }
+                Ok(Message::Hello { caps, .. }) => {
+                    if cmd_event_tx
+                        .send(BlitCommandEvent::HostCaps(caps))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
                 Ok(Message::ChromeChipClick { id }) => {
                     if cmd_event_tx
                         .send(BlitCommandEvent::ChromeChipClick(id))
@@ -184,6 +196,14 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
     let mut frame_seq: u64 = 0;
     let mut prev_cells: Vec<WireCell> = Vec::new();
     let mut prev_dims: (u16, u16) = (0, 0);
+    // 2026-06-22 — host's negotiated caps from its reply Hello.
+    // Starts empty; the reader thread forwards the Hello caps via
+    // `BlitCommandEvent::HostCaps`. Sends of v8+ messages
+    // (ChromeChips, etc.) gate on the matching bit so a pre-v8
+    // host doesn't trip its decode-unknown-type → disconnect
+    // path. Without this, an installed-but-stale tmnl drops mnml
+    // on the first chip flush.
+    let mut host_caps: tmnl_protocol::Caps = tmnl_protocol::Caps::empty();
     loop {
         app.tick();
 
@@ -209,10 +229,15 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
         // `pending_chrome_chips` Option is Some only when the new
         // snapshot differs from `last_sent_chrome_chips`, so we
         // don't spam the wire with identical messages every tick.
-        app.refresh_chrome_chips();
-        if let Some(chips) = app.pending_chrome_chips.take() {
-            let mut w = writer.lock().unwrap();
-            let _ = write_message(&mut *w, &Message::ChromeChips(chips));
+        // Gate chip-flush on the host advertising CHROME_CHIPS.
+        // Without this, a pre-v8 tmnl decodes `MSG_CHROME_CHIPS` as
+        // an unknown type and disconnects the client — fatal.
+        if host_caps.contains(tmnl_protocol::Caps::CHROME_CHIPS) {
+            app.refresh_chrome_chips();
+            if let Some(chips) = app.pending_chrome_chips.take() {
+                let mut w = writer.lock().unwrap();
+                let _ = write_message(&mut *w, &Message::ChromeChips(chips));
+            }
         }
         // Re-send `Message::Title` whenever the foreground UI changes
         // between mnml's editor and the docked mixr panel. tmnl's
@@ -263,6 +288,9 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                 }
                 BlitCommandEvent::ChromeChipClick(id) => {
                     app.dispatch_chrome_chip_click(&id);
+                }
+                BlitCommandEvent::HostCaps(caps) => {
+                    host_caps = caps;
                 }
             }
         }
