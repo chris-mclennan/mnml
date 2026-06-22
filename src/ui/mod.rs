@@ -676,10 +676,44 @@ fn render_layout(
     match layout {
         Layout::Empty => None,
         Layout::Leaf(id) => {
-            // Record this leaf's body rect (all pane kinds) for tab drag-drop
-            // hit-testing (drag-to-split).
-            app.rects.pane_bodies.push((area, *id));
             let focused = app.active == Some(*id);
+            // 2026-06-21 — VS Code-style per-split tab strip. When
+            // this leaf is INSIDE a split (path non-empty) AND the
+            // pane isn't a Pty (which has its own tab strip in
+            // pty_view), carve out the top row of `area` and paint
+            // a 1-row tab showing the file/title for this leaf.
+            // The body area shrinks by 1 row. The single global
+            // bufferline at the top still exists (shows all open
+            // panes); these per-leaf strips give each split visual
+            // ownership of its file.
+            let is_split_leaf = !path.is_empty();
+            let has_own_tab_strip =
+                matches!(app.panes.get(*id), Some(crate::pane::Pane::Pty(_)));
+            let body_area = if is_split_leaf
+                && !has_own_tab_strip
+                && area.height >= 2
+            {
+                let strip = ratatui::layout::Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: 1,
+                };
+                paint_leaf_tab(frame, app, *id, strip, focused);
+                ratatui::layout::Rect {
+                    x: area.x,
+                    y: area.y + 1,
+                    width: area.width,
+                    height: area.height - 1,
+                }
+            } else {
+                area
+            };
+            // Record this leaf's body rect (all pane kinds) for tab drag-drop
+            // hit-testing (drag-to-split). Uses the post-strip body
+            // so drag-to-split zones don't overlap the per-leaf tab.
+            app.rects.pane_bodies.push((body_area, *id));
+            let area = body_area;
             // Resolve the variant first so the immutable peek doesn't outlive into
             // the `&mut App` draw call.
             let kind: u8 = match app.panes.get(*id) {
@@ -1880,6 +1914,161 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
 
         y = y.saturating_add(3);
     }
+}
+
+/// 2026-06-21 — paint a 1-row tab strip above an in-split leaf
+/// showing the pane it currently displays. The user requested
+/// VS Code-style per-split tab strips so each split visually
+/// owns its file. Renders: ` ICON  Name • × ` — icon in the
+/// pane-type's color, name in fg (italic if preview, bold if
+/// pinned), `•` if dirty, `×` to close (registers a click rect
+/// in `bufferline_tab_close` so the existing handler closes the
+/// pane).
+fn paint_leaf_tab(
+    frame: &mut Frame,
+    app: &mut App,
+    id: crate::layout::PaneId,
+    strip: Rect,
+    focused: bool,
+) {
+    use crate::pane::Pane;
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Paragraph;
+    let t = theme::cur();
+    let nerd = !app.config.ui.ascii_icons;
+    let Some(pane) = app.panes.get(id) else {
+        return;
+    };
+    // Visual states.
+    let bg = if focused { t.bg2 } else { t.bg_darker };
+    let fg = if focused { t.fg } else { t.comment };
+    let title = pane.title();
+    let dirty = pane.is_dirty();
+    let (glyph, icon_color) = icon_for_pane(pane, nerd);
+    let mut name_style = Style::default().fg(fg).bg(bg);
+    if focused {
+        name_style = name_style.add_modifier(Modifier::BOLD);
+    }
+    if let Pane::Editor(b) = pane {
+        if b.is_preview {
+            name_style = name_style.add_modifier(Modifier::ITALIC);
+        }
+    }
+    let pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
+    let icon_span = if pinned {
+        Span::styled(
+            " 📌 ".to_string(),
+            Style::default().fg(t.yellow).bg(bg).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            format!(" {glyph} "),
+            Style::default().fg(icon_color).bg(bg),
+        )
+    };
+    let dirty_mark = if dirty {
+        format!(" • ")
+    } else {
+        format!("   ")
+    };
+    let close_label = " × ";
+    let icon_w = icon_span.content.chars().count() as u16;
+    let dirty_w = dirty_mark.chars().count() as u16;
+    let close_w = close_label.chars().count() as u16;
+    let avail_for_name = strip
+        .width
+        .saturating_sub(icon_w + dirty_w + close_w + 1);
+    let name = clip_to_cells(&title, avail_for_name as usize);
+    let name_w = name.chars().count() as u16;
+    let pad_after = strip
+        .width
+        .saturating_sub(icon_w + name_w + dirty_w + close_w);
+    let line = Line::from(vec![
+        icon_span,
+        Span::styled(name.clone(), name_style),
+        Span::styled(dirty_mark, Style::default().fg(t.orange).bg(bg)),
+        Span::styled(
+            " ".repeat(pad_after as usize),
+            Style::default().bg(bg),
+        ),
+        Span::styled(
+            close_label.to_string(),
+            Style::default().fg(t.red).bg(bg),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(bg)),
+        strip,
+    );
+    // Click rect on the whole strip → focus the leaf. Click on the
+    // × → close the leaf (re-uses bufferline_tab_close handling).
+    app.rects.bufferline_tabs.push((strip, id));
+    let close_x = strip.x + strip.width.saturating_sub(close_w);
+    app.rects.bufferline_tab_close.push((
+        ratatui::layout::Rect {
+            x: close_x,
+            y: strip.y,
+            width: close_w,
+            height: 1,
+        },
+        id,
+    ));
+}
+
+/// Pick a `(glyph, color)` for any pane kind — duplicates the
+/// dispatch in `bufferline::draw` but kept inline here so the
+/// per-leaf tab strip doesn't need a public API on bufferline.
+fn icon_for_pane(
+    pane: &crate::pane::Pane,
+    nerd: bool,
+) -> (&'static str, ratatui::style::Color) {
+    use crate::pane::Pane;
+    match pane {
+        Pane::Editor(b) => {
+            let p = b
+                .path
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from("untitled"));
+            crate::ui::icons::for_path(&p, false, false, nerd)
+        }
+        Pane::MdPreview(p) => crate::ui::icons::for_path(&p.path, false, false, nerd),
+        Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
+        Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, theme::cur().orange),
+        Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
+        Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, theme::cur().yellow),
+        Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, theme::cur().teal),
+        Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
+        Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, theme::cur().green),
+        Pane::Browser(_) => (if nerd { "\u{f059f}" } else { "◉" }, theme::cur().blue),
+        Pane::Diagnostics(_) => (if nerd { "\u{f0026}" } else { "⚠" }, theme::cur().red),
+        Pane::Grep(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().yellow),
+        Pane::Flaky(_) => (if nerd { "\u{f0668}" } else { "≋" }, theme::cur().purple),
+        Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
+        Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
+        Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
+        Pane::BlitHost(_) => (if nerd { "\u{F0EAA}" } else { "▤" }, theme::cur().purple),
+        Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
+        Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
+        Pane::DapRepl(_) => (if nerd { "\u{F018D}" } else { ">" }, theme::cur().cyan),
+        Pane::Image(_) => (if nerd { "\u{F021F}" } else { "▤" }, theme::cur().purple),
+        Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, theme::cur().purple),
+        Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
+        Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
+    }
+}
+
+/// Cell-width-aware clip with `…` suffix.
+fn clip_to_cells(s: &str, max_cells: usize) -> String {
+    if s.chars().count() <= max_cells {
+        return s.to_string();
+    }
+    if max_cells == 0 {
+        return String::new();
+    }
+    let mut out: String = s.chars().take(max_cells.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
