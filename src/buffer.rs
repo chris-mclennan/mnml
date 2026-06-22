@@ -163,10 +163,26 @@ pub struct Buffer {
     /// standard-input-style mode. A preview buffer gets *replaced*
     /// when the user tree-clicks another file (instead of opening a
     /// new tab next to it). The first edit promotes it to a regular
-    /// pinned buffer (`is_preview = false`); double-clicking the
-    /// file in the tree also pins it. Always false when input style
-    /// is `vim` (where every file gets its own buffer regardless).
+    /// buffer (`is_preview = false`); double-clicking the file in
+    /// the tree also promotes it. Always false when input style is
+    /// `vim` (where every file gets its own buffer regardless).
     pub is_preview: bool,
+    /// 2026-06-21 — VS Code-style pinned tab. Distinct from
+    /// `is_preview`: a pinned tab stays at the FRONT of the
+    /// bufferline strip, renders with a 📌 glyph, and is immune
+    /// to `close-all` / `close-others` (only an explicit
+    /// `buffer.close` / right-click-Close-Tab closes it). The
+    /// three states are:
+    ///   - Preview (`is_preview = true`, `is_pinned = false`) —
+    ///     transient; next single-click replaces.
+    ///   - Regular (`is_preview = false`, `is_pinned = false`) —
+    ///     default after edit/typing/double-click.
+    ///   - Pinned (`is_preview = false`, `is_pinned = true`) —
+    ///     stays at front, immune to bulk-close.
+    /// Pinning is set via right-click → "Pin tab" or via
+    /// `buffer.pin_toggle`. Persisted across sessions in
+    /// session.json.
+    pub is_pinned: bool,
     saved_text: String,
     pub language_ext: Option<String>,
     pub input: Box<dyn InputHandler>,
@@ -347,6 +363,7 @@ impl Buffer {
             h_scroll: 0,
             dirty: false,
             is_preview: false,
+            is_pinned: false,
             saved_text: text,
             language_ext: ext,
             input: input::make_handler(cfg),
@@ -425,6 +442,7 @@ impl Buffer {
                     // save + get "no changes to save" silently.
                     dirty: true,
                     is_preview: false,
+            is_pinned: false,
                     saved_text: String::new(),
                     language_ext: ext,
                     input: input::make_handler(cfg),
@@ -502,6 +520,7 @@ impl Buffer {
             h_scroll: 0,
             dirty: false,
             is_preview: false,
+            is_pinned: false,
             saved_text: String::new(),
             language_ext: None,
             input: input::make_handler(cfg),

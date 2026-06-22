@@ -5463,6 +5463,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // pane (edge zone) or move the dragged pane into it (center zone).
             // Otherwise it was a plain click / a reorder release on the tab
             // strip → reveal the tab (deferred buffer-switch).
+            //
+            // 2026-06-21 — VS Code-style: double-click on a tab
+            // promotes a preview tab to a regular tab (the italic
+            // becomes plain). Single click just reveals.
             if let Some(src) = app.rects.bufferline_drag_tab {
                 let over_body = app
                     .rects
@@ -5472,6 +5476,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if over_body {
                     app.drop_tab_on_pane(src, x, y);
                 } else {
+                    // Detect double-click on the same tab rect.
+                    let now = std::time::Instant::now();
+                    let is_double = matches!(
+                        app.last_click,
+                        Some((prev, px, py, _))
+                            if px == x
+                                && py == y
+                                && now.duration_since(prev) < std::time::Duration::from_millis(450)
+                    );
+                    app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
+                    if is_double {
+                        if let Some(Pane::Editor(b)) = app.panes.get_mut(src) {
+                            b.is_preview = false;
+                        }
+                    }
                     app.reveal_pane(src);
                 }
             }

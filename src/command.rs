@@ -1631,6 +1631,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.reopen_closed_buffer(),
         },
         Command {
+            id: "buffer.pin_toggle",
+            title: "Pin / Unpin the active tab (sticks to front of strip)",
+            group: "buffer",
+            keys: &[],
+            run: |app| app.buffer_pin_toggle(),
+        },
+        Command {
             id: "buffer.next",
             title: "Next buffer (positional)",
             group: "buffer",

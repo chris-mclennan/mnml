@@ -481,6 +481,7 @@ impl App {
                 self.reveal_pane(id);
                 self.save_active();
             }
+            PinTab(id) => self.buffer_pin_toggle_at(id),
             RenameSession(id) => {
                 // Reveal the session so it's the active pane, then
                 // reuse the `:rename` prompt (which targets `active`).

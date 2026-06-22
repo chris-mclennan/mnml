@@ -154,9 +154,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // strip, so they don't also get a bufferline tab. `visible` is the
     // ordered PaneIds the strip shows; `bufferline_first_visible` and
     // the scroll math index into it, not `app.panes`.
-    let visible: Vec<usize> = (0..app.panes.len())
+    //
+    // 2026-06-21 — VS Code-style pinned tabs sort to the FRONT.
+    // Within the pinned + unpinned groups, original pane order is
+    // preserved (so the user can still reorder via close/reopen).
+    let mut visible: Vec<usize> = (0..app.panes.len())
         .filter(|&i| !matches!(app.panes[i], Pane::Pty(_)))
         .collect();
+    visible.sort_by_key(|&i| {
+        let pinned = matches!(app.panes.get(i), Some(Pane::Editor(b)) if b.is_pinned);
+        if pinned { 0 } else { 1 }
+    });
     let sep = 1u16; // cell between tabs (rendered as the bg color)
     // Reserve 2 cells on each side of the tab strip for the overflow chevrons
     // when there's content past the edge.
@@ -322,14 +330,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         {
             name_style = name_style.add_modifier(Modifier::ITALIC);
         }
-        spans.push(Span::styled(
-            format!(" {glyph} "),
-            // Icons keep their natural devicon color on every tab — active
-            // or inactive — so file types stay recognizable at a glance
-            // (matches NvChad's tabufline). Only the name + close badge
-            // dim on inactive chips.
-            Style::default().fg(icon_color).bg(bg),
-        ));
+        // 2026-06-21 — VS Code-style pinned tab. The 📌 glyph
+        // replaces the file-type icon. Distinct visual from
+        // preview (italics).
+        let pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
+        if pinned {
+            spans.push(Span::styled(
+                " 📌 ".to_string(),
+                Style::default()
+                    .fg(theme::cur().yellow)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!(" {glyph} "),
+                // Icons keep their natural devicon color on every tab — active
+                // or inactive — so file types stay recognizable at a glance
+                // (matches NvChad's tabufline). Only the name + close badge
+                // dim on inactive chips.
+                Style::default().fg(icon_color).bg(bg),
+            ));
+        }
         spans.push(Span::styled(format!("{name} "), name_style));
         if !diag.is_empty() {
             let diag_fg = if diag.starts_with('\u{2717}') {

@@ -41,6 +41,7 @@ impl App {
                     breakpoints: b.breakpoints.clone(),
                     breakpoint_conditions: b.breakpoint_conditions.clone(),
                     breakpoint_hit_conditions: b.breakpoint_hit_conditions.clone(),
+                    is_pinned: b.is_pinned,
                 });
                 merged_cursors.insert(path.clone(), (b.editor.cursor(), b.scroll));
             }
@@ -266,11 +267,13 @@ impl App {
                     active_pane = Some(pid);
                 }
                 if let Some(Pane::Editor(buf)) = self.panes.get_mut(pid) {
-                    // Restored buffers are pinned, not preview — otherwise
-                    // the next open_path() in this loop would replace this
-                    // one (preview-replacement) and we'd lose every buffer
-                    // but the last.
+                    // Restored buffers are not preview — otherwise the
+                    // next open_path() in this loop would replace this
+                    // one (preview-replacement) and we'd lose every
+                    // buffer but the last. Pinned state is restored
+                    // from the saved session (2026-06-21).
                     buf.is_preview = false;
+                    buf.is_pinned = b.is_pinned;
                     let (row, col) = byte_to_row_col(buf.editor.text(), b.cursor_byte);
                     buf.editor.place_cursor(row, col);
                     buf.scroll = b.scroll;

@@ -44,6 +44,10 @@ pub enum MenuAction {
     /// Surfaced from the bufferline tab right-click menu — the
     /// VS-Code-mouse hunt's SEV-2 "no Save button anywhere" finding.
     SavePane(PaneId),
+    /// 2026-06-21 — VS Code-style pin / unpin for a specific editor
+    /// tab. Pinned tabs sort to the front of the bufferline strip
+    /// (📌 glyph) and are immune to Close all / Close others.
+    PinTab(PaneId),
     /// Rename a pty session (Claude / Codex / shell) — reveals the
     /// pane, then opens the session-name prompt.
     RenameSession(PaneId),

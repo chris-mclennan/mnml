@@ -31,6 +31,16 @@ impl App {
         {
             items.push(MenuItem::new("Save", MenuAction::SavePane(id)));
         }
+        // 2026-06-21 — VS Code-style Pin tab. Only offered for
+        // editor panes (pty/Request/etc. tabs aren't pin-eligible).
+        // Label flips based on current pinned state.
+        if matches!(self.panes.get(id), Some(Pane::Editor(_))) {
+            let pinned = matches!(self.panes.get(id), Some(Pane::Editor(b)) if b.is_pinned);
+            items.push(MenuItem::new(
+                if pinned { "Unpin tab" } else { "Pin tab" },
+                MenuAction::PinTab(id),
+            ));
+        }
         items.push(MenuItem::new("Close", MenuAction::CloseTab(id)));
         items.push(MenuItem::new(
             "Close others",
@@ -78,6 +88,7 @@ impl App {
     /// nothing is lost silently — they're kept and counted.
     pub(super) fn close_panes_except(&mut self, keep: Option<PaneId>) {
         let mut kept_dirty = 0usize;
+        let mut kept_pinned = 0usize;
         // Walk high→low so the indices below the one we close stay valid.
         for i in (0..self.panes.len()).rev() {
             if Some(i) == keep {
@@ -87,12 +98,24 @@ impl App {
                 kept_dirty += 1;
                 continue;
             }
+            // 2026-06-21 — VS Code-style pinned tabs are immune to
+            // Close all / Close others. User must explicitly
+            // unpin then close, or right-click → Close on that tab.
+            if matches!(self.panes.get(i), Some(Pane::Editor(b)) if b.is_pinned) {
+                kept_pinned += 1;
+                continue;
+            }
             self.force_close_pane(i);
         }
+        let mut bits: Vec<String> = Vec::new();
         if kept_dirty > 0 {
-            self.toast(format!(
-                "kept {kept_dirty} unsaved buffer(s) — save or :q! them"
-            ));
+            bits.push(format!("{kept_dirty} unsaved"));
+        }
+        if kept_pinned > 0 {
+            bits.push(format!("{kept_pinned} pinned"));
+        }
+        if !bits.is_empty() {
+            self.toast(format!("kept {}", bits.join(" + ")));
         }
     }
 
@@ -854,6 +877,41 @@ impl App {
         }
         if self.active.is_none() {
             self.focus = Focus::Tree;
+        }
+    }
+
+    /// 2026-06-21 — VS Code-style pin toggle. Pins the active
+    /// editor tab to the FRONT of the bufferline strip with a 📌
+    /// glyph. Pinned tabs are immune to close-all / close-others
+    /// and survive across sessions (persisted in session.json).
+    /// No-op for non-editor panes.
+    pub fn buffer_pin_toggle(&mut self) {
+        let Some(i) = self.active else {
+            self.toast("no active pane to pin");
+            return;
+        };
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(i) {
+            b.is_preview = false;
+            b.is_pinned = !b.is_pinned;
+            let name = b
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "untitled".to_string());
+            let verb = if b.is_pinned { "pinned" } else { "unpinned" };
+            self.toast(format!("{verb} {name}"));
+        } else {
+            self.toast("buffer.pin_toggle: not an editor pane");
+        }
+    }
+
+    /// 2026-06-21 — pin / unpin a specific pane by id. Used by the
+    /// bufferline tab right-click context menu.
+    pub fn buffer_pin_toggle_at(&mut self, id: usize) {
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(id) {
+            b.is_preview = false;
+            b.is_pinned = !b.is_pinned;
         }
     }
 

@@ -1255,6 +1255,11 @@ struct SavedBuffer {
     /// alongside conditions. Same orphan-line cleanup on load.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     breakpoint_hit_conditions: std::collections::HashMap<u32, String>,
+    /// 2026-06-21 — VS Code-style pinned tab state. Persisted so
+    /// pinned tabs survive across sessions. Default false (existing
+    /// sessions deserialize cleanly).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    is_pinned: bool,
 }
 
 /// A serializable mirror of [`Layout`] where leaves carry indices into
