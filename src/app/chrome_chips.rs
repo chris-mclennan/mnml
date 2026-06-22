@@ -113,16 +113,23 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
     // wordy; the numbered chips communicate the same thing). The
     // chrome chip set is now just: tab pages + theme + close.
 
-    // Per-tab-page chips — ` <n> ` or ` ●<n> ` for dirty. Active
-    // tab page gets a separate ` × ` chip after it so the close
+    // 2026-06-22 user feedback: tab chips looked goofy with all
+    // the padding (` 1 ` + ` 2× ` + ` ●━ ` + ` × `). Drop the
+    // inner padding entirely — each chip is now just the glyph(s)
+    // + bg color. Distinct chip backgrounds give visual separation;
+    // adjacent same-bg chips (e.g. active tab + its close, both
+    // blue) read as one combined chip which is correct semantically.
+
+    // Per-tab-page chips — `<n>` or `●<n>` for dirty. Active tab
+    // gets a separate `×` chip immediately after so the close
     // hit-rect maps to `tabpage:<i>:close` distinctly.
     for i in 0..app.layouts.len() {
         let active = i == app.active_layout;
         let dirty = app.tab_has_dirty_buffer(i);
         let label_inner = if dirty {
-            format!(" \u{25CF}{} ", i + 1)
+            format!("\u{25CF}{}", i + 1)
         } else {
-            format!(" {} ", i + 1)
+            format!("{}", i + 1)
         };
         let (chip_fg, chip_bg) = if active {
             (t.bg_darker, t.blue)
@@ -141,7 +148,7 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
             let close = if nerd { "\u{F0156}".to_string() } else { "x".to_string() };
             chips.push(ChromeChip {
                 id: format!("tabpage:{i}:close"),
-                label: format!("{close} "),
+                label: close,
                 glyph: String::new(),
                 fg: color_to_packed(chip_fg),
                 bg: color_to_packed(chip_bg),
@@ -149,8 +156,8 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
             });
         }
     }
-    // Theme toggle — 4 cells: ` ●━ ` or ` ━● ` (handle position
-    // tracks which theme is active).
+    // Theme toggle — `●━` or `━●` (handle position tracks which
+    // theme is active). No inner padding.
     let on_alt = app
         .config
         .ui
@@ -158,9 +165,9 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
         .as_deref()
         .is_some_and(|alt| t.name.eq_ignore_ascii_case(alt));
     let pill = if on_alt {
-        " \u{2501}\u{25CF} "
+        "\u{2501}\u{25CF}"
     } else {
-        " \u{25CF}\u{2501} "
+        "\u{25CF}\u{2501}"
     };
     chips.push(ChromeChip {
         id: "theme_toggle".to_string(),
@@ -170,11 +177,11 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
         bg: color_to_packed(t.bg2),
         bold: false,
     });
-    // ` × ` window close — 3 cells, red bg + bold dark fg.
+    // `×` window close — red bg + bold dark fg.
     let close_glyph = if nerd { "\u{F0156}".to_string() } else { "x".to_string() };
     chips.push(ChromeChip {
         id: "window_close".to_string(),
-        label: format!(" {close_glyph} "),
+        label: close_glyph,
         glyph: String::new(),
         fg: color_to_packed(t.bg_darker),
         bg: color_to_packed(t.red),
