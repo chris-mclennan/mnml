@@ -1053,30 +1053,41 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // (it wasn't bumped past the chevron after painting). The real
     // right edge of the workspace cluster is `x + dropdown_w`.
     let palette_right_edge = x + dropdown_w;
-    let full_w = bufferline::right_cluster_width(app);
-    let compact_w = bufferline::right_cluster_width_mode(app, false);
+    let full_w = bufferline::right_cluster_width_for(app, bufferline::ClusterMode::Full);
+    let compact_w = bufferline::right_cluster_width_for(app, bufferline::ClusterMode::Compact);
+    let minimal_w = bufferline::right_cluster_width_for(app, bufferline::ClusterMode::Minimal);
     let mode = bufferline::pick_cluster_mode(
         area.x,
         area.width,
         palette_right_edge,
         full_w,
         compact_w,
+        minimal_w,
         4, // gap cells between palette + cluster
     );
-    if let Some((w, include_tabs)) = mode {
+    if let Some((w, cluster_mode)) = mode {
         let cluster_area = Rect {
             x: area.x + area.width.saturating_sub(w),
             y: area.y,
             width: w,
             height: 1,
         };
-        bufferline::paint_right_cluster_mode(
+        bufferline::paint_right_cluster_for(
             frame,
             app,
             cluster_area,
             t.bg_dark,
-            include_tabs,
+            cluster_mode,
         );
+    } else {
+        // Cluster hidden entirely — clear the chip rects so stale
+        // rects from a wider frame don't steal clicks.
+        app.rects.launcher_icon_rects.clear();
+        app.rects.bufferline_new_tab_button = None;
+        app.rects.bufferline_tab_page_chips.clear();
+        app.rects.bufferline_tab_page_close.clear();
+        app.rects.bufferline_theme_toggle = None;
+        app.rects.bufferline_window_close = None;
     }
 }
 
@@ -2232,6 +2243,64 @@ mod palette_bar_tests {
         assert!(
             !row.contains(" 1 "),
             "numbered tab chip ' 1 ' should be hidden at width 90: {row:?}"
+        );
+    }
+
+    /// Regression: the bufferline used to clear `launcher_icon_rects`
+    /// + the cluster chip rects every frame, but no longer paints
+    /// them — the palette bar does. The clears wiped the click
+    /// targets the palette bar just registered, so the chips
+    /// rendered but were unclickable. This test runs the FULL
+    /// `draw` (not just palette_bar) at a width wide enough for
+    /// every chip and asserts the click rects survive afterward.
+    #[test]
+    fn full_draw_keeps_cluster_click_rects_registered() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        let mut cfg = Config::default();
+        // Seed a launcher icon so we can verify launcher_icon_rects
+        // gets populated (and survives the full draw).
+        cfg.ui.launcher_icons.push(crate::config::LauncherIcon {
+            id: "test_launcher".to_string(),
+            glyph: "\u{F0E58}".to_string(),
+            fallback: "C".to_string(),
+            command: ":noop".to_string(),
+            color: "orange".to_string(),
+            tooltip: Some("test launcher".to_string()),
+        });
+        let mut app = App::new(ws, cfg).unwrap();
+        // Force standalone mode: ignore any TMNL_TRANSFER_SOCKET
+        // env var leakage from earlier tests. Without this, the
+        // palette bar's visibility gate (`!is_inside_tmnl()`) can
+        // suppress the entire bar — and with it, the cluster rect
+        // registration we're testing.
+        app.under_tmnl = false;
+        app.inside_tmnl_pty = false;
+        let mut term = Terminal::new(TestBackend::new(200, 30)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+
+        // After a full draw, every cluster chip's rect must still
+        // be registered — confirming the bufferline-clears-after-
+        // palette-paint bug doesn't reappear.
+        assert!(
+            !app.rects.launcher_icon_rects.is_empty(),
+            "launcher_icon_rects empty post-draw: cluster rects must be registered \
+             (under_tmnl={}, inside_pty={}, bufferline_visible={})",
+            app.under_tmnl,
+            app.inside_tmnl_pty,
+            app.bufferline_visible,
+        );
+        assert!(
+            app.rects.bufferline_new_tab_button.is_some(),
+            "new tab button rect missing post-draw"
+        );
+        assert!(
+            app.rects.bufferline_theme_toggle.is_some(),
+            "theme toggle rect missing post-draw"
+        );
+        assert!(
+            app.rects.bufferline_window_close.is_some(),
+            "window close rect missing post-draw"
         );
     }
 
