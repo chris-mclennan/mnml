@@ -937,15 +937,21 @@ fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
     if rect.width == 0 || rect.height == 0 {
         return;
     }
-    // The bright-blue VS Code drag overlay color — equivalent
-    // to its `editorGroup.dropBackground` token. Just a flat
-    // bg; the underlying text still shows through because
-    // ratatui renders fg-over-bg per cell.
-    let style = Style::default().bg(t.blue).fg(t.fg);
+    // VS Code's drop indicator is a TRANSLUCENT GRAY overlay
+    // (its `editorGroup.dropBackground` token is roughly 18%
+    // alpha). A ratatui TUI can't do real alpha, but we can
+    // mimic the effect by mutating ONLY the bg color of cells
+    // under the overlay — the existing cell content + fg color
+    // stay intact, so the user still reads what's underneath,
+    // just with a gray tint. User-feedback 2026-06-22: a solid
+    // blue paint hid the text entirely; gray-bg-only matches
+    // VS Code's behavior.
+    let buf = frame.buffer_mut();
     for y in rect.y..rect.y.saturating_add(rect.height) {
         for x in rect.x..rect.x.saturating_add(rect.width) {
-            let cell_rect = Rect::new(x, y, 1, 1);
-            frame.render_widget(Paragraph::new(" ").style(style), cell_rect);
+            if let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_bg(t.grey);
+            }
         }
     }
 }
