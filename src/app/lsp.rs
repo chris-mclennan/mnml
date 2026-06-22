@@ -608,7 +608,7 @@ impl App {
                 None => {
                     self.panes.push(pane);
                     let id = self.panes.len() - 1;
-                    *self.layout_mut() = Layout::Leaf(id);
+                    *self.layout_mut() = Layout::leaf(id);
                     self.active = Some(id);
                 }
             }

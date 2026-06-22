@@ -763,7 +763,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::leaf(id);
                 self.active = Some(id);
             }
         }
@@ -3683,7 +3683,7 @@ impl App {
                 // tracked in panes[] + active but rendered nothing.
                 // Mirror what every other empty-state landing path
                 // does (e.g. `open_path` at mod.rs:5247).
-                *self.layout_mut() = crate::layout::Layout::Leaf(new_id);
+                *self.layout_mut() = crate::layout::Layout::leaf(new_id);
                 new_id
             }
         };

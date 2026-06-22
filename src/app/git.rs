@@ -1703,7 +1703,7 @@ impl App {
             self.reveal_pane(id);
             // Reveal can leave the leaf as a split member — force a
             // single-leaf layout so the graph fills the editor area.
-            *self.layout_mut() = Layout::Leaf(id);
+            *self.layout_mut() = Layout::leaf(id);
             self.active = Some(id);
             self.focus = Focus::Pane;
             return;
@@ -1713,7 +1713,7 @@ impl App {
         ));
         self.panes.push(pane);
         let id = self.panes.len() - 1;
-        *self.layout_mut() = Layout::Leaf(id);
+        *self.layout_mut() = Layout::leaf(id);
         self.active = Some(id);
         self.focus = Focus::Pane;
     }
@@ -1788,7 +1788,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
+                *self.layout_mut() = Layout::leaf(id);
                 self.active = Some(id);
             }
         }

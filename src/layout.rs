@@ -23,7 +23,15 @@ pub enum SplitDir {
 #[derive(Debug, Clone)]
 pub enum Layout {
     Empty,
-    Leaf(PaneId),
+    /// A single split / leaf in the layout tree. May hold multiple
+    /// tabs (panes); `active` is the currently visible one and is
+    /// always present in `tabs`. `tabs` is non-empty and preserves
+    /// insertion order (newest at end, except when explicitly
+    /// reordered by drag-to-rearrange).
+    Leaf {
+        active: PaneId,
+        tabs: Vec<PaneId>,
+    },
     Split {
         dir: SplitDir,
         /// Percent of the split's long axis given to `first` (clamped 10..=90).
@@ -34,7 +42,16 @@ pub enum Layout {
 }
 
 impl Layout {
-    /// Every pane id referenced by the tree (left-to-right / top-to-bottom).
+    /// Convenience: make a single-tab leaf showing `id`.
+    pub fn leaf(id: PaneId) -> Self {
+        Layout::Leaf {
+            active: id,
+            tabs: vec![id],
+        }
+    }
+
+    /// The active (visible) pane id for every leaf in the tree.
+    /// Tab-stack siblings are NOT included — see `all_panes()`.
     pub fn leaves(&self) -> Vec<PaneId> {
         let mut out = Vec::new();
         self.collect_leaves(&mut out);
@@ -43,11 +60,55 @@ impl Layout {
     fn collect_leaves(&self, out: &mut Vec<PaneId>) {
         match self {
             Layout::Empty => {}
-            Layout::Leaf(id) => out.push(*id),
+            Layout::Leaf { active, .. } => out.push(*active),
             Layout::Split { first, second, .. } => {
                 first.collect_leaves(out);
                 second.collect_leaves(out);
             }
+        }
+    }
+
+    /// Every pane referenced by the tree, including background
+    /// tabs in multi-tab leaves. Used by garbage-collection logic
+    /// that needs to know which `panes[i]` entries are still
+    /// reachable from the layout.
+    pub fn all_panes(&self) -> Vec<PaneId> {
+        let mut out = Vec::new();
+        self.collect_all_panes(&mut out);
+        out
+    }
+    fn collect_all_panes(&self, out: &mut Vec<PaneId>) {
+        match self {
+            Layout::Empty => {}
+            Layout::Leaf { tabs, .. } => out.extend(tabs.iter().copied()),
+            Layout::Split { first, second, .. } => {
+                first.collect_all_panes(out);
+                second.collect_all_panes(out);
+            }
+        }
+    }
+
+    /// Find the leaf containing `pane` (as active OR background
+    /// tab) and return a mutable ref to its (active, tabs) for
+    /// in-place mutation.
+    pub fn leaf_containing_mut(&mut self, pane: PaneId) -> Option<(&mut PaneId, &mut Vec<PaneId>)> {
+        match self {
+            Layout::Leaf { active, tabs } if tabs.contains(&pane) => Some((active, tabs)),
+            Layout::Split { first, second, .. } => first
+                .leaf_containing_mut(pane)
+                .or_else(|| second.leaf_containing_mut(pane)),
+            _ => None,
+        }
+    }
+
+    /// Find the leaf whose `active` pane is `target`.
+    pub fn active_leaf_mut(&mut self, target: PaneId) -> Option<(&mut PaneId, &mut Vec<PaneId>)> {
+        match self {
+            Layout::Leaf { active, tabs } if *active == target => Some((active, tabs)),
+            Layout::Split { first, second, .. } => first
+                .active_leaf_mut(target)
+                .or_else(|| second.active_leaf_mut(target)),
+            _ => None,
         }
     }
 
@@ -65,11 +126,11 @@ impl Layout {
             }
     }
 
-    /// The first (leftmost / topmost) leaf, if any.
+    /// The first (leftmost / topmost) leaf's active pane, if any.
     pub fn first_leaf(&self) -> Option<PaneId> {
         match self {
             Layout::Empty => None,
-            Layout::Leaf(id) => Some(*id),
+            Layout::Leaf { active, .. } => Some(*active),
             Layout::Split { first, second, .. } => {
                 first.first_leaf().or_else(|| second.first_leaf())
             }
@@ -77,13 +138,22 @@ impl Layout {
     }
 
     pub fn contains(&self, p: PaneId) -> bool {
-        self.leaves().contains(&p)
+        self.all_panes().contains(&p)
     }
 
-    /// Re-point a leaf currently showing `from` to show `to` instead.
+    /// Re-point the leaf whose ACTIVE pane is `from` to show `to`
+    /// instead. Also rewrites the entry in `tabs` so the tab list
+    /// stays consistent.
     pub fn set_leaf_pane(&mut self, from: PaneId, to: PaneId) {
         match self {
-            Layout::Leaf(id) if *id == from => *id = to,
+            Layout::Leaf { active, tabs } if *active == from => {
+                if let Some(pos) = tabs.iter().position(|&t| t == from) {
+                    tabs[pos] = to;
+                } else {
+                    tabs.push(to);
+                }
+                *active = to;
+            }
             Layout::Split { first, second, .. } => {
                 first.set_leaf_pane(from, to);
                 second.set_leaf_pane(from, to);
@@ -92,11 +162,12 @@ impl Layout {
         }
     }
 
-    /// Replace the `Leaf(target)` node with `with` (used to split a leaf in place).
-    /// Returns true if the leaf was found.
+    /// Replace the leaf whose ACTIVE pane is `target` with the
+    /// subtree `with`. Used by `splice_pane_at` to swap a leaf
+    /// for a Split in-place.
     pub fn replace_leaf(&mut self, target: PaneId, with: Layout) -> bool {
         match self {
-            Layout::Leaf(id) if *id == target => {
+            Layout::Leaf { active, .. } if *active == target => {
                 *self = with;
                 true
             }
@@ -107,36 +178,44 @@ impl Layout {
         }
     }
 
-    /// Remove the leaf showing `target`: if it's a child of a split, the split
-    /// collapses into its sibling; if it's the root, the tree becomes `Empty`.
-    /// Returns true if the leaf was found.
+    /// Remove `target` from the tree:
+    ///   - If `target` is a BACKGROUND tab in some leaf, just drop
+    ///     it from that leaf's `tabs` (the leaf shape stays).
+    ///   - If `target` IS the active tab AND the leaf has other
+    ///     tabs, pop another tab as active (rightward neighbour
+    ///     preferred, falling back to leftward).
+    ///   - If `target` is the active tab AND the leaf is single-
+    ///     tab, the leaf is dropped: if it's a child of a split
+    ///     the split collapses into its sibling; if it's the root
+    ///     the tree becomes `Empty`.
+    /// Returns true if `target` was found.
     pub fn remove_leaf(&mut self, target: PaneId) -> bool {
         match self {
             Layout::Empty => false,
-            Layout::Leaf(id) => {
-                if *id == target {
-                    *self = Layout::Empty;
-                    true
-                } else {
-                    false
+            Layout::Leaf { active, tabs } => {
+                if !tabs.contains(&target) {
+                    return false;
                 }
+                let is_active = *active == target;
+                if let Some(pos) = tabs.iter().position(|&t| t == target) {
+                    tabs.remove(pos);
+                }
+                if tabs.is_empty() {
+                    *self = Layout::Empty;
+                } else if is_active {
+                    // Pick the new active: same-index (rightward
+                    // neighbour) if available, else the previous tab.
+                    let pos = tabs.iter().position(|&t| t == *active);
+                    if pos.is_none() {
+                        let idx = tabs.len().saturating_sub(1);
+                        *active = tabs[idx];
+                    }
+                }
+                true
             }
             Layout::Split { first, second, .. } => {
-                // Is `target` a direct child leaf? Then collapse to the sibling.
-                if matches!(**first, Layout::Leaf(id) if id == target) {
-                    *self = std::mem::replace(second, Box::new(Layout::Empty))
-                        .as_ref()
-                        .clone();
-                    return true;
-                }
-                if matches!(**second, Layout::Leaf(id) if id == target) {
-                    *self = std::mem::replace(first, Box::new(Layout::Empty))
-                        .as_ref()
-                        .clone();
-                    return true;
-                }
-                // Otherwise recurse; if a child collapsed to Empty (shouldn't happen
-                // for a well-formed tree), collapse this split too.
+                // Try to remove from each child; if a child becomes Empty,
+                // collapse this split into its sibling.
                 let hit = first.remove_leaf(target) || second.remove_leaf(target);
                 if hit {
                     if matches!(**first, Layout::Empty) {
@@ -340,7 +419,7 @@ impl Layout {
                 first.equalize_splits();
                 second.equalize_splits();
             }
-            Layout::Empty | Layout::Leaf(_) => {}
+            Layout::Empty | Layout::Leaf { .. } => {}
         }
     }
 
@@ -371,11 +450,17 @@ impl Layout {
         }
         match self {
             Layout::Empty => {}
-            Layout::Leaf(id) => {
-                if *id == a {
-                    *id = b;
-                } else if *id == b {
-                    *id = a;
+            Layout::Leaf { active, tabs } => {
+                let swap = |x: &mut PaneId| {
+                    if *x == a {
+                        *x = b;
+                    } else if *x == b {
+                        *x = a;
+                    }
+                };
+                swap(active);
+                for t in tabs.iter_mut() {
+                    swap(t);
                 }
             }
             Layout::Split { first, second, .. } => {
@@ -393,11 +478,20 @@ impl Layout {
     pub fn shift_after(&mut self, removed: PaneId) {
         match self {
             Layout::Empty => {}
-            Layout::Leaf(id) => {
-                if *id == removed {
+            Layout::Leaf { active, tabs } => {
+                // Drop any tab pointing AT `removed`; shift higher ids down.
+                tabs.retain(|t| *t != removed);
+                for t in tabs.iter_mut() {
+                    if *t > removed {
+                        *t -= 1;
+                    }
+                }
+                if tabs.is_empty() {
                     *self = Layout::Empty;
-                } else if *id > removed {
-                    *id -= 1;
+                } else if *active == removed {
+                    *active = tabs[0];
+                } else if *active > removed {
+                    *active -= 1;
                 }
             }
             Layout::Split { first, second, .. } => {
@@ -435,7 +529,7 @@ impl Layout {
     ) {
         match self {
             Layout::Empty => {}
-            Layout::Leaf(id) => leaves.push((*id, area)),
+            Layout::Leaf { active, .. } => leaves.push((*active, area)),
             Layout::Split {
                 dir,
                 ratio,
@@ -529,7 +623,7 @@ mod tests {
 
     #[test]
     fn leaf_basics() {
-        let mut l = Layout::Leaf(0);
+        let mut l = Layout::leaf(0);
         assert_eq!(l.leaves(), vec![0]);
         assert_eq!(l.first_leaf(), Some(0));
         assert!(l.contains(0));
@@ -539,15 +633,15 @@ mod tests {
 
     #[test]
     fn split_and_collapse() {
-        let mut l = Layout::Leaf(0);
+        let mut l = Layout::leaf(0);
         // split leaf 0 → Split(Leaf 0, Leaf 1)
         assert!(l.replace_leaf(
             0,
             Layout::Split {
                 dir: SplitDir::Horizontal,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(0)),
-                second: Box::new(Layout::Leaf(1)),
+                first: Box::new(Layout::leaf(0)),
+                second: Box::new(Layout::leaf(1)),
             }
         ));
         assert_eq!(l.leaves(), vec![0, 1]);
@@ -557,8 +651,8 @@ mod tests {
             Layout::Split {
                 dir: SplitDir::Vertical,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(1)),
-                second: Box::new(Layout::Leaf(2)),
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(2)),
             }
         ));
         assert_eq!(l.leaves(), vec![0, 1, 2]);
@@ -568,7 +662,7 @@ mod tests {
         // remove leaf 0 → collapses to just Leaf 2
         assert!(l.remove_leaf(0));
         assert_eq!(l.leaves(), vec![2]);
-        assert!(matches!(l, Layout::Leaf(2)));
+        assert!(matches!(l, Layout::Leaf { active: 2, .. }));
         // remove the last → Empty
         assert!(l.remove_leaf(2));
         assert!(matches!(l, Layout::Empty));
@@ -579,12 +673,12 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
+            first: Box::new(Layout::leaf(0)),
             second: Box::new(Layout::Split {
                 dir: SplitDir::Vertical,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(1)),
-                second: Box::new(Layout::Leaf(3)),
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(3)),
             }),
         };
         l.shift_after(2); // pretend pane 2 was removed from app.panes
@@ -599,13 +693,13 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         l.shift_after(0);
         // Pane 0 removed: first leaf gone, second was Leaf(1) → Leaf(0).
         // Split collapses to that leaf.
-        assert!(matches!(l, Layout::Leaf(0)));
+        assert!(matches!(l, Layout::Leaf { active: 0, .. }));
     }
 
     #[test]
@@ -615,12 +709,12 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
+            first: Box::new(Layout::leaf(0)),
             second: Box::new(Layout::Split {
                 dir: SplitDir::Vertical,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(1)),
-                second: Box::new(Layout::Leaf(2)),
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(2)),
             }),
         };
         l.shift_after(1);
@@ -635,16 +729,16 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         let swapped = l.swap_siblings_containing(0);
         assert!(swapped);
         let Layout::Split { first, second, .. } = &l else {
             panic!()
         };
-        assert!(matches!(**first, Layout::Leaf(1)));
-        assert!(matches!(**second, Layout::Leaf(0)));
+        assert!(matches!(**first, Layout::Leaf { active: 1, .. }));
+        assert!(matches!(**second, Layout::Leaf { active: 0, .. }));
     }
 
     #[test]
@@ -655,12 +749,12 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
+            first: Box::new(Layout::leaf(0)),
             second: Box::new(Layout::Split {
                 dir: SplitDir::Vertical,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(1)),
-                second: Box::new(Layout::Leaf(2)),
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(2)),
             }),
         };
         let swapped = l.swap_siblings_containing(1);
@@ -676,8 +770,8 @@ mod tests {
         else {
             panic!()
         };
-        assert!(matches!(**f, Layout::Leaf(2)));
-        assert!(matches!(**s, Layout::Leaf(1)));
+        assert!(matches!(**f, Layout::Leaf { active: 2, .. }));
+        assert!(matches!(**s, Layout::Leaf { active: 1, .. }));
     }
 
     #[test]
@@ -685,8 +779,8 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         // Active leaf is 0 (in `first`). Grow by 10 ⇒ ratio rises.
         assert!(l.adjust_split_ratio_for(0, SplitDir::Horizontal, 10));
@@ -701,8 +795,8 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         // Active leaf is 1 (in `second`). Grow by 10 ⇒ ratio FALLS (so
         // `first` shrinks, `second` grows).
@@ -720,8 +814,8 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Vertical,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         let res = l.adjust_split_ratio_for(0, SplitDir::Horizontal, 10);
         assert!(!res);
@@ -735,8 +829,8 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Vertical,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         let changed = l.move_active_to(1, SplitDir::Horizontal, false);
         assert!(changed);
@@ -747,8 +841,8 @@ mod tests {
             panic!()
         };
         assert_eq!(*dir, SplitDir::Horizontal);
-        assert!(matches!(**first, Layout::Leaf(1)));
-        assert!(matches!(**second, Layout::Leaf(0)));
+        assert!(matches!(**first, Layout::Leaf { active: 1, .. }));
+        assert!(matches!(**second, Layout::Leaf { active: 0, .. }));
     }
 
     #[test]
@@ -757,8 +851,8 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         let changed = l.move_active_to(1, SplitDir::Horizontal, true);
         assert!(!changed);
@@ -769,12 +863,12 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 75,
-            first: Box::new(Layout::Leaf(0)),
+            first: Box::new(Layout::leaf(0)),
             second: Box::new(Layout::Split {
                 dir: SplitDir::Vertical,
                 ratio: 20,
-                first: Box::new(Layout::Leaf(1)),
-                second: Box::new(Layout::Leaf(2)),
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(2)),
             }),
         };
         l.equalize_splits();
@@ -793,12 +887,12 @@ mod tests {
         let mut l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
+            first: Box::new(Layout::leaf(0)),
             second: Box::new(Layout::Split {
                 dir: SplitDir::Vertical,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(1)),
-                second: Box::new(Layout::Leaf(2)),
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(2)),
             }),
         };
         l.set_ratio_at(&[], 70); // the outer split
@@ -834,8 +928,8 @@ mod tests {
         let l = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         let (leaves, divs) = l.compute_rects(area);
         assert_eq!(leaves.len(), 2);

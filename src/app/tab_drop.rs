@@ -101,7 +101,7 @@ impl App {
             DropZone::Center => {
                 // Target slot now shows `src`; whatever was there becomes a
                 // background tab (still listed in the bufferline).
-                self.layout_mut().replace_leaf(target, Layout::Leaf(src));
+                self.layout_mut().replace_leaf(target, Layout::leaf(src));
             }
             _ => {
                 let (dir, src_first) = match zone {
@@ -112,9 +112,9 @@ impl App {
                     DropZone::Center => unreachable!(),
                 };
                 let (first, second) = if src_first {
-                    (Layout::Leaf(src), Layout::Leaf(target))
+                    (Layout::leaf(src), Layout::leaf(target))
                 } else {
-                    (Layout::Leaf(target), Layout::Leaf(src))
+                    (Layout::leaf(target), Layout::leaf(src))
                 };
                 self.layout_mut().replace_leaf(
                     target,
@@ -215,8 +215,8 @@ mod tests {
         *app.layout_mut() = Layout::Split {
             dir: SplitDir::Horizontal,
             ratio: 50,
-            first: Box::new(Layout::Leaf(0)),
-            second: Box::new(Layout::Leaf(1)),
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
         };
         app.active = Some(0);
         app
@@ -250,8 +250,8 @@ mod tests {
         // Target should now be a Split whose right (second) child is `src`.
         match app.layout() {
             Layout::Split { first, second, .. } => {
-                assert!(matches!(**first, Layout::Leaf(id) if id == target));
-                assert!(matches!(**second, Layout::Leaf(id) if id == src));
+                assert!(matches!(**first, Layout::Leaf { active: id, .. } if id == target));
+                assert!(matches!(**second, Layout::Leaf { active: id, .. } if id == src));
             }
             other => panic!("expected a split, got {other:?}"),
         }
@@ -270,7 +270,7 @@ mod tests {
         // remove_leaf(1) collapses the split to Leaf(0), then replace_leaf(0,
         // Leaf(1)) → the visible tree is just Leaf(1) (src moved in; old pane 0
         // survives as a background tab).
-        assert!(matches!(app.layout(), Layout::Leaf(id) if *id == src));
+        assert!(matches!(app.layout(), Layout::Leaf { active: id, .. } if *id == src));
         assert_eq!(app.active, Some(src));
     }
 
@@ -278,12 +278,12 @@ mod tests {
     fn drop_on_own_pane_is_a_noop() {
         let mut app = app_two_panes();
         // Collapse to a single visible leaf (0) for the no-op check.
-        *app.layout_mut() = Layout::Leaf(0);
+        *app.layout_mut() = Layout::leaf(0);
         app.active = Some(0);
         let only = 0;
         let body = Rect::new(0, 1, 40, 20);
         app.rects.pane_bodies = vec![(body, only)];
         app.drop_tab_on_pane(only, body.x + body.width - 1, body.y + 1);
-        assert!(matches!(app.layout(), Layout::Leaf(id) if *id == only));
+        assert!(matches!(app.layout(), Layout::Leaf { active: id, .. } if *id == only));
     }
 }

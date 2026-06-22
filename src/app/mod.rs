@@ -1268,6 +1268,18 @@ struct SavedBuffer {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum SavedLayout {
     Empty,
+    /// 2026-06-22 — multi-tab leaf. `tabs` is the list of saved-
+    /// pane indices, `active` is the index INTO `tabs` that's
+    /// currently visible. Pre-2026-06-22 sessions used the
+    /// `Leaf(usize)` tuple variant; deserialize keeps the
+    /// `#[serde(other)]` Leaf for back-compat below.
+    LeafTabs {
+        active: usize,
+        tabs: Vec<usize>,
+    },
+    /// Legacy single-pane leaf variant, kept for back-compat with
+    /// session.json files written before 2026-06-22. New code
+    /// always writes LeafTabs.
     Leaf(usize),
     Split {
         dir: SavedSplitDir,
@@ -5526,7 +5538,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
+                *self.layout_mut() = Layout::leaf(id);
                 self.active = Some(id);
             }
         }
@@ -5658,7 +5670,7 @@ impl App {
             } else {
                 self.panes.push(preview);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
+                *self.layout_mut() = Layout::leaf(id);
                 id
             };
             // Passive auto-open: leave focus where it was.
@@ -5752,7 +5764,7 @@ impl App {
                     None => {
                         self.panes.push(pane);
                         let id = self.panes.len() - 1;
-                        *self.layout_mut() = Layout::Leaf(id);
+                        *self.layout_mut() = Layout::leaf(id);
                         self.active = Some(id);
                     }
                 }
@@ -8536,7 +8548,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
+                *self.layout_mut() = Layout::leaf(id);
                 self.active = Some(id);
             }
         }
@@ -8615,7 +8627,7 @@ impl App {
                 None => {
                     self.panes.push(pane);
                     let id = self.panes.len() - 1;
-                    *self.layout_mut() = crate::layout::Layout::Leaf(id);
+                    *self.layout_mut() = crate::layout::Layout::leaf(id);
                     self.active = Some(id);
                 }
             }
@@ -9109,7 +9121,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
+                *self.layout_mut() = Layout::leaf(id);
                 self.active = Some(id);
             }
         }
@@ -9309,7 +9321,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::leaf(id);
                 self.active = Some(id);
             }
         }
@@ -9358,7 +9370,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = crate::layout::Layout::Leaf(id);
+                *self.layout_mut() = crate::layout::Layout::leaf(id);
                 self.active = Some(id);
             }
         }
@@ -10124,11 +10136,27 @@ impl App {
 fn saved_layout_from(layout: &Layout, pane_to_idx: &[Option<usize>]) -> Option<SavedLayout> {
     match layout {
         Layout::Empty => Some(SavedLayout::Empty),
-        Layout::Leaf(id) => pane_to_idx
-            .get(*id)
-            .copied()
-            .flatten()
-            .map(SavedLayout::Leaf),
+        Layout::Leaf { active, tabs } => {
+            // Map every tab through pane_to_idx; drop tabs that
+            // map to None (non-editor panes we don't save).
+            let saved_tabs: Vec<usize> = tabs
+                .iter()
+                .filter_map(|&pid| pane_to_idx.get(pid).copied().flatten())
+                .collect();
+            if saved_tabs.is_empty() {
+                return None;
+            }
+            let active_pos = tabs
+                .iter()
+                .position(|t| t == active)
+                .and_then(|p| pane_to_idx.get(tabs[p])?.map(|_| p))
+                .unwrap_or(0)
+                .min(saved_tabs.len() - 1);
+            Some(SavedLayout::LeafTabs {
+                active: active_pos,
+                tabs: saved_tabs,
+            })
+        }
         Layout::Split {
             dir,
             ratio,
@@ -10153,7 +10181,21 @@ fn saved_layout_from(layout: &Layout, pane_to_idx: &[Option<usize>]) -> Option<S
 fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Option<Layout> {
     match saved {
         SavedLayout::Empty => Some(Layout::Empty),
-        SavedLayout::Leaf(i) => idx_to_pane.get(*i).copied().flatten().map(Layout::Leaf),
+        SavedLayout::Leaf(i) => idx_to_pane.get(*i).copied().flatten().map(Layout::leaf),
+        SavedLayout::LeafTabs { active, tabs } => {
+            let resolved: Vec<PaneId> = tabs
+                .iter()
+                .filter_map(|&i| idx_to_pane.get(i).copied().flatten())
+                .collect();
+            if resolved.is_empty() {
+                return None;
+            }
+            let active_idx = (*active).min(resolved.len() - 1);
+            Some(Layout::Leaf {
+                active: resolved[active_idx],
+                tabs: resolved,
+            })
+        }
         SavedLayout::Split {
             dir,
             ratio,

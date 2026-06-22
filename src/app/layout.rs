@@ -176,7 +176,7 @@ impl App {
             self.layout_mut().set_leaf_pane(cur, id);
             self.active = Some(id);
         } else {
-            *self.layout_mut() = Layout::Leaf(id);
+            *self.layout_mut() = Layout::leaf(id);
             self.active = Some(id);
         }
         if prior != self.active {
@@ -558,8 +558,8 @@ impl App {
             Layout::Split {
                 dir,
                 ratio: 50,
-                first: Box::new(Layout::Leaf(leaf)),
-                second: Box::new(Layout::Leaf(new_id)),
+                first: Box::new(Layout::leaf(leaf)),
+                second: Box::new(Layout::leaf(new_id)),
             },
         );
         new_id
@@ -1134,7 +1134,7 @@ impl App {
         }
         // Insert a fresh tab after the active with the moved leaf.
         let insert_at = self.active_layout + 1;
-        self.layouts.insert(insert_at, Layout::Leaf(id));
+        self.layouts.insert(insert_at, Layout::leaf(id));
         self.tab_actives.insert(insert_at, Some(id));
         self.active_layout = insert_at;
         self.active = Some(id);
@@ -1707,8 +1707,8 @@ mod layout_tests {
                     .iter()
                     .position(|p| matches!(p, Pane::Editor(b) if b.is_at(&b_path)))
                     .expect("b.txt should be re-opened");
-                assert!(matches!(**first, Layout::Leaf(id) if id == a));
-                assert!(matches!(**second, Layout::Leaf(id) if id == b));
+                assert!(matches!(**first, Layout::Leaf { active: id, .. } if id == a));
+                assert!(matches!(**second, Layout::Leaf { active: id, .. } if id == b));
             }
             other => panic!("expected a Split, got {other:?}"),
         }
@@ -1772,14 +1772,14 @@ mod layout_tests {
         app.move_to_new_tab();
         assert_eq!(app.layouts.len(), 2);
         assert_eq!(app.active_layout, 1);
-        assert!(matches!(app.layout(), Layout::Leaf(id) if *id == b_id));
+        assert!(matches!(app.layout(), Layout::Leaf { active: id, .. } if *id == b_id));
         // Tab 1 collapsed to a single leaf (a.txt).
         let a_id = app
             .panes
             .iter()
             .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
             .unwrap();
-        assert!(matches!(&app.layouts[0], Layout::Leaf(id) if *id == a_id));
+        assert!(matches!(&app.layouts[0], Layout::Leaf { active: id, .. } if *id == a_id));
     }
 
     #[test]

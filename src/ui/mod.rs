@@ -687,8 +687,9 @@ fn render_layout(
 ) -> Option<(u16, u16)> {
     match layout {
         Layout::Empty => None,
-        Layout::Leaf(id) => {
+        Layout::Leaf { active: id, tabs } => {
             let focused = app.active == Some(*id);
+            let tabs_owned = tabs.clone();
             // 2026-06-21 — VS Code-style per-split tab strip. When
             // this leaf is INSIDE a split (path non-empty) AND the
             // pane isn't a Pty (which has its own tab strip in

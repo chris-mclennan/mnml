@@ -162,7 +162,7 @@ impl App {
             None => {
                 self.panes.push(pane);
                 let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::Leaf(id);
+                *self.layout_mut() = Layout::leaf(id);
                 self.active = Some(id);
             }
         }
@@ -421,7 +421,7 @@ mod grep_tests {
         ));
         app.panes.push(pane);
         let id = app.panes.len() - 1;
-        *app.layout_mut() = Layout::Leaf(id);
+        *app.layout_mut() = Layout::leaf(id);
         app.active = Some(id);
         app.focus = Focus::Pane;
 
@@ -466,7 +466,7 @@ mod grep_tests {
         app.panes.push(pane);
         let grep_id = app.panes.len() - 1;
         // Make the grep pane the active one (so run_grep_replace targets it).
-        *app.layout_mut() = Layout::Leaf(grep_id);
+        *app.layout_mut() = Layout::leaf(grep_id);
         app.active = Some(grep_id);
 
         app.run_grep_replace("BAR".into());
@@ -527,7 +527,7 @@ mod grep_tests {
         ));
         app.panes.push(pane);
         let grep_id = app.panes.len() - 1;
-        *app.layout_mut() = Layout::Leaf(grep_id);
+        *app.layout_mut() = Layout::leaf(grep_id);
         app.active = Some(grep_id);
 
         app.run_grep_replace("BAR".into());
