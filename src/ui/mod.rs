@@ -2114,23 +2114,27 @@ fn paint_leaf_tab_strip(
         };
         let icon_color = if pinned { t.yellow } else { icon_color };
 
-        // chip = " <icon> <name> <•> <×> "  (active gets ×, inactive gets dirty • only)
+        // chip = " <icon> <name> <•/×> "
         let name_clipped = clip_to_cells(&title, chip_max_name_w);
         let icon_w = icon_text.chars().count() as u16;
         let name_w = name_clipped.chars().count() as u16;
-        // Layout: leading-pad(1) + icon + gap(1) + name + gap(1) + status(1) + trailing-pad(1)
-        // status char: × on active, • if dirty (and not active), space otherwise
-        let status_char = if is_active {
-            "×"
-        } else if dirty {
+        // status char priority: dirty wins over active (VS Code /
+        // Sublime convention — the close button becomes the
+        // dirty-indicator dot until the buffer is saved).
+        //   dirty       → •  (any tab, orange)
+        //   active+clean → ×  (red close)
+        //   inactive+clean → space
+        let status_char = if dirty {
             "•"
+        } else if is_active {
+            "×"
         } else {
             " "
         };
-        let status_color = if is_active {
-            t.red
-        } else if dirty {
+        let status_color = if dirty {
             t.orange
+        } else if is_active {
+            t.red
         } else {
             chip_fg
         };
