@@ -665,16 +665,24 @@ impl LspManager {
                 }
                 Err(e) => {
                     self.dead.insert(sc.name.clone());
-                    // 2026-06-21 multilang SEV-3: was including the
-                    // full os-error chain ("(spawn ...: No such
-                    // file or directory (os error 2))") which
-                    // displaced the status bar. Now: short
-                    // message + install hint when we recognize
-                    // a "not found" error.
+                    // 2026-06-21 multilang feature: when the LSP
+                    // binary isn't on PATH, include the exact
+                    // install command for the recognized servers.
+                    // Recognized via the cmd's basename. Falls
+                    // back to a generic "install it on PATH" when
+                    // we don't have a hint for the binary.
                     let short = if e.to_lowercase().contains("not found")
                         || e.to_lowercase().contains("no such file")
                     {
-                        format!("LSP: {} not installed — install it on PATH", sc.cmd)
+                        match install_hint_for(&sc.cmd) {
+                            Some(install) => {
+                                format!("LSP: {} not installed — `{install}`", sc.cmd)
+                            }
+                            None => format!(
+                                "LSP: {} not installed — install it on PATH",
+                                sc.cmd
+                            ),
+                        }
                     } else {
                         format!("LSP: {} unavailable", sc.cmd)
                     };
@@ -1205,6 +1213,44 @@ pub(crate) fn byte_at(text: &str, line: u32, character: u32) -> Option<usize> {
     match line_text.char_indices().nth(character as usize) {
         Some((off, _)) => Some(start + off),
         None => Some(start + line_text.len()),
+    }
+}
+
+/// 2026-06-21 — return an install-command hint for a recognized
+/// LSP binary, or None when we don't know it. Matched on basename
+/// so it works whether the user configured `rust-analyzer` or an
+/// absolute path. The `attach()` toast interpolates this into the
+/// "not installed" message so a new user gets a concrete next step
+/// instead of a generic "install it on PATH."
+fn install_hint_for(cmd: &str) -> Option<&'static str> {
+    let base = std::path::Path::new(cmd)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(cmd);
+    match base {
+        "rust-analyzer" => Some("rustup component add rust-analyzer"),
+        "typescript-language-server" => {
+            Some("npm i -g typescript typescript-language-server")
+        }
+        "tsserver" => Some("npm i -g typescript"),
+        "pylsp" => Some("pip install python-lsp-server"),
+        "pyright" | "pyright-langserver" => Some("npm i -g pyright"),
+        "gopls" => Some("go install golang.org/x/tools/gopls@latest"),
+        "clangd" => Some("brew install llvm  /  apt install clangd"),
+        "lua-language-server" => Some("brew install lua-language-server"),
+        "ruby-lsp" => Some("gem install ruby-lsp"),
+        "solargraph" => Some("gem install solargraph"),
+        "bash-language-server" => Some("npm i -g bash-language-server"),
+        "vscode-html-language-server"
+        | "vscode-css-language-server"
+        | "vscode-json-language-server"
+        | "vscode-eslint-language-server" => Some("npm i -g vscode-langservers-extracted"),
+        "yaml-language-server" => Some("npm i -g yaml-language-server"),
+        "vue-language-server" => Some("npm i -g @vue/language-server"),
+        "tailwindcss-language-server" => Some("npm i -g @tailwindcss/language-server"),
+        "marksman" => Some("brew install marksman"),
+        "taplo" => Some("cargo install taplo-cli --features lsp"),
+        _ => None,
     }
 }
 

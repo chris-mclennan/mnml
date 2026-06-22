@@ -209,6 +209,10 @@ pub enum PickerKind {
     /// `id` = absolute path to a worktree to remove. Accept ⇒
     /// `git worktree remove <path>` (confirm prompt first).
     GitWorktreeRemove,
+    /// 2026-06-21 — `id` = the directory name under `cmd/`.
+    /// Accept ⇒ `go run ./cmd/<id>`. Opened by `:go.run` when
+    /// the module has 2+ `cmd/<app>/` packages.
+    GoRunCmd,
 }
 
 #[derive(Debug, Clone)]

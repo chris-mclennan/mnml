@@ -289,6 +289,17 @@ pub(crate) fn click_to_file_pos(
 /// Used by the hover-tooltip system; right-click + left-click handlers do their
 /// own per-chip rect checks since they need to act, not just identify.
 pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
+    // 2026-06-21 — Claude Agents dashboard topbar chips: each
+    // chip rect is registered with its TopbarChipKind so the
+    // tooltip can explain what it cycles + the keyboard chord.
+    if let Some(&(_, _, kind)) = app
+        .rects
+        .claude_agents_topbar_chips
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::ClaudeAgentsTopbarChip(kind));
+    }
     if let Some(r) = app.rects.statusline_mode_chip
         && contains(r, x, y)
     {

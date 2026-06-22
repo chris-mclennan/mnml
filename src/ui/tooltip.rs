@@ -399,5 +399,31 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let rect = app.rects.code_lens_chips.first().map(|(r, _, _)| *r)?;
             Some((rect, "click: run code lens".into(), None))
         }
+        HoverChip::ClaudeAgentsTopbarChip(kind) => {
+            let rect = app
+                .rects
+                .claude_agents_topbar_chips
+                .iter()
+                .find(|(_, _, k)| *k == kind)
+                .map(|(r, _, _)| *r)?;
+            let label = match kind {
+                crate::ui::TopbarChipKind::View => {
+                    "click: cycle drill view (Summary → Todos → Files → Bash → Subagents) · key: v"
+                }
+                crate::ui::TopbarChipKind::Sort => {
+                    "click: cycle sort key (state → tokens↓ → cost↓ → recent → …) · key: s"
+                }
+                crate::ui::TopbarChipKind::Group => {
+                    "click: cycle grouping (by source ↔ by workspace) · key: Ctrl+G"
+                }
+                crate::ui::TopbarChipKind::Source => {
+                    "click: cycle source filter (all → ✦ claude → ◈ codex → all) · key: >"
+                }
+                crate::ui::TopbarChipKind::Workspace => {
+                    "click: toggle workspace-only filter · key: W"
+                }
+            };
+            Some((rect, label.into(), None))
+        }
     }
 }

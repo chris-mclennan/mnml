@@ -240,6 +240,11 @@ pub enum HoverChip {
     /// `&'static str` is the command id (e.g. `"file.new_folder"`)
     /// stored alongside the rect in `app.rects.tree_icon_buttons`.
     TreeIcon(&'static str),
+    /// 2026-06-21 — Claude Agents dashboard topbar chip. Carries
+    /// the chip kind so the tooltip text can describe what each
+    /// click cycles. Rect is stored in
+    /// `app.rects.claude_agents_topbar_chips`.
+    ClaudeAgentsTopbarChip(crate::ui::TopbarChipKind),
     /// The primary workspace header (`> WORKSPACE-NAME`) — tooltip
     /// reveals the absolute path so the user can confirm which
     /// directory mnml actually opened in.

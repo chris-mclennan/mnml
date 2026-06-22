@@ -231,12 +231,63 @@ impl App {
     }
 
     /// `go <subcmd>` (test ./... / build / run / vet). Requires
-    /// a go.mod at the workspace root.
+    /// a go.mod somewhere in the ancestor chain.
+    ///
+    /// 2026-06-21 — `go run` auto-detects `cmd/<app>/` packages
+    /// at the module root. Most non-trivial Go projects put main
+    /// in `cmd/<app>/main.go` rather than the module root, so
+    /// `go run .` is wrong there. Behavior:
+    ///   - 0 `cmd/<app>/` dirs → run `go <subcmd>` literally
+    ///     (default behavior, covers `go test ./...` etc.).
+    ///   - 1 `cmd/<app>/` dir AND subcmd is `run .` → run
+    ///     `go run ./cmd/<app>` (auto-pick the only binary).
+    ///   - 2+ `cmd/<app>/` dirs AND subcmd is `run .` → open a
+    ///     picker over them. Accept fires `go run ./cmd/<pick>`.
     pub fn run_go_subcommand(&mut self, subcmd: &str) {
+        if subcmd == "run ." {
+            let root = crate::app::playwright::find_manifest_dir(
+                &self.workspace,
+                &["go.mod"],
+            );
+            if let Some(root) = root {
+                let cmd_dir = root.join("cmd");
+                let entries: Vec<std::path::PathBuf> = std::fs::read_dir(&cmd_dir)
+                    .ok()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| e.path())
+                    .collect();
+                match entries.len() {
+                    0 => {} // fall through to default `go run .`
+                    1 => {
+                        let app = entries[0].file_name().unwrap().to_string_lossy().to_string();
+                        return self.run_manifest_command("go.mod", "go", &format!("run ./cmd/{app}"));
+                    }
+                    _ => {
+                        use crate::picker::{Picker, PickerItem, PickerKind};
+                        let items: Vec<PickerItem> = entries
+                            .iter()
+                            .map(|p| {
+                                let name = p.file_name().unwrap().to_string_lossy().to_string();
+                                PickerItem::new(name.clone(), format!("cmd/{name}"), name)
+                            })
+                            .collect();
+                        self.open_picker(Picker::new(
+                            PickerKind::GoRunCmd,
+                            "go run: pick a cmd/<app>",
+                            items,
+                        ));
+                        return;
+                    }
+                }
+            }
+        }
         self.run_manifest_command("go.mod", "go", subcmd);
     }
 
-    fn run_manifest_command(&mut self, manifest: &str, bin: &str, subcmd: &str) {
+    pub(crate) fn run_manifest_command(&mut self, manifest: &str, bin: &str, subcmd: &str) {
         // 2026-06-21 multilang+lsp-cheat-test SEV-2: was checking
         // only `self.workspace.join(manifest)`, so subdir of a
         // monorepo (e.g. `/repo/cmd/server` with go.mod at /repo/)
@@ -513,7 +564,7 @@ impl App {
 /// of `manifests`. Returns the matching directory or `None`. Used
 /// by the npm/pytest/cargo/go runners to handle monorepo subdirs
 /// the way the tools themselves do (2026-06-21 SEV-2 fix).
-fn find_manifest_dir(start: &std::path::Path, manifests: &[&str]) -> Option<std::path::PathBuf> {
+pub fn find_manifest_dir(start: &std::path::Path, manifests: &[&str]) -> Option<std::path::PathBuf> {
     let mut cur = start.to_path_buf();
     loop {
         for m in manifests {

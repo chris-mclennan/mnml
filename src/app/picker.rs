@@ -732,6 +732,10 @@ impl App {
                     format!("type 'remove' to drop worktree {}", path.display()),
                 ));
             }
+            PickerKind::GoRunCmd => {
+                let app = item.id.clone();
+                self.run_manifest_command("go.mod", "go", &format!("run ./cmd/{app}"));
+            }
             PickerKind::CookiesDelete => {
                 if let Some((host, name)) = item.id.split_once('\t') {
                     let removed = {
