@@ -525,6 +525,36 @@ pub fn paint_right_cluster(
     let mut spans: Vec<Span> = Vec::new();
     let mut cluster_x = area.x;
 
+    // 2026-06-22 — VS Code-style split-editor buttons. Same
+    // pair as the per-leaf tab strip but rendered on the
+    // bufferline so single-leaf (no-split) layouts also have
+    // a mouse-discoverable split path. Click → split the
+    // current active leaf.
+    if let Some(active) = app.active {
+        let btn_v_glyph = if nerd { "\u{eb56}" } else { "|+" };
+        let btn_h_glyph = if nerd { "\u{eb55}" } else { "_+" };
+        for (glyph, dir) in [
+            (btn_v_glyph, crate::layout::SplitDir::Horizontal),
+            (btn_h_glyph, crate::layout::SplitDir::Vertical),
+        ] {
+            spans.push(Span::styled(
+                format!(" {glyph} "),
+                Style::default().fg(t.comment).bg(t.bg2),
+            ));
+            app.rects.split_strip_buttons.push((
+                Rect {
+                    x: cluster_x,
+                    y: area.y,
+                    width: 3,
+                    height: 1,
+                },
+                active,
+                dir,
+            ));
+            cluster_x += 3;
+        }
+    }
+
     // Launcher icons.
     for (i, icon) in app.config.ui.launcher_icons.iter().enumerate() {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
