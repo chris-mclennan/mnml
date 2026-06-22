@@ -2055,6 +2055,10 @@ pub struct PaneRects {
     /// corresponding state (sort / group / source / ws / view).
     pub claude_agents_topbar_chips:
         Vec<(Rect, usize, crate::ui::TopbarChipKind)>,
+    /// 2026-06-21 — column headers in the Spend Report pane.
+    /// `(rect, pane_id, sort_key)`. Click cycles asc/desc on that
+    /// column (or sets it as the sort key if it wasn't).
+    pub spend_headers: Vec<(Rect, usize, crate::pane::SpendSortKey)>,
     /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
     pub picker_box: Option<Rect>,
     pub picker_items: Vec<(Rect, usize)>,
@@ -7725,6 +7729,7 @@ impl App {
             Pane::Image(p) => Some((p.tab_title(), false)),
             Pane::ClaudeAgents(p) => Some((p.tab_title(), false)),
             Pane::Websocket(p) => Some((p.tab_title(), false)),
+            Pane::SpendReport(_) => Some(("AI spend (24h)".to_string(), false)),
         }
     }
 
@@ -8556,32 +8561,58 @@ impl App {
         self.toast("filters cleared");
     }
 
-    /// `:ai.spend_today` — open a `[ai-spend-today]` scratch with
-    /// total token + cost spend across every Claude + Codex session
-    /// touched in the last 24 hours, broken down by workspace.
+    /// `:ai.spend_today` — open the SpendReport pane: sortable
+    /// per-workspace breakdown of token + cost spend across every
+    /// Claude + Codex session touched in the last 24 hours.
+    ///
+    /// 2026-06-21 — was a Markdown scratch (table) that the
+    /// editor rendered with full syntax-highlighting + cursor /
+    /// find etc., none of which makes sense for a read-only
+    /// financial report. Now a dedicated pane with clickable
+    /// column headers, sort cycling (`s` chord), and the
+    /// renderer is workspace / total counts in its title bar.
     pub fn ai_spend_today(&mut self) {
-        let s = crate::claude_agents::spend_today();
-        let mut body = String::new();
-        body.push_str("# AI spend (last 24h)\n\n");
-        body.push_str(&format!(
-            "- claude sessions: **{}**\n- codex sessions: **{}**\n- total tokens: **{}**\n- total cost: **${:.4}**\n\n",
-            s.claude_sessions, s.codex_sessions, s.total_tokens, s.total_cost_usd
-        ));
-        body.push_str("## Per workspace\n\n");
-        if s.per_workspace.is_empty() {
-            body.push_str("_(no sessions in window)_\n");
-        } else {
-            body.push_str("| workspace | tokens | cost |\n|---|---|---|\n");
-            for (ws, tok, cost) in &s.per_workspace {
-                body.push_str(&format!("| {ws} | {tok} | ${cost:.4} |\n"));
+        // Re-use an existing SpendReport pane if one is open, else
+        // open fresh. Avoids accumulating 5 spend panes after a
+        // few uses.
+        if let Some(pid) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::SpendReport(_)))
+        {
+            if let Some(Pane::SpendReport(sr)) = self.panes.get_mut(pid) {
+                sr.refresh();
             }
+            self.active = Some(pid);
+            self.focus_pane();
+        } else {
+            let pane = Pane::SpendReport(crate::pane::SpendReportPane::fresh());
+            match self.active {
+                Some(cur) => {
+                    let new_id = self
+                        .split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                    self.active = Some(new_id);
+                }
+                None => {
+                    self.panes.push(pane);
+                    let id = self.panes.len() - 1;
+                    *self.layout_mut() = crate::layout::Layout::Leaf(id);
+                    self.active = Some(id);
+                }
+            }
+            self.focus_pane();
         }
-        self.open_scratch_with_text("[ai-spend-today]".to_string(), body);
-        self.toast(format!(
-            "today: {} sessions · ${:.4}",
-            s.claude_sessions + s.codex_sessions,
-            s.total_cost_usd
-        ));
+        // Toast the totals so the user gets the punchline even if
+        // they pop the pane closed quickly.
+        if let Some(pid) = self.active
+            && let Some(Pane::SpendReport(p)) = self.panes.get(pid)
+        {
+            self.toast(format!(
+                "today: {} sessions · ${:.4}",
+                p.snapshot.claude_sessions + p.snapshot.codex_sessions,
+                p.snapshot.total_cost_usd
+            ));
+        }
     }
 
     /// `:ai.session_search` — open a prompt for a search term.
@@ -8682,6 +8713,34 @@ impl App {
                 p.live_tail_selected();
             }
         }
+    }
+
+    /// 2026-06-21 — right-click on a Files drill-down row in the
+    /// dashboard. Surfaces 4 actions for the clicked file:
+    /// Open (single-pane), Reveal in tree, Yank workspace-relative
+    /// path, Copy file contents to a scratch buffer.
+    pub fn open_dashboard_file_context_menu(
+        &mut self,
+        path: String,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let pb = std::path::PathBuf::from(&path);
+        let rel = crate::app::rel_path(&self.workspace, &pb);
+        let title = pb
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let items = vec![
+            MenuItem::new("Open", MenuAction::OpenPath(pb.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(pb.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new(
+                "Open externally",
+                MenuAction::OpenExternally(pb),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
     /// 2026-06-21 vscode-mouse SEV-2: right-click on a dashboard

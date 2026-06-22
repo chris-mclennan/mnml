@@ -273,6 +273,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, theme::cur().purple),
             // nf-md-lan — websocket connection.
             Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
+            // nf-md-currency-usd — AI spend report.
+            Pane::SpendReport(_) => {
+                (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange)
+            }
         };
         // Dirty: filled circle. Clean: `nf-md-close` (\u{F0156}) — same
         // Material-Design glyph NvChad uses for buffer close, renders

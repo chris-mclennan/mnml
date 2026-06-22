@@ -115,6 +115,86 @@ pub enum Pane {
     /// `:ws.connect`. Distinct from the scratch-buffer approach
     /// (v1) which only supported a single connection at a time.
     Websocket(crate::websocket::WebsocketPane),
+    /// 2026-06-21 — `:ai.spend_today` now opens a real pane (was
+    /// a Markdown scratch). Sortable per-workspace breakdown of
+    /// tokens + cost in the last 24h. Click column headers (or
+    /// press `s`) to cycle the sort key.
+    SpendReport(SpendReportPane),
+}
+
+/// State for [`Pane::SpendReport`]. Re-snapshots
+/// `claude_agents::spend_today()` every refresh; sort/scroll are
+/// pane-local. Click on a header rect toggles asc/desc on that
+/// column (mouse parity with `s` chord).
+#[derive(Debug, Clone)]
+pub struct SpendReportPane {
+    pub snapshot: crate::claude_agents::SpendToday,
+    pub built_at: std::time::SystemTime,
+    pub selected: usize,
+    pub scroll: usize,
+    pub sort_by: SpendSortKey,
+    pub sort_desc: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendSortKey {
+    Workspace,
+    Tokens,
+    Cost,
+}
+
+impl SpendSortKey {
+    pub fn label(self) -> &'static str {
+        match self {
+            SpendSortKey::Workspace => "workspace",
+            SpendSortKey::Tokens => "tokens",
+            SpendSortKey::Cost => "cost",
+        }
+    }
+    pub fn cycle(self) -> Self {
+        match self {
+            SpendSortKey::Workspace => SpendSortKey::Tokens,
+            SpendSortKey::Tokens => SpendSortKey::Cost,
+            SpendSortKey::Cost => SpendSortKey::Workspace,
+        }
+    }
+}
+
+impl SpendReportPane {
+    pub fn fresh() -> Self {
+        Self {
+            snapshot: crate::claude_agents::spend_today(),
+            built_at: std::time::SystemTime::now(),
+            selected: 0,
+            scroll: 0,
+            // Default: largest spend first (cost desc).
+            sort_by: SpendSortKey::Cost,
+            sort_desc: true,
+        }
+    }
+    pub fn refresh(&mut self) {
+        self.snapshot = crate::claude_agents::spend_today();
+        self.built_at = std::time::SystemTime::now();
+        if self.selected >= self.snapshot.per_workspace.len() {
+            self.selected = self.snapshot.per_workspace.len().saturating_sub(1);
+        }
+    }
+    /// Return the rows sorted by current sort_by/sort_desc. Stable.
+    pub fn sorted_rows(&self) -> Vec<(String, u64, f64)> {
+        let mut v = self.snapshot.per_workspace.clone();
+        match self.sort_by {
+            SpendSortKey::Workspace => v.sort_by(|a, b| a.0.cmp(&b.0)),
+            SpendSortKey::Tokens => v.sort_by(|a, b| a.1.cmp(&b.1)),
+            SpendSortKey::Cost => v.sort_by(|a, b| {
+                a.2.partial_cmp(&b.2)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }),
+        }
+        if self.sort_desc {
+            v.reverse();
+        }
+        v
+    }
 }
 
 /// State for [`Pane::DapRepl`]. `input` is the single-line entry;
@@ -441,6 +521,7 @@ impl Pane {
             Pane::Image(p) => p.tab_title(),
             Pane::ClaudeAgents(p) => p.tab_title(),
             Pane::Websocket(p) => p.tab_title(),
+            Pane::SpendReport(_) => "AI spend (24h)".to_string(),
         }
     }
 
@@ -469,7 +550,8 @@ impl Pane {
             | Pane::Image(_)
             | Pane::BlitHost(_)
             | Pane::ClaudeAgents(_)
-            | Pane::Websocket(_) => false,
+            | Pane::Websocket(_)
+            | Pane::SpendReport(_) => false,
         }
     }
 

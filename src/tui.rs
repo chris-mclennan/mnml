@@ -1852,6 +1852,37 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // SpendReport pane: j/k navigate, s cycles sort, r refresh, Esc/q closes.
+    if matches!(app.panes.get(i), Some(Pane::SpendReport(_))) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.focus_tree(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::SpendReport(p)) = app.panes.get_mut(i) {
+                    p.selected = p.selected.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::SpendReport(p)) = app.panes.get_mut(i) {
+                    let n = p.snapshot.per_workspace.len();
+                    if n > 0 {
+                        p.selected = (p.selected + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Char('s') => {
+                if let Some(Pane::SpendReport(p)) = app.panes.get_mut(i) {
+                    p.sort_by = p.sort_by.cycle();
+                }
+            }
+            KeyCode::Char('r') => {
+                if let Some(Pane::SpendReport(p)) = app.panes.get_mut(i) {
+                    p.refresh();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
     // Websocket pane — Enter sends, Esc focuses tree (consistent
     // with every other pane), printable chars edit the input,
     // PgUp/PgDn scroll the log. Explicit close paths:
@@ -3350,6 +3381,29 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
+    // 2026-06-21 — Spend Report column header click: cycle
+    // asc/desc on that column (or set it as the sort key).
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        if let Some(&(_, pid, key)) = app
+            .rects
+            .spend_headers
+            .iter()
+            .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.active = Some(pid);
+            app.focus_pane();
+            if let Some(Pane::SpendReport(p)) = app.panes.get_mut(pid) {
+                if p.sort_by == key {
+                    p.sort_desc = !p.sort_desc;
+                } else {
+                    p.sort_by = key;
+                    p.sort_desc = true;
+                }
+            }
+            return;
+        }
+    }
+
     // 2026-06-21 vscode-mouse SEV-2: Claude Agents topbar chip
     // clicks cycle the corresponding pane state. Was: chips
     // looked like buttons but weren't registered.
@@ -4008,6 +4062,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 })
             {
                 app.open_dashboard_row_context_menu(pid, row_idx, (x, y));
+                return;
+            }
+            // 2026-06-21 — right-click on a Files drill-down panel
+            // row in the dashboard → 4-item context menu
+            // (Open / Reveal in tree / Yank path / Copy to scratch).
+            if let Some(path) = app
+                .rects
+                .claude_drill_files
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, p)| p.clone())
+            {
+                app.open_dashboard_file_context_menu(path, (x, y));
                 return;
             }
             // Right-click on a statusline chip — context menus for the four

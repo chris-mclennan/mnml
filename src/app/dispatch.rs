@@ -826,6 +826,19 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     p.scroll = p.scroll.saturating_sub(step);
                 }
             }
+            Some(Pane::SpendReport(p)) => {
+                // Wheel scrolls the per-workspace list; renderer
+                // clamps. Selection follows.
+                let step = delta.unsigned_abs() as usize;
+                let n = p.snapshot.per_workspace.len();
+                if n > 0 {
+                    if delta < 0 {
+                        p.selected = p.selected.saturating_sub(step);
+                    } else {
+                        p.selected = (p.selected + step).min(n - 1);
+                    }
+                }
+            }
             None => {}
         }
         // Each SCM/CI pane's max_idx depends on which view-mode is

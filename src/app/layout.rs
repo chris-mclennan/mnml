@@ -528,6 +528,7 @@ impl App {
             Some(Pane::BlitHost(_)) => None,
             Some(Pane::ClaudeAgents(_)) => None,
             Some(Pane::Websocket(_)) => None,
+            Some(Pane::SpendReport(_)) => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -851,6 +852,7 @@ impl App {
             Pane::BlitHost(_) => (None, None),
             Pane::ClaudeAgents(_) => (None, None),
             Pane::Websocket(_) => (None, None),
+            Pane::SpendReport(_) => (None, None),
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);

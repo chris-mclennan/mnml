@@ -22,6 +22,7 @@
 pub mod about_overlay;
 pub mod activity_bar;
 pub mod ai_view;
+pub mod spend_report_view;
 
 /// 2026-06-21 vscode-mouse SEV-2 — which Claude Agents dashboard
 /// topbar chip a click is on. The mouse dispatcher matches this
@@ -161,6 +162,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.cheatsheet_headers.clear();
         app.rects.ws_send_buttons.clear();
         app.rects.claude_agents_topbar_chips.clear();
+        app.rects.spend_headers.clear();
         app.rects.claude_drill_files.clear();
         app.rects.split_dividers.clear();
         app.rects.pty_tabs.clear();
@@ -703,6 +705,7 @@ fn render_layout(
                 Some(crate::pane::Pane::BlitHost(_)) => 33,
                 Some(crate::pane::Pane::ClaudeAgents(_)) => 34,
                 Some(crate::pane::Pane::Websocket(_)) => 35,
+                Some(crate::pane::Pane::SpendReport(_)) => 36,
                 _ => 0,
             };
             match kind {
@@ -743,6 +746,10 @@ fn render_layout(
                 }
                 35 => {
                     ws_view::draw(frame, app, *id, area, focused);
+                    None
+                }
+                36 => {
+                    spend_report_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
