@@ -3541,6 +3541,31 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // it (handled elsewhere).
     if matches!(m.kind, MouseEventKind::Moved) {
         let now = std::time::Instant::now();
+        // 2026-06-22 — some terminals report Moved (no button)
+        // even while a button is held during a drag. If
+        // `tree_drag` is Some, the user is mid-drag (mouse-down
+        // happened, mouse-up hasn't fired yet), so treat Moved
+        // as a drag-tracking event too. Without this, the ghost
+        // + drop overlay stay invisible because the cursor
+        // never updates between Down and Up.
+        if app.tree_drag.is_some() {
+            app.set_tree_drag_cursor(x, y);
+            let src_is_file = app
+                .tree_drag
+                .as_ref()
+                .map(|d| !d.src_is_dir)
+                .unwrap_or(false);
+            let over_tree = app
+                .rects
+                .tree
+                .map(|tr| crate::app::dispatch::contains(tr, x, y))
+                .unwrap_or(false);
+            if !over_tree && src_is_file {
+                app.update_tab_drop_target(x, y);
+            } else if !over_tree {
+                app.rects.tab_drop_target = None;
+            }
+        }
         let new_chip = crate::app::dispatch::hover_chip_at(app, x, y);
         let prev_chip = app.hover_chip.map(|(c, _)| c);
         if new_chip != prev_chip {
