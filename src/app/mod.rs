@@ -51,6 +51,7 @@ mod session;
 pub(crate) mod settings;
 mod snippets;
 mod startup_picker;
+pub(crate) mod chrome_chips;
 pub(crate) mod tab_drop;
 mod tmnl;
 
@@ -2837,6 +2838,17 @@ pub struct App {
     /// by `[[ui.integration_icon]]` chips whose `command` field uses
     /// the `tmnl:<id>` prefix. Always empty when not `under_tmnl`.
     pub pending_host_commands: Vec<String>,
+    /// 2026-06-21 — chrome chips snapshot to send on the next blit
+    /// tick. Set by `refresh_chrome_chips` ONLY when the new
+    /// snapshot differs from `last_sent_chrome_chips`. The blit
+    /// loop takes() it and sends via Message::ChromeChips. None
+    /// when nothing changed since the last flush.
+    pub pending_chrome_chips:
+        Option<Vec<tmnl_protocol::ChromeChip>>,
+    /// Last chrome chip set we sent to tmnl. Used by
+    /// `refresh_chrome_chips` to detect changes and avoid spamming
+    /// identical payloads on every tick.
+    pub last_sent_chrome_chips: Vec<tmnl_protocol::ChromeChip>,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3583,6 +3595,8 @@ impl App {
             pending_open_panes: Vec::new(),
             last_sent_blit_title: None,
             pending_host_commands: Vec::new(),
+            pending_chrome_chips: None,
+            last_sent_chrome_chips: Vec::new(),
             hover_chip: None,
             hover_divider_idx: None,
             show_discovery_overlay: false,

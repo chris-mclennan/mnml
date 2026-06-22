@@ -65,6 +65,12 @@ enum BlitCommandEvent {
     /// `Message::RunClientCommand(id)` — tmnl wants this command
     /// fired. Main loop runs it via the local command registry.
     Invoke(String),
+    /// 2026-06-21 — `Message::ChromeChipClick { id }` — user
+    /// clicked a chrome chip we projected onto tmnl chrome. Main
+    /// loop matches the id and fires the matching mnml action
+    /// (`launcher.click` / `tab.select N` / `theme.toggle` /
+    /// `app.quit` / `tab.new` / `tab.close N`).
+    ChromeChipClick(String),
 }
 
 pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
@@ -140,6 +146,14 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                         break;
                     }
                 }
+                Ok(Message::ChromeChipClick { id }) => {
+                    if cmd_event_tx
+                        .send(BlitCommandEvent::ChromeChipClick(id))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
                 Ok(_) => {}
                 Err(_) => {
                     let _ = disc_tx.send(());
@@ -189,6 +203,17 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                 let _ = write_message(&mut *w, &Message::RunHostCommand(id));
             }
         }
+        // 2026-06-21 — flush the chrome chip model (launcher icons /
+        // TABS / theme / close) to tmnl chrome whenever it changes.
+        // `refresh_chrome_chips` rebuilds the snapshot; the
+        // `pending_chrome_chips` Option is Some only when the new
+        // snapshot differs from `last_sent_chrome_chips`, so we
+        // don't spam the wire with identical messages every tick.
+        app.refresh_chrome_chips();
+        if let Some(chips) = app.pending_chrome_chips.take() {
+            let mut w = writer.lock().unwrap();
+            let _ = write_message(&mut *w, &Message::ChromeChips(chips));
+        }
         // Re-send `Message::Title` whenever the foreground UI changes
         // between mnml's editor and the docked mixr panel. tmnl's
         // chrome chip pulls this directly, so the chip swaps to
@@ -235,6 +260,9 @@ pub fn run(mut app: App, socket: &Path) -> Result<bool, String> {
                 }
                 BlitCommandEvent::Invoke(id) => {
                     let _ = crate::command::run(&id, &mut app);
+                }
+                BlitCommandEvent::ChromeChipClick(id) => {
+                    app.dispatch_chrome_chip_click(&id);
                 }
             }
         }

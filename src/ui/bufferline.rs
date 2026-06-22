@@ -111,17 +111,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ` ●━ ` ` × `. Each launcher chip is 4 cells (` <glyph> ` + label
     // space). Pre-compute the total so the per-buffer tab strip's
     // scroll math reserves enough width.
-    // 2026-06-21 — only reserve cluster width when the cluster is
-    // painted IN the bufferline (under tmnl native mode). In
-    // standalone, the cluster lives in the palette bar above us;
-    // the bufferline's full width is available for tabs.
-    let cluster_in_bufferline = app.is_inside_tmnl();
-    let right_w: u16 = if cluster_in_bufferline {
-        right_cluster_width(app)
-    } else {
-        0
-    };
-    let tabs_max_x = area.x + area.width.saturating_sub(right_w);
+    // 2026-06-21 — the cluster lives on the chrome row in BOTH
+    // modes now (Phase 1: palette bar in standalone; Phase 2:
+    // tmnl chrome via Message::ChromeChips when under tmnl).
+    // Bufferline no longer paints it or reserves space.
+    let tabs_max_x = area.x + area.width;
 
     // Disambiguated labels — when two open editors share a filename, prepend
     // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
@@ -439,21 +433,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let _ = last_drawn;
 
-    // 2026-06-21 — right cluster moved to `paint_right_cluster`
-    // (called from draw_palette_bar in standalone mode). When the
-    // palette bar isn't visible (we're inside tmnl native mode),
-    // the cluster falls back to painting here in the bufferline
-    // so tmnl users still see it.
+    // 2026-06-21 — right cluster moved to chrome row entirely
+    // (Phase 1: palette bar in standalone; Phase 2: tmnl chrome
+    // via Message::ChromeChips when under tmnl). Bufferline only
+    // paints the file-tab strip now.
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    if app.is_inside_tmnl() {
-        let cluster_area = ratatui::layout::Rect {
-            x: tabs_max_x,
-            y: area.y,
-            width: area.width.saturating_sub(tabs_max_x - area.x),
-            height: 1,
-        };
-        paint_right_cluster(frame, app, cluster_area, theme::cur().bg_darker);
-    }
 }
 
 /// Width in cells of the right-cluster chrome (launcher icons +
