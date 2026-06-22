@@ -2166,3 +2166,86 @@ fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
         }
     }
 }
+
+#[cfg(test)]
+mod palette_bar_tests {
+    use super::*;
+    use crate::app::App;
+    use crate::config::Config;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Render the palette bar at `width` cells and return the row
+    /// as a String. Drives the real `draw_palette_bar` (not just
+    /// the math helper) so we catch behavior across the actual
+    /// render path — including the bufferline cluster paint,
+    /// which the unit tests in bufferline.rs can't verify.
+    fn render_palette_bar_row(width: u16, n_tabs: usize) -> String {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        let mut app = App::new(ws, Config::default()).unwrap();
+        // Open extra tab pages to populate the TABS chip list.
+        for _ in 1..n_tabs {
+            app.tab_new(None);
+        }
+        let mut term = Terminal::new(TestBackend::new(width, 3)).unwrap();
+        term.draw(|f| {
+            let area = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height: 1,
+            };
+            draw_palette_bar(f, &mut app, area);
+        })
+        .unwrap();
+        let buf = term.backend().buffer();
+        (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
+    #[test]
+    fn palette_bar_wide_shows_full_cluster_with_tabs() {
+        let row = render_palette_bar_row(200, 3);
+        // Wide enough — TABS label + numbered chips must be present.
+        assert!(row.contains("TABS"), "expected 'TABS' in wide row: {row:?}");
+        assert!(
+            row.contains(" 1 "),
+            "expected ' 1 ' tab chip in wide row: {row:?}"
+        );
+        assert!(
+            row.contains(" 2 "),
+            "expected ' 2 ' tab chip in wide row: {row:?}"
+        );
+    }
+
+    #[test]
+    fn palette_bar_narrow_drops_tabs_section() {
+        // 90 cells: too narrow for the full cluster but compact
+        // (no TABS / tab chips) should still fit. Verify the
+        // user-reported behavior — TABS section disappears while
+        // launcher icons + theme + close stay reachable.
+        let row = render_palette_bar_row(90, 3);
+        assert!(
+            !row.contains("TABS"),
+            "TABS label should be hidden at width 90: {row:?}"
+        );
+        assert!(
+            !row.contains(" 1 "),
+            "numbered tab chip ' 1 ' should be hidden at width 90: {row:?}"
+        );
+    }
+
+    #[test]
+    fn palette_bar_extra_narrow_hides_cluster_entirely() {
+        // 82 cells: even compact doesn't fit past the workspace
+        // chip — cluster should vanish completely (still above
+        // the 80-col palette-bar-visible cutoff).
+        let row = render_palette_bar_row(82, 3);
+        assert!(
+            !row.contains("TABS"),
+            "TABS must be hidden: {row:?}"
+        );
+        // No tab chip
+        assert!(!row.contains(" 1 "), "no tab chip allowed: {row:?}");
+    }
+}
