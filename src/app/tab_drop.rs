@@ -99,9 +99,17 @@ impl App {
         self.layout_mut().remove_leaf(src);
         match zone {
             DropZone::Center => {
-                // Target slot now shows `src`; whatever was there becomes a
-                // background tab (still listed in the bufferline).
-                self.layout_mut().replace_leaf(target, Layout::leaf(src));
+                // 2026-06-22 multi-tab: add `src` as a new tab in
+                // the target leaf and flip it active. Previously
+                // replaced the leaf, orphaning the prior pane.
+                if let Some((active, tabs)) = self.layout_mut().active_leaf_mut(target) {
+                    if !tabs.contains(&src) {
+                        tabs.push(src);
+                    }
+                    *active = src;
+                } else {
+                    self.layout_mut().replace_leaf(target, Layout::leaf(src));
+                }
             }
             _ => {
                 let (dir, src_first) = match zone {

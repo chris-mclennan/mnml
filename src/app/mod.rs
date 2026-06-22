@@ -1942,6 +1942,16 @@ pub struct PaneRects {
     pub git_graph_column_headers: Vec<(Rect, crate::git::graph::SortColumn)>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
+    /// 2026-06-22 — per-split multi-tab chip click rects. Each entry
+    /// is `(rect, leaf_active_pane, this_tab_pane)`. Click → switch
+    /// the leaf's active to this_tab_pane. `leaf_active_pane`
+    /// identifies WHICH leaf's tab strip this chip belongs to (so
+    /// the click handler can target the right leaf in the layout
+    /// tree). Cleared + repopulated every frame by render_layout.
+    pub split_tab_chips: Vec<(Rect, PaneId, PaneId)>,
+    /// Per-split tab close `×` chips. Same shape: (rect,
+    /// leaf_active, tab_pane). Click → close that tab.
+    pub split_tab_close: Vec<(Rect, PaneId, PaneId)>,
     /// The whole central split-tree area.
     pub body: Option<Rect>,
     /// `(text_area, pane_id)` per visible editor leaf — the editable region
@@ -2305,6 +2315,11 @@ pub struct TreeDrag {
     pub armed: bool,
     /// Most-recent row the drag was over — drives the highlight tint.
     pub current_target_idx: Option<usize>,
+    /// 2026-06-22 — last-known cursor position during the drag.
+    /// Updated on every mouse-move; read by the drag-ghost paint
+    /// pass to draw a small chip near the cursor.
+    pub cursor_x: u16,
+    pub cursor_y: u16,
 }
 
 /// One reversible git operation for the GitGraph toolbar's Undo / Redo.
@@ -3826,7 +3841,18 @@ impl App {
             origin_y: y,
             armed: false,
             current_target_idx: None,
+            cursor_x: 0,
+            cursor_y: y,
         });
+    }
+
+    /// 2026-06-22 — update the cursor position tracked by an
+    /// in-flight tree drag. Read by the drag-ghost paint pass.
+    pub fn set_tree_drag_cursor(&mut self, x: u16, y: u16) {
+        if let Some(d) = self.tree_drag.as_mut() {
+            d.cursor_x = x;
+            d.cursor_y = y;
+        }
     }
 
     /// Mouse-move within a tree drag — arms the drag once we leave the

@@ -158,6 +158,13 @@ impl App {
             }
         }
         if self.layout().contains(id) {
+            // Already in the current layout — possibly as the
+            // active tab of some leaf, possibly as a background
+            // tab. Flip the containing leaf's active to this
+            // pane, then set App::active.
+            if let Some((active, _tabs)) = self.layout_mut().leaf_containing_mut(id) {
+                *active = id;
+            }
             self.active = Some(id);
         } else if let Some(other_tab) = self
             .layouts
@@ -167,13 +174,25 @@ impl App {
         {
             // Pane lives in another tab page — switch tabs so the
             // invariant "each pane is in at most one leaf across all
-            // tabs" holds. Otherwise set_leaf_pane below would
-            // duplicate the leaf reference into the active tab.
+            // tabs" holds.
             self.remember_active_for_tab();
             self.active_layout = other_tab;
             self.active = Some(id);
         } else if let Some(cur) = self.active {
-            self.layout_mut().set_leaf_pane(cur, id);
+            // 2026-06-22 multi-tab: instead of REPLACING the active
+            // pane (the old set_leaf_pane behavior — which
+            // orphaned the prior pane into a background bufferline
+            // tab), ADD `id` to the focused leaf's tabs as the new
+            // active. The user's "open a file in this split"
+            // becomes a tab in that split, matching VS Code.
+            if let Some((active, tabs)) = self.layout_mut().active_leaf_mut(cur) {
+                if !tabs.contains(&id) {
+                    tabs.push(id);
+                }
+                *active = id;
+            } else {
+                *self.layout_mut() = Layout::leaf(id);
+            }
             self.active = Some(id);
         } else {
             *self.layout_mut() = Layout::leaf(id);
@@ -927,6 +946,58 @@ impl App {
         if let Some(i) = self.active {
             self.force_close_pane(i);
         }
+    }
+
+    /// 2026-06-22 — click on a per-split tab chip. Switches the
+    /// leaf whose current active is `leaf_active_was` to show
+    /// `new_active` instead. The leaf must already contain
+    /// `new_active` in its tabs list (otherwise no-op). Also
+    /// updates `App::active` so focus follows the click.
+    pub fn switch_split_tab(&mut self, leaf_active_was: PaneId, new_active: PaneId) {
+        let Some((active, tabs)) = self.layout_mut().active_leaf_mut(leaf_active_was) else {
+            return;
+        };
+        if !tabs.contains(&new_active) {
+            return;
+        }
+        *active = new_active;
+        self.active = Some(new_active);
+        self.focus = Focus::Pane;
+        self.retarget_outline_to_active();
+    }
+
+    /// 2026-06-22 — click × on a per-split tab chip. Removes
+    /// `tab_to_close` from the leaf identified by
+    /// `leaf_active_was`'s tabs. If the closed tab WAS the active
+    /// one, the leaf falls back to another tab (rightward
+    /// neighbour preferred). If it was the last tab, the leaf
+    /// collapses (Layout::remove_leaf handles that).
+    pub fn close_split_tab(&mut self, leaf_active_was: PaneId, tab_to_close: PaneId) {
+        // Find which layout (tab page) this leaf lives in.
+        let lay_idx = self
+            .layouts
+            .iter()
+            .position(|l| l.contains(leaf_active_was));
+        let Some(_lay_idx) = lay_idx else {
+            return;
+        };
+        // `remove_leaf` walks down to the matching leaf and pops
+        // the tab. If that tab was active AND the leaf has more
+        // tabs, the leaf's active flips to a sibling. If it was
+        // the last tab, the leaf collapses into its split sibling
+        // (or Empty at the root).
+        self.layout_mut().remove_leaf(tab_to_close);
+        // Re-resolve App::active to whatever the leaf points at
+        // now (or the first leaf in the tree if our leaf went away).
+        let new_active = self
+            .layout()
+            .leaves()
+            .first()
+            .copied()
+            .or_else(|| self.layout().first_leaf());
+        self.active = new_active;
+        self.focus = Focus::Pane;
+        self.retarget_outline_to_active();
     }
 
     /// Switch to tab `idx` (no-op if out of range or already there). Saves
@@ -1758,9 +1829,12 @@ mod layout_tests {
 
     #[test]
     fn move_to_new_tab_pulls_split_out() {
-        // Tab 1 has a.txt + b.txt as a split. Move b.txt to a new
-        // tab — tab 1 should collapse to just a.txt, tab 2 should
-        // hold b.txt as a single leaf.
+        // 2026-06-22 — multi-tab semantics: `open_path(&b)` after a
+        // split now ADDS b as a tab in the focused leaf (instead of
+        // replacing the leaf's active pane). So after the setup:
+        //   tab 0: Split { Leaf{a,[a]}, Leaf{active=b, tabs=[a-copy,b]} }
+        // Moving b to a new tab pulls b out of the right leaf;
+        // the right leaf still has a-copy, so the split STAYS.
         let (d, mut app) = app_with_files();
         let a = d.path().join("a.txt").canonicalize().unwrap();
         let b = d.path().join("b.txt").canonicalize().unwrap();
@@ -1773,13 +1847,9 @@ mod layout_tests {
         assert_eq!(app.layouts.len(), 2);
         assert_eq!(app.active_layout, 1);
         assert!(matches!(app.layout(), Layout::Leaf { active: id, .. } if *id == b_id));
-        // Tab 1 collapsed to a single leaf (a.txt).
-        let a_id = app
-            .panes
-            .iter()
-            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
-            .unwrap();
-        assert!(matches!(&app.layouts[0], Layout::Leaf { active: id, .. } if *id == a_id));
+        // Tab 0 still has the split (right leaf now single-tab w/
+        // a-copy after b moved out).
+        assert!(matches!(&app.layouts[0], Layout::Split { .. }));
     }
 
     #[test]

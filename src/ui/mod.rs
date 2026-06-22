@@ -497,6 +497,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.pty_tab_new.clear();
     app.rects.pty_tab_close.clear();
     let layout = app.layout().clone();
+    // 2026-06-22 — clear per-split tab chip rects before the
+    // recursive walk re-populates them. Without this, frames
+    // would accumulate stale chip rects from prior layouts and
+    // clicks would target deleted leaves.
+    app.rects.split_tab_chips.clear();
+    app.rects.split_tab_close.clear();
     let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
         welcome::draw(frame, app, body_area);
         None
@@ -508,6 +514,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Drag-to-split: while a bufferline tab is dragged over a pane body, paint
     // a hint showing where the pane will land.
     draw_tab_drop_hint(frame, app);
+    // 2026-06-22 — drag ghost (paints near the cursor while a
+    // file drag is in flight). Comes AFTER the drop-zone hint so
+    // the ghost reads on top of the highlighted zone.
+    draw_tree_drag_ghost(frame, app);
 
     // Scratch terminal strip — paints below the body. Resizes the pty
     // so the shell knows about the new viewport.
@@ -694,11 +704,8 @@ fn render_layout(
             // this leaf is INSIDE a split (path non-empty) AND the
             // pane isn't a Pty (which has its own tab strip in
             // pty_view), carve out the top row of `area` and paint
-            // a 1-row tab showing the file/title for this leaf.
-            // The body area shrinks by 1 row. The single global
-            // bufferline at the top still exists (shows all open
-            // panes); these per-leaf strips give each split visual
-            // ownership of its file.
+            // a horizontal row of tab chips (one per pane in the
+            // leaf's `tabs`). The body area shrinks by 1 row.
             let is_split_leaf = !path.is_empty();
             let has_own_tab_strip =
                 matches!(app.panes.get(*id), Some(crate::pane::Pane::Pty(_)));
@@ -712,7 +719,7 @@ fn render_layout(
                     width: area.width,
                     height: 1,
                 };
-                paint_leaf_tab(frame, app, *id, strip, focused);
+                paint_leaf_tab_strip(frame, app, *id, &tabs_owned, strip, focused);
                 ratatui::layout::Rect {
                     x: area.x,
                     y: area.y + 1,
@@ -831,12 +838,78 @@ fn render_layout(
     }
 }
 
+/// 2026-06-22 — drag ghost for a tree-file drag. Paints a small
+/// chip showing the file's name near the cursor while the drag
+/// is armed and the mouse is past the origin row. Cleared
+/// automatically when `tree_drag` clears on mouse-up.
+fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Paragraph;
+    let Some(drag) = app.tree_drag.as_ref() else {
+        return;
+    };
+    if !drag.armed {
+        return;
+    }
+    let cx = drag.cursor_x;
+    let cy = drag.cursor_y;
+    // Skip the leading dir portion; show just the filename.
+    let name = drag
+        .src_path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| drag.src_path.to_string_lossy().into_owned());
+    let label = clip_to_cells(&name, 24);
+    let label_w = label.chars().count() as u16;
+    let chip_w = label_w + 4; // " 🗎 <name> "
+    // Position chip 1 cell down + 2 cells right of cursor (so it
+    // doesn't sit under the cursor itself). Clamp to area.
+    let area = frame.area();
+    let mut chip_x = cx.saturating_add(2);
+    let mut chip_y = cy.saturating_add(1);
+    if chip_x + chip_w > area.x + area.width {
+        chip_x = (area.x + area.width).saturating_sub(chip_w);
+    }
+    if chip_y >= area.y + area.height {
+        chip_y = cy.saturating_sub(1);
+    }
+    let chip_rect = Rect {
+        x: chip_x,
+        y: chip_y,
+        width: chip_w,
+        height: 1,
+    };
+    let t = theme::cur();
+    let bg = t.bg2;
+    let fg = t.fg;
+    let icon = if drag.src_is_dir { "" } else { "" };
+    let icon_color = if drag.src_is_dir { t.blue } else { t.cyan };
+    let line = Line::from(vec![
+        Span::styled(" ".to_string(), Style::default().bg(bg)),
+        Span::styled(
+            format!("{icon} "),
+            Style::default().fg(icon_color).bg(bg),
+        ),
+        Span::styled(
+            label,
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".to_string(), Style::default().bg(bg)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(bg)),
+        chip_rect,
+    );
+}
+
 /// Drag-to-split drop hint. When a bufferline tab is dragged over a pane body,
 /// paint the zone it will land in (left/right/top/bottom half for a split, or
 /// the center box for a move-in-place) with a tinted fill + accent border and a
 /// short label. No-op when no tab is being dragged over a pane.
 fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
-    let Some((pid, zone)) = app.rects.tab_drop_target else {
+    use crate::app::tab_drop::{DropZone, zone_rect};
+    let Some((pid, active_zone)) = app.rects.tab_drop_target else {
         return;
     };
     let Some((body, _)) = app
@@ -848,33 +921,69 @@ fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
     else {
         return;
     };
-    let rect = crate::app::tab_drop::zone_rect(body, zone);
-    if rect.width == 0 || rect.height == 0 {
-        return;
-    }
     let t = theme::cur();
-    let label = match zone {
-        crate::app::tab_drop::DropZone::Center => "move here",
-        _ => "split here",
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Double)
-        .border_style(Style::default().fg(t.blue).add_modifier(Modifier::BOLD))
-        .style(Style::default().bg(t.bg2));
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    if inner.width > 0 && inner.height > 0 {
-        let cy = inner.y + inner.height / 2;
-        let row = Rect::new(inner.x, cy, inner.width, 1);
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                label,
+    // 2026-06-22 — paint ALL 5 zones as faint outlines + highlight
+    // the active one with a bright double border + label. Mimics
+    // VS Code's drag-to-split overlay where all targets are
+    // visible at once so the user can see what each does without
+    // hovering over each one in turn.
+    let all_zones = [
+        DropZone::Left,
+        DropZone::Right,
+        DropZone::Top,
+        DropZone::Bottom,
+        DropZone::Center,
+    ];
+    for &zone in &all_zones {
+        let rect = zone_rect(body, zone);
+        if rect.width <= 1 || rect.height <= 1 {
+            continue;
+        }
+        let is_active = zone == active_zone;
+        let (border_style, fill_bg) = if is_active {
+            (
                 Style::default().fg(t.blue).add_modifier(Modifier::BOLD),
-            ))
-            .alignment(ratatui::layout::Alignment::Center),
-            row,
-        );
+                t.bg2,
+            )
+        } else {
+            (Style::default().fg(t.comment), t.bg_dark)
+        };
+        let border_type = if is_active {
+            BorderType::Double
+        } else {
+            BorderType::Plain
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(border_type)
+            .border_style(border_style)
+            .style(Style::default().bg(fill_bg));
+        let inner = block.inner(rect);
+        frame.render_widget(block, rect);
+        // Label inside the active zone only — the inactive outlines
+        // stay decoration so the active label reads cleanly.
+        if is_active && inner.width > 0 && inner.height > 0 {
+            let label = match zone {
+                DropZone::Center => "move here",
+                DropZone::Left => "split left",
+                DropZone::Right => "split right",
+                DropZone::Top => "split top",
+                DropZone::Bottom => "split bottom",
+            };
+            let cy = inner.y + inner.height / 2;
+            let row = Rect::new(inner.x, cy, inner.width, 1);
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    label,
+                    Style::default()
+                        .fg(t.blue)
+                        .add_modifier(Modifier::BOLD)
+                        .bg(fill_bg),
+                ))
+                .alignment(ratatui::layout::Alignment::Center),
+                row,
+            );
+        }
     }
 }
 
@@ -1971,20 +2080,18 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// 2026-06-21 — paint a 1-row tab strip above an in-split leaf
-/// showing the pane it currently displays. The user requested
-/// VS Code-style per-split tab strips so each split visually
-/// owns its file. Renders: ` ICON  Name • × ` — icon in the
-/// pane-type's color, name in fg (italic if preview, bold if
-/// pinned), `•` if dirty, `×` to close (registers a click rect
-/// in `bufferline_tab_close` so the existing handler closes the
-/// pane).
-fn paint_leaf_tab(
+/// 2026-06-22 — paint a multi-tab strip above an in-split leaf,
+/// one chip per pane in the leaf's `tabs`. Active chip is
+/// highlighted (bg2); inactive chips are dimmer (bg_darker).
+/// Each chip renders ` <icon> <name> <•/×> ` left-to-right.
+/// Click chip → switch active. Click × → close that tab.
+fn paint_leaf_tab_strip(
     frame: &mut Frame,
     app: &mut App,
-    id: crate::layout::PaneId,
+    active: crate::layout::PaneId,
+    tabs: &[crate::layout::PaneId],
     strip: Rect,
-    focused: bool,
+    leaf_focused: bool,
 ) {
     use crate::pane::Pane;
     use ratatui::style::{Modifier, Style};
@@ -1992,83 +2099,138 @@ fn paint_leaf_tab(
     use ratatui::widgets::Paragraph;
     let t = theme::cur();
     let nerd = !app.config.ui.ascii_icons;
-    let Some(pane) = app.panes.get(id) else {
-        return;
-    };
-    // Visual states.
-    let bg = if focused { t.bg2 } else { t.bg_darker };
-    let fg = if focused { t.fg } else { t.comment };
-    let title = pane.title();
-    let dirty = pane.is_dirty();
-    let (glyph, icon_color) = icon_for_pane(pane, nerd);
-    let mut name_style = Style::default().fg(fg).bg(bg);
-    if focused {
-        name_style = name_style.add_modifier(Modifier::BOLD);
-    }
-    if let Pane::Editor(b) = pane {
-        if b.is_preview {
-            name_style = name_style.add_modifier(Modifier::ITALIC);
-        }
-    }
-    let pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
-    let icon_span = if pinned {
-        Span::styled(
-            " 📌 ".to_string(),
-            Style::default().fg(t.yellow).bg(bg).add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::styled(
-            format!(" {glyph} "),
-            Style::default().fg(icon_color).bg(bg),
-        )
-    };
-    let dirty_mark = if dirty {
-        format!(" • ")
-    } else {
-        format!("   ")
-    };
-    let close_label = " × ";
-    let icon_w = icon_span.content.chars().count() as u16;
-    let dirty_w = dirty_mark.chars().count() as u16;
-    let close_w = close_label.chars().count() as u16;
-    let avail_for_name = strip
-        .width
-        .saturating_sub(icon_w + dirty_w + close_w + 1);
-    let name = clip_to_cells(&title, avail_for_name as usize);
-    let name_w = name.chars().count() as u16;
-    let pad_after = strip
-        .width
-        .saturating_sub(icon_w + name_w + dirty_w + close_w);
-    let line = Line::from(vec![
-        icon_span,
-        Span::styled(name.clone(), name_style),
-        Span::styled(dirty_mark, Style::default().fg(t.orange).bg(bg)),
-        Span::styled(
-            " ".repeat(pad_after as usize),
-            Style::default().bg(bg),
-        ),
-        Span::styled(
-            close_label.to_string(),
-            Style::default().fg(t.red).bg(bg),
-        ),
-    ]);
+
+    // Paint the strip bg first so gaps between chips read as the
+    // un-tabbed bar background, not random terminal fill.
+    let strip_bg = t.bg_darker;
     frame.render_widget(
-        Paragraph::new(line).style(Style::default().bg(bg)),
+        Paragraph::new("").style(Style::default().bg(strip_bg)),
         strip,
     );
-    // Click rect on the whole strip → focus the leaf. Click on the
-    // × → close the leaf (re-uses bufferline_tab_close handling).
-    app.rects.bufferline_tabs.push((strip, id));
-    let close_x = strip.x + strip.width.saturating_sub(close_w);
-    app.rects.bufferline_tab_close.push((
-        ratatui::layout::Rect {
-            x: close_x,
+
+    // Per-chip layout: ` <icon> <name>[•] <× >`. Min name width 4
+    // so chips with short names don't squish to nothing.
+    let chip_max_name_w: usize = 18;
+
+    let mut chip_x = strip.x;
+    let strip_right = strip.x + strip.width;
+
+    for &id in tabs {
+        if chip_x >= strip_right {
+            break;
+        }
+        let Some(pane) = app.panes.get(id) else {
+            continue;
+        };
+        let is_active = id == active;
+        // Active chip: bg2 + bright fg. Inactive: bg_darker + dim fg.
+        let chip_bg = if is_active { t.bg2 } else { strip_bg };
+        let chip_fg = if is_active && leaf_focused {
+            t.fg
+        } else if is_active {
+            t.fg
+        } else {
+            t.comment
+        };
+        let title = pane.title();
+        let dirty = pane.is_dirty();
+        let (glyph, icon_color) = icon_for_pane(pane, nerd);
+        let pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
+        let is_preview = matches!(pane, Pane::Editor(b) if b.is_preview);
+
+        let icon_text = if pinned {
+            "📌".to_string()
+        } else {
+            glyph.to_string()
+        };
+        let icon_color = if pinned { t.yellow } else { icon_color };
+
+        // chip = " <icon> <name> <•> <×> "  (active gets ×, inactive gets dirty • only)
+        let name_clipped = clip_to_cells(&title, chip_max_name_w);
+        let icon_w = icon_text.chars().count() as u16;
+        let name_w = name_clipped.chars().count() as u16;
+        // Layout: leading-pad(1) + icon + gap(1) + name + gap(1) + status(1) + trailing-pad(1)
+        // status char: × on active, • if dirty (and not active), space otherwise
+        let status_char = if is_active {
+            "×"
+        } else if dirty {
+            "•"
+        } else {
+            " "
+        };
+        let status_color = if is_active {
+            t.red
+        } else if dirty {
+            t.orange
+        } else {
+            chip_fg
+        };
+        let chip_w = 1 + icon_w + 1 + name_w + 1 + 1 + 1; // pad + icon + gap + name + gap + status + pad
+        // Clip to remaining space.
+        let avail = strip_right.saturating_sub(chip_x);
+        let painted_w = chip_w.min(avail);
+        if painted_w == 0 {
+            break;
+        }
+        let chip_rect = Rect {
+            x: chip_x,
             y: strip.y,
-            width: close_w,
+            width: painted_w,
             height: 1,
-        },
-        id,
-    ));
+        };
+
+        // Build the line as a sequence of styled spans with the chip's bg.
+        let mut name_style = Style::default().fg(chip_fg).bg(chip_bg);
+        if is_active {
+            name_style = name_style.add_modifier(Modifier::BOLD);
+        }
+        if is_preview {
+            name_style = name_style.add_modifier(Modifier::ITALIC);
+        }
+        let line = Line::from(vec![
+            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
+            Span::styled(
+                icon_text,
+                Style::default().fg(icon_color).bg(chip_bg),
+            ),
+            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
+            Span::styled(name_clipped, name_style),
+            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
+            Span::styled(
+                status_char.to_string(),
+                Style::default().fg(status_color).bg(chip_bg),
+            ),
+            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
+        ]);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(chip_bg)),
+            chip_rect,
+        );
+
+        // Register click rects: whole chip → switch active.
+        // Active chip's × (4th-from-end of the chip) → close.
+        app.rects
+            .split_tab_chips
+            .push((chip_rect, active, id));
+        if is_active && painted_w >= 3 {
+            // The × sits at: pad(1) + icon(1) + gap(1) + name + gap(1) → 4+name_w from chip_x
+            // Actually let me compute it from the right: the trailing pad is 1, then × is 1.
+            let close_x = chip_rect.x + chip_rect.width.saturating_sub(2);
+            let close_rect = Rect {
+                x: close_x,
+                y: chip_rect.y,
+                width: 1,
+                height: 1,
+            };
+            app.rects
+                .split_tab_close
+                .push((close_rect, active, id));
+        }
+
+        chip_x = chip_x.saturating_add(painted_w);
+        // 1-cell gap between chips (strip bg shows through).
+        chip_x = chip_x.saturating_add(1);
+    }
 }
 
 /// Pick a `(glyph, color)` for any pane kind — duplicates the

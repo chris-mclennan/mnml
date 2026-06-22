@@ -4800,6 +4800,27 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.dragging_tab_page = Some(app.active_layout);
                 return;
             }
+            // 2026-06-22 — per-split tab chip clicks (multi-tab
+            // leaves). Close × FIRST so a close-button click in the
+            // chip body doesn't get swallowed by the chip-switch.
+            if let Some(&(_, leaf_active, tab_pane)) = app
+                .rects
+                .split_tab_close
+                .iter()
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.close_split_tab(leaf_active, tab_pane);
+                return;
+            }
+            if let Some(&(_, leaf_active, tab_pane)) = app
+                .rects
+                .split_tab_chips
+                .iter()
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.switch_split_tab(leaf_active, tab_pane);
+                return;
+            }
             if let Some(r) = app.rects.bufferline_theme_toggle
                 && crate::app::dispatch::contains(r, x, y)
             {
@@ -5354,6 +5375,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // drag only fires on tree rect coordinates).
             if let Some(d) = app.tree_drag.as_ref() {
                 let src_is_file = !d.src_is_dir;
+                // 2026-06-22 — track cursor position for the drag-
+                // ghost overlay. Updated on every move regardless of
+                // which region the cursor is in.
+                app.set_tree_drag_cursor(x, y);
                 if let Some(tr) = app.rects.tree
                     && crate::app::dispatch::contains(tr, x, y)
                 {
