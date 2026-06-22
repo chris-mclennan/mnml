@@ -442,106 +442,46 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Which chip subset to render in the right cluster. Picked by
-/// `pick_cluster_mode` based on available width. The widest
-/// stage that fits wins; if none do, the cluster is hidden.
-///
-///   Full     all chips: launcher icons / + / TABS / tab pages /
-///            theme toggle / × close
-///   Compact  drops TABS + numbered tab pages
-///   Minimal  drops TABS + tab pages AND theme toggle — leaves
-///            launcher icons / + / × only
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClusterMode {
-    Full,
-    Compact,
-    Minimal,
-}
-
-impl ClusterMode {
-    pub fn include_tab_pages(self) -> bool {
-        matches!(self, ClusterMode::Full)
-    }
-    pub fn include_theme_toggle(self) -> bool {
-        !matches!(self, ClusterMode::Minimal)
-    }
-}
-
 /// Width in cells of the right-cluster chrome (launcher icons +
 /// `+` + `TABS` + tab-page chips + theme toggle + close).
 pub fn right_cluster_width(app: &App) -> u16 {
-    right_cluster_width_for(app, ClusterMode::Full)
+    let n_launcher = app.config.ui.launcher_icons.len() as u16;
+    // launcher icons (` X ` × n) + ` + ` new-tab button + ` TABS `
+    let mut w: u16 = 3 * n_launcher + 3 + 6;
+    for i in 0..app.layouts.len() {
+        let dig = (i + 1).to_string().chars().count() as u16;
+        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
+        w += 2 + dig + dirty;
+        if i == app.active_layout {
+            w += 2;
+        }
+    }
+    // theme toggle pill + ` × ` window close
+    w += 4 + 3;
+    w
 }
 
-/// Pick the right-cluster mode for a palette bar of total width
-/// `area_w` starting at `area_x`, given a workspace chip that
-/// ends at `palette_right_edge` and a minimum visual gap of
-/// `gap` cells. Returns `(cluster_width, mode)`, or `None` if
-/// even the minimal cluster won't fit.
+/// 2026-06-22 — does the right cluster fit at full width without
+/// overlapping the centered workspace chip? Returns `(cluster_left,
+/// width)` to paint, or `None` to hide entirely. No intermediate
+/// stages — user preference is "full or gone", not progressive.
 ///
 /// Pure function — extracted so unit tests can exercise the
-/// stage transitions (full → compact → minimal → hidden) across
-/// widths without spinning up a full ratatui Terminal. Used by
-/// `draw_palette_bar` in `src/ui/mod.rs`.
+/// boundaries without spinning up a full ratatui Terminal. Used
+/// by `draw_palette_bar` in `src/ui/mod.rs`.
 pub fn pick_cluster_mode(
     area_x: u16,
     area_w: u16,
     palette_right_edge: u16,
     full_w: u16,
-    compact_w: u16,
-    minimal_w: u16,
     gap: u16,
-) -> Option<(u16, ClusterMode)> {
-    let cluster_left = |w: u16| area_x + area_w.saturating_sub(w);
-    let needed = palette_right_edge + gap;
-    if cluster_left(full_w) >= needed {
-        Some((full_w, ClusterMode::Full))
-    } else if cluster_left(compact_w) >= needed {
-        Some((compact_w, ClusterMode::Compact))
-    } else if cluster_left(minimal_w) >= needed {
-        Some((minimal_w, ClusterMode::Minimal))
+) -> Option<u16> {
+    let cluster_left = area_x + area_w.saturating_sub(full_w);
+    if cluster_left >= palette_right_edge + gap {
+        Some(full_w)
     } else {
         None
     }
-}
-
-/// Width in cells under the given `ClusterMode`. 2026-06-22 —
-/// Minimal drops theme toggle on top of what Compact drops.
-pub fn right_cluster_width_for(app: &App, mode: ClusterMode) -> u16 {
-    let n_launcher = app.config.ui.launcher_icons.len() as u16;
-    // launcher icons (` X ` × n) + ` + ` new-tab button
-    let mut w: u16 = 3 * n_launcher + 3;
-    if mode.include_tab_pages() {
-        // ` TABS ` label
-        w += 6;
-        for i in 0..app.layouts.len() {
-            let dig = (i + 1).to_string().chars().count() as u16;
-            let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-            w += 2 + dig + dirty;
-            if i == app.active_layout {
-                w += 2;
-            }
-        }
-    }
-    if mode.include_theme_toggle() {
-        // 4-cell theme toggle pill
-        w += 4;
-    }
-    // ` × ` window close (always)
-    w += 3;
-    w
-}
-
-/// Compat shim: kept so existing tests + callers still compile
-/// while the call sites get migrated to `right_cluster_width_for`.
-#[doc(hidden)]
-pub fn right_cluster_width_mode(app: &App, include_tab_pages: bool) -> u16 {
-    let mode = if include_tab_pages {
-        ClusterMode::Full
-    } else {
-        ClusterMode::Compact
-    };
-    right_cluster_width_for(app, mode)
 }
 
 /// Paint the NvChad-style right cluster (launcher icons · `+` ·
@@ -556,46 +496,20 @@ pub fn right_cluster_width_mode(app: &App, include_tab_pages: bool) -> u16 {
 /// in standard mode; the bufferline only re-paints it when mnml
 /// is inside tmnl native mode (no palette bar there). Tmnl chrome
 /// integration is Phase 2.
-pub fn paint_right_cluster(frame: &mut Frame, app: &mut App, area: Rect, bg: ratatui::style::Color) {
-    paint_right_cluster_for(frame, app, area, bg, ClusterMode::Full);
-}
-
-/// Compat shim — older callers use a bool.
-#[doc(hidden)]
-pub fn paint_right_cluster_mode(
-    frame: &mut Frame,
-    app: &mut App,
-    area: Rect,
-    bg: ratatui::style::Color,
-    include_tab_pages: bool,
-) {
-    let mode = if include_tab_pages {
-        ClusterMode::Full
-    } else {
-        ClusterMode::Compact
-    };
-    paint_right_cluster_for(frame, app, area, bg, mode);
-}
-
-/// Paint the cluster under the given `ClusterMode`. 2026-06-22 —
-/// `Compact` drops TABS + numbered tab chips; `Minimal` drops
-/// theme toggle as well, leaving launcher icons + `+` new tab +
-/// `×` close as the smallest useful cluster.
 ///
 /// Always-clear semantics: callers don't need to pre-clear the
 /// click-target rects. This fn resets every rect it might write
-/// at entry, so a stale rect from a previous frame (with a
-/// different mode) can't steal a click.
-pub fn paint_right_cluster_for(
+/// at entry, so a stale rect from a previous frame (cluster hidden
+/// at a narrower width) can't steal a click.
+pub fn paint_right_cluster(
     frame: &mut Frame,
     app: &mut App,
     area: Rect,
     bg: ratatui::style::Color,
-    mode: ClusterMode,
 ) {
-    // Always-clear: stale rects from a prior-frame paint with a
-    // wider mode would otherwise stay registered and steal clicks
-    // at cells we're no longer painting.
+    // Always-clear: stale rects from a prior-frame paint at a
+    // wider width would otherwise stay registered and steal
+    // clicks at cells we're no longer painting.
     app.rects.launcher_icon_rects.clear();
     app.rects.bufferline_new_tab_button = None;
     app.rects.bufferline_tab_page_chips.clear();
@@ -640,7 +554,7 @@ pub fn paint_right_cluster_for(
         height: 1,
     });
     cluster_x += 3;
-    if mode.include_tab_pages() {
+    {
         // `TABS` label (decorative).
         spans.push(Span::styled(
             " TABS ",
@@ -689,9 +603,8 @@ pub fn paint_right_cluster_for(
             }
         }
     }
-    // Theme toggle pill — skipped in Minimal so just `+ ×` remains
-    // at the narrowest viable width (user preference 2026-06-22).
-    if mode.include_theme_toggle() {
+    // Theme toggle pill.
+    {
         let on_alt = app
             .config
             .ui
@@ -854,69 +767,49 @@ mod tests {
         );
     }
 
-    // 2026-06-22 — narrow-width cluster-mode picker tests. Pins
-    // the 4-stage transition (full → compact → minimal → hidden)
-    // so the narrow-width hide can't silently regress.
+    // 2026-06-22 — full-or-hidden cluster-mode picker tests.
+    // No intermediate stages — user preference is "if it fits
+    // paint everything, else hide it all".
     #[test]
-    fn pick_cluster_mode_picks_full_at_generous_width() {
-        // 200 cells wide; full (50) starts at col 150 — way past
-        // the workspace chip at col 60. Full wins.
-        let mode = pick_cluster_mode(0, 200, 60, 50, 30, 20, 4);
-        assert_eq!(mode, Some((50, ClusterMode::Full)));
+    fn pick_cluster_mode_shows_full_at_generous_width() {
+        // 200 cells, chip ends at col 60. Full (50): left=150.
+        // 150 >= 60+4 ✓.
+        let mode = pick_cluster_mode(0, 200, 60, 50, 4);
+        assert_eq!(mode, Some(50));
     }
 
     #[test]
-    fn pick_cluster_mode_falls_back_to_compact_when_full_overlaps() {
-        // 100-cell bar, chip ends at col 60. Full (50): left=50,
-        // < 60+4. Compact (30): left=70, ≥ 64 ✓. Compact wins.
-        let mode = pick_cluster_mode(0, 100, 60, 50, 30, 20, 4);
-        assert_eq!(mode, Some((30, ClusterMode::Compact)));
-    }
-
-    #[test]
-    fn pick_cluster_mode_falls_back_to_minimal_when_compact_also_overlaps() {
-        // 80-cell bar, chip ends at col 60. Full (50): left=30, no.
-        // Compact (30): left=50, no. Minimal (20): left=60, ≥ 64? No.
-        // Hmm — need narrower minimal. Use 15 cells. left=65, ≥ 64 ✓.
-        let mode = pick_cluster_mode(0, 80, 60, 50, 30, 15, 4);
-        assert_eq!(mode, Some((15, ClusterMode::Minimal)));
-    }
-
-    #[test]
-    fn pick_cluster_mode_hides_cluster_when_even_minimal_overlaps() {
-        // 70-cell bar, chip ends at col 60. Minimal (15): left=55,
-        // < 64. None.
-        let mode = pick_cluster_mode(0, 70, 60, 50, 30, 15, 4);
+    fn pick_cluster_mode_hides_when_cluster_would_overlap() {
+        // 100 cells, chip ends at col 60. Full (50): left=50.
+        // 50 < 60+4 — hide.
+        let mode = pick_cluster_mode(0, 100, 60, 50, 4);
         assert_eq!(mode, None);
     }
 
     #[test]
     fn pick_cluster_mode_respects_area_x_offset() {
-        // bar offset to col 5; minimal (15) → left=5+100-15=90
-        // ≥ palette_right_edge+gap (65+4=69) ✓. With full (50)
-        // → left=55, < 69. Compact (30) → left=75, ≥ 69 ✓.
-        let mode = pick_cluster_mode(5, 100, 65, 50, 30, 15, 4);
-        assert_eq!(mode, Some((30, ClusterMode::Compact)));
+        // bar offset to col 5; full (50): left=5+100-50=55.
+        // chip end 65, need >= 69. 55 < 69 → hide.
+        let mode = pick_cluster_mode(5, 100, 65, 50, 4);
+        assert_eq!(mode, None);
     }
 
     #[test]
     fn pick_cluster_mode_gap_zero_lets_cluster_touch_palette() {
-        // gap=0; full (50) → left=50, ≥ 50. Full picked.
-        let mode = pick_cluster_mode(0, 100, 50, 50, 30, 15, 0);
-        assert_eq!(mode, Some((50, ClusterMode::Full)));
+        // gap=0; full (50) → left=50, ≥ 50. Paint.
+        let mode = pick_cluster_mode(0, 100, 50, 50, 0);
+        assert_eq!(mode, Some(50));
     }
 
     #[test]
     fn pick_cluster_mode_saturating_sub_doesnt_crash_on_tiny_widths() {
-        // Bar narrower than even minimal — saturating_sub clamps to 0,
-        // cluster_left = area_x. Should return None, not panic.
-        let mode = pick_cluster_mode(0, 10, 60, 50, 30, 15, 4);
+        let mode = pick_cluster_mode(0, 10, 60, 50, 4);
         assert_eq!(mode, None);
     }
 
     #[test]
     fn pick_cluster_mode_zero_width_returns_none() {
-        let mode = pick_cluster_mode(0, 0, 0, 50, 30, 15, 4);
+        let mode = pick_cluster_mode(0, 0, 0, 50, 4);
         assert_eq!(mode, None);
     }
 }

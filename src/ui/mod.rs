@@ -1053,32 +1053,22 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // (it wasn't bumped past the chevron after painting). The real
     // right edge of the workspace cluster is `x + dropdown_w`.
     let palette_right_edge = x + dropdown_w;
-    let full_w = bufferline::right_cluster_width_for(app, bufferline::ClusterMode::Full);
-    let compact_w = bufferline::right_cluster_width_for(app, bufferline::ClusterMode::Compact);
-    let minimal_w = bufferline::right_cluster_width_for(app, bufferline::ClusterMode::Minimal);
-    let mode = bufferline::pick_cluster_mode(
+    let full_w = bufferline::right_cluster_width(app);
+    let cluster_w = bufferline::pick_cluster_mode(
         area.x,
         area.width,
         palette_right_edge,
         full_w,
-        compact_w,
-        minimal_w,
         4, // gap cells between palette + cluster
     );
-    if let Some((w, cluster_mode)) = mode {
+    if let Some(w) = cluster_w {
         let cluster_area = Rect {
             x: area.x + area.width.saturating_sub(w),
             y: area.y,
             width: w,
             height: 1,
         };
-        bufferline::paint_right_cluster_for(
-            frame,
-            app,
-            cluster_area,
-            t.bg_dark,
-            cluster_mode,
-        );
+        bufferline::paint_right_cluster(frame, app, cluster_area, t.bg_dark);
     } else {
         // Cluster hidden entirely — clear the chip rects so stale
         // rects from a wider frame don't steal clicks.
@@ -2230,11 +2220,11 @@ mod palette_bar_tests {
     }
 
     #[test]
-    fn palette_bar_narrow_drops_tabs_section() {
-        // 90 cells: too narrow for the full cluster but compact
-        // (no TABS / tab chips) should still fit. Verify the
-        // user-reported behavior — TABS section disappears while
-        // launcher icons + theme + close stay reachable.
+    fn palette_bar_narrow_hides_cluster_entirely() {
+        // 90 cells: too narrow for the full cluster — and there's
+        // no compact stage anymore. User preference (2026-06-22):
+        // full-or-hidden, no intermediate. TABS / + / theme / × all
+        // disappear in one drop.
         let row = render_palette_bar_row(90, 3);
         assert!(
             !row.contains("TABS"),
