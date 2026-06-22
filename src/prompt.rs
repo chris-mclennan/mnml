@@ -142,6 +142,10 @@ pub enum PromptKind {
     /// layout can pick the right package without `:go.run` being
     /// hardcoded to `.`.
     GoRunPath,
+    /// Accept ⇒ shell-out `grpcurl <plain?> -d "" <host> list` to
+    /// enumerate services. Opens a picker over the discovered
+    /// services. 2026-06-21 `:grpc.discover`.
+    GrpcDiscoverHost,
     /// Accept (input == "merge") ⇒ `git merge <pending_merge_source>`.
     /// Confirm prompt for the GitMergeInto picker.
     GitMergeConfirm,

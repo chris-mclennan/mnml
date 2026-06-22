@@ -3403,6 +3403,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.ws_connect_prompt(),
         },
         Command {
+            id: "ws.history",
+            title: "WebSocket: picker over past URLs (~/.mnml/ws-history)",
+            group: "http",
+            keys: &[],
+            run: |app| app.ws_history_picker(),
+        },
+        Command {
             id: "ws.send_message",
             title: "WebSocket: send a message on the active connection",
             group: "http",
@@ -3426,6 +3433,13 @@ fn builtin_commands() -> Vec<Command> {
             // [ws-response].
             keys: &[],
             run: |app| app.ws_send_active(),
+        },
+        Command {
+            id: "grpc.discover",
+            title: "gRPC: reflect a server → pick service/method → seed scratch",
+            group: "http",
+            keys: &[],
+            run: |app| app.grpc_discover_prompt(),
         },
         Command {
             id: "grpc.send",

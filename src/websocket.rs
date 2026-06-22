@@ -95,11 +95,13 @@ impl WebsocketPane {
     }
 
     /// Drain pending messages into `log` + apply state changes.
-    /// Called from App.tick.
+    /// Called from App.tick. Also persists each message to
+    /// `~/.mnml/ws-history/<host-slug>/history.jsonl` (2026-06-21).
     pub fn drain(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 WsMsg::Recv { ts, text, outgoing } => {
+                    persist_history(&self.url, outgoing, &text);
                     self.log.push(LogEntry { ts, outgoing, text });
                 }
                 WsMsg::State(s) => self.state = s,
@@ -121,6 +123,7 @@ impl WebsocketPane {
         }
         let payload = std::mem::take(&mut self.input);
         self.input_cursor = 0;
+        persist_history(&self.url, true, &payload);
         // Mirror into log first (we won't get an echo from server).
         self.log.push(LogEntry {
             ts: Instant::now(),
@@ -324,4 +327,102 @@ fn worker(
             }
         }
     }
+}
+
+/// 2026-06-21 — best-effort persist a single message to
+/// `~/.mnml/ws-history/<host-slug>/history.jsonl`. Appends one
+/// JSON line. Silently no-ops when HOME isn't set or the dir
+/// can't be created — the file is informational, not load-bearing.
+fn persist_history(url: &str, outgoing: bool, text: &str) {
+    let Some(home) = std::env::var_os("HOME") else {
+        return;
+    };
+    let host = host_of_url(url);
+    let slug = host
+        .replace(['/', ':'], "_")
+        .replace(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.' && c != '-', "_");
+    if slug.is_empty() {
+        return;
+    }
+    let dir = std::path::PathBuf::from(home)
+        .join(".mnml/ws-history")
+        .join(&slug);
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("history.jsonl");
+    let ts_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    // Encode text as a JSON string literal (escape control chars
+    // + quote + backslash). Newlines flattened to \n.
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    let line = format!(
+        "{{\"ts\":{ts_ms},\"url\":\"{url}\",\"outgoing\":{outgoing},\"text\":\"{escaped}\"}}\n"
+    );
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// 2026-06-21 — `:ws.history` reader. Walks
+/// `~/.mnml/ws-history/*/history.jsonl`, returns
+/// `Vec<(url, last_ts_ms, message_count)>` sorted by last_ts
+/// descending. Used by the history picker.
+pub fn read_ws_history() -> Vec<(String, u128, usize)> {
+    let mut out: std::collections::BTreeMap<String, (u128, usize)> =
+        std::collections::BTreeMap::new();
+    let Some(home) = std::env::var_os("HOME") else {
+        return Vec::new();
+    };
+    let root = std::path::PathBuf::from(home).join(".mnml/ws-history");
+    let Ok(rd) = std::fs::read_dir(&root) else {
+        return Vec::new();
+    };
+    for d in rd.flatten() {
+        let p = d.path().join("history.jsonl");
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let mut last_ts: u128 = 0;
+        let mut url_seen: Option<String> = None;
+        let mut count = 0usize;
+        for line in text.lines() {
+            count += 1;
+            // Cheap field-extract without pulling serde_json — both
+            // fields are at fixed positions in the writer.
+            if let Some(ts_str) = line
+                .strip_prefix("{\"ts\":")
+                .and_then(|s| s.split(',').next())
+                && let Ok(ts) = ts_str.parse::<u128>()
+            {
+                last_ts = last_ts.max(ts);
+            }
+            if url_seen.is_none()
+                && let Some(rest) = line.split("\"url\":\"").nth(1)
+                && let Some(end) = rest.find('"')
+            {
+                url_seen = Some(rest[..end].to_string());
+            }
+        }
+        if let Some(u) = url_seen {
+            out.entry(u).or_insert((last_ts, count)).0 = last_ts;
+            out.get_mut(&out.keys().next().unwrap().clone()); // no-op for borrow
+        }
+    }
+    let mut rows: Vec<(String, u128, usize)> = out
+        .into_iter()
+        .map(|(url, (ts, count))| (url, ts, count))
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    rows
 }

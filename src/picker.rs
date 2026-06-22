@@ -213,6 +213,25 @@ pub enum PickerKind {
     /// Accept ⇒ `go run ./cmd/<id>`. Opened by `:go.run` when
     /// the module has 2+ `cmd/<app>/` packages.
     GoRunCmd,
+    /// 2026-06-21 — `id` = fully-qualified service name (e.g.
+    /// `helloworld.Greeter`). Accept ⇒ shell-out grpcurl to list
+    /// the service's methods → open GrpcMethod picker. `detail`
+    /// carries the host the user typed at the discover prompt
+    /// (we re-thread it through the next picker via
+    /// `App::pending_grpc_host`).
+    GrpcService,
+    /// `id` = fully-qualified method name (e.g.
+    /// `helloworld.Greeter/SayHello`). Accept ⇒ shell-out
+    /// `grpcurl describe <service>.<method>` to get the Request
+    /// type's skeleton → seed a `[grpc-discover]` scratch with
+    /// the JSON the user can edit + fire via `:grpc.send`.
+    GrpcMethod,
+    /// 2026-06-21 — `id` = a wss:// URL from the WS history
+    /// store. Accept ⇒ open that URL as a fresh `:ws.connect`
+    /// (so the user can re-fire messages against the same
+    /// server) and optionally seed the message log with the
+    /// last N messages via a `[ws-history-<host>]` scratch.
+    WsHistory,
 }
 
 #[derive(Debug, Clone)]

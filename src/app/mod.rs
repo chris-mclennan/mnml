@@ -3152,6 +3152,10 @@ pub struct App {
     /// opens its prompt, so the accept handler sends to the right
     /// WS pane even if the user moved focus mid-prompt.
     pub pending_ws_send_pane: Option<usize>,
+    /// 2026-06-21 — host stashed mid-flight in `:grpc.discover`
+    /// flow so the service-picker accept can re-use it for the
+    /// method picker without re-prompting.
+    pub pending_grpc_host: Option<String>,
     /// True while a chain run is in flight; gates double-submits.
     pub http_chain_in_flight: bool,
     /// Pending kill (SIGTERM) target for `:ai.agents_dashboard`'s
@@ -3655,6 +3659,7 @@ impl App {
             http_chain_in_flight: false,
             ws_send_chan: None,
             pending_ws_send_pane: None,
+            pending_grpc_host: None,
             pending_kill_pid: None,
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,

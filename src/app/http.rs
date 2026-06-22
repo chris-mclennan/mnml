@@ -8,6 +8,77 @@
 
 use super::*;
 
+/// 2026-06-21 — extract a JSON skeleton from a grpcurl
+/// `describe <Type>` output. Returns a JSON object literal with
+/// each scalar / message field defaulted (string → "", numbers →
+/// 0, bool → false, message → {}). Best-effort regex-light
+/// parser; falls back to "{}" when the proto can't be lexed.
+pub fn extract_proto_skeleton(s: &str) -> String {
+    let mut fields: Vec<(String, String)> = Vec::new();
+    // Look for "  <type> <name> = <num>;" lines inside the message
+    // body. The braces around the body aren't tracked; we just
+    // pick lines that look like field declarations.
+    for line in s.lines() {
+        let line = line.trim();
+        // Skip braces, oneof headers, comments, the message header
+        // ("Greeter is a service" / "HelloRequest is a message").
+        if line.is_empty()
+            || line.starts_with('{')
+            || line.starts_with('}')
+            || line.starts_with("//")
+            || line.starts_with("oneof")
+            || line.ends_with('{')
+            || !line.contains('=')
+        {
+            continue;
+        }
+        // Strip trailing `;`.
+        let line = line.trim_end_matches(';');
+        // Form: `[repeated] <type> <name> = <num>`.
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let (ty_idx, name_idx) = if parts[0] == "repeated" || parts[0] == "optional" {
+            (1, 2)
+        } else {
+            (0, 1)
+        };
+        if name_idx >= parts.len() {
+            continue;
+        }
+        let ty = parts[ty_idx];
+        let name = parts[name_idx];
+        // Validate `=` follows the name.
+        if parts.get(name_idx + 1) != Some(&"=") {
+            continue;
+        }
+        let default = match ty {
+            "string" | "bytes" => "\"\"".to_string(),
+            "bool" => "false".to_string(),
+            "int32" | "int64" | "uint32" | "uint64" | "sint32" | "sint64"
+            | "fixed32" | "fixed64" | "sfixed32" | "sfixed64" | "float" | "double" => {
+                "0".to_string()
+            }
+            _ => "{}".to_string(), // assume nested message
+        };
+        let value = if parts[0] == "repeated" {
+            format!("[{default}]")
+        } else {
+            default
+        };
+        fields.push((name.to_string(), value));
+    }
+    if fields.is_empty() {
+        return "{}".to_string();
+    }
+    let inner: Vec<String> = fields
+        .iter()
+        .map(|(n, v)| format!("    \"{n}\": {v}"))
+        .collect();
+    format!("{{\n{}\n  }}", inner.join(",\n"))
+}
+
 /// Result of a backgrounded `:ws.send` worker.
 pub struct WsSendReply {
     pub url: String,
@@ -863,6 +934,219 @@ impl App {
     ///     "plaintext": true | false,   // optional, default false
     ///     "headers": { "name": "value" }, // optional
     ///     "message": { ... } }         // the request payload
+    /// 2026-06-21 — `:ws.history` opens a picker over past
+    /// connections. Reads `~/.mnml/ws-history/*/history.jsonl`,
+    /// sorts by last activity desc, shows URL + msg count.
+    /// Accept opens a connection to that URL and a `[ws-history-
+    /// <host>]` scratch with the last 200 lines of the history
+    /// for context.
+    pub fn ws_history_picker(&mut self) {
+        let rows = crate::websocket::read_ws_history();
+        if rows.is_empty() {
+            self.toast("ws.history: empty (no past connections persisted)");
+            return;
+        }
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = rows
+            .into_iter()
+            .map(|(url, _ts, count)| {
+                let detail = format!("{count} msgs");
+                PickerItem::new(url.clone(), url, detail)
+            })
+            .collect();
+        self.open_picker(Picker::new(
+            PickerKind::WsHistory,
+            "ws history (past connections)",
+            items,
+        ));
+    }
+
+    /// Accept handler for `:ws.history` picker — open a scratch
+    /// with the last 200 history lines and start a fresh
+    /// connection to the same URL.
+    pub fn ws_history_open(&mut self, url: String) {
+        // 1) Seed a scratch with the last ~200 lines of history
+        // so the user can see what they've sent / received.
+        if let Some(home) = std::env::var_os("HOME") {
+            let host = url
+                .strip_prefix("wss://")
+                .or_else(|| url.strip_prefix("ws://"))
+                .unwrap_or(&url)
+                .split('/')
+                .next()
+                .unwrap_or("?");
+            let slug: String = host
+                .replace(':', "_")
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let path = std::path::PathBuf::from(home)
+                .join(".mnml/ws-history")
+                .join(&slug)
+                .join("history.jsonl");
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                let lines: Vec<&str> = text.lines().collect();
+                let start = lines.len().saturating_sub(200);
+                let mut body = format!("# ws history — {host}\n\n");
+                for l in &lines[start..] {
+                    body.push_str(l);
+                    body.push('\n');
+                }
+                self.open_scratch_with_text(
+                    format!("[ws-history-{host}]"),
+                    body,
+                );
+            }
+        }
+        // 2) Start a fresh connection to the URL.
+        self.ws_connect_to(&url);
+    }
+
+    /// 2026-06-21 — `:grpc.discover` step 1: prompt for a host
+    /// (e.g. `localhost:50051`). The accept handler shells out
+    /// `grpcurl -plaintext <host> list` and opens a picker over
+    /// discovered services. Subsequent service / method picks
+    /// shell out to grpcurl `list <svc>` / `describe <method>`
+    /// to enumerate methods + extract the Request skeleton.
+    pub fn grpc_discover_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::GrpcDiscoverHost,
+            "grpc discover: host:port",
+            "localhost:50051",
+        ));
+    }
+
+    pub fn grpc_discover_host(&mut self, host: String) {
+        let host = host.trim().to_string();
+        if host.is_empty() {
+            self.toast("grpc.discover: host can't be empty");
+            return;
+        }
+        let out = std::process::Command::new("grpcurl")
+            .args(["-plaintext", &host, "list"])
+            .output();
+        let Ok(out) = out else {
+            self.toast("grpc.discover: spawn grpcurl failed (is it on PATH?)");
+            return;
+        };
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            self.toast(format!("grpc.discover: {}", stderr.trim()));
+            return;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let services: Vec<String> = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with("grpc.reflection."))
+            .map(String::from)
+            .collect();
+        if services.is_empty() {
+            self.toast(
+                "grpc.discover: no services (server may lack reflection support)",
+            );
+            return;
+        }
+        self.pending_grpc_host = Some(host);
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = services
+            .into_iter()
+            .map(|s| PickerItem::new(s.clone(), s.clone(), String::new()))
+            .collect();
+        self.open_picker(Picker::new(PickerKind::GrpcService, "grpc service", items));
+    }
+
+    pub fn grpc_discover_service(&mut self, service: String) {
+        let Some(host) = self.pending_grpc_host.clone() else {
+            self.toast("grpc.discover: lost host (open the prompt again)");
+            return;
+        };
+        let out = std::process::Command::new("grpcurl")
+            .args(["-plaintext", &host, "list", &service])
+            .output();
+        let Ok(out) = out else {
+            self.toast("grpc.discover: spawn grpcurl failed");
+            return;
+        };
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            self.toast(format!("grpc.discover: {}", stderr.trim()));
+            return;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let methods: Vec<String> = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect();
+        if methods.is_empty() {
+            self.toast(format!("grpc.discover: no methods on {service}"));
+            return;
+        }
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = methods
+            .into_iter()
+            .map(|m| {
+                let canonical = match m.rfind('.') {
+                    Some(idx) => format!("{}/{}", &m[..idx], &m[idx + 1..]),
+                    None => m.clone(),
+                };
+                PickerItem::new(canonical.clone(), canonical, String::new())
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::GrpcMethod, "grpc method", items));
+    }
+
+    pub fn grpc_discover_method(&mut self, method: String) {
+        let Some(host) = self.pending_grpc_host.take() else {
+            self.toast("grpc.discover: lost host");
+            return;
+        };
+        let describe_target = method.replace('/', ".");
+        let req_skeleton = match std::process::Command::new("grpcurl")
+            .args(["-plaintext", &host, "describe", &describe_target])
+            .output()
+        {
+            Ok(o) if o.status.success() => {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                let req_type = stdout
+                    .lines()
+                    .find_map(|l| l.trim().strip_prefix("rpc"))
+                    .and_then(|after| after.split('(').nth(1))
+                    .and_then(|s| s.split(')').next())
+                    .map(|s| s.trim().trim_start_matches('.').to_string());
+                if let Some(rt) = req_type {
+                    match std::process::Command::new("grpcurl")
+                        .args(["-plaintext", &host, "describe", &rt])
+                        .output()
+                    {
+                        Ok(o2) if o2.status.success() => {
+                            extract_proto_skeleton(&String::from_utf8_lossy(&o2.stdout))
+                        }
+                        _ => "{}".to_string(),
+                    }
+                } else {
+                    "{}".to_string()
+                }
+            }
+            _ => "{}".to_string(),
+        };
+        let body = format!(
+            "{{\n  \"server\": \"{host}\",\n  \"method\": \"{method}\",\n  \"plaintext\": true,\n  \"message\": {req_skeleton}\n}}\n"
+        );
+        self.open_scratch_with_text("[grpc-discover]".to_string(), body);
+        self.toast(format!(
+            "grpc.discover: ✓ {method} — edit + :grpc.send"
+        ));
+    }
+
     pub fn grpc_send_active(&mut self) {
         let buf_text = match self.active.and_then(|i| self.panes.get(i)) {
             Some(Pane::Editor(b)) => b.editor.text().to_string(),
