@@ -2485,4 +2485,106 @@ mod palette_bar_tests {
         // No tab chip
         assert!(!row.contains(" 1 "), "no tab chip allowed: {row:?}");
     }
+
+    /// 2026-06-22 — verify the drop overlay paints when a tree
+    /// drag is over a pane body.
+    #[test]
+    fn drop_overlay_paints_when_over_pane() {
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        std::fs::write(ws.join("a.txt"), "alpha").unwrap();
+        std::fs::write(ws.join("b.txt"), "beta").unwrap();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        app.under_tmnl = false;
+        app.inside_tmnl_pty = false;
+        // Open a file so there's a pane body to drop on.
+        app.open_path(&ws.join("a.txt"));
+        // Render once to populate pane_bodies.
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        // Now simulate: drag from tree (e.g. b.txt) over the pane.
+        // Pick a coord that's inside the pane body.
+        let body_rect = app
+            .rects
+            .pane_bodies
+            .first()
+            .map(|(r, _)| *r)
+            .expect("expected at least one pane body");
+        let center_x = body_rect.x + body_rect.width / 2;
+        let center_y = body_rect.y + body_rect.height / 2;
+        app.begin_tree_drag(ws.join("b.txt"), false, 10);
+        app.set_tree_drag_cursor(center_x, center_y);
+        app.update_tab_drop_target(center_x, center_y);
+        assert!(
+            app.rects.tab_drop_target.is_some(),
+            "drop target should be set when cursor is over a pane body"
+        );
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer();
+        let screen: String = (0..buf.area.height)
+            .map(|y| {
+                let row: String = (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect();
+                row + "\n"
+            })
+            .collect();
+        assert!(
+            screen.contains("move here")
+                || screen.contains("split left")
+                || screen.contains("split right")
+                || screen.contains("split top")
+                || screen.contains("split bottom"),
+            "drop overlay label should appear on screen.\n\
+             tab_drop_target: {:?} screen:\n{}",
+            app.rects.tab_drop_target,
+            screen
+        );
+    }
+
+    /// 2026-06-22 — verify the drag ghost actually paints during
+    /// a tree drag. User-reported: no visible ghost during drag.
+    /// This test simulates the drag (mouse-down on tree, then
+    /// move) and asserts the ghost chip text appears on screen.
+    #[test]
+    fn drag_ghost_paints_during_armed_drag() {
+        use std::path::PathBuf;
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        std::fs::write(ws.join("dragme.txt"), "drag me").unwrap();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        app.under_tmnl = false;
+        app.inside_tmnl_pty = false;
+        // Start a tree drag from row y=10 (simulating mouse-down on
+        // the tree row), then move the cursor to (50, 20) — past
+        // the tree, onto a pane area.
+        app.begin_tree_drag(ws.join("dragme.txt"), false, 10);
+        app.set_tree_drag_cursor(50, 20);
+        assert!(
+            app.tree_drag.as_ref().unwrap().armed,
+            "drag should arm on cursor motion past origin"
+        );
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer();
+        // The ghost chip should contain the filename "dragme.txt"
+        // somewhere on screen. Scan all rows.
+        let screen: String = (0..buf.area.height)
+            .map(|y| {
+                let row: String = (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect();
+                row + "\n"
+            })
+            .collect();
+        assert!(
+            screen.contains("dragme.txt"),
+            "drag ghost chip should render 'dragme.txt' on screen but didn't.\n\
+             Cursor: ({}, {}) armed: {} screen:\n{}",
+            app.tree_drag.as_ref().unwrap().cursor_x,
+            app.tree_drag.as_ref().unwrap().cursor_y,
+            app.tree_drag.as_ref().unwrap().armed,
+            screen
+        );
+    }
 }

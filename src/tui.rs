@@ -4818,6 +4818,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
+                // 2026-06-22 — double-click on a per-leaf tab
+                // promotes a preview tab to a permanent one
+                // (matches bufferline-tab double-click). Re-uses
+                // `App::last_click` for the timing.
+                let now = std::time::Instant::now();
+                let is_double = matches!(
+                    app.last_click,
+                    Some((prev, px, py, _))
+                        if px == x
+                            && py == y
+                            && now.duration_since(prev) < std::time::Duration::from_millis(450)
+                );
+                app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
+                if is_double
+                    && let Some(Pane::Editor(b)) = app.panes.get_mut(tab_pane)
+                {
+                    b.is_preview = false;
+                }
                 app.switch_split_tab(leaf_active, tab_pane);
                 return;
             }
