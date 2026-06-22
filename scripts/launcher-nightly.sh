@@ -67,6 +67,29 @@ EOF
     exit 1
 fi
 
+# 2026-06-22 — also watch tmnl source. When mnml runs as a tmnl
+# native pane (which happens when we exec tmnl --mnml below), a
+# stale tmnl binary means UI changes to the chrome row / wgpu
+# render aren't picked up even after rebuilding mnml. The
+# nightly icon is a "click it and get the latest of EVERYTHING"
+# tool — that has to include tmnl too. Mirror the mnml rebuild
+# pattern: mtime-check tmnl source against the installed binary.
+tmnl_src_root="$HOME/Projects/tmnl"
+tmnl_installed="$HOME/.cargo/bin/tmnl"
+if [ -d "$tmnl_src_root/src" ] && [ -x "$tmnl_installed" ]; then
+    tmnl_newer="$(find "$tmnl_src_root/src" "$tmnl_src_root/Cargo.toml" "$tmnl_src_root/Cargo.lock" -newer "$tmnl_installed" -type f 2>/dev/null | head -1)"
+    if [ -n "$tmnl_newer" ]; then
+        echo "  tmnl_needs_install=yes ($tmnl_newer)" >> "$log_file"
+        osascript -e "display notification \"Rebuilding tmnl (release install)\" with title \"mnml-nightly\"" 2>/dev/null &
+        if ! (cd "$tmnl_src_root" && cargo install --path . 2>>"$log_file"); then
+            osascript <<EOF
+display dialog "mnml-nightly: tmnl install failed.\n\nSee $log_file for details." buttons {"OK"} default button "OK" with icon caution
+EOF
+            exit 1
+        fi
+    fi
+fi
+
 export PATH="$(dirname "$dev_bin"):/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
 # Resolve tmnl, in order: $PATH → /Applications/tmnl-nightly.app
