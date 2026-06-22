@@ -268,7 +268,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // right column: optionally a 1-row bufferline above the body.
     // `app.bufferline_visible = false` ⇒ skip the strip; the body grows.
-    let (bufferline_area, body_area) = if app.bufferline_visible {
+    // 2026-06-22 — also skip when the current layout has any
+    // splits. Each split paints its own per-leaf tab strip above
+    // its body, and the global bufferline would duplicate that
+    // info (user feedback: "tabs on the left + subheading with
+    // the name = goofy"). The per-leaf strips are the source of
+    // truth when splits exist; only a single-leaf layout falls
+    // back to the global bufferline.
+    let has_splits = app
+        .layouts
+        .get(app.active_layout)
+        .map(|l| l.has_splits())
+        .unwrap_or(false);
+    let (bufferline_area, body_area) = if app.bufferline_visible && !has_splits {
         let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
         (Some(r[0]), r[1])
     } else {

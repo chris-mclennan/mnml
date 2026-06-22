@@ -51,6 +51,20 @@ impl Layout {
         }
     }
 
+    /// True when this layout contains at least one `Split` node.
+    /// Used by `ui::draw` to hide the global bufferline when the
+    /// per-leaf tab strips above each split would otherwise
+    /// duplicate it.
+    pub fn has_splits(&self) -> bool {
+        matches!(self, Layout::Split { .. })
+            || match self {
+                Layout::Split { first, second, .. } => {
+                    first.has_splits() || second.has_splits()
+                }
+                _ => false,
+            }
+    }
+
     /// The first (leftmost / topmost) leaf, if any.
     pub fn first_leaf(&self) -> Option<PaneId> {
         match self {
