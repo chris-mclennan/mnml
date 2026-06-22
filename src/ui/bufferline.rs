@@ -111,21 +111,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ` ●━ ` ` × `. Each launcher chip is 4 cells (` <glyph> ` + label
     // space). Pre-compute the total so the per-buffer tab strip's
     // scroll math reserves enough width.
-    let n_tabs = app.layouts.len();
-    let n_launcher = app.config.ui.launcher_icons.len() as u16;
-    let mut right_w: u16 = 3 * n_launcher + 3 + 6; // launchers + ` + ` + ` TABS `
-    for i in 0..n_tabs {
-        // Active = ` <n>󰅖 ` (3 cells label + 2 cells close glyph).
-        // Inactive = ` <n> ` (3 cells label only). Dirty tab gets a
-        // leading `●` → +1 cell.
-        let dig = (i + 1).to_string().chars().count() as u16;
-        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-        right_w += 2 + dig + dirty;
-        if i == app.active_layout {
-            right_w += 2; // close glyph + trailing space
-        }
-    }
-    right_w += 4 + 3; // ` ●━ ` + ` × `
+    // 2026-06-21 — only reserve cluster width when the cluster is
+    // painted IN the bufferline (under tmnl native mode). In
+    // standalone, the cluster lives in the palette bar above us;
+    // the bufferline's full width is available for tabs.
+    let cluster_in_bufferline = app.is_inside_tmnl();
+    let right_w: u16 = if cluster_in_bufferline {
+        right_cluster_width(app)
+    } else {
+        0
+    };
     let tabs_max_x = area.x + area.width.saturating_sub(right_w);
 
     // Disambiguated labels — when two open editors share a filename, prepend
@@ -444,63 +439,93 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let _ = last_drawn;
 
-    // ── Right cluster (NvChad-style chrome) ──
-    //
-    //   `+` new-tab · `TABS` label · `<n>` per-tabpage chips (`⊗` close on
-    //   non-active) · `◯` theme toggle · `×` close-active-pane.
-    //
-    // Each segment registers its rect in `app.rects` so `tui::dispatch_mouse`
-    // can route clicks. Painted left-to-right starting at `tabs_max_x`; the
-    // bufferline scroll math reserved exactly `right_w` cells.
-    let t = theme::cur();
-    let mut cluster_x = tabs_max_x;
+    // 2026-06-21 — right cluster moved to `paint_right_cluster`
+    // (called from draw_palette_bar in standalone mode). When the
+    // palette bar isn't visible (we're inside tmnl native mode),
+    // the cluster falls back to painting here in the bufferline
+    // so tmnl users still see it.
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    if app.is_inside_tmnl() {
+        let cluster_area = ratatui::layout::Rect {
+            x: tabs_max_x,
+            y: area.y,
+            width: area.width.saturating_sub(tabs_max_x - area.x),
+            height: 1,
+        };
+        paint_right_cluster(frame, app, cluster_area, theme::cur().bg_darker);
+    }
+}
 
-    // Launcher-icon strip — one chip per configured `[[ui.launcher_icon]]`.
-    // Claude + Codex are built-in defaults; users can replace / append via
-    // config (see `LauncherIcon` rustdoc). Each chip is 3 cells
-    // (` <glyph> `), painted on its theme-slot color. Click hands off
-    // to `dispatch_launcher_icon_click` in dispatch.rs.
+/// Width in cells of the right-cluster chrome (launcher icons +
+/// `+` + `TABS` + tab-page chips + theme toggle + close).
+pub fn right_cluster_width(app: &App) -> u16 {
+    let n_tabs = app.layouts.len() as u16;
+    let n_launcher = app.config.ui.launcher_icons.len() as u16;
+    let mut w: u16 = 3 * n_launcher + 3 + 6;
+    for i in 0..app.layouts.len() {
+        let dig = (i + 1).to_string().chars().count() as u16;
+        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
+        w += 2 + dig + dirty;
+        if i == app.active_layout {
+            w += 2;
+        }
+    }
+    w += 4 + 3;
+    let _ = n_tabs;
+    w
+}
+
+/// Paint the NvChad-style right cluster (launcher icons · `+` ·
+/// `TABS` · tab-page chips · theme toggle · close) starting at
+/// `area.x` for up to `area.width` cells. Each segment registers
+/// its click rect in `app.rects` so the existing mouse dispatcher
+/// continues to work. `bg` is the column background (palette bar
+/// uses `bg_dark`, bufferline uses `bg_darker`).
+///
+/// 2026-06-21 — extracted from bufferline::draw so the palette
+/// bar (mnml's standalone-mode chrome row) can host this cluster
+/// in standard mode; the bufferline only re-paints it when mnml
+/// is inside tmnl native mode (no palette bar there). Tmnl chrome
+/// integration is Phase 2.
+pub fn paint_right_cluster(frame: &mut Frame, app: &mut App, area: Rect, bg: ratatui::style::Color) {
+    if area.width == 0 {
+        return;
+    }
+    let t = theme::cur();
+    let nerd = !app.config.ui.ascii_icons;
+    let mut spans: Vec<Span> = Vec::new();
+    let mut cluster_x = area.x;
+
+    // Launcher icons.
     for (i, icon) in app.config.ui.launcher_icons.iter().enumerate() {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let bg = launcher_color(&t, &icon.color);
+        let chip_bg = launcher_color(&t, &icon.color);
         spans.push(Span::styled(
             format!(" {glyph} "),
             Style::default()
                 .fg(t.bg_darker)
-                .bg(bg)
+                .bg(chip_bg)
                 .add_modifier(Modifier::BOLD),
         ));
         app.rects.launcher_icon_rects.push((
-            ratatui::layout::Rect {
-                x: cluster_x,
-                y: area.y,
-                width: 3,
-                height: 1,
-            },
+            Rect { x: cluster_x, y: area.y, width: 3, height: 1 },
             i,
         ));
         cluster_x += 3;
     }
-
-    // New-tab button. `nf-md-plus` (\u{F0415}) — thicker than ASCII `+`,
-    // same glyph NvChad uses for `TabNewBtn`. Colors match NvChad's
-    // `TbTabNewBtn = { fg = white, bg = one_bg2 }` — dark chip, light glyph.
+    // `+` new-tab button.
     spans.push(Span::styled(
         " \u{F0415} ",
         Style::default().fg(t.fg).bg(t.bg2),
     ));
-    app.rects.bufferline_new_tab_button = Some(ratatui::layout::Rect {
+    app.rects.bufferline_new_tab_button = Some(Rect {
         x: cluster_x,
         y: area.y,
         width: 3,
         height: 1,
     });
     cluster_x += 3;
-
-    // `TABS` label (decorative). White-ish chip with dark bold text —
-    // uses `t.fg` (NvChad's `white`, #abb2bf in onedark) for max
-    // contrast against the dark chrome. `comment` was still rendering
-    // too dim.
+    // `TABS` label (decorative).
     spans.push(Span::styled(
         " TABS ",
         Style::default()
@@ -509,13 +534,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .add_modifier(Modifier::BOLD),
     ));
     cluster_x += 6;
-
-    // Per-tabpage chips: active = ` <n>󰅖 ` (light-blue bg, dark text,
-    // close glyph), inactive = ` <n> ` (dim bg2, comment-grey text, NO
-    // close — keeps the strip uncluttered; users close via the active
-    // chip or `:bd`). The close glyph is `nf-md-close` (\u{F0156}) —
-    // same Material-Design glyph NvChad uses. Dirty tabs get a leading
-    // `●`.
+    // Per-tab-page chips with close on active.
     for i in 0..app.layouts.len() {
         let active = i == app.active_layout;
         let dirty = app.tab_has_dirty_buffer(i);
@@ -528,9 +547,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (chip_fg, chip_bg) = if active {
             (t.bg_darker, t.blue)
         } else {
-            // Inactive tab text: `fg` (white) is readable on `bg2`;
-            // `comment` was washing out too dim for the number to
-            // register at a glance.
             (t.fg, t.bg2)
         };
         let mut chip_style = Style::default().fg(chip_fg).bg(chip_bg);
@@ -539,44 +555,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         spans.push(Span::styled(label, chip_style));
         app.rects.bufferline_tab_page_chips.push((
-            ratatui::layout::Rect {
-                x: cluster_x,
-                y: area.y,
-                width: label_w,
-                height: 1,
-            },
+            Rect { x: cluster_x, y: area.y, width: label_w, height: 1 },
             i,
         ));
         cluster_x += label_w;
         if active {
-            // Close glyph + trailing space (2 cells). `nf-md-close`
-            // (\u{F0156}) — the standard Material Design close X, same
-            // glyph NvChad uses. ASCII mode substitutes `x` for
-            // terminals without a Nerd Font (bug-hunt SEV-3
-            // 2026-06-07 — bufferline was bypassing `--ascii`).
             let close = if nerd { "\u{F0156} " } else { "x " };
             spans.push(Span::styled(
                 close,
                 Style::default().fg(chip_fg).bg(chip_bg),
             ));
             app.rects.bufferline_tab_page_close.push((
-                ratatui::layout::Rect {
-                    x: cluster_x,
-                    y: area.y,
-                    width: 1,
-                    height: 1,
-                },
+                Rect { x: cluster_x, y: area.y, width: 1, height: 1 },
                 i,
             ));
             cluster_x += 2;
         }
     }
-
-    // Theme toggle — 2-cell composed pill: `●` handle (bright fg) + `━`
-    // rail (dim comment grey). When a `[ui] theme_toggle` pair is
-    // configured, the handle side flips based on which theme is active —
-    // handle-LEFT (`●━`) when on the primary theme, handle-RIGHT (`━●`)
-    // when on the alternate. Total slot is 4 cells: ` <pill> `.
+    // Theme toggle pill.
     let on_alt = app
         .config
         .ui
@@ -604,16 +600,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
     }
     spans.push(Span::styled(" ", Style::default().bg(t.bg2)));
-    app.rects.bufferline_theme_toggle = Some(ratatui::layout::Rect {
+    app.rects.bufferline_theme_toggle = Some(Rect {
         x: cluster_x,
         y: area.y,
         width: 4,
         height: 1,
     });
     cluster_x += 4;
-
-    // Close-active-pane (matches `Ctrl+W` muscle memory). `nf-md-close`
-    // (\u{F0156}) — thicker than Unicode `×`, matches the per-tab close.
+    // Window close.
     spans.push(Span::styled(
         " \u{F0156} ",
         Style::default()
@@ -621,14 +615,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .bg(t.red)
             .add_modifier(Modifier::BOLD),
     ));
-    app.rects.bufferline_window_close = Some(ratatui::layout::Rect {
+    app.rects.bufferline_window_close = Some(Rect {
         x: cluster_x,
         y: area.y,
         width: 3,
         height: 1,
     });
     let _ = cluster_x;
-
+    let _ = bg; // bg currently unused; future styling pass may use it.
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

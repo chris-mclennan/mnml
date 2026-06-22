@@ -1037,6 +1037,24 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         dropdown_rect,
     );
     app.rects.palette_dropdown_button = Some(dropdown_rect);
+
+    // 2026-06-21 — right-aligned chrome cluster (launcher icons /
+    // `+` / TABS chips / theme toggle / close). Was in bufferline;
+    // moved here so the bufferline row is free for per-split tab
+    // strips. tmnl-native mode still paints the cluster in the
+    // bufferline (palette bar isn't shown there) until the
+    // tmnl-protocol Phase 2 integration ships.
+    let cluster_w = bufferline::right_cluster_width(app);
+    if cluster_w < area.width {
+        let cluster_x = area.x + area.width.saturating_sub(cluster_w);
+        let cluster_area = Rect {
+            x: cluster_x,
+            y: area.y,
+            width: cluster_w,
+            height: 1,
+        };
+        bufferline::paint_right_cluster(frame, app, cluster_area, t.bg_dark);
+    }
 }
 
 /// Sort key for the activity-bar Git section's file-change list.
