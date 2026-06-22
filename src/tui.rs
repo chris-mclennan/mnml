@@ -4268,6 +4268,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_tab_context_menu(id, (x, y));
                 return;
             }
+            // 2026-06-22 — per-split tab chips also get a
+            // right-click context menu (same as bufferline
+            // tabs). Routes to the third tuple field (tab pane
+            // id), not the leaf_active (which would always be
+            // the leaf's active pane, not the one clicked).
+            if let Some(&(_, _, tab_pane)) = app
+                .rects
+                .split_tab_chips
+                .iter()
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.open_tab_context_menu(tab_pane, (x, y));
+                return;
+            }
             if let Some(tr) = app.rects.tree
                 && crate::app::dispatch::contains(tr, x, y)
             {

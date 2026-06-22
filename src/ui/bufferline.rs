@@ -277,10 +277,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // pin should appear where the close-X is, not by
         // replacing the file-type icon on the left.
         let pinned_here = matches!(pane, Pane::Editor(b) if b.is_pinned);
-        let badge = if pane.is_dirty() {
-            if nerd { "●" } else { "*" }
-        } else if pinned_here {
+        // Pinned wins over dirty — a pinned tab should ALWAYS
+        // surface its pin glyph (matching VS Code's "pinned
+        // overrides everything in the close slot" behavior).
+        let badge = if pinned_here {
             if nerd { "\u{f08d}" } else { "P" }
+        } else if pane.is_dirty() {
+            if nerd { "●" } else { "*" }
         } else if nerd {
             "\u{F0156}"
         } else {

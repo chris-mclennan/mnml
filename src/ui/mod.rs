@@ -2132,19 +2132,20 @@ fn paint_leaf_tab_strip(
         //   active+clean → ×  (red close — only active)
         //   else        → space
         let pin_glyph = if nerd { "\u{f08d}" } else { "P" };
-        let status_char = if dirty {
-            "•"
-        } else if pinned {
+        // Pinned wins over dirty + active (matches VS Code).
+        let status_char = if pinned {
             pin_glyph
+        } else if dirty {
+            "•"
         } else if is_active {
             "×"
         } else {
             " "
         };
-        let status_color = if dirty {
-            t.orange
-        } else if pinned {
+        let status_color = if pinned {
             t.yellow
+        } else if dirty {
+            t.orange
         } else if is_active {
             t.red
         } else {
