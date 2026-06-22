@@ -3848,10 +3848,17 @@ impl App {
 
     /// 2026-06-22 — update the cursor position tracked by an
     /// in-flight tree drag. Read by the drag-ghost paint pass.
+    /// Also arms the drag on any motion (X or Y) since the
+    /// y-only check missed horizontal drags (tree → right edge
+    /// of a pane), leaving the ghost / drop overlay invisible.
     pub fn set_tree_drag_cursor(&mut self, x: u16, y: u16) {
         if let Some(d) = self.tree_drag.as_mut() {
+            let moved = x != d.cursor_x || y != d.cursor_y;
             d.cursor_x = x;
             d.cursor_y = y;
+            if moved {
+                d.armed = true;
+            }
         }
     }
 

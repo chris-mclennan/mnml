@@ -547,7 +547,7 @@ impl Default for Config {
                 tab_width: 4,
                 autosave_secs: 0,
                 trim_trailing_ws_on_save: false,
-                breadcrumb: true,
+                breadcrumb: false,
                 auto_pair: false,
                 auto_indent: true,
                 format_on_save: false,
