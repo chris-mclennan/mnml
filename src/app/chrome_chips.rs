@@ -99,19 +99,14 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
     // to the standalone palette-bar version. `glyph` is unused
     // here (kept in the protocol shape for future expansion).
 
-    // Launcher icons — ` <glyph> ` (3 cells, launcher-color bg).
-    for (i, icon) in app.config.ui.launcher_icons.iter().enumerate() {
-        let glyph = if nerd { icon.glyph.clone() } else { icon.fallback.clone() };
-        let chip_bg = launcher_color(&t, &icon.color);
-        chips.push(ChromeChip {
-            id: format!("launcher:{i}"),
-            label: format!(" {glyph} "),
-            glyph: String::new(),
-            fg: color_to_packed(t.bg_darker),
-            bg: color_to_packed(chip_bg),
-            bold: true,
-        });
-    }
+    // Launcher icons — NOT sent under tmnl. Tmnl has its own
+    // `[[launcher_icon]]` config and paints its own row of icons
+    // on the chrome strip; sending mnml's would duplicate them
+    // visually. (`build_chrome_chips` only runs when
+    // `app.under_tmnl == true` — see `refresh_chrome_chips`.)
+    // In standalone (Apple Terminal etc) this code path doesn't
+    // run at all and mnml's launcher icons still render via its
+    // own palette-bar paint.
     // ` + ` new tab — 3 cells, t.bg2 bg.
     let plus_glyph = if nerd { "\u{F0415}".to_string() } else { "+".to_string() };
     chips.push(ChromeChip {
@@ -201,22 +196,6 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
         bold: true,
     });
     chips
-}
-
-/// Match `bufferline::launcher_color` — duplicated to keep this
-/// module free of `pub` exports from bufferline.
-fn launcher_color(t: &crate::ui::theme::Theme, name: &str) -> ratatui::style::Color {
-    match name {
-        "orange" => t.orange,
-        "cyan" => t.cyan,
-        "blue" => t.blue,
-        "green" => t.green,
-        "yellow" => t.yellow,
-        "purple" => t.purple,
-        "red" => t.red,
-        "teal" => t.teal,
-        _ => t.bg2,
-    }
 }
 
 /// Convert a ratatui `Color` to the protocol's packed RGBA. The
