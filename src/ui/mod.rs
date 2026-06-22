@@ -854,17 +854,18 @@ fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
     }
     let cx = drag.cursor_x;
     let cy = drag.cursor_y;
-    // Skip the leading dir portion; show just the filename.
     let name = drag
         .src_path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| drag.src_path.to_string_lossy().into_owned());
-    let label = clip_to_cells(&name, 24);
+    let label = clip_to_cells(&name, 28);
     let label_w = label.chars().count() as u16;
-    let chip_w = label_w + 4; // " 🗎 <name> "
-    // Position chip 1 cell down + 2 cells right of cursor (so it
-    // doesn't sit under the cursor itself). Clamp to area.
+    // 2026-06-22 — ghost chip: ` ⤴ <icon> <name> ` (5 + name cells).
+    // The ⤴ "moving" arrow makes it instantly read as a drag,
+    // and the bright bg means the user can't miss it.
+    let prefix = if drag.src_is_dir { "📁 " } else { "📄 " };
+    let chip_w = label_w + 5; // " 📄 <name> "
     let area = frame.area();
     let mut chip_x = cx.saturating_add(2);
     let mut chip_y = cy.saturating_add(1);
@@ -881,16 +882,12 @@ fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
         height: 1,
     };
     let t = theme::cur();
-    let bg = t.bg2;
-    let fg = t.fg;
-    let icon = if drag.src_is_dir { "" } else { "" };
-    let icon_color = if drag.src_is_dir { t.blue } else { t.cyan };
+    // Bright accent bg + dark fg so the chip really pops.
+    let bg = t.blue;
+    let fg = t.bg_darker;
     let line = Line::from(vec![
         Span::styled(" ".to_string(), Style::default().bg(bg)),
-        Span::styled(
-            format!("{icon} "),
-            Style::default().fg(icon_color).bg(bg),
-        ),
+        Span::styled(prefix.to_string(), Style::default().fg(fg).bg(bg)),
         Span::styled(
             label,
             Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
@@ -922,11 +919,12 @@ fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
         return;
     };
     let t = theme::cur();
-    // 2026-06-22 — paint ALL 5 zones as faint outlines + highlight
-    // the active one with a bright double border + label. Mimics
-    // VS Code's drag-to-split overlay where all targets are
-    // visible at once so the user can see what each does without
-    // hovering over each one in turn.
+    // 2026-06-22 — VS Code-style drop overlay: the ACTIVE zone
+    // gets a SOLID bright fill (impossible to miss); inactive
+    // zones get thin outlines that hint at the other targets.
+    // Earlier iteration used identical-bg blocks for active vs
+    // inactive — user couldn't tell which was which during a
+    // drag.
     let all_zones = [
         DropZone::Left,
         DropZone::Right,
@@ -940,49 +938,54 @@ fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
             continue;
         }
         let is_active = zone == active_zone;
-        let (border_style, fill_bg) = if is_active {
-            (
-                Style::default().fg(t.blue).add_modifier(Modifier::BOLD),
-                t.bg2,
-            )
-        } else {
-            (Style::default().fg(t.comment), t.bg_dark)
-        };
-        let border_type = if is_active {
-            BorderType::Double
-        } else {
-            BorderType::Plain
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(border_style)
-            .style(Style::default().bg(fill_bg));
-        let inner = block.inner(rect);
-        frame.render_widget(block, rect);
-        // Label inside the active zone only — the inactive outlines
-        // stay decoration so the active label reads cleanly.
-        if is_active && inner.width > 0 && inner.height > 0 {
-            let label = match zone {
-                DropZone::Center => "move here",
-                DropZone::Left => "split left",
-                DropZone::Right => "split right",
-                DropZone::Top => "split top",
-                DropZone::Bottom => "split bottom",
-            };
-            let cy = inner.y + inner.height / 2;
-            let row = Rect::new(inner.x, cy, inner.width, 1);
+        if is_active {
+            // Solid blue fill across the whole zone — this is the
+            // "where will the file go" hint. Plus a bright white
+            // label centered in the zone.
+            let fill_style = Style::default().bg(t.blue);
             frame.render_widget(
-                Paragraph::new(Span::styled(
-                    label,
-                    Style::default()
-                        .fg(t.blue)
-                        .add_modifier(Modifier::BOLD)
-                        .bg(fill_bg),
-                ))
-                .alignment(ratatui::layout::Alignment::Center),
-                row,
+                Paragraph::new("").style(fill_style),
+                rect,
             );
+            // Border for definition (single line, white).
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Double)
+                .border_style(Style::default().fg(t.fg).bg(t.blue))
+                .style(fill_style);
+            let inner = block.inner(rect);
+            frame.render_widget(block, rect);
+            if inner.width > 0 && inner.height > 0 {
+                let label = match zone {
+                    DropZone::Center => "move here",
+                    DropZone::Left => "split left",
+                    DropZone::Right => "split right",
+                    DropZone::Top => "split top",
+                    DropZone::Bottom => "split bottom",
+                };
+                let cy = inner.y + inner.height / 2;
+                let row = Rect::new(inner.x, cy, inner.width, 1);
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        label,
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(t.blue)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                    .alignment(ratatui::layout::Alignment::Center),
+                    row,
+                );
+            }
+        } else {
+            // Inactive zone — thin border outline, no fill (lets
+            // the editor content show through so the user can
+            // still read what's there). Single-line, dim.
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Plain)
+                .border_style(Style::default().fg(t.comment));
+            frame.render_widget(block, rect);
         }
     }
 }
