@@ -107,27 +107,12 @@ fn build_chrome_chips(app: &App) -> Vec<ChromeChip> {
     // In standalone (Apple Terminal etc) this code path doesn't
     // run at all and mnml's launcher icons still render via its
     // own palette-bar paint.
-    // ` + ` new tab — 3 cells, t.bg2 bg.
-    let plus_glyph = if nerd { "\u{F0415}".to_string() } else { "+".to_string() };
-    chips.push(ChromeChip {
-        id: "newtab".to_string(),
-        label: format!(" {plus_glyph} "),
-        glyph: String::new(),
-        fg: color_to_packed(t.fg),
-        bg: color_to_packed(t.bg2),
-        bold: false,
-    });
-    // ` TABS ` decorative label — 6 cells, white bg with dark
-    // bold text. Sentinel id `_label_tabs` never matches in click
-    // dispatch (no-op when clicked).
-    chips.push(ChromeChip {
-        id: "_label_tabs".to_string(),
-        label: " TABS ".to_string(),
-        glyph: String::new(),
-        fg: color_to_packed(t.bg_darker),
-        bg: color_to_packed(t.fg),
-        bold: true,
-    });
+    // 2026-06-22 — user feedback: drop `+` newtab (tmnl has its
+    // own `+` add-integration chip immediately to the left; ours
+    // duplicated it visually) and `TABS` decorative label (too
+    // wordy; the numbered chips communicate the same thing). The
+    // chrome chip set is now just: tab pages + theme + close.
+
     // Per-tab-page chips — ` <n> ` or ` ●<n> ` for dirty. Active
     // tab page gets a separate ` × ` chip after it so the close
     // hit-rect maps to `tabpage:<i>:close` distinctly.
