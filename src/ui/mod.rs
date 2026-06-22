@@ -570,6 +570,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.whichkey.is_some() {
         whichkey::draw(frame, app, area);
+    } else if app.vim_operator_menu().is_some() {
+        // 2026-06-21 — vim-operator whichkey popup. Only paints
+        // when leader-whichkey isn't already showing (leader
+        // takes priority on the unlikely overlap).
+        whichkey::draw_vim_operators(frame, app, area);
     }
     if app.close_prompt.is_some() {
         close_prompt::draw(frame, app, area);

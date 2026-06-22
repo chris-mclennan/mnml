@@ -3007,6 +3007,109 @@ impl InputHandler for VimInputHandler {
         "vim"
     }
 
+    /// 2026-06-21 — vim-operator whichkey popup. Returns the
+    /// continuations available at the current `prefix` state.
+    /// NvChad-style — the popup paints whenever the user is one
+    /// keypress deep into a multi-key chord, hinting at what
+    /// comes next.
+    fn operator_menu_hint(&self) -> Option<(String, Vec<(char, &'static str, bool)>)> {
+        // Only show in Normal / Visual modes. Insert + cmdline
+        // don't have operator chords.
+        if !matches!(self.mode, VimMode::Normal | VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock) {
+            return None;
+        }
+        match self.prefix {
+            Prefix::G => Some((
+                "g".to_string(),
+                vec![
+                    ('g', "top of file (gg)", false),
+                    ('e', "back end-of-word (ge)", false),
+                    ('d', "go to definition (LSP)", false),
+                    ('D', "go to declaration (LSP)", false),
+                    ('r', "find references (LSP)", false),
+                    ('i', "go to implementation (LSP)", false),
+                    ('h', "hover (LSP)", false),
+                    ('t', "next tab", false),
+                    ('T', "prev tab", false),
+                    ('c', "+comment", true),
+                    ('q', "+reflow", true),
+                    ('u', "lowercase {motion}", false),
+                    ('U', "uppercase {motion}", false),
+                    ('v', "reselect last visual", false),
+                    ('f', "open file under cursor", false),
+                    ('x', "execute file under cursor", false),
+                ],
+            )),
+            Prefix::Gc => Some((
+                "gc".to_string(),
+                vec![
+                    ('c', "comment current line (gcc)", false),
+                    ('w', "comment word", false),
+                    ('p', "comment paragraph", false),
+                ],
+            )),
+            Prefix::Z => Some((
+                "Z".to_string(),
+                vec![('Z', "save & quit (:x)", false), ('Q', "quit without save (:q!)", false)],
+            )),
+            Prefix::ZFold => Some((
+                "z".to_string(),
+                vec![
+                    ('a', "toggle fold (cursor)", false),
+                    ('o', "open fold (cursor)", false),
+                    ('c', "close fold (cursor)", false),
+                    ('R', "open all folds", false),
+                    ('M', "close all folds (lsp.fold_all)", false),
+                    ('E', "expand all folds", false),
+                ],
+            )),
+            Prefix::Window => Some((
+                "Ctrl+W".to_string(),
+                vec![
+                    ('h', "focus left split", false),
+                    ('j', "focus down split", false),
+                    ('k', "focus up split", false),
+                    ('l', "focus right split", false),
+                    ('w', "cycle splits", false),
+                    ('q', "close current split", false),
+                    ('s', "split horizontal", false),
+                    ('v', "split vertical", false),
+                ],
+            )),
+            Prefix::BracketOpen => Some((
+                "[".to_string(),
+                vec![
+                    ('c', "prev git hunk", false),
+                    ('d', "prev LSP diagnostic", false),
+                    ('e', "prev error (LSP)", false),
+                    ('q', "prev quickfix item", false),
+                ],
+            )),
+            Prefix::BracketClose => Some((
+                "]".to_string(),
+                vec![
+                    ('c', "next git hunk", false),
+                    ('d', "next LSP diagnostic", false),
+                    ('e', "next error (LSP)", false),
+                    ('q', "next quickfix item", false),
+                ],
+            )),
+            Prefix::Register => Some((
+                "\"".to_string(),
+                vec![
+                    ('a', "+ register a-z (named)", true),
+                    ('0', "last yank", false),
+                    ('+', "system clipboard", false),
+                    ('_', "blackhole (discard)", false),
+                ],
+            )),
+            // Other prefixes (mark-set, find-char, replace,
+            // text-object) are single-char terminators with no
+            // useful menu — they want ANY char, not a list.
+            _ => None,
+        }
+    }
+
     fn on_blur(&mut self) {
         // Drop to Normal and forget any half-typed chord / `:`-line.
         self.mode = VimMode::Normal;

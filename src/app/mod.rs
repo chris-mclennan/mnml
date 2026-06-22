@@ -3731,6 +3731,20 @@ impl App {
         Some((prefix, crate::whichkey::continuations(prefix)))
     }
 
+    /// 2026-06-21 — vim-operator whichkey popup. Reads the active
+    /// editor's input handler for its current prefix state; the
+    /// popup renders whenever the user is one key deep into a
+    /// multi-key vim chord (g…, d…, Ctrl+W…, […, ]…, z…).
+    pub fn vim_operator_menu(
+        &self,
+    ) -> Option<(String, Vec<(char, &'static str, bool)>)> {
+        let i = self.active?;
+        let Some(Pane::Editor(b)) = self.panes.get(i) else {
+            return None;
+        };
+        b.input.operator_menu_hint()
+    }
+
     /// Toggle the quick-scratch terminal at the bottom of the body. First
     /// invocation spawns a shell; subsequent toggles hide/show + focus.
     /// Dropping the App tears the pty down via `PtySession::Drop`.

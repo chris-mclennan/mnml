@@ -211,6 +211,16 @@ pub trait InputHandler: Send {
     fn ex_history(&self) -> Vec<String> {
         Vec::new()
     }
+    /// 2026-06-21 — whichkey-style popup hint when the handler is
+    /// in a multi-key prefix state (vim `g…`, `d…`, `Ctrl+W…`,
+    /// `[…`, `]…`, `z…`). Returns `Some((prefix_label,
+    /// continuations))` where continuations is
+    /// `(key, label, is_group)` — same shape the leader
+    /// whichkey popup consumes. Default `None` (standard mode
+    /// has no prefix states).
+    fn operator_menu_hint(&self) -> Option<(String, Vec<(char, &'static str, bool)>)> {
+        None
+    }
     /// Ask the handler to enter Insert mode. Vim's impl flips its internal
     /// VimMode + clears any pending chord; Standard mode is no-op (it has
     /// no modes). Used by `App::block_insert_start` so the App can drive the
