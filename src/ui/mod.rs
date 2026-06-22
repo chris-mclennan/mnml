@@ -2116,25 +2116,26 @@ fn paint_leaf_tab_strip(
         let pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
         let is_preview = matches!(pane, Pane::Editor(b) if b.is_preview);
 
-        let icon_text = if pinned {
-            "📌".to_string()
-        } else {
-            glyph.to_string()
-        };
-        let icon_color = if pinned { t.yellow } else { icon_color };
+        // 2026-06-22 — pinned tabs keep the file-type glyph on
+        // the LEFT (so you can still see what kind of file it
+        // is) and show the pin indicator on the RIGHT where the
+        // close × would normally be. User-feedback.
+        let icon_text = glyph.to_string();
 
-        // chip = " <icon> <name> <•/×> "
+        // chip = " <icon> <name> <•/⌹/×> "
         let name_clipped = clip_to_cells(&title, chip_max_name_w);
         let icon_w = icon_text.chars().count() as u16;
         let name_w = name_clipped.chars().count() as u16;
-        // status char priority: dirty wins over active (VS Code /
-        // Sublime convention — the close button becomes the
-        // dirty-indicator dot until the buffer is saved).
-        //   dirty       → •  (any tab, orange)
-        //   active+clean → ×  (red close)
-        //   inactive+clean → space
+        // Status char priority:
+        //   dirty       → •  (orange — any tab)
+        //   pinned      → 📌  (yellow — any tab)
+        //   active+clean → ×  (red close — only active)
+        //   else        → space
+        let pin_glyph = if nerd { "\u{f08d}" } else { "P" };
         let status_char = if dirty {
             "•"
+        } else if pinned {
+            pin_glyph
         } else if is_active {
             "×"
         } else {
@@ -2142,6 +2143,8 @@ fn paint_leaf_tab_strip(
         };
         let status_color = if dirty {
             t.orange
+        } else if pinned {
+            t.yellow
         } else if is_active {
             t.red
         } else {

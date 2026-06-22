@@ -269,15 +269,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange)
             }
         };
-        // Dirty: filled circle. Clean: `nf-md-close` (\u{F0156}) — same
-        // Material-Design glyph NvChad uses for buffer close, renders
-        // substantially larger than the ASCII `×` (which JetBrainsMono
-        // Nerd Font draws as a tiny multiplication sign).
-        // ASCII mode (`[ui] ascii_icons = true` / `--ascii`) substitutes
-        // a `*`/`x` so terminals without a Nerd Font don't render tofu.
-        // 2026-06-07 bug-hunt SEV-3 — bufferline was the last holdout.
+        // Status badge priority:
+        //   dirty   → ● / *  (orange — any tab)
+        //   pinned  → 📌 / P  (yellow — any tab)
+        //   else    → close glyph (× / x)
+        // Pinned-badge added 2026-06-22 — user-feedback: the
+        // pin should appear where the close-X is, not by
+        // replacing the file-type icon on the left.
+        let pinned_here = matches!(pane, Pane::Editor(b) if b.is_pinned);
         let badge = if pane.is_dirty() {
             if nerd { "●" } else { "*" }
+        } else if pinned_here {
+            if nerd { "\u{f08d}" } else { "P" }
         } else if nerd {
             "\u{F0156}"
         } else {
@@ -302,6 +305,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 theme::cur().fg,
                 if pane.is_dirty() {
                     theme::cur().orange
+                } else if pinned_here {
+                    theme::cur().yellow
                 } else {
                     theme::cur().grey_fg
                 },
@@ -310,7 +315,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             (
                 theme::cur().bg_darker,
                 theme::cur().grey_fg,
-                theme::cur().grey,
+                if pinned_here {
+                    theme::cur().yellow
+                } else {
+                    theme::cur().grey
+                },
             )
         };
         let mut name_style = Style::default().fg(name_fg).bg(bg);
@@ -325,28 +334,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         {
             name_style = name_style.add_modifier(Modifier::ITALIC);
         }
-        // 2026-06-21 — VS Code-style pinned tab. The 📌 glyph
-        // replaces the file-type icon. Distinct visual from
-        // preview (italics).
-        let pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
-        if pinned {
-            spans.push(Span::styled(
-                " 📌 ".to_string(),
-                Style::default()
-                    .fg(theme::cur().yellow)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            spans.push(Span::styled(
-                format!(" {glyph} "),
-                // Icons keep their natural devicon color on every tab — active
-                // or inactive — so file types stay recognizable at a glance
-                // (matches NvChad's tabufline). Only the name + close badge
-                // dim on inactive chips.
-                Style::default().fg(icon_color).bg(bg),
-            ));
-        }
+        // 2026-06-22 — pinned tabs keep the file-type glyph
+        // (pin moved to the right-side badge). Icons keep their
+        // natural devicon color on every tab — active or
+        // inactive — so file types stay recognizable at a
+        // glance (matches NvChad's tabufline).
+        spans.push(Span::styled(
+            format!(" {glyph} "),
+            Style::default().fg(icon_color).bg(bg),
+        ));
         spans.push(Span::styled(format!("{name} "), name_style));
         if !diag.is_empty() {
             let diag_fg = if diag.starts_with('\u{2717}') {
