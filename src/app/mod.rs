@@ -3860,6 +3860,13 @@ impl App {
                 d.armed = true;
             }
         }
+        // 2026-06-22 diag — temporary trace so we can confirm the
+        // drag-tracking path fires when the user mid-drags.
+        // Enable by setting MNML_DEBUG_DRAG=1 in the env.
+        if std::env::var_os("MNML_DEBUG_DRAG").is_some() {
+            let armed = self.tree_drag.as_ref().is_some_and(|d| d.armed);
+            self.toast(format!("drag cursor=({x},{y}) armed={armed}"));
+        }
     }
 
     /// Mouse-move within a tree drag — arms the drag once we leave the

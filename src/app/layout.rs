@@ -973,31 +973,22 @@ impl App {
     /// neighbour preferred). If it was the last tab, the leaf
     /// collapses (Layout::remove_leaf handles that).
     pub fn close_split_tab(&mut self, leaf_active_was: PaneId, tab_to_close: PaneId) {
-        // Find which layout (tab page) this leaf lives in.
-        let lay_idx = self
-            .layouts
-            .iter()
-            .position(|l| l.contains(leaf_active_was));
-        let Some(_lay_idx) = lay_idx else {
-            return;
-        };
-        // `remove_leaf` walks down to the matching leaf and pops
-        // the tab. If that tab was active AND the leaf has more
-        // tabs, the leaf's active flips to a sibling. If it was
-        // the last tab, the leaf collapses into its split sibling
-        // (or Empty at the root).
-        self.layout_mut().remove_leaf(tab_to_close);
-        // Re-resolve App::active to whatever the leaf points at
-        // now (or the first leaf in the tree if our leaf went away).
-        let new_active = self
-            .layout()
-            .leaves()
-            .first()
-            .copied()
-            .or_else(|| self.layout().first_leaf());
-        self.active = new_active;
-        self.focus = Focus::Pane;
-        self.retarget_outline_to_active();
+        // 2026-06-22 — user expectation: clicking × on a tab
+        // FULLY closes the pane (removes from app.panes + drops
+        // it from every layout). Previously this called
+        // `remove_leaf` only, which dropped the pane from the
+        // visible tree but left it in `app.panes` — so the
+        // global bufferline still showed it as a background tab
+        // after the user thought it was closed.
+        //
+        // `close_pane` handles the dirty-buffer save prompt and
+        // delegates to `force_close_pane` (full removal + layout
+        // collapse + focus retarget). leaf_active_was is unused
+        // — kept in the signature for symmetry with
+        // `switch_split_tab` so the click handler doesn't need
+        // to know which arg matters.
+        let _ = leaf_active_was;
+        self.close_pane(tab_to_close);
     }
 
     /// Switch to tab `idx` (no-op if out of range or already there). Saves
