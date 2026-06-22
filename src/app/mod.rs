@@ -3835,6 +3835,13 @@ impl App {
     /// drag is "armed" only after the mouse moves off this row, so a
     /// pure click still acts as a click.
     pub fn begin_tree_drag(&mut self, src_path: std::path::PathBuf, src_is_dir: bool, y: u16) {
+        if std::env::var_os("MNML_DEBUG_DRAG").is_some() {
+            self.toast(format!(
+                "begin_tree_drag: {} (dir={})",
+                src_path.display(),
+                src_is_dir
+            ));
+        }
         self.tree_drag = Some(TreeDrag {
             src_path,
             src_is_dir,

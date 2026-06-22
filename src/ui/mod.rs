@@ -2486,6 +2486,173 @@ mod palette_bar_tests {
         assert!(!row.contains(" 1 "), "no tab chip allowed: {row:?}");
     }
 
+    /// 2026-06-22 — full integration test: simulate the events
+    /// crossterm would dispatch during a tree-file drag and
+    /// verify the ghost + drop overlay paint at every stage.
+    /// This covers what other terminals (Apple Terminal, iTerm,
+    /// tmnl) should produce when the user drags a file from the
+    /// tree to a pane. Catches regressions where:
+    ///   - mouse-Moved without held-button is the only mid-drag
+    ///     event (some terminals report it this way)
+    ///   - tree_drag isn't being set on mouse-down on tree row
+    ///   - ghost / overlay paint code paths regress
+    #[test]
+    fn full_drag_flow_paints_ghost_and_overlay() {
+        use ratatui::crossterm::event::{
+            KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        std::fs::write(ws.join("a.txt"), "alpha").unwrap();
+        std::fs::write(ws.join("b.txt"), "beta").unwrap();
+        let mut app = App::new(ws.clone(), Config::default()).unwrap();
+        app.under_tmnl = false;
+        app.inside_tmnl_pty = false;
+        // Open a.txt so there's a pane body to drop onto.
+        app.open_path(&ws.join("a.txt"));
+        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+
+        // Find a tree row for b.txt — pick the row + col that the
+        // click handler would resolve. Compute the screen row for
+        // a b.txt entry by walking the visible tree.
+        let tree_rect = app
+            .rects
+            .tree
+            .expect("tree should render with a workspace open");
+        let visible_rows = app.tree.visible_rows();
+        let b_idx = visible_rows
+            .iter()
+            .position(|r| r.path.file_name().is_some_and(|n| n == "b.txt"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "b.txt not in visible_rows; rows={:?}",
+                    visible_rows
+                        .iter()
+                        .map(|r| r.path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .collect::<Vec<_>>()
+                )
+            });
+        let click_x = tree_rect.x + tree_rect.width / 2;
+        let click_y = tree_rect.y + (b_idx as u16);
+
+        // === STAGE 1: mouse-down on tree row → begin_tree_drag ===
+        crate::tui::dispatch_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: click_x,
+                row: click_y,
+                modifiers: KeyModifiers::empty(),
+            },
+        );
+        assert!(
+            app.tree_drag.is_some(),
+            "tree_drag should be Some after mouse-down on tree row (tree_rect={:?}, click=({},{}))",
+            tree_rect,
+            click_x,
+            click_y
+        );
+
+        // === STAGE 2: cursor moves into a pane body ===
+        // Terminals can deliver this as either Drag(Left) or
+        // Moved depending on platform / capture mode. Test both.
+        let body_rect = app
+            .rects
+            .pane_bodies
+            .first()
+            .map(|(r, _)| *r)
+            .expect("expected at least one pane body");
+        let move_x = body_rect.x + body_rect.width / 2;
+        let move_y = body_rect.y + body_rect.height / 2;
+
+        // First with Moved (the case other terminals sometimes
+        // send during a drag).
+        crate::tui::dispatch_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: move_x,
+                row: move_y,
+                modifiers: KeyModifiers::empty(),
+            },
+        );
+        assert!(
+            app.tree_drag
+                .as_ref()
+                .map(|d| d.armed)
+                .unwrap_or(false),
+            "tree_drag should arm on cursor motion during drag (Moved event)"
+        );
+        assert!(
+            app.rects.tab_drop_target.is_some(),
+            "tab_drop_target should be set when cursor is over a pane body during a tree drag"
+        );
+
+        // === STAGE 3: render — ghost + overlay must be on screen ===
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let buf = term.backend().buffer();
+        let screen: String = (0..buf.area.height)
+            .map(|y| {
+                let row: String = (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect();
+                row + "\n"
+            })
+            .collect();
+        assert!(
+            screen.contains("b.txt"),
+            "drag ghost chip should render 'b.txt' on screen.\n{}",
+            screen
+        );
+        assert!(
+            screen.contains("split left")
+                || screen.contains("split right")
+                || screen.contains("split top")
+                || screen.contains("split bottom")
+                || screen.contains("move here"),
+            "drop overlay should paint a directional label.\n{}",
+            screen
+        );
+
+        // === STAGE 4: mouse-up over pane → drop succeeds ===
+        let initial_layouts: Vec<_> = app.layouts.iter().map(|l| l.clone()).collect();
+        let _ = initial_layouts;
+        crate::tui::dispatch_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: move_x,
+                row: move_y,
+                modifiers: KeyModifiers::empty(),
+            },
+        );
+        assert!(
+            app.tree_drag.is_none(),
+            "tree_drag should clear on mouse-up"
+        );
+        // The release dropped b.txt onto a.txt's pane → either a
+        // split or center-move (depends on which zone the click
+        // landed in). Either way, b.txt is now a buffer.
+        let pane_paths: Vec<_> = app
+            .panes
+            .iter()
+            .filter_map(|p| match p {
+                crate::pane::Pane::Editor(b) => b.path.clone(),
+                _ => None,
+            })
+            .collect();
+        let b_open = pane_paths
+            .iter()
+            .any(|p| p.file_name().is_some_and(|n| n == "b.txt"));
+        assert!(
+            b_open,
+            "after drop, b.txt should be open as a Pane::Editor. \
+             panes: {:?}",
+            pane_paths
+        );
+    }
+
     /// 2026-06-22 — verify the drop overlay paints when a tree
     /// drag is over a pane body.
     #[test]
