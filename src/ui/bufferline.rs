@@ -443,19 +443,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 /// Width in cells of the right-cluster chrome (launcher icons +
 /// `+` + `TABS` + tab-page chips + theme toggle + close).
 pub fn right_cluster_width(app: &App) -> u16 {
-    let n_tabs = app.layouts.len() as u16;
+    right_cluster_width_mode(app, true)
+}
+
+/// Width in cells when the TABS label + per-tabpage chips are
+/// optionally hidden. 2026-06-22 — `include_tab_pages: false`
+/// drops `TABS` + numbered tab chips + the close on the active
+/// one, used when the palette bar is too narrow to fit the full
+/// cluster without overlapping the workspace chip.
+pub fn right_cluster_width_mode(app: &App, include_tab_pages: bool) -> u16 {
     let n_launcher = app.config.ui.launcher_icons.len() as u16;
-    let mut w: u16 = 3 * n_launcher + 3 + 6;
-    for i in 0..app.layouts.len() {
-        let dig = (i + 1).to_string().chars().count() as u16;
-        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-        w += 2 + dig + dirty;
-        if i == app.active_layout {
-            w += 2;
+    // launcher icons (` X ` × n) + ` + ` new-tab button
+    let mut w: u16 = 3 * n_launcher + 3;
+    if include_tab_pages {
+        // ` TABS ` label
+        w += 6;
+        for i in 0..app.layouts.len() {
+            let dig = (i + 1).to_string().chars().count() as u16;
+            let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
+            w += 2 + dig + dirty;
+            if i == app.active_layout {
+                w += 2;
+            }
         }
     }
+    // theme toggle pill + ` × ` window close
     w += 4 + 3;
-    let _ = n_tabs;
     w
 }
 
@@ -472,6 +485,22 @@ pub fn right_cluster_width(app: &App) -> u16 {
 /// is inside tmnl native mode (no palette bar there). Tmnl chrome
 /// integration is Phase 2.
 pub fn paint_right_cluster(frame: &mut Frame, app: &mut App, area: Rect, bg: ratatui::style::Color) {
+    paint_right_cluster_mode(frame, app, area, bg, true);
+}
+
+/// `include_tab_pages: false` drops the `TABS` label + numbered
+/// tab chips from the cluster. Used by `draw_palette_bar` when
+/// the palette bar is too narrow to fit the full cluster
+/// without overlapping the workspace chip — the launcher icons,
+/// `+`, theme toggle, and close stay; the tab-page UI is hidden
+/// (still reachable via :tab.next / Cmd+Shift+] etc.).
+pub fn paint_right_cluster_mode(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    bg: ratatui::style::Color,
+    include_tab_pages: bool,
+) {
     if area.width == 0 {
         return;
     }
@@ -509,51 +538,53 @@ pub fn paint_right_cluster(frame: &mut Frame, app: &mut App, area: Rect, bg: rat
         height: 1,
     });
     cluster_x += 3;
-    // `TABS` label (decorative).
-    spans.push(Span::styled(
-        " TABS ",
-        Style::default()
-            .fg(t.bg_darker)
-            .bg(t.fg)
-            .add_modifier(Modifier::BOLD),
-    ));
-    cluster_x += 6;
-    // Per-tab-page chips with close on active.
-    for i in 0..app.layouts.len() {
-        let active = i == app.active_layout;
-        let dirty = app.tab_has_dirty_buffer(i);
-        let label = if dirty {
-            format!(" \u{25CF}{} ", i + 1)
-        } else {
-            format!(" {} ", i + 1)
-        };
-        let label_w = label.chars().count() as u16;
-        let (chip_fg, chip_bg) = if active {
-            (t.bg_darker, t.blue)
-        } else {
-            (t.fg, t.bg2)
-        };
-        let mut chip_style = Style::default().fg(chip_fg).bg(chip_bg);
-        if active {
-            chip_style = chip_style.add_modifier(Modifier::BOLD);
-        }
-        spans.push(Span::styled(label, chip_style));
-        app.rects.bufferline_tab_page_chips.push((
-            Rect { x: cluster_x, y: area.y, width: label_w, height: 1 },
-            i,
+    if include_tab_pages {
+        // `TABS` label (decorative).
+        spans.push(Span::styled(
+            " TABS ",
+            Style::default()
+                .fg(t.bg_darker)
+                .bg(t.fg)
+                .add_modifier(Modifier::BOLD),
         ));
-        cluster_x += label_w;
-        if active {
-            let close = if nerd { "\u{F0156} " } else { "x " };
-            spans.push(Span::styled(
-                close,
-                Style::default().fg(chip_fg).bg(chip_bg),
-            ));
-            app.rects.bufferline_tab_page_close.push((
-                Rect { x: cluster_x, y: area.y, width: 1, height: 1 },
+        cluster_x += 6;
+        // Per-tab-page chips with close on active.
+        for i in 0..app.layouts.len() {
+            let active = i == app.active_layout;
+            let dirty = app.tab_has_dirty_buffer(i);
+            let label = if dirty {
+                format!(" \u{25CF}{} ", i + 1)
+            } else {
+                format!(" {} ", i + 1)
+            };
+            let label_w = label.chars().count() as u16;
+            let (chip_fg, chip_bg) = if active {
+                (t.bg_darker, t.blue)
+            } else {
+                (t.fg, t.bg2)
+            };
+            let mut chip_style = Style::default().fg(chip_fg).bg(chip_bg);
+            if active {
+                chip_style = chip_style.add_modifier(Modifier::BOLD);
+            }
+            spans.push(Span::styled(label, chip_style));
+            app.rects.bufferline_tab_page_chips.push((
+                Rect { x: cluster_x, y: area.y, width: label_w, height: 1 },
                 i,
             ));
-            cluster_x += 2;
+            cluster_x += label_w;
+            if active {
+                let close = if nerd { "\u{F0156} " } else { "x " };
+                spans.push(Span::styled(
+                    close,
+                    Style::default().fg(chip_fg).bg(chip_bg),
+                ));
+                app.rects.bufferline_tab_page_close.push((
+                    Rect { x: cluster_x, y: area.y, width: 1, height: 1 },
+                    i,
+                ));
+                cluster_x += 2;
+            }
         }
     }
     // Theme toggle pill.

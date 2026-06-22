@@ -1039,21 +1039,42 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.palette_dropdown_button = Some(dropdown_rect);
 
     // 2026-06-21 — right-aligned chrome cluster (launcher icons /
-    // `+` / TABS chips / theme toggle / close). Was in bufferline;
-    // moved here so the bufferline row is free for per-split tab
-    // strips. tmnl-native mode still paints the cluster in the
-    // bufferline (palette bar isn't shown there) until the
-    // tmnl-protocol Phase 2 integration ships.
-    let cluster_w = bufferline::right_cluster_width(app);
-    if cluster_w < area.width {
-        let cluster_x = area.x + area.width.saturating_sub(cluster_w);
+    // `+` / TABS chips / theme toggle / close). Right-edge of the
+    // workspace chip + dropdown is the leftward bound; if the
+    // full cluster would visually overlap them, drop the TABS +
+    // tab-page section. If even the compact cluster won't fit,
+    // skip the cluster entirely.
+    //
+    // 2026-06-22 user-reported: at narrow widths the launcher
+    // icons + tab-page chips overlapped (rendered on top of each
+    // other). Stage the fallback so the most-clicked chips
+    // (launchers + close) stay visible the longest.
+    let palette_right_edge = x; // `x` is just past the dropdown chevron
+    let gap_px: u16 = 2; // visual breathing room between palette + cluster
+    let full_w = bufferline::right_cluster_width(app);
+    let compact_w = bufferline::right_cluster_width_mode(app, false);
+    let cluster_left = |w: u16| area.x + area.width.saturating_sub(w);
+    let mode: Option<(u16, bool)> = if cluster_left(full_w) >= palette_right_edge + gap_px {
+        Some((full_w, true))
+    } else if cluster_left(compact_w) >= palette_right_edge + gap_px {
+        Some((compact_w, false))
+    } else {
+        None
+    };
+    if let Some((w, include_tabs)) = mode {
         let cluster_area = Rect {
-            x: cluster_x,
+            x: area.x + area.width.saturating_sub(w),
             y: area.y,
-            width: cluster_w,
+            width: w,
             height: 1,
         };
-        bufferline::paint_right_cluster(frame, app, cluster_area, t.bg_dark);
+        bufferline::paint_right_cluster_mode(
+            frame,
+            app,
+            cluster_area,
+            t.bg_dark,
+            include_tabs,
+        );
     }
 }
 
