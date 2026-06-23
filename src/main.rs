@@ -144,12 +144,11 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--blit SOCKET] [--startup-picker] [--no-workspace] [--no-native-promote]\n  \
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace]\n  \
                        mnml run FILE [--env NAME] [--workspace DIR]\n\n\
                      flags:\n  \
                        --startup-picker      show a JetBrains-style chooser overlay on launch\n                                         (also enabled by MNML_STARTUP_PICKER=1)\n  \
-                       --no-workspace        land in the empty-state ($HOME) instead of resolving\n                                         [startup] default_workspace; used by the .app icon\n                                         launcher so clicking the icon doesn't auto-open a folder\n  \
-                       --no-native-promote   suppress the auto-promote that relaunches mnml as a\n                                         native tmnl tab when launched from tmnl's pty (env var\n                                         TMNL_TRANSFER_SOCKET present). Keep the standard pty\n                                         experience instead — useful for split-pane workflows\n                                         or transient `mnml file.txt` edits in the current shell\n"
+                       --no-workspace        land in the empty-state ($HOME) instead of resolving\n                                         [startup] default_workspace; used by the .app icon\n                                         launcher so clicking the icon doesn't auto-open a folder\n"
                 );
                 std::process::exit(0);
             }

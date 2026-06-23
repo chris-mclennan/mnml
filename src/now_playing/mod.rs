@@ -11,9 +11,7 @@
 //! never block the render loop.
 
 mod macos;
-// `pub(crate)` so `App::open_mixr_pane` can call `mixr::is_running()`
-// to avoid spawning a second mixr alongside a live one.
-pub(crate) mod mixr;
+mod mixr;
 
 use std::sync::mpsc::Receiver;
 use std::time::Duration;

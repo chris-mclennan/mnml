@@ -2806,7 +2806,6 @@ pub struct App {
     /// User-requested 2026-06-18 after the centered Prompt looked
     /// inconsistent with vim's bottom-anchored cmdline.
     pub no_pane_cmdline: Option<String>,
-    /// The native mixr panel — mnml hosts `mixr --blit` and renders it
     // 2026-06-22 — tmnl/blit/mixr-host fields removed with the
     // tmnl-integration cleanup. Mnml runs in any terminal now;
     // there's no host-protocol state to track.

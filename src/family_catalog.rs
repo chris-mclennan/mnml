@@ -100,17 +100,17 @@ impl FamilySibling {
 
     /// The launch command to invoke when the rail chip is clicked.
     /// Built-in entries use a per-id command like `:http.send` rather
-    /// than `:host.launch <binary>`.
+    /// than `:term <binary>`.
     pub fn launch_command(&self) -> String {
         if self.is_builtin() {
             // Today: HTTP uses `:http.send`. Add more mappings here if
             // we ever surface other built-ins in the catalog.
             return match self.id {
                 "http" => ":http.send".to_string(),
-                _ => format!(":host.launch {}", self.binary),
+                _ => format!(":term {}", self.binary),
             };
         }
-        format!(":host.launch {}", self.binary)
+        format!(":term {}", self.binary)
     }
 }
 
@@ -270,25 +270,6 @@ pub const CATALOG: &[FamilySibling] = &[
             fallback: "Sn",
             color: "yellow",
             tooltip: "SNS topics + subscriptions",
-        },
-    },
-    // ── Music ─────────────────────────────────────────────────
-    // mixr is the family's DJ app. The rail chip launches it as a
-    // docked panel inside mnml via the `mixr.show` palette command
-    // (uses the mixr_host module — different code path from the
-    // generic blit-host `:host.launch` siblings).
-    FamilySibling {
-        id: "mixr",
-        binary: "mixr",
-        category: Category::Music,
-        repo_url: "https://github.com/chris-mclennan/mixr-rs",
-        pinned_version: "v0.1.3",
-        one_liner: "Family DJ app — docked panel inside mnml",
-        icon: IconTemplate {
-            glyph: "\u{F075A}", // nf-md-music_note
-            fallback: "♪",
-            color: "pink",
-            tooltip: "mixr DJ panel",
         },
     },
     // ── Filesystem / Storage ──────────────────────────────────
@@ -644,10 +625,10 @@ pub struct OwnedIconTemplate {
 }
 
 impl DiscoveredSibling {
-    /// Stringly `:host.launch <binary>` invocation. Mirrors
+    /// Stringly `:term <binary>` invocation. Mirrors
     /// `FamilySibling::launch_command()`.
     pub fn launch_command(&self) -> String {
-        format!(":host.launch {}", self.binary)
+        format!(":term {}", self.binary)
     }
 }
 
@@ -876,9 +857,9 @@ mod tests {
     }
 
     #[test]
-    fn launch_command_uses_host_launch() {
+    fn launch_command_uses_term() {
         let s = find_by_binary("mnml-fs-s3").expect("s3 in catalog");
-        assert_eq!(s.launch_command(), ":host.launch mnml-fs-s3");
+        assert_eq!(s.launch_command(), ":term mnml-fs-s3");
     }
 
     #[test]
@@ -940,7 +921,7 @@ mod tests {
         assert!(r.is_builtin());
         assert!(r.install_command().is_none());
         // Launch command for built-in is the per-id palette command,
-        // not `:host.launch`.
+        // not `:term`.
         assert_eq!(r.launch_command(), ":http.send");
     }
 
@@ -961,6 +942,6 @@ mod tests {
         let r = SiblingRef::Discovered(d);
         assert!(r.is_discovered());
         assert!(r.install_command().is_none());
-        assert_eq!(r.launch_command(), ":host.launch mnml-other-x");
+        assert_eq!(r.launch_command(), ":term mnml-other-x");
     }
 }

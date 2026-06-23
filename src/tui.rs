@@ -19,7 +19,6 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
-use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::buffer::BufferEvent;

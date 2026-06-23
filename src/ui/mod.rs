@@ -1804,7 +1804,7 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
 /// `:ex` / `tmnl:host_id`).
 /// Result of probing whether the binary backing an integration's
 /// command is actually on the user's PATH. Today only the
-/// `:host.launch <binary>` shape is probed; mnml-internal commands
+/// `:term <binary>` shape is probed; mnml-internal commands
 /// (no prefix) and tmnl host commands (`tmnl:<id>`) are assumed
 /// available because they don't shell out.
 enum IntegrationAvailability {
@@ -1815,8 +1815,8 @@ enum IntegrationAvailability {
 }
 
 /// Walk the `command` string from an `IntegrationIcon` and decide
-/// whether the underlying tool is installed. Only `:host.launch
-/// <binary>` invocations are probed (built-in palette commands like
+/// whether the underlying tool is installed. Only `:term <binary>`
+/// invocations are probed (built-in palette commands like
 /// `:ai.claude_code` always return `Available`). Detection happens in
 /// `integration_detect`: in-process `$PATH` walk + per-OS well-known
 /// install dirs (`~/.cargo/bin`, Homebrew, etc.), with results cached
@@ -1907,7 +1907,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             .filter(|s| !s.is_empty())
             .unwrap_or(icon.id.as_str())
             .to_string();
-        // Probe availability for `:host.launch <binary>` commands —
+        // Probe availability for `:term <binary>` commands —
         // a stale or missing binary is the only "broken" state worth
         // surfacing at v1. Internal `mnml` commands (no prefix) and
         // tmnl host-runs (`tmnl:`) are always assumed available.
@@ -2370,11 +2370,6 @@ mod palette_bar_tests {
             tooltip: Some("test launcher".to_string()),
         });
         let mut app = App::new(ws, cfg).unwrap();
-        // Force standalone mode: ignore any TMNL_TRANSFER_SOCKET
-        // env var leakage from earlier tests. Without this, the
-        // palette bar's visibility gate (`!is_inside_tmnl()`) can
-        // suppress the entire bar — and with it, the cluster rect
-        // registration we're testing.
         let mut term = Terminal::new(TestBackend::new(200, 30)).unwrap();
         term.draw(|f| draw(f, &mut app)).unwrap();
 
