@@ -284,6 +284,14 @@ pub enum HoverChip {
     PaletteForwardButton,
     /// Palette-bar dropdown chevron (opens the recents picker).
     PaletteDropdownButton,
+    /// The H/V split-editor button at the right end of a tab strip
+    /// (bufferline OR per-leaf strip). `SplitDir::Horizontal` → the
+    /// side-by-side button; `SplitDir::Vertical` → the stacked button.
+    SplitStripButton(crate::layout::SplitDir),
+    /// The terminal-launch button at the right end of a tab strip
+    /// (immediately left of the H/V buttons). Click opens a new
+    /// shell in a split.
+    SplitStripTermButton,
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list

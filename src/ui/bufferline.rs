@@ -681,16 +681,20 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let t = theme::cur();
     let nerd = !app.config.ui.ascii_icons;
-    // `\u{ea85}` (nf-cod-terminal) — click opens a new shell in a
-    // split below the active leaf.
-    // `\u{eb56}` (nf-cod-split_horizontal) renders as a box with
-    // a vertical divider — paired with the action that creates a
-    // side-by-side split. `\u{eb57}` (nf-cod-split_vertical)
-    // renders as a box with a horizontal divider — paired with
-    // the action that creates a stacked split.
-    let term_glyph = if nerd { "\u{ea85}" } else { ">_" };
-    let btn_v_glyph = if nerd { "\u{eb56}" } else { "|+" };
-    let btn_h_glyph = if nerd { "\u{eb57}" } else { "_+" };
+    // Glyph naming follows the *visual* layout the icon depicts,
+    // not the `SplitDir` axis label (which is the rotation that
+    // CREATES that layout):
+    //   - `\u{eb56}` nf-cod-split_horizontal — side-by-side boxes
+    //     with a vertical divider; paired with SplitDir::Horizontal
+    //     ("split right").
+    //   - `\u{eb57}` nf-cod-split_vertical — stacked boxes with a
+    //     horizontal divider; paired with SplitDir::Vertical
+    //     ("split down").
+    //   - `\u{ea85}` nf-cod-terminal — click opens a new shell in
+    //     a split below the active leaf.
+    let term_glyph = if nerd { "\u{ea85}" } else { "$" };
+    let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
+    let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let bg = t.bg_darker;
     let mut bx = area.x + area.width - SPLIT_BUTTONS_W;
 
@@ -710,10 +714,10 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.split_strip_term_buttons.push((term_rect, active));
     bx += 3;
 
-    // H + V split buttons.
+    // Split buttons — glyph paired with action that CREATES that layout.
     for (glyph, dir) in [
-        (btn_v_glyph, crate::layout::SplitDir::Horizontal),
-        (btn_h_glyph, crate::layout::SplitDir::Vertical),
+        (side_by_side_glyph, crate::layout::SplitDir::Horizontal),
+        (stacked_glyph, crate::layout::SplitDir::Vertical),
     ] {
         let btn_rect = Rect {
             x: bx,

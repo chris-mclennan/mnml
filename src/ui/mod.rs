@@ -158,6 +158,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.spend_headers.clear();
         app.rects.claude_drill_files.clear();
         app.rects.split_dividers.clear();
+        app.rects.split_strip_buttons.clear();
+        app.rects.split_strip_term_buttons.clear();
         app.rects.pty_tabs.clear();
         app.rects.pty_tab_new.clear();
         app.rects.pty_tab_close.clear();
@@ -2127,9 +2129,11 @@ fn paint_leaf_tab_strip(
     // horizontal-split), each in a 3-cell ` <glyph> ` button.
     // Terminal click → focus this leaf + open a shell. Split
     // clicks → focus this leaf + split_active(dir).
-    let term_glyph = if nerd { "\u{ea85}" } else { ">_" };
-    let btn_v_glyph = if nerd { "\u{eb56}" } else { "|+" };
-    let btn_h_glyph = if nerd { "\u{eb57}" } else { "_+" };
+    // Glyph naming follows the *visual* layout, not the
+    // SplitDir axis label. See `bufferline::paint_split_buttons`.
+    let term_glyph = if nerd { "\u{ea85}" } else { "$" };
+    let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
+    let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let dim_fg = t.comment;
     let mut bx = strip_right.saturating_sub(SPLIT_BTNS_TOTAL);
 
@@ -2152,8 +2156,8 @@ fn paint_leaf_tab_strip(
     }
 
     for (glyph, dir) in [
-        (btn_v_glyph, crate::layout::SplitDir::Horizontal),
-        (btn_h_glyph, crate::layout::SplitDir::Vertical),
+        (side_by_side_glyph, crate::layout::SplitDir::Horizontal),
+        (stacked_glyph, crate::layout::SplitDir::Vertical),
     ] {
         let btn_rect = Rect {
             x: bx,

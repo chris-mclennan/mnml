@@ -274,6 +274,28 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let rect = app.rects.palette_dropdown_button?;
             Some((rect, "recent files".to_string(), None))
         }
+        HoverChip::SplitStripTermButton => {
+            let rect = app
+                .rects
+                .split_strip_term_buttons
+                .iter()
+                .map(|(r, _)| *r)
+                .next()?;
+            Some((rect, "open shell in split".to_string(), None))
+        }
+        HoverChip::SplitStripButton(dir) => {
+            let rect = app
+                .rects
+                .split_strip_buttons
+                .iter()
+                .find(|(_, _, d)| *d == dir)
+                .map(|(r, _, _)| *r)?;
+            let label = match dir {
+                crate::layout::SplitDir::Horizontal => "split right",
+                crate::layout::SplitDir::Vertical => "split down",
+            };
+            Some((rect, label.into(), None))
+        }
         HoverChip::RailHeaderChip(action) => {
             let rect = app
                 .rects

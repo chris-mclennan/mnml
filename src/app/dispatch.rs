@@ -410,6 +410,22 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::PaletteDropdownButton);
     }
+    if app
+        .rects
+        .split_strip_term_buttons
+        .iter()
+        .any(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::SplitStripTermButton);
+    }
+    if let Some(&(_, _, dir)) = app
+        .rects
+        .split_strip_buttons
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::SplitStripButton(dir));
+    }
     if let Some(&(_, action)) = app
         .rects
         .rail_git_header_buttons
