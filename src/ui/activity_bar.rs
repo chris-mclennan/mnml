@@ -17,13 +17,12 @@ use ratatui::widgets::Paragraph;
 use crate::app::{ActivitySection, App};
 use crate::ui::theme;
 
-/// Width of the activity bar strip in cells. 4 cells = 1 padding
-/// + 1 glyph + 2 trailing padding. The Nerd Font PUA icons used
-/// here are designed wider than 1 cell, so the bar needs explicit
-/// padding so the glyph doesn't visually collide with the tree
-/// column to its right. (Earlier 3-cell version assumed glyphs
-/// were strictly 1-cell — true with NFM, false with NF.)
-pub const ACTIVITY_BAR_WIDTH: u16 = 4;
+/// Width of the activity bar strip in cells. 3 cells = 1 padding + 1
+/// glyph + 1 padding. Was 4 (trailing spacer column) but the extra
+/// cell read as a too-wide gap between the window edge and the
+/// rail. Matches vscode's visual weight at this terminal-cell
+/// density.
+pub const ACTIVITY_BAR_WIDTH: u16 = 3;
 
 /// Paint the activity bar into `area`. Registers a click rect per
 /// icon on `app.rects.activity_bar_icons` so mouse handling can
@@ -91,15 +90,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let glyph = if nerd { glyph_nerd } else { fallback };
         let is_active = app.active_section == *section;
 
-        // Active icon: blue fg + left-edge accent bar.
+        // Active icon: blue fg, bold, with a left-edge accent bar.
         // Inactive: dim fg, no accent.
-        // 2026-06-22 — removed Modifier::BOLD on active. It
-        // switched the icon to the bold-weight font face which
-        // has wider PUA glyphs, so the active icon was visibly
-        // larger than the others + got clipped by the cell box.
-        // Color + accent bar is enough visual signal.
         let style = if is_active {
-            Style::default().fg(t.blue).bg(bar_bg)
+            Style::default()
+                .fg(t.blue)
+                .bg(bar_bg)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
                 .fg(t.comment)
