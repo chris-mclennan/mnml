@@ -249,7 +249,7 @@ pub fn set(name: &str) -> Option<Theme> {
 /// Path to the canonical "current theme" file — `~/.config/mnml/current-theme.toml`
 /// (respecting `$XDG_CONFIG_HOME`). This is the family's single source of truth:
 /// [`write_current`] keeps it in sync with mnml's active theme, and every sibling
-/// (tmnl, mixr, the `mnml-*` integrations) reads it to follow mnml's colours.
+/// (mixr, the `mnml-*` integrations) reads it to follow mnml's colours.
 pub fn current_theme_path() -> Option<std::path::PathBuf> {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
         && !xdg.is_empty()
@@ -279,13 +279,13 @@ fn hex(c: Color) -> String {
 
 /// Serialise `t` to the `[base_30]` + `[base_16]` TOML shape mnml itself parses
 /// ([`parse_theme`]). The key names match the NvChad base_30 schema so any
-/// consumer — mnml's own parser, tmnl's `map_mnml_to_palette`, a sibling's
-/// `theme.rs` — reads the colours it expects. `comment` (the dim role) is emitted
-/// under both `light_grey` and `grey_fg2` so loaders keying off either find it.
+/// consumer — mnml's own parser, a sibling's `theme.rs` — reads the colours
+/// it expects. `comment` (the dim role) is emitted under both `light_grey`
+/// and `grey_fg2` so loaders keying off either find it.
 pub fn to_toml(t: &Theme) -> String {
     let mut s = String::with_capacity(1024);
     s.push_str(
-        "# Written by mnml — the resolved active theme. Family apps (tmnl, mixr,\n\
+        "# Written by mnml — the resolved active theme. Family apps (mixr,\n\
          # mnml-* siblings) read this to follow mnml's colours. Regenerated on\n\
          # launch and on every theme switch; do not hand-edit.\n",
     );

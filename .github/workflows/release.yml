@@ -82,9 +82,6 @@ jobs:
         run: |
           set -euo pipefail
           cd ..
-          if [ ! -d tmnl-protocol ]; then
-            git clone --depth=1 https://github.com/chris-mclennan/tmnl-protocol.git
-          fi
           if [ ! -d fim-engine ]; then
             git clone --depth=1 https://github.com/chris-mclennan/fim-engine.git
           fi
@@ -149,15 +146,11 @@ jobs:
         run: |
           set -euo pipefail
           cd ..
-          if [ ! -d tmnl-protocol ]; then
-            git clone --depth=1 https://github.com/chris-mclennan/tmnl-protocol.git
-          fi
           if [ ! -d fim-engine ]; then
             git clone --depth=1 https://github.com/chris-mclennan/fim-engine.git
           fi
         shell: "bash"
-      # MANUAL EDIT — mnml is pure TUI (no winit/wgpu/muda), so the deps list
-      # is much shorter than tmnl's. Mirrors `.github/build-setup.yml`.
+      # MANUAL EDIT — Linux build deps. Mirrors `.github/build-setup.yml`.
       # Will be clobbered if `dist generate` succeeds in the future;
       # allow-dirty=ci blocks regen so for now this stays.
       - name: Install Linux build deps
@@ -276,9 +269,6 @@ jobs:
         run: |
           set -euo pipefail
           cd ..
-          if [ ! -d tmnl-protocol ]; then
-            git clone --depth=1 https://github.com/chris-mclennan/tmnl-protocol.git
-          fi
           if [ ! -d fim-engine ]; then
             git clone --depth=1 https://github.com/chris-mclennan/fim-engine.git
           fi
@@ -340,9 +330,6 @@ jobs:
         run: |
           set -euo pipefail
           cd ..
-          if [ ! -d tmnl-protocol ]; then
-            git clone --depth=1 https://github.com/chris-mclennan/tmnl-protocol.git
-          fi
           if [ ! -d fim-engine ]; then
             git clone --depth=1 https://github.com/chris-mclennan/fim-engine.git
           fi

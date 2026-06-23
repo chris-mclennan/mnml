@@ -21,17 +21,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      # mnml depends on sibling crates by path (../tmnl-protocol, ../fim-engine),
-      # so check them out alongside this repo for the path deps to resolve.
+      # mnml depends on the fim-engine sibling crate by path (../fim-engine),
+      # so check it out alongside this repo for the path dep to resolve.
       - name: Checkout mnml
         uses: actions/checkout@v4
         with:
           path: mnml
-      - name: Checkout tmnl-protocol
-        uses: actions/checkout@v4
-        with:
-          repository: chris-mclennan/tmnl-protocol
-          path: tmnl-protocol
       - name: Checkout fim-engine
         uses: actions/checkout@v4
         with:

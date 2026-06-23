@@ -40,7 +40,7 @@ body:
     id: environment
     attributes:
       label: OS & terminal
-      description: e.g. "macOS 15.4, Ghostty" or "Arch Linux, tmnl"
+      description: e.g. "macOS 15.4, Ghostty" or "Arch Linux, Alacritty"
     validations:
       required: true
   - type: textarea

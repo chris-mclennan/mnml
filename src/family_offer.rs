@@ -1,6 +1,6 @@
 //! First-launch "did you know about the rest of the family?" check.
 //!
-//! On launch, detect which of mnml's sibling apps (mixr, tmnl) are
+//! On launch, detect which of mnml's sibling apps (mixr) are
 //! installed. If any are *missing*, fire a one-shot toast with the
 //! install command for each. Marker file at
 //! `~/.config/mnml/.family-offer-shown` suppresses subsequent
@@ -11,10 +11,7 @@
 //! and DMG-installed users. Cross-platform install commands are
 //! picked at compile time via `cfg!(target_os)`.
 //!
-//! Skipped in headless / blit modes — no toast surface, and the
-//! launcher (mnml.app / `tmnl --mnml`) already implies you have at
-//! least the host installed, which is information the user already
-//! knows.
+//! Skipped in headless mode — no toast surface.
 
 use std::path::PathBuf;
 

@@ -860,7 +860,6 @@ const HELP_LINES: &[HelpEntry] = &[
     HelpEntry::Row("(Files panel) click", "open the file in an editor pane"),
     HelpEntry::Section("Actions"),
     HelpEntry::Row("o", "resume the session in a new mnml pty pane"),
-    HelpEntry::Row("T", "resume the session in a new tmnl tab (when under tmnl)"),
     HelpEntry::Row("K", "SIGTERM (escalates to SIGKILL after 2s)"),
     HelpEntry::Row("e", "export the selected transcript as markdown"),
     HelpEntry::Section("Palette commands"),

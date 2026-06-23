@@ -11,9 +11,9 @@
 #     https://crates.io/me; scope to "publish-new" + "publish-update").
 #   (GITHUB_TOKEN is the default per-run token — already provided.)
 #
-# Publish order: tmnl-protocol + fim-engine MUST be published to crates.io
-# before this mnml workflow's release job can succeed. Each crate's `path = "..."`
-# dependency carries a `version = "X.Y.Z"` for crates.io's resolver.
+# Publish order: fim-engine MUST be published to crates.io before this
+# mnml workflow's release job can succeed. Its `path = "..."` dependency
+# carries a `version = "X.Y.Z"` for crates.io's resolver.
 
 name: release-plz
 
