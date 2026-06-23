@@ -9,8 +9,8 @@
 //! ("v0.1.3 available — github.com/.../releases/tag/v0.1.3").
 //!
 //! Disabled by `[ui] check_updates = false` in the user's config,
-//! and silently no-op in headless / blit modes (no statusline to
-//! show the result, no toast surface).
+//! and silently no-op in headless mode (no statusline to show
+//! the result, no toast surface).
 //!
 //! Deliberately simple — string-equality on the version tag, no
 //! semver parsing. Triggers a false-positive only when running an

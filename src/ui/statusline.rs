@@ -312,10 +312,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // AppleScript (see `tui.rs` send_macos_player). Idle (no track
     // from any source) collapses to a single `♪ mixr` chip.
     //
-    // Nerd-font codepoints (same as tmnl's chrome-side satellite
-    // at `gpu_launcher_paint::MIXR_*_GLYPH`) — basic Unicode
-    // ⏸/▶/⏭ rendered as invisible glyphs in mnml's font-fallback
-    // chain on the user's setup (reported 2026-06-17).
+    // Nerd-font codepoints — basic Unicode ⏸/▶/⏭ rendered as
+    // invisible glyphs in mnml's font-fallback chain on the user's
+    // setup (reported 2026-06-17).
     const NF_PLAY: char = '\u{f04b}'; // nf-fa-play
     const NF_PAUSE: char = '\u{f04c}'; // nf-fa-pause
     const NF_FFWD: char = '\u{f051}'; // nf-fa-step-forward

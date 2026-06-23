@@ -627,11 +627,9 @@ impl App {
         );
     }
 
-    /// 2026-06-22 — open the family DJ app `mixr` as a Pty pane.
-    /// Replaces the prior `mixr_host` docked panel that went away
-    /// with the tmnl/blit cleanup. Reuses an existing mixr pty if
-    /// one's already open; otherwise spawns a fresh one in a
-    /// horizontal split (same shape as Codex).
+    /// Open the family DJ app `mixr` as a Pty pane. Reuses an
+    /// existing mixr pty if one's already open; otherwise spawns a
+    /// fresh one in a horizontal split (same shape as Codex).
     pub fn open_mixr(&mut self) {
         let existing = self.panes.iter().position(|p| match p {
             Pane::Pty(s) => s.profile.label.starts_with("mixr"),

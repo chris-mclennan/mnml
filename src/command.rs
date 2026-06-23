@@ -741,8 +741,8 @@ fn builtin_commands() -> Vec<Command> {
             // Scans ~/.claude/projects/*/<sid>.jsonl, cross-references
             // pgrep claude, renders one row per session with state /
             // model / tokens / cwd / last user+asst exchange. Useful
-            // when you've got several CC sessions across mnml panes
-            // and tmnl tabs and want a unified overview.
+            // when you've got several CC sessions running and want a
+            // unified overview.
             keys: &[],
             run: |app| app.open_claude_agents_pane(),
         },
@@ -4272,10 +4272,5 @@ fn builtin_commands() -> Vec<Command> {
     // siblings in 2026-06. The cross-host `pr.picker` was removed
     // too — no in-core caches to aggregate.
     // `aws.*` commands moved to mnml-aws-codebuild in 2026-06.
-    // 2026-06-22 — tmnl-handoff commands removed alongside the
-    // blit-protocol cleanup. Pty panes (`Ctrl+T`) cover the
-    // in-mnml shell experience; tools that used to launch as
-    // sibling tabs can be launched from the user's terminal of
-    // choice.
     cmds
 }

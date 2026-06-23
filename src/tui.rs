@@ -32,7 +32,7 @@ use crate::{command, ui};
 pub fn run(mut app: App) -> Result<bool, String> {
     // Workspace basename for the terminal-window title — picks up the
     // current project name so multiple mnml tabs are distinguishable
-    // ("mnml — mnml", "mnml — tmnl", "mnml — work", …).
+    // ("mnml — mnml", "mnml — work", …).
     let title = match app.workspace.file_name().and_then(|s| s.to_str()) {
         Some(name) if !name.is_empty() => format!("mnml — {name}"),
         _ => "mnml".to_string(),
@@ -59,7 +59,7 @@ fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>>
         ratatui::crossterm::style::Print("\x1b[?1003h"),
         SetCursorStyle::SteadyBar,
         // OSC 0/2 — sets the terminal window/tab title. Most terminals
-        // (Apple Terminal, iTerm2, tmnl, Kitty, WezTerm, …) read this
+        // (Apple Terminal, iTerm2, Ghostty, Kitty, WezTerm, …) read this
         // and display the title in the tab strip. Falls back silently on
         // terminals that don't honor OSC sequences.
         SetTitle(title),
@@ -5002,8 +5002,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Two command forms supported:
             //   `:<ex>`  → mnml ex command
             //   `<id>`   → mnml registered command id
-            // (2026-06-22 — `tmnl:<id>` form removed with the tmnl
-            // integration cleanup.) Check BEFORE the section-toggle below.
+            // Check BEFORE the section-toggle below.
             if let Some(&(_, icon_idx)) = app
                 .rects
                 .integration_icon_rects

@@ -113,10 +113,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ` ●━ ` ` × `. Each launcher chip is 4 cells (` <glyph> ` + label
     // space). Pre-compute the total so the per-buffer tab strip's
     // scroll math reserves enough width.
-    // 2026-06-21 — the cluster lives on the chrome row in BOTH
-    // modes now (Phase 1: palette bar in standalone; Phase 2:
-    // tmnl chrome via Message::ChromeChips when under tmnl).
-    // Bufferline no longer paints it or reserves space.
+    // The cluster lives on the palette-bar chrome row, not the
+    // bufferline itself.
     let tabs_max_x = area.x + area.width;
 
     // Disambiguated labels — when two open editors share a filename, prepend
@@ -432,10 +430,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let _ = last_drawn;
 
-    // 2026-06-21 — right cluster moved to chrome row entirely
-    // (Phase 1: palette bar in standalone; Phase 2: tmnl chrome
-    // via Message::ChromeChips when under tmnl). Bufferline only
-    // paints the file-tab strip now.
+    // Right cluster lives on the palette-bar chrome row.
+    // Bufferline only paints the file-tab strip.
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -488,11 +484,8 @@ pub fn pick_cluster_mode(
 /// continues to work. `bg` is the column background (palette bar
 /// uses `bg_dark`, bufferline uses `bg_darker`).
 ///
-/// 2026-06-21 — extracted from bufferline::draw so the palette
-/// bar (mnml's standalone-mode chrome row) can host this cluster
-/// in standard mode; the bufferline only re-paints it when mnml
-/// is inside tmnl native mode (no palette bar there). Tmnl chrome
-/// integration is Phase 2.
+/// Extracted from bufferline::draw so the palette bar (mnml's
+/// chrome row) can host this cluster.
 ///
 /// Always-clear semantics: callers don't need to pre-clear the
 /// click-target rects. This fn resets every rect it might write

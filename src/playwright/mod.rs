@@ -11,7 +11,7 @@
 //! Trace pane moved to the standalone `mnml-test-playwright` binary in
 //! 2026-06. mnml's `tests.open_trace` (`t` on a failed test) now
 //! shells out to `:term mnml-test-playwright <trace.zip>` so the
-//! trace opens in a hosted blit-host pane.
+//! trace opens in a Pty pane.
 
 pub mod flaky_pane;
 pub mod history;

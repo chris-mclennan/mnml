@@ -36,8 +36,9 @@ pub struct StartupPickerState {
 impl App {
     /// Should the picker be shown on startup? Triggered by
     /// `--startup-picker` CLI flag or `MNML_STARTUP_PICKER=1` env
-    /// (the latter is how the mnml.app launcher plumbs it through
-    /// tmnl, which doesn't forward arbitrary CLI args to mnml).
+    /// (the env var is how the mnml.app launcher plumbs the flag
+    /// through, since LaunchServices doesn't forward arbitrary
+    /// CLI args).
     pub fn want_startup_picker(cli_flag: bool) -> bool {
         if cli_flag {
             return true;

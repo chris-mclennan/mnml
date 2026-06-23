@@ -3,12 +3,12 @@
 //!
 //! The script is sourceable from `~/.zshrc` / `~/.bashrc` via the
 //! one-line opt-in documented in README.md. When `$MNML_PROMPT_SCRIPT`
-//! is unset (normal shells outside mnml/tmnl) the opt-in line is a
+//! is unset (normal shells outside mnml) the opt-in line is a
 //! no-op.
 //!
 //! Used by [`crate::pty_pane::PtySession::spawn`] — any shell pty mnml
 //! spawns inherits the env so its prompt themes against the current
-//! mnml palette. tmnl's `shell.rs` has the matching wiring on its side.
+//! mnml palette.
 //!
 //! Naming note: the related `crate::prompt` module is mnml's
 //! single-line text-input overlay (command prompt for `:commit -m …`
@@ -62,7 +62,7 @@ pub fn install_prompt_script() -> io::Result<PathBuf> {
 
 /// The env-var pairs to inject into a spawned shell so the prompt
 /// script picks up the current mnml palette. `context_label` is the
-/// chip text on the right side ("mnml" / "tmnl" / etc.).
+/// chip text on the right side ("mnml" / shell-name).
 pub fn theme_env_vars(context_label: &str) -> Vec<(String, String)> {
     let t = theme::cur();
     let mut out = vec![

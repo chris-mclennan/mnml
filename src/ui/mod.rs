@@ -109,10 +109,6 @@ use crate::focus::Focus;
 use crate::layout::{Layout, SplitDir, split_rects};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    // Reset the per-frame cursor capture — populated below whenever this
-    // draw calls `set_cursor_position`. Blit reads it to gate
-    // `cursor_visible` on the wire, suppressing the stale-(0,0) flash that
-    // tmnl would otherwise paint before mnml has shown anything.
     let area = frame.area();
     frame.render_widget(
         Block::default().style(Style::default().bg(theme::cur().bg_dark)),
@@ -207,10 +203,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // statusline shows steady state, the cmdline below it shows the live `:`
     // line + transient echo messages). The top row is a 1-row palette bar
     // (VS Code-style centered "search files, run commands…" chip) — visible
-    // when the window is wide enough AND we're not inside tmnl. Under tmnl
-    // (native blit *or* standard pty child), the host renders the palette
-    // chip directly in its native chrome strip (next to the macOS traffic
-    // lights), so the inline bar would be duplicate chrome.
+    // when the window is wide enough.
     let palette_bar_visible = area.width >= 80;
     let palette_bar_h: u16 = if palette_bar_visible { 1 } else { 0 };
     let v = RLayout::vertical([
@@ -899,8 +892,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let magnify = if ascii { "?" } else { "\u{F0349}" };
     // `\u{EAB4}` is the real codicon `chevron-down` in Nerd Fonts.
     // `\u{EAA1}` (the obvious-looking choice) renders as chevron-UP in
-    // this font — same bug we hit on the tmnl chrome chip; this is the
-    // matching fix for mnml's inline palette bar.
+    // this font.
     let dropdown_glyph = if ascii { "v" } else { "\u{EAB4}" };
     // VS Code shows the workspace / repo name as the palette label
     // when no search is active (rather than placeholder text). Fall
@@ -939,10 +931,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // / prev_buffer cycle, so a single-buffer click is a no-op).
     // Enabled state uses the bright `fg` slot for max contrast on
     // every theme; disabled drops to the muted `comment` slot so the
-    // arrows still read as glyphs but visually recede. (Previous
-    // attempt used `comment`/`bg2` to mirror the tmnl chrome chip,
-    // but `bg2` matched the chip background and made the arrows
-    // disappear entirely on some themes — `comment` is the floor.)
+    // arrows still read as glyphs but visually recede.
     let nav_enabled = app.panes.len() > 1;
     let nav_fg = if nav_enabled { t.fg } else { t.comment };
 
@@ -993,7 +982,6 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     // Buttons sit on a darker bg than the chip so the back/forward
     // cluster reads as chrome and the chip reads as the focal input.
-    // Mirrors tmnl chrome's BTN_BG (~0.13) vs CHIP_BG (~0.18).
     let btn_bg = t.bg_dark;
     frame.render_widget(
         ratatui::widgets::Paragraph::new(back_str).style(Style::default().fg(nav_fg).bg(btn_bg)),
@@ -1796,12 +1784,11 @@ fn draw_search_section(frame: &mut Frame, app: &mut App, area: Rect) {
 /// rows. Each row: large glyph + tooltip/id, with the bound command
 /// shown dim below. Clicking a row fires the same command path as
 /// the compact icon strip in the Explorer rail (palette command id /
-/// `:ex` / `tmnl:host_id`).
+/// `:ex`).
 /// Result of probing whether the binary backing an integration's
 /// command is actually on the user's PATH. Today only the
 /// `:term <binary>` shape is probed; mnml-internal commands
-/// (no prefix) and tmnl host commands (`tmnl:<id>`) are assumed
-/// available because they don't shell out.
+/// (no prefix) are assumed available because they don't shell out.
 enum IntegrationAvailability {
     Available,
     /// Binary name (just the leaf, no path) the user would need to
@@ -1904,8 +1891,8 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             .to_string();
         // Probe availability for `:term <binary>` commands —
         // a stale or missing binary is the only "broken" state worth
-        // surfacing at v1. Internal `mnml` commands (no prefix) and
-        // tmnl host-runs (`tmnl:`) are always assumed available.
+        // surfacing at v1. Internal `mnml` commands (no prefix) are
+        // always assumed available.
         let availability = integration_availability(&icon.command);
         let (name_fg, suffix) = match availability {
             IntegrationAvailability::Available => (t.fg, None),
@@ -1937,7 +1924,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         // dispatcher in tui.rs walks the same `integration_icon_rects`
         // list it uses for the compact rail strip, so adding our row
         // there gives it the existing click semantics for free
-        // (palette command / `:ex` / `tmnl:` prefix handling).
+        // (palette command / `:ex` prefix handling).
         app.rects.integration_icon_rects.push((row1, idx));
 
         if y + 1 >= area.y + area.height {
@@ -2408,8 +2395,8 @@ mod palette_bar_tests {
     /// 2026-06-22 — full integration test: simulate the events
     /// crossterm would dispatch during a tree-file drag and
     /// verify the ghost + drop overlay paint at every stage.
-    /// This covers what other terminals (Apple Terminal, iTerm,
-    /// tmnl) should produce when the user drags a file from the
+    /// This covers what terminals (Apple Terminal, iTerm, Ghostty,
+    /// kitty) should produce when the user drags a file from the
     /// tree to a pane. Catches regressions where:
     ///   - mouse-Moved without held-button is the only mid-drag
     ///     event (some terminals report it this way)

@@ -753,11 +753,10 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("Azure Blob Storage browser".to_string()),
                     },
-                    // Terminal-native diagnostic tools. Under tmnl
-                    // they spawn as sibling tabs; standalone they
-                    // open as Pty panes inside mnml's layout. The
-                    // sidebar filter shows them only when the binary
-                    // is on PATH (`integration_detect`).
+                    // Terminal-native diagnostic tools. Open as Pty
+                    // panes inside mnml's layout. The sidebar filter
+                    // shows them only when the binary is on PATH
+                    // (`integration_detect`).
                     IntegrationIcon {
                         id: "htop".to_string(),
                         glyph: "\u{F085A}".to_string(), // nf-md-monitor_dashboard
@@ -953,9 +952,7 @@ impl Default for Config {
                         tooltip: Some("SNS topics + subscriptions".to_string()),
                     },
                     // mixr rail chip — opens the family DJ app via
-                    // `mixr.show`. 2026-06-22 — re-added after the
-                    // tmnl/blit cleanup; now opens as a Pty pane
-                    // rather than a docked panel.
+                    // `mixr.show` as a Pty pane.
                     IntegrationIcon {
                         id: "mixr".to_string(),
                         glyph: "\u{F075A}".to_string(), // nf-md-music_note

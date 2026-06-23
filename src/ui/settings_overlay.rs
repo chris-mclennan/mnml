@@ -346,8 +346,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // 1-line hint bar at the bottom. Truncated to the inner panel
     // width so a narrow terminal doesn't punch through the right
     // border — the content `window` above already gets the same
-    // treatment via `truncate_line_to_width`. 2026-06-08 follow-up
-    // to the tmnl settings-help-overflow fix.
+    // treatment via `truncate_line_to_width`.
     // 2026-06-19 — earlier hint said "Enter save" but Enter on a
     // Text row entered edit mode (then Enter again to commit +
     // persist). Now distinguishes the two roles.

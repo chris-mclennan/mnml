@@ -23,9 +23,8 @@
 #
 # Flow recorded:
 # 1. Pre-seed a tempfile with several JSONL rows across multiple
-#    workspaces (mnml, tattle, mixr-rs, tmnl) — varied methods,
-#    statuses, durations — to make the cross-workspace surface
-#    obvious.
+#    workspaces (mnml, tattle, mixr-rs) — varied methods, statuses,
+#    durations — to make the cross-workspace surface obvious.
 # 2. Export `MNML_HISTORY_GLOBAL_PATH` to point mnml at that file.
 # 3. Launch mnml on a tempdir.
 # 4. `:http.history_global` opens the picker; title reads
@@ -81,7 +80,7 @@ Sleep 150ms
 Type `printf '%s\n' '{"ts":1718900005000,"workspace":"mnml","workspace_path":"/Users/me/Projects/mnml","method":"POST","url":"https://httpbin.org/post","status":200,"duration_ms":418,"body_bytes":312,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
-Type `printf '%s\n' '{"ts":1718900006000,"workspace":"tmnl","workspace_path":"/Users/me/Projects/tmnl","method":"GET","url":"https://api.openai.com/v1/models","status":null,"duration_ms":3001,"body_bytes":null,"error":"connect timeout"}' >> $MNML_HISTORY_GLOBAL_PATH`
+Type `printf '%s\n' '{"ts":1718900006000,"workspace":"docs","workspace_path":"/Users/me/Projects/docs","method":"GET","url":"https://api.openai.com/v1/models","status":null,"duration_ms":3001,"body_bytes":null,"error":"connect timeout"}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
 Type `printf '%s\n' '{"ts":1718900007000,"workspace":"tattle","workspace_path":"/Users/me/Projects/tattle","method":"DELETE","url":"https://api.tattle.dev/v1/sessions/abc123","status":204,"duration_ms":151,"body_bytes":0,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
@@ -125,7 +124,7 @@ Sleep 2s
 
 # ── Stage 2: scroll through the entries to show the workspace mix ──────
 # `j` walks down through the rows — each detail line surfaces a
-# different workspace (tattle, mixr-rs, mnml, tmnl…) so the
+# different workspace (tattle, mixr-rs, mnml, docs…) so the
 # cross-workspace nature of the surface is clear.
 Down
 Sleep 600ms

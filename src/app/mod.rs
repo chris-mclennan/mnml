@@ -1840,8 +1840,6 @@ pub struct PaneRects {
     /// AppleScript `next track`. `None` when the cluster is in its
     /// idle single-chip form.
     pub statusline_mixr_ffwd_chip: Option<Rect>,
-    // 2026-06-22 — mixr-panel rects removed with the tmnl/mixr-host
-    // cleanup. Mnml no longer hosts mixr as a blit panel.
     /// `LSP {N}` chip — click opens `:LspStatus`.
     pub statusline_lsp_chip: Option<Rect>,
     /// `WRAP` chip — click toggles `[ui] wrap`.
@@ -2798,9 +2796,6 @@ pub struct App {
     /// User-requested 2026-06-18 after the centered Prompt looked
     /// inconsistent with vim's bottom-anchored cmdline.
     pub no_pane_cmdline: Option<String>,
-    // 2026-06-22 — tmnl/blit/mixr-host fields removed with the
-    // tmnl-integration cleanup. Mnml runs in any terminal now;
-    // there's no host-protocol state to track.
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my

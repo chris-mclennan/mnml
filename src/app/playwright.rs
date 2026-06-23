@@ -359,8 +359,7 @@ impl App {
         self.run_playwright(args);
     }
 
-    /// `t` in a tests pane — 2026-06-22: BlitHost removed; this
-    /// just toasts a hint. The user can run
+    /// `t` in a tests pane — toasts a hint to run
     /// `mnml-test-playwright <path>` in any shell pane manually.
     pub fn open_selected_test_trace(&mut self) {
         self.toast("trace viewer: run `mnml-test-playwright <path>` in a shell");

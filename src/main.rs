@@ -230,7 +230,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         );
     }
     // Materialise the resolved active theme (even the default) to
-    // `~/.config/mnml/current-theme.toml` so the family — tmnl, mixr, the
+    // `~/.config/mnml/current-theme.toml` so the family — mixr, the
     // `mnml-*` siblings — can follow mnml's colours from one source of truth.
     mnml::ui::theme::write_current(&mnml::ui::theme::cur());
 
