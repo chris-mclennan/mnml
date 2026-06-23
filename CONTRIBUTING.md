@@ -57,12 +57,12 @@ A few load-bearing pieces — read [`CLAUDE.md`](CLAUDE.md) for the full design:
 - **Cargo features.** The default build has no optional features. `aws-codebuild`
   adds `Pane::CodeBuilds` + `Pane::LogTail` (AWS CodeBuild + CloudWatch log
   tail, both shelling out to the `aws` CLI; no new crate deps). Gate org-specific
-  code in private blit-host binaries rather than adding new features here.
-- **Blit-host integrations** (`src/pane_host.rs`, `src/app/blit_host.rs`).
-  Out-of-process binaries render into a `Pane::BlitHost` over a Unix socket using
-  the `tmnl-protocol` wire format. Opened via `:host.launch <binary>`. Adding a
-  new integration requires no changes to mnml — wire up a binary and add a
-  `[[ui.launcher_icon]]` config entry.
+  code in private sibling binaries rather than adding new features here.
+- **Sibling tool integrations.** Standalone TUI binaries (`mnml-forge-*`,
+  `mnml-aws-*`, etc.) open as Pty panes via `:term <binary>`. Adding a
+  new integration requires no changes to mnml — write the binary as a
+  regular TUI and add a `[[ui.integration_icon]]` config entry pointing
+  at `:term <binary>`.
 
 ## Conventions
 

@@ -39,8 +39,8 @@ impl App {
         let buf_len = b.editor.text().len();
         let input = b.editor.text()[start..end].to_string();
         // Spawn the shell synchronously, write input to stdin, capture stdout.
-        // Use the active workspace as cwd so `:%!cmd` in the tmnl section
-        // resolves relative paths against tmnl, not the launch primary.
+        // Use the active workspace as cwd so `:%!cmd` resolves relative
+        // paths against the active workspace, not the launch primary.
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let workspace = self.active_workspace_path().to_path_buf();
         let result = std::thread::scope(|s| {

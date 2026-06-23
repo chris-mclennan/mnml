@@ -1,6 +1,6 @@
 # Family theming — one mnml-sourced palette
 
-mnml, tmnl, mixr, and the `mnml-*` integration siblings all follow **one
+mnml, mixr, and the `mnml-*` integration siblings all follow **one
 palette, sourced from mnml's active theme.** Change mnml's theme and the whole
 family retints — within a tick for apps that live-reload.
 
@@ -45,7 +45,7 @@ Consumers map the keys they need. The load-bearing ones:
 
 ## How a consumer follows it
 
-Mirror tmnl's loader (`tmnl/src/theme.rs`) — the reference implementation:
+Pattern (mirror what mixr does in `mixr/src/theme.rs`):
 
 1. On startup, read `~/.config/mnml/current-theme.toml`, parse `[base_30]`, and
    build a local `Palette` of `ratatui::Color::Rgb` values (one field per role
@@ -53,21 +53,5 @@ Mirror tmnl's loader (`tmnl/src/theme.rs`) — the reference implementation:
 2. **Live reload:** once per tick, `stat()` the file; on mtime change, re-parse
    and swap the palette (cheap — full parse only when it actually changes).
 
-Two render paths, depending on how the app draws:
-
-- **Hosted (blit) apps** already funnel every cell through a `color_to_rgba()`
-  remap before sending frames (e.g. `mixr/src/tui/blit.rs`). Extend that one
-  match to map the full ratatui `Color` set → palette — crucially
-  `Color::DarkGray → dim`, plus the semantic colours. This is the cheap path and
-  fixes hosted dim text without touching render sites.
-- **Standalone (crossterm) apps** render `Color` straight to the terminal, so
-  there's no chokepoint — replace the literal `Color::DarkGray`/etc. sites with
-  `palette().dim`/etc. Mechanical; do the dim sites first (highest value).
-
-## Protocol — deliberately unchanged
-
-The blit wire `Message::Palette` still carries only `bg/fg/accent`. We do **not**
-extend it: the file already carries the full rich set, works for standalone and
-hosted apps alike, and avoids a breaking `tmnl-protocol` version bump across all
-clients. (A future `MSG_PALETTE_V2` could push live in-memory updates without the
-mtime poll, but it isn't needed — the file mechanism covers every case.)
+Crossterm rendering: replace literal `Color::DarkGray`/etc. sites with
+`palette().dim`/etc. Mechanical; do the dim sites first (highest value).

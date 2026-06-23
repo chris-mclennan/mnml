@@ -19,8 +19,7 @@
 #     Resources/AppIcon.icns
 #     Resources/bin/mnml        (the actual TUI binary)
 #
-# Launcher dispatch: if `tmnl` is on PATH the launcher opens mnml as
-# a native tmnl tab; otherwise it falls back to Terminal.app.
+# Launcher dispatch: opens mnml in Terminal.app.
 #
 # `--bin-path` is for CI — cargo-dist has already built the binary
 # at a known path; we just package it.

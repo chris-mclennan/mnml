@@ -10,6 +10,25 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+### Removed (2026-06-22)
+
+- **Tmnl integration removed.** Mnml is now terminal-agnostic. Pivoted to
+  "mnml runs in any terminal; let the terminal handle rendering quality."
+  - `Pane::BlitHost` + the entire blit-protocol client; `mixr_host`,
+    `pane_host`, `chrome_chips` modules.
+  - `--blit`, `--no-native-promote` CLI flags; `TMNL_TRANSFER_SOCKET`
+    auto-promote-to-tmnl-native-tab path; `MNML_BLIT_SOCKET` env var.
+  - `:host.launch`, `:tmnl.open-tab`, `:tmnl.pop-pty` ex commands;
+    `tmnl.*` palette commands.
+  - `tmnl-protocol` Cargo dependency.
+- Reset default integration icons from `:host.launch <bin>` to `:term <bin>`
+  (sibling tools open as Pty panes now).
+
+### Added (replacing removed behaviour)
+
+- `mixr.show` palette command + `App::open_mixr` — opens mixr as a
+  Pty pane (replaces the prior `mixr_host` docked panel).
+
 mnml has not yet had a tagged release. The `0.1.0` line below summarises the
 capabilities present in the current `main`.
 

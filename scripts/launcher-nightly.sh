@@ -6,8 +6,8 @@
 # binary). The whole point of the nightly icon is "click and get
 # whatever I just compiled."
 #
-# 2026-06-22 — tmnl integration removed; the launcher opens
-# mnml in macOS's Terminal.app.
+# Opens mnml in Ghostty when available, else falls back to
+# Terminal.app.
 
 dev_bin="$HOME/Projects/mnml/target/release/mnml"
 src_root="$HOME/Projects/mnml"
@@ -59,6 +59,18 @@ fi
 
 export PATH="$(dirname "$dev_bin"):/opt/homebrew/bin:/usr/local/bin:$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
+# Prefer Ghostty, fall back to Terminal.app.
+ghostty_bin=""
+if command -v ghostty >/dev/null 2>&1; then
+    ghostty_bin="$(command -v ghostty)"
+elif [ -x "/Applications/Ghostty.app/Contents/MacOS/ghostty" ]; then
+    ghostty_bin="/Applications/Ghostty.app/Contents/MacOS/ghostty"
+fi
+if [ -n "$ghostty_bin" ]; then
+    echo "  found ghostty at $ghostty_bin — exec ghostty -e mnml" >> "$log_file"
+    exec "$ghostty_bin" -e "$dev_bin"
+fi
+echo "  ghostty not found — falling back to Terminal.app" >> "$log_file"
 osascript <<EOF
 tell application "Terminal"
     activate

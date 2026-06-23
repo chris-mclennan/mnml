@@ -3,8 +3,8 @@
 # workflow doesn't:
 #
 #  (1) Clones mnml's sibling crates to the layout that mnml's
-#      `Cargo.toml` path-deps expect (`../tmnl-protocol`,
-#      `../fim-engine`). Anonymous clone (sibling repos are public).
+#      `Cargo.toml` path-deps expect (`../fim-engine`). Anonymous
+#      clone (sibling repo is public).
 #
 #  (2) Installs the Linux system libs that tree-sitter, fontconfig,
 #      and OpenSSL build-time depend on. macOS + Windows runners have
@@ -15,9 +15,6 @@
   run: |
     set -euo pipefail
     cd ..
-    if [ ! -d tmnl-protocol ]; then
-      git clone --depth=1 https://github.com/chris-mclennan/tmnl-protocol.git
-    fi
     if [ ! -d fim-engine ]; then
       git clone --depth=1 https://github.com/chris-mclennan/fim-engine.git
     fi

@@ -2,7 +2,7 @@
 //!
 //! The renderer lives at `src/ui/settings_overlay.rs`. See the "Family
 //! settings UI convention" in `CLAUDE.md` for the visual idiom we
-//! match across mnml + tmnl + mixr.
+//! match across mnml + mixr.
 //!
 //! Design notes:
 //! - `build_settings(&Config)` recomputes the row list each render —

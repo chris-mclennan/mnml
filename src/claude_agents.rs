@@ -65,11 +65,6 @@ pub enum ClaudeAgentsAction {
     /// the row's `cwd` (or the current workspace if cwd is missing).
     /// For codex rows, opens `codex` (no resume — stateless).
     ResumeSession,
-    /// When mnml is running under tmnl: open a new top-level tmnl
-    /// tab with `claude --resume <sid>` (Claude rows) or `codex`
-    /// (Codex rows). No-op when not under tmnl. Distinct from
-    /// `ResumeSession` (which docks in an mnml pty pane).
-    ResumeSessionInTmnl,
     /// Export the focused row's transcript as markdown into the
     /// current workspace's `.mnml/claude-exports/` and open it in
     /// an editor pane.

@@ -735,16 +735,6 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            id: "ai.dashboard.resume_in_tmnl",
-            title: "AI dashboard: resume the focused session in a new tmnl tab",
-            group: "ai",
-            keys: &[],
-            run: |app| {
-                use crate::claude_agents::ClaudeAgentsAction;
-                app.claude_agents_action(ClaudeAgentsAction::ResumeSessionInTmnl);
-            },
-        },
-        Command {
             id: "ai.dashboard",
             title: "AI: open Claude Agents dashboard (also lists Codex sessions)",
             group: "ai",

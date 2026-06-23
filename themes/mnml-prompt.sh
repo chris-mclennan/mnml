@@ -4,10 +4,10 @@
 #
 #     [ -n "$MNML_PROMPT_SCRIPT" ] && source "$MNML_PROMPT_SCRIPT"
 #
-# `$MNML_PROMPT_SCRIPT` is exported by mnml/tmnl before they spawn a
+# `$MNML_PROMPT_SCRIPT` is exported by mnml before they spawn a
 # shell; outside their child shells the line above is a no-op.
 #
-# Theming is via env vars — also exported by mnml/tmnl before spawn —
+# Theming is via env vars — also exported by mnml before spawn —
 # so the prompt automatically picks up the active mnml palette colors.
 # Unset vars fall back to a tokyo-night-ish default so the script
 # still looks reasonable if sourced standalone.
@@ -19,7 +19,7 @@
 #
 # Right-aligned (zsh RPROMPT; bash via the same PROMPT_COMMAND):
 #   4. clock HH:MM    — dim grey
-#   5. context chip   — "mnml" / "tmnl" / shell-name, dim grey
+#   5. context chip   — "mnml" / shell-name, dim grey
 #
 # Glyphs are powerline + nerd-font:    ±   ❯
 #

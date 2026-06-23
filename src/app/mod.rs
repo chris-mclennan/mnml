@@ -1714,14 +1714,6 @@ pub struct PaneRects {
     /// The `> GIT` section header row in the rail (when the rail's visible).
     /// Click → `App::toggle_git_section_expanded`.
     pub git_section_toggle: Option<Rect>,
-    /// Cursor position `(x, y)` that `ui::draw` *actually* set on the frame
-    /// via `set_cursor_position`. Reset to `None` at the start of every
-    /// draw; populated only when ui::draw decided a cursor should be shown
-    /// (active editor pane with a cursor, an open prompt / picker caret).
-    /// Read by `blit::run` to decide `cursor_visible` on the wire — without
-    /// this, tmnl would paint a stale (0, 0) cursor before mnml has shown
-    /// anything (the white flash during startup).
-    pub drawn_cursor_pos: Option<(u16, u16)>,
     /// `(rect, ws_idx, scroll)` per extra-workspace section's body — the rect
     /// is the file-list area, ws_idx is the index into `App.extra_workspaces`,
     /// scroll is the tree's scroll offset at render time so a click can be
@@ -2702,7 +2694,7 @@ pub struct App {
     /// closure.
     ///
     /// Bug-hunt SEV-3 fix 2026-06-07: `forge.open_lambda` + siblings
-    /// used to report `ok=true` even when the underlying `host.launch`
+    /// used to report `ok=true` even when the underlying `:term`
     /// failed (binary not on PATH); headless callers + plugin
     /// authors couldn't tell.
     pub last_command_failed: bool,
@@ -2858,7 +2850,7 @@ pub struct App {
     pub show_welcome: bool,
     /// Background "is there a newer release?" probe. `None` if the
     /// user opted out via `[ui] check_updates = false`, or we're in
-    /// blit / headless mode. See `src/update_check.rs`.
+    /// headless mode. See `src/update_check.rs`.
     pub update_check: Option<std::sync::Arc<crate::update_check::UpdateCheck>>,
     /// Startup workspace picker — `Some` while the launch-time
     /// chooser overlay is shown. See `src/ui/startup_picker.rs` for
@@ -4371,7 +4363,7 @@ impl App {
     fn set_theme_silent(&mut self, name: &str) -> Option<String> {
         let t = crate::ui::theme::set(name)?;
         // Keep the canonical `current-theme.toml` in sync so the family
-        // (tmnl, mixr, mnml-* siblings) retints to match within a tick.
+        // (mixr, mnml-* siblings) retints to match within a tick.
         crate::ui::theme::write_current(&t);
         self.config.ui.theme = t.name.to_string();
         for pane in &mut self.panes {
@@ -5771,9 +5763,9 @@ impl App {
     }
 
     pub fn open_shell(&mut self) {
-        // Spawn in the *active* workspace — so when the user has tmnl
-        // section focused in a multi-workspace setup, term.shell opens
-        // in tmnl's directory, not the launch primary.
+        // Spawn in the *active* workspace — so in a multi-workspace
+        // setup, term.shell opens in the focused workspace's directory,
+        // not the launch primary.
         let cwd = self.active_workspace_path().to_path_buf();
         self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(cwd)));
     }
@@ -8763,10 +8755,6 @@ impl App {
                 MenuAction::Command("ai.dashboard.resume_in_pty"),
             ),
             MenuItem::new(
-                "Resume in tmnl tab",
-                MenuAction::Command("ai.dashboard.resume_in_tmnl"),
-            ),
-            MenuItem::new(
                 "Yank session id",
                 MenuAction::Command("ai.dashboard.yank_session_id"),
             ),
@@ -8902,12 +8890,6 @@ impl App {
                         self.toast("opened fresh codex (CLI is stateless)");
                     }
                 }
-            }
-            ClaudeAgentsAction::ResumeSessionInTmnl => {
-                // 2026-06-22 — tmnl integration removed; this
-                // action is a no-op now. The `o` action above
-                // opens the session as an mnml pty pane.
-                self.toast("tmnl integration removed; use o for an mnml pane");
             }
         }
     }

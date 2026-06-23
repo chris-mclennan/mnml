@@ -61,9 +61,9 @@ Or look it up at
 
 ### 6. Add the secrets to each GitHub repo
 
-For each of `chris-mclennan/mnml`, `chris-mclennan/mixr`,
-`chris-mclennan/tmnl` — go to **Settings → Secrets and variables →
-Actions → New repository secret**.
+For each of `chris-mclennan/mnml`, `chris-mclennan/mixr` —
+go to **Settings → Secrets and variables → Actions → New
+repository secret**.
 
 Add these 5 secrets:
 
@@ -85,7 +85,7 @@ gh secret set APPLE_ID --repo chris-mclennan/mnml
 gh secret set APPLE_APP_PASSWORD --repo chris-mclennan/mnml
 ```
 
-Repeat for `mixr` and `tmnl`.
+Repeat for `mixr`.
 
 ### 7. Trigger a release
 

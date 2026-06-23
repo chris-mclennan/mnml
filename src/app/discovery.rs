@@ -1080,7 +1080,7 @@ ascii_icons = false
 id = \"lambda\"
 glyph = \"x\"
 fallback = \"L\"
-command = \":host.launch mnml-aws-lambda\"
+command = \":term mnml-aws-lambda\"
 color = \"orange\"
 
 [[ui.launcher_icon]]
@@ -1106,7 +1106,7 @@ color = \"blue\"
                 id: "lambda".to_string(),
                 glyph: "x".to_string(),
                 fallback: "L".to_string(),
-                command: ":host.launch mnml-aws-lambda".to_string(),
+                command: ":term mnml-aws-lambda".to_string(),
                 color: "orange".to_string(),
                 tooltip: Some("Lambda".to_string()),
             },
@@ -1114,7 +1114,7 @@ color = \"blue\"
                 id: "s3".to_string(),
                 glyph: "y".to_string(),
                 fallback: "S3".to_string(),
-                command: ":host.launch mnml-fs-s3".to_string(),
+                command: ":term mnml-fs-s3".to_string(),
                 color: "orange".to_string(),
                 tooltip: None,
             },
@@ -1135,7 +1135,7 @@ color = \"blue\"
             id: "lambda".to_string(),
             glyph: "x".to_string(),
             fallback: "L".to_string(),
-            command: ":host.launch mnml-aws-lambda".to_string(),
+            command: ":term mnml-aws-lambda".to_string(),
             color: "orange".to_string(),
             tooltip: None,
         }];

@@ -1,10 +1,8 @@
 #!/bin/bash
 # mnml-launcher — the executable inside mnml.app.
 #
-# Opens mnml in macOS's Terminal.app. (2026-06-22 — previously
-# preferred launching mnml as a tmnl native tab; tmnl integration
-# was removed in the cleanup that pivoted mnml to be terminal-
-# agnostic.)
+# Opens mnml in Ghostty when available, else falls back to
+# Terminal.app.
 #
 # Pathing: the executable lives at <Bundle>/Contents/MacOS/mnml-launcher;
 # the actual mnml binary ships at <Bundle>/Contents/Resources/bin/mnml.
@@ -38,6 +36,19 @@ echo "  PATH=$PATH" >> "$log_file"
 # globally-installed one.
 export PATH="$bundle_root/Contents/Resources/bin:$PATH"
 
+# Prefer Ghostty (better Nerd Font rendering, native macOS feel),
+# fall back to Terminal.app.
+ghostty_bin=""
+if command -v ghostty >/dev/null 2>&1; then
+    ghostty_bin="$(command -v ghostty)"
+elif [ -x "/Applications/Ghostty.app/Contents/MacOS/ghostty" ]; then
+    ghostty_bin="/Applications/Ghostty.app/Contents/MacOS/ghostty"
+fi
+if [ -n "$ghostty_bin" ]; then
+    echo "  found ghostty at $ghostty_bin — exec ghostty -e mnml" >> "$log_file"
+    exec "$ghostty_bin" -e "$mnml_bin"
+fi
+echo "  ghostty not found — falling back to Terminal.app" >> "$log_file"
 osascript <<EOF
 tell application "Terminal"
     activate

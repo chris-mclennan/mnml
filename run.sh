@@ -2,7 +2,7 @@
 # mnml wrapper — build (in the repo) + run (in *your* cwd) with a restart-aware
 # loop, plus subcommands for driving the running mnml from another shell.
 # Family convention: subcommands `build`/`release`/`test`/`check`/`watch`/`help`
-# are common across mnml + tmnl + mixr-rs. Per-app modes follow.
+# are common across mnml + mixr-rs. Per-app modes follow.
 #
 # Usage:
 #   ./run.sh                      Open the directory you ran it from. Builds with
@@ -30,10 +30,6 @@
 #   ./run.sh status               Print marker state (workspace, IPC dir).
 #   ./run.sh headless [WORKSPACE] Same restart loop, but --headless (virtual
 #                                 screen + file-IPC; nothing on the terminal).
-#   ./run.sh blit SOCKET          Run mnml as a tmnl native client (--blit).
-#                                 Renders into the parent tmnl, not the terminal.
-#   ./run.sh under-tmnl [WS]      Launch tmnl with mnml as a native tab (calls
-#                                 `tmnl --mnml`). tmnl must be on $PATH.
 #
 # Env:
 #   MNML_RELEASE=1   Build/run target/release/mnml (the release profile has LTO
@@ -100,32 +96,6 @@ case "${1:-start}" in
       echo "no marker — no mnml tracked"
     fi
     exit 0 ;;
-  # ── tmnl-integration shortcuts ──────────────────────────────────
-  blit)
-    shift
-    socket="${1:-}"
-    if [ -z "$socket" ]; then
-      echo "[run.sh] blit needs a socket path: ./run.sh blit <socket>" >&2
-      exit 2
-    fi
-    # Build first (debug profile — release is opt-in via MNML_RELEASE=1).
-    if [ "${MNML_RELEASE:-0}" = "1" ]; then
-      cargo build --release --quiet && exec "$REPO/target/release/mnml" --blit "$socket"
-    else
-      cargo build --quiet && exec "$REPO/target/debug/mnml" --blit "$socket"
-    fi
-    ;;
-  under-tmnl)
-    shift
-    if ! command -v tmnl >/dev/null 2>&1; then
-      echo "[run.sh] tmnl not found on PATH — build + install ../tmnl first" >&2
-      exit 1
-    fi
-    # tmnl --mnml spawns its own mnml as a native client. Pass through
-    # the remaining args (workspace, --input, etc.) — tmnl forwards them
-    # to mnml via its launcher template.
-    exec tmnl --mnml "$@"
-    ;;
   # ── Misc ────────────────────────────────────────────────────────
   -h|--help|help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
   # ── Implicit default ────────────────────────────────────────────
