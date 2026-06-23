@@ -158,7 +158,6 @@ export default defineConfig({
           label: 'Family',
           items: [
             { label: 'The family', slug: 'family' },
-            { label: 'tmnl — GPU terminal', link: 'https://tmnl.sh' },
             { label: 'mixr — DJ app', link: 'https://mixr.sh' },
           ],
         },
