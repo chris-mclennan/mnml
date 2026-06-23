@@ -23,7 +23,7 @@ use crate::ui::theme;
 /// padding so the glyph doesn't visually collide with the tree
 /// column to its right. (Earlier 3-cell version assumed glyphs
 /// were strictly 1-cell — true with NFM, false with NF.)
-pub const ACTIVITY_BAR_WIDTH: u16 = 4;
+pub const ACTIVITY_BAR_WIDTH: u16 = 5;
 
 /// Paint the activity bar into `area`. Registers a click rect per
 /// icon on `app.rects.activity_bar_icons` so mouse handling can
