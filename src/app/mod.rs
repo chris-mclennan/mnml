@@ -1926,6 +1926,11 @@ pub struct PaneRects {
     /// 2026-06-22. Two entries per visible leaf (one Horizontal,
     /// one Vertical). Cleared + repopulated every frame.
     pub split_strip_buttons: Vec<(Rect, PaneId, crate::layout::SplitDir)>,
+    /// `(rect, pane_id)` per visible terminal-launch button in the
+    /// split-strip cluster (immediately left of the H/V buttons).
+    /// Click → focus that leaf + open a new shell pane via
+    /// `App::open_shell()`. Cleared + repopulated every frame.
+    pub split_strip_term_buttons: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
     pub body: Option<Rect>,
     /// `(text_area, pane_id)` per visible editor leaf — the editable region

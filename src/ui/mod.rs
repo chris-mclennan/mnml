@@ -431,6 +431,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.split_tab_chips.clear();
     app.rects.split_tab_close.clear();
     app.rects.split_strip_buttons.clear();
+    app.rects.split_strip_term_buttons.clear();
     let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
         welcome::draw(frame, app, body_area);
         None
@@ -1990,7 +1991,8 @@ fn paint_leaf_tab_strip(
     // the buttons. Tabs that don't fit get clipped per the
     // existing chip_w logic.
     const SPLIT_BTN_W: u16 = 3;
-    const SPLIT_BTNS_TOTAL: u16 = SPLIT_BTN_W * 2;
+    // Three buttons now: terminal + V-split + H-split.
+    const SPLIT_BTNS_TOTAL: u16 = SPLIT_BTN_W * 3;
     let mut chip_x = strip.x;
     let strip_right = strip.x + strip.width;
     let tabs_right = strip_right.saturating_sub(SPLIT_BTNS_TOTAL);
@@ -2120,15 +2122,35 @@ fn paint_leaf_tab_strip(
         chip_x = chip_x.saturating_add(1);
     }
 
-    // 2026-06-22 — VS Code-style split-editor buttons on the
-    // far right of the strip. Two glyphs (vertical-split,
-    // horizontal-split), each 1 glyph + 1 trailing pad in a
-    // 3-cell button (` <glyph> ` style). Click → focus this
-    // leaf + split_active(dir).
+    // VS Code-style split-editor + terminal buttons on the far
+    // right of the strip. Three glyphs (terminal, vertical-split,
+    // horizontal-split), each in a 3-cell ` <glyph> ` button.
+    // Terminal click → focus this leaf + open a shell. Split
+    // clicks → focus this leaf + split_active(dir).
+    let term_glyph = if nerd { "\u{ea85}" } else { ">_" };
     let btn_v_glyph = if nerd { "\u{eb56}" } else { "|+" };
-    let btn_h_glyph = if nerd { "\u{eb55}" } else { "_+" };
+    let btn_h_glyph = if nerd { "\u{eb57}" } else { "_+" };
     let dim_fg = t.comment;
     let mut bx = strip_right.saturating_sub(SPLIT_BTNS_TOTAL);
+
+    // Terminal button (leftmost).
+    {
+        let term_rect = Rect {
+            x: bx,
+            y: strip.y,
+            width: SPLIT_BTN_W,
+            height: 1,
+        };
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(strip_bg)),
+            Span::styled(term_glyph, Style::default().fg(dim_fg).bg(strip_bg)),
+            Span::styled(" ", Style::default().bg(strip_bg)),
+        ]);
+        frame.render_widget(Paragraph::new(line), term_rect);
+        app.rects.split_strip_term_buttons.push((term_rect, active));
+        bx = bx.saturating_add(SPLIT_BTN_W);
+    }
+
     for (glyph, dir) in [
         (btn_v_glyph, crate::layout::SplitDir::Horizontal),
         (btn_h_glyph, crate::layout::SplitDir::Vertical),

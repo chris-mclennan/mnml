@@ -4700,6 +4700,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.close_split_tab(leaf_active, tab_pane);
                 return;
             }
+            // Terminal button in the split-strip cluster.
+            // Focus the clicked leaf, then open a shell in a
+            // split (mirrors the `term.shell` palette command).
+            if let Some(&(_, leaf_active)) = app
+                .rects
+                .split_strip_term_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.active = Some(leaf_active);
+                app.focus = crate::focus::Focus::Pane;
+                app.open_shell();
+                return;
+            }
             // 2026-06-22 — per-split split-editor buttons at the
             // right of the strip. Focus the clicked leaf's active
             // pane, then dispatch split_active(dir).

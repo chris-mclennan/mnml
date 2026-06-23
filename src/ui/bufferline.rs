@@ -114,8 +114,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // space). Pre-compute the total so the per-buffer tab strip's
     // scroll math reserves enough width.
     // The cluster lives on the palette-bar chrome row, not the
-    // bufferline itself.
-    let tabs_max_x = area.x + area.width;
+    // bufferline itself. The H/V split buttons DO live on the
+    // bufferline — reserve the rightmost SPLIT_BUTTONS_W cells
+    // for them so the tab strip's scroll math doesn't run them over.
+    let tabs_max_x = area
+        .x
+        .saturating_add(area.width.saturating_sub(SPLIT_BUTTONS_W));
 
     // Disambiguated labels — when two open editors share a filename, prepend
     // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
@@ -430,13 +434,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let _ = last_drawn;
 
-    // Right cluster lives on the palette-bar chrome row.
-    // Bufferline only paints the file-tab strip.
+    // Right cluster (launcher icons, `+`, TABS chips, theme
+    // toggle, close) lives on the palette-bar chrome row.
+    // Bufferline paints the file-tab strip + the H/V split
+    // buttons at the right end.
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    paint_split_buttons(frame, app, area);
 }
 
 /// Width in cells of the right-cluster chrome (launcher icons +
-/// `+` + `TABS` + tab-page chips + theme toggle + close).
+/// `+` + `TABS` + tab-page chips + theme toggle + close). Split
+/// buttons are NOT part of this — they live on the bufferline
+/// (tab bar) right end, not the chrome row.
 pub fn right_cluster_width(app: &App) -> u16 {
     let n_launcher = app.config.ui.launcher_icons.len() as u16;
     // launcher icons (` X ` × n) + ` + ` new-tab button + ` TABS `
@@ -515,35 +524,8 @@ pub fn paint_right_cluster(
     let mut spans: Vec<Span> = Vec::new();
     let mut cluster_x = area.x;
 
-    // 2026-06-22 — VS Code-style split-editor buttons. Same
-    // pair as the per-leaf tab strip but rendered on the
-    // bufferline so single-leaf (no-split) layouts also have
-    // a mouse-discoverable split path. Click → split the
-    // current active leaf.
-    if let Some(active) = app.active {
-        let btn_v_glyph = if nerd { "\u{eb56}" } else { "|+" };
-        let btn_h_glyph = if nerd { "\u{eb55}" } else { "_+" };
-        for (glyph, dir) in [
-            (btn_v_glyph, crate::layout::SplitDir::Horizontal),
-            (btn_h_glyph, crate::layout::SplitDir::Vertical),
-        ] {
-            spans.push(Span::styled(
-                format!(" {glyph} "),
-                Style::default().fg(t.comment).bg(t.bg2),
-            ));
-            app.rects.split_strip_buttons.push((
-                Rect {
-                    x: cluster_x,
-                    y: area.y,
-                    width: 3,
-                    height: 1,
-                },
-                active,
-                dir,
-            ));
-            cluster_x += 3;
-        }
-    }
+    // Split buttons moved to the bufferline (tab bar) right end —
+    // see `paint_split_buttons` below.
 
     // Launcher icons.
     for (i, icon) in app.config.ui.launcher_icons.iter().enumerate() {
@@ -677,6 +659,77 @@ pub fn paint_right_cluster(
     let _ = cluster_x;
     let _ = bg; // bg currently unused; future styling pass may use it.
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// Width in cells of the split-buttons cluster — terminal +
+/// H + V buttons, 3 cells each = 9. Painted at the bufferline's
+/// right end so single-leaf (no-split) layouts have a mouse-
+/// discoverable split + terminal path even when the per-leaf
+/// tab strip doesn't paint its own buttons.
+pub const SPLIT_BUTTONS_W: u16 = 9;
+
+/// Paint the terminal + H / V split buttons at the right end of
+/// `area`. Registers click rects in `app.rects.split_strip_buttons`
+/// (H/V) and `app.rects.split_strip_term_buttons` (terminal).
+/// No-op when there's no active leaf.
+pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
+    if area.width < SPLIT_BUTTONS_W {
+        return;
+    }
+    let Some(active) = app.active else {
+        return;
+    };
+    let t = theme::cur();
+    let nerd = !app.config.ui.ascii_icons;
+    // `\u{ea85}` (nf-cod-terminal) — click opens a new shell in a
+    // split below the active leaf.
+    // `\u{eb56}` (nf-cod-split_horizontal) renders as a box with
+    // a vertical divider — paired with the action that creates a
+    // side-by-side split. `\u{eb57}` (nf-cod-split_vertical)
+    // renders as a box with a horizontal divider — paired with
+    // the action that creates a stacked split.
+    let term_glyph = if nerd { "\u{ea85}" } else { ">_" };
+    let btn_v_glyph = if nerd { "\u{eb56}" } else { "|+" };
+    let btn_h_glyph = if nerd { "\u{eb57}" } else { "_+" };
+    let bg = t.bg_darker;
+    let mut bx = area.x + area.width - SPLIT_BUTTONS_W;
+
+    // Terminal button (leftmost).
+    let term_rect = Rect {
+        x: bx,
+        y: area.y,
+        width: 3,
+        height: 1,
+    };
+    let term_line = Line::from(vec![
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(term_glyph, Style::default().fg(t.comment).bg(bg)),
+        Span::styled(" ", Style::default().bg(bg)),
+    ]);
+    frame.render_widget(Paragraph::new(term_line), term_rect);
+    app.rects.split_strip_term_buttons.push((term_rect, active));
+    bx += 3;
+
+    // H + V split buttons.
+    for (glyph, dir) in [
+        (btn_v_glyph, crate::layout::SplitDir::Horizontal),
+        (btn_h_glyph, crate::layout::SplitDir::Vertical),
+    ] {
+        let btn_rect = Rect {
+            x: bx,
+            y: area.y,
+            width: 3,
+            height: 1,
+        };
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(glyph, Style::default().fg(t.comment).bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
+        ]);
+        frame.render_widget(Paragraph::new(line), btn_rect);
+        app.rects.split_strip_buttons.push((btn_rect, active, dir));
+        bx += 3;
+    }
 }
 
 #[cfg(test)]
