@@ -293,7 +293,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // whichever ActivitySection is active. tree_view continues to
     // render the Explorer mode; other modes paint a stub.
     if let Some(ta) = tree_area {
-        let bar_w = crate::ui::activity_bar::ACTIVITY_BAR_WIDTH.min(ta.width);
+        let bar_w = crate::ui::activity_bar::width_for(app).min(ta.width);
         let bar_area = Rect {
             x: ta.x,
             y: ta.y,

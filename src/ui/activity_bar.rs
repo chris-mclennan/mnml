@@ -17,12 +17,26 @@ use ratatui::widgets::Paragraph;
 use crate::app::{ActivitySection, App};
 use crate::ui::theme;
 
-/// Width of the activity bar strip in cells. 3 cells = 1 padding + 1
-/// glyph + 1 padding. Was 4 (trailing spacer column) but the extra
-/// cell read as a too-wide gap between the window edge and the
-/// rail. Matches vscode's visual weight at this terminal-cell
-/// density.
+/// Width of the activity bar strip in cells. Standard-mode
+/// terminals (Apple Terminal etc.) get 3 cells because Nerd Font
+/// PUA glyphs visually overflow into adjacent cells, making the
+/// rail read as ~4-5 cells wide. tmnl-native rendering clamps
+/// glyphs to 1 cell strictly, so 3 looks visibly cramped — use
+/// 4 (extra trailing pad) when we know we're hosted under tmnl.
+/// User-feedback 2026-06-22 — side-by-side compared both. See
+/// `width_for(&App)` for the conditional.
 pub const ACTIVITY_BAR_WIDTH: u16 = 3;
+
+/// Per-render activity-bar width. Returns the larger value when
+/// running under tmnl (no glyph overflow → need explicit padding
+/// to read at the same visual weight as standard mode).
+pub fn width_for(app: &crate::app::App) -> u16 {
+    if app.is_inside_tmnl() {
+        ACTIVITY_BAR_WIDTH + 1
+    } else {
+        ACTIVITY_BAR_WIDTH
+    }
+}
 
 /// Paint the activity bar into `area`. Registers a click rect per
 /// icon on `app.rects.activity_bar_icons` so mouse handling can
