@@ -266,27 +266,15 @@ The complete, organised feature inventory. For the front-door overview see
   `events.jsonl` out) — the same `App` and draw path as the terminal UI.
 - **Plugins** — out-of-process helpers over the IPC channel can register
   commands that appear in the palette and resolve as keybindings.
-- **Blit-host integration** — `:host.launch <binary>` spawns an out-of-process
-  binary as a `Pane::BlitHost`; the binary renders into the pane over a Unix
-  socket using the `tmnl-protocol` wire format. No changes to mnml needed to add
-  an integration — drop a `[[ui.launcher_icon]]` entry in config. `Ctrl+E`
-  returns focus to the split tree. Shipped integrations (each also runs
-  standalone): `mnml-tickets-jira` (Jira ticket viewer),
-  `mnml-aws-cloudwatch-logs` (live CloudWatch log-stream tail, per-tab filter
-  patterns), `mnml-aws-amplify` (Amplify apps / branches / deploy-jobs viewer),
-  `mnml-db-dynamodb` (DynamoDB table browser, PRIMARY key auto-resolved from
-  `describe-table`), `mnml-aws-lambda` (function browser, paginated list +
-  detail panel), `mnml-aws-eventbridge` (buses + rules-per-bus browser). The
-  integration-icon rail ships default entries for all of
-  them; palette commands `forge.open_cloudwatch_logs`, `forge.open_amplify`,
-  `forge.open_dynamodb`, `forge.open_lambda`, and `forge.open_eventbridge` are
-  also registered.
-- **`tmnl` integration** — runs standalone in any terminal; gains native-pane
-  hand-off when hosted inside the [`tmnl`](https://github.com/chris-mclennan/tmnl)
-  terminal. `:tmnl.open-tab <command>` (alias `:tmnl.tab`) asks tmnl to open a
-  command in a new native tab. `:tmnl.pop-pty` (alias `:tmnl.pop`) transfers the
-  focused terminal pane's pty fd to tmnl via SCM_RIGHTS, making it a sibling tab
-  without killing the child process (Unix only).
+- **Sibling tool integrations** — `:term <binary>` spawns a sibling tool
+  (`mnml-tickets-jira`, `mnml-aws-cloudwatch-logs`, `mnml-aws-amplify`,
+  `mnml-db-dynamodb`, `mnml-aws-lambda`, `mnml-aws-eventbridge`, and ~15
+  more in `family_catalog`) as a Pty pane. The integration-icon rail
+  ships default entries for all of them; palette commands
+  `forge.open_cloudwatch_logs`, `forge.open_amplify`, `forge.open_dynamodb`,
+  `forge.open_lambda`, and `forge.open_eventbridge` are also registered.
+  Add a custom integration by dropping a `[[ui.integration_icon]]` entry
+  in config — no code changes to mnml required.
 - **Settings overlay** — `:settings` / `view.settings` opens a keyboard-driven
   overlay (centered, ~60 % × 70 %) for everyday config toggles. Rows are
   `▸ <label>: [active] / other  *`; section headers `── UI ──` etc. Keys:
@@ -295,7 +283,7 @@ The complete, organised feature inventory. For the front-door overview see
 - **Config-driven launcher-icon strip** — the bufferline's right cluster is
   driven by `[[ui.launcher_icon]]` TOML entries (`id`, `glyph`, `fallback`,
   `command`, `color`, `tooltip`). The `command` field accepts a registered
-  command id or a colon-prefixed ex-cmdline string (`:host.launch binary`).
+  command id or a colon-prefixed ex-cmdline string (`:term binary`).
   Setting the key replaces the built-in Claude Code + Codex defaults.
 - **Config-driven integration-icon rail** — the file-tree rail's icon strip is
   driven by `[[ui.integration_icon]]` TOML entries (same fields as
@@ -323,7 +311,7 @@ The complete, organised feature inventory. For the front-door overview see
 - **Update-available check** — on launch, a background thread queries
   `api.github.com/repos/chris-mclennan/mnml/releases/latest` and fires a
   one-shot toast when a newer release tag is found. Opt out with
-  `[ui] check_updates = false`. Skipped in headless and blit modes.
+  `[ui] check_updates = false`. Skipped in headless mode.
 
 ## Languages
 
