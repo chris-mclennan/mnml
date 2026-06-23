@@ -3,7 +3,7 @@ title: Bitbucket forge viewer
 description: mnml-forge-bitbucket — a Bitbucket Cloud pull-request, pipelines, and branches viewer (standalone or hosted as an mnml pane). Configurable tabs per-repo or workspace-spanning via `mode = mine|reviewing`, with a right-half PR detail panel and approve/unapprove toggle.
 ---
 
-[`mnml-forge-bitbucket`](https://github.com/chris-mclennan/mnml-forge-bitbucket) is a terminal Bitbucket Cloud viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. It's the first shipped member of the `forge` integration class — sibling repos `mnml-forge-github` and a future `mnml-forge-gitlab` follow the same shape. See [Building integrations](/manual/integrations/building/) for the model.
+[`mnml-forge-bitbucket`](https://github.com/chris-mclennan/mnml-forge-bitbucket) is a terminal Bitbucket Cloud viewer. Runs **standalone in any terminal**. It's the first shipped member of the `forge` integration class — sibling repos `mnml-forge-github` and a future `mnml-forge-gitlab` follow the same shape. See [Building integrations](/manual/integrations/building/) for the model.
 
 ```
 ┌─ bitbucket PRs ──────────────────────────────────────────────────┐
@@ -186,13 +186,13 @@ The approval chip shows either `✓ you approved · N total` or `○ not approve
 
 Just run `mnml-forge-bitbucket` in any terminal. The TUI takes over until you `q`.
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-forge-bitbucket
+:term mnml-forge-bitbucket
 ```
 
-mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
+mnml spawns it in a Pty pane — splittable, focusable, key-routed like any other pane.
 
 ## Wire it into mnml's left rail
 
@@ -203,7 +203,7 @@ To get a one-click chip in mnml's rail under **INTEGRATIONS** (alongside Claude 
 id       = "bitbucket"
 glyph    = "\U000F0093"            # nf-md-bitbucket (TOML 8-digit form)
 fallback = "B"
-command  = ":host.launch mnml-forge-bitbucket"
+command  = ":term mnml-forge-bitbucket"
 color    = "blue"
 tooltip  = "Open Bitbucket PRs"
 ```

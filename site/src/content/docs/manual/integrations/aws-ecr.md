@@ -3,7 +3,7 @@ title: AWS ECR viewer
 description: mnml-aws-ecr — a terminal browser for AWS ECR repositories and image tags. List repositories or images-per-repository with size, push date, digest. Pairs with mnml-aws-ecs. Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-ecr`](https://github.com/chris-mclennan/mnml-aws-ecr) is a terminal browser for AWS Elastic Container Registry — list every repository in a region, drill into image tags with size + push date + digest, yank the `docker pull` URI in one keystroke. Pairs naturally with [`mnml-aws-ecs`](/manual/integrations/aws-ecs/) for the full container deploy workflow (where the image lives + where the container runs). Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-ecr`](https://github.com/chris-mclennan/mnml-aws-ecr) is a terminal browser for AWS Elastic Container Registry — list every repository in a region, drill into image tags with size + push date + digest, yank the `docker pull` URI in one keystroke. Pairs naturally with [`mnml-aws-ecs`](/manual/integrations/aws-ecs/) for the full container deploy workflow (where the image lives + where the container runs). Runs **standalone in any terminal**.
 
 ```
 ┌─ ecr ─────────────────────────────────────────────────────────────────┐
@@ -101,10 +101,10 @@ The yank on an image row gives you what you'd paste into `docker pull <copied>` 
 mnml-aws-ecr
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-ecr
+:term mnml-aws-ecr
 ```
 
 ## Wire it into mnml's left rail

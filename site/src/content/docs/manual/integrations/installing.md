@@ -46,7 +46,7 @@ The probe is in-process (no `which` fork) and walks two location classes in orde
 
 Why the fallback matters: **macOS .app bundles don't inherit your shell's `PATH`**. If you launch mnml.app from Finder/Spotlight, its environment is the minimal system `PATH` the launcher gives it — your `~/.zshrc` never runs. Without the fallback, you'd `cargo install mnml-forge-bitbucket`, see it appear in any shell, then double-click mnml.app and watch the Bitbucket chip vanish despite the binary sitting one directory over. Checking the standard `cargo install` location (`~/.cargo/bin`) and the standard Homebrew prefix directly sidesteps the entire PATH-inheritance question.
 
-Internal palette commands (no prefix — e.g. `ai.claude_code`, `http.send`) and tmnl host commands (`tmnl:<host_id>`) are always assumed available because they don't shell out. They never get filtered out.
+Internal palette commands (no prefix — e.g. `ai.claude_code`, `http.send`) are always assumed available because they don't shell out. They never get filtered out.
 
 ## Adding a sibling
 
@@ -112,7 +112,7 @@ The banner mnml writes looks like this; you can recognise it on next inspection:
 id = "lambda"
 glyph = ""
 fallback = "L"
-command = ":host.launch mnml-aws-lambda"
+command = ":term mnml-aws-lambda"
 color = "orange"
 tooltip = "AWS Lambda"
 ```
@@ -270,15 +270,15 @@ Any binary named `mnml-*-*` placed in any of the well-known locations is detecte
 
 1. Is named `mnml-<class>-<name>` (the prefix is the only naming rule).
 2. Lives on `PATH` or in `~/.cargo/bin` (which `cargo install` writes to by default).
-3. Either runs standalone or speaks the blit-host protocol when invoked with `--blit <socket>`.
+3. Runs standalone as a TUI (mnml launches it as a Pty pane via `:term <binary>`).
 
 …it'll resolve. Users can wire its chip with the same `[[ui.integration_icon]]` block any other sibling uses.
 
-The full anatomy of an integration — directory layout, the `tmnl-protocol` dependency, the `blit.rs` file you copy, the `--check` convention — lives in [Building integrations](/manual/integrations/building/).
+The full anatomy of an integration — directory layout, the `--check` convention — lives in [Building integrations](/manual/integrations/building/).
 
 ## Next
 
-- [Building integrations](/manual/integrations/building/) — anatomy of a sibling: standalone, pty, or hosted blit pane.
+- [Building integrations](/manual/integrations/building/) — anatomy of a sibling: standalone TUI launched as a Pty pane.
 - [Activity bar](/manual/activity-bar/) — the **Integrations** section is one of five activity-bar sections; click the puzzle-piece icon to switch to it.
 - [Settings & configuration](/manual/settings/) — full reference for `[[ui.integration_icon]]` and `[[ui.launcher_icon]]`.
 - [Community integrations](/manual/integrations/community/) — directory of community-built siblings.

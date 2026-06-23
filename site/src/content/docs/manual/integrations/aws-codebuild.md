@@ -3,7 +3,7 @@ title: AWS CodeBuild viewer
 description: mnml-aws-codebuild — a terminal viewer for AWS CodeBuild project runs + CloudWatch Logs live tail. Shells out to the `aws` CLI; no SDK dependency. Runs standalone or hosted as an mnml pane.
 ---
 
-[`mnml-aws-codebuild`](https://github.com/chris-mclennan/mnml-aws-codebuild) is a terminal viewer for AWS CodeBuild project runs and CloudWatch Logs live tail. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. It defers entirely to the **AWS CLI** for credentials — there is no AWS SDK dependency, no token file, no `--profile` flag. See [Building integrations](/manual/integrations/building/) for the model.
+[`mnml-aws-codebuild`](https://github.com/chris-mclennan/mnml-aws-codebuild) is a terminal viewer for AWS CodeBuild project runs and CloudWatch Logs live tail. Runs **standalone in any terminal**. It defers entirely to the **AWS CLI** for credentials — there is no AWS SDK dependency, no token file, no `--profile` flag. See [Building integrations](/manual/integrations/building/) for the model.
 
 This is the sibling that picked up the CodeBuild + CloudWatch panes that used to live in mnml core's `aws-codebuild` Cargo feature (removed 2026-06).
 
@@ -155,13 +155,13 @@ build re-uses the existing tab.
 
 Just run `mnml-aws-codebuild` in any terminal. The TUI takes over until you `q`.
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-codebuild
+:term mnml-aws-codebuild
 ```
 
-mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
+mnml spawns it in a Pty pane — splittable, focusable, key-routed like any other pane.
 
 ## Wire it into mnml's left rail
 
@@ -172,7 +172,7 @@ mnml spawns it with `--blit <socket>` and renders the streamed cells into a nati
 id       = "codebuild"
 glyph    = "\U000F0E5C"            # nf-md-cogs (TOML 8-digit form)
 fallback = "C"
-command  = ":host.launch mnml-aws-codebuild"
+command  = ":term mnml-aws-codebuild"
 color    = "orange"
 tooltip  = "Open AWS CodeBuild + log tail"
 ```

@@ -3,7 +3,7 @@ title: AWS RDS viewer
 description: mnml-aws-rds — a terminal browser for AWS RDS DB instances and Aurora clusters. List + focused-item detail (engine, status, endpoint, storage). Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-rds`](https://github.com/chris-mclennan/mnml-aws-rds) is a terminal browser for AWS RDS — list every DB instance or Aurora cluster in a region, inspect engine / status / endpoint / storage detail, yank the endpoint for a `psql` invocation in one keystroke. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-rds`](https://github.com/chris-mclennan/mnml-aws-rds) is a terminal browser for AWS RDS — list every DB instance or Aurora cluster in a region, inspect engine / status / endpoint / storage detail, yank the endpoint for a `psql` invocation in one keystroke. Runs **standalone in any terminal**.
 
 ```
 ┌─ rds ─────────────────────────────────────────────────────────────────┐
@@ -106,10 +106,10 @@ Or just paste the host into your secrets manager / IaC config and move on. Less 
 mnml-aws-rds
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-rds
+:term mnml-aws-rds
 ```
 
 ## Wire it into mnml's left rail

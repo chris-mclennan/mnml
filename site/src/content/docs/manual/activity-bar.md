@@ -55,11 +55,11 @@ Two notes on overlap with what already exists:
 
 ### Integrations
 
-A vertical list of the configured `[[ui.integration_icon]]` entries from your config. Each entry takes three rows: the glyph (in its configured colour) next to the tooltip / id, then the bound command dim below, then a blank spacer. Both the glyph row and the command row are clickable — they fire the icon's `command` field through the same dispatcher the compact rail-strip icons use, so a palette command id (`mixr.show`), an ex-command (`:host.launch myapp`), or a `tmnl:<host_id>` prefix all just work.
+A vertical list of the configured `[[ui.integration_icon]]` entries from your config. Each entry takes three rows: the glyph (in its configured colour) next to the tooltip / id, then the bound command dim below, then a blank spacer. Both the glyph row and the command row are clickable — they fire the icon's `command` field through the same dispatcher the compact rail-strip icons use, so a palette command id (`mixr.show`) or an ex-command (`:term myapp`) both just work.
 
 Empty state — when no `[[ui.integration_icon]]` entries are configured, the section paints `No integrations — add [[ui.integration_icon]] in your config` in italic.
 
-**Missing-binary badge.** When an entry's `command` is `:host.launch <binary>`, mnml probes the binary against your `PATH` (via `which`) at render time. If it's not installed, the row's name dims to the comment colour and a dim red `(<bin> not installed)` suffix renders next to it — instead of failing silently when you click. Internal palette commands (no prefix) and tmnl host commands (`tmnl:<host_id>`) are always assumed available because they don't shell out, so they never wear the badge. The probe is cheap and only runs while the Integrations section is the active one.
+**Missing-binary badge.** When an entry's `command` is `:term <binary>`, mnml probes the binary against your `PATH` (via `which`) at render time. If it's not installed, the row's name dims to the comment colour and a dim red `(<bin> not installed)` suffix renders next to it — instead of failing silently when you click. Internal palette commands (no prefix) are always assumed available because they don't shell out, so they never wear the badge. The probe is cheap and only runs while the Integrations section is the active one.
 
 ### Search
 

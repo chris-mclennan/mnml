@@ -3,7 +3,7 @@ title: AWS Cognito viewer
 description: mnml-aws-cognito — a terminal browser for AWS Cognito User Pools and recent users. List pools or users-in-pool with status, email, attributes, Lambda triggers. Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-cognito`](https://github.com/chris-mclennan/mnml-aws-cognito) is a terminal browser for AWS Cognito User Pools — list every pool in a region, drill into recent users with status / email / created-at / Lambda triggers, yank a user's `sub` (the OIDC subject claim) or a pool's ID in one keystroke. Useful for the support workflow: "user X reports a sign-in problem — find them, check their status." Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-cognito`](https://github.com/chris-mclennan/mnml-aws-cognito) is a terminal browser for AWS Cognito User Pools — list every pool in a region, drill into recent users with status / email / created-at / Lambda triggers, yank a user's `sub` (the OIDC subject claim) or a pool's ID in one keystroke. Useful for the support workflow: "user X reports a sign-in problem — find them, check their status." Runs **standalone in any terminal**.
 
 ```
 ┌─ cognito ─────────────────────────────────────────────────────────────┐
@@ -104,10 +104,10 @@ The user `sub` yank is the **OIDC subject claim** — paste it into a database q
 mnml-aws-cognito
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-cognito
+:term mnml-aws-cognito
 ```
 
 ## Wire it into mnml's left rail

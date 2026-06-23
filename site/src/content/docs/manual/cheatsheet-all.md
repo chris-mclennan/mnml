@@ -281,7 +281,6 @@ These are operator-pending objects — type them after `d`, `c`, `y`, `v`, etc.
 | Focus existing or open new shell | `Ctrl+T` | `Ctrl+T` | `term.focus_or_open_shell` |
 | Shell as a pane | `<leader>at` / `:term` / `:terminal` | (palette) | `term.shell` |
 | Rename pty tab | (palette) | (palette) | `term.rename` |
-| Pop pty into tmnl (transfer fd) | `:tmnl.pop-pty` / `:tmnl.pop` | (palette) | `tmnl.pop_pty` |
 
 ## AI
 

@@ -223,7 +223,7 @@ When set (e.g. `["TE-", "MIX-"]`), pty session tabs that don't have a user-set n
 mnml has two icon strips driven from `[ui]` arrays:
 
 - `[[ui.launcher_icon]]` — colored chips on the right edge of the bufferline. Defaults to empty.
-- `[[ui.integration_icon]]` — plain glyphs in the rail's INTEGRATIONS row (under GIT). Defaults to Claude Code, Codex, Bitbucket, Jira, HTTP, CodeBuild, GitHub, Azure DevOps, GitLab, S3, CloudWatch Logs, Amplify, DynamoDB, Lambda, EventBridge — one chip per first-party sibling that ships as a default. Each fires `:host.launch <binary>` so installing the matching sibling is all it takes to make the chip work.
+- `[[ui.integration_icon]]` — plain glyphs in the rail's INTEGRATIONS row (under GIT). Defaults to Claude Code, Codex, Bitbucket, Jira, HTTP, CodeBuild, GitHub, Azure DevOps, GitLab, S3, CloudWatch Logs, Amplify, DynamoDB, Lambda, EventBridge — one chip per first-party sibling that ships as a default. Each fires `:term <binary>` so installing the matching sibling is all it takes to make the chip work.
 
 Both share the same shape:
 
@@ -232,45 +232,13 @@ Both share the same shape:
 id       = "myapp"                       # stable identifier
 glyph    = "\u{F0668}"                   # nerd-font glyph
 fallback = "MA"                          # ASCII fallback for --ascii / ascii_icons = true
-command  = ":host.launch myapp"          # leading `:` ⇒ ex-cmdline;
-                                          # `tmnl:<id>` ⇒ tmnl-host command;
+command  = ":term myapp"          # leading `:` ⇒ ex-cmdline;
                                           # no prefix ⇒ mnml command id
 color    = "teal"                        # orange / cyan / blue / green / yellow / purple / red / teal / bg2
-tooltip  = "My private blit-host app"    # optional hover text
+tooltip  = "My private Pty-pane app"     # optional hover text
 ```
 
 Setting the array **replaces** the built-in defaults — copy the defaults from the source if you want to extend rather than replace.
-
-##### `tmnl:` commands — left-rail chips for tmnl-host capabilities
-
-When mnml is running under [tmnl](/family/tmnl/), `command = "tmnl:<id>"` asks the tmnl renderer to fire one of *its* registered commands by id (rather than a mnml command). The message goes over the blit channel as `Message::RunHostCommand` and tmnl looks the id up in its own registry. Driving use case: tmnl-only capabilities like the Browser pane and the Playwright dashboard — neither lives in mnml, but you may want a one-click chip in mnml's left rail to fire them.
-
-Two ready-made recipes:
-
-```toml
-# Playwright dashboard: tmnl spawns `playwright-cli show` with
-# PLAYWRIGHT_DASHBOARD_DEBUG_PORT=9222, discovers the dashboard's
-# local URL via CDP /json/list, opens it in a Browser pane.
-[[ui.integration_icon]]
-id       = "playwright_dashboard"
-glyph    = "\u{F0668}"                  # nf-md-play_circle
-fallback = "▶"
-command  = "tmnl:browser.attach_dashboard"
-color    = "green"
-tooltip  = "Playwright dashboard"
-
-# Browser pane from clipboard URL: tmnl reads the clipboard, opens
-# the URL in a new Browser pane next to the focused split.
-[[ui.integration_icon]]
-id       = "browser_clipboard"
-glyph    = "\u{F059F}"                  # nf-md-web
-fallback = "B"
-command  = "tmnl:split.browser_clipboard"
-color    = "blue"
-tooltip  = "Browser (clipboard URL)"
-```
-
-When mnml is **not** running under tmnl, clicking a `tmnl:` chip toasts an explanation instead of silently failing — the command would have nowhere to land. The chips themselves are still visible (mnml can't know which commands the host registry has), so opt in only if you're running under tmnl most of the time.
 
 #### Update check
 
@@ -287,7 +255,7 @@ A few details worth knowing:
 - **One toast per session.** An `AtomicBool` flips on first surface, so the toast can't re-fire after you dismiss it.
 - **String-equality, not semver.** mnml compares the tag verbatim. A dev build whose `Cargo.toml` runs ahead of the latest tag won't trigger the toast; a build whose version *matches* the tag while having unreleased local changes won't either. False-positives are limited to "tag bumped but the dev version still matches the old tag" — rare in practice.
 - **Opt out:** set `[ui] check_updates = false` and the background thread never spawns. No network call, no toast.
-- **Skipped automatically in `--headless` and `--blit` modes.** Both modes have no toast surface and no statusline chip, so the check is a no-op there even when `check_updates` is `true`.
+- **Skipped automatically in `--headless` mode.** No toast surface and no statusline chip, so the check is a no-op there even when `check_updates` is `true`.
 
 Source: `src/update_check.rs` (the background fetch + the shared `UpdateCheck` handle) and `src/main.rs` (the gate that decides whether to spawn it).
 
@@ -308,7 +276,7 @@ A few details worth knowing:
 - **Sync decode.** Image bytes are read + decoded on the main thread. Mnml only triggers the preview when a stable cursor has been on the row for ≥250 ms, so flick-scrolling through the tree doesn't fire decodes.
 - **Opt out:** set `[ui] tree_image_preview = false` and the preview machinery is skipped entirely — no decode, no paint, no debounce timer.
 
-Skipped automatically in `--headless` and `--blit` modes (neither has a surface for inline image escape sequences).
+Skipped automatically in `--headless` mode (no surface for inline image escape sequences).
 
 #### Now-playing source
 
@@ -415,11 +383,11 @@ See the [LSP manual](/manual/lsp/) for the field reference and the list of serve
 
 ### Git-host integrations — moved to `mnml-forge-*` siblings
 
-The in-tree Bitbucket / GitHub / GitLab / Azure DevOps live panes were split out of mnml core in 2026-06 into four standalone sibling binaries — [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), [`mnml-forge-gitlab`](/manual/integrations/forge-gitlab/), [`mnml-forge-azdevops`](/manual/integrations/forge-azdevops/) — each hosted in a regular mnml pane via `:host.launch <binary>`. Each forge sibling reads its own config from `~/.config/mnml-forge-<host>.toml` and its own credentials from `~/.config/mnml-forge-<host>/token`. See the [integration class overview](/manual/integrations/community/) for the model.
+The in-tree Bitbucket / GitHub / GitLab / Azure DevOps live panes were split out of mnml core in 2026-06 into four standalone sibling binaries — [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), [`mnml-forge-gitlab`](/manual/integrations/forge-gitlab/), [`mnml-forge-azdevops`](/manual/integrations/forge-azdevops/) — each hosted in a regular mnml pane via `:term <binary>`. Each forge sibling reads its own config from `~/.config/mnml-forge-<host>.toml` and its own credentials from `~/.config/mnml-forge-<host>/token`. See the [integration class overview](/manual/integrations/community/) for the model.
 
 Existing `[bitbucket]`, `[github]`, `[gitlab]`, `[azdevops]` sections in your mnml config are **silently ignored** — no error, no warning. You can either delete them or leave them in place; they're noise to mnml now. The new shape lives in each forge sibling's own per-binary config file.
 
-Mnml's default config still seeds four launcher chips in the rail's INTEGRATIONS row (`bitbucket`, `github`, `gitlab`, `azdevops`) that fire `:host.launch mnml-forge-<host>` — install whichever siblings you use and click the chip to open the viewer.
+Mnml's default config still seeds four launcher chips in the rail's INTEGRATIONS row (`bitbucket`, `github`, `gitlab`, `azdevops`) that fire `:term mnml-forge-<host>` — install whichever siblings you use and click the chip to open the viewer.
 
 #### Cross-host PR workflow
 
@@ -429,11 +397,11 @@ mnml ships palette commands and whichkey chords that fan out across whichever fo
 |---|---|---|
 | `pr.picker` | `<leader>P p` | Cross-host fuzzy picker — Enter opens URL, Tab cross-navs to the matching pipeline / build |
 | `pr.refresh` | `<leader>P r` | Background re-fetch of the cross-host PR cache (5-min TTL) |
-| `forge.open_bitbucket` | `<leader>i b` | `:host.launch mnml-forge-bitbucket` |
-| `forge.open_github` | `<leader>i g` | `:host.launch mnml-forge-github` |
-| `forge.open_gitlab` | `<leader>i l` | `:host.launch mnml-forge-gitlab` |
-| `forge.open_azdevops` | `<leader>i z` | `:host.launch mnml-forge-azdevops` |
-| `forge.open_codebuild` | `<leader>i c` | `:host.launch mnml-aws-codebuild` |
+| `forge.open_bitbucket` | `<leader>i b` | `:term mnml-forge-bitbucket` |
+| `forge.open_github` | `<leader>i g` | `:term mnml-forge-github` |
+| `forge.open_gitlab` | `<leader>i l` | `:term mnml-forge-gitlab` |
+| `forge.open_azdevops` | `<leader>i z` | `:term mnml-forge-azdevops` |
+| `forge.open_codebuild` | `<leader>i c` | `:term mnml-aws-codebuild` |
 
 All commands are chord-bindable via `[keys.global]` / `[keys.vim]` / `[keys.standard]` if you want different bindings than the whichkey defaults.
 
@@ -489,7 +457,6 @@ A small set of runtime knobs live in environment variables rather than the TOML 
 | `MNML_IMAGE_PROTOCOL` | `kitty` / `iterm2` / `sixel` / `none` | Skip terminal-protocol auto-detection and force a specific inline-image protocol. Affects markdown image embeds, the file-tree hover-preview, and the image-pane viewer. `none` disables image rendering entirely. |
 | `XDG_CONFIG_HOME` | path | When set, mnml reads `$XDG_CONFIG_HOME/mnml/config.toml` instead of `~/.config/mnml/config.toml`. (Standard XDG basedir spec.) |
 | `MNML_STARTUP_PICKER` | `1` | Same as `--startup-picker` — open the JetBrains-style chooser on launch. See the [Startup picker manual](/manual/startup-picker/). |
-| `TMNL_LAUNCH_ARGS` | CLI args | Set by the macOS app launchers (`mnml.app` / `tmnl.app`) — anything in here gets appended to `mnml`'s argv when run from Finder. Used to wire `--input standard --startup-picker` into the Finder launch path. |
 
 `MNML_IMAGE_PROTOCOL` is the most-commonly-useful one in day-to-day use:
 

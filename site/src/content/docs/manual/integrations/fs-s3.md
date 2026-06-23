@@ -3,7 +3,7 @@ title: Amazon S3 browser
 description: mnml-fs-s3 — a terminal browser for Amazon S3 buckets + prefixes + objects. Bucket tabs, breadcrumb navigation, download to local cache, URI yank, presigned URLs. Shells out to the `aws` CLI; no SDK dep. The first of the `mnml-fs-*` cloud-filesystem sibling class.
 ---
 
-[`mnml-fs-s3`](https://github.com/chris-mclennan/mnml-fs-s3) is a terminal browser for Amazon S3 — list buckets, navigate prefixes, download objects, yank URIs, generate presigned URLs. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. It defers entirely to the **AWS CLI** for credentials — there is no AWS SDK dependency, same auth chain as [`mnml-aws-codebuild`](/manual/integrations/aws-codebuild/).
+[`mnml-fs-s3`](https://github.com/chris-mclennan/mnml-fs-s3) is a terminal browser for Amazon S3 — list buckets, navigate prefixes, download objects, yank URIs, generate presigned URLs. Runs **standalone in any terminal**. It defers entirely to the **AWS CLI** for credentials — there is no AWS SDK dependency, same auth chain as [`mnml-aws-codebuild`](/manual/integrations/aws-codebuild/).
 
 This is the **first of the family's `mnml-fs-*` siblings** — opens up `mnml-fs-gcs` (Google Cloud Storage), `mnml-fs-azureblob`, and other cloud-filesystem viewers with the same TUI shape. See [Building integrations](/manual/integrations/building/) for the model.
 
@@ -117,7 +117,7 @@ This is the interesting integration point. There are three levels; v0.1 ships th
 
 **v0.1 (this release):** Press `Enter` on a file → sibling downloads to `~/.cache/mnml-fs-s3/<bucket>/<key>` → status shows the local path. User copies the path manually (or `y`-yanks the `s3://` URI for later) and opens it however they like. Simple, works today, no protocol changes.
 
-**v0.2 (planned):** When running as a hosted pane (`:host.launch mnml-fs-s3`), the sibling emits a `tmnl-protocol::Message::OpenFile { path }` event after download. mnml-as-host picks it up and opens the file in its editor pane. The S3 browser stays focused; you `Tab` between the editor + S3 browser. Same protocol change benefits future siblings.
+**v0.2 (planned):** After download, the sibling emits a structured event that mnml picks up to open the file in its editor pane. The S3 browser stays focused; you `Tab` between the editor + S3 browser.
 
 **v0.3 (later):** Save-back. Remember the (bucket, key) → local path mapping. Add a save-hook in mnml core that calls the sibling when a file from `~/.cache/mnml-fs-s3/` is saved. Sibling does `aws s3 cp` upload. Now you can actually edit configs in S3 from mnml.
 
@@ -135,13 +135,13 @@ For users on EC2/EKS/Linux, the mount-then-browse path is equally valid — eith
 
 Just run `mnml-fs-s3` in any terminal. The TUI takes over until you `q`.
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-fs-s3
+:term mnml-fs-s3
 ```
 
-mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
+mnml spawns it in a Pty pane — splittable, focusable, key-routed like any other pane.
 
 ## Wire it into mnml's left rail
 
@@ -154,7 +154,7 @@ To customise the icon, drop this into your `~/.config/mnml/config.toml`:
 id       = "s3"
 glyph    = "\U000F0EBC"            # nf-md-aws (TOML 8-digit form)
 fallback = "S3"
-command  = ":host.launch mnml-fs-s3"
+command  = ":term mnml-fs-s3"
 color    = "orange"
 tooltip  = "Open S3 browser"
 ```
@@ -163,11 +163,11 @@ Setting `[[ui.integration_icon]]` **replaces** the built-in defaults, so copy th
 
 ## Status
 
-**v0.1 (this release)** — Bucket tabs, prefix navigation, download-to-cache, URI / presigned-URL yank, S3 console open, delete-with-confirmation. Standalone TUI + blit-host mode.
+**v0.1 (this release)** — Bucket tabs, prefix navigation, download-to-cache, URI / presigned-URL yank, S3 console open, delete-with-confirmation.
 
 Held back for v0.2+:
 - Upload prompt UI (the `aws s3 cp` call is implemented; the prompt scaffold is what's deferred)
-- `tmnl-protocol::Message::OpenFile` for the in-place file-open handoff
+- Open-file handoff so a download lands directly in mnml's editor pane
 - Glacier / IA tier visibility
 - Versioning support (latest only in v0.1)
 - Encryption metadata

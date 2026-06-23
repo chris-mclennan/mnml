@@ -21,7 +21,7 @@ The positional argument is just a path — it doesn't need to be a git repo, an 
 
 ```bash
 ./run.sh                   # workspace = the dir you ran ./run.sh from
-./run.sh ~/Projects/tmnl   # workspace = ~/Projects/tmnl
+./run.sh ~/Projects/notes  # workspace = ~/Projects/notes
 ```
 
 The wrapper resolves the workspace to an absolute path before exec'ing `mnml`, so symlinks and `~` get normalised exactly once.
@@ -85,15 +85,15 @@ Each workspace header has a small chip cluster on the right edge:
 
 ## Sibling workspaces
 
-A workspace can have *additional* directories pinned alongside it in the rail. Useful when you're working on a multi-repo project — say `mnml` + `tmnl-protocol` + `fim-engine` — and want one mnml window with three collapsible workspace sections instead of three separate launches.
+A workspace can have *additional* directories pinned alongside it in the rail. Useful when you're working on a multi-repo project — say `mnml` + `mixr-rs` + `fim-engine` — and want one mnml window with three collapsible workspace sections instead of three separate launches.
 
 Add them via `[[workspaces]]` in the workspace-local config:
 
 ```toml
 # <workspace>/.mnml/config.toml
 [[workspaces]]
-name = "tmnl-protocol"
-path = "~/Projects/tmnl-protocol"
+name = "mixr-rs"
+path = "~/Projects/mixr-rs"
 
 [[workspaces]]
 path = "~/Projects/fim-engine"     # name defaults to "fim-engine" (basename)

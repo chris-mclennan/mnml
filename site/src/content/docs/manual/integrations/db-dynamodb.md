@@ -3,7 +3,7 @@ title: DynamoDB browser
 description: mnml-db-dynamodb — a terminal browser for Amazon DynamoDB tables and items. Scan-based table browsing with focused-item JSON detail panel. First mnml-db-* sibling that uses the AWS CLI for auth instead of a vendor driver.
 ---
 
-[`mnml-db-dynamodb`](https://github.com/chris-mclennan/mnml-db-dynamodb) is a terminal browser for Amazon DynamoDB — scan tables, inspect item JSON, yank entries. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-db-dynamodb`](https://github.com/chris-mclennan/mnml-db-dynamodb) is a terminal browser for Amazon DynamoDB — scan tables, inspect item JSON, yank entries. Runs **standalone in any terminal**.
 
 Sibling to the existing `mnml-db-*` databases ([`mnml-db-postgres`](https://github.com/chris-mclennan/mnml-db-postgres), `-mariadb`, `-redshift`, `-clickhouse`, `-redis`, `-docdb`), but the first one that uses the `aws` CLI for auth instead of a vendor driver — same chain as the other AWS siblings.
 
@@ -97,10 +97,10 @@ The `PRIMARY` column is smart — on first scan, the sibling runs `describe-tabl
 mnml-db-dynamodb
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-db-dynamodb
+:term mnml-db-dynamodb
 ```
 
 ## Wire it into mnml's left rail

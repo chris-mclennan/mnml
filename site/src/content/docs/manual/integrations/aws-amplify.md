@@ -3,7 +3,7 @@ title: AWS Amplify viewer
 description: mnml-aws-amplify — a terminal viewer for AWS Amplify apps, branches, and deploy jobs. Split view of branches + recent jobs. Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-amplify`](https://github.com/chris-mclennan/mnml-aws-amplify) is a terminal viewer for AWS Amplify — apps, branches, and deploy jobs. The Amplify console is one of the more click-painful AWS surfaces; this pulls the daily-driver views (which branch is on what stage, did the last deploy succeed, what was the commit) into a terminal tab. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-amplify`](https://github.com/chris-mclennan/mnml-aws-amplify) is a terminal viewer for AWS Amplify — apps, branches, and deploy jobs. The Amplify console is one of the more click-painful AWS surfaces; this pulls the daily-driver views (which branch is on what stage, did the last deploy succeed, what was the commit) into a terminal tab. Runs **standalone in any terminal**.
 
 ```
 ┌─ amplify ────────────────────────────────────────────────────────┐
@@ -91,10 +91,10 @@ On an **App** tab, moving the branch selection auto-triggers a `list-jobs` for t
 mnml-aws-amplify
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-amplify
+:term mnml-aws-amplify
 ```
 
 ## Wire it into mnml's left rail

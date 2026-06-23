@@ -3,7 +3,7 @@ title: AWS SQS viewer
 description: mnml-aws-sqs — a terminal browser for AWS SQS queues with approximate message counts, retention, visibility timeout, redrive policy. Lazy per-queue attribute fetch keeps it fast on accounts with hundreds of queues. Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-sqs`](https://github.com/chris-mclennan/mnml-aws-sqs) is a terminal browser for AWS SQS — list every queue in a region, watch approximate message counts at a glance, drill into the focused queue's full attributes (visibility timeout, retention period, redrive policy / DLQ wiring, etc.), yank the queue URL or ARN in one keystroke. Pairs naturally with [`mnml-aws-eventbridge`](/manual/integrations/aws-eventbridge/) — events fan out to SQS queues, you'll find yourself flipping between the two. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-sqs`](https://github.com/chris-mclennan/mnml-aws-sqs) is a terminal browser for AWS SQS — list every queue in a region, watch approximate message counts at a glance, drill into the focused queue's full attributes (visibility timeout, retention period, redrive policy / DLQ wiring, etc.), yank the queue URL or ARN in one keystroke. Pairs naturally with [`mnml-aws-eventbridge`](/manual/integrations/aws-eventbridge/) — events fan out to SQS queues, you'll find yourself flipping between the two. Runs **standalone in any terminal**.
 
 ```
 ┌─ sqs ─────────────────────────────────────────────────────────────────┐
@@ -110,10 +110,10 @@ The URL yank is what you'll use most — it's the input shape for the `aws sqs s
 mnml-aws-sqs
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-sqs
+:term mnml-aws-sqs
 ```
 
 ## Wire it into mnml's left rail

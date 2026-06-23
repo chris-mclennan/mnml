@@ -3,7 +3,7 @@ title: AWS EventBridge viewer
 description: mnml-aws-eventbridge — a terminal browser for AWS EventBridge buses and rules. List + focused-item detail (event pattern JSON, schedule expression, ARN). Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-eventbridge`](https://github.com/chris-mclennan/mnml-aws-eventbridge) is a terminal browser for AWS EventBridge — list event buses or rules-per-bus, inspect event patterns / schedules / state / targets, jump to the console. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-eventbridge`](https://github.com/chris-mclennan/mnml-aws-eventbridge) is a terminal browser for AWS EventBridge — list event buses or rules-per-bus, inspect event patterns / schedules / state / targets, jump to the console. Runs **standalone in any terminal**.
 
 ```
 ┌─ eventbridge ─────────────────────────────────────────────────────────┐
@@ -105,10 +105,10 @@ event_bus_name = "orders-events"
 mnml-aws-eventbridge
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-eventbridge
+:term mnml-aws-eventbridge
 ```
 
 ## Wire it into mnml's left rail

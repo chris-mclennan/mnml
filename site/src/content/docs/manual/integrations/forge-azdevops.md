@@ -3,7 +3,7 @@ title: Azure DevOps forge viewer
 description: mnml-forge-azdevops — an Azure DevOps Pull Requests + Builds viewer (standalone or hosted as an mnml pane). Configurable tabs per-repo or project-spanning via `mode = mine|reviewing`, with optional repo/branch/definition narrowers on Build tabs.
 ---
 
-[`mnml-forge-azdevops`](https://github.com/chris-mclennan/mnml-forge-azdevops) is a terminal Azure DevOps viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. It's the Azure DevOps side of the **forge** integration class — sibling to [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), and [`mnml-forge-gitlab`](/manual/integrations/forge-gitlab/). See [Building integrations](/manual/integrations/building/) for the model.
+[`mnml-forge-azdevops`](https://github.com/chris-mclennan/mnml-forge-azdevops) is a terminal Azure DevOps viewer. Runs **standalone in any terminal**. It's the Azure DevOps side of the **forge** integration class — sibling to [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), and [`mnml-forge-gitlab`](/manual/integrations/forge-gitlab/). See [Building integrations](/manual/integrations/building/) for the model.
 
 ```
 ┌─ azure devops ───────────────────────────────────────────────────┐
@@ -223,13 +223,13 @@ Per-host caveats here:
 
 Just run `mnml-forge-azdevops` in any terminal. The TUI takes over until you `q`.
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-forge-azdevops
+:term mnml-forge-azdevops
 ```
 
-mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
+mnml spawns it in a Pty pane — splittable, focusable, key-routed like any other pane.
 
 ## Wire it into mnml's left rail
 
@@ -240,7 +240,7 @@ mnml spawns it with `--blit <socket>` and renders the streamed cells into a nati
 id       = "azdevops"
 glyph    = "\U0000EBE8"            # nf-cod-azure (TOML 8-digit form)
 fallback = "A"
-command  = ":host.launch mnml-forge-azdevops"
+command  = ":term mnml-forge-azdevops"
 color    = "blue"
 tooltip  = "Open Azure DevOps PRs + builds"
 ```

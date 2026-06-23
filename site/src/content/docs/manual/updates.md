@@ -32,10 +32,7 @@ The toast fires once per session — dismissing it (or just letting it time out)
 check_updates = false   # skip the GitHub API call on launch
 ```
 
-Default is `true`. The check is also skipped automatically when:
-
-- `--headless` is set (no toast surface).
-- `--blit` is set (mnml is running as a native pane inside tmnl; the host shows toasts, not the guest).
+Default is `true`. The check is also skipped automatically when `--headless` is set (no toast surface).
 
 ## Installing an update
 
@@ -158,7 +155,7 @@ The check defends against partial downloads, CDN corruption, and a transparent p
 **The launch toast never appears.** Check three things in order:
 
 1. `[ui] check_updates` in `~/.config/mnml/config.toml` — if it's `false`, the background thread doesn't spawn.
-2. You're not running with `--headless` or `--blit` — the check is skipped in both modes.
+2. You're not running with `--headless` — the check is skipped in that mode.
 3. The version you're running is genuinely behind. The check uses string equality on the tag; a local build whose `Cargo.toml` equals the latest published tag will look like "already on latest". Run `mnml --version` and cross-check against `https://github.com/chris-mclennan/mnml/releases/latest`.
 
 **`update check disabled or not started`.** The command ran but `App.update_check` is `None`. Same three causes as above — most often, you set `check_updates = false` or launched headless.

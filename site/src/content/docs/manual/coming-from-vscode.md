@@ -238,7 +238,7 @@ A per-workspace overlay at `<workspace>/.mnml/config.toml` is the equivalent of 
 
 ### No extensions marketplace
 
-mnml's plugin model is two parts: registered commands (built-in, in `src/command.rs`) and out-of-process **sibling binaries** hosted as panes via [blit-host](/manual/integrations/installing/). The `> INTEGRATIONS` section of the file tree shows installed siblings; click `+` to browse + install more. No marketplace, no signing, no auto-updates pushed at you. See [Installing integrations](/manual/integrations/installing/).
+mnml's plugin model is two parts: registered commands (built-in, in `src/command.rs`) and out-of-process **sibling binaries** launched as Pty panes via `:term <binary>`. The `> INTEGRATIONS` section of the file tree shows installed siblings; click `+` to browse + install more. No marketplace, no signing, no auto-updates pushed at you. See [Installing integrations](/manual/integrations/installing/).
 
 ### Built-in things VS Code does via extensions
 

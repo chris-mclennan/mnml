@@ -3,7 +3,7 @@ title: GitLab forge viewer
 description: mnml-forge-gitlab — a GitLab Merge Requests + Pipelines viewer (standalone or hosted as an mnml pane). Configurable tabs per-project or instance-spanning via `mode = mine|reviewing`. Works against gitlab.com or any self-hosted instance via `base_url`.
 ---
 
-[`mnml-forge-gitlab`](https://github.com/chris-mclennan/mnml-forge-gitlab) is a terminal GitLab viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. It's the GitLab side of the **forge** integration class — sibling to [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), and [`mnml-forge-azdevops`](/manual/integrations/forge-azdevops/). See [Building integrations](/manual/integrations/building/) for the model.
+[`mnml-forge-gitlab`](https://github.com/chris-mclennan/mnml-forge-gitlab) is a terminal GitLab viewer. Runs **standalone in any terminal**. It's the GitLab side of the **forge** integration class — sibling to [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), and [`mnml-forge-azdevops`](/manual/integrations/forge-azdevops/). See [Building integrations](/manual/integrations/building/) for the model.
 
 ```
 ┌─ gitlab ─────────────────────────────────────────────────────────┐
@@ -188,13 +188,13 @@ Auto-refresh runs every `refresh_interval_secs` seconds (default `60`, set to `0
 
 Just run `mnml-forge-gitlab` in any terminal. The TUI takes over until you `q`.
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-forge-gitlab
+:term mnml-forge-gitlab
 ```
 
-mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
+mnml spawns it in a Pty pane — splittable, focusable, key-routed like any other pane.
 
 ## Wire it into mnml's left rail
 
@@ -205,7 +205,7 @@ mnml spawns it with `--blit <socket>` and renders the streamed cells into a nati
 id       = "gitlab"
 glyph    = "\U0000F296"            # nf-fa-gitlab (TOML 8-digit form)
 fallback = "L"
-command  = ":host.launch mnml-forge-gitlab"
+command  = ":term mnml-forge-gitlab"
 color    = "orange"
 tooltip  = "Open GitLab MRs + Pipelines"
 ```

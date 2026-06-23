@@ -3,7 +3,7 @@ title: AWS CloudWatch Logs viewer
 description: mnml-aws-cloudwatch-logs — a terminal viewer for AWS CloudWatch log groups. Tabbed groups, live tail with severity coloring, filter patterns, console link. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-cloudwatch-logs`](https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs) is a terminal viewer for AWS CloudWatch Logs — tabbed log groups, per-line severity coloring, filter pattern support, and a one-key jump to the AWS Console. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-cloudwatch-logs`](https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs) is a terminal viewer for AWS CloudWatch Logs — tabbed log groups, per-line severity coloring, filter pattern support, and a one-key jump to the AWS Console. Runs **standalone in any terminal**.
 
 This generalizes the Logs tabs that used to live inside [`mnml-aws-codebuild`](/manual/integrations/aws-codebuild/) — instead of CodeBuild-specific log groups, this viewer handles any CloudWatch log group (Lambda, API Gateway, ECS, EKS, your own service logs).
 
@@ -161,13 +161,13 @@ The CodeBuild sibling has Logs tabs because CodeBuild builds emit their own log 
 mnml-aws-cloudwatch-logs
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-cloudwatch-logs
+:term mnml-aws-cloudwatch-logs
 ```
 
-mnml spawns the binary with `--blit <socket>` and renders the cells into a regular `Pane::BlitHost`. `Ctrl+E` returns focus to the layout tree.
+mnml spawns the binary in a Pty pane — splittable, focusable, key-routed like any other pane.
 
 ## Wire it into mnml's left rail
 
