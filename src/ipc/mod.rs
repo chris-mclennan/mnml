@@ -109,11 +109,38 @@ pub enum IpcCommand {
     /// along a Bresenham-style path to the destination (one event per
     /// cell traversed, so a 10-cell drag fires ~10 events), and Up(left)
     /// at the destination. Tests splitter resize + tab drag-reorder.
+    /// All events fire in a single `drain_commands` iteration — no paint
+    /// frames between them. For recordings that need to SHOW the drag
+    /// motion, drive the raw `MouseDown` / `MouseMove` / `MouseUp`
+    /// variants with interleaved `Wait`s instead.
     Drag {
         from_col: u16,
         from_row: u16,
         col: u16,
         row: u16,
+    },
+    /// Raw mouse-down event at `(col, row)`. Companion to `MouseMove` /
+    /// `MouseUp` for driving drags one event at a time so a recording
+    /// host can interleave `Wait` between events and the renderer
+    /// paints intermediate frames (ghost chip, drop overlay, hover
+    /// highlights).
+    MouseDown {
+        col: u16,
+        row: u16,
+        button: ratatui::crossterm::event::MouseButton,
+        mods: ratatui::crossterm::event::KeyModifiers,
+    },
+    /// Raw mouse-move event at `(col, row)`. Companion to `MouseDown` /
+    /// `MouseUp`. When a button is pressed (host previously fired
+    /// `MouseDown` without `MouseUp`), this is treated as a drag step;
+    /// otherwise it's a hover.
+    MouseMove { col: u16, row: u16 },
+    /// Raw mouse-up event at `(col, row)`. Companion to `MouseDown`.
+    MouseUp {
+        col: u16,
+        row: u16,
+        button: ratatui::crossterm::event::MouseButton,
+        mods: ratatui::crossterm::event::KeyModifiers,
     },
     /// Sleep for `ms` milliseconds. Lets async work (LSP responses,
     /// git refreshes, AI completions, IO) settle before the next
@@ -329,6 +356,28 @@ fn parse_command(line: &str) -> IpcCommand {
                 from_row: fr,
                 col: tc,
                 row: tr,
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "mouse_down" => match (raw.col, raw.row) {
+            (Some(col), Some(row)) => IpcCommand::MouseDown {
+                col,
+                row,
+                button: parse_mouse_button(raw.button.as_deref()),
+                mods: parse_mods(raw.mods.as_deref()),
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "mouse_move" => match (raw.col, raw.row) {
+            (Some(col), Some(row)) => IpcCommand::MouseMove { col, row },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "mouse_up" => match (raw.col, raw.row) {
+            (Some(col), Some(row)) => IpcCommand::MouseUp {
+                col,
+                row,
+                button: parse_mouse_button(raw.button.as_deref()),
+                mods: parse_mods(raw.mods.as_deref()),
             },
             _ => IpcCommand::Unknown(line.to_string()),
         },
@@ -596,6 +645,78 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                 ("from", &format!("{from_col},{from_row}")),
                 ("to", &format!("{col},{row}")),
                 ("steps", &steps.to_string()),
+            ])
+        }
+        IpcCommand::MouseDown {
+            col,
+            row,
+            button,
+            mods,
+        } => {
+            use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(*button),
+                    column: *col,
+                    row: *row,
+                    modifiers: *mods,
+                },
+            );
+            json_event(&[
+                ("event", "mouse_down"),
+                ("col", &col.to_string()),
+                ("row", &row.to_string()),
+            ])
+        }
+        IpcCommand::MouseMove { col, row } => {
+            use ratatui::crossterm::event::{
+                KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+            };
+            // If a left button is currently held (host previously fired
+            // MouseDown without MouseUp), this is a Drag step; otherwise
+            // a Moved hover. Drives the ghost-chip + drop-overlay paint
+            // path the same way a real mouse does mid-drag.
+            let kind = if app.tree_drag.is_some() {
+                MouseEventKind::Drag(MouseButton::Left)
+            } else {
+                MouseEventKind::Moved
+            };
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind,
+                    column: *col,
+                    row: *row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
+            json_event(&[
+                ("event", "mouse_move"),
+                ("col", &col.to_string()),
+                ("row", &row.to_string()),
+            ])
+        }
+        IpcCommand::MouseUp {
+            col,
+            row,
+            button,
+            mods,
+        } => {
+            use ratatui::crossterm::event::{MouseEvent, MouseEventKind};
+            crate::tui::dispatch_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Up(*button),
+                    column: *col,
+                    row: *row,
+                    modifiers: *mods,
+                },
+            );
+            json_event(&[
+                ("event", "mouse_up"),
+                ("col", &col.to_string()),
+                ("row", &row.to_string()),
             ])
         }
         IpcCommand::Wait { ms } => {
