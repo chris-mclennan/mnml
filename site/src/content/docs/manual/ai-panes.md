@@ -1,9 +1,9 @@
 ---
 title: AI panes
-description: Run Claude Code, Codex, or any AI CLI as embedded pty panes — with auto-naming from ticket prefixes, a multi-session tab strip, launcher icons, and (under tmnl) a pop-out-to-a-sibling-tab handoff.
+description: Run Claude Code, Codex, or any AI CLI as embedded pty panes — with auto-naming from ticket prefixes, a multi-session tab strip, and launcher icons.
 ---
 
-mnml doesn't bundle a model. What it does is run AI CLIs (`claude`, `codex`, whatever you have on `$PATH`) as **first-class panes inside the split tree** — with the same tab-strip, focus, and resize machinery every other pane gets — and a few mnml-specific niceties layered on top: a multi-session tab strip with `+` and `×`, auto-naming from ticket-key prefixes, a launcher-icon row for one-click spawn, and (when mnml is hosted inside [tmnl](https://tmnl.sh)) the ability to *pop* a running session out into a sibling native tab without killing the child.
+mnml doesn't bundle a model. What it does is run AI CLIs (`claude`, `codex`, whatever you have on `$PATH`) as **first-class panes inside the split tree** — with the same tab-strip, focus, and resize machinery every other pane gets — and a few mnml-specific niceties layered on top: a multi-session tab strip with `+` and `×`, auto-naming from ticket-key prefixes, and a launcher-icon row for one-click spawn.
 
 This page is about the **pane-and-session surface** for AI tooling. For the on-selection actions (explain / fix / refactor / write-tests) and the agentic API backend, see the broader AI track in the [feature inventory](https://github.com/chris-mclennan/mnml/blob/main/FEATURES.md#ai).
 
@@ -143,7 +143,7 @@ tooltip  = "Codex"
 The `command` field accepts two shapes:
 
 - A **registered command id** (e.g. `"ai.claude_code"`, `"mixr.show"`) — dispatched through the same path as a palette click.
-- A **colon-prefixed ex-cmdline string** (e.g. `":host.launch myapp arg1 arg2"`) — fed through `run_ex_command`. This is how you wire a custom blit-host integration to a chip.
+- A **colon-prefixed ex-cmdline string** (e.g. `":term myapp arg1 arg2"`) — fed through `run_ex_command`. This is how you wire a custom Pty-pane integration to a chip.
 
 Hover any chip to see its tooltip. Click to fire.
 
@@ -153,54 +153,18 @@ The left sidebar's rail has an INTEGRATIONS section under GIT. Same shape as lau
 
 Override with `[[ui.integration_icon]]` blocks in config; passing an empty array removes the section. The default set ships Claude (orange Spark glyph at U+F8B0) and Codex (cyan glyph at U+F8B1) — both patched into the user's Nerd Font by `scripts/patch_nerd_font.py`. Without the patch, the fallbacks (`✻` and `▸_`) evoke the brands using stock Unicode.
 
-## Launching custom blit-host binaries
+## Launching custom sibling binaries
 
-`:host.launch <binary> [args…]` spawns an **out-of-process binary** that renders into a `Pane::BlitHost` over a Unix socket using the `tmnl-protocol` wire format. The binary's `--blit <socket>` runtime is the protocol contract; everything else (database viewers, ticket browsers, Playwright dashboards) is a separate program.
-
-```vim
-:host.launch myapp                  " spawn `myapp --blit <socket>`
-:host.launch psql-viewer host=prod  " spawn with args
-```
-
-`Ctrl+E` releases focus from the blit-host pane back to the split tree. Closing the pane terminates the child.
-
-This is **the AI-pane mechanism's sibling for non-pty integrations** — useful when your tool already has a TUI of its own and you want it rendered as a regular mnml pane rather than living inside a terminal. Drop a `[[ui.launcher_icon]]` entry pointing at `":host.launch myapp"` to get a one-click chip; no mnml code changes needed.
-
-See `docs/PLUGINS.md` in the source tree for the protocol contract and a worked example.
-
-## Tmnl integration — popping a session into a sibling tab
-
-When mnml is running as a [tmnl](https://tmnl.sh) `--blit` native client, two extra commands light up. Both are no-ops (with a toast) when mnml isn't under tmnl.
-
-### `:tmnl.open-tab` — spawn fresh
+`:term <binary> [args…]` spawns an **out-of-process binary** as a Pty pane. Database viewers, ticket browsers, log tailers, Playwright dashboards — anything with a TUI can be a sibling.
 
 ```vim
-:tmnl.open-tab claude               " open Claude in a new tmnl tab
-:tmnl.open-tab claude --model opus
-:tmnl.tab codex                     " alias
+:term myapp                  " spawn `myapp` in a Pty pane
+:term psql-viewer host=prod  " spawn with args
 ```
 
-Asks the parent tmnl to open a new native tab running `<command> <args…>`. The existing mnml pane (if any) is untouched. Convenience palette commands `tmnl.open_claude_in_tab` and `tmnl.open_codex_in_tab` wrap the common cases.
+Closing the pane terminates the child.
 
-### `:tmnl.pop-pty` — transfer the live session
-
-The **hard variant**: take the focused pty pane and *transfer* its running pty master fd to tmnl via `SCM_RIGHTS`. tmnl wraps the fd in an adopted session and surfaces it as a new tab; mnml removes its pane *without killing the child*. The conversation keeps going; only the rendering window moved.
-
-```vim
-:tmnl.pop-pty                       " pop the focused pty into a tmnl tab
-:tmnl.pop                           " alias
-```
-
-Toasts and no-ops if:
-
-- The focused pane isn't a pty (nothing to pop)
-- `$TMNL_TRANSFER_SOCKET` is unset (mnml isn't under tmnl, or under a tmnl too old to expose the receiver)
-- The pty backend doesn't expose a raw fd (never hit on macOS / Linux — defended for portability)
-- Connecting / writing to the transfer socket fails
-
-The `PtySession.released` flag prevents `Drop` from killing the child once handoff has succeeded — the new owner is tmnl, and the kernel-duplicated fd lives in tmnl's process now. Unix only; the Windows path simply doesn't compile this command in.
-
-> v1 known limitation: between handoff and mnml's own exit, mnml's leaked reader thread still holds a duped master fd contending for the pty stream. Bytes mnml reads are dropped, but tmnl may see a thinned-out stream until mnml closes. The typical flow is "pop, then close mnml" — the leak window is short.
+Drop a `[[ui.launcher_icon]]` entry pointing at `":term myapp"` to get a one-click chip; no mnml code changes needed.
 
 ## Multi-session tactics
 

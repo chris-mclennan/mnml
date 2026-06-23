@@ -21,7 +21,6 @@ use crate::grep_pane::GrepPane;
 use crate::image::ImagePane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;
-use crate::pane_host::BlitHostPane;
 // `Pane::PipelineLog` was kept as scaffolding through the 2026-06
 // SCM split but never re-populated; removed once the dust settled.
 use crate::playwright::TestsPane;
@@ -95,12 +94,6 @@ pub enum Pane {
     /// is painted over the pane's body via a post-ratatui escape
     /// emission. Otherwise the body shows a metadata-only placeholder.
     Image(ImagePane),
-    /// A mnml-hosted external binary speaking the tmnl-protocol blit
-    /// wire (`<binary> --blit <socket>`). Mnml paints the cells the
-    /// child sends and forwards input back. The third class of
-    /// integration alongside command plugins and Cargo features —
-    /// see `docs/PLUGINS.md`. Opened via `:host.launch <binary> [args…]`.
-    BlitHost(BlitHostPane),
     /// Claude Code agents dashboard — one row per session.jsonl
     /// found under `~/.claude/projects/`, with live/idle/ended
     /// state, model, token spend, last user/assistant message, and
@@ -514,7 +507,6 @@ impl Pane {
             Pane::Grep(g) => g.tab_title(),
             Pane::Quickfix(g) => format!("Quickfix · {}", g.hits.len()),
             Pane::CmdlineHistory(_) => "q:".to_string(),
-            Pane::BlitHost(p) => p.tab_title(),
             Pane::Cheatsheet(_) => "Cheatsheet".to_string(),
             Pane::Debug(_) => "Debug".to_string(),
             Pane::DapRepl(_) => "DAP REPL".to_string(),
@@ -548,7 +540,6 @@ impl Pane {
             | Pane::Debug(_)
             | Pane::DapRepl(_)
             | Pane::Image(_)
-            | Pane::BlitHost(_)
             | Pane::ClaudeAgents(_)
             | Pane::Websocket(_)
             | Pane::SpendReport(_) => false,

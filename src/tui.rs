@@ -19,7 +19,6 @@ use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode, enable_raw_mode,
     supports_keyboard_enhancement,
 };
-use ratatui::layout::Rect;
 
 use crate::app::App;
 use crate::buffer::BufferEvent;
@@ -277,19 +276,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     }
     // Native mixr panel — when focused, route *every* key (incl. Esc,
     // which mixr uses for back-navigation) to mixr over the wire.
-    // `Ctrl+E` releases focus back to the editor (mixr doesn't use it).
-    if let Some(p) = app.mixr_panel.as_mut()
-        && p.focused
-    {
-        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            p.focused = false;
-            return;
-        }
-        if let Some(ev) = crate::mixr_host::crossterm_key_to_input(&key) {
-            p.send_input(ev);
-        }
-        return;
-    }
     // Startup picker intercept — when the launch-time chooser is up,
     // it owns the keyboard. Esc / q dismisses; arrows + digits move /
     // commit; everything else is swallowed so it doesn't leak through
@@ -2621,21 +2607,6 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // A `Pane::BlitHost` — forward every key to the hosted child (it
-    // owns its own keymap). `Ctrl+E` releases focus to the tree, mirroring
-    // the `mixr` panel's escape hatch.
-    if matches!(app.panes.get(i), Some(Pane::BlitHost(_))) {
-        if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app.focus_tree();
-            return;
-        }
-        if let Some(ev) = crate::pane_host::crossterm_key_to_input(&key)
-            && let Some(Pane::BlitHost(p)) = app.panes.get(i)
-        {
-            p.channel.send_input(ev);
-        }
-        return;
-    }
     // A diagnostics ("Problems") list: ↑↓ select, Enter → jump to the location,
     // r refresh, Esc → tree.
     if matches!(app.panes.get(i), Some(Pane::Diagnostics(_))) {
@@ -3773,137 +3744,6 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             return;
         }
         app.blur_scratch_term();
-    }
-    // Native mixr panel — drag the header to move it, drag the left /
-    // right / bottom edge to resize (it tears off into a free-floating
-    // window); the cell area focuses + forwards to mixr.
-    {
-        use crate::mixr_host::{MixrDrag, MixrSize};
-        let down = matches!(m.kind, MouseEventKind::Down(MouseButton::Left));
-        let drag = matches!(m.kind, MouseEventKind::Drag(MouseButton::Left));
-        let up = matches!(m.kind, MouseEventKind::Up(MouseButton::Left));
-        let any_down = matches!(m.kind, MouseEventKind::Down(_));
-
-        // An in-progress move / resize drag.
-        if let Some(kind) = app.mixr_drag {
-            if drag && let (Some(body), Some(p)) = (app.rects.body, app.mixr_panel.as_mut()) {
-                crate::app::dispatch::apply_mixr_drag(&mut p.float, body, kind, x, y);
-                return;
-            }
-            if up {
-                app.mixr_drag = None;
-                return;
-            }
-        }
-
-        // The full panel rect = header ∪ cell area.
-        let panel = match (app.rects.mixr_panel_header, app.rects.mixr_panel) {
-            (Some(h), Some(c)) => Some(Rect {
-                x: h.x,
-                y: h.y,
-                width: h.width,
-                height: h.height + c.height,
-            }),
-            _ => None,
-        };
-        if let Some(panel) = panel {
-            let cells = app.rects.mixr_panel.unwrap();
-            let on_header = app
-                .rects
-                .mixr_panel_header
-                .is_some_and(|h| crate::app::dispatch::contains(h, x, y));
-            let p_right = panel.x + panel.width - 1;
-            let p_bottom = panel.y + panel.height - 1;
-            let on_left = x == panel.x && y >= panel.y && y <= p_bottom;
-            let on_right = x == p_right && y >= panel.y && y <= p_bottom;
-            let on_bottom = y == p_bottom && x >= panel.x && x <= p_right;
-
-            if down {
-                // Size-state chips in the header — grow / shrink /
-                // minimize. Checked BEFORE drag detection because
-                // the chips sit ON the header drag-region and a
-                // drag-start would otherwise eat the click. Order
-                // doesn't matter — each is a single cell that
-                // only fires on its own rect.
-                if let Some(r) = app.rects.mixr_size_grow_button
-                    && crate::app::dispatch::contains(r, x, y)
-                {
-                    if let Some(p) = app.mixr_panel.as_mut() {
-                        p.size = crate::mixr_host::MixrSize::Full;
-                        p.focused = true;
-                    }
-                    return;
-                }
-                if let Some(r) = app.rects.mixr_size_shrink_button
-                    && crate::app::dispatch::contains(r, x, y)
-                {
-                    if let Some(p) = app.mixr_panel.as_mut() {
-                        p.size = crate::mixr_host::MixrSize::BottomStrip;
-                        p.focused = true;
-                    }
-                    return;
-                }
-                if let Some(r) = app.rects.mixr_size_minimize_button
-                    && crate::app::dispatch::contains(r, x, y)
-                {
-                    if let Some(p) = app.mixr_panel.as_mut() {
-                        p.size = crate::mixr_host::MixrSize::Minimized;
-                        p.focused = false;
-                    }
-                    return;
-                }
-                // Edges win over the header / cells. Any of them tears
-                // the panel off into a free-floating window.
-                let kind = if on_left {
-                    Some(MixrDrag::ResizeLeft)
-                } else if on_right {
-                    Some(MixrDrag::ResizeRight)
-                } else if on_bottom {
-                    Some(MixrDrag::ResizeBottom)
-                } else if on_header {
-                    Some(MixrDrag::Move {
-                        grab_dx: x.saturating_sub(panel.x),
-                        grab_dy: y.saturating_sub(panel.y),
-                    })
-                } else {
-                    None
-                };
-                if let Some(kind) = kind {
-                    if let Some(p) = app.mixr_panel.as_mut() {
-                        if p.size != MixrSize::Floating {
-                            p.float = panel;
-                            p.size = MixrSize::Floating;
-                        }
-                        p.focused = true;
-                    }
-                    app.mixr_drag = Some(kind);
-                    return;
-                }
-            }
-
-            // Cell area → focus + forward to mixr.
-            let inside = crate::app::dispatch::contains(cells, x, y);
-            let focused = app.mixr_panel.as_ref().is_some_and(|p| p.focused);
-            if inside && (down || focused) {
-                if let Some(p) = app.mixr_panel.as_mut() {
-                    if down {
-                        p.focused = true;
-                    }
-                    p.send_input(crate::mixr_host::crossterm_mouse_to_input(
-                        &m,
-                        x - cells.x,
-                        y - cells.y,
-                    ));
-                }
-                return;
-            }
-            if any_down
-                && !crate::app::dispatch::contains(panel, x, y)
-                && let Some(p) = app.mixr_panel.as_mut()
-            {
-                p.focused = false;
-            }
-        }
     }
     // A click anywhere dismisses the hover / signature popups (the click
     // still lands). Completion popup clicks are handled specially: a click
@@ -5160,14 +5000,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             // INTEGRATIONS icon — hand off to the configured command.
-            // Three command forms supported:
-            //   `:<ex>`        → mnml ex command
-            //   `tmnl:<id>`    → ask the tmnl host to fire its own
-            //                    command by id (left-rail chip for a
-            //                    tmnl-side capability like
-            //                    `browser.attach_dashboard`)
-            //   `<id>`         → mnml registered command id
-            // Check BEFORE the section-toggle below.
+            // Two command forms supported:
+            //   `:<ex>`  → mnml ex command
+            //   `<id>`   → mnml registered command id
+            // (2026-06-22 — `tmnl:<id>` form removed with the tmnl
+            // integration cleanup.) Check BEFORE the section-toggle below.
             if let Some(&(_, icon_idx)) = app
                 .rects
                 .integration_icon_rects
@@ -5178,8 +5015,6 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let cmd = icon.command.clone();
                 if let Some(rest) = cmd.strip_prefix(':') {
                     app.run_ex_command(rest);
-                } else if let Some(rest) = cmd.strip_prefix("tmnl:") {
-                    app.tmnl_run_host_command(rest.to_string());
                 } else {
                     crate::command::run(&cmd, app);
                 }

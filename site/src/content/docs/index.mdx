@@ -20,7 +20,7 @@ import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
 mnml is a terminal IDE in the NvChad aesthetic — file-tree rail, tabline, powerline statusline, Nerd-Font devicons, tree-sitter highlighting — built on one design decision that runs through everything: **a pluggable input layer.** Vim modal editing and a modeless VS Code-style keymap are both first-class, both fully remappable, and swappable at runtime. The editor, buffer, and render layers never branch on which one is active.
 
-Install it as a proper macOS `.app` (DMG, drag to Applications, click the dock icon and a tmnl tab opens for it) or as a CLI on any platform.
+Install it as a proper macOS `.app` (DMG, drag to Applications, click the dock icon and mnml opens in Terminal.app) or as a CLI on any platform.
 
 <CardGrid stagger>
   <Card title="Two editing modes, one codebase" icon="setting">
@@ -57,7 +57,7 @@ Install it as a proper macOS `.app` (DMG, drag to Applications, click the dock i
     **94 NvChad base46 themes** (onedark / gruvbox / catppuccin / kanagawa / tokyonight / nord / dracula / ...). Tree-sitter highlighting for **39+ languages** with **language injection** (fenced code blocks, embedded `<script>` / `<style>`). Markdown preview with inline image rendering via **Kitty / iTerm2 graphics protocols**. Zen mode, sticky scope context, indent guides, hover tooltips, right-click menus, a keyboard-driven settings overlay.
   </Card>
   <Card title="Headless + scriptable" icon="seti:bash">
-    `mnml --headless` renders to a virtual screen driven over a file-IPC channel (`command` in, `screen.txt` / `status.json` / `events.jsonl` out) — same `App` and draw path as the terminal UI. Out-of-process plugins over that channel can register commands that appear in the palette and resolve as keybindings. `:host.launch <binary>` opens any `tmnl-protocol`-speaking binary as a pane.
+    `mnml --headless` renders to a virtual screen driven over a file-IPC channel (`command` in, `screen.txt` / `status.json` / `events.jsonl` out) — same `App` and draw path as the terminal UI. Out-of-process plugins over that channel can register commands that appear in the palette and resolve as keybindings. `:term <binary>` opens any TUI binary as a Pty pane.
   </Card>
 </CardGrid>
 
@@ -78,10 +78,9 @@ The manual goes deep on each surface — what's there, how to drive it, the keym
 
 ## The family
 
-mnml is one of three small Rust tools by Chris McLennan. They share design language, integrate via the [`tmnl-protocol`](https://github.com/chris-mclennan/tmnl-protocol) cell-streaming layer, and work as native tabs together — but each runs perfectly well standalone.
+mnml is one of two small Rust tools by Chris McLennan. They share design language and run perfectly well standalone in any terminal.
 
 - **mnml** — this IDE.
-- **[tmnl](https://tmnl.sh)** — a GPU-rendered terminal with offline AI command completion. Hosts mnml as a native tab instead of nesting it inside another terminal emulator.
-- **[mixr](https://mixr.sh)** — a terminal DJ rig. Docks inside mnml as a side panel via `:mixr.show`.
+- **[mixr](https://mixr.sh)** — a terminal DJ rig. Opens as a Pty pane inside mnml via `mixr.show`.
 
 [See the family page →](/family/)

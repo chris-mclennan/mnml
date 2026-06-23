@@ -3,7 +3,7 @@ title: AWS SNS viewer
 description: mnml-aws-sns — a terminal browser for AWS SNS topics and per-topic subscription detail. Pairs with mnml-aws-sqs for the SNS → SQS fan-out pattern. Lazy per-topic attribute fetch keeps it fast on accounts with hundreds of topics. Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-sns`](https://github.com/chris-mclennan/mnml-aws-sns) is a terminal browser for AWS SNS — list every topic in a region, watch confirmed / pending subscription counts, drill into per-topic subscription detail (protocol, endpoint, status). Pairs naturally with [`mnml-aws-sqs`](/manual/integrations/aws-sqs/) for the canonical **SNS → SQS fan-out pattern**. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-sns`](https://github.com/chris-mclennan/mnml-aws-sns) is a terminal browser for AWS SNS — list every topic in a region, watch confirmed / pending subscription counts, drill into per-topic subscription detail (protocol, endpoint, status). Pairs naturally with [`mnml-aws-sqs`](/manual/integrations/aws-sqs/) for the canonical **SNS → SQS fan-out pattern**. Runs **standalone in any terminal**.
 
 ```
 ┌─ sns ─────────────────────────────────────────────────────────────────┐
@@ -109,10 +109,10 @@ The `Y` (capital) yank on a subscription is the **destination** — paste straig
 mnml-aws-sns
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-sns
+:term mnml-aws-sns
 ```
 
 ## Wire it into mnml's left rail

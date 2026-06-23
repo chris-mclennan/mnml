@@ -107,44 +107,26 @@ fn test_subcommand(argv: Vec<String>) -> ExitCode {
 struct TuiArgs {
     workspace: PathBuf,
     headless: bool,
-    blit: Option<PathBuf>,
     input_style: Option<String>,
     ascii: bool,
     config_path: Option<PathBuf>,
     startup_picker: bool,
-    /// When true, suppress the auto-promote-to-native-tmnl-tab path
-    /// that kicks in when mnml is launched inside tmnl's pty (via
-    /// the `TMNL_TRANSFER_SOCKET` env var). Useful for users who want
-    /// the standard pty experience even inside tmnl (e.g. split
-    /// panes inside a single tmnl tab, transient `mnml file.txt`
-    /// edits in their current shell). Default off — auto-promote
-    /// is the default because native mode is strictly nicer in the
-    /// common case (no double chrome, real tab handoff, mixr
-    /// sidebar integration).
-    no_native_promote: bool,
 }
 
 fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut workspace: Option<PathBuf> = None;
     let mut headless = false;
-    let mut blit: Option<PathBuf> = None;
     let mut input_style = None;
     let mut ascii = false;
     let mut config_path = None;
     let mut startup_picker = false;
     let mut no_workspace = false;
-    let mut no_native_promote = false;
 
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--headless" => headless = true,
             "--ascii" => ascii = true,
-            "--blit" => {
-                blit = Some(PathBuf::from(
-                    it.next().ok_or("--blit needs a socket path".to_string())?,
-                ));
-            }
             "--input" => {
                 input_style = Some(
                     it.next()
@@ -158,17 +140,15 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
             }
             "--startup-picker" => startup_picker = true,
             "--no-workspace" => no_workspace = true,
-            "--no-native-promote" => no_native_promote = true,
             "-h" | "--help" => {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--blit SOCKET] [--startup-picker] [--no-workspace] [--no-native-promote]\n  \
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace]\n  \
                        mnml run FILE [--env NAME] [--workspace DIR]\n\n\
                      flags:\n  \
                        --startup-picker      show a JetBrains-style chooser overlay on launch\n                                         (also enabled by MNML_STARTUP_PICKER=1)\n  \
-                       --no-workspace        land in the empty-state ($HOME) instead of resolving\n                                         [startup] default_workspace; used by the .app icon\n                                         launcher so clicking the icon doesn't auto-open a folder\n  \
-                       --no-native-promote   suppress the auto-promote that relaunches mnml as a\n                                         native tmnl tab when launched from tmnl's pty (env var\n                                         TMNL_TRANSFER_SOCKET present). Keep the standard pty\n                                         experience instead — useful for split-pane workflows\n                                         or transient `mnml file.txt` edits in the current shell\n"
+                       --no-workspace        land in the empty-state ($HOME) instead of resolving\n                                         [startup] default_workspace; used by the .app icon\n                                         launcher so clicking the icon doesn't auto-open a folder\n"
                 );
                 std::process::exit(0);
             }
@@ -180,13 +160,6 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                 workspace = Some(PathBuf::from(s));
             }
         }
-    }
-
-    if blit.is_none()
-        && let Ok(v) = std::env::var("MNML_BLIT_SOCKET")
-        && !v.is_empty()
-    {
-        blit = Some(PathBuf::from(v));
     }
 
     // Workspace resolution order:
@@ -226,102 +199,11 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     Ok(TuiArgs {
         workspace,
         headless,
-        blit,
         input_style,
         ascii,
         config_path,
         startup_picker,
-        no_native_promote,
     })
-}
-
-/// Should mnml ask tmnl to relaunch it as a native tab? True only
-/// when ALL of:
-///   * not already a blit client (`--blit <socket>` not set)
-///   * not headless
-///   * stdin is a tty (interactive — not piped)
-///   * `--no-native-promote` not passed
-///   * `TMNL_TRANSFER_SOCKET` is set (we're inside tmnl)
-#[cfg(unix)]
-fn should_promote_to_native(args: &TuiArgs) -> bool {
-    use std::io::IsTerminal;
-    args.blit.is_none()
-        && !args.headless
-        && !args.no_native_promote
-        && std::io::stdin().is_terminal()
-        && std::env::var_os("TMNL_TRANSFER_SOCKET").is_some()
-}
-
-/// Build the arg vector handed to the newly-spawned native mnml.
-/// Pass the canonicalized workspace first (so the native side doesn't
-/// have to re-resolve from a potentially different cwd), then any
-/// scalar flags that affect runtime behavior. Skipped: `--blit` (the
-/// new instance will get its own from tmnl), `--headless` (we'd never
-/// reach this path with it set), `--no-workspace` (already collapsed
-/// to a workspace path), `--no-native-promote` (the new instance will
-/// have `--blit` so won't try to promote anyway — but pass it through
-/// as belt-and-suspenders so any future re-promotion logic stays
-/// disabled).
-#[cfg(unix)]
-fn build_promote_args(args: &TuiArgs) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    out.push(args.workspace.to_string_lossy().into_owned());
-    if let Some(style) = &args.input_style {
-        out.push("--input".into());
-        out.push(style.clone());
-    }
-    if args.ascii {
-        out.push("--ascii".into());
-    }
-    if let Some(p) = &args.config_path {
-        out.push("--config".into());
-        out.push(p.to_string_lossy().into_owned());
-    }
-    if args.startup_picker {
-        out.push("--startup-picker".into());
-    }
-    if args.no_native_promote {
-        out.push("--no-native-promote".into());
-    }
-    out
-}
-
-/// Connect to `TMNL_TRANSFER_SOCKET` and send `Message::OpenPane`
-/// (no fd) so tmnl spawns mnml as a fresh native tab. Returns `true`
-/// when the message was delivered to the kernel buffer (success ≡
-/// "tmnl will see this on its next tick"). Returns `false` on any
-/// failure — caller falls through to the normal startup path so a
-/// stale env var doesn't brick mnml.
-///
-/// We don't wait for an ack: tmnl's transfer listener processes the
-/// message asynchronously, the user-visible effect is "a new tab
-/// appears in tmnl shortly after this pty exits", and adding a
-/// round-trip would require a new protocol message.
-#[cfg(unix)]
-fn try_promote_to_native_tab(args: &TuiArgs) -> bool {
-    let Some(socket) = std::env::var_os("TMNL_TRANSFER_SOCKET") else {
-        return false;
-    };
-    let stream = match std::os::unix::net::UnixStream::connect(&socket) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "mnml: auto-native: TMNL_TRANSFER_SOCKET={:?} connect failed ({e}) — \
-                 continuing as a pty session. Pass --no-native-promote to silence.",
-                socket
-            );
-            return false;
-        }
-    };
-    let msg = tmnl_protocol::Message::OpenPane {
-        command: "mnml".to_string(),
-        args: build_promote_args(args),
-    };
-    if let Err(e) = tmnl_protocol::send_message_with_fd(&stream, &msg, None) {
-        eprintln!("mnml: auto-native: send failed ({e}) — continuing as a pty session");
-        return false;
-    }
-    true
 }
 
 fn run_tui(argv: Vec<String>) -> ExitCode {
@@ -332,18 +214,6 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-
-    // Auto-promote to a native tmnl tab when launched from inside
-    // tmnl's pty. Native mode delivers no-double-chrome + true tab
-    // handoff + mixr-as-sibling-pane; the pty experience works (see
-    // mnml#7de2b3f / tmnl#7e3d56e) but is strictly less integrated.
-    // Opt out: `--no-native-promote` (per-launch) or run mnml from
-    // outside tmnl. Silently falls through on any failure so a
-    // stale TMNL_TRANSFER_SOCKET never bricks startup.
-    #[cfg(unix)]
-    if should_promote_to_native(&args) && try_promote_to_native_tab(&args) {
-        return ExitCode::SUCCESS;
-    }
 
     let mut config = Config::load(args.config_path.as_deref(), &args.workspace);
     if let Some(style) = args.input_style {
@@ -383,17 +253,14 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());
     }
     // Background "is there a newer release?" check. Skipped in
-    // headless / blit modes (no toast surface that makes sense)
-    // and when the user opted out via [ui] check_updates = false.
-    if app.config.ui.check_updates && args.blit.is_none() && !args.headless {
+    // headless mode (no toast surface that makes sense) and when
+    // the user opted out via [ui] check_updates = false.
+    if app.config.ui.check_updates && !args.headless {
         app.update_check = Some(mnml::update_check::UpdateCheck::spawn());
     }
     // First-launch "have you met the rest of the family?" — fires a
-    // one-shot toast per missing sibling (mixr / tmnl), then marks
-    // `~/.config/mnml/.family-offer-shown` so we don't pester. Skipped
-    // in headless / blit modes (no toast surface that makes sense).
-    if args.blit.is_none()
-        && !args.headless
+    // one-shot toast per missing sibling. Skipped in headless mode.
+    if !args.headless
         && let Some(offer) = mnml::family_offer::FamilyOffer::maybe_new()
     {
         for line in offer.hint_lines() {
@@ -402,9 +269,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         offer.mark_shown();
     }
 
-    let result = if let Some(socket) = &args.blit {
-        mnml::blit::run(app, socket)
-    } else if args.headless {
+    let result = if args.headless {
         mnml::headless::run(app)
     } else {
         mnml::tui::run(app)

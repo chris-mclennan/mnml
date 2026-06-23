@@ -102,7 +102,7 @@ pub struct WorkspaceConfig {
 // Bitbucket + GitHub panes + config moved out of mnml core in
 // 2026-06. Live dashboards now ship in the standalone
 // mnml-forge-bitbucket / mnml-forge-github binaries, hosted via
-// `:host.launch mnml-forge-bitbucket` / `:host.launch mnml-forge-github`.
+// `:term mnml-forge-bitbucket` / `:term mnml-forge-github`.
 // The integration icon strip seeds rows pointing at them.
 
 /// Long-lived branches the per-branch pipelines view defaults to
@@ -135,7 +135,7 @@ pub struct CiConfig {
 
 /// `[playwright]` — settings used by the Playwright integration. Reserved
 /// for future expansion (currently empty after `[playwright.docdb]` moved
-/// out to a private blit-host integration).
+/// out to a private terminal integration).
 #[derive(Debug, Clone, Default)]
 pub struct PlaywrightConfig {}
 
@@ -385,7 +385,7 @@ pub struct UiConfig {
     /// bufferline. Each entry renders as a 4-cell colored chip that
     /// runs `command` on click. Default has Claude Code + Codex; users
     /// can append entries via `[[ui.launcher_icon]]` in their config to
-    /// add `host.launch <binary>` shortcuts for blit-host integrations
+    /// add `:term <binary>` shortcuts for sibling tool integrations
     /// (database viewers, ticket viewers, etc.) or any registered
     /// command. See [`LauncherIcon`].
     pub launcher_icons: Vec<LauncherIcon>,
@@ -472,7 +472,7 @@ pub struct UiConfig {
 /// id       = "jira"
 /// glyph    = "\U000F0411"            # nf-md-jira (TOML 8-digit form)
 /// fallback = "J"
-/// command  = ":host.launch jira-viewer"
+/// command  = ":term jira-viewer"
 /// color    = "blue"
 /// tooltip  = "Open Jira board"
 /// ```
@@ -498,14 +498,14 @@ pub struct IntegrationIcon {
 /// One entry in the bufferline's right-side launcher-icon strip.
 ///
 /// ```toml
-/// # An icon for a private blit-host binary you've built locally:
+/// # An icon for a private terminal binary you've built locally:
 /// [[ui.launcher_icon]]
 /// id       = "myapp"
 /// glyph    = "\U000F0668"       # nf-md-test-tube (TOML 8-digit form)
 /// fallback = "MA"               # when --ascii / [ui] ascii_icons = true
-/// command  = ":host.launch myapp"  # leading `:` ⇒ ex-cmdline string
+/// command  = ":term myapp"  # leading `:` ⇒ ex-cmdline string
 /// color    = "teal"             # theme slot name for the chip bg
-/// tooltip  = "My private blit-host app"
+/// tooltip  = "My private terminal app"
 ///
 /// # Or fire any registered command directly (no leading `:`):
 /// [[ui.launcher_icon]]
@@ -528,7 +528,7 @@ pub struct LauncherIcon {
     pub fallback: String,
     /// What to fire on click. Either a registered command id
     /// (`"ai.claude_code"`, `"mixr.show"`) or a colon-prefixed cmdline
-    /// string that goes through `run_ex_command` (`":host.launch /bin"`).
+    /// string that goes through `run_ex_command` (`":term /bin"`).
     pub command: String,
     /// Theme slot name for the chip background. Recognized: `"orange"`,
     /// `"cyan"`, `"blue"`, `"green"`, `"yellow"`, `"purple"`, `"red"`,
@@ -638,10 +638,10 @@ impl Default for Config {
                         glyph: "\u{E703}".to_string(), // nf-dev-bitbucket
                         fallback: "B".to_string(),
                         // Launches the standalone mnml-forge-bitbucket
-                        // viewer as a blit-host pane. User must have it
+                        // viewer as a Pty pane. User must have it
                         // installed (`cargo install --git
                         // https://github.com/chris-mclennan/mnml-forge-bitbucket`).
-                        command: ":host.launch mnml-forge-bitbucket".to_string(),
+                        command: ":term mnml-forge-bitbucket".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Bitbucket pipelines + PRs".to_string()),
                     },
@@ -650,11 +650,11 @@ impl Default for Config {
                         glyph: "\u{F0411}".to_string(), // nf-md-jira
                         fallback: "J".to_string(),
                         // Launches the standalone mnml-tracker-jira
-                        // viewer as a blit-host pane. User must have it
+                        // viewer as a Pty pane. User must have it
                         // installed (`cargo install --git
                         // https://github.com/chris-mclennan/mnml-tracker-jira`)
                         // and a populated `~/.config/mnml-tracker-jira{.toml,/token}`.
-                        command: ":host.launch mnml-tracker-jira".to_string(),
+                        command: ":term mnml-tracker-jira".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Jira tracker".to_string()),
                     },
@@ -690,10 +690,10 @@ impl Default for Config {
                         glyph: "\u{F0492}".to_string(), // nf-md-hammer-wrench
                         fallback: "C".to_string(),
                         // Launches the standalone mnml-aws-codebuild
-                        // viewer as a blit-host pane. User must have
+                        // viewer as a Pty pane. User must have
                         // it installed (`cargo install --git
                         // https://github.com/chris-mclennan/mnml-aws-codebuild`).
-                        command: ":host.launch mnml-aws-codebuild".to_string(),
+                        command: ":term mnml-aws-codebuild".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("AWS CodeBuild + logs".to_string()),
                     },
@@ -702,10 +702,10 @@ impl Default for Config {
                         glyph: "\u{F02A4}".to_string(), // nf-md-github
                         fallback: "G".to_string(),
                         // Launches the standalone mnml-forge-github
-                        // viewer as a blit-host pane. User must have
+                        // viewer as a Pty pane. User must have
                         // it installed (`cargo install --git
                         // https://github.com/chris-mclennan/mnml-forge-github`).
-                        command: ":host.launch mnml-forge-github".to_string(),
+                        command: ":term mnml-forge-github".to_string(),
                         color: "fg".to_string(),
                         tooltip: Some("GitHub Actions + PRs".to_string()),
                     },
@@ -714,10 +714,10 @@ impl Default for Config {
                         glyph: "\u{EBE8}".to_string(), // nf-cod-azure
                         fallback: "A".to_string(),
                         // Launches the standalone mnml-forge-azdevops
-                        // viewer as a blit-host pane. User must have it
+                        // viewer as a Pty pane. User must have it
                         // installed (`cargo install --git
                         // https://github.com/chris-mclennan/mnml-forge-azdevops`).
-                        command: ":host.launch mnml-forge-azdevops".to_string(),
+                        command: ":term mnml-forge-azdevops".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Azure DevOps PRs + builds".to_string()),
                     },
@@ -726,10 +726,10 @@ impl Default for Config {
                         glyph: "\u{F296}".to_string(), // nf-fa-gitlab
                         fallback: "L".to_string(),
                         // Launches the standalone mnml-forge-gitlab
-                        // viewer as a blit-host pane. User must have it
+                        // viewer as a Pty pane. User must have it
                         // installed (`cargo install --git
                         // https://github.com/chris-mclennan/mnml-forge-gitlab`).
-                        command: ":host.launch mnml-forge-gitlab".to_string(),
+                        command: ":term mnml-forge-gitlab".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("GitLab MRs + Pipelines".to_string()),
                     },
@@ -738,10 +738,10 @@ impl Default for Config {
                         glyph: "\u{F0EBC}".to_string(), // nf-md-aws
                         fallback: "S3".to_string(),
                         // Launches the standalone mnml-fs-s3 viewer
-                        // as a blit-host pane. User must have it
+                        // as a Pty pane. User must have it
                         // installed (`cargo install --git
                         // https://github.com/chris-mclennan/mnml-fs-s3`).
-                        command: ":host.launch mnml-fs-s3".to_string(),
+                        command: ":term mnml-fs-s3".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Amazon S3 browser".to_string()),
                     },
@@ -749,7 +749,7 @@ impl Default for Config {
                         id: "azure_blob".to_string(),
                         glyph: "\u{F0805}".to_string(), // nf-md-microsoft_azure
                         fallback: "Az".to_string(),
-                        command: ":host.launch mnml-fs-azure-blob".to_string(),
+                        command: ":term mnml-fs-azure-blob".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Azure Blob Storage browser".to_string()),
                     },
@@ -781,7 +781,7 @@ impl Default for Config {
                         id: "datadog".to_string(),
                         glyph: "\u{F1A0F}".to_string(), // nf-md-dog
                         fallback: "Dd".to_string(),
-                        command: ":host.launch mnml-obs-datadog".to_string(),
+                        command: ":term mnml-obs-datadog".to_string(),
                         color: "purple".to_string(),
                         tooltip: Some(
                             "Datadog — monitors + dashboards + logs + incidents".to_string(),
@@ -791,7 +791,7 @@ impl Default for Config {
                         id: "buttondown".to_string(),
                         glyph: "\u{F0EB1}".to_string(), // nf-md-email_newsletter
                         fallback: "Bd".to_string(),
-                        command: ":host.launch mnml-msg-buttondown".to_string(),
+                        command: ":term mnml-msg-buttondown".to_string(),
                         color: "green".to_string(),
                         tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
                     },
@@ -799,7 +799,7 @@ impl Default for Config {
                         id: "slack".to_string(),
                         glyph: "\u{F03EF}".to_string(), // nf-md-slack
                         fallback: "Sk".to_string(),
-                        command: ":host.launch mnml-msg-slack".to_string(),
+                        command: ":term mnml-msg-slack".to_string(),
                         color: "magenta".to_string(),
                         tooltip: Some(
                             "Slack — channels + DMs + threads + search + post".to_string(),
@@ -809,7 +809,7 @@ impl Default for Config {
                         id: "teams".to_string(),
                         glyph: "\u{F0FA1}".to_string(), // nf-md-microsoft_teams
                         fallback: "Tm".to_string(),
-                        command: ":host.launch mnml-msg-teams".to_string(),
+                        command: ":term mnml-msg-teams".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some(
                             "Microsoft Teams — teams + chats + threads + post".to_string(),
@@ -819,7 +819,7 @@ impl Default for Config {
                         id: "mandrill".to_string(),
                         glyph: "\u{F01EF}".to_string(), // nf-md-email_check_outline
                         fallback: "Md".to_string(),
-                        command: ":host.launch mnml-msg-mandrill".to_string(),
+                        command: ":term mnml-msg-mandrill".to_string(),
                         color: "red".to_string(),
                         tooltip: Some(
                             "Mandrill — transactional email messages + templates + tags"
@@ -830,7 +830,7 @@ impl Default for Config {
                         id: "gmail".to_string(),
                         glyph: "\u{F03BC}".to_string(), // nf-md-gmail
                         fallback: "Gm".to_string(),
-                        command: ":host.launch mnml-msg-gmail".to_string(),
+                        command: ":term mnml-msg-gmail".to_string(),
                         color: "red".to_string(),
                         tooltip: Some(
                             "Gmail — inbox + sent + labels + search + compose".to_string(),
@@ -840,7 +840,7 @@ impl Default for Config {
                         id: "docker".to_string(),
                         glyph: "\u{F0868}".to_string(), // nf-md-docker
                         fallback: "Dk".to_string(),
-                        command: ":host.launch mnml-virt-docker".to_string(),
+                        command: ":term mnml-virt-docker".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some(
                             "Docker — containers + images + volumes + networks".to_string(),
@@ -850,7 +850,7 @@ impl Default for Config {
                         id: "cloudflare".to_string(),
                         glyph: "\u{F0E7B}".to_string(), // nf-md-cloud_outline
                         fallback: "Cf".to_string(),
-                        command: ":host.launch mnml-cdn-cloudflare".to_string(),
+                        command: ":term mnml-cdn-cloudflare".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
                     },
@@ -858,7 +858,7 @@ impl Default for Config {
                         id: "tattle_inbox".to_string(),
                         glyph: "\u{F01F0}".to_string(), // nf-md-email_search_outline
                         fallback: "Ti".to_string(),
-                        command: ":host.launch mnml-tattle-inbox".to_string(),
+                        command: ":term mnml-tattle-inbox".to_string(),
                         color: "magenta".to_string(),
                         tooltip: Some(
                             "Tattle inbox (INTERNAL — dev/staging email/SMS sink)".to_string(),
@@ -868,7 +868,7 @@ impl Default for Config {
                         id: "cloudwatch_logs".to_string(),
                         glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
                         fallback: "CW".to_string(),
-                        command: ":host.launch mnml-aws-cloudwatch-logs".to_string(),
+                        command: ":term mnml-aws-cloudwatch-logs".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("CloudWatch Logs live tail".to_string()),
                     },
@@ -876,7 +876,7 @@ impl Default for Config {
                         id: "amplify".to_string(),
                         glyph: "\u{F087D}".to_string(), // nf-md-rocket-launch
                         fallback: "Am".to_string(),
-                        command: ":host.launch mnml-aws-amplify".to_string(),
+                        command: ":term mnml-aws-amplify".to_string(),
                         color: "purple".to_string(),
                         tooltip: Some("Amplify apps + deploys".to_string()),
                     },
@@ -884,7 +884,7 @@ impl Default for Config {
                         id: "dynamodb".to_string(),
                         glyph: "\u{F1C0}".to_string(), // nf-fa-database
                         fallback: "Dy".to_string(),
-                        command: ":host.launch mnml-db-dynamodb".to_string(),
+                        command: ":term mnml-db-dynamodb".to_string(),
                         color: "teal".to_string(),
                         tooltip: Some("DynamoDB table browser".to_string()),
                     },
@@ -892,7 +892,7 @@ impl Default for Config {
                         id: "lambda".to_string(),
                         glyph: "\u{F0EBF}".to_string(), // nf-md-lambda
                         fallback: "La".to_string(),
-                        command: ":host.launch mnml-aws-lambda".to_string(),
+                        command: ":term mnml-aws-lambda".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Lambda function browser".to_string()),
                     },
@@ -900,7 +900,7 @@ impl Default for Config {
                         id: "eventbridge".to_string(),
                         glyph: "\u{F0CE0}".to_string(), // nf-md-bus
                         fallback: "EB".to_string(),
-                        command: ":host.launch mnml-aws-eventbridge".to_string(),
+                        command: ":term mnml-aws-eventbridge".to_string(),
                         color: "pink".to_string(),
                         tooltip: Some("EventBridge buses + rules".to_string()),
                     },
@@ -908,7 +908,7 @@ impl Default for Config {
                         id: "rds".to_string(),
                         glyph: "\u{F1C0}".to_string(), // nf-fa-database
                         fallback: "RD".to_string(),
-                        command: ":host.launch mnml-aws-rds".to_string(),
+                        command: ":term mnml-aws-rds".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("RDS database browser".to_string()),
                     },
@@ -916,7 +916,7 @@ impl Default for Config {
                         id: "ecs".to_string(),
                         glyph: "\u{F0F12}".to_string(), // nf-md-server
                         fallback: "EC".to_string(),
-                        command: ":host.launch mnml-aws-ecs".to_string(),
+                        command: ":term mnml-aws-ecs".to_string(),
                         color: "green".to_string(),
                         tooltip: Some("ECS clusters + services".to_string()),
                     },
@@ -924,7 +924,7 @@ impl Default for Config {
                         id: "ecr".to_string(),
                         glyph: "\u{F03D7}".to_string(), // nf-md-archive
                         fallback: "ER".to_string(),
-                        command: ":host.launch mnml-aws-ecr".to_string(),
+                        command: ":term mnml-aws-ecr".to_string(),
                         color: "purple".to_string(),
                         tooltip: Some("ECR container registry".to_string()),
                     },
@@ -932,7 +932,7 @@ impl Default for Config {
                         id: "cognito".to_string(),
                         glyph: "\u{F0004}".to_string(), // nf-md-account_circle
                         fallback: "Co".to_string(),
-                        command: ":host.launch mnml-aws-cognito".to_string(),
+                        command: ":term mnml-aws-cognito".to_string(),
                         color: "cyan".to_string(),
                         tooltip: Some("Cognito User Pools + users".to_string()),
                     },
@@ -940,7 +940,7 @@ impl Default for Config {
                         id: "sqs".to_string(),
                         glyph: "\u{F09FE}".to_string(), // nf-md-mailbox_outline
                         fallback: "Sq".to_string(),
-                        command: ":host.launch mnml-aws-sqs".to_string(),
+                        command: ":term mnml-aws-sqs".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("SQS queues".to_string()),
                     },
@@ -948,21 +948,21 @@ impl Default for Config {
                         id: "sns".to_string(),
                         glyph: "\u{F0A0F}".to_string(), // nf-md-bullhorn_outline
                         fallback: "Sn".to_string(),
-                        command: ":host.launch mnml-aws-sns".to_string(),
+                        command: ":term mnml-aws-sns".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("SNS topics + subscriptions".to_string()),
                     },
-                    // mixr is family — the rail chip launches it as a
-                    // docked panel via the `mixr.show` palette command
-                    // (uses the mixr_host code path, not the generic
-                    // blit-host `:host.launch`).
+                    // mixr rail chip — opens the family DJ app via
+                    // `mixr.show`. 2026-06-22 — re-added after the
+                    // tmnl/blit cleanup; now opens as a Pty pane
+                    // rather than a docked panel.
                     IntegrationIcon {
                         id: "mixr".to_string(),
                         glyph: "\u{F075A}".to_string(), // nf-md-music_note
                         fallback: "♪".to_string(),
-                        command: ":mixr.show".to_string(),
+                        command: "mixr.show".to_string(),
                         color: "pink".to_string(),
-                        tooltip: Some("mixr DJ panel".to_string()),
+                        tooltip: Some("mixr DJ".to_string()),
                     },
                     // 2026-06-19 — removed a duplicate `id: "http"`
                     // entry that lived here. The earlier `IntegrationIcon`
@@ -2186,7 +2186,7 @@ repo  = "example-knowledge"
 [[ui.launcher_icon]]
 glyph    = "M"
 fallback = "MA"
-command  = ":host.launch myapp"
+command  = ":term myapp"
 color    = "teal"
 tooltip  = "myapp browser"
 
@@ -2194,7 +2194,7 @@ tooltip  = "myapp browser"
 id       = "db"
 glyph    = "D"
 fallback = "DB"
-command  = "host.launch psql-viewer"
+command  = "psql-viewer"
 color    = "purple"
 "#
         )
@@ -2206,17 +2206,18 @@ color    = "purple"
         // Claude+Codex defaults are gone.
         assert_eq!(cfg.ui.launcher_icons.len(), 2);
         // First entry — id auto-derived from the command's first token
-        // when omitted (`host.launch` here, leading `:` stripped).
-        assert_eq!(cfg.ui.launcher_icons[0].id, "host.launch");
-        assert_eq!(cfg.ui.launcher_icons[0].command, ":host.launch myapp");
+        // when omitted (`term` here, leading `:` stripped).
+        assert_eq!(cfg.ui.launcher_icons[0].id, "term");
+        assert_eq!(cfg.ui.launcher_icons[0].command, ":term myapp");
         assert_eq!(cfg.ui.launcher_icons[0].color, "teal");
         assert_eq!(
             cfg.ui.launcher_icons[0].tooltip.as_deref(),
             Some("myapp browser")
         );
-        // Second entry — explicit id, no leading `:` on command.
+        // Second entry — explicit id, command without leading `:`
+        // (interpreted as a registered command id by the dispatcher).
         assert_eq!(cfg.ui.launcher_icons[1].id, "db");
-        assert_eq!(cfg.ui.launcher_icons[1].command, "host.launch psql-viewer");
+        assert_eq!(cfg.ui.launcher_icons[1].command, "psql-viewer");
         assert!(cfg.ui.launcher_icons[1].tooltip.is_none());
     }
 

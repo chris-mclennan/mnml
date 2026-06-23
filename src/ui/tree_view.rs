@@ -465,7 +465,7 @@ fn draw_add_repo_row(
 }
 
 /// Original-config indices of the integration icons that should
-/// render in the sidebar — built-ins always show; `:host.launch X`
+/// render in the sidebar — built-ins always show; `:term X`
 /// entries only show when `X` is detected on PATH or a well-known
 /// install dir. Preserving the original index matters because the
 /// hover/click rect map uses it to look the icon up again.

@@ -16,7 +16,7 @@ The **startup picker** is the overlay that fills that gap. It's a small chooser 
 │    [3] Open folder…                               │
 │    [4] Open: work                                 │
 │    [5] Open: mnml-family                          │
-│    [6] Open: tmnl                                 │
+│    [6] Open: notes                                │
 │                                                   │
 │  ↑↓ move · Enter select · Esc skip                │
 │                                                   │
@@ -34,15 +34,7 @@ In every other case mnml goes straight to the editor with no overlay. The picker
 
 ### The Finder / dock path
 
-The `mnml.app` and `mnml-nightly.app` launchers (the macOS bundles installed by the DMG, or built locally via `./scripts/build-app.sh`) both export:
-
-```sh
-export TMNL_LAUNCH_ARGS="--input standard --startup-picker"
-```
-
-…before they exec `tmnl --mnml`. So clicking the mnml icon in Finder, Spotlight, or the dock lands you on the picker rather than dropping you straight into `$HOME` with no idea what's around.
-
-The env var trick is necessary because tmnl owns the command line that ends up reaching mnml — there's no clean way to forward arbitrary CLI args from a `.app` bundle through tmnl. `MNML_STARTUP_PICKER=1` (which `--startup-picker` also accepts) survives the hand-off intact.
+The `mnml.app` and `mnml-nightly.app` launchers (the macOS bundles installed by the DMG, or built locally via `./scripts/build-app.sh`) open mnml in Terminal.app with `--startup-picker` set, so clicking the mnml icon in Finder, Spotlight, or the dock lands you on the picker rather than dropping you straight into `$HOME` with no idea what's around.
 
 ## Picker rows
 
@@ -71,7 +63,7 @@ name = "family"
 path = "~/Projects/mnml-family"
 
 [[workspaces]]
-path = "~/Projects/tmnl"      # name defaults to "tmnl" (basename)
+path = "~/Projects/notes"     # name defaults to "notes" (basename)
 ```
 
 `name` is what shows in the picker row (`Open: work`). When omitted, mnml uses the path's basename. See [Workspaces & the file rail](/manual/workspaces/) for the full schema and how these entries integrate with the file-rail's sibling-workspace pattern.

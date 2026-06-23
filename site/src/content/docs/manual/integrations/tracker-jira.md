@@ -3,7 +3,7 @@ title: Jira tickets viewer
 description: mnml-tracker-jira — a Jira ticket viewer (standalone or hosted as an mnml pane). Configurable tabs from literal JQL or auto-resolved release fixVersions, with detail panel, status transitions, inline assignee/fixVersion editing, bulk ops, comment posting, and watcher toggle.
 ---
 
-[`mnml-tracker-jira`](https://github.com/chris-mclennan/mnml-tracker-jira) is a terminal Jira viewer. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol. Configurable through your normal mnml config conventions — see [Building integrations](/manual/integrations/building/) for the model.
+[`mnml-tracker-jira`](https://github.com/chris-mclennan/mnml-tracker-jira) is a terminal Jira viewer. Runs **standalone in any terminal**. Configurable through your normal mnml config conventions — see [Building integrations](/manual/integrations/building/) for the model.
 
 ```
 ┌─ tickets ────────────────────────────────────────────────────────┐
@@ -169,13 +169,13 @@ With the detail panel open, `c` drops a one-block editor at the bottom of the pa
 
 Just run `mnml-tracker-jira` in any terminal. The TUI takes over until you `q`.
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-tracker-jira
+:term mnml-tracker-jira
 ```
 
-mnml spawns it with `--blit <socket>` and renders the streamed cells into a native `Pane::BlitHost`. The pane becomes a normal mnml pane — splittable, focusable, key-routed. `Ctrl+E` releases focus back to the layout tree. See [Building integrations](/manual/integrations/building/) for the protocol mechanism.
+mnml spawns it in a Pty pane — splittable, focusable, key-routed like any other pane.
 
 ## Wire it into mnml's left rail
 
@@ -186,7 +186,7 @@ To get a one-click chip in mnml's rail under **INTEGRATIONS** (between Claude Co
 id       = "jira"
 glyph    = "\U000F0411"            # nf-md-jira (TOML 8-digit form)
 fallback = "J"
-command  = ":host.launch mnml-tracker-jira"
+command  = ":term mnml-tracker-jira"
 color    = "blue"
 tooltip  = "Open Jira tickets"
 ```

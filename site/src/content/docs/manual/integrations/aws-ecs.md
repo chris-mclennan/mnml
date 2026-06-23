@@ -3,7 +3,7 @@ title: AWS ECS viewer
 description: mnml-aws-ecs — a terminal browser for AWS ECS clusters and services. Two-tab kind (clusters / services-per-cluster) with task count + deployment rollout state + recent service events. Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-ecs`](https://github.com/chris-mclennan/mnml-aws-ecs) is a terminal browser for AWS ECS — list every cluster, list services-within-a-cluster, watch running/desired task counts, drill into recent deployment rollout state + the last few service events. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-ecs`](https://github.com/chris-mclennan/mnml-aws-ecs) is a terminal browser for AWS ECS — list every cluster, list services-within-a-cluster, watch running/desired task counts, drill into recent deployment rollout state + the last few service events. Runs **standalone in any terminal**.
 
 ```
 ┌─ ecs ─────────────────────────────────────────────────────────────────┐
@@ -105,10 +105,10 @@ The recent-events section is the actionable bit: when a deployment stalls, the e
 mnml-aws-ecs
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-ecs
+:term mnml-aws-ecs
 ```
 
 ## Wire it into mnml's left rail

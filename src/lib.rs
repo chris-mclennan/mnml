@@ -32,7 +32,6 @@ pub mod sse;
 // binary in 2026-06.
 // `mod azdevops` was split out to the standalone mnml-forge-azdevops
 // binary in 2026-06.
-pub mod blit;
 pub(crate) mod browser_pane;
 pub(crate) mod buffer;
 pub(crate) mod cdp;
@@ -73,10 +72,8 @@ pub(crate) mod layout;
 pub(crate) mod linter;
 pub(crate) mod lsp;
 pub(crate) mod markdown_outline;
-pub(crate) mod mixr_host;
 pub(crate) mod now_playing;
 pub(crate) mod pane;
-pub(crate) mod pane_host;
 pub(crate) mod picker;
 // `mod pipeline_log` was removed after the 2026-06 SCM split — no
 // in-tree host populates it any more.

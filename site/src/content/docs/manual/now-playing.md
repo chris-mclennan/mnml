@@ -166,5 +166,4 @@ The deck briefly writes an empty track field as it loads the next file. Without 
 - [Settings & configuration](/manual/settings/) — `now_playing_source`, `preferred_music_app`, every UI knob
 - [Activity bar](/manual/activity-bar/) — the icon rail's `mixr.show` chip
 - [mixr — DJ app](https://mixr.sh) — the sibling that produces `~/.mixr/quick.txt`
-- [tmnl — GPU terminal](https://tmnl.sh) — the bufferline-side mixr chip mirrors this same play/pause/teleport semantic when tmnl owns a mixr Native tab
 - [Coming from VS Code](/manual/coming-from-vscode/) — other VS-Code-shaped chrome

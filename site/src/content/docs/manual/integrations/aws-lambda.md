@@ -3,7 +3,7 @@ title: AWS Lambda viewer
 description: mnml-aws-lambda — a terminal browser for AWS Lambda functions. List + focused-function detail panel (runtime, memory, timeout, handler, ARN). Runs standalone or as an mnml-hosted pane. Same `aws` CLI auth chain as the other AWS siblings.
 ---
 
-[`mnml-aws-lambda`](https://github.com/chris-mclennan/mnml-aws-lambda) is a terminal browser for AWS Lambda — list every function in a region (or watch a hand-picked set), inspect runtime / memory / timeout / handler, open the console, yank an ARN. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-aws-lambda`](https://github.com/chris-mclennan/mnml-aws-lambda) is a terminal browser for AWS Lambda — list every function in a region (or watch a hand-picked set), inspect runtime / memory / timeout / handler, open the console, yank an ARN. Runs **standalone in any terminal**.
 
 ```
 ┌─ lambda ──────────────────────────────────────────────────────────────┐
@@ -116,10 +116,10 @@ This is the first cross-sibling handoff in the family — Lambda's data model po
 mnml-aws-lambda
 ```
 
-### Blit-host (hosted by mnml)
+### Hosted as a mnml Pty pane
 
 ```vim
-:host.launch mnml-aws-lambda
+:term mnml-aws-lambda
 ```
 
 ## Wire it into mnml's left rail

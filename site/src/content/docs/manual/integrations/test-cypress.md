@@ -3,7 +3,7 @@ title: Cypress test results viewer
 description: mnml-test-cypress — a terminal viewer for Cypress mochawesome JSON reports. Pass/fail state per test, filter to failures, yank the spec file path. The test runner stays in mnml core; this is the read-only results inspector.
 ---
 
-[`mnml-test-cypress`](https://github.com/chris-mclennan/mnml-test-cypress) is a terminal viewer for [Cypress](https://www.cypress.io/) test results — reads [mochawesome](https://github.com/adamgruber/mochawesome) JSON, surfaces the pass/fail state of every test, filters to failures by default. Runs **standalone in any terminal** or as a **native mnml pane** via the blit-host protocol.
+[`mnml-test-cypress`](https://github.com/chris-mclennan/mnml-test-cypress) is a terminal viewer for [Cypress](https://www.cypress.io/) test results — reads [mochawesome](https://github.com/adamgruber/mochawesome) JSON, surfaces the pass/fail state of every test, filters to failures by default. Runs **standalone in any terminal**.
 
 Sibling to [`mnml-test-playwright`](/manual/integrations/test-playwright/) — the second of the family's `mnml-test-*` test-tooling viewers. The Cypress **test runner** stays in mnml core (editor-integrated — runs on the spec you have open, jumps to the failing line on accept); this sibling is the read-only results inspector.
 
@@ -85,17 +85,15 @@ Default filter is **failures only** — most of the time you open a results view
 
 ## Use it as an mnml pane
 
-`mnml-test-cypress` speaks the `tmnl-protocol` blit-host shape when launched with `--blit <socket>`:
-
 ```vim
-:host.launch mnml-test-cypress cypress/results/mochawesome.json
+:term mnml-test-cypress cypress/results/mochawesome.json
 ```
 
-The positional path is passed through verbatim — useful for wiring into a tmnl chord or palette command that opens a fresh results file on demand.
+The positional path is passed through verbatim — useful for wiring it into a palette command that opens a fresh results file on demand.
 
 ## Status
 
-**v0.1 (this release)** — Mochawesome JSON parsing, flat test list with filter, spec-path yank, error details panel. Standalone TUI + blit-host mode.
+**v0.1 (this release)** — Mochawesome JSON parsing, flat test list with filter, spec-path yank, error details panel.
 
 Held back for v0.2+:
 
@@ -103,7 +101,6 @@ Held back for v0.2+:
 - **Video link** — `cypress/videos/<spec>.mp4` yank or open in default player
 - **Tree-view layout** grouping by suite (currently flat with suite path joined into the test title)
 - **Other Cypress reporter formats** — junit XML, default JSON. v0.1 is mochawesome-only because it's the format with enough structure to render usefully
-- **`tmnl-protocol::Message::OpenFile` integration** for "Enter on a row → open spec at the failing line in mnml's editor"
 
 ## Source
 

@@ -96,26 +96,16 @@ wrap        = false
 cmd        = "rust-analyzer"
 extensions = ["rs"]
 
-# Bufferline launcher icons (right cluster). Drop in :host.launch entries for any
-# private blit-host binary you've built locally.
+# Bufferline launcher icons (right cluster). Drop in :term entries for any
+# private Pty-pane binary you've built locally.
 [[ui.launcher_icon]]
 id       = "myapp"
 glyph    = "\u{F0668}"
 fallback = "MA"
-command  = ":host.launch myapp"
+command  = ":term myapp"
 color    = "teal"
-tooltip  = "My private blit-host app"
+tooltip  = "My private Pty-pane app"
 ```
-
-## Inside tmnl
-
-If you're running mnml under [tmnl](https://tmnl.sh), three extra commands light up:
-
-- `:tmnl.open-tab <command>` — opens a new tmnl tab running `<command>` instead of nesting it in mnml
-- `:tmnl.pop-pty` — transfers the focused pty pane out of mnml into its own native tmnl tab (SCM_RIGHTS fd transfer, no state loss)
-- The pluggable AI pane chips on the bufferline can launch into native tmnl tabs
-
-If you're not under tmnl, these no-op with a toast.
 
 ## Headless
 

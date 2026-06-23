@@ -1,19 +1,16 @@
 ---
 title: Building integrations
-description: How to build your own mnml integration — a standalone CLI that opt-in becomes a native mnml pane via the blit-host protocol.
+description: How to build your own mnml integration — a standalone TUI that opt-in becomes an mnml Pty pane via the `:term <binary>` palette command.
 ---
 
-mnml integrations are **standalone ratatui CLIs** that follow a few conventions and optionally speak [`tmnl-protocol`](https://crates.io/crates/tmnl-protocol) over a Unix domain socket so they can be hosted as a native mnml pane.
+mnml integrations are **standalone ratatui CLIs** that follow a few conventions. mnml hosts them as Pty panes via `:term <binary>` — no protocol to implement, no manifest to register.
 
 They are not plugins, extensions, or scripts. There is no mnml runtime, no plugin loader, no manifest, no registration step. Each integration is a regular Rust binary that:
 
 1. Works **standalone** in any terminal (Terminal.app, iTerm2, tmux, ssh — anywhere).
-2. Works **inside mnml as a pty pane** automatically (same as Claude Code, Codex, shell).
-3. Optionally works **inside mnml as a native blit pane** via the `--blit <socket>` flag, which gives it mnml's theme palette and click events.
+2. Works **inside mnml as a Pty pane** automatically — same as Claude Code, Codex, shell.
 
-The "opt-in to native hosting" piece is small — ~485 lines of `blit.rs` you copy from a reference repo. Everything else is just your viewer.
-
-## Three deployment modes
+## Two deployment modes
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -26,20 +23,13 @@ The "opt-in to native hosting" piece is small — ~485 lines of `blit.rs` you co
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Mode 2: Pty pane inside mnml                                       │
 │                                                                     │
-│  (open a terminal pane in mnml, run the binary)                     │
-│  → runs as a regular pty — same as any CLI tool                     │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│  Mode 3: Native BlitHost pane inside mnml                           │
-│                                                                     │
-│  :host.launch mnml-db-postgres                                      │
-│  → mnml spawns it with --blit <socket>, renders its cell grid       │
-│    natively, forwards keys + clicks. Theme palette piped in.        │
+│  :term mnml-db-postgres                                             │
+│  → mnml spawns the binary as a Pty pane — splittable, focusable,    │
+│    key-routed like any other pane                                   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-Modes 1 and 2 require nothing from your code beyond being a normal TUI binary. Mode 3 requires the `--blit` flag and a copy of `blit.rs`.
+Both modes require nothing from your code beyond being a normal ratatui TUI binary.
 
 ## Anatomy of an integration
 
@@ -50,13 +40,12 @@ mnml-db-postgres/
 ├── Cargo.toml                 # deps + binary metadata
 ├── README.md
 └── src/
-    ├── main.rs                # CLI parsing + picks TUI vs --blit vs --check
+    ├── main.rs                # CLI parsing + picks TUI vs --check
     ├── app.rs                 # all app state — connections, query buffer, results
     ├── config.rs              # reads ~/.config/mnml-db-postgres.toml
     ├── postgres.rs            # the only file unique to this integration
     ├── keys.rs                # action enum + key → action mapping
-    ├── ui.rs                  # ratatui draw + event loop
-    └── blit.rs                # tmnl-protocol over UDS — copied verbatim
+    └── ui.rs                  # ratatui draw + event loop
 ```
 
 ~1,500 lines of Rust total. The only file you really write from scratch is the one that talks to your backend (`postgres.rs` here; `jira.rs` for the Jira viewer; `redis_client.rs` for Redis; etc.).
@@ -110,7 +99,6 @@ The family idiom:
 ```sh
 mnml-<thing>                   # launch the TUI
 mnml-<thing> --check           # print resolved config + auth state, exit 0/1
-mnml-<thing> --blit <socket>   # blit-host mode (mode 3); no terminal takeover
 ```
 
 `--check` should show: where the config came from, which connections / tabs are configured, whether auth succeeds. This is the "is my setup right?" command.
@@ -140,30 +128,6 @@ If you're building an integration against an AWS, GCP, Azure, or other "the vend
 
 When one sibling's data points at another sibling's surface — a Lambda function's logs live in CloudWatch, an S3 bucket's events feed an EventBridge rule, a CodeBuild run's artifacts land in S3 — the natural move is a single-key handoff to the relevant sibling. The first instance: [`mnml-aws-lambda`](/manual/integrations/aws-lambda/)'s `l` chord launches [`mnml-aws-cloudwatch-logs`](/manual/integrations/aws-cloudwatch-logs/) on the focused function. The mechanism is a plain `std::process::Command::new("mnml-aws-cloudwatch-logs").spawn()` — no IPC, no shared state, just the sibling binary path on `$PATH`. If you're routing through a context (a focused function, an open bucket), pass it as a CLI flag (`--log-group /aws/lambda/<fn>` is the planned v0.2 of that chord). Treat the sibling like any other vendor CLI — if it's installed it'll resolve; if it isn't, toast that it's missing and move on.
 
-## Opting into blit-host mode
-
-If you want your integration to be hostable as a native mnml pane (`:host.launch <binary>`), do these three things:
-
-1. **Add the `tmnl-protocol` dependency:**
-
-   ```toml
-   tmnl-protocol = "0.0.3"
-   ```
-
-2. **Copy `blit.rs` verbatim** from any of the reference repos — e.g. [`mnml-db-postgres/src/blit.rs`](https://github.com/chris-mclennan/mnml-db-postgres/blob/main/src/blit.rs). It's a pure wire-format adapter; you shouldn't need to modify it.
-
-3. **Wire `--blit <socket>` in `main.rs`:**
-
-   ```rust
-   if let Some(socket_path) = args.blit {
-       return blit::run(socket_path, app).await;
-   }
-   ```
-
-   In standalone mode, the same `app` is driven by `crossterm` events; in blit mode, it's driven by tmnl-protocol messages over the UDS. Same App, different transport.
-
-That's it. mnml hosts you via `:host.launch <your-binary>` and renders your cell grid as a regular `Pane::BlitHost` pane.
-
 ## Wiring a launcher chip
 
 Once your integration is installed, users can add a one-click chip to mnml's left rail by adding to their `~/.config/mnml/config.toml`:
@@ -173,7 +137,7 @@ Once your integration is installed, users can add a one-click chip to mnml's lef
 id       = "your-thing"
 glyph    = "\U000F0411"          # any Nerd Font glyph
 fallback = "Y"
-command  = ":host.launch mnml-your-thing"
+command  = ":term mnml-your-thing"
 color    = "blue"
 tooltip  = "Open your thing"
 ```

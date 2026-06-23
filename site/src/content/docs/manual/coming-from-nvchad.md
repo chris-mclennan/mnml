@@ -361,7 +361,7 @@ The command palette (`Ctrl-Shift-P` / `<leader>p`) is the catch-all. Every comma
 
 ### Plugin manager — there isn't one
 
-mnml's "plugins" model is two parts: registered commands (Rust-side, in `src/command.rs`) and out-of-process sibling binaries hosted via [blit-host](/manual/integrations/installing/). There's no Lua, no Packer/Lazy, no per-buffer autocmds. If you need a thing, either it's already there as a command + chord, or you write a sibling.
+mnml's "plugins" model is two parts: registered commands (Rust-side, in `src/command.rs`) and out-of-process sibling binaries launched as Pty panes via `:term <binary>`. There's no Lua, no Packer/Lazy, no per-buffer autocmds. If you need a thing, either it's already there as a command + chord, or you write a sibling.
 
 ### Treesitter is on by default — no `:TSInstall`
 

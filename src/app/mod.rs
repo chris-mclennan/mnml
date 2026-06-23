@@ -25,7 +25,6 @@ use crate::tree::Tree;
 // `mod gitlab` was split out to mnml-forge-gitlab in 2026-06.
 
 mod ai;
-mod blit_host;
 mod cdp;
 mod context_menus;
 mod dap;
@@ -41,7 +40,6 @@ mod http;
 mod layout;
 mod lsp;
 mod macros_marks;
-mod mixr;
 mod now_playing;
 mod picker;
 // pipeline_log removed after 2026-06 SCM split.
@@ -51,9 +49,7 @@ mod session;
 pub(crate) mod settings;
 mod snippets;
 mod startup_picker;
-pub(crate) mod chrome_chips;
 pub(crate) mod tab_drop;
-mod tmnl;
 
 pub use startup_picker::{StartupPickerAction, StartupPickerState};
 
@@ -1852,26 +1848,8 @@ pub struct PaneRects {
     /// AppleScript `next track`. `None` when the cluster is in its
     /// idle single-chip form.
     pub statusline_mixr_ffwd_chip: Option<Rect>,
-    /// The native mixr panel's mixr-cell rect (set by `ui::draw` when
-    /// the panel is shown) — `tick` reads it to keep mixr sized to it.
-    pub mixr_panel: Option<Rect>,
-    /// The floating panel's 1-row header rect — the drag handle.
-    pub mixr_panel_header: Option<Rect>,
-    /// Reposition buttons in the header — `(rect, target anchor)`.
-    pub mixr_pos_buttons: Vec<(Rect, crate::mixr_host::MixrPos)>,
-    /// Header `-` / `+` width buttons (narrower / wider).
-    pub mixr_width_minus: Option<Rect>,
-    pub mixr_width_plus: Option<Rect>,
-    /// Right-aligned size-state buttons in the mixr panel header.
-    /// Each is `None` when the current state hides the button (e.g.
-    /// the grow chip hides while already Full). Click handlers in
-    /// `tui.rs` snap the panel to the corresponding `MixrSize`.
-    pub mixr_size_grow_button: Option<Rect>,
-    pub mixr_size_shrink_button: Option<Rect>,
-    pub mixr_size_minimize_button: Option<Rect>,
-    /// The floating panel's free-edge resize strip (cell-area rows) —
-    /// drag it to resize the width.
-    pub mixr_resize_edge: Option<Rect>,
+    // 2026-06-22 — mixr-panel rects removed with the tmnl/mixr-host
+    // cleanup. Mnml no longer hosts mixr as a blit panel.
     /// `LSP {N}` chip — click opens `:LspStatus`.
     pub statusline_lsp_chip: Option<Rect>,
     /// `WRAP` chip — click toggles `[ui] wrap`.
@@ -2828,60 +2806,9 @@ pub struct App {
     /// User-requested 2026-06-18 after the centered Prompt looked
     /// inconsistent with vim's bottom-anchored cmdline.
     pub no_pane_cmdline: Option<String>,
-    /// The native mixr panel — mnml hosts `mixr --blit` and renders it
-    /// as a right-docked half-width panel. `None` until `mixr.show`
-    /// first launches it; then it persists (minimize hides it, it
-    /// doesn't drop). See `crate::mixr_host`.
-    pub mixr_panel: Option<crate::mixr_host::MixrPanel>,
-    /// In-progress move / resize drag of the floating mixr panel —
-    /// `Some` between mouse-down on its header / edge and release.
-    pub mixr_drag: Option<crate::mixr_host::MixrDrag>,
-    /// True when mnml is running as a tmnl native client (`--blit`).
-    /// `mixr.show` reads it to route mixr to a sibling tmnl pane (via
-    /// `OpenPane`) rather than nesting it as a pty pane. **Only set
-    /// in blit mode** — does NOT cover the standard-pty case where
-    /// mnml is just a shell child of tmnl. IPC-routing code paths
-    /// (`tmnl_open_tab`, `tmnl_run_host_command`) gate on this flag
-    /// because they queue messages drained by the blit loop, which
-    /// only runs in native mode.
-    pub under_tmnl: bool,
-    /// True when mnml is running as a regular pty child of tmnl
-    /// (standard mode — no blit protocol). Detected at startup from
-    /// the `TMNL_TRANSFER_SOCKET` env var that tmnl exports to all
-    /// spawned children. Used for **UI** decisions only — e.g.
-    /// hiding the inline palette bar because tmnl already renders
-    /// the palette chip in its native chrome strip. IPC routing
-    /// must still use [`Self::under_tmnl`] (no blit loop here).
-    pub inside_tmnl_pty: bool,
-    /// Open-pane requests queued for the tmnl host — `(command, args)`.
-    /// The blit loop drains these into `Message::OpenPane` each tick.
-    /// Always empty when not `under_tmnl`.
-    pub pending_open_panes: Vec<(String, Vec<String>)>,
-    /// Most recent `tmnl_protocol::Message::Title` mnml sent over
-    /// blit. `None` until the first send. The blit loop re-evaluates
-    /// the desired title each tick — workspace name normally, or
-    /// `"mixr"` while the docked mixr panel is the foreground UI —
-    /// and only re-sends when the value changes, so the tmnl chrome
-    /// chip updates without flooding the protocol with no-op
-    /// titles. Always `None` outside blit mode.
-    pub last_sent_blit_title: Option<String>,
-    /// Host-command requests queued for the tmnl renderer. Each is a
-    /// command id (e.g. `"browser.attach_dashboard"`) — the blit loop
-    /// drains them into `Message::RunHostCommand` each tick. Populated
-    /// by `[[ui.integration_icon]]` chips whose `command` field uses
-    /// the `tmnl:<id>` prefix. Always empty when not `under_tmnl`.
-    pub pending_host_commands: Vec<String>,
-    /// 2026-06-21 — chrome chips snapshot to send on the next blit
-    /// tick. Set by `refresh_chrome_chips` ONLY when the new
-    /// snapshot differs from `last_sent_chrome_chips`. The blit
-    /// loop takes() it and sends via Message::ChromeChips. None
-    /// when nothing changed since the last flush.
-    pub pending_chrome_chips:
-        Option<Vec<tmnl_protocol::ChromeChip>>,
-    /// Last chrome chip set we sent to tmnl. Used by
-    /// `refresh_chrome_chips` to detect changes and avoid spamming
-    /// identical payloads on every tick.
-    pub last_sent_chrome_chips: Vec<tmnl_protocol::ChromeChip>,
+    // 2026-06-22 — tmnl/blit/mixr-host fields removed with the
+    // tmnl-integration cleanup. Mnml runs in any terminal now;
+    // there's no host-protocol state to track.
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3413,15 +3340,6 @@ impl App {
         &self.layouts[self.active_layout]
     }
 
-    /// Whether mnml is inside a tmnl host in **any** mode (native
-    /// blit or standard pty child). Use for UI decisions like
-    /// "hide chrome that tmnl already renders". For IPC routing —
-    /// `tmnl_open_tab`, `tmnl_run_host_command`, `mixr.show` —
-    /// check [`Self::under_tmnl`] directly, because only blit mode
-    /// has a message-draining loop.
-    pub fn is_inside_tmnl(&self) -> bool {
-        self.under_tmnl || self.inside_tmnl_pty
-    }
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
         let workspace = workspace
             .canonicalize()
@@ -3617,19 +3535,6 @@ impl App {
             lookup_fire_rx: None,
             debug_rects: false,
             no_pane_cmdline: None,
-            mixr_panel: None,
-            mixr_drag: None,
-            under_tmnl: false,
-            // Detect a standard-pty parent tmnl via the env var
-            // `TMNL_TRANSFER_SOCKET` (tmnl exports it to every
-            // spawned child). Lets the inline palette bar hide so
-            // tmnl's native palette chip isn't duplicate chrome.
-            inside_tmnl_pty: std::env::var_os("TMNL_TRANSFER_SOCKET").is_some(),
-            pending_open_panes: Vec::new(),
-            last_sent_blit_title: None,
-            pending_host_commands: Vec::new(),
-            pending_chrome_chips: None,
-            last_sent_chrome_chips: Vec::new(),
             hover_chip: None,
             hover_divider_idx: None,
             show_discovery_overlay: false,
@@ -7806,7 +7711,6 @@ impl App {
             Pane::Outline(o) => Some((o.tab_title(), false)),
             Pane::Quickfix(g) => Some((format!("Quickfix · {}", g.hits.len()), false)),
             Pane::CmdlineHistory(_) => Some(("q:".to_string(), false)),
-            Pane::BlitHost(p) => Some((p.tab_title(), false)),
             Pane::Cheatsheet(_) => Some(("Cheatsheet".to_string(), false)),
             Pane::Debug(_) => Some(("Debug".to_string(), false)),
             Pane::DapRepl(_) => Some(("DAP REPL".to_string(), false)),
@@ -9000,28 +8904,10 @@ impl App {
                 }
             }
             ClaudeAgentsAction::ResumeSessionInTmnl => {
-                use crate::claude_agents::AgentSource;
-                if !self.is_inside_tmnl() {
-                    self.toast("not running under tmnl — use o for an mnml pane");
-                    return;
-                }
-                let sid = row.session_id.clone();
-                match row.source {
-                    AgentSource::Claude => {
-                        self.tmnl_open_tab(
-                            "claude".to_string(),
-                            vec!["--resume".to_string(), sid.clone()],
-                        );
-                        self.toast(format!(
-                            "tmnl: claude --resume {}…",
-                            sid.chars().take(8).collect::<String>()
-                        ));
-                    }
-                    AgentSource::Codex => {
-                        self.tmnl_open_tab("codex".to_string(), vec![]);
-                        self.toast("tmnl: opened fresh codex tab");
-                    }
-                }
+                // 2026-06-22 — tmnl integration removed; this
+                // action is a no-op now. The `o` action above
+                // opens the session as an mnml pty pane.
+                self.toast("tmnl integration removed; use o for an mnml pane");
             }
         }
     }
@@ -9857,7 +9743,6 @@ impl App {
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();
-        self.drain_mixr_panel();
         self.drain_http_jobs();
         self.drain_sse_jobs();
         self.drain_websocket();
@@ -9890,7 +9775,6 @@ impl App {
         self.drain_dap_events();
         self.drain_lsp_events();
         self.drain_cdp_events();
-        self.drain_blit_host_events();
         self.refresh_live_ai_panes();
         self.maintain_tree_image_preview();
         self.drain_scm_pr_pending();

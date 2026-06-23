@@ -148,7 +148,7 @@ The left sidebar has two persistent sections: **WORKSPACE** (the file tree) and 
 
 Worktrees come from `git worktree list --porcelain`. Clicking a worktree row opens a shell in that path (a `Pane::Pty`). Worktree management — create / remove — runs through the same typed-confirm safety net as branch delete.
 
-The open-PRs-for-this-branch sidecar that earlier mnml builds drew on the gutter is gone — the SCM live dashboards split out of the core in 2026-06 into the standalone [`mnml-forge-*` viewers](/manual/integrations/community/#forge-viewers). To see PRs / MRs / pipelines for the current repo, launch the matching forge viewer (`:host.launch mnml-forge-bitbucket` / `mnml-forge-github` / `mnml-forge-gitlab` / `mnml-forge-azdevops`).
+The open-PRs-for-this-branch sidecar that earlier mnml builds drew on the gutter is gone — the SCM live dashboards split out of the core in 2026-06 into the standalone [`mnml-forge-*` viewers](/manual/integrations/community/#forge-viewers). To see PRs / MRs / pipelines for the current repo, launch the matching forge viewer (`:term mnml-forge-bitbucket` / `mnml-forge-github` / `mnml-forge-gitlab` / `mnml-forge-azdevops`).
 
 The rail's right-click menu (on a branch row) covers:
 

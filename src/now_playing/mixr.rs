@@ -25,15 +25,6 @@ const NONE_SENTINEL: &str = "—";
 /// the only reliable signal.
 const STALE_AFTER: Duration = Duration::from_secs(10);
 
-/// How recently `quick.txt` must have been written for [`is_running`]
-/// to call mixr *alive*. Tighter than [`STALE_AFTER`] on purpose: this
-/// gates whether mnml will spawn its own mixr (see
-/// `App::open_mixr_pane`), so we want a small window — just after mnml
-/// closes its *own* pane (which SIGKILLs that mixr) the file lingers,
-/// and a too-generous window would make mnml mistake the corpse for a
-/// live external mixr and refuse to relaunch.
-const RUNNING_FRESH: Duration = Duration::from_secs(4);
-
 /// Path to mixr's quick-status file (`~/.mixr/quick.txt`).
 fn quick_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
@@ -42,24 +33,12 @@ fn quick_path() -> Option<PathBuf> {
 
 /// True iff `path` was modified within `within`. A future mtime (clock
 /// skew) counts as fresh; a missing file / unreadable mtime ⇒ not
-/// fresh. Shared by [`poll`]'s stale-file guard and [`is_running`].
+/// fresh. Used by [`poll`]'s stale-file guard.
 fn fresh_within(path: &std::path::Path, within: Duration) -> bool {
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .map(|t| t.elapsed().map(|age| age <= within).unwrap_or(true))
         .unwrap_or(false)
-}
-
-/// True iff *a* mixr process appears to be alive right now — any mixr,
-/// whether mnml spawned it or the user launched it standalone. mixr
-/// rewrites `quick.txt` many times a second while alive, so a recent
-/// write is a reliable liveness signal without a pidfile or a probe.
-///
-/// Used by `App::open_mixr_pane` to avoid spawning a *second* mixr
-/// that would fight the running one over the single audio device and
-/// the shared `~/.mixr/command` channel.
-pub fn is_running() -> bool {
-    quick_path().is_some_and(|p| fresh_within(&p, RUNNING_FRESH))
 }
 
 /// Read + project mixr's current state into a [`NowPlaying`]. `None`
@@ -185,8 +164,7 @@ mod tests {
         // …but not within a zero window (it was written in the past).
         assert!(!fresh_within(&p, Duration::from_secs(0)));
         std::fs::remove_file(&p).ok();
-        // A missing file is never fresh — the signal `is_running` keys
-        // off of when no mixr has ever run.
+        // A missing file is never fresh.
         assert!(!fresh_within(&p, Duration::from_secs(60)));
     }
 }

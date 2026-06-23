@@ -77,7 +77,7 @@ Or grab a build from the [releases page](https://github.com/chris-mclennan/mnml/
 **macOS app bundles** — `./scripts/build-app.sh release` produces `target/mnml.app`
 (stable); `./scripts/build-app.sh --nightly` produces `target/mnml-nightly.app`
 (always execs your latest `cargo build --release`). Both coexist in `/Applications`.
-The launcher integrates with `tmnl` if present, and shows the startup workspace
+The launcher opens mnml in Terminal.app and shows the startup workspace
 picker by default.
 
 A [Nerd Font](https://www.nerdfonts.com/) is recommended for devicons and
@@ -158,7 +158,7 @@ extensions = ["rs"]
 
 # Bufferline right-cluster icons. Setting this key replaces the built-in
 # Claude Code + Codex defaults. `command` is a registered command id or
-# a colon-prefixed ex-cmdline string (e.g. ":host.launch my-binary").
+# a colon-prefixed ex-cmdline string (e.g. ":term my-binary").
 [[ui.launcher_icon]]
 id       = "claude_code"
 glyph    = "\u{F0E2D}"
@@ -175,16 +175,16 @@ the SCM dashboard tables are all configurable too — see
 ### Themed shell prompt (optional)
 
 mnml ships a small powerline-style prompt (`themes/mnml-prompt.sh`)
-that auto-themes against the active mnml palette. When mnml or tmnl
-spawn a shell they install the script to `~/.config/mnml/prompt.sh`
-and export `$MNML_PROMPT_SCRIPT` plus the palette colors. To enable
+that auto-themes against the active mnml palette. When mnml spawns
+a shell it installs the script to `~/.config/mnml/prompt.sh`
+and exports `$MNML_PROMPT_SCRIPT` plus the palette colors. To enable
 it, add one line to your `~/.zshrc` (or `.bashrc`):
 
 ```sh
 [ -n "$MNML_PROMPT_SCRIPT" ] && source "$MNML_PROMPT_SCRIPT"
 ```
 
-Outside mnml/tmnl shells the env var is unset and the line is a
+Outside mnml shells the env var is unset and the line is a
 no-op, so normal terminals are unaffected. The prompt shows `cwd ·
 git branch (± when dirty) · exit code (only non-zero) · clock ·
 context-chip`. Switching mnml themes auto-rethemes the next shell
@@ -210,8 +210,6 @@ Development convenience wrappers:
 ./run.sh stop               # send quit to the running instance
 ./run.sh status             # show marker (workspace, IPC dir)
 ./run.sh headless [WS]      # same loop but --headless
-./run.sh blit SOCKET        # run as a tmnl native client (--blit)
-./run.sh under-tmnl [WS]    # launch tmnl with mnml as a native tab
 ./run.sh build|release|test|check|watch   # cargo wrappers
 ./dev.sh                    # cargo-watch auto-rebuild-on-save
 ```
@@ -228,20 +226,18 @@ cargo build --features aws-codebuild
 
 mnml builds on stable Rust (MSRV **1.87**, edition 2024).
 
-## The tmnl family
+## Family
 
 mnml is one of a small family of terminal-native Rust tools:
 
 | Project | What it is | |
 |---------|-----------|--|
-| [**tmnl**](https://github.com/chris-mclennan/tmnl) | A GPU-accelerated terminal | hosts mnml & mixr as native tabs |
 | **mnml** | A terminal IDE | ← you are here |
 | [**mixr**](https://github.com/chris-mclennan/mixr) | A terminal DJ app | electronic-music mixing |
-| [**tmnl-protocol**](https://github.com/chris-mclennan/tmnl-protocol) | The binary wire protocol | the glue between them |
 | [**fim-engine**](https://github.com/chris-mclennan/fim-engine) | Embedded code completion | powers mnml's inline suggestions |
 
-mnml runs standalone in any terminal, and gains native-pane integration when
-hosted inside `tmnl`.
+mnml runs in any terminal — Apple Terminal, iTerm2, Ghostty, kitty,
+WezTerm, Alacritty, and others.
 
 ## Contributing
 
