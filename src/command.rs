@@ -3729,20 +3729,6 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_codex(),
         },
         Command {
-            id: "mixr.show",
-            title: "Mixr: open the TUI DJ in a split below",
-            group: "ai",
-            keys: &[],
-            run: |app| app.open_mixr_pane(),
-        },
-        Command {
-            id: "mixr.launch",
-            title: "Mixr: launch in its own tab (keeps playing after mnml closes)",
-            group: "ai",
-            keys: &[],
-            run: |app| app.launch_mixr(),
-        },
-        Command {
             id: "browser.open",
             title: "Browser: open Chrome (CDP) — console / nav / eval",
             group: "browser",
@@ -4289,69 +4275,10 @@ fn builtin_commands() -> Vec<Command> {
     // siblings in 2026-06. The cross-host `pr.picker` was removed
     // too — no in-core caches to aggregate.
     // `aws.*` commands moved to mnml-aws-codebuild in 2026-06.
-    // tmnl-handoff — only useful when mnml is running as a tmnl
-    // `--blit` client. The commands are registered unconditionally; at
-    // runtime they toast an explanation if mnml's not under tmnl.
-    cmds.push(Command {
-        id: "tmnl.open_claude_in_tab",
-        title: "tmnl: open Claude Code in a new tab",
-        group: "tmnl",
-        keys: &[],
-        run: |app| app.tmnl_open_claude_in_tab(),
-    });
-    cmds.push(Command {
-        id: "tmnl.open_codex_in_tab",
-        title: "tmnl: open Codex in a new tab",
-        group: "tmnl",
-        keys: &[],
-        run: |app| app.tmnl_open_codex_in_tab(),
-    });
-    // Spawn a fresh shell as a tmnl-parented sibling tab — distinct
-    // from `Ctrl+T` which opens a shell *inside* mnml as a Pty pane.
-    // This one's PTY is owned by tmnl, so it survives if mnml exits
-    // and lives in tmnl's chrome tab strip. Only meaningful under
-    // tmnl — toasts when standalone.
-    cmds.push(Command {
-        id: "tmnl.new_shell_tab",
-        title: "tmnl: open a new shell as a sibling tab",
-        group: "tmnl",
-        keys: &["super+shift+t"],
-        run: |app| {
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-            app.tmnl_open_tab(shell, Vec::new());
-        },
-    });
-    // Quick-launch chips for ubiquitous terminal-native diagnostic
-    // tools. Under tmnl they spawn as sibling tabs; standalone they
-    // open as Pty panes inside mnml's layout.
-    cmds.push(Command {
-        id: "tools.htop",
-        title: "Tools: open htop (interactive process viewer)",
-        group: "tools",
-        keys: &[],
-        run: |app| app.launch_tool("htop", Vec::new()),
-    });
-    cmds.push(Command {
-        id: "tools.iftop",
-        title: "Tools: open iftop (interactive bandwidth monitor)",
-        group: "tools",
-        keys: &[],
-        // iftop needs raw-socket privs on most systems. The chip
-        // assumes the user has either set the cap bit (`setcap
-        // cap_net_raw=eip $(which iftop)`) or wrapped it via a
-        // privileged alias; we don't sudo for them.
-        run: |app| app.launch_tool("iftop", Vec::new()),
-    });
-    // Transfer the focused pty pane to tmnl as a new tab (SCM_RIGHTS
-    // fd handoff). Toasts when there's no focused pty or when not
-    // running under a tmnl that exposes a transfer socket.
-    #[cfg(unix)]
-    cmds.push(Command {
-        id: "tmnl.pop_pty",
-        title: "tmnl: pop focused terminal into a new tab",
-        group: "tmnl",
-        keys: &[],
-        run: |app| app.pop_pty_to_tmnl(),
-    });
+    // 2026-06-22 — tmnl-handoff commands removed alongside the
+    // blit-protocol cleanup. Pty panes (`Ctrl+T`) cover the
+    // in-mnml shell experience; tools that used to launch as
+    // sibling tabs can be launched from the user's terminal of
+    // choice.
     cmds
 }

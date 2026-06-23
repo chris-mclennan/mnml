@@ -783,29 +783,6 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 // Nothing to scroll — the image pane is "what you see is
                 // what you get". Future v2 could pan a too-large image.
             }
-            Some(Pane::BlitHost(p)) => {
-                // Forward wheel events to the hosted child as
-                // scroll-up/down with the panel-local coordinates;
-                // it owns its own scroll model.
-                let kind = if delta < 0 {
-                    tmnl_protocol::MouseKind::ScrollUp
-                } else {
-                    tmnl_protocol::MouseKind::ScrollDown
-                };
-                let col = (x.saturating_sub(tr.x)).min(p.channel.cols.saturating_sub(1));
-                let row = (y.saturating_sub(tr.y)).min(p.channel.rows.saturating_sub(1));
-                for _ in 0..delta.unsigned_abs() {
-                    p.channel.send_input(tmnl_protocol::InputEvent::Mouse(
-                        tmnl_protocol::MouseInput {
-                            kind,
-                            button: tmnl_protocol::BUTTON_NONE,
-                            col,
-                            row,
-                            mods: 0,
-                        },
-                    ));
-                }
-            }
             Some(Pane::ClaudeAgents(p)) => {
                 // Scroll the rows by delta.
                 for _ in 0..delta.unsigned_abs() {
@@ -852,48 +829,6 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
 
 pub(crate) fn contains(r: Rect, x: u16, y: u16) -> bool {
     x >= r.x && x < r.x.saturating_add(r.width) && y >= r.y && y < r.y.saturating_add(r.height)
-}
-
-/// Apply an in-progress mixr-panel drag to its `float` rect — clamped
-/// to `body` so the window can't move or grow past an edge, and never
-/// shrinks below a usable minimum.
-pub(crate) fn apply_mixr_drag(
-    float: &mut Rect,
-    body: Rect,
-    kind: crate::mixr_host::MixrDrag,
-    x: u16,
-    y: u16,
-) {
-    use crate::mixr_host::MixrDrag;
-    const MIN_W: u16 = 24;
-    const MIN_H: u16 = 8;
-    let body_right = body.x.saturating_add(body.width);
-    let body_bottom = body.y.saturating_add(body.height);
-    match kind {
-        MixrDrag::Move { grab_dx, grab_dy } => {
-            let max_x = body_right.saturating_sub(float.width).max(body.x);
-            let max_y = body_bottom.saturating_sub(float.height).max(body.y);
-            float.x = x.saturating_sub(grab_dx).clamp(body.x, max_x);
-            float.y = y.saturating_sub(grab_dy).clamp(body.y, max_y);
-        }
-        MixrDrag::ResizeLeft => {
-            let right = float.x.saturating_add(float.width);
-            let hi = right.saturating_sub(MIN_W).max(body.x);
-            let new_x = x.clamp(body.x, hi);
-            float.x = new_x;
-            float.width = right.saturating_sub(new_x).max(MIN_W);
-        }
-        MixrDrag::ResizeRight => {
-            let lo = float.x.saturating_add(MIN_W).min(body_right);
-            let new_right = x.saturating_add(1).clamp(lo, body_right);
-            float.width = new_right.saturating_sub(float.x).max(MIN_W);
-        }
-        MixrDrag::ResizeBottom => {
-            let lo = float.y.saturating_add(MIN_H).min(body_bottom);
-            let new_bottom = y.saturating_add(1).clamp(lo, body_bottom);
-            float.height = new_bottom.saturating_sub(float.y).max(MIN_H);
-        }
-    }
 }
 
 /// Mouse click on a list-style pane row. Dispatches based on the pane

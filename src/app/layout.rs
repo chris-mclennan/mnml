@@ -544,7 +544,6 @@ impl App {
             | Some(Pane::DapRepl(_))
             | Some(Pane::Image(_))
             | None => None,
-            Some(Pane::BlitHost(_)) => None,
             Some(Pane::ClaudeAgents(_)) => None,
             Some(Pane::Websocket(_)) => None,
             Some(Pane::SpendReport(_)) => None,
@@ -868,7 +867,6 @@ impl App {
             | Pane::Debug(_)
             | Pane::DapRepl(_)
             | Pane::Image(_) => (None, None),
-            Pane::BlitHost(_) => (None, None),
             Pane::ClaudeAgents(_) => (None, None),
             Pane::Websocket(_) => (None, None),
             Pane::SpendReport(_) => (None, None),

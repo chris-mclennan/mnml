@@ -252,8 +252,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
             Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
             Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
-            // nf-mdi-application-cog — generic "hosted external app" glyph.
-            Pane::BlitHost(_) => (if nerd { "\u{F0EAA}" } else { "▤" }, theme::cur().purple),
             Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
             Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
             // nf-md-console (terminal arrow) — REPL prompt vibe.

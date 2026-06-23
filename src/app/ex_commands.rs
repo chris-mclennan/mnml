@@ -732,25 +732,6 @@ impl App {
             // "close window"). Same dirty-prompt path as `:bd` so unsaved
             // editors prompt.
             "close" | "clo" | "hide" => self.close_active_pane(),
-            // `:host.launch <binary> [args...]` — spawn `<binary> --blit
-            // <socket> [args...]` and open it as a `Pane::BlitHost`. See
-            // `docs/PLUGINS.md`'s "blit-host integration" section for the
-            // protocol contract.
-            "host.launch" => {
-                if rest.is_empty() {
-                    self.toast(":host.launch <binary> [args...] — binary required");
-                    return;
-                }
-                let mut parts = rest.split_whitespace();
-                let binary = parts.next().unwrap().to_string();
-                let args: Vec<String> = parts.map(|s| s.to_string()).collect();
-                self.host_launch(binary, args);
-            }
-            // `:tmnl.open-tab <command> [args...]` — when mnml is running
-            // as a tmnl `--blit` client, ask the parent tmnl to spawn a
-            // new native tab running `<command>`. No-op (with a toast) when
-            // mnml isn't under tmnl. Useful for popping a long-running CLI
-            // (claude, codex, a shell) out into its own dedicated tab.
             // `:settings` — open the settings overlay. Same as
             // `view.settings` in the palette.
             "settings" => {
@@ -772,24 +753,6 @@ impl App {
             // `:help` / `:h` — open the keymap-reference overlay.
             "help" | "h" => {
                 self.toggle_help_overlay();
-            }
-            "tmnl.open-tab" | "tmnl.tab" => {
-                if rest.is_empty() {
-                    self.toast(":tmnl.open-tab <command> [args...] — command required");
-                    return;
-                }
-                let mut parts = rest.split_whitespace();
-                let command = parts.next().unwrap().to_string();
-                let args: Vec<String> = parts.map(|s| s.to_string()).collect();
-                self.tmnl_open_tab(command, args);
-            }
-            // `:tmnl.pop-pty` — the *hard* handoff: transfer the focused
-            // pty pane's master fd to tmnl via SCM_RIGHTS so the running
-            // process becomes a sibling tab. The local pane is removed
-            // without killing the child (its new owner is tmnl).
-            #[cfg(unix)]
-            "tmnl.pop-pty" | "tmnl.pop" => {
-                self.pop_pty_to_tmnl();
             }
             // `:Explore` / `:E` / `:Sex[plore]` / `:Vex[plore]` / `:Lex[plore]`
             // — vim's netrw file-explorer aliases. mnml routes them to the

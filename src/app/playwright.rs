@@ -359,31 +359,11 @@ impl App {
         self.run_playwright(args);
     }
 
-    /// `t` in a tests pane — launch the standalone `mnml-test-playwright`
-    /// viewer on the highlighted test's retained `trace.zip` (we run
-    /// with `--trace=retain-on-failure`, so failures have one). The
-    /// in-tree `Pane::Trace` viewer moved out to mnml-test-playwright in
-    /// 2026-06; this method now dispatches `:host.launch mnml-test-playwright
-    /// <path>` so the trace opens in a regular blit-host pane.
+    /// `t` in a tests pane — 2026-06-22: BlitHost removed; this
+    /// just toasts a hint. The user can run
+    /// `mnml-test-playwright <path>` in any shell pane manually.
     pub fn open_selected_test_trace(&mut self) {
-        let path = match self.active.and_then(|i| self.panes.get(i)) {
-            Some(Pane::Tests(t)) => match t.selected_test() {
-                Some(tc) => tc.trace_path.clone(),
-                None => return,
-            },
-            _ => {
-                self.toast("select a test in the results pane first");
-                return;
-            }
-        };
-        let Some(path) = path else {
-            self.toast("no trace for that test (only failed tests retain one)");
-            return;
-        };
-        self.host_launch(
-            "mnml-test-playwright".to_string(),
-            vec![path.to_string_lossy().into_owned()],
-        );
+        self.toast("trace viewer: run `mnml-test-playwright <path>` in a shell");
     }
 
     /// Stub kept after the Trace pane moved out — the standalone

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 /// The family members. `mnml` includes itself so the "missing"
 /// filter is just `!= "mnml"` — easier than maintaining a separate
 /// sibling list.
-const FAMILY: &[&str] = &["mnml", "mixr", "tmnl"];
+const FAMILY: &[&str] = &["mnml", "mixr"];
 const SELF: &str = "mnml";
 
 pub struct FamilyOffer {

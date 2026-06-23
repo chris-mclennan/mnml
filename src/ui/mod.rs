@@ -36,7 +36,6 @@ pub enum TopbarChipKind {
     Workspace,
 }
 // Azure DevOps views moved to mnml-forge-azdevops.
-pub mod blit_host_view;
 pub mod browser_view;
 pub mod bufferline;
 pub mod cheatsheet_view;
@@ -74,7 +73,6 @@ pub mod integration_edit_overlay;
 // log_tail_view moved to mnml-aws-codebuild.
 pub mod md_inline_overlay;
 pub mod md_preview;
-pub mod mixr_view;
 pub mod outline_view;
 pub mod picker;
 // pipeline_log_view removed after 2026-06 SCM split.
@@ -216,7 +214,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // (native blit *or* standard pty child), the host renders the palette
     // chip directly in its native chrome strip (next to the macOS traffic
     // lights), so the inline bar would be duplicate chrome.
-    let palette_bar_visible = area.width >= 80 && !app.is_inside_tmnl();
+    let palette_bar_visible = area.width >= 80;
     let palette_bar_h: u16 = if palette_bar_visible { 1 } else { 0 };
     let v = RLayout::vertical([
         Constraint::Length(palette_bar_h),
@@ -410,67 +408,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // short strip; `Full` is full body height. Width is capped at
     // `MAX_WIDTH` so a very wide screen doesn't blow it out.
     // `Minimized` = hidden (just the ♪ chip).
-    let mut mixr_area: Option<Rect> = None;
-    let mut mixr_header: Option<Rect> = None;
-    if let Some(size) = app.mixr_panel.as_ref().map(|p| p.size) {
-        use crate::mixr_host::MixrSize;
-        let panel: Option<Rect> = match size {
-            MixrSize::Minimized => None,
-            MixrSize::BottomStrip => {
-                let h = crate::mixr_host::STRIP_ROWS.min(body_area.height);
-                let w = body_area.width.min(crate::mixr_host::MAX_WIDTH);
-                (w >= 20 && h >= 6).then_some(Rect {
-                    x: body_area.x,
-                    y: body_area.y + body_area.height - h,
-                    width: w,
-                    height: h,
-                })
-            }
-            MixrSize::Full => {
-                let w = body_area.width.min(crate::mixr_host::MAX_WIDTH);
-                (w >= 20 && body_area.height >= 6).then_some(Rect {
-                    x: body_area.x,
-                    y: body_area.y,
-                    width: w,
-                    height: body_area.height,
-                })
-            }
-            MixrSize::Floating => {
-                // The free window — `panel.float`, clamped into the body.
-                let f = app
-                    .mixr_panel
-                    .as_ref()
-                    .map(|p| p.float)
-                    .unwrap_or(body_area);
-                let w = f.width.clamp(24, body_area.width.max(24));
-                let h = f.height.clamp(8, body_area.height.max(8));
-                let x =
-                    f.x.clamp(body_area.x, body_area.x + body_area.width.saturating_sub(w));
-                let y = f.y.clamp(
-                    body_area.y,
-                    body_area.y + body_area.height.saturating_sub(h),
-                );
-                (w >= 20 && h >= 6).then_some(Rect {
-                    x,
-                    y,
-                    width: w,
-                    height: h,
-                })
-            }
-        };
-        if let Some(panel) = panel {
-            // Split: 1-row title header + mixr cells below.
-            mixr_header = Some(Rect { height: 1, ..panel });
-            mixr_area = Some(Rect {
-                x: panel.x,
-                y: panel.y + 1,
-                width: panel.width,
-                height: panel.height.saturating_sub(1),
-            });
-        }
-    }
-    app.rects.mixr_panel = mixr_area;
-    app.rects.mixr_panel_header = mixr_header;
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
     app.rects.pane_bodies.clear();
@@ -526,21 +463,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         && app.scratch_term.is_some()
     {
         scratch_term_view::draw(frame, app, strip);
-    }
-
-    // Native mixr panel — the 1-row title header, then mixr's cells.
-    if let Some(harea) = mixr_header {
-        let size = app
-            .mixr_panel
-            .as_ref()
-            .map(|p| p.size)
-            .unwrap_or(crate::mixr_host::MixrSize::Minimized);
-        mixr_view::draw_header(frame, app, harea, size);
-    }
-    if let Some(marea) = mixr_area
-        && let Some(panel) = app.mixr_panel.as_ref()
-    {
-        mixr_view::draw(frame, panel, marea);
     }
 
     // Inline-rendered markdown overlay: paints heading-line bold + colored,
@@ -757,7 +679,6 @@ fn render_layout(
                 Some(crate::pane::Pane::Debug(_)) => 30,
                 Some(crate::pane::Pane::DapRepl(_)) => 31,
                 Some(crate::pane::Pane::Image(_)) => 32,
-                Some(crate::pane::Pane::BlitHost(_)) => 33,
                 Some(crate::pane::Pane::ClaudeAgents(_)) => 34,
                 Some(crate::pane::Pane::Websocket(_)) => 35,
                 Some(crate::pane::Pane::SpendReport(_)) => 36,
@@ -794,7 +715,6 @@ fn render_layout(
                     None
                 }
                 32 => image_view::draw(frame, app, *id, area, focused),
-                33 => blit_host_view::draw(frame, app, *id, area, focused),
                 34 => {
                     claude_agents_view::draw(frame, app, *id, area, focused);
                     None
@@ -2281,7 +2201,6 @@ fn icon_for_pane(
         Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
         Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
         Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
-        Pane::BlitHost(_) => (if nerd { "\u{F0EAA}" } else { "▤" }, theme::cur().purple),
         Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
         Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
         Pane::DapRepl(_) => (if nerd { "\u{F018D}" } else { ">" }, theme::cur().cyan),
@@ -2456,8 +2375,6 @@ mod palette_bar_tests {
         // palette bar's visibility gate (`!is_inside_tmnl()`) can
         // suppress the entire bar — and with it, the cluster rect
         // registration we're testing.
-        app.under_tmnl = false;
-        app.inside_tmnl_pty = false;
         let mut term = Terminal::new(TestBackend::new(200, 30)).unwrap();
         term.draw(|f| draw(f, &mut app)).unwrap();
 
@@ -2467,9 +2384,7 @@ mod palette_bar_tests {
         assert!(
             !app.rects.launcher_icon_rects.is_empty(),
             "launcher_icon_rects empty post-draw: cluster rects must be registered \
-             (under_tmnl={}, inside_pty={}, bufferline_visible={})",
-            app.under_tmnl,
-            app.inside_tmnl_pty,
+             (bufferline_visible={})",
             app.bufferline_visible,
         );
         assert!(
@@ -2520,8 +2435,6 @@ mod palette_bar_tests {
         std::fs::write(ws.join("a.txt"), "alpha").unwrap();
         std::fs::write(ws.join("b.txt"), "beta").unwrap();
         let mut app = App::new(ws.clone(), Config::default()).unwrap();
-        app.under_tmnl = false;
-        app.inside_tmnl_pty = false;
         // Open a.txt so there's a pane body to drop onto.
         app.open_path(&ws.join("a.txt"));
         let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
@@ -2619,13 +2532,12 @@ mod palette_bar_tests {
             "drag ghost chip should render 'b.txt' on screen.\n{}",
             screen
         );
+        // 2026-06-22 — overlay redesigned to be label-less (a
+        // translucent gray over the active zone). Verify the
+        // drop target is registered instead.
         assert!(
-            screen.contains("split left")
-                || screen.contains("split right")
-                || screen.contains("split top")
-                || screen.contains("split bottom")
-                || screen.contains("move here"),
-            "drop overlay should paint a directional label.\n{}",
+            app.rects.tab_drop_target.is_some(),
+            "drag flow should register a tab_drop_target.\n{}",
             screen
         );
 
@@ -2676,8 +2588,6 @@ mod palette_bar_tests {
         std::fs::write(ws.join("a.txt"), "alpha").unwrap();
         std::fs::write(ws.join("b.txt"), "beta").unwrap();
         let mut app = App::new(ws.clone(), Config::default()).unwrap();
-        app.under_tmnl = false;
-        app.inside_tmnl_pty = false;
         // Open a file so there's a pane body to drop on.
         app.open_path(&ws.join("a.txt"));
         // Render once to populate pane_bodies.
@@ -2711,14 +2621,9 @@ mod palette_bar_tests {
             })
             .collect();
         assert!(
-            screen.contains("move here")
-                || screen.contains("split left")
-                || screen.contains("split right")
-                || screen.contains("split top")
-                || screen.contains("split bottom"),
-            "drop overlay label should appear on screen.\n\
-             tab_drop_target: {:?} screen:\n{}",
-            app.rects.tab_drop_target,
+            app.rects.tab_drop_target.is_some(),
+            "drop overlay should register a tab_drop_target.\n\
+             screen:\n{}",
             screen
         );
     }
@@ -2734,8 +2639,6 @@ mod palette_bar_tests {
         let ws = d.path().to_path_buf();
         std::fs::write(ws.join("dragme.txt"), "drag me").unwrap();
         let mut app = App::new(ws.clone(), Config::default()).unwrap();
-        app.under_tmnl = false;
-        app.inside_tmnl_pty = false;
         // Start a tree drag from row y=10 (simulating mouse-down on
         // the tree row), then move the cursor to (50, 20) — past
         // the tree, onto a pane area.
