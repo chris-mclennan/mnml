@@ -952,9 +952,18 @@ impl Default for Config {
                         color: "yellow".to_string(),
                         tooltip: Some("SNS topics + subscriptions".to_string()),
                     },
-                    // 2026-06-22 — mixr rail chip removed alongside
-                    // the mixr_host cleanup. Users who run mixr can
-                    // launch it from their terminal directly.
+                    // mixr rail chip — opens the family DJ app via
+                    // `mixr.show`. 2026-06-22 — re-added after the
+                    // tmnl/blit cleanup; now opens as a Pty pane
+                    // rather than a docked panel.
+                    IntegrationIcon {
+                        id: "mixr".to_string(),
+                        glyph: "\u{F075A}".to_string(), // nf-md-music_note
+                        fallback: "♪".to_string(),
+                        command: "mixr.show".to_string(),
+                        color: "pink".to_string(),
+                        tooltip: Some("mixr DJ".to_string()),
+                    },
                     // 2026-06-19 — removed a duplicate `id: "http"`
                     // entry that lived here. The earlier `IntegrationIcon`
                     // around line 654 covers HTTP already (paper-plane

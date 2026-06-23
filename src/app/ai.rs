@@ -627,6 +627,26 @@ impl App {
         );
     }
 
+    /// 2026-06-22 — open the family DJ app `mixr` as a Pty pane.
+    /// Replaces the prior `mixr_host` docked panel that went away
+    /// with the tmnl/blit cleanup. Reuses an existing mixr pty if
+    /// one's already open; otherwise spawns a fresh one in a
+    /// horizontal split (same shape as Codex).
+    pub fn open_mixr(&mut self) {
+        let existing = self.panes.iter().position(|p| match p {
+            Pane::Pty(s) => s.profile.label.starts_with("mixr"),
+            _ => false,
+        });
+        if let Some(id) = existing {
+            self.reveal_pane(id);
+            return;
+        }
+        self.open_pty_dir(
+            crate::pty_pane::BinaryProfile::mixr(self.workspace.clone()),
+            crate::layout::SplitDir::Horizontal,
+        );
+    }
+
     /// Return the pane id of any open Claude Code pty pane (matched by
     /// `BinaryProfile.label`), or `None`.
     fn find_claude_pty(&self) -> Option<PaneId> {

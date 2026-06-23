@@ -83,6 +83,13 @@ impl FamilySibling {
         self.pinned_version == "built-in"
     }
 
+    /// `true` when this catalog entry uses a custom palette command
+    /// instead of `:term <binary>` — used to route mixr (and any
+    /// future similar siblings) to their dedicated open handler.
+    pub fn uses_custom_command(&self) -> bool {
+        self.id == "mixr"
+    }
+
     /// The full `cargo install` invocation a user would run. Returns
     /// a no-op note for built-in entries (they ship with mnml core).
     pub fn install_command(&self) -> String {
@@ -100,11 +107,16 @@ impl FamilySibling {
 
     /// The launch command to invoke when the rail chip is clicked.
     /// Built-in entries use a per-id command like `:http.send` rather
-    /// than `:term <binary>`.
+    /// than `:term <binary>`; mixr uses `:mixr.show` (dedicated open
+    /// handler that reuses an already-open pty).
     pub fn launch_command(&self) -> String {
+        if self.uses_custom_command() {
+            return match self.id {
+                "mixr" => "mixr.show".to_string(),
+                _ => format!(":term {}", self.binary),
+            };
+        }
         if self.is_builtin() {
-            // Today: HTTP uses `:http.send`. Add more mappings here if
-            // we ever surface other built-ins in the catalog.
             return match self.id {
                 "http" => ":http.send".to_string(),
                 _ => format!(":term {}", self.binary),
@@ -270,6 +282,24 @@ pub const CATALOG: &[FamilySibling] = &[
             fallback: "Sn",
             color: "yellow",
             tooltip: "SNS topics + subscriptions",
+        },
+    },
+    // ── Music ─────────────────────────────────────────────────
+    // mixr is the family's DJ app. 2026-06-22 — was a docked
+    // panel via mixr_host; now opens as a Pty pane via the
+    // `mixr.show` palette command.
+    FamilySibling {
+        id: "mixr",
+        binary: "mixr",
+        category: Category::Music,
+        repo_url: "https://github.com/chris-mclennan/mixr-rs",
+        pinned_version: "v0.1.3",
+        one_liner: "Family DJ app — Pty pane",
+        icon: IconTemplate {
+            glyph: "\u{F075A}", // nf-md-music_note
+            fallback: "♪",
+            color: "pink",
+            tooltip: "mixr DJ",
         },
     },
     // ── Filesystem / Storage ──────────────────────────────────
