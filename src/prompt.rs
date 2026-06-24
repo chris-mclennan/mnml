@@ -183,6 +183,10 @@ pub enum PromptKind {
     /// floor. Ref + a short label held in `App.pending_stash_drop`.
     /// untouched-surfaces-hunt-2026-06-08 SEV-2 #8.
     GitStashDrop,
+    /// Accept ⇒ run `git tag -d <name>` *iff* the typed text
+    /// matches the tag's name exactly. Tag name held in
+    /// `App.pending_tag_delete`.
+    GitTagDelete,
     /// Accept ⇒ reverse-apply the hunk against the working tree
     /// (`crate::git::diff::discard_hunk`) *iff* the typed text matches
     /// the literal word `discard` exactly. Hunk identity is held in

@@ -497,6 +497,11 @@ impl App {
             GitDeleteBranch(name) => self.git_delete_branch_prompt(name),
             GitWorktreeShell(path) => self.open_worktree_shell(&path.to_string_lossy()),
             GitWorktreeRemove(path) => self.git_worktree_remove_prompt(path),
+            GitStashPop(id) => self.git_stash_pop(&id),
+            GitStashApply(id) => self.git_stash_apply(&id),
+            GitStashDrop(id) => self.git_stash_drop_prompt(&id),
+            GitTagDelete(name) => self.git_tag_delete_prompt(&name),
+            GitRemoteCheckout(name) => self.checkout_branch(&name),
             PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active, true),
             OpenUrl(url) => {
                 open_url_external(&url);

@@ -3234,6 +3234,10 @@ pub struct App {
     /// stash drop picker; cleared on accept or cancel.
     /// untouched-surfaces-hunt-2026-06-08 SEV-2 #8.
     pub pending_stash_drop: Option<(String, String)>,
+    /// Tag name awaiting a "type tag-name to confirm" delete
+    /// prompt. Set by `git_tag_delete_prompt`; cleared on accept
+    /// or cancel.
+    pub pending_tag_delete: Option<String>,
     /// `(pane_id, hunk_index)` of a diff hunk awaiting a
     /// "type 'discard' to confirm" prompt. Set when the user clicks
     /// the Discard chip; cleared on accept or cancel.
@@ -3789,6 +3793,7 @@ impl App {
             pending_delete_branch: None,
             pending_worktree_remove: None,
             pending_stash_drop: None,
+            pending_tag_delete: None,
             pending_discard_hunk: None,
             pending_discard_file: None,
             pending_fs_action: None,

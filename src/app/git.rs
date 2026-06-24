@@ -2833,6 +2833,158 @@ impl App {
         self.context_menu = Some(menu);
     }
 
+    /// Right-click on a git-palette STASH row → 3-item context
+    /// menu (pop / apply / drop). Pop = apply + drop; Apply
+    /// leaves the stash on the list; Drop removes it without
+    /// applying. The Drop action goes through the standard
+    /// confirm flow.
+    pub fn open_git_palette_stash_context_menu(
+        &mut self,
+        stash_idx: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(st) = self.git_rail.stashes.get(stash_idx) else {
+            return;
+        };
+        let id = st.id.clone();
+        let summary = st.summary.clone();
+        let title = Some(format!("{id}  {summary}"));
+        let items = vec![
+            MenuItem::new(format!("Pop {id}"), MenuAction::GitStashPop(id.clone())),
+            MenuItem::new(
+                format!("Apply {id} (keep)"),
+                MenuAction::GitStashApply(id.clone()),
+            ),
+            MenuItem::new(format!("Drop {id}…"), MenuAction::GitStashDrop(id)),
+        ];
+        self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
+    /// Right-click on a git-palette TAG row → context menu with
+    /// Checkout (already the click action) and Delete.
+    pub fn open_git_palette_tag_context_menu(
+        &mut self,
+        tag_idx: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(name) = self.git_rail.tags.get(tag_idx).cloned() else {
+            return;
+        };
+        let title = Some(format!("⊙ {name}"));
+        let items = vec![
+            MenuItem::new(
+                format!("Checkout {name}"),
+                MenuAction::GitCheckoutBranch(name.clone()),
+            ),
+            MenuItem::new(format!("Delete tag {name}…"), MenuAction::GitTagDelete(name)),
+        ];
+        self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
+    /// Pop a named stash — apply + drop. No confirm since pop is
+    /// reversible (the changes go into the working tree; user can
+    /// restash if needed).
+    pub fn git_stash_pop(&mut self, stash_ref: &str) {
+        match crate::git::stash::pop_ref(self.active_repo_path(), stash_ref) {
+            Ok(msg) => {
+                self.toast(msg);
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git stash pop: {e}")),
+        }
+    }
+
+    /// Apply a named stash (keeps it on the stash list).
+    pub fn git_stash_apply(&mut self, stash_ref: &str) {
+        match crate::git::stash::apply(self.active_repo_path(), stash_ref) {
+            Ok(msg) => {
+                self.toast(msg);
+                self.after_git_change();
+            }
+            Err(e) => self.toast(format!("git stash apply: {e}")),
+        }
+    }
+
+    /// Open the `git stash drop` confirm prompt for a specific
+    /// stash ref (e.g. `stash@{1}`). Reuses the existing `drop`
+    /// confirm gate — type `drop` to commit.
+    pub fn git_stash_drop_prompt(&mut self, stash_ref: &str) {
+        use crate::prompt::{Prompt, PromptKind};
+        self.prompt = Some(Prompt::seeded(
+            PromptKind::GitStashDrop,
+            format!("Type 'drop' to drop {stash_ref}"),
+            "",
+        ));
+        self.pending_stash_drop = Some((stash_ref.to_string(), stash_ref.to_string()));
+    }
+
+    /// Open the `git tag -d <name>` confirm prompt — type the
+    /// tag name to commit. Same shape as `git_delete_branch_prompt`.
+    pub fn git_tag_delete_prompt(&mut self, name: &str) {
+        use crate::prompt::{Prompt, PromptKind};
+        self.prompt = Some(Prompt::seeded(
+            PromptKind::GitTagDelete,
+            format!("Type {name:?} to delete this tag"),
+            "",
+        ));
+        self.pending_tag_delete = Some(name.to_string());
+    }
+
+    /// Accept handler for `PromptKind::GitTagDelete`.
+    pub fn confirm_tag_delete(&mut self, typed: String) {
+        let Some(name) = self.pending_tag_delete.take() else {
+            return;
+        };
+        if typed.trim() != name {
+            self.toast("tag delete cancelled (name didn't match)");
+            return;
+        }
+        let out = std::process::Command::new("git")
+            .args(["tag", "-d", &name])
+            .current_dir(self.active_repo_path())
+            .output();
+        match out {
+            Ok(o) if o.status.success() => {
+                self.toast(format!("deleted tag {name}"));
+                self.after_git_change();
+            }
+            Ok(o) => {
+                let err = String::from_utf8_lossy(&o.stderr)
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("git tag -d failed")
+                    .trim()
+                    .to_string();
+                self.toast(format!("git tag -d: {err}"));
+            }
+            Err(e) => self.toast(format!("git tag -d: {e}")),
+        }
+    }
+
+    /// Right-click on a git-palette REMOTE branch row → context
+    /// menu with Checkout (creates a local tracking branch).
+    /// Branch deletion / remote ops are intentionally excluded —
+    /// destructive remote ops belong on a dedicated workflow,
+    /// not a one-click menu.
+    pub fn open_git_palette_remote_branch_context_menu(
+        &mut self,
+        remote_idx: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(name) = self.git_rail.remote_branches.get(remote_idx).cloned() else {
+            return;
+        };
+        let title = Some(format!("⎈ {name}"));
+        let items = vec![MenuItem::new(
+            format!("Checkout {name} (track)"),
+            MenuAction::GitRemoteCheckout(name),
+        )];
+        self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
     /// Common tail of click + Enter — run the action attached to `hit`.
     fn run_git_rail_hit(&mut self, hit: crate::git::rail::GitRailHit) {
         match hit {

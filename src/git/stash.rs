@@ -125,6 +125,26 @@ fn parse_stash_message(msg: &str) -> (String, String) {
     (String::new(), trimmed.to_string())
 }
 
+/// `git stash pop <ref>` — apply + drop the named stash (vs the bare
+/// `pop` above which always targets the top of the stash list).
+pub fn pop_ref(workspace: &Path, stash_ref: &str) -> Result<String, String> {
+    let out = Command::new("git")
+        .args(["stash", "pop", stash_ref])
+        .current_dir(workspace)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(format!("popped {stash_ref}"))
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("git stash pop failed")
+            .trim()
+            .to_string())
+    }
+}
+
 /// `git stash apply <ref>` — apply the named stash, keeping it in the
 /// stash list (unlike `pop`).
 pub fn apply(workspace: &Path, stash_ref: &str) -> Result<String, String> {

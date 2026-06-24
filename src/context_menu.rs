@@ -71,6 +71,18 @@ pub enum MenuAction {
     GitWorktreeShell(PathBuf),
     /// Git rail — confirm + `git worktree remove <path>`.
     GitWorktreeRemove(PathBuf),
+    /// Git palette stash — `git stash pop <id>` (applies + drops).
+    GitStashPop(String),
+    /// Git palette stash — `git stash apply <id>` (applies, keeps).
+    GitStashApply(String),
+    /// Git palette stash — confirm + `git stash drop <id>`.
+    GitStashDrop(String),
+    /// Git palette tag — confirm + `git tag -d <name>`.
+    GitTagDelete(String),
+    /// Git palette remote-branch — `git checkout <name>` (creates a
+    /// local tracking branch). Wraps `App::checkout_branch` which
+    /// already handles the remote-ref form.
+    GitRemoteCheckout(String),
     /// Open a rendered-markdown preview for `path` in a split. Surfaced from
     /// the tree (right-click an `.md`/`.markdown`/`.mdx`/`.mkd` file) and
     /// from a bufferline tab right-click on the same.

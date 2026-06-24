@@ -1484,6 +1484,9 @@ impl App {
             crate::prompt::PromptKind::GitStashDrop => {
                 self.confirm_stash_drop(p.input.clone());
             }
+            crate::prompt::PromptKind::GitTagDelete => {
+                self.confirm_tag_delete(p.input.clone());
+            }
             crate::prompt::PromptKind::LspWorkspaceSymbol => {
                 let q = p.input.clone();
                 self.run_workspace_symbol_query(&q);

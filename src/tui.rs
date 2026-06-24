@@ -4500,11 +4500,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                             (x, y),
                         );
                     }
-                    crate::ui::git_palette::GitPaletteHit::RemoteBranch(_)
-                    | crate::ui::git_palette::GitPaletteHit::Stash(_)
-                    | crate::ui::git_palette::GitPaletteHit::Tag(_) => {
-                        // Right-click context menus for these land
-                        // in a follow-up.
+                    crate::ui::git_palette::GitPaletteHit::Stash(i) => {
+                        app.open_git_palette_stash_context_menu(i, (x, y));
+                    }
+                    crate::ui::git_palette::GitPaletteHit::Tag(i) => {
+                        app.open_git_palette_tag_context_menu(i, (x, y));
+                    }
+                    crate::ui::git_palette::GitPaletteHit::RemoteBranch(i) => {
+                        app.open_git_palette_remote_branch_context_menu(i, (x, y));
                     }
                 }
                 return;
