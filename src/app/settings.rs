@@ -368,6 +368,18 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: dws_current != dws_default,
     }));
 
+    // Projects folder — used by the startup picker to list immediate
+    // subdirectories as one-click "Open project: foo" rows.
+    // Tilde-expanded on save (`~/Projects` → `/Users/.../Projects`).
+    // Empty string disables the feature.
+    out.push(SettingItem::Text(TextRow {
+        key: "ui.projects_dir",
+        label: "Projects folder",
+        value: cfg.ui.projects_dir.clone(),
+        default: d.ui.projects_dir.clone(),
+        modified: cfg.ui.projects_dir != d.ui.projects_dir,
+    }));
+
     // Tree width (number row — v2). 16..=60; step 2.
     out.push(SettingItem::Number(NumberRow {
         key: "ui.tree_width",
@@ -760,6 +772,24 @@ pub fn apply_text_setting(cfg: &mut Config, key: &str, value: &str) -> bool {
             };
             let changed = cfg.default_workspace != new;
             cfg.default_workspace = new;
+            changed
+        }
+        "ui.projects_dir" => {
+            // Tilde-expand on save so consumers can use the value as
+            // a path directly. Empty string disables the feature.
+            let trimmed = value.trim();
+            let expanded = if let Some(rest) = trimmed.strip_prefix("~/")
+                && let Some(home) = std::env::var_os("HOME")
+            {
+                std::path::PathBuf::from(home)
+                    .join(rest)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                trimmed.to_string()
+            };
+            let changed = cfg.ui.projects_dir != expanded;
+            cfg.ui.projects_dir = expanded;
             changed
         }
         _ => false,
@@ -1194,12 +1224,47 @@ impl App {
         // `~/.config/mnml/config.toml` (its existing home), and rebaseline the
         // snapshot so a later Esc doesn't appear to revert a committed global
         // change.
+        // `ui.projects_dir` is also global — same shape.
+        // Clone everything off `state` up front so we can borrow `self`
+        // mutably for `self.toast` without running into a double-borrow.
         let original_dws = state.original.default_workspace.clone();
         let current_dws = self.config.default_workspace.clone();
-        if original_dws != current_dws {
-            match crate::config::persist_default_workspace(current_dws.as_deref()) {
+        let original_pd = state.original.ui.projects_dir.clone();
+        let current_pd = self.config.ui.projects_dir.clone();
+        let dws_result = if original_dws != current_dws {
+            Some(crate::config::persist_default_workspace(current_dws.as_deref()))
+        } else {
+            None
+        };
+        let pd_result = if original_pd != current_pd {
+            let opt = if current_pd.is_empty() {
+                None
+            } else {
+                Some(current_pd.as_str())
+            };
+            Some(crate::config::persist_ui_projects_dir(opt))
+        } else {
+            None
+        };
+        // Now safe to reach back into `self.settings_overlay` /
+        // `self.toast` — the `state` borrow above is dead.
+        if let Some(result) = dws_result {
+            match result {
                 Ok(path) => {
-                    state.original.default_workspace = current_dws.clone();
+                    if let Some(s) = self.settings_overlay.as_mut() {
+                        s.original.default_workspace = current_dws.clone();
+                    }
+                    self.toast(format!("settings: saved → {}", path.display()));
+                }
+                Err(e) => self.toast(format!("settings: persist failed: {e}")),
+            }
+        }
+        if let Some(result) = pd_result {
+            match result {
+                Ok(path) => {
+                    if let Some(s) = self.settings_overlay.as_mut() {
+                        s.original.ui.projects_dir = current_pd.clone();
+                    }
                     self.toast(format!("settings: saved → {}", path.display()));
                 }
                 Err(e) => self.toast(format!("settings: persist failed: {e}")),
@@ -1209,7 +1274,7 @@ impl App {
         // per-workspace file like the discrete rows. Esc still reverts them
         // via the workspace-file snapshot restore.
         if let Some(key) = edited_key
-            && key != "startup.default_workspace"
+            && !matches!(key, "startup.default_workspace" | "ui.projects_dir")
         {
             self.persist_setting_to_workspace(key);
         }

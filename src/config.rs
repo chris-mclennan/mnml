@@ -461,6 +461,19 @@ pub struct UiConfig {
     /// preferred_music_app = "spotify"
     /// ```
     pub preferred_music_app: String,
+
+    /// Directory whose immediate subdirectories are eligible
+    /// project-roots — used by the startup picker as one-click
+    /// rows alongside `[[workspaces]]` entries. Tilde-expanded
+    /// at config load. Empty string disables the feature (the
+    /// picker just shows New file / Open file / Open folder /
+    /// configured workspaces as before).
+    ///
+    /// ```toml
+    /// [ui]
+    /// projects_dir = "~/Projects"
+    /// ```
+    pub projects_dir: String,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -974,6 +987,7 @@ impl Default for Config {
                 tree_image_preview: true,
                 now_playing_source: "auto".to_string(),
                 preferred_music_app: "mixr".to_string(),
+                projects_dir: String::new(),
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1151,6 +1165,10 @@ struct RawUi {
     /// See [`UiConfig::preferred_music_app`].
     #[serde(default)]
     preferred_music_app: Option<String>,
+    /// Default projects folder for the startup picker. Tilde-expanded
+    /// at config load. See [`UiConfig::projects_dir`].
+    #[serde(default)]
+    projects_dir: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1453,6 +1471,23 @@ impl Config {
                 self.ui.preferred_music_app = normalized;
             }
         }
+        if let Some(s) = raw.ui.projects_dir {
+            // Tilde-expand on load so renderers can use the value
+            // straight as a path. Empty / blank → disabled.
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                self.ui.projects_dir = String::new();
+            } else if let Some(rest) = trimmed.strip_prefix("~/")
+                && let Some(home) = std::env::var_os("HOME")
+            {
+                self.ui.projects_dir = std::path::PathBuf::from(home)
+                    .join(rest)
+                    .to_string_lossy()
+                    .into_owned();
+            } else {
+                self.ui.projects_dir = trimmed.to_string();
+            }
+        }
         if let Some(v) = raw.session.restore {
             self.session.restore = v;
         }
@@ -1690,6 +1725,97 @@ fn upsert_startup_default_workspace(src: &str, path: Option<&Path>) -> String {
             out.push('\n');
         }
         out.push_str("[startup]\n");
+        out.push_str(w);
+        out.push('\n');
+    }
+    out
+}
+
+/// Persist `[ui] projects_dir = "..."` to the user-level config at
+/// `~/.config/mnml/config.toml`. Empty string ⇒ remove the line.
+/// Same shape as `persist_default_workspace`. Returns the path
+/// written, or an error string when the existing TOML is malformed
+/// enough that we'd rather not blindly overwrite.
+pub fn persist_ui_projects_dir(value: Option<&str>) -> Result<PathBuf, String> {
+    let cfg_path = user_config_path()
+        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    let updated = upsert_global_string(&existing, "ui", "projects_dir", value);
+    std::fs::write(&cfg_path, &updated)
+        .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    Ok(cfg_path)
+}
+
+/// Pure-string TOML rewrite — find `[table]` / `key = "value"` and
+/// update / insert / remove. `None` ⇒ remove the line. Doesn't
+/// understand multi-line strings (fine for single-line quoted
+/// values). Same shape as `upsert_startup_default_workspace`; a
+/// future refactor could collapse the two.
+fn upsert_global_string(
+    src: &str,
+    table: &str,
+    key: &str,
+    value: Option<&str>,
+) -> String {
+    let want_line = value.filter(|v| !v.is_empty()).map(|v| {
+        let mut s = String::with_capacity(key.len() + v.len() + 6);
+        s.push_str(key);
+        s.push_str(" = ");
+        s.push_str(&toml_quote(v));
+        s
+    });
+    let header_line = format!("[{table}]");
+    let key_prefix = format!("{key} ");
+    let key_eq = format!("{key}=");
+    let mut out = String::with_capacity(src.len() + 64);
+    let mut in_table = false;
+    let mut replaced = false;
+    let mut table_seen = false;
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            let header = trimmed.trim_end();
+            if in_table && !replaced && let Some(w) = want_line.as_ref() {
+                out.push_str(w);
+                out.push('\n');
+                replaced = true;
+            }
+            in_table = header == header_line;
+            if in_table {
+                table_seen = true;
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        if in_table && (trimmed.starts_with(&key_prefix) || trimmed.starts_with(&key_eq)) {
+            if let Some(w) = want_line.as_ref() {
+                out.push_str(w);
+                out.push('\n');
+            }
+            replaced = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if in_table && !replaced && let Some(w) = want_line.as_ref() {
+        out.push_str(w);
+        out.push('\n');
+    }
+    if !table_seen && let Some(w) = want_line.as_ref() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str(&header_line);
+        out.push('\n');
         out.push_str(w);
         out.push('\n');
     }

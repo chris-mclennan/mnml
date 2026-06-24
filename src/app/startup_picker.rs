@@ -9,7 +9,7 @@ use crate::app::App;
 /// Action the picker fires when the user commits a selection. The
 /// caller (`tui.rs` keymap) translates this into the appropriate
 /// `App` method calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartupPickerAction {
     /// Dismiss the picker; user continues in the workspace mnml was
     /// already launched at.
@@ -23,6 +23,8 @@ pub enum StartupPickerAction {
     /// row. Index matches `App::switch_workspace` (0 = primary,
     /// 1+ = extras).
     SwitchWorkspace(usize),
+    /// Open a subdirectory of `[ui] projects_dir` as the workspace.
+    OpenProject(std::path::PathBuf),
 }
 
 /// Mutable state for the startup picker — currently just which row

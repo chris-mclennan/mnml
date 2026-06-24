@@ -854,16 +854,13 @@ fn draw_workspace_files(
     if avail == 0 {
         return start_y;
     }
-    // The file list takes UP TO half the rail height when the GIT section is
-    // expanded (so the rail doesn't become a wall of files crowding out git);
-    // otherwise it can claim everything below it.
-    let reserve_for_git = if app.git_section_expanded {
-        let need = 2 + app.git_rail.row_count().min(8) as u16;
-        need.min(avail.saturating_sub(2))
-    } else {
-        0
-    };
-    let h = (avail - reserve_for_git) as usize;
+    // The outer layout in `draw()` already carves out GIT + INTEGRATIONS
+    // heights from the workspace area before passing it in here, so
+    // `avail` is exactly the workspace's allotted height. Earlier code
+    // tried to reserve a chunk inside this fn for GIT too — that
+    // double-counting left a visible empty zone above INTEGRATIONS
+    // when GIT was expanded (file list stopped short of `ws_end_y`).
+    let h = avail as usize;
     if h == 0 {
         return start_y;
     }

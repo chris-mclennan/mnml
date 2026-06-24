@@ -44,6 +44,24 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         let key = (b'4' + i as u8) as char;
         rows.push((key.to_string(), format!("Open: {}", w.name)));
     }
+    // Immediate subdirectories of `[ui] projects_dir`, one row each.
+    // Number keys keep ticking up; once we run out (>9 total rows),
+    // they show as ` ` so the user knows they have to use ↑↓ + Enter.
+    let configured_count = app.config.workspaces.len().min(6);
+    for (i, sub) in project_subdirs(app).into_iter().enumerate() {
+        let row_idx = 3 + configured_count + i;
+        let key = if row_idx < 9 {
+            ((b'1' + row_idx as u8) as char).to_string()
+        } else {
+            " ".to_string()
+        };
+        let name = sub
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_string();
+        rows.push((key, format!("Open project: {name}")));
+    }
 
     let title = " Open mnml — Esc to skip ";
     let label_w = rows
@@ -108,29 +126,64 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+/// Up to N immediate subdirectories of `[ui] projects_dir`, sorted
+/// alphabetically. Empty when the config is unset or the path can't
+/// be read. Capped at 6 so the picker doesn't grow unbounded.
+pub(crate) fn project_subdirs(app: &App) -> Vec<std::path::PathBuf> {
+    const CAP: usize = 6;
+    let root = app.config.ui.projects_dir.trim();
+    if root.is_empty() {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out: Vec<std::path::PathBuf> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| {
+            // Skip dotfiles + standard dev clutter the user wouldn't
+            // open as a workspace anyway.
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| !n.starts_with('.') && n != "node_modules" && n != "target")
+        })
+        .map(|e| e.path())
+        .collect();
+    out.sort();
+    out.truncate(CAP);
+    out
+}
+
 /// How many rows the picker is currently showing — used by key
 /// handling to clamp `selected` on up/down.
 pub fn row_count(app: &App) -> usize {
     let configured = app.config.workspaces.len().min(6);
-    3 + configured
+    let projects = project_subdirs(app).len();
+    3 + configured + projects
 }
 
 /// Resolve `selected` index into the action to fire.
 pub fn action_for(app: &App, idx: usize) -> Option<StartupPickerAction> {
+    let configured = app.config.workspaces.len();
+    let configured_capped = configured.min(6);
     match idx {
         0 => Some(StartupPickerAction::NewFile),
         1 => Some(StartupPickerAction::OpenFile),
         2 => Some(StartupPickerAction::OpenFolder),
-        n => {
+        n if n < 3 + configured_capped => {
             let ws = n - 3;
-            if ws < app.config.workspaces.len() {
-                // The user-facing workspace switcher uses 1-based indices
-                // where 0 = primary / 1+ = extras. The configured rows in
-                // `[[workspaces]]` map to 1-based extras, so add 1.
-                Some(StartupPickerAction::SwitchWorkspace(ws + 1))
-            } else {
-                None
-            }
+            // The user-facing workspace switcher uses 1-based indices
+            // where 0 = primary / 1+ = extras. The configured rows in
+            // `[[workspaces]]` map to 1-based extras, so add 1.
+            Some(StartupPickerAction::SwitchWorkspace(ws + 1))
+        }
+        n => {
+            let proj_idx = n - 3 - configured_capped;
+            let subs = project_subdirs(app);
+            subs.get(proj_idx)
+                .cloned()
+                .map(StartupPickerAction::OpenProject)
         }
     }
 }

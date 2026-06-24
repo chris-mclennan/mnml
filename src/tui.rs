@@ -195,6 +195,12 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
         SwitchWorkspace(idx) => {
             app.switch_workspace(idx);
         }
+        OpenProject(path) => {
+            // Same path as `view.add_workspace` once it has the
+            // resolved path — registers the folder as an extra
+            // workspace + switches focus to it.
+            app.add_workspace_runtime(path, None);
+        }
     }
 }
 
