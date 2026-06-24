@@ -1019,10 +1019,13 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             // (dim grey); background stays on the chrome row's
             // `t.bg_dark`. When open, invert to a cyan highlight so
             // the active menu reads as the focal target.
+            // 2026-06-24 — resting menu text uses `grey` (darker)
+            // instead of `comment` so the menu bar feels less
+            // prominent. Active (open) row keeps the cyan invert.
             let (word_fg, word_bg) = if is_open {
                 (t.bg_dark, t.cyan)
             } else {
-                (t.comment, t.bg_dark)
+                (t.grey, t.bg_dark)
             };
             let base_style = Style::default()
                 .fg(word_fg)

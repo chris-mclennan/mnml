@@ -1514,8 +1514,24 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('/') => {
             app.tree.filter_mode = true;
         }
-        KeyCode::Up | KeyCode::Char('k') => app.tree.move_up(),
-        KeyCode::Down | KeyCode::Char('j') => app.tree.move_down(),
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(ws_idx) = app.focused_extra_ws
+                && let Some(ws) = app.extra_workspaces.get_mut(ws_idx)
+            {
+                ws.tree.move_up();
+            } else {
+                app.tree.move_up();
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(ws_idx) = app.focused_extra_ws
+                && let Some(ws) = app.extra_workspaces.get_mut(ws_idx)
+            {
+                ws.tree.move_down();
+            } else {
+                app.tree.move_down();
+            }
+        }
         // Tab is the explicit cross-section affordance — flips into the
         // git rail (when expanded + non-empty) and back. Replaces the
         // earlier ↓-at-bottom auto-flip behaviour, which silently spawned
@@ -5545,6 +5561,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.focus_tree();
                 app.rail_section = crate::app::RailSection::Workspace;
+                // Clicking the primary tree returns focus from any
+                // extra workspace; cursor highlight follows.
+                app.focused_extra_ws = None;
                 // VS Code preview/pin gesture: single-click on a file
                 // opens it as a preview tab (replaceable by the next
                 // single-click); double-click promotes to a real tab

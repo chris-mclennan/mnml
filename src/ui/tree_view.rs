@@ -1309,9 +1309,20 @@ fn draw_extra_workspace_section(
     let multi_repo = app.repos.len() > 1;
     let active_repo_path = app.repos.get(app.active_repo).map(|r| r.path.clone());
 
+    // Focus state for the cursor highlight: rail focused on the
+    // tree AND `focused_extra_ws` points at THIS workspace. The
+    // primary tree's `focused` checks Focus::Tree +
+    // RailSection::Workspace; we do the analogous check via the
+    // dedicated extra-workspace focus field.
+    let focused = matches!(app.focus, crate::focus::Focus::Tree)
+        && app.focused_extra_ws == Some(ws_idx);
+    let cursor = app.extra_workspaces[ws_idx].tree.cursor();
+
     let mut lines: Vec<Line> = Vec::with_capacity(h);
     const ROOT_INDENT: &str = "  ";
-    for row in rows.iter().skip(scroll).take(h) {
+    for (vi, row) in rows.iter().enumerate().skip(scroll).take(h) {
+        let is_cursor = vi == cursor;
+        let row_bg_col = row_bg(is_cursor, focused, rail_bg);
         let is_repo_row = multi_repo
             && row.is_dir
             && row.depth == 0
@@ -1353,8 +1364,8 @@ fn draw_extra_workspace_section(
         } else {
             theme::cur().fg
         };
-        let mut name_style = Style::default().fg(name_color).bg(rail_bg);
-        if row.is_dir {
+        let mut name_style = Style::default().fg(name_color).bg(row_bg_col);
+        if row.is_dir || (is_cursor && focused) {
             name_style = name_style.add_modifier(Modifier::BOLD);
         }
         if is_repo_row && !is_active_repo {
@@ -1386,20 +1397,20 @@ fn draw_extra_workspace_section(
         let mut spans = vec![
             Span::styled(
                 chev_part,
-                Style::default().fg(theme::cur().comment).bg(rail_bg),
+                Style::default().fg(theme::cur().comment).bg(row_bg_col),
             ),
-            Span::styled(icon_part, Style::default().fg(prefix_color).bg(rail_bg)),
+            Span::styled(icon_part, Style::default().fg(prefix_color).bg(row_bg_col)),
         ];
         if !repo_marker.is_empty() {
             spans.push(Span::styled(
                 repo_marker,
-                Style::default().fg(repo_marker_color).bg(rail_bg),
+                Style::default().fg(repo_marker_color).bg(row_bg_col),
             ));
         }
         spans.push(Span::styled(row.name.clone(), name_style));
         spans.push(Span::styled(
             " ".repeat(pad_n),
-            Style::default().bg(rail_bg),
+            Style::default().bg(row_bg_col),
         ));
         lines.push(Line::from(spans));
     }

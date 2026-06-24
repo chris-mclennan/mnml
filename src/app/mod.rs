@@ -2798,6 +2798,12 @@ pub struct App {
     /// Switched by ↓ off the end of the workspace list / ↑ off the top of the
     /// git list, or by clicking a row in the other section.
     pub rail_section: RailSection,
+    /// `Some(ws_idx)` when keyboard/mouse focus is on the extra
+    /// workspace at that index (instead of the primary tree).
+    /// Click on an extra workspace row → sets this; click on
+    /// primary tree → clears it. Lets the extra-workspace
+    /// renderer draw a cursor highlight on the right tree.
+    pub focused_extra_ws: Option<usize>,
     pub git: GitStatus,
     pub toast: Option<(String, Instant)>,
     /// Stack of recent toasts (newest first), capped at `TOAST_STACK_MAX`.
@@ -3690,6 +3696,7 @@ impl App {
             integration_section_expanded: integrations_section_expanded_default,
             git_branches_expanded: false,
             rail_section: RailSection::Workspace,
+            focused_extra_ws: None,
             git,
             toast: None,
             toast_stack: std::collections::VecDeque::new(),
@@ -4606,6 +4613,12 @@ impl App {
             return;
         }
         ws.tree.set_cursor(row_idx);
+        // Park keyboard focus on this extra workspace so the
+        // renderer draws a cursor highlight + so future arrow
+        // keys move within this tree (not the primary one).
+        self.focus_tree();
+        self.focused_extra_ws = Some(ws_idx);
+        self.rail_section = RailSection::Workspace;
         let row = rows[row_idx].clone();
         if row.is_dir {
             // Multi-repo: clicking a depth-0 repo dir activates that repo so
