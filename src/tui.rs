@@ -5513,7 +5513,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             // Dock widget close `×` click → remove the widget.
-            // Checked BEFORE the body click so the × wins.
+            // Checked BEFORE the title-bar / body so the × wins.
             if let Some(&(_, id)) = app
                 .rects
                 .dock_widget_close_buttons
@@ -5523,8 +5523,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.dock_widgets.retain(|w| w.id != id);
                 return;
             }
-            // Dock widget body click → toast (slice 1; content-
-            // specific actions land in later slices).
+            // Dock widget title bar mouse-down → arm a drag. Final
+            // corner resolves on mouse-up based on which quadrant
+            // of the editor body the cursor ended up in.
+            if let Some(&(_, id)) = app
+                .rects
+                .dock_widget_titles
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.dock_drag_id = Some(id);
+                return;
+            }
+            // Dock widget body click → toast (placeholder; content-
+            // specific actions can hook in later).
             if let Some(&(_, id)) = app
                 .rects
                 .dock_widget_bodies
@@ -5940,6 +5952,28 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.end_divider_drag();
             app.drag_select = None;
             app.dragging_tab_page = None;
+            // Dock widget drag — resolve the final cursor position
+            // to a corner of the editor body (BL / BR / TL / TR
+            // quadrants), then update the widget's `corner` field.
+            // No-op if there's no editor-body rect or the widget
+            // disappeared mid-drag.
+            if let Some(drag_id) = app.dock_drag_id.take()
+                && let Some(body) = app.rects.body
+                && body.width > 0
+                && body.height > 0
+            {
+                let mid_x = body.x + body.width / 2;
+                let mid_y = body.y + body.height / 2;
+                let new_corner = match (x < mid_x, y < mid_y) {
+                    (true, true) => crate::dock::DockCorner::TopLeft,
+                    (false, true) => crate::dock::DockCorner::TopRight,
+                    (true, false) => crate::dock::DockCorner::BottomLeft,
+                    (false, false) => crate::dock::DockCorner::BottomRight,
+                };
+                if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == drag_id) {
+                    w.corner = new_corner;
+                }
+            }
             // Rail section drag-resize release. If the pointer never
             // moved, treat as a click → toggle the section's
             // collapse state. If it did move, commit the new

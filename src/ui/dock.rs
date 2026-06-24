@@ -25,6 +25,7 @@ use crate::ui::theme;
 pub fn draw(frame: &mut Frame, app: &mut App, editor_area: Rect) {
     app.rects.dock_widget_bodies.clear();
     app.rects.dock_widget_close_buttons.clear();
+    app.rects.dock_widget_titles.clear();
     if app.dock_widgets.is_empty() {
         return;
     }
@@ -171,6 +172,15 @@ fn paint_corner_stack(
                 height: 1,
             };
             app.rects.dock_widget_close_buttons.push((close_rect, w.id));
+            // Title-bar drag-anchor rect — everything EXCEPT the
+            // close × button.
+            let title_drag_rect = Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width.saturating_sub(2),
+                height: 1,
+            };
+            app.rects.dock_widget_titles.push((title_drag_rect, w.id));
         }
 
         // Body content (inner minus title row).

@@ -1834,6 +1834,10 @@ pub struct PaneRects {
     /// of each dock widget's title bar. Click → remove the
     /// widget from `App::dock_widgets`.
     pub dock_widget_close_buttons: Vec<(Rect, usize)>,
+    /// `(rect, widget_id)` per dock widget title bar. Mouse-down
+    /// arms a drag-to-corner; the dispatcher resolves the new
+    /// corner from the cursor's final position on mouse-up.
+    pub dock_widget_titles: Vec<(Rect, usize)>,
     /// Current rendered height (rows) of the INTEGRATIONS section.
     /// Set every frame by `tree_view::draw` so the mouse-down handler
     /// can capture it as the drag-resize anchor.
@@ -2929,6 +2933,10 @@ pub struct App {
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
     pub dock_widget_next_id: usize,
+    /// `Some(id)` while the user is mid-drag on a dock widget's
+    /// title bar. Mouse-up resolves the drag to a new corner
+    /// based on the cursor's final quadrant in the editor area.
+    pub dock_drag_id: Option<usize>,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3621,6 +3629,7 @@ impl App {
             workspace_picker_filter: String::new(),
             dock_widgets: Vec::new(),
             dock_widget_next_id: 0,
+            dock_drag_id: None,
             pending_format_save: None,
             pending_will_save: None,
             pending_cookie_edit: None,
