@@ -16,7 +16,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::dock::{DockContent, DockCorner};
+use crate::dock::{DockContent, DockCorner, Layout as DockLayout, Opacity};
 use crate::ui::theme;
 
 /// Paint all dock widgets into the editor body area. Called from
@@ -26,6 +26,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor_area: Rect) {
     app.rects.dock_widget_bodies.clear();
     app.rects.dock_widget_close_buttons.clear();
     app.rects.dock_widget_titles.clear();
+    app.rects.dock_widget_kebabs.clear();
     if app.dock_widgets.is_empty() {
         return;
     }
@@ -33,6 +34,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor_area: Rect) {
         return;
     }
     let t = theme::cur();
+
+    // ── Inline-mode widgets first: tile horizontally into the
+    // top + bottom strips reserved by `ui::draw`. The editor
+    // area parameter is ALREADY shrunk by these strips, so we
+    // read the strips back from `app.rects`.
+    let top_strip = app.rects.inline_dock_top_strip;
+    let bottom_strip = app.rects.inline_dock_bottom_strip;
+    paint_inline_strip(frame, app, top_strip, /*is_top=*/ true, t);
+    paint_inline_strip(frame, app, bottom_strip, /*is_top=*/ false, t);
 
     // Group widgets by corner so we know how to stack inside each.
     // Iterate the four corners explicitly so painting order is
@@ -45,6 +55,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor_area: Rect) {
     ] {
         paint_corner_stack(frame, app, editor_area, corner, t);
     }
+    // Kebab menu — painted last so it overlays all widget chrome.
+    paint_kebab_menu(frame, app, t);
 }
 
 fn paint_corner_stack(
@@ -62,7 +74,9 @@ fn paint_corner_stack(
         .dock_widgets
         .iter()
         .enumerate()
-        .filter(|(_, w)| w.corner == corner)
+        .filter(|(_, w)| {
+            w.corner == corner && matches!(w.layout, crate::dock::Layout::Overlay)
+        })
         .map(|(i, w)| (i, w.clone()))
         .collect();
     if indexed.is_empty() {
@@ -126,17 +140,31 @@ fn paint_corner_stack(
             width: widget_w,
             height: widget_h,
         };
-        frame.render_widget(Clear, widget_rect);
+        // Solid widgets get a Clear (wipes the editor cells
+        // underneath) + a solid bg. Translucent widgets skip
+        // the Clear so the editor text shows through the body;
+        // border + title still get a bg so the chrome is
+        // visible.
+        let translucent = matches!(w.opacity, Opacity::Translucent);
+        if !translucent {
+            frame.render_widget(Clear, widget_rect);
+        }
 
-        // Block border + bg.
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .style(Style::default().fg(t.comment).bg(t.bg2));
+        // Block border + (maybe) bg.
+        let block = if translucent {
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(t.comment))
+        } else {
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(t.comment).bg(t.bg2))
+        };
         let inner = block.inner(widget_rect);
         frame.render_widget(block, widget_rect);
 
-        // Title bar (top row of inner area) + close button at the
-        // rightmost cell of that row.
+        // Title bar (top row of inner area) + kebab `⋮` at the
+        // rightmost cell. Close lives in the kebab menu now.
         if inner.width > 4 {
             // Widget being dragged → highlight the title bar with
             // an accent bg so the user knows the press registered
@@ -144,7 +172,7 @@ fn paint_corner_stack(
             let is_dragging = app.dock_drag_id == Some(w.id);
             let title_bg = if is_dragging { t.cyan } else { t.bg2 };
             let title_fg = if is_dragging { t.bg } else { t.fg };
-            let close_glyph = "×";
+            let kebab_glyph = "⋮";
             let drag_hint = if is_dragging { " ⇲ " } else { "" };
             let title_w = inner.width.saturating_sub(2 + drag_hint.chars().count() as u16);
             let title_clipped: String = w.title.chars().take(title_w as usize).collect();
@@ -160,8 +188,8 @@ fn paint_corner_stack(
                 Span::styled(" ".repeat(pad), Style::default().bg(title_bg)),
                 Span::styled(drag_hint, Style::default().fg(title_fg).bg(title_bg)),
                 Span::styled(
-                    close_glyph,
-                    Style::default().fg(t.red).bg(title_bg),
+                    kebab_glyph,
+                    Style::default().fg(title_fg).bg(title_bg),
                 ),
                 Span::styled(" ", Style::default().bg(title_bg)),
             ]);
@@ -172,16 +200,16 @@ fn paint_corner_stack(
                 height: 1,
             };
             frame.render_widget(Paragraph::new(title_line), title_rect);
-            // Close button click rect — the rightmost 1 cell (the ×).
-            let close_rect = Rect {
+            // Kebab `⋮` click rect — the rightmost 1 cell.
+            let kebab_rect = Rect {
                 x: inner.x + inner.width - 2,
                 y: inner.y,
                 width: 1,
                 height: 1,
             };
-            app.rects.dock_widget_close_buttons.push((close_rect, w.id));
+            app.rects.dock_widget_kebabs.push((kebab_rect, w.id));
             // Title-bar drag-anchor rect — everything EXCEPT the
-            // close × button.
+            // kebab glyph.
             let title_drag_rect = Rect {
                 x: inner.x,
                 y: inner.y,
@@ -212,6 +240,311 @@ fn paint_corner_stack(
 
         painted_h = painted_h.saturating_add(widget_h);
     }
+}
+
+/// Tile inline widgets horizontally across `strip`. `is_top`
+/// controls source ordering: top widgets are TL→TR (left→right by
+/// corner, then by insertion); bottom widgets are BL→BR.
+fn paint_inline_strip(
+    frame: &mut Frame,
+    app: &mut App,
+    strip: Option<Rect>,
+    is_top: bool,
+    t: crate::ui::theme::Theme,
+) {
+    let Some(strip) = strip else {
+        return;
+    };
+    // Collect inline widgets for this edge, in insertion order
+    // within each corner. Left corner first → right corner
+    // second, so widths-frac-of-editor lines up with corner
+    // intent.
+    let (left_corner, right_corner) = if is_top {
+        (DockCorner::TopLeft, DockCorner::TopRight)
+    } else {
+        (DockCorner::BottomLeft, DockCorner::BottomRight)
+    };
+    let mut ordered: Vec<crate::dock::DockWidget> = Vec::new();
+    for w in &app.dock_widgets {
+        if matches!(w.layout, crate::dock::Layout::Inline) && w.corner == left_corner {
+            ordered.push(w.clone());
+        }
+    }
+    for w in &app.dock_widgets {
+        if matches!(w.layout, crate::dock::Layout::Inline) && w.corner == right_corner {
+            ordered.push(w.clone());
+        }
+    }
+    if ordered.is_empty() {
+        return;
+    }
+    // Tile left-to-right. Each widget gets its own
+    // `width_frac × editor_width` slice; if their summed widths
+    // exceed the strip, later widgets are dropped (rule we
+    // settled on: first inline at this edge wins; subsequent
+    // ones silently overflow).
+    let strip_w = strip.width;
+    let mut cur_x = strip.x;
+    for w in &ordered {
+        let w_frac = w.width_frac.clamp(0.15, 0.9);
+        let widget_w = (strip_w as f32 * w_frac) as u16;
+        if widget_w < 8 {
+            continue;
+        }
+        if cur_x + widget_w > strip.x + strip.width {
+            // Out of room — skip silently.
+            break;
+        }
+        let widget_rect = Rect {
+            x: cur_x,
+            y: strip.y,
+            width: widget_w,
+            height: strip.height,
+        };
+        paint_one_widget(frame, app, w, widget_rect, t);
+        cur_x += widget_w;
+    }
+}
+
+/// Extracted single-widget paint so `paint_corner_stack` and
+/// `paint_inline_strip` share the chrome / body code.
+fn paint_one_widget(
+    frame: &mut Frame,
+    app: &mut App,
+    w: &crate::dock::DockWidget,
+    widget_rect: Rect,
+    t: crate::ui::theme::Theme,
+) {
+    let translucent = matches!(w.opacity, Opacity::Translucent);
+    if !translucent {
+        frame.render_widget(Clear, widget_rect);
+    }
+    let block = if translucent {
+        Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(t.comment))
+    } else {
+        Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(t.comment).bg(t.bg2))
+    };
+    let inner = block.inner(widget_rect);
+    frame.render_widget(block, widget_rect);
+    // Title + kebab.
+    if inner.width > 4 {
+        let is_dragging = app.dock_drag_id == Some(w.id);
+        let title_bg = if is_dragging { t.cyan } else { t.bg2 };
+        let title_fg = if is_dragging { t.bg } else { t.fg };
+        let kebab_glyph = "⋮";
+        let drag_hint = if is_dragging { " ⇲ " } else { "" };
+        let title_w = inner
+            .width
+            .saturating_sub(2 + drag_hint.chars().count() as u16);
+        let title_clipped: String = w.title.chars().take(title_w as usize).collect();
+        let pad = (title_w as usize).saturating_sub(title_clipped.chars().count());
+        let title_line = Line::from(vec![
+            Span::styled(
+                title_clipped,
+                Style::default()
+                    .fg(title_fg)
+                    .bg(title_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ".repeat(pad), Style::default().bg(title_bg)),
+            Span::styled(drag_hint, Style::default().fg(title_fg).bg(title_bg)),
+            Span::styled(kebab_glyph, Style::default().fg(title_fg).bg(title_bg)),
+            Span::styled(" ", Style::default().bg(title_bg)),
+        ]);
+        let title_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(title_line), title_rect);
+        let kebab_rect = Rect {
+            x: inner.x + inner.width - 2,
+            y: inner.y,
+            width: 1,
+            height: 1,
+        };
+        app.rects.dock_widget_kebabs.push((kebab_rect, w.id));
+        let title_drag_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width.saturating_sub(2),
+            height: 1,
+        };
+        app.rects.dock_widget_titles.push((title_drag_rect, w.id));
+    }
+    if inner.height >= 2 {
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height - 1,
+        };
+        match &w.content {
+            DockContent::Text(s) => render_text_body(frame, body_rect, s, t),
+            DockContent::LogTail { path, max_lines } => {
+                render_log_tail_body(frame, body_rect, path, *max_lines, t)
+            }
+        }
+        app.rects.dock_widget_bodies.push((body_rect, w.id));
+    }
+}
+
+/// Paint the open kebab menu (if any). Anchored below the `⋮`
+/// glyph that opened it; clamped to screen edges.
+fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme) {
+    app.rects.dock_kebab_rows = Vec::new();
+    let Some(menu) = app.dock_kebab_menu.as_ref() else {
+        return;
+    };
+    // Look up the widget so we can mark current values in the menu
+    // (e.g. the active Layout / Opacity).
+    let cur_layout = app
+        .dock_widgets
+        .iter()
+        .find(|w| w.id == menu.widget_id)
+        .map(|w| w.layout);
+    let cur_opacity = app
+        .dock_widgets
+        .iter()
+        .find(|w| w.id == menu.widget_id)
+        .map(|w| w.opacity);
+    let cur_corner = app
+        .dock_widgets
+        .iter()
+        .find(|w| w.id == menu.widget_id)
+        .map(|w| w.corner);
+
+    // Compute panel dimensions.
+    let max_label = 18u16; // widest item label
+    let w = max_label + 4;
+    let body_rows = menu.items.len() as u16;
+    let h = body_rows + 2; // borders
+    let screen = frame.area();
+    let x = menu
+        .anchor_x
+        .saturating_sub(w / 2)
+        .min(screen.x + screen.width.saturating_sub(w));
+    let y = (menu.anchor_y + 1).min(screen.y + screen.height.saturating_sub(h));
+    let area = Rect {
+        x,
+        y,
+        width: w.min(screen.width),
+        height: h.min(screen.height),
+    };
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .style(Style::default().fg(t.fg).bg(t.bg2));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut y = inner.y;
+    let mut item_rects: Vec<(Rect, usize)> = Vec::new();
+    for (idx, item) in menu.items.iter().enumerate() {
+        if y >= inner.y + inner.height {
+            break;
+        }
+        let is_selected = idx == menu.selected;
+        let row_rect = Rect {
+            x: inner.x,
+            y,
+            width: inner.width,
+            height: 1,
+        };
+        let (text, fg, bg, indent, modifier) = match item {
+            crate::dock::KebabMenuItem::Header(h) => (
+                h.to_string(),
+                t.comment,
+                t.bg2,
+                "",
+                Modifier::BOLD,
+            ),
+            crate::dock::KebabMenuItem::Separator => (
+                "─".repeat(inner.width as usize),
+                t.comment,
+                t.bg2,
+                "",
+                Modifier::empty(),
+            ),
+            crate::dock::KebabMenuItem::Resize(p) => (
+                p.label().to_string(),
+                t.fg,
+                if is_selected { t.cyan } else { t.bg2 },
+                "  ",
+                Modifier::empty(),
+            ),
+            crate::dock::KebabMenuItem::MoveTo(c) => {
+                let label = match c {
+                    DockCorner::BottomLeft => "Bottom-left",
+                    DockCorner::BottomRight => "Bottom-right",
+                    DockCorner::TopLeft => "Top-left",
+                    DockCorner::TopRight => "Top-right",
+                };
+                let marker = if cur_corner == Some(*c) { "● " } else { "  " };
+                (
+                    format!("{marker}{label}"),
+                    t.fg,
+                    if is_selected { t.cyan } else { t.bg2 },
+                    "",
+                    Modifier::empty(),
+                )
+            }
+            crate::dock::KebabMenuItem::SetLayout(l) => {
+                let label = match l {
+                    DockLayout::Overlay => "Overlay",
+                    DockLayout::Inline => "Inline (eats space)",
+                };
+                let marker = if cur_layout == Some(*l) { "● " } else { "  " };
+                (
+                    format!("{marker}{label}"),
+                    t.fg,
+                    if is_selected { t.cyan } else { t.bg2 },
+                    "",
+                    Modifier::empty(),
+                )
+            }
+            crate::dock::KebabMenuItem::SetOpacity(o) => {
+                let label = match o {
+                    Opacity::Solid => "Solid",
+                    Opacity::Translucent => "Translucent",
+                };
+                let marker = if cur_opacity == Some(*o) { "● " } else { "  " };
+                (
+                    format!("{marker}{label}"),
+                    t.fg,
+                    if is_selected { t.cyan } else { t.bg2 },
+                    "",
+                    Modifier::empty(),
+                )
+            }
+            crate::dock::KebabMenuItem::Close => (
+                "Close".to_string(),
+                t.red,
+                if is_selected { t.cyan } else { t.bg2 },
+                "  ",
+                Modifier::empty(),
+            ),
+        };
+        let line = Line::from(vec![
+            Span::styled(indent.to_string(), Style::default().bg(bg)),
+            Span::styled(text, Style::default().fg(fg).bg(bg).add_modifier(modifier)),
+        ]);
+        frame.render_widget(Paragraph::new(line), row_rect);
+        // Only register click rects for selectable items.
+        if !matches!(
+            item,
+            crate::dock::KebabMenuItem::Header(_) | crate::dock::KebabMenuItem::Separator
+        ) {
+            item_rects.push((row_rect, idx));
+        }
+        y += 1;
+    }
+    app.rects.dock_kebab_rows = item_rects;
 }
 
 /// Render static text into the widget's body. Naive char-boundary

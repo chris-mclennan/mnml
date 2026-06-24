@@ -1838,6 +1838,21 @@ pub struct PaneRects {
     /// arms a drag-to-corner; the dispatcher resolves the new
     /// corner from the cursor's final position on mouse-up.
     pub dock_widget_titles: Vec<(Rect, usize)>,
+    /// `(rect, widget_id)` per dock widget kebab `⋮` glyph at the
+    /// right end of the title bar. Click → open the per-widget
+    /// kebab menu anchored just below the glyph.
+    pub dock_widget_kebabs: Vec<(Rect, usize)>,
+    /// `(rect, item_idx)` per kebab-menu row, where `item_idx`
+    /// indexes into `DockKebabMenu::items`. Cleared + rebuilt
+    /// every frame.
+    pub dock_kebab_rows: Vec<(Rect, usize)>,
+    /// Strip reserved at the top of the editor body for inline
+    /// dock widgets at TL / TR corners. Editor body is shrunk by
+    /// `height` from the top. `None` = no inline top widgets.
+    pub inline_dock_top_strip: Option<Rect>,
+    /// Strip reserved at the bottom of the editor body for inline
+    /// dock widgets at BL / BR corners. Same shape as top strip.
+    pub inline_dock_bottom_strip: Option<Rect>,
     /// Current rendered height (rows) of the INTEGRATIONS section.
     /// Set every frame by `tree_view::draw` so the mouse-down handler
     /// can capture it as the drag-resize anchor.
@@ -2937,6 +2952,16 @@ pub struct App {
     /// title bar. Mouse-up resolves the drag to a new corner
     /// based on the cursor's final quadrant in the editor area.
     pub dock_drag_id: Option<usize>,
+    /// Live cursor position during a dock drag. Updated on every
+    /// Mouse Drag event while `dock_drag_id` is set; consumed by
+    /// the renderer to paint the ghost next to the cursor + the
+    /// hover-corner overlay.
+    pub dock_drag_cursor: Option<(u16, u16)>,
+    /// Open kebab-menu state: `(widget_id, anchor_xy, selected_idx)`.
+    /// `None` ⇒ no menu open. The menu lists Resize / Move to /
+    /// Close items; `selected_idx` indexes into the flat item list
+    /// (with sub-menus expanded).
+    pub dock_kebab_menu: Option<crate::dock::KebabMenuState>,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3630,6 +3655,8 @@ impl App {
             dock_widgets: Vec::new(),
             dock_widget_next_id: 0,
             dock_drag_id: None,
+            dock_drag_cursor: None,
+            dock_kebab_menu: None,
             pending_format_save: None,
             pending_will_save: None,
             pending_cookie_edit: None,

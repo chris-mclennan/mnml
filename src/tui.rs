@@ -371,6 +371,66 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Dock widget kebab menu — when open, intercept keys so they
+    // navigate the menu rather than falling through to editor /
+    // tree handlers.
+    if app.dock_kebab_menu.is_some() {
+        let menu = app.dock_kebab_menu.as_ref().unwrap();
+        let items_len = menu.items.len();
+        match key.code {
+            KeyCode::Esc => {
+                app.dock_kebab_menu = None;
+                return;
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                if let Some(m) = app.dock_kebab_menu.as_mut() {
+                    let mut i = m.selected;
+                    for _ in 0..items_len {
+                        i = (i + 1) % items_len;
+                        if matches!(
+                            m.items[i],
+                            crate::dock::KebabMenuItem::Header(_)
+                                | crate::dock::KebabMenuItem::Separator
+                        ) {
+                            continue;
+                        }
+                        break;
+                    }
+                    m.selected = i;
+                }
+                return;
+            }
+            KeyCode::Up | KeyCode::BackTab => {
+                if let Some(m) = app.dock_kebab_menu.as_mut() {
+                    let mut i = m.selected;
+                    for _ in 0..items_len {
+                        i = if i == 0 { items_len - 1 } else { i - 1 };
+                        if matches!(
+                            m.items[i],
+                            crate::dock::KebabMenuItem::Header(_)
+                                | crate::dock::KebabMenuItem::Separator
+                        ) {
+                            continue;
+                        }
+                        break;
+                    }
+                    m.selected = i;
+                }
+                return;
+            }
+            KeyCode::Enter => {
+                let (wid, item) = {
+                    let m = app.dock_kebab_menu.as_ref().unwrap();
+                    (m.widget_id, m.items.get(m.selected).copied())
+                };
+                if let Some(item) = item {
+                    crate::dock::apply_kebab_choice(app, wid, item);
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
     // Git-palette filter input — when focused, intercept typing /
     // backspace / Esc here so the keys don't fall through to the
     // editor.
@@ -4142,6 +4202,36 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::Down(MouseButton::Right) => {
+            // Right-click on a dock widget (body, title, or kebab)
+            // → open the kebab menu anchored at the click. Same
+            // menu as the `⋮` glyph; gives power users a faster
+            // path. Checked first so the menu wins over per-pane
+            // right-click handlers below.
+            if let Some(id) = app
+                .rects
+                .dock_widget_bodies
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, id)| *id)
+                .or_else(|| {
+                    app.rects
+                        .dock_widget_titles
+                        .iter()
+                        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                        .map(|(_, id)| *id)
+                })
+                .or_else(|| {
+                    app.rects
+                        .dock_widget_kebabs
+                        .iter()
+                        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                        .map(|(_, id)| *id)
+                })
+            {
+                app.dock_kebab_menu =
+                    Some(crate::dock::KebabMenuState::build(id, x, y));
+                return;
+            }
             // 2026-06-21 vscode-mouse SEV-2: right-click on a
             // Claude Agents dashboard row → 7-item context menu.
             if let Some(&(_, pid, row_idx)) = app
@@ -5524,15 +5614,41 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.click_git_rail(hit);
                 return;
             }
-            // Dock widget close `×` click → remove the widget.
-            // Checked BEFORE the title-bar / body so the × wins.
-            if let Some(&(_, id)) = app
+            // Open kebab-menu row click → apply choice + close.
+            // Checked FIRST so a click on a menu row wins over
+            // anything underneath (the menu is an overlay).
+            if app.dock_kebab_menu.is_some()
+                && let Some(&(_, idx)) = app
+                    .rects
+                    .dock_kebab_rows
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                if let Some(menu) = app.dock_kebab_menu.as_ref()
+                    && let Some(item) = menu.items.get(idx).copied()
+                {
+                    let wid = menu.widget_id;
+                    crate::dock::apply_kebab_choice(app, wid, item);
+                }
+                return;
+            }
+            // Click ANYWHERE else with the kebab menu open → close it.
+            if app.dock_kebab_menu.is_some() {
+                app.dock_kebab_menu = None;
+                // Fall through — let the click hit whatever it
+                // was meant for.
+            }
+            // Dock widget kebab `⋮` click → open the menu.
+            // Checked BEFORE the title-bar / body so the kebab
+            // wins.
+            if let Some(&(r, id)) = app
                 .rects
-                .dock_widget_close_buttons
+                .dock_widget_kebabs
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                app.dock_widgets.retain(|w| w.id != id);
+                app.dock_kebab_menu =
+                    Some(crate::dock::KebabMenuState::build(id, r.x, r.y));
                 return;
             }
             // Dock widget title bar mouse-down → arm a drag. Final
@@ -5545,6 +5661,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.dock_drag_id = Some(id);
+                app.dock_drag_cursor = Some((x, y));
                 return;
             }
             // Dock widget body click → toast (placeholder; content-
@@ -5985,6 +6102,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == drag_id) {
                     w.corner = new_corner;
                 }
+                app.dock_drag_cursor = None;
             }
             // Rail section drag-resize release. If the pointer never
             // moved, treat as a click → toggle the section's

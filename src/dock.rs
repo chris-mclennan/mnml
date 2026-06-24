@@ -27,6 +27,28 @@ pub enum DockCorner {
     TopRight,
 }
 
+/// How the widget interacts with the editor body:
+///   - `Overlay` — paints on top of the editor (today's default).
+///     Widgets at the same edge stack vertically.
+///   - `Inline` — claims its own strip; editor reflows around it.
+///     Multiple inline widgets at the same edge tile horizontally
+///     by `width_frac`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Layout {
+    Overlay,
+    Inline,
+}
+
+/// Background fill policy. `Solid` paints a full bg under the
+/// widget (today's default). `Translucent` skips the body bg fill
+/// so the editor text underneath shows through; title bar + border
+/// still get a bg so the widget remains visible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Opacity {
+    Solid,
+    Translucent,
+}
+
 /// What the dock widget renders inside its body. Held as an enum
 /// so future variants (live Claude tail, build status, log tail,
 /// custom plugin content) can land without touching the renderer
@@ -64,6 +86,19 @@ pub struct DockWidget {
     pub title: String,
     /// Body payload.
     pub content: DockContent,
+    /// Overlay (default) vs Inline. See `Layout` docs.
+    #[serde(default = "default_layout")]
+    pub layout: Layout,
+    /// Solid (default) vs Translucent. See `Opacity` docs.
+    #[serde(default = "default_opacity")]
+    pub opacity: Opacity,
+}
+
+fn default_layout() -> Layout {
+    Layout::Overlay
+}
+fn default_opacity() -> Opacity {
+    Opacity::Solid
 }
 
 impl DockWidget {
@@ -89,6 +124,8 @@ impl DockWidget {
             height_frac: 0.25,
             title: title.into(),
             content: DockContent::Text(body.into()),
+            layout: Layout::Overlay,
+            opacity: Opacity::Solid,
         }
     }
 }
@@ -135,7 +172,155 @@ pub fn push_log_tail(
             path,
             max_lines: 16,
         },
+        layout: Layout::Overlay,
+        opacity: Opacity::Solid,
     });
+}
+
+/// Named size presets surfaced in the kebab menu's `Resize ▸`
+/// sub-list. Mapping to `(width_frac, height_frac)`:
+///   - Small  → 0.25 × 0.15
+///   - Medium → 0.5  × 0.25  (default)
+///   - Large  → 0.5  × 0.4
+///   - Wide   → 0.9  × 0.25
+///   - Tall   → 0.5  × 0.5
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SizePreset {
+    Small,
+    Medium,
+    Large,
+    Wide,
+    Tall,
+}
+
+impl SizePreset {
+    pub fn fractions(self) -> (f32, f32) {
+        match self {
+            SizePreset::Small => (0.25, 0.15),
+            SizePreset::Medium => (0.5, 0.25),
+            SizePreset::Large => (0.5, 0.4),
+            SizePreset::Wide => (0.9, 0.25),
+            SizePreset::Tall => (0.5, 0.5),
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            SizePreset::Small => "Small",
+            SizePreset::Medium => "Medium",
+            SizePreset::Large => "Large",
+            SizePreset::Wide => "Wide",
+            SizePreset::Tall => "Tall",
+        }
+    }
+}
+
+/// One row in the kebab menu. Flat-list shape so the dispatcher
+/// can pick by index — sub-menus are inlined under their headers
+/// for v1 (no nested popups).
+#[derive(Debug, Clone, Copy)]
+pub enum KebabMenuItem {
+    /// Header row, not selectable.
+    Header(&'static str),
+    Separator,
+    Resize(SizePreset),
+    MoveTo(DockCorner),
+    SetLayout(Layout),
+    SetOpacity(Opacity),
+    Close,
+}
+
+/// Open kebab-menu state.
+#[derive(Debug, Clone)]
+pub struct KebabMenuState {
+    /// Which widget the menu belongs to.
+    pub widget_id: usize,
+    /// Anchor cell (where the `⋮` was). The menu renders just
+    /// below this; clamped to screen edges on the right / bottom.
+    pub anchor_x: u16,
+    pub anchor_y: u16,
+    /// Highlighted row (used by keyboard nav; click bypasses it).
+    pub selected: usize,
+    /// Materialized item list — built once at open so renderer +
+    /// dispatcher agree on indices.
+    pub items: Vec<KebabMenuItem>,
+}
+
+impl KebabMenuState {
+    pub fn build(widget_id: usize, anchor_x: u16, anchor_y: u16) -> Self {
+        let mut items = Vec::new();
+        items.push(KebabMenuItem::Header("Resize"));
+        for p in [
+            SizePreset::Small,
+            SizePreset::Medium,
+            SizePreset::Large,
+            SizePreset::Wide,
+            SizePreset::Tall,
+        ] {
+            items.push(KebabMenuItem::Resize(p));
+        }
+        items.push(KebabMenuItem::Separator);
+        items.push(KebabMenuItem::Header("Move to"));
+        for c in [
+            DockCorner::BottomLeft,
+            DockCorner::BottomRight,
+            DockCorner::TopLeft,
+            DockCorner::TopRight,
+        ] {
+            items.push(KebabMenuItem::MoveTo(c));
+        }
+        items.push(KebabMenuItem::Separator);
+        items.push(KebabMenuItem::Header("Layout"));
+        items.push(KebabMenuItem::SetLayout(Layout::Overlay));
+        items.push(KebabMenuItem::SetLayout(Layout::Inline));
+        items.push(KebabMenuItem::Separator);
+        items.push(KebabMenuItem::Header("Opacity"));
+        items.push(KebabMenuItem::SetOpacity(Opacity::Solid));
+        items.push(KebabMenuItem::SetOpacity(Opacity::Translucent));
+        items.push(KebabMenuItem::Separator);
+        items.push(KebabMenuItem::Close);
+        KebabMenuState {
+            widget_id,
+            anchor_x,
+            anchor_y,
+            selected: 1, // skip the leading "Resize" header
+            items,
+        }
+    }
+}
+
+/// Apply a kebab-menu choice to its widget. The dispatcher calls
+/// this when the user clicks a row or presses Enter on a
+/// keyboard-selected row.
+pub fn apply_kebab_choice(app: &mut crate::app::App, widget_id: usize, item: KebabMenuItem) {
+    match item {
+        KebabMenuItem::Header(_) | KebabMenuItem::Separator => {}
+        KebabMenuItem::Resize(preset) => {
+            if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == widget_id) {
+                let (wf, hf) = preset.fractions();
+                w.width_frac = wf;
+                w.height_frac = hf;
+            }
+        }
+        KebabMenuItem::MoveTo(corner) => {
+            if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == widget_id) {
+                w.corner = corner;
+            }
+        }
+        KebabMenuItem::SetLayout(layout) => {
+            if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == widget_id) {
+                w.layout = layout;
+            }
+        }
+        KebabMenuItem::SetOpacity(opacity) => {
+            if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == widget_id) {
+                w.opacity = opacity;
+            }
+        }
+        KebabMenuItem::Close => {
+            app.dock_widgets.retain(|w| w.id != widget_id);
+        }
+    }
+    app.dock_kebab_menu = None;
 }
 
 /// Cycle the most recently added widget to the next corner

@@ -408,6 +408,70 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     app.rects.scratch_term_strip = scratch_strip;
+    // Inline dock widgets — claim a top + bottom strip based on
+    // the max heights of inline widgets at top / bottom corners.
+    // Widgets at BL/BR contribute to the BOTTOM strip; TL/TR to
+    // the TOP strip. Multiple inline widgets at the same edge
+    // tile horizontally — they don't stack — so the strip height
+    // is the MAX of their heights (not the sum).
+    let mut inline_bottom_strip: Option<Rect> = None;
+    let mut inline_top_strip: Option<Rect> = None;
+    {
+        let area_h = body_area.height;
+        let area_w = body_area.width;
+        let mut top_h: u16 = 0;
+        let mut bottom_h: u16 = 0;
+        for w in &app.dock_widgets {
+            if !matches!(w.layout, crate::dock::Layout::Inline) {
+                continue;
+            }
+            let h_frac = w.height_frac.clamp(0.15, 0.9);
+            let h = (area_h as f32 * h_frac) as u16;
+            match w.corner {
+                crate::dock::DockCorner::BottomLeft
+                | crate::dock::DockCorner::BottomRight => {
+                    if h > bottom_h {
+                        bottom_h = h;
+                    }
+                }
+                crate::dock::DockCorner::TopLeft | crate::dock::DockCorner::TopRight => {
+                    if h > top_h {
+                        top_h = h;
+                    }
+                }
+            }
+        }
+        // Cap combined strip height at 50% of editor body so the
+        // editor never gets crushed to a single row.
+        let cap = area_h / 2;
+        if top_h + bottom_h > cap {
+            // Proportional shrink.
+            let scale = cap as f32 / (top_h + bottom_h) as f32;
+            top_h = (top_h as f32 * scale) as u16;
+            bottom_h = (bottom_h as f32 * scale) as u16;
+        }
+        if top_h > 0 && area_h > top_h + 2 {
+            inline_top_strip = Some(Rect {
+                x: body_area.x,
+                y: body_area.y,
+                width: area_w,
+                height: top_h,
+            });
+            body_area.y += top_h;
+            body_area.height -= top_h;
+        }
+        if bottom_h > 0 && body_area.height > bottom_h + 2 {
+            inline_bottom_strip = Some(Rect {
+                x: body_area.x,
+                y: body_area.y + body_area.height - bottom_h,
+                width: area_w,
+                height: bottom_h,
+            });
+            body_area.height -= bottom_h;
+        }
+    }
+    app.rects.inline_dock_top_strip = inline_top_strip;
+    app.rects.inline_dock_bottom_strip = inline_bottom_strip;
     // The native mixr panel — an overlay docked at the bottom-left of
     // the body (from the file-tree edge across). `BottomStrip` is a
     // short strip; `Full` is full body height. Width is capped at
