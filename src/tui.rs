@@ -4332,8 +4332,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                             (x, y),
                         );
                     }
-                    crate::ui::git_palette::GitPaletteHit::RemoteBranch(_) => {
-                        // Remote-branch context menu lands in a follow-up.
+                    crate::ui::git_palette::GitPaletteHit::RemoteBranch(_)
+                    | crate::ui::git_palette::GitPaletteHit::Stash(_)
+                    | crate::ui::git_palette::GitPaletteHit::Tag(_) => {
+                        // Right-click context menus for these land
+                        // in a follow-up.
                     }
                 }
                 return;
@@ -5484,6 +5487,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         // Checkout the remote branch — git will
                         // auto-create a local tracking branch.
                         if let Some(name) = app.git_rail.remote_branches.get(i).cloned() {
+                            app.checkout_branch(&name);
+                        }
+                    }
+                    crate::ui::git_palette::GitPaletteHit::Stash(i) => {
+                        // Click a stash → show its summary as a
+                        // toast. Right-click handles pop / apply /
+                        // drop (lands when the context menu does).
+                        if let Some(st) = app.git_rail.stashes.get(i) {
+                            let id = st.id.clone();
+                            let summary = st.summary.clone();
+                            app.toast(format!("{id}: {summary}"));
+                        }
+                    }
+                    crate::ui::git_palette::GitPaletteHit::Tag(i) => {
+                        // Click a tag → checkout (creates a
+                        // detached HEAD).
+                        if let Some(name) = app.git_rail.tags.get(i).cloned() {
                             app.checkout_branch(&name);
                         }
                     }

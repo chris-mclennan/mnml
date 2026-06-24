@@ -465,6 +465,97 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .push((row_rect, GitPaletteHit::Pull(i)));
             y += 1;
         }
+        if y < area.y + area.height {
+            y += 1;
+        }
+    }
+
+    // ── STASHES section ───────────────────────────────────────
+    if !app.git_rail.stashes.is_empty() && y < area.y + area.height {
+        y = draw_section_header(
+            frame,
+            app,
+            area,
+            y,
+            "STASHES",
+            app.git_rail.stashes.len(),
+            bg,
+        );
+        for (i, st) in app.git_rail.stashes.iter().enumerate() {
+            if y >= area.y + area.height {
+                break;
+            }
+            // The summary is `WIP on branch: <hash> <message>`.
+            // We display just the trailing message for compactness;
+            // the full summary is in the row's hover tooltip target.
+            let summary_short = st
+                .summary
+                .split_once(':')
+                .map(|(_, rest)| rest.trim().to_string())
+                .unwrap_or_else(|| st.summary.clone());
+            let width = area.width as usize;
+            let avail = width.saturating_sub(5);
+            let display = if summary_short.chars().count() > avail {
+                let mut s: String = summary_short.chars().take(avail.saturating_sub(1)).collect();
+                s.push('…');
+                s
+            } else {
+                summary_short
+            };
+            let row_rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            };
+            let line = Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("◆ ", Style::default().fg(t.purple).bg(bg)),
+                Span::styled(display, Style::default().fg(t.fg).bg(bg)),
+            ]);
+            frame.render_widget(Paragraph::new(line), row_rect);
+            app.rects
+                .git_palette_rows
+                .push((row_rect, GitPaletteHit::Stash(i)));
+            y += 1;
+        }
+        if y < area.y + area.height {
+            y += 1;
+        }
+    }
+
+    // ── TAGS section ──────────────────────────────────────────
+    if !app.git_rail.tags.is_empty() && y < area.y + area.height {
+        y = draw_section_header(
+            frame,
+            app,
+            area,
+            y,
+            "TAGS",
+            app.git_rail.tags.len(),
+            bg,
+        );
+        for (i, tag) in app.git_rail.tags.iter().enumerate() {
+            if y >= area.y + area.height {
+                break;
+            }
+            let row_rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            };
+            let line = Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("⊙ ", Style::default().fg(t.orange).bg(bg)),
+                Span::styled(tag.clone(), Style::default().fg(t.fg).bg(bg)),
+            ]);
+            frame.render_widget(Paragraph::new(line), row_rect);
+            app.rects
+                .git_palette_rows
+                .push((row_rect, GitPaletteHit::Tag(i)));
+            y += 1;
+        }
     }
 }
 
@@ -519,6 +610,10 @@ pub enum GitPaletteHit {
     RemoteBranch(usize),
     Worktree(usize),
     Pull(usize),
+    /// Stash — index into `git_rail.stashes`.
+    Stash(usize),
+    /// Tag — index into `git_rail.tags`.
+    Tag(usize),
 }
 
 /// Group branch names by their `/` prefix into a tree:

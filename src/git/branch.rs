@@ -43,6 +43,40 @@ pub fn local_branches_by_recent(workspace: &Path) -> Vec<String> {
     )
 }
 
+/// Tag names, lex-sorted.
+pub fn tags(workspace: &Path) -> Vec<String> {
+    let mut t = lines_of(
+        workspace,
+        &["for-each-ref", "--format=%(refname:short)", "refs/tags"],
+    );
+    t.sort();
+    t
+}
+
+/// One row in `git stash list` — `(stash_id, summary)`. The
+/// stash_id is e.g. `stash@{0}`; the summary is the trailing
+/// `WIP on main: 42a1f2 some commit msg` etc.
+#[derive(Debug, Clone)]
+pub struct StashRow {
+    pub id: String,
+    pub summary: String,
+}
+
+pub fn stashes(workspace: &Path) -> Vec<StashRow> {
+    lines_of(
+        workspace,
+        &["stash", "list", "--format=%gd\x1f%gs"],
+    )
+    .into_iter()
+    .filter_map(|line| {
+        line.split_once('\x1f').map(|(id, summary)| StashRow {
+            id: id.to_string(),
+            summary: summary.to_string(),
+        })
+    })
+    .collect()
+}
+
 /// Remote-tracking branch names (`origin/main`, …), minus the `*/HEAD` aliases.
 pub fn remote_branches(workspace: &Path) -> Vec<String> {
     lines_of(

@@ -69,6 +69,10 @@ pub struct GitRail {
     /// …). Used only by the git palette (`ActivitySection::Git` mode);
     /// the legacy compact rail doesn't render these.
     pub remote_branches: Vec<String>,
+    /// `git stash list` rows. Used only by the git palette.
+    pub stashes: Vec<branch::StashRow>,
+    /// Tags (`refs/tags`). Used only by the git palette.
+    pub tags: Vec<String>,
     pub worktrees: Vec<Worktree>,
     /// Open PRs/MRs for the current repo (best-effort match by remote URL
     /// against the configured SCM hosts). Empty when there's no recognized
@@ -97,6 +101,8 @@ impl GitRail {
         GitRail {
             branches: Vec::new(),
             remote_branches: Vec::new(),
+            stashes: Vec::new(),
+            tags: Vec::new(),
             worktrees: Vec::new(),
             pulls: Vec::new(),
             current_branch: None,
@@ -112,6 +118,8 @@ impl GitRail {
     pub fn refresh(&mut self, workspace: &Path) {
         let current = branch::current(workspace);
         self.remote_branches = branch::remote_branches(workspace);
+        self.stashes = branch::stashes(workspace);
+        self.tags = branch::tags(workspace);
         self.branches = branch::local_branches(workspace)
             .into_iter()
             .map(|name| BranchRow {
