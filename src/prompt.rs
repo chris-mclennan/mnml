@@ -251,6 +251,10 @@ pub enum PromptKind {
     /// text (`:rename` / `term.rename`). Empty input clears the name
     /// back to the profile default.
     PtySessionName,
+    /// Accept ⇒ rename the dock widget referenced by
+    /// `App::dock_rename_target`. Empty input falls back to the
+    /// default `Note N` style name (regenerated from id).
+    DockWidgetRename,
     /// Accept ⇒ approve the AI agent's pending `write_file`; Esc ⇒ deny.
     /// The answer is relayed to the blocked agent worker through its
     /// confirm channel (`App::resolve_tool_confirm`).

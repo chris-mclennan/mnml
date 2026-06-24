@@ -27,7 +27,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor_area: Rect) {
     app.rects.dock_widget_close_buttons.clear();
     app.rects.dock_widget_titles.clear();
     app.rects.dock_widget_kebabs.clear();
+    app.rects.dock_empty_chip = None;
     if app.dock_widgets.is_empty() {
+        // Empty-state discoverability chip — a faint `+ dock` at
+        // the very bottom-right of the editor body. Click → open
+        // the kebab-style new-widget picker (a stripped-down
+        // menu with just the `Add` actions). Disappears the
+        // moment any widget exists. Only render if there's
+        // enough room AND no overlay is active that would
+        // visually compete.
+        if editor_area.width >= 14 && editor_area.height >= 2 {
+            paint_empty_state_chip(frame, app, editor_area);
+        }
         return;
     }
     if editor_area.width < 12 || editor_area.height < 4 {
@@ -55,6 +66,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, editor_area: Rect) {
     ] {
         paint_corner_stack(frame, app, editor_area, corner, t);
     }
+    // Drop-zone preview during a dock drag — painted BEFORE the
+    // kebab menu so an open menu still overlays it (drags don't
+    // happen with a menu open anyway, but the layering is safer).
+    paint_drag_preview(frame, app, editor_area, t);
     // Kebab menu — painted last so it overlays all widget chrome.
     paint_kebab_menu(frame, app, t);
 }
@@ -337,9 +352,29 @@ fn paint_one_widget(
         let title_fg = if is_dragging { t.bg } else { t.fg };
         let kebab_glyph = "⋮";
         let drag_hint = if is_dragging { " ⇲ " } else { "" };
-        let title_w = inner
-            .width
-            .saturating_sub(2 + drag_hint.chars().count() as u16);
+        // Live-content tail-indicator chip — only meaningful for
+        // content variants whose data CAN exceed the visible
+        // body (LogTail today; future ClaudeTail / BuildStatus
+        // will opt in by reporting their own "lines below").
+        let tail_hint = match &w.content {
+            DockContent::LogTail { path, .. } => {
+                let body_h = inner.height.saturating_sub(1).max(1) as usize;
+                let total = std::fs::read_to_string(path)
+                    .map(|s| s.lines().count())
+                    .unwrap_or(0);
+                if total > body_h {
+                    let hidden = total - body_h;
+                    Some(format!(" ▼{hidden} "))
+                } else {
+                    None
+                }
+            }
+            DockContent::Text(_) => None,
+        };
+        let tail_hint_str = tail_hint.as_deref().unwrap_or("");
+        let title_w = inner.width.saturating_sub(
+            2 + drag_hint.chars().count() as u16 + tail_hint_str.chars().count() as u16,
+        );
         let title_clipped: String = w.title.chars().take(title_w as usize).collect();
         let pad = (title_w as usize).saturating_sub(title_clipped.chars().count());
         let title_line = Line::from(vec![
@@ -351,6 +386,10 @@ fn paint_one_widget(
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ".repeat(pad), Style::default().bg(title_bg)),
+            Span::styled(
+                tail_hint_str.to_string(),
+                Style::default().fg(t.comment).bg(title_bg),
+            ),
             Span::styled(drag_hint, Style::default().fg(title_fg).bg(title_bg)),
             Span::styled(kebab_glyph, Style::default().fg(title_fg).bg(title_bg)),
             Span::styled(" ", Style::default().bg(title_bg)),
@@ -392,6 +431,169 @@ fn paint_one_widget(
         }
         app.rects.dock_widget_bodies.push((body_rect, w.id));
     }
+}
+
+/// While a dock widget is being dragged, paint:
+///   - a translucent gray overlay over the quadrant the cursor
+///     is currently in (where the widget will pin on release),
+///   - a small ghost chip near the cursor showing the title.
+fn paint_drag_preview(
+    frame: &mut Frame,
+    app: &mut App,
+    editor_area: Rect,
+    t: crate::ui::theme::Theme,
+) {
+    let Some(drag_id) = app.dock_drag_id else {
+        return;
+    };
+    let Some((cx, cy)) = app.dock_drag_cursor else {
+        return;
+    };
+    // Look up the title for the ghost chip.
+    let title = match app.dock_widgets.iter().find(|w| w.id == drag_id) {
+        Some(w) => w.title.clone(),
+        None => return,
+    };
+    if editor_area.width < 4 || editor_area.height < 4 {
+        return;
+    }
+
+    // Resolve cursor → quadrant.
+    let mid_x = editor_area.x + editor_area.width / 2;
+    let mid_y = editor_area.y + editor_area.height / 2;
+    let (qx, qy, qw, qh) = match (cx < mid_x, cy < mid_y) {
+        // TopLeft
+        (true, true) => (
+            editor_area.x,
+            editor_area.y,
+            editor_area.width / 2,
+            editor_area.height / 2,
+        ),
+        // TopRight
+        (false, true) => (
+            mid_x,
+            editor_area.y,
+            editor_area.x + editor_area.width - mid_x,
+            editor_area.height / 2,
+        ),
+        // BottomLeft
+        (true, false) => (
+            editor_area.x,
+            mid_y,
+            editor_area.width / 2,
+            editor_area.y + editor_area.height - mid_y,
+        ),
+        // BottomRight
+        (false, false) => (
+            mid_x,
+            mid_y,
+            editor_area.x + editor_area.width - mid_x,
+            editor_area.y + editor_area.height - mid_y,
+        ),
+    };
+    let drop_rect = Rect {
+        x: qx,
+        y: qy,
+        width: qw,
+        height: qh,
+    };
+    // Translucent-ish gray fill — terminals can't do alpha so we
+    // approximate by overpainting each cell with a single
+    // shaded glyph + dim fg. This signals "drop zone" without
+    // hiding what's underneath.
+    let shade_style = Style::default().fg(t.comment).bg(t.bg_dark);
+    for row in 0..drop_rect.height {
+        let y = drop_rect.y + row;
+        let line = Line::from(Span::styled(
+            "░".repeat(drop_rect.width as usize),
+            shade_style,
+        ));
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect {
+                x: drop_rect.x,
+                y,
+                width: drop_rect.width,
+                height: 1,
+            },
+        );
+    }
+    // Corner-label so the user can tell which quadrant they're
+    // targeting (handy when dragging across a busy split tree).
+    let corner_label = match (cx < mid_x, cy < mid_y) {
+        (true, true) => " ⤴ Top-left ",
+        (false, true) => " ⤵ Top-right ",
+        (true, false) => " ⤷ Bottom-left ",
+        (false, false) => " ⤶ Bottom-right ",
+    };
+    let label_w = corner_label.chars().count() as u16;
+    if drop_rect.width > label_w + 2 && drop_rect.height >= 1 {
+        let label_rect = Rect {
+            x: drop_rect.x + (drop_rect.width - label_w) / 2,
+            y: drop_rect.y + drop_rect.height / 2,
+            width: label_w,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                corner_label,
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg2)
+                    .add_modifier(Modifier::BOLD),
+            ))),
+            label_rect,
+        );
+    }
+    // Ghost chip near the cursor — `⇲ <title>` so the user sees
+    // what they're carrying. Offset 1 cell so it doesn't cover
+    // the cursor itself.
+    let chip_label = format!(" ⇲ {title} ");
+    let chip_w = chip_label.chars().count() as u16;
+    let chip_x = (cx + 2).min(editor_area.x + editor_area.width.saturating_sub(chip_w));
+    let chip_y = cy.saturating_sub(1).max(editor_area.y);
+    let chip_rect = Rect {
+        x: chip_x,
+        y: chip_y,
+        width: chip_w.min(editor_area.width),
+        height: 1,
+    };
+    frame.render_widget(Clear, chip_rect);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            chip_label,
+            Style::default()
+                .fg(t.bg)
+                .bg(t.cyan)
+                .add_modifier(Modifier::BOLD),
+        ))),
+        chip_rect,
+    );
+}
+
+/// Paint the empty-state discoverability chip — a faint
+/// `+ dock` at the bottom-right of the editor body. Click target
+/// stored in `app.rects.dock_empty_chip` so the mouse handler
+/// can fire `dock.new_text`.
+fn paint_empty_state_chip(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = theme::cur();
+    let label = " + dock ";
+    let lw = label.chars().count() as u16;
+    if area.width <= lw + 2 {
+        return;
+    }
+    let chip_rect = Rect {
+        x: area.x + area.width - lw - 1,
+        y: area.y + area.height - 1,
+        width: lw,
+        height: 1,
+    };
+    let line = Line::from(Span::styled(
+        label,
+        Style::default().fg(t.comment).bg(t.bg2),
+    ));
+    frame.render_widget(Paragraph::new(line), chip_rect);
+    app.rects.dock_empty_chip = Some(chip_rect);
 }
 
 /// Paint the open kebab menu (if any). Anchored below the `⋮`
@@ -522,6 +724,13 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                     Modifier::empty(),
                 )
             }
+            crate::dock::KebabMenuItem::Rename => (
+                "Rename…".to_string(),
+                t.fg,
+                if is_selected { t.cyan } else { t.bg2 },
+                "  ",
+                Modifier::empty(),
+            ),
             crate::dock::KebabMenuItem::Close => (
                 "Close".to_string(),
                 t.red,

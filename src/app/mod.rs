@@ -1846,6 +1846,10 @@ pub struct PaneRects {
     /// indexes into `DockKebabMenu::items`. Cleared + rebuilt
     /// every frame.
     pub dock_kebab_rows: Vec<(Rect, usize)>,
+    /// Click rect for the bottom-right `+ dock` empty-state chip
+    /// (shown only when `dock_widgets.is_empty()`). Click → fires
+    /// `dock.new_text`.
+    pub dock_empty_chip: Option<Rect>,
     /// Strip reserved at the top of the editor body for inline
     /// dock widgets at TL / TR corners. Editor body is shrunk by
     /// `height` from the top. `None` = no inline top widgets.
@@ -2962,6 +2966,9 @@ pub struct App {
     /// Close items; `selected_idx` indexes into the flat item list
     /// (with sub-menus expanded).
     pub dock_kebab_menu: Option<crate::dock::KebabMenuState>,
+    /// `Some(widget_id)` while the dock-rename prompt is open.
+    /// Commit handler reads this to know which widget to retitle.
+    pub dock_rename_target: Option<usize>,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3657,6 +3664,7 @@ impl App {
             dock_drag_id: None,
             dock_drag_cursor: None,
             dock_kebab_menu: None,
+            dock_rename_target: None,
             pending_format_save: None,
             pending_will_save: None,
             pending_cookie_edit: None,
@@ -5907,6 +5915,35 @@ impl App {
     /// `:rename` / `term.rename` — open a prompt to name the active pty
     /// session (Claude / Codex / shell). The name shows in the pty-pane
     /// tab strip + the bufferline tab. Seeded with the current name.
+    /// Open the rename prompt for a dock widget. Seeded with the
+    /// widget's current title; commit handler in the prompt
+    /// dispatch reads `App::dock_rename_target` to find the widget.
+    pub fn open_dock_rename_prompt(&mut self, seed: String) {
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::DockWidgetRename,
+            "Rename widget (empty = revert to default)",
+            seed,
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Commit handler for `PromptKind::DockWidgetRename`. Sets the
+    /// widget's `title` to `name`, or reverts to a `Note <id>`
+    /// default when `name` is empty / blank.
+    pub fn rename_dock_widget(&mut self, name: &str) {
+        let Some(target_id) = self.dock_rename_target.take() else {
+            return;
+        };
+        if let Some(w) = self.dock_widgets.iter_mut().find(|w| w.id == target_id) {
+            let trimmed = name.trim();
+            w.title = if trimmed.is_empty() {
+                format!("Note {}", w.id)
+            } else {
+                trimmed.to_string()
+            };
+        }
+    }
+
     pub fn open_rename_session_prompt(&mut self) {
         let Some(cur) = self.active else {
             self.toast("no active pane");

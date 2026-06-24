@@ -5614,6 +5614,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.click_git_rail(hit);
                 return;
             }
+            // Empty-state `+ dock` chip → fire dock.new_text.
+            if let Some(r) = app.rects.dock_empty_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                crate::command::run("dock.new_text", app);
+                return;
+            }
             // Open kebab-menu row click → apply choice + close.
             // Checked FIRST so a click on a menu row wins over
             // anything underneath (the menu is an overlay).
@@ -5901,6 +5908,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            // Dock widget drag — track cursor for the live ghost +
+            // drop-zone overlay. We don't commit anything until
+            // mouse-up; this just updates state so the renderer
+            // can paint the preview.
+            if app.dock_drag_id.is_some() {
+                app.dock_drag_cursor = Some((x, y));
+            }
             // Tree drag — arm if armed, update target idx. Runs alongside
             // the other drag handlers since it doesn't conflict (the tree
             // drag only fires on tree rect coordinates).

@@ -226,6 +226,8 @@ pub enum KebabMenuItem {
     MoveTo(DockCorner),
     SetLayout(Layout),
     SetOpacity(Opacity),
+    /// Open an inline prompt to rename the widget's title.
+    Rename,
     Close,
 }
 
@@ -277,6 +279,7 @@ impl KebabMenuState {
         items.push(KebabMenuItem::SetOpacity(Opacity::Solid));
         items.push(KebabMenuItem::SetOpacity(Opacity::Translucent));
         items.push(KebabMenuItem::Separator);
+        items.push(KebabMenuItem::Rename);
         items.push(KebabMenuItem::Close);
         KebabMenuState {
             widget_id,
@@ -314,6 +317,16 @@ pub fn apply_kebab_choice(app: &mut crate::app::App, widget_id: usize, item: Keb
         KebabMenuItem::SetOpacity(opacity) => {
             if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == widget_id) {
                 w.opacity = opacity;
+            }
+        }
+        KebabMenuItem::Rename => {
+            // Open the no-pane prompt seeded with the current
+            // title. The commit handler (`handle_dock_rename_commit`)
+            // applies it on Enter.
+            if let Some(w) = app.dock_widgets.iter().find(|w| w.id == widget_id) {
+                let seed = w.title.clone();
+                app.dock_rename_target = Some(widget_id);
+                app.open_dock_rename_prompt(seed);
             }
         }
         KebabMenuItem::Close => {

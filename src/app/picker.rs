@@ -1525,6 +1525,15 @@ impl App {
                 let typed = p.input.clone();
                 self.rename_active_pty(&typed);
             }
+            crate::prompt::PromptKind::DockWidgetRename => {
+                let typed = p.input.clone();
+                self.rename_dock_widget(&typed);
+            }
+            crate::prompt::PromptKind::AiToolConfirm => {
+                // Approval handled at the Esc/Enter intercept; if
+                // the prompt got this far without that handling,
+                // fall through silently.
+            }
         }
     }
 }
