@@ -1067,6 +1067,15 @@ struct SavedSession {
     /// Claude session (`ai.session_picker`) re-applies its name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pty_session_names: Vec<(String, String)>,
+    /// Corner-pinned dock widgets. Persisted as-is — the layout
+    /// survives restart so the user's familiar dock arrangement
+    /// comes back. `next_id` is stashed separately so the
+    /// monotonic counter doesn't reset (avoids id collisions if
+    /// the user creates more widgets mid-session).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dock_widgets: Vec<crate::dock::DockWidget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dock_widget_next_id: Option<usize>,
     /// Last `[m] device emulation` preset picked this session (index into
     /// `crate::browser_pane::DEVICE_PRESETS`). Applied to every fresh
     /// `browser.open` so the user doesn't have to re-pick after a relaunch.

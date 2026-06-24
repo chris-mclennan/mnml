@@ -105,6 +105,12 @@ impl App {
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
             clock_show_utc: Some(self.clock_show_utc),
+            dock_widgets: self.dock_widgets.clone(),
+            dock_widget_next_id: if self.dock_widget_next_id > 0 {
+                Some(self.dock_widget_next_id)
+            } else {
+                None
+            },
             pty_session_names: {
                 // Walk pty panes — record (session_id, display_name)
                 // for any renamed Claude session so a later resume can
@@ -407,6 +413,19 @@ impl App {
             self.clock_show_utc = v;
         }
         self.saved_pty_session_names = saved.pty_session_names.into_iter().collect();
+        // Restore the dock widgets verbatim — they own their
+        // positions, sizes, and content. `next_id` is restored
+        // so future widgets keep monotonically increasing ids
+        // (no collisions with restored ones).
+        self.dock_widgets = saved.dock_widgets;
+        if let Some(next) = saved.dock_widget_next_id {
+            self.dock_widget_next_id = next;
+        } else if !self.dock_widgets.is_empty() {
+            // Old session.json before we tracked next_id — derive
+            // from max(id) + 1 so we don't reuse an id.
+            self.dock_widget_next_id =
+                self.dock_widgets.iter().map(|w| w.id).max().unwrap_or(0) + 1;
+        }
         // Drop indices that no longer point into the (potentially
         // shorter) preset table — older sessions could have saved an
         // out-of-range value after a code change.

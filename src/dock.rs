@@ -19,7 +19,7 @@
 /// Which corner of the editor body a dock widget is pinned to.
 /// Stacking direction within a corner: bottom corners stack
 /// UPWARD; top corners stack DOWNWARD.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DockCorner {
     BottomLeft,
     BottomRight,
@@ -31,7 +31,7 @@ pub enum DockCorner {
 /// so future variants (live Claude tail, build status, log tail,
 /// custom plugin content) can land without touching the renderer
 /// for existing variants.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DockContent {
     /// Static text — wraps within the widget body. v1 content
     /// variant; the simplest possible payload so the dock chrome
@@ -40,7 +40,7 @@ pub enum DockContent {
 }
 
 /// A single corner-pinned widget.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DockWidget {
     /// Stable id used by the click-rect dispatch to look the
     /// widget back up. Assigned by `App` on insert; monotonically
