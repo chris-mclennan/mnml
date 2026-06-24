@@ -1385,7 +1385,7 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
         // Sub-label (dim, not selectable).
         push_sublabel(&mut lines, "branches", width, rail_bg);
         row_y += 1;
-        if (row_y - area.y) as usize >= avail {
+        if (row_y - start_y) as usize >= avail {
             frame.render_widget(Paragraph::new(lines), git_body_rect(area, start_y));
             return;
         }
@@ -1400,7 +1400,7 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
         };
         let always_show_current = !app.git_branches_expanded && total_branches > BRANCH_LIST_CAP;
         for (i, br) in app.git_rail.branches.iter().enumerate() {
-            if (row_y - area.y) as usize >= avail {
+            if (row_y - start_y) as usize >= avail {
                 break;
             }
             // When collapsed: render first `cap` branches PLUS the
@@ -1446,7 +1446,7 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
         }
         // `+ N more` / `show less` toggle row (only when there's
         // something to toggle).
-        if total_branches > BRANCH_LIST_CAP && (row_y - area.y) as usize <= avail {
+        if total_branches > BRANCH_LIST_CAP && (row_y - start_y) as usize <= avail {
             let toggle_text = if app.git_branches_expanded {
                 "  show less".to_string()
             } else {
@@ -1477,11 +1477,11 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
     }
 
     // ── worktrees sub-section ──
-    if !app.git_rail.worktrees.is_empty() && ((row_y - area.y) as usize) < avail {
+    if !app.git_rail.worktrees.is_empty() && ((row_y - start_y) as usize) < avail {
         push_sublabel(&mut lines, "worktrees", width, rail_bg);
         row_y += 1;
         for (i, wt) in app.git_rail.worktrees.iter().enumerate() {
-            if (row_y - area.y) as usize >= avail {
+            if (row_y - start_y) as usize >= avail {
                 break;
             }
             let row_idx = nb + i;
@@ -1535,12 +1535,12 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
     }
 
     // ── pulls sub-section (open PRs / MRs for the current repo) ──
-    if !app.git_rail.pulls.is_empty() && ((row_y - area.y) as usize) < avail {
+    if !app.git_rail.pulls.is_empty() && ((row_y - start_y) as usize) < avail {
         push_sublabel(&mut lines, "open prs", width, rail_bg);
         row_y += 1;
         let nb_and_nw = nb + app.git_rail.worktrees.len();
         for (i, pr) in app.git_rail.pulls.iter().enumerate() {
-            if (row_y - area.y) as usize >= avail {
+            if (row_y - start_y) as usize >= avail {
                 break;
             }
             let row_idx = nb_and_nw + i;

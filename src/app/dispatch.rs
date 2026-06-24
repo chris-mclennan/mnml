@@ -577,6 +577,11 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         // arm below can branch on it without a second borrow on `app`.
         let follows_cursor = app.cursor_follows_wheel();
         let vp = (tr.height as usize).max(1);
+        // Editor / md-preview / diff bodies amplify the per-tick
+        // wheel delta — page-like scrolling at the natural rate
+        // (tui.rs passes ±1 per tick; multiplying by EDITOR_WHEEL_GAIN
+        // restores the prior "3 lines per tick" feel).
+        const EDITOR_WHEEL_GAIN: usize = 3;
         match app.panes.get_mut(pid) {
             Some(Pane::Editor(b)) => {
                 // Two policies per `[editor] wheel_moves_cursor`:
@@ -589,7 +594,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 //     this frame. Cursor stays where it was — may
                 //     leave the viewport. Cleared the moment cursor
                 //     moves (VS Code / Sublime canon).
-                let n = delta.unsigned_abs() as usize;
+                let n = delta.unsigned_abs() as usize * EDITOR_WHEEL_GAIN;
                 if follows_cursor {
                     let op = if delta < 0 {
                         EditOp::MoveUp
@@ -613,7 +618,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 }
             }
             Some(Pane::MdPreview(p)) => {
-                let n = delta.unsigned_abs() as usize;
+                let n = delta.unsigned_abs() as usize * EDITOR_WHEEL_GAIN;
                 p.scroll = if delta < 0 {
                     p.scroll.saturating_sub(n)
                 } else {
@@ -621,7 +626,7 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 };
             }
             Some(Pane::Diff(d)) => {
-                let n = delta.unsigned_abs() as usize;
+                let n = delta.unsigned_abs() as usize * EDITOR_WHEEL_GAIN;
                 d.scroll = if delta < 0 {
                     d.scroll.saturating_sub(n)
                 } else {

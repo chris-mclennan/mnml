@@ -5526,8 +5526,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // Mouse-up always clears the bufferline-tab drag arm.
             app.rects.bufferline_drag_tab = None;
         }
-        MouseEventKind::ScrollUp => crate::app::dispatch::scroll_under(app, x, y, -3),
-        MouseEventKind::ScrollDown => crate::app::dispatch::scroll_under(app, x, y, 3),
+        // Wheel sends one event per terminal-emitted tick (macOS Terminal /
+        // Ghostty / iTerm2 fire several ticks per real wheel notch under
+        // smooth-scrolling). Pass ±1 so tree / list / sidebar surfaces
+        // scroll at the natural rate; the editor / md-preview / diff
+        // arms in `scroll_under` amplify internally.
+        MouseEventKind::ScrollUp => crate::app::dispatch::scroll_under(app, x, y, -1),
+        MouseEventKind::ScrollDown => crate::app::dispatch::scroll_under(app, x, y, 1),
         _ => {}
     }
 }
