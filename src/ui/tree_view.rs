@@ -1208,7 +1208,7 @@ fn draw_tree_image_preview(frame: &mut Frame, app: &mut App, inner: Rect) {
 /// expanded, renders a bounded file-list slot beneath it (capped at
 /// `EXTRA_TREE_MAX_ROWS` so a deep tree can't crowd out siblings + the GIT
 /// section). Returns the row past the last drawn.
-const EXTRA_TREE_MAX_ROWS: usize = 12;
+const EXTRA_TREE_MAX_ROWS: usize = 32;
 
 fn draw_extra_workspace_section(
     frame: &mut Frame,
@@ -1289,13 +1289,21 @@ fn draw_extra_workspace_section(
         app.extra_workspaces[ws_idx].tree.scroll,
     ));
 
-    // Clamp the tree's scroll so the cursor stays in view. We're not the
-    // focused tree (filter mode is a primary-only feature for now), so we
-    // just paint top-down with the saved scroll.
+    // Auto-scroll to keep the cursor in view. Matches the primary
+    // tree's behaviour in `draw_workspace_files`. Without this,
+    // `move_up`/`move_down` (driven by mouse wheel or arrow keys)
+    // changes the cursor but the visible window doesn't follow —
+    // so the user can scroll past the visible 12 rows and never
+    // see what they "scrolled" to.
     let rows = app.extra_workspaces[ws_idx].tree.visible_rows();
-    let scroll = app.extra_workspaces[ws_idx].tree.scroll;
+    let cursor = app.extra_workspaces[ws_idx].tree.cursor();
+    if cursor < app.extra_workspaces[ws_idx].tree.scroll {
+        app.extra_workspaces[ws_idx].tree.scroll = cursor;
+    } else if cursor >= app.extra_workspaces[ws_idx].tree.scroll + h {
+        app.extra_workspaces[ws_idx].tree.scroll = cursor + 1 - h;
+    }
     let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
-    let scroll = scroll.min(max_scroll);
+    let scroll = app.extra_workspaces[ws_idx].tree.scroll.min(max_scroll);
     app.extra_workspaces[ws_idx].tree.scroll = scroll;
 
     let multi_repo = app.repos.len() > 1;
