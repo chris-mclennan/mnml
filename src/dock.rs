@@ -60,17 +60,61 @@ pub struct DockWidget {
 }
 
 impl DockWidget {
-    /// Default `0.5 × 0.25` bottom-left text widget. Used by the
-    /// `dock.new_text` palette command when the user doesn't
-    /// specify size / corner overrides.
+    /// Default `0.5 × 0.25` bottom-left text widget. Convenience
+    /// for the bare `dock.new_text` palette command.
     pub fn new_text<S: Into<String>>(id: usize, title: S, body: S) -> Self {
+        Self::new_text_at(id, DockCorner::BottomLeft, title, body)
+    }
+
+    /// Place a default-sized text widget at any corner. The 4
+    /// per-corner palette commands (`dock.new_text_bl` etc.) use
+    /// this so they share the default sizing without diverging.
+    pub fn new_text_at<S: Into<String>>(
+        id: usize,
+        corner: DockCorner,
+        title: S,
+        body: S,
+    ) -> Self {
         DockWidget {
             id,
-            corner: DockCorner::BottomLeft,
+            corner,
             width_frac: 0.5,
             height_frac: 0.25,
             title: title.into(),
             content: DockContent::Text(body.into()),
         }
     }
+}
+
+/// Push a new text widget at `corner`. Title increments with each
+/// call (`Note 1`, `Note 2`, …) so multiple stacked widgets are
+/// visually distinguishable. Shared helper for the 4 per-corner
+/// palette commands.
+pub fn push_text_at(app: &mut crate::app::App, corner: DockCorner) {
+    let id = app.dock_widget_next_id;
+    app.dock_widget_next_id += 1;
+    let n = app.dock_widgets.len() + 1;
+    app.dock_widgets.push(DockWidget::new_text_at(
+        id,
+        corner,
+        format!("Note {n}"),
+        format!(
+            "Dock widget #{n} at {corner:?}.\nClick × to close, or run `dock.close_all` to clear them all."
+        ),
+    ));
+}
+
+/// Cycle the most recently added widget to the next corner
+/// (BottomLeft → BottomRight → TopRight → TopLeft → BottomLeft).
+/// Convenience until right-click move lands.
+pub fn cycle_focused_corner(app: &mut crate::app::App) {
+    let Some(last) = app.dock_widgets.last_mut() else {
+        return;
+    };
+    last.corner = match last.corner {
+        DockCorner::BottomLeft => DockCorner::BottomRight,
+        DockCorner::BottomRight => DockCorner::TopRight,
+        DockCorner::TopRight => DockCorner::TopLeft,
+        DockCorner::TopLeft => DockCorner::BottomLeft,
+    };
 }

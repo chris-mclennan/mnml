@@ -3652,15 +3652,28 @@ fn builtin_commands() -> Vec<Command> {
             title: "Dock: new text widget (bottom-left)",
             group: "dock",
             keys: &[],
-            run: |app| {
-                let id = app.dock_widget_next_id;
-                app.dock_widget_next_id += 1;
-                app.dock_widgets.push(crate::dock::DockWidget::new_text(
-                    id,
-                    "Note",
-                    "Click the × to close. Slice 1 ships static-text\nwidgets; richer content variants land later.",
-                ));
-            },
+            run: |app| crate::dock::push_text_at(app, crate::dock::DockCorner::BottomLeft),
+        },
+        Command {
+            id: "dock.new_text_br",
+            title: "Dock: new text widget (bottom-right)",
+            group: "dock",
+            keys: &[],
+            run: |app| crate::dock::push_text_at(app, crate::dock::DockCorner::BottomRight),
+        },
+        Command {
+            id: "dock.new_text_tl",
+            title: "Dock: new text widget (top-left)",
+            group: "dock",
+            keys: &[],
+            run: |app| crate::dock::push_text_at(app, crate::dock::DockCorner::TopLeft),
+        },
+        Command {
+            id: "dock.new_text_tr",
+            title: "Dock: new text widget (top-right)",
+            group: "dock",
+            keys: &[],
+            run: |app| crate::dock::push_text_at(app, crate::dock::DockCorner::TopRight),
         },
         Command {
             id: "dock.close_all",
@@ -3670,6 +3683,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| {
                 app.dock_widgets.clear();
             },
+        },
+        Command {
+            id: "dock.move_corner_next",
+            title: "Dock: move focused widget to next corner",
+            group: "dock",
+            keys: &[],
+            run: |app| crate::dock::cycle_focused_corner(app),
         },
         Command {
             id: "term.scratch_toggle",
