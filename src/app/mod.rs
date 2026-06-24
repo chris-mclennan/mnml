@@ -1817,6 +1817,14 @@ pub struct PaneRects {
     /// Click target for the picker's filter input. Click to focus +
     /// start typing.
     pub workspace_picker_filter_input: Option<Rect>,
+    /// `(rect, widget_id)` per dock widget body. Click → focus
+    /// the widget (toast in slice 1; content-specific actions
+    /// later).
+    pub dock_widget_bodies: Vec<(Rect, usize)>,
+    /// `(rect, widget_id)` per close-`×` button at the right end
+    /// of each dock widget's title bar. Click → remove the
+    /// widget from `App::dock_widgets`.
+    pub dock_widget_close_buttons: Vec<(Rect, usize)>,
     /// Current rendered height (rows) of the INTEGRATIONS section.
     /// Set every frame by `tree_view::draw` so the mouse-down handler
     /// can capture it as the drag-resize anchor.
@@ -2904,6 +2912,14 @@ pub struct App {
     /// Filter input for the workspace picker (case-insensitive
     /// substring match against workspace name + group label).
     pub workspace_picker_filter: String,
+    /// Corner-pinned dock widgets (third UI tier between full
+    /// panes and 1-row status chrome). v1 ships bottom-left
+    /// `Text` widgets only — see `src/dock.rs` + `src/ui/dock.rs`.
+    pub dock_widgets: Vec<crate::dock::DockWidget>,
+    /// Monotonically-increasing id for new dock widgets. Each
+    /// `dock.new_*` invocation bumps it; ids are stable for the
+    /// session.
+    pub dock_widget_next_id: usize,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3594,6 +3610,8 @@ impl App {
             git_palette_filter_focused: false,
             workspace_picker_open: false,
             workspace_picker_filter: String::new(),
+            dock_widgets: Vec::new(),
+            dock_widget_next_id: 0,
             pending_format_save: None,
             pending_will_save: None,
             pending_cookie_edit: None,

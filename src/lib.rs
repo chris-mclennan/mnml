@@ -88,6 +88,7 @@ pub(crate) mod signature;
 pub(crate) mod snippets;
 pub(crate) mod tools;
 pub(crate) mod tree;
+pub mod dock;
 pub mod menu_bar;
 pub mod tui;
 pub mod ui;

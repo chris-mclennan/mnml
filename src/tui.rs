@@ -5512,6 +5512,31 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.click_git_rail(hit);
                 return;
             }
+            // Dock widget close `×` click → remove the widget.
+            // Checked BEFORE the body click so the × wins.
+            if let Some(&(_, id)) = app
+                .rects
+                .dock_widget_close_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.dock_widgets.retain(|w| w.id != id);
+                return;
+            }
+            // Dock widget body click → toast (slice 1; content-
+            // specific actions land in later slices).
+            if let Some(&(_, id)) = app
+                .rects
+                .dock_widget_bodies
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                if let Some(w) = app.dock_widgets.iter().find(|w| w.id == id) {
+                    let title = w.title.clone();
+                    app.toast(format!("dock: {title}"));
+                }
+                return;
+            }
             // Workspace-picker chevron → toggle the dropdown.
             if let Some(r) = app.rects.workspace_picker_chevron
                 && crate::app::dispatch::contains(r, x, y)

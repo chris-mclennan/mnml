@@ -3648,6 +3648,30 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_rename_session_prompt(),
         },
         Command {
+            id: "dock.new_text",
+            title: "Dock: new text widget (bottom-left)",
+            group: "dock",
+            keys: &[],
+            run: |app| {
+                let id = app.dock_widget_next_id;
+                app.dock_widget_next_id += 1;
+                app.dock_widgets.push(crate::dock::DockWidget::new_text(
+                    id,
+                    "Note",
+                    "Click the × to close. Slice 1 ships static-text\nwidgets; richer content variants land later.",
+                ));
+            },
+        },
+        Command {
+            id: "dock.close_all",
+            title: "Dock: close all widgets",
+            group: "dock",
+            keys: &[],
+            run: |app| {
+                app.dock_widgets.clear();
+            },
+        },
+        Command {
             id: "term.scratch_toggle",
             title: "Terminal: quick scratch strip at the bottom (Ctrl+`)",
             group: "term",

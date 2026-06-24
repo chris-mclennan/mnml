@@ -81,6 +81,7 @@ pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
 pub mod request_view;
+pub mod dock;
 pub mod git_palette;
 pub mod menu_bar;
 pub mod workspace_picker;
@@ -458,6 +459,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let mut path = Vec::new();
         render_layout(frame, app, &layout, body_area, &mut path)
     };
+
+    // Corner-pinned dock widgets — painted AFTER the editor body so
+    // they overlay it when they overlap, BEFORE the drop-hint /
+    // ghost / overlays so a drag-target can still draw on top.
+    dock::draw(frame, app, body_area);
 
     // Drag-to-split: while a bufferline tab is dragged over a pane body, paint
     // a hint showing where the pane will land.
