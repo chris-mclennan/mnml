@@ -5032,11 +5032,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // `> INTEGRATIONS` section header — click toggles collapse.
+            // `> INTEGRATIONS` section header — arm drag-resize. On
+            // mouse-up: !moved → toggle collapse; moved → commit
+            // the new max height.
             if let Some(tr) = app.rects.integration_section_toggle
                 && crate::app::dispatch::contains(tr, x, y)
             {
-                app.integration_section_expanded = !app.integration_section_expanded;
+                app.rail_section_drag = Some(crate::app::RailSectionDrag {
+                    kind: crate::app::RailSectionKind::Integrations,
+                    start_y: y,
+                    start_h: app.rects.integration_section_h.max(1),
+                    moved: false,
+                });
                 return;
             }
             // The `> WORKSPACE-NAME` section header — clicking it toggles the
@@ -5075,11 +5082,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // The `> GIT` section header — same idea for the git rail.
+            // The `> GIT` section header — arm drag-resize. Mouse-up
+            // without movement falls through to the toggle; movement
+            // commits the new max height.
             if let Some(tr) = app.rects.git_section_toggle
                 && crate::app::dispatch::contains(tr, x, y)
             {
-                app.toggle_git_section_expanded();
+                app.rail_section_drag = Some(crate::app::RailSectionDrag {
+                    kind: crate::app::RailSectionKind::Git,
+                    start_y: y,
+                    start_h: app.rects.git_section_h.max(1),
+                    moved: false,
+                });
                 return;
             }
             // Extra-workspace section header → toggle expansion.
@@ -5370,6 +5384,26 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            if let Some(mut drag) = app.rail_section_drag {
+                // Drag-resize a rail section. `start_y - y` is the
+                // upward pointer offset; that's how many extra rows
+                // the section's top edge gets to claim (section
+                // grows UP). Layout code caps at `content_needed`
+                // automatically.
+                drag.moved = true;
+                let delta = drag.start_y as i32 - y as i32;
+                let new_h = (drag.start_h as i32 + delta).clamp(1, 200) as u16;
+                match drag.kind {
+                    crate::app::RailSectionKind::Integrations => {
+                        app.integrations_user_max_h = Some(new_h);
+                    }
+                    crate::app::RailSectionKind::Git => {
+                        app.git_user_max_h = Some(new_h);
+                    }
+                }
+                app.rail_section_drag = Some(drag);
+                return;
+            }
             if app.dragging_scrollbar.is_some() {
                 app.drag_scrollbar_to(x, y);
             } else if app.dragging_tree_edge {
@@ -5438,6 +5472,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.end_divider_drag();
             app.drag_select = None;
             app.dragging_tab_page = None;
+            // Rail section drag-resize release. If the pointer never
+            // moved, treat as a click → toggle the section's
+            // collapse state. If it did move, commit the new
+            // `*_user_max_h` (already updated on each drag tick).
+            if let Some(drag) = app.rail_section_drag.take() {
+                if !drag.moved {
+                    match drag.kind {
+                        crate::app::RailSectionKind::Integrations => {
+                            app.integration_section_expanded =
+                                !app.integration_section_expanded;
+                        }
+                        crate::app::RailSectionKind::Git => {
+                            app.toggle_git_section_expanded();
+                        }
+                    }
+                }
+            }
             // Tree drag-drop release. Three outcomes:
             //  1. over a pane body + the source is a FILE → drag-to-split:
             //     open the file in a split / move it into that pane.

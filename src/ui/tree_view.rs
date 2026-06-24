@@ -71,14 +71,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // that the two bottom sections can claim.
     const MIN_TREE_ROWS: u16 = 6;
     let bottom_budget = area.height.saturating_sub(MIN_TREE_ROWS).max(1);
-    // INTEGRATIONS gets first dibs — it's small (1 header + 1-2 icon
-    // rows) and a long GIT branch list would otherwise eat the whole
-    // bottom budget and squeeze it out. GIT then gets what's left and
-    // its branch list scrolls if it can't fit (GIT is the section
-    // designed to grow; INTEGRATIONS is a stable fixed-size strip).
-    let integration_height = integration_needed.min(bottom_budget);
+    // Section heights honor the user-set max (set via drag-to-resize
+    // on the section header). Final size is the smaller of the
+    // user-set cap, the content-needed value, and the available
+    // budget. So:
+    //   - User drags header down (max_h < needed): section shrinks
+    //     to user_h; content scrolls if applicable.
+    //   - User drags header up (max_h >= needed): section caps at
+    //     content_needed (no wasted empty space).
+    //   - No user override: section auto-sizes to needed (old behaviour).
+    // INTEGRATIONS gets first dibs — a long GIT branch list would
+    // otherwise eat the whole bottom budget and squeeze it out.
+    let integration_cap = app
+        .integrations_user_max_h
+        .unwrap_or(integration_needed)
+        .min(integration_needed)
+        .min(bottom_budget);
+    let integration_height = integration_cap;
     let remaining_for_git = bottom_budget.saturating_sub(integration_height);
-    let git_height = git_needed.min(remaining_for_git).max(1);
+    let git_cap = app
+        .git_user_max_h
+        .unwrap_or(git_needed)
+        .min(git_needed)
+        .min(remaining_for_git);
+    let git_height = git_cap.max(1);
+    // Cache for the mouse-down drag-resize handler so it can use
+    // these as the drag anchor.
+    app.rects.integration_section_h = integration_height;
+    app.rects.git_section_h = git_height;
     // Bottom-pad GIT by 1 row when collapsed so the chevron-only
     // header doesn't sit flush against the rail's bottom edge —
     // visually anchors it as a real section header rather than a

@@ -1570,6 +1570,30 @@ pub enum RailSection {
     Git,
 }
 
+/// Which rail section the user is mid-drag on. Stored inside
+/// `RailSectionDrag` and consumed by the layout code in `tree_view`
+/// to derive the section's max height during the drag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RailSectionKind {
+    Integrations,
+    Git,
+}
+
+/// Active drag-resize state for a rail section header.
+#[derive(Debug, Clone, Copy)]
+pub struct RailSectionDrag {
+    /// Which section's header is being dragged.
+    pub kind: RailSectionKind,
+    /// Pointer Y at mouse-down.
+    pub start_y: u16,
+    /// Section's effective height at mouse-down.
+    pub start_h: u16,
+    /// `true` once at least one Drag event has fired since mouse-down.
+    /// Used to distinguish a quick click (no drag → toggle collapse)
+    /// from a real drag (resize, suppress toggle on release).
+    pub moved: bool,
+}
+
 /// Top-level rail mode driven by the far-left vscode-style activity
 /// bar. Each variant maps to a single rail pane filling everything to
 /// the right of the activity-bar strip. v1 only fully wires
@@ -1769,6 +1793,13 @@ pub struct PaneRects {
     /// flips `App.integration_section_expanded` (same pattern as
     /// `tree_toggle` / `git_section_toggle`).
     pub integration_section_toggle: Option<Rect>,
+    /// Current rendered height (rows) of the INTEGRATIONS section.
+    /// Set every frame by `tree_view::draw` so the mouse-down handler
+    /// can capture it as the drag-resize anchor.
+    pub integration_section_h: u16,
+    /// Current rendered height (rows) of the GIT section. See
+    /// `integration_section_h`.
+    pub git_section_h: u16,
     /// Statusline git-branch chip — clickable shortcut to `git.graph`.
     /// Registered by `ui::statusline::draw` per render; absent when the
     /// branch isn't shown (no repo / non-git workspace).
@@ -2392,6 +2423,22 @@ pub struct App {
     /// True while the user is mid-drag on the rail's right-edge handle.
     /// Cleared on mouse-up; clamps `tree_width` to a sane range during drag.
     pub dragging_tree_edge: bool,
+    /// User-set MAX height for the INTEGRATIONS rail section. `None`
+    /// = auto-size to content needed (the default). When `Some(h)`,
+    /// the layout uses `min(h, content_needed)` so a too-large cap
+    /// collapses back to content (no wasted empty space). Set via
+    /// drag-to-resize on the `> INTEGRATIONS` header.
+    pub integrations_user_max_h: Option<u16>,
+    /// User-set MAX height for the GIT rail section. Same semantics
+    /// as `integrations_user_max_h`. Set via drag-to-resize on the
+    /// `> GIT` header.
+    pub git_user_max_h: Option<u16>,
+    /// `Some((kind, start_y, start_h))` while the user is mid-drag
+    /// on a rail section header. Each drag tick updates the
+    /// corresponding `*_user_max_h`. Cleared on mouse-up. Mouse-up
+    /// without an intervening drag event is treated as a click
+    /// (toggles collapse).
+    pub rail_section_drag: Option<RailSectionDrag>,
     /// `Some(hit)` while the user is mid-drag on a scrollbar (editor /
     /// diff / embedded-diff). Each drag tick maps the current `y` →
     /// new scroll position via `apply_scrollbar_drag`. Cleared on
@@ -3443,6 +3490,9 @@ impl App {
             git_section_commit_focused: false,
             tree_width,
             dragging_tree_edge: false,
+            integrations_user_max_h: None,
+            git_user_max_h: None,
+            rail_section_drag: None,
             dragging_scrollbar: None,
             git_graph_detail_col_override: None,
             dragging_git_graph_detail: None,
