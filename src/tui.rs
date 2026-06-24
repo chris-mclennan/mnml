@@ -6118,26 +6118,89 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.end_divider_drag();
             app.drag_select = None;
             app.dragging_tab_page = None;
-            // Dock widget drag — resolve the final cursor position
-            // to a corner of the editor body (BL / BR / TL / TR
-            // quadrants), then update the widget's `corner` field.
-            // No-op if there's no editor-body rect or the widget
-            // disappeared mid-drag.
+            // Dock widget drag — resolve the final cursor position.
+            //
+            // Magnetic snap first: if the cursor is near another
+            // widget's body, place the dragged widget in that
+            // widget's corner + reorder it adjacent in the vec
+            // (above/below based on cursor Y vs target center).
+            //
+            // Fallback: existing quadrant-of-editor-body logic.
             if let Some(drag_id) = app.dock_drag_id.take()
                 && let Some(body) = app.rects.body
                 && body.width > 0
                 && body.height > 0
             {
-                let mid_x = body.x + body.width / 2;
-                let mid_y = body.y + body.height / 2;
-                let new_corner = match (x < mid_x, y < mid_y) {
-                    (true, true) => crate::dock::DockCorner::TopLeft,
-                    (false, true) => crate::dock::DockCorner::TopRight,
-                    (true, false) => crate::dock::DockCorner::BottomLeft,
-                    (false, false) => crate::dock::DockCorner::BottomRight,
-                };
-                if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == drag_id) {
-                    w.corner = new_corner;
+                const SNAP_DIST: u32 = 8;
+                // Find the closest non-self widget body rect by
+                // Manhattan distance to its center.
+                let snap_target = app
+                    .rects
+                    .dock_widget_bodies
+                    .iter()
+                    .filter(|(_, id)| *id != drag_id)
+                    .map(|(r, id)| {
+                        let cx = r.x + r.width / 2;
+                        let cy = r.y + r.height / 2;
+                        let dx = (cx as i32 - x as i32).unsigned_abs();
+                        let dy = (cy as i32 - y as i32).unsigned_abs();
+                        (dx + dy, *id, *r)
+                    })
+                    .min_by_key(|(d, _, _)| *d);
+
+                if let Some((dist, target_id, target_rect)) = snap_target
+                    && dist <= SNAP_DIST
+                {
+                    // Inherit target's corner + reorder so the
+                    // dragged widget sits adjacent to the target.
+                    let target_corner = app
+                        .dock_widgets
+                        .iter()
+                        .find(|w| w.id == target_id)
+                        .map(|w| w.corner);
+                    if let Some(corner) = target_corner {
+                        if let Some(w) =
+                            app.dock_widgets.iter_mut().find(|w| w.id == drag_id)
+                        {
+                            w.corner = corner;
+                        }
+                        // Move the dragged widget in the vec to sit
+                        // either just before or just after the
+                        // target based on the cursor's side.
+                        let target_mid_y = target_rect.y + target_rect.height / 2;
+                        let put_before = y < target_mid_y;
+                        if let Some(src_idx) =
+                            app.dock_widgets.iter().position(|w| w.id == drag_id)
+                        {
+                            let dragged = app.dock_widgets.remove(src_idx);
+                            // Re-locate the target after removal.
+                            let target_idx = app
+                                .dock_widgets
+                                .iter()
+                                .position(|w| w.id == target_id)
+                                .unwrap_or(app.dock_widgets.len());
+                            let insert_at = if put_before {
+                                target_idx
+                            } else {
+                                (target_idx + 1).min(app.dock_widgets.len())
+                            };
+                            app.dock_widgets.insert(insert_at, dragged);
+                        }
+                    }
+                } else {
+                    let mid_x = body.x + body.width / 2;
+                    let mid_y = body.y + body.height / 2;
+                    let new_corner = match (x < mid_x, y < mid_y) {
+                        (true, true) => crate::dock::DockCorner::TopLeft,
+                        (false, true) => crate::dock::DockCorner::TopRight,
+                        (true, false) => crate::dock::DockCorner::BottomLeft,
+                        (false, false) => crate::dock::DockCorner::BottomRight,
+                    };
+                    if let Some(w) =
+                        app.dock_widgets.iter_mut().find(|w| w.id == drag_id)
+                    {
+                        w.corner = new_corner;
+                    }
                 }
                 app.dock_drag_cursor = None;
             }
