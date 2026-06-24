@@ -138,24 +138,32 @@ fn paint_corner_stack(
         // Title bar (top row of inner area) + close button at the
         // rightmost cell of that row.
         if inner.width > 4 {
+            // Widget being dragged → highlight the title bar with
+            // an accent bg so the user knows the press registered
+            // and mouse-up will move it.
+            let is_dragging = app.dock_drag_id == Some(w.id);
+            let title_bg = if is_dragging { t.cyan } else { t.bg2 };
+            let title_fg = if is_dragging { t.bg } else { t.fg };
             let close_glyph = "×";
-            let title_w = inner.width.saturating_sub(2);
+            let drag_hint = if is_dragging { " ⇲ " } else { "" };
+            let title_w = inner.width.saturating_sub(2 + drag_hint.chars().count() as u16);
             let title_clipped: String = w.title.chars().take(title_w as usize).collect();
             let pad = (title_w as usize).saturating_sub(title_clipped.chars().count());
             let title_line = Line::from(vec![
                 Span::styled(
                     title_clipped,
                     Style::default()
-                        .fg(t.fg)
-                        .bg(t.bg2)
+                        .fg(title_fg)
+                        .bg(title_bg)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" ".repeat(pad), Style::default().bg(t.bg2)),
+                Span::styled(" ".repeat(pad), Style::default().bg(title_bg)),
+                Span::styled(drag_hint, Style::default().fg(title_fg).bg(title_bg)),
                 Span::styled(
                     close_glyph,
-                    Style::default().fg(t.red).bg(t.bg2),
+                    Style::default().fg(t.red).bg(title_bg),
                 ),
-                Span::styled(" ", Style::default().bg(t.bg2)),
+                Span::styled(" ", Style::default().bg(title_bg)),
             ]);
             let title_rect = Rect {
                 x: inner.x,

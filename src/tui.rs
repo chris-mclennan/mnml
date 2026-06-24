@@ -971,7 +971,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             // abbreviations (`:reg`, `:wq`, …). Users wanting
             // the popup match use Tab/click first to put it
             // into the line.
-            KeyCode::Enter => app.no_pane_cmdline_commit(),
+            KeyCode::Enter => {
+                // 2026-06-24 — if the user has navigated the popup
+                // with ↑/↓/Tab (selected index != 0), accept the
+                // highlighted match before committing. Index 0 is
+                // the auto-selected first match — leaving it
+                // unaccepted preserves the vim convention where
+                // `:reg<Enter>` fires the literal `:reg` instead
+                // of whatever `:registers`/etc. matched first.
+                if app.cmdline_popup_is_showing() && app.cmdline_popup_selected > 0 {
+                    app.cmdline_popup_accept_current();
+                }
+                app.no_pane_cmdline_commit();
+            }
             KeyCode::Backspace => app.no_pane_cmdline_backspace(),
             // 2026-06-19 — popup nav. Tab / Down advance the
             // highlighted match; Shift+Tab / Up retreat. Rewrites
