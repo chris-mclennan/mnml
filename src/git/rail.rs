@@ -65,6 +65,10 @@ pub struct PullRow {
 #[derive(Debug)]
 pub struct GitRail {
     pub branches: Vec<BranchRow>,
+    /// Remote-tracking branches (`origin/main`, `origin/feature/foo`,
+    /// …). Used only by the git palette (`ActivitySection::Git` mode);
+    /// the legacy compact rail doesn't render these.
+    pub remote_branches: Vec<String>,
     pub worktrees: Vec<Worktree>,
     /// Open PRs/MRs for the current repo (best-effort match by remote URL
     /// against the configured SCM hosts). Empty when there's no recognized
@@ -92,6 +96,7 @@ impl GitRail {
     pub fn empty() -> Self {
         GitRail {
             branches: Vec::new(),
+            remote_branches: Vec::new(),
             worktrees: Vec::new(),
             pulls: Vec::new(),
             current_branch: None,
@@ -106,6 +111,7 @@ impl GitRail {
     /// reads from memory.
     pub fn refresh(&mut self, workspace: &Path) {
         let current = branch::current(workspace);
+        self.remote_branches = branch::remote_branches(workspace);
         self.branches = branch::local_branches(workspace)
             .into_iter()
             .map(|name| BranchRow {

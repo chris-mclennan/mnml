@@ -936,10 +936,13 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
                 .menu_open
                 .as_ref()
                 .is_some_and(|s| s.menu_idx == i);
-            // Any menu open ⇒ reveal accelerator underlines on EVERY
-            // menu word so the user can keyboard-navigate without
-            // having to memorise Alt+letter mappings.
-            let any_menu_open = app.menu_open.is_some();
+            // Always reveal the Alt+<letter> accelerator underlines.
+            // Terminals can't send key events for modifier keys alone
+            // (no "Alt down" event), so the Windows-style press-Alt-
+            // to-reveal pattern isn't achievable. Always-on underlines
+            // give the user a permanent reference for which letter
+            // opens which menu.
+            let any_menu_open = true;
             // Foreground matches the palette/search chip's `t.comment`
             // (dim grey); background stays on the chrome row's
             // `t.bg_dark`. When open, invert to a cyan highlight so

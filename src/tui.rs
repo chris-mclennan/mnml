@@ -4304,25 +4304,38 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
             // Right-click on a git-palette row — same context menu
             // dispatch as the legacy rail (delete branch / open
-            // worktree / open PR …).
+            // worktree / open PR …). Remote branches don't have a
+            // dedicated context menu yet — fall through silently
+            // for now.
             if let Some(&(_, hit)) = app
                 .rects
                 .git_palette_rows
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                let rail_hit = match hit {
+                match hit {
                     crate::ui::git_palette::GitPaletteHit::Branch(i) => {
-                        crate::git::rail::GitRailHit::Branch(i)
+                        app.open_git_rail_context_menu(
+                            crate::git::rail::GitRailHit::Branch(i),
+                            (x, y),
+                        );
                     }
                     crate::ui::git_palette::GitPaletteHit::Worktree(i) => {
-                        crate::git::rail::GitRailHit::Worktree(i)
+                        app.open_git_rail_context_menu(
+                            crate::git::rail::GitRailHit::Worktree(i),
+                            (x, y),
+                        );
                     }
                     crate::ui::git_palette::GitPaletteHit::Pull(i) => {
-                        crate::git::rail::GitRailHit::Pull(i)
+                        app.open_git_rail_context_menu(
+                            crate::git::rail::GitRailHit::Pull(i),
+                            (x, y),
+                        );
                     }
-                };
-                app.open_git_rail_context_menu(rail_hit, (x, y));
+                    crate::ui::git_palette::GitPaletteHit::RemoteBranch(_) => {
+                        // Remote-branch context menu lands in a follow-up.
+                    }
+                }
                 return;
             }
             // Right-click on a diff body row (standalone or embedded
@@ -5457,18 +5470,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                let rail_hit = match hit {
+                match hit {
                     crate::ui::git_palette::GitPaletteHit::Branch(i) => {
-                        crate::git::rail::GitRailHit::Branch(i)
+                        app.click_git_rail(crate::git::rail::GitRailHit::Branch(i));
                     }
                     crate::ui::git_palette::GitPaletteHit::Worktree(i) => {
-                        crate::git::rail::GitRailHit::Worktree(i)
+                        app.click_git_rail(crate::git::rail::GitRailHit::Worktree(i));
                     }
                     crate::ui::git_palette::GitPaletteHit::Pull(i) => {
-                        crate::git::rail::GitRailHit::Pull(i)
+                        app.click_git_rail(crate::git::rail::GitRailHit::Pull(i));
                     }
-                };
-                app.click_git_rail(rail_hit);
+                    crate::ui::git_palette::GitPaletteHit::RemoteBranch(i) => {
+                        // Checkout the remote branch — git will
+                        // auto-create a local tracking branch.
+                        if let Some(name) = app.git_rail.remote_branches.get(i).cloned() {
+                            app.checkout_branch(&name);
+                        }
+                    }
+                }
                 return;
             }
             // Claude Agents — Files drill-down file row click → open
