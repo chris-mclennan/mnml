@@ -3676,6 +3676,19 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| crate::dock::push_text_at(app, crate::dock::DockCorner::TopRight),
         },
         Command {
+            id: "dock.new_log_tail",
+            title: "Dock: tail a file (bottom-left)",
+            group: "dock",
+            keys: &[],
+            // Defaults to the workspace's `~/.mnml/run.log` so
+            // users have something to test with. They can pass
+            // a path arg or right-click the widget to change it.
+            run: |app| {
+                let path = app.workspace.join(".mnml").join("run.log");
+                crate::dock::push_log_tail(app, crate::dock::DockCorner::BottomLeft, path);
+            },
+        },
+        Command {
             id: "dock.close_all",
             title: "Dock: close all widgets",
             group: "dock",

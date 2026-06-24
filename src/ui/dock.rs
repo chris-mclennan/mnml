@@ -183,35 +183,10 @@ fn paint_corner_stack(
             };
             match &w.content {
                 DockContent::Text(s) => {
-                    // Naive line-wrap on word boundaries; long
-                    // single words just clip. Good enough for v1.
-                    let mut lines: Vec<Line> = Vec::with_capacity(body_rect.height as usize);
-                    let max_w = body_rect.width as usize;
-                    for raw in s.lines() {
-                        let mut remaining = raw;
-                        while !remaining.is_empty()
-                            && lines.len() < body_rect.height as usize
-                        {
-                            let take = remaining
-                                .chars()
-                                .take(max_w)
-                                .collect::<String>();
-                            let take_len = take.chars().count();
-                            lines.push(Line::from(Span::styled(
-                                take,
-                                Style::default().fg(t.fg).bg(t.bg2),
-                            )));
-                            remaining = remaining
-                                .char_indices()
-                                .nth(take_len)
-                                .map(|(idx, _)| &remaining[idx..])
-                                .unwrap_or("");
-                        }
-                        if lines.len() >= body_rect.height as usize {
-                            break;
-                        }
-                    }
-                    frame.render_widget(Paragraph::new(lines), body_rect);
+                    render_text_body(frame, body_rect, s, t);
+                }
+                DockContent::LogTail { path, max_lines } => {
+                    render_log_tail_body(frame, body_rect, path, *max_lines, t);
                 }
             }
             app.rects.dock_widget_bodies.push((body_rect, w.id));
@@ -219,4 +194,85 @@ fn paint_corner_stack(
 
         painted_h = painted_h.saturating_add(widget_h);
     }
+}
+
+/// Render static text into the widget's body. Naive char-boundary
+/// line-wrap; long single words just clip at the right edge. Good
+/// enough for v1 — proper word-wrap can land later.
+fn render_text_body(
+    frame: &mut Frame,
+    body_rect: Rect,
+    text: &str,
+    t: crate::ui::theme::Theme,
+) {
+    let mut lines: Vec<Line> = Vec::with_capacity(body_rect.height as usize);
+    let max_w = body_rect.width as usize;
+    for raw in text.lines() {
+        let mut remaining = raw;
+        while !remaining.is_empty() && lines.len() < body_rect.height as usize {
+            let take = remaining.chars().take(max_w).collect::<String>();
+            let take_len = take.chars().count();
+            lines.push(Line::from(Span::styled(
+                take,
+                Style::default().fg(t.fg).bg(t.bg2),
+            )));
+            remaining = remaining
+                .char_indices()
+                .nth(take_len)
+                .map(|(idx, _)| &remaining[idx..])
+                .unwrap_or("");
+        }
+        if lines.len() >= body_rect.height as usize {
+            break;
+        }
+    }
+    frame.render_widget(Paragraph::new(lines), body_rect);
+}
+
+/// Render the last `max_lines` rows of `path` into the body. Re-
+/// reads the file every frame; sufficient for the small log
+/// tails this widget targets (tests + build output + AI session
+/// jsonl), and avoids the complexity of mtime caching.
+///
+/// Empty / missing file → render a dim placeholder.
+fn render_log_tail_body(
+    frame: &mut Frame,
+    body_rect: Rect,
+    path: &std::path::Path,
+    max_lines: usize,
+    t: crate::ui::theme::Theme,
+) {
+    let max_w = body_rect.width as usize;
+    let max_h = body_rect.height as usize;
+    let take_n = max_lines.min(max_h);
+
+    let mut lines_out: Vec<Line> = Vec::with_capacity(take_n);
+    match std::fs::read_to_string(path) {
+        Ok(s) => {
+            let all_lines: Vec<&str> = s.lines().collect();
+            let start = all_lines.len().saturating_sub(take_n);
+            for raw in &all_lines[start..] {
+                // Truncate to width — log tails are usually long-
+                // line stdout; wrapping wastes vertical space.
+                let display: String = raw.chars().take(max_w).collect();
+                lines_out.push(Line::from(Span::styled(
+                    display,
+                    Style::default().fg(t.fg).bg(t.bg2),
+                )));
+            }
+        }
+        Err(_) => {
+            // File missing / unreadable — show the path so the
+            // user knows what we tried to open.
+            let display: String = format!("(no file: {})", path.display())
+                .chars()
+                .take(max_w)
+                .collect();
+            lines_out.push(Line::from(Span::styled(
+                display,
+                Style::default().fg(t.comment).bg(t.bg2),
+            )));
+        }
+    }
+    frame.render_widget(Paragraph::new(lines_out), body_rect);
 }

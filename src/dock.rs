@@ -37,6 +37,13 @@ pub enum DockContent {
     /// variant; the simplest possible payload so the dock chrome
     /// can be exercised before specific data sources land.
     Text(String),
+    /// Live tail of a file's last `max_lines` rows. Re-read each
+    /// frame (cheap — files are small). Useful for build logs,
+    /// test output, AI-session jsonl files, etc.
+    LogTail {
+        path: std::path::PathBuf,
+        max_lines: usize,
+    },
 }
 
 /// A single corner-pinned widget.
@@ -102,6 +109,33 @@ pub fn push_text_at(app: &mut crate::app::App, corner: DockCorner) {
             "Dock widget #{n} at {corner:?}.\nClick × to close, or run `dock.close_all` to clear them all."
         ),
     ));
+}
+
+/// Push a log-tail widget. `path` is whatever the user supplied
+/// (tilde-expanded by the prompt before this is called).
+pub fn push_log_tail(
+    app: &mut crate::app::App,
+    corner: DockCorner,
+    path: std::path::PathBuf,
+) {
+    let id = app.dock_widget_next_id;
+    app.dock_widget_next_id += 1;
+    let title = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "log".to_string());
+    app.dock_widgets.push(DockWidget {
+        id,
+        corner,
+        width_frac: 0.5,
+        height_frac: 0.25,
+        title,
+        content: DockContent::LogTail {
+            path,
+            max_lines: 16,
+        },
+    });
 }
 
 /// Cycle the most recently added widget to the next corner
