@@ -863,6 +863,22 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, id) in &app.rects.bufferline_tabs {
         push_rect(&mut out, &mut first, &format!("bufferline_tab:{id}"), *r);
     }
+    for (r, leaf_active, dir) in &app.rects.split_strip_buttons {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("split_strip:{leaf_active}:{dir:?}"),
+            *r,
+        );
+    }
+    for (r, leaf_active) in &app.rects.split_strip_term_buttons {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("split_strip_term:{leaf_active}"),
+            *r,
+        );
+    }
     // 2026-06-19 — second batch of rect families per vscode-user-
     // mouse agent's "toolkit misses what it was built for" finding.
     if let Some(r) = app.rects.picker_box {

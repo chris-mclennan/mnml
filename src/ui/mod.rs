@@ -200,6 +200,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
 
+    // Clear the split-strip button rects at the top of every
+    // non-zen frame so two populating call sites (`bufferline::draw`
+    // for single-leaf, `paint_leaf_tab_strip` for multi-leaf) can
+    // BOTH push their entries this frame without one wiping the
+    // other's contribution.
+    app.rects.split_strip_buttons.clear();
+    app.rects.split_strip_term_buttons.clear();
+
     // Split off the bottom statusline + cmdline bar (each 1 row, full width).
     // Cmdline bar sits BELOW the statusline (vim/neovim convention: the
     // statusline shows steady state, the cmdline below it shows the live `:`
@@ -432,8 +440,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // clicks would target deleted leaves.
     app.rects.split_tab_chips.clear();
     app.rects.split_tab_close.clear();
-    app.rects.split_strip_buttons.clear();
-    app.rects.split_strip_term_buttons.clear();
+    // Note: `split_strip_buttons` / `split_strip_term_buttons` are
+    // NOT cleared here — they were cleared earlier in ui::draw,
+    // before `bufferline::draw` populated them for the single-leaf
+    // case. Clearing here would wipe the bufferline's rects before
+    // mouse dispatch reads them. The per-leaf strip in
+    // `paint_leaf_tab_strip` pushes additional entries on top for
+    // the multi-leaf case.
     let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
         welcome::draw(frame, app, body_area);
         None

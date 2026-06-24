@@ -5393,12 +5393,32 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 drag.moved = true;
                 let delta = drag.start_y as i32 - y as i32;
                 let new_h = (drag.start_h as i32 + delta).clamp(1, 200) as u16;
+                // Dragging the header down past where the section
+                // would only show its own header (≤ 2 rows total)
+                // → snap to collapsed. The collapsed header still
+                // shows, just with the chevron pointing right;
+                // a future expand resets `user_max_h` so the
+                // section auto-sizes again.
+                const COLLAPSE_THRESHOLD: u16 = 2;
+                let collapse = new_h <= COLLAPSE_THRESHOLD;
                 match drag.kind {
                     crate::app::RailSectionKind::Integrations => {
-                        app.integrations_user_max_h = Some(new_h);
+                        if collapse {
+                            app.integration_section_expanded = false;
+                            app.integrations_user_max_h = None;
+                        } else {
+                            app.integration_section_expanded = true;
+                            app.integrations_user_max_h = Some(new_h);
+                        }
                     }
                     crate::app::RailSectionKind::Git => {
-                        app.git_user_max_h = Some(new_h);
+                        if collapse {
+                            app.git_section_expanded = false;
+                            app.git_user_max_h = None;
+                        } else {
+                            app.git_section_expanded = true;
+                            app.git_user_max_h = Some(new_h);
+                        }
                     }
                 }
                 app.rail_section_drag = Some(drag);
