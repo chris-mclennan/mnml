@@ -139,7 +139,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .to_string();
     let chev = section_chev(app.tree_root_expanded, nerd);
     let chev_str = format!(" {chev} ");
-    let header_used = chev_str.chars().count() + ws_name.chars().count();
+    // Workspace-picker dropdown chevron — sits immediately after
+    // the workspace name. Click to toggle the picker dropdown.
+    let dropdown_glyph = " ▾ ";
+    let header_used =
+        chev_str.chars().count() + ws_name.chars().count() + dropdown_glyph.chars().count();
     let header_rect = Rect {
         x: area.x,
         y: area.y,
@@ -147,6 +151,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     let chip_spans = workspace_header_chips(app, header_rect, header_used, nerd, rail_bg);
+    // Compute the dropdown chevron's rect so the mouse handler can
+    // toggle the picker on click.
+    let dropdown_x = area.x
+        + chev_str.chars().count() as u16
+        + ws_name.chars().count() as u16;
+    app.rects.workspace_picker_chevron = Some(Rect {
+        x: dropdown_x,
+        y: area.y,
+        width: dropdown_glyph.chars().count() as u16,
+        height: 1,
+    });
     let mut spans = vec![
         Span::styled(
             chev_str,
@@ -158,6 +173,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .fg(theme::cur().fg)
                 .bg(rail_bg)
                 .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            dropdown_glyph,
+            Style::default().fg(theme::cur().comment).bg(rail_bg),
         ),
     ];
     spans.extend(chip_spans);

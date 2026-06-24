@@ -97,6 +97,10 @@ pub struct WorkspaceConfig {
     pub name: String,
     /// Absolute path on disk. `~` is expanded at config-load time.
     pub path: PathBuf,
+    /// Optional group label — drives section grouping in the
+    /// workspace-picker dropdown (e.g. `"work"` / `"personal"`).
+    /// `None` lands in the default ungrouped section.
+    pub group: Option<String>,
 }
 
 // Bitbucket + GitHub panes + config moved out of mnml core in
@@ -1086,6 +1090,10 @@ struct RawConfig {
 struct RawWorkspace {
     name: Option<String>,
     path: String,
+    /// Optional group label — drives the picker grouping
+    /// (e.g. `"work"` / `"personal"`).
+    #[serde(default)]
+    group: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1633,6 +1641,7 @@ impl Config {
             self.workspaces.push(WorkspaceConfig {
                 name,
                 path: expanded,
+                group: w.group,
             });
         }
     }

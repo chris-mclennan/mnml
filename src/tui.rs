@@ -348,6 +348,26 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // Workspace-picker dropdown — when open, intercept keys so they
+    // navigate the picker (not the editor below).
+    if app.workspace_picker_open {
+        match key.code {
+            KeyCode::Esc => {
+                app.workspace_picker_open = false;
+                app.workspace_picker_filter.clear();
+                return;
+            }
+            KeyCode::Backspace => {
+                app.workspace_picker_filter.pop();
+                return;
+            }
+            KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+                app.workspace_picker_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Git-palette filter input — when focused, intercept typing /
     // backspace / Esc here so the keys don't fall through to the
     // editor.
@@ -5488,6 +5508,46 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.click_git_rail(hit);
                 return;
+            }
+            // Workspace-picker chevron → toggle the dropdown.
+            if let Some(r) = app.rects.workspace_picker_chevron
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.workspace_picker_open = !app.workspace_picker_open;
+                if !app.workspace_picker_open {
+                    app.workspace_picker_filter.clear();
+                }
+                return;
+            }
+            // Workspace-picker row click → switch + close.
+            if let Some(&(_, ws_idx)) = app
+                .rects
+                .workspace_picker_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.switch_workspace(ws_idx);
+                app.workspace_picker_open = false;
+                app.workspace_picker_filter.clear();
+                return;
+            }
+            // Workspace-picker filter input → focus stays implicit
+            // (no separate focus flag; the dropdown owns the
+            // keyboard while open). Click anywhere outside the
+            // picker closes it.
+            if app.workspace_picker_open
+                && app.rects.workspace_picker_filter_input.is_none_or(|r| {
+                    !crate::app::dispatch::contains(r, x, y)
+                })
+                && app
+                    .rects
+                    .workspace_picker_rows
+                    .iter()
+                    .all(|(r, _)| !crate::app::dispatch::contains(*r, x, y))
+            {
+                app.workspace_picker_open = false;
+                app.workspace_picker_filter.clear();
+                // Fall through — let the click hit whatever's under.
             }
             // Git-palette filter input — click to focus + start typing.
             if let Some(r) = app.rects.git_palette_filter_input

@@ -83,6 +83,7 @@ pub mod rename_preview_overlay;
 pub mod request_view;
 pub mod git_palette;
 pub mod menu_bar;
+pub mod workspace_picker;
 pub mod scratch_term_view;
 pub mod scrollbar;
 pub mod settings_overlay;
@@ -591,6 +592,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // overlays the editor body / overlays when open. Mouse-up
     // outside the dropdown closes it (see tui.rs dispatch).
     menu_bar::draw_dropdown(frame, app);
+    // Workspace-picker dropdown — same overlay treatment, anchored
+    // below the workspace header chevron.
+    workspace_picker::draw(frame, app);
     // …and the flash highlight paints last so it can sit on top of even
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).

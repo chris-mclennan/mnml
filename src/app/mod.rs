@@ -1807,6 +1807,16 @@ pub struct PaneRects {
     /// Click rect for the git palette's filter input. Click to
     /// focus + start typing; Esc clears + unfocuses.
     pub git_palette_filter_input: Option<Rect>,
+    /// Click target for the `▾` dropdown chevron next to the
+    /// workspace name. Toggles `App::workspace_picker_open`.
+    pub workspace_picker_chevron: Option<Rect>,
+    /// `(rect, workspace_idx)` per row in the workspace-picker
+    /// dropdown. `workspace_idx` matches `App::switch_workspace`
+    /// (0 = primary, 1+ = extras). Cleared + repopulated every frame.
+    pub workspace_picker_rows: Vec<(Rect, usize)>,
+    /// Click target for the picker's filter input. Click to focus +
+    /// start typing.
+    pub workspace_picker_filter_input: Option<Rect>,
     /// Current rendered height (rows) of the INTEGRATIONS section.
     /// Set every frame by `tree_view::draw` so the mouse-down handler
     /// can capture it as the drag-resize anchor.
@@ -2886,6 +2896,14 @@ pub struct App {
     /// filter input. Typing in this state extends the filter; Esc
     /// clears it.
     pub git_palette_filter_focused: bool,
+    /// `true` while the workspace-picker dropdown is open (anchored
+    /// under the workspace header in the rail). Click the `▾` chip
+    /// to toggle; click a row to switch + close; Esc / click-out
+    /// closes.
+    pub workspace_picker_open: bool,
+    /// Filter input for the workspace picker (case-insensitive
+    /// substring match against workspace name + group label).
+    pub workspace_picker_filter: String,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3574,6 +3592,8 @@ impl App {
             last_list_scroll_at: None,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
+            workspace_picker_open: false,
+            workspace_picker_filter: String::new(),
             pending_format_save: None,
             pending_will_save: None,
             pending_cookie_edit: None,
