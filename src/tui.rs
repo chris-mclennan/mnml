@@ -4228,8 +4228,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         .map(|(_, id)| *id)
                 })
             {
-                app.dock_kebab_menu =
-                    Some(crate::dock::KebabMenuState::build(id, x, y));
+                if let Some(w) = app.dock_widgets.iter().find(|w| w.id == id) {
+                    app.dock_kebab_menu =
+                        Some(crate::dock::KebabMenuState::build(w, x, y));
+                }
                 return;
             }
             // 2026-06-21 vscode-mouse SEV-2: right-click on a
@@ -5654,8 +5656,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                app.dock_kebab_menu =
-                    Some(crate::dock::KebabMenuState::build(id, r.x, r.y));
+                if let Some(w) = app.dock_widgets.iter().find(|w| w.id == id) {
+                    app.dock_kebab_menu =
+                        Some(crate::dock::KebabMenuState::build(w, r.x, r.y));
+                }
                 return;
             }
             // Dock widget title bar mouse-down → arm a drag. Final

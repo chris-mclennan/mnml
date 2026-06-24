@@ -3585,6 +3585,9 @@ impl App {
             r
         };
         let tree_width = config.ui.tree_width;
+        let git_section_expanded_default = config.ui.git_section_default_expanded;
+        let integrations_section_expanded_default =
+            config.ui.integrations_section_default_expanded;
         Ok(App {
             workspace,
             config,
@@ -3683,8 +3686,8 @@ impl App {
             scm_pr_pending: None,
             repos,
             active_repo,
-            git_section_expanded: true,
-            integration_section_expanded: true,
+            git_section_expanded: git_section_expanded_default,
+            integration_section_expanded: integrations_section_expanded_default,
             git_branches_expanded: false,
             rail_section: RailSection::Workspace,
             git,

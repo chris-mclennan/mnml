@@ -449,53 +449,43 @@ fn paint_drag_preview(
     let Some((cx, cy)) = app.dock_drag_cursor else {
         return;
     };
-    // Look up the title for the ghost chip.
-    let title = match app.dock_widgets.iter().find(|w| w.id == drag_id) {
-        Some(w) => w.title.clone(),
-        None => return,
+    // Look up the title + actual size for the ghost chip and
+    // drop-rect. The drop-rect must match the widget's current
+    // dimensions — painting the whole quadrant misleads the user
+    // about the actual landing footprint.
+    let Some(widget) = app.dock_widgets.iter().find(|w| w.id == drag_id) else {
+        return;
     };
-    if editor_area.width < 4 || editor_area.height < 4 {
+    let title = widget.title.clone();
+    let w_frac = widget.width_frac.clamp(0.15, 0.9);
+    let h_frac = widget.height_frac.clamp(0.15, 0.9);
+    let widget_w = (editor_area.width as f32 * w_frac) as u16;
+    let widget_h = (editor_area.height as f32 * h_frac) as u16;
+    if editor_area.width < 4 || editor_area.height < 4 || widget_w < 4 || widget_h < 2 {
         return;
     }
 
-    // Resolve cursor → quadrant.
+    // Resolve cursor → target corner.
     let mid_x = editor_area.x + editor_area.width / 2;
     let mid_y = editor_area.y + editor_area.height / 2;
-    let (qx, qy, qw, qh) = match (cx < mid_x, cy < mid_y) {
+    let (drop_x, drop_y) = match (cx < mid_x, cy < mid_y) {
         // TopLeft
-        (true, true) => (
-            editor_area.x,
-            editor_area.y,
-            editor_area.width / 2,
-            editor_area.height / 2,
-        ),
+        (true, true) => (editor_area.x, editor_area.y),
         // TopRight
-        (false, true) => (
-            mid_x,
-            editor_area.y,
-            editor_area.x + editor_area.width - mid_x,
-            editor_area.height / 2,
-        ),
+        (false, true) => (editor_area.x + editor_area.width - widget_w, editor_area.y),
         // BottomLeft
-        (true, false) => (
-            editor_area.x,
-            mid_y,
-            editor_area.width / 2,
-            editor_area.y + editor_area.height - mid_y,
-        ),
+        (true, false) => (editor_area.x, editor_area.y + editor_area.height - widget_h),
         // BottomRight
         (false, false) => (
-            mid_x,
-            mid_y,
-            editor_area.x + editor_area.width - mid_x,
-            editor_area.y + editor_area.height - mid_y,
+            editor_area.x + editor_area.width - widget_w,
+            editor_area.y + editor_area.height - widget_h,
         ),
     };
     let drop_rect = Rect {
-        x: qx,
-        y: qy,
-        width: qw,
-        height: qh,
+        x: drop_x,
+        y: drop_y,
+        width: widget_w,
+        height: widget_h,
     };
     // Translucent-ish gray fill — terminals can't do alpha so we
     // approximate by overpainting each cell with a single

@@ -506,6 +506,27 @@ pub struct UiConfig {
     /// tab_bar_ai_icon = "claude_code"
     /// ```
     pub tab_bar_ai_icon: String,
+
+    /// Start the rail's `> GIT` section expanded on launch?
+    /// Default `false` (collapsed) — keeps the rail compact when
+    /// the user lands. Toggle in-session by clicking the section
+    /// header; this pref only controls the initial state.
+    ///
+    /// ```toml
+    /// [ui]
+    /// git_section_default_expanded = false
+    /// ```
+    pub git_section_default_expanded: bool,
+
+    /// Start the rail's `> INTEGRATIONS` section expanded on
+    /// launch? Same shape as `git_section_default_expanded`.
+    /// Default `false`.
+    ///
+    /// ```toml
+    /// [ui]
+    /// integrations_section_default_expanded = false
+    /// ```
+    pub integrations_section_default_expanded: bool,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -1022,6 +1043,8 @@ impl Default for Config {
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
                 tab_bar_ai_icon: "none".to_string(),
+                git_section_default_expanded: false,
+                integrations_section_default_expanded: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1215,6 +1238,14 @@ struct RawUi {
     /// See [`UiConfig::tab_bar_ai_icon`].
     #[serde(default)]
     tab_bar_ai_icon: Option<String>,
+    /// Initial expanded state for the rail's `> GIT` section.
+    /// Default `false` (collapsed). See
+    /// [`UiConfig::git_section_default_expanded`].
+    #[serde(default)]
+    git_section_default_expanded: Option<bool>,
+    /// Same shape, for the `> INTEGRATIONS` section.
+    #[serde(default)]
+    integrations_section_default_expanded: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1528,6 +1559,12 @@ impl Config {
             if matches!(normalized.as_str(), "none" | "claude_code" | "codex") {
                 self.ui.tab_bar_ai_icon = normalized;
             }
+        }
+        if let Some(b) = raw.ui.git_section_default_expanded {
+            self.ui.git_section_default_expanded = b;
+        }
+        if let Some(b) = raw.ui.integrations_section_default_expanded {
+            self.ui.integrations_section_default_expanded = b;
         }
         if let Some(s) = raw.ui.projects_dir {
             // Tilde-expand on load so renderers can use the value

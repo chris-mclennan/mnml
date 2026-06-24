@@ -248,7 +248,7 @@ pub struct KebabMenuState {
 }
 
 impl KebabMenuState {
-    pub fn build(widget_id: usize, anchor_x: u16, anchor_y: u16) -> Self {
+    pub fn build(widget: &DockWidget, anchor_x: u16, anchor_y: u16) -> Self {
         let mut items = Vec::new();
         items.push(KebabMenuItem::Header("Resize"));
         for p in [
@@ -281,14 +281,49 @@ impl KebabMenuState {
         items.push(KebabMenuItem::Separator);
         items.push(KebabMenuItem::Rename);
         items.push(KebabMenuItem::Close);
+
+        // Pre-select the row that matches the widget's current
+        // size preset. If the widget's fractions don't match any
+        // preset (e.g. user-dragged custom size), fall back to
+        // the first selectable item.
+        let current_preset = match_current_preset(widget);
+        let selected = items
+            .iter()
+            .position(|it| match it {
+                KebabMenuItem::Resize(p) => Some(*p) == current_preset,
+                _ => false,
+            })
+            .unwrap_or(1);
+
         KebabMenuState {
-            widget_id,
+            widget_id: widget.id,
             anchor_x,
             anchor_y,
-            selected: 1, // skip the leading "Resize" header
+            selected,
             items,
         }
     }
+}
+
+/// Match the widget's `(width_frac, height_frac)` against the
+/// `SizePreset` table. Float comparison with `<0.01` tolerance to
+/// avoid false-mismatches from f32 rounding. Returns `None` when
+/// the widget was dragged to a custom size.
+fn match_current_preset(widget: &DockWidget) -> Option<SizePreset> {
+    let (wf, hf) = (widget.width_frac, widget.height_frac);
+    for p in [
+        SizePreset::Small,
+        SizePreset::Medium,
+        SizePreset::Large,
+        SizePreset::Wide,
+        SizePreset::Tall,
+    ] {
+        let (pw, ph) = p.fractions();
+        if (wf - pw).abs() < 0.01 && (hf - ph).abs() < 0.01 {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// Apply a kebab-menu choice to its widget. The dispatcher calls

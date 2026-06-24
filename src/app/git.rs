@@ -2996,8 +2996,10 @@ mod git_tests {
     #[test]
     fn git_rail_section_toggles_focus_rail() {
         let (_d, mut app) = app_with_files();
-        // Both sections start expanded; collapse + re-expand each and
-        // verify the rail keyboard parks on the section just expanded.
+        // 2026-06-24: GIT defaults collapsed now. Seed the expanded
+        // state explicitly so this test still exercises the
+        // collapse-then-expand-then-focus flow it was written for.
+        app.git_section_expanded = true;
         assert!(app.tree_root_expanded);
         assert!(app.git_section_expanded);
         app.toggle_tree_root_expanded(); // collapse
@@ -3081,14 +3083,16 @@ mod git_tests {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join("a.txt"), "a").unwrap();
         let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        assert!(app.git_section_expanded);
-        app.git_section_expanded = false;
+        // 2026-06-24: default is now collapsed. Flip to expanded +
+        // round-trip so the saved value is the non-default one.
+        app.git_section_expanded = true;
         app.save_session_on_quit();
         let mut app2 = App::new(d.path().to_path_buf(), Config::default()).unwrap();
-        // Pre-restore: runtime default is true.
-        assert!(app2.git_section_expanded);
-        app2.try_restore_session();
+        // Pre-restore: runtime default is false (collapsed).
         assert!(!app2.git_section_expanded);
+        app2.try_restore_session();
+        // After restore: gets the saved-expanded value.
+        assert!(app2.git_section_expanded);
     }
 
     #[test]
