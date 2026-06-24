@@ -4302,6 +4302,29 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_git_rail_context_menu(hit, (x, y));
                 return;
             }
+            // Right-click on a git-palette row — same context menu
+            // dispatch as the legacy rail (delete branch / open
+            // worktree / open PR …).
+            if let Some(&(_, hit)) = app
+                .rects
+                .git_palette_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                let rail_hit = match hit {
+                    crate::ui::git_palette::GitPaletteHit::Branch(i) => {
+                        crate::git::rail::GitRailHit::Branch(i)
+                    }
+                    crate::ui::git_palette::GitPaletteHit::Worktree(i) => {
+                        crate::git::rail::GitRailHit::Worktree(i)
+                    }
+                    crate::ui::git_palette::GitPaletteHit::Pull(i) => {
+                        crate::git::rail::GitRailHit::Pull(i)
+                    }
+                };
+                app.open_git_rail_context_menu(rail_hit, (x, y));
+                return;
+            }
             // Right-click on a diff body row (standalone or embedded
             // diff) → per-hunk context menu (Open file at revision /
             // Copy commit hash / Stage / Unstage / Discard).
@@ -5151,13 +5174,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                // The Git icon opens the git graph pane directly —
-                // it's mnml's "all git ops live here" surface, so
-                // the placeholder section sub-panel is bypassed.
+                // Git icon: switch the rail to the GitKraken-style
+                // git palette AND open the git graph as a pane in
+                // the editor area. The two work together — the
+                // rail navigates branches / worktrees / PRs while
+                // the graph shows commit history + diff. Other
+                // activity sections just switch the rail.
+                app.set_activity_section(section);
                 if matches!(section, crate::app::ActivitySection::Git) {
                     crate::command::run("git.graph", app);
-                } else {
-                    app.set_activity_section(section);
                 }
                 return;
             }
@@ -5421,6 +5446,29 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.click_git_rail(hit);
+                return;
+            }
+            // Git-palette row (the GitKraken-style panel shown when
+            // `ActivitySection::Git` is active). Maps to the same
+            // `GitRailHit` dispatch as the legacy rail.
+            if let Some(&(_, hit)) = app
+                .rects
+                .git_palette_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                let rail_hit = match hit {
+                    crate::ui::git_palette::GitPaletteHit::Branch(i) => {
+                        crate::git::rail::GitRailHit::Branch(i)
+                    }
+                    crate::ui::git_palette::GitPaletteHit::Worktree(i) => {
+                        crate::git::rail::GitRailHit::Worktree(i)
+                    }
+                    crate::ui::git_palette::GitPaletteHit::Pull(i) => {
+                        crate::git::rail::GitRailHit::Pull(i)
+                    }
+                };
+                app.click_git_rail(rail_hit);
                 return;
             }
             // Claude Agents — Files drill-down file row click → open

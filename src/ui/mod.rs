@@ -81,6 +81,7 @@ pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
 pub mod request_view;
+pub mod git_palette;
 pub mod menu_bar;
 pub mod scratch_term_view;
 pub mod scrollbar;
@@ -321,7 +322,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 draw_debug_section(frame, app, content_area);
             }
             crate::app::ActivitySection::Git => {
-                draw_git_section_content(frame, app, content_area);
+                git_palette::draw(frame, app, content_area);
             }
         }
         // For non-Explorer sections the tree_view click rects aren't

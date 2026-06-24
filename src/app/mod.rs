@@ -1800,6 +1800,10 @@ pub struct PaneRects {
     /// dropdown. Empty when no menu is open. Used for click + hover-
     /// highlight dispatch.
     pub menu_bar_items: Vec<(Rect, usize)>,
+    /// `(rect, hit)` per row in the git palette (the GitKraken-style
+    /// panel shown when `ActivitySection::Git` is active). Cleared
+    /// + repopulated every frame by `git_palette::draw`.
+    pub git_palette_rows: Vec<(Rect, crate::ui::git_palette::GitPaletteHit)>,
     /// Current rendered height (rows) of the INTEGRATIONS section.
     /// Set every frame by `tree_view::draw` so the mouse-down handler
     /// can capture it as the drag-resize anchor.
