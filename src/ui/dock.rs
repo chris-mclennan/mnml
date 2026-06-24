@@ -622,16 +622,32 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
         .map(|w| w.corner);
 
     // Compute panel dimensions.
-    let max_label = 18u16; // widest item label
+    let max_label = 22u16; // widest item label (incl. "Inline (eats space)")
     let w = max_label + 4;
     let body_rows = menu.items.len() as u16;
     let h = body_rows + 2; // borders
     let screen = frame.area();
+    // Don't paint over the statusline / cmdline strip at the
+    // bottom — clamp to the statusline's top y if known. Falls
+    // back to screen height - 1 if the statusline rect isn't
+    // available yet.
+    let bottom_limit = app
+        .rects
+        .statusline
+        .map(|r| r.y)
+        .unwrap_or_else(|| screen.y + screen.height.saturating_sub(1));
     let x = menu
         .anchor_x
         .saturating_sub(w / 2)
         .min(screen.x + screen.width.saturating_sub(w));
-    let y = (menu.anchor_y + 1).min(screen.y + screen.height.saturating_sub(h));
+    let preferred_y = menu.anchor_y + 1;
+    // If the menu would extend past the bottom limit, flip it
+    // ABOVE the anchor (drop-up). Otherwise drop-down as usual.
+    let y = if preferred_y + h > bottom_limit {
+        menu.anchor_y.saturating_sub(h).max(screen.y)
+    } else {
+        preferred_y
+    };
     let area = Rect {
         x,
         y,
@@ -658,6 +674,12 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
             width: inner.width,
             height: 1,
         };
+        // Selection style: bright cyan bg + dark fg + BOLD reads
+        // strongly against `t.bg2`. The earlier "cyan bg + t.fg"
+        // washed out because `t.fg` is light on light cyan.
+        let sel_bg = t.cyan;
+        let sel_fg = t.bg;
+        let sel_mod = Modifier::BOLD;
         let (text, fg, bg, indent, modifier) = match item {
             crate::dock::KebabMenuItem::Header(h) => (
                 h.to_string(),
@@ -675,10 +697,10 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
             ),
             crate::dock::KebabMenuItem::Resize(p) => (
                 p.label().to_string(),
-                t.fg,
-                if is_selected { t.cyan } else { t.bg2 },
+                if is_selected { sel_fg } else { t.fg },
+                if is_selected { sel_bg } else { t.bg2 },
                 "  ",
-                Modifier::empty(),
+                if is_selected { sel_mod } else { Modifier::empty() },
             ),
             crate::dock::KebabMenuItem::MoveTo(c) => {
                 let label = match c {
@@ -690,10 +712,10 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                 let marker = if cur_corner == Some(*c) { "● " } else { "  " };
                 (
                     format!("{marker}{label}"),
-                    t.fg,
-                    if is_selected { t.cyan } else { t.bg2 },
+                    if is_selected { sel_fg } else { t.fg },
+                    if is_selected { sel_bg } else { t.bg2 },
                     "",
-                    Modifier::empty(),
+                    if is_selected { sel_mod } else { Modifier::empty() },
                 )
             }
             crate::dock::KebabMenuItem::SetLayout(l) => {
@@ -704,10 +726,10 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                 let marker = if cur_layout == Some(*l) { "● " } else { "  " };
                 (
                     format!("{marker}{label}"),
-                    t.fg,
-                    if is_selected { t.cyan } else { t.bg2 },
+                    if is_selected { sel_fg } else { t.fg },
+                    if is_selected { sel_bg } else { t.bg2 },
                     "",
-                    Modifier::empty(),
+                    if is_selected { sel_mod } else { Modifier::empty() },
                 )
             }
             crate::dock::KebabMenuItem::SetOpacity(o) => {
@@ -718,30 +740,36 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                 let marker = if cur_opacity == Some(*o) { "● " } else { "  " };
                 (
                     format!("{marker}{label}"),
-                    t.fg,
-                    if is_selected { t.cyan } else { t.bg2 },
+                    if is_selected { sel_fg } else { t.fg },
+                    if is_selected { sel_bg } else { t.bg2 },
                     "",
-                    Modifier::empty(),
+                    if is_selected { sel_mod } else { Modifier::empty() },
                 )
             }
             crate::dock::KebabMenuItem::Rename => (
                 "Rename…".to_string(),
-                t.fg,
-                if is_selected { t.cyan } else { t.bg2 },
+                if is_selected { sel_fg } else { t.fg },
+                if is_selected { sel_bg } else { t.bg2 },
                 "  ",
-                Modifier::empty(),
+                if is_selected { sel_mod } else { Modifier::empty() },
             ),
             crate::dock::KebabMenuItem::Close => (
                 "Close".to_string(),
-                t.red,
-                if is_selected { t.cyan } else { t.bg2 },
+                if is_selected { sel_fg } else { t.red },
+                if is_selected { sel_bg } else { t.bg2 },
                 "  ",
-                Modifier::empty(),
+                if is_selected { sel_mod } else { Modifier::empty() },
             ),
         };
+        // Right-pad the row so the bg fills the full menu width
+        // (otherwise the selection highlight stops at the end of
+        // the text and looks like a stub).
+        let text_w = indent.chars().count() + text.chars().count();
+        let pad = (inner.width as usize).saturating_sub(text_w);
         let line = Line::from(vec![
             Span::styled(indent.to_string(), Style::default().bg(bg)),
             Span::styled(text, Style::default().fg(fg).bg(bg).add_modifier(modifier)),
+            Span::styled(" ".repeat(pad), Style::default().bg(bg)),
         ]);
         frame.render_widget(Paragraph::new(line), row_rect);
         // Only register click rects for selectable items.
