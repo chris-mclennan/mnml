@@ -1804,6 +1804,9 @@ pub struct PaneRects {
     /// panel shown when `ActivitySection::Git` is active). Cleared
     /// + repopulated every frame by `git_palette::draw`.
     pub git_palette_rows: Vec<(Rect, crate::ui::git_palette::GitPaletteHit)>,
+    /// Click rect for the git palette's filter input. Click to
+    /// focus + start typing; Esc clears + unfocuses.
+    pub git_palette_filter_input: Option<Rect>,
     /// Current rendered height (rows) of the INTEGRATIONS section.
     /// Set every frame by `tree_view::draw` so the mouse-down handler
     /// can capture it as the drag-resize anchor.
@@ -2873,6 +2876,16 @@ pub struct App {
     /// User-requested 2026-06-18 after the centered Prompt looked
     /// inconsistent with vim's bottom-anchored cmdline.
     pub no_pane_cmdline: Option<String>,
+    /// Active filter text for the git palette's search input
+    /// (case-insensitive substring match against branch / remote
+    /// / worktree / stash / tag / PR names). Empty string = no
+    /// filter. Cleared when the user closes the Git activity
+    /// section.
+    pub git_palette_filter: String,
+    /// `true` while the user's keyboard focus is in the git palette
+    /// filter input. Typing in this state extends the filter; Esc
+    /// clears it.
+    pub git_palette_filter_focused: bool,
     /// Persistent quick-scratch terminal — a ~10-row bottom strip
     /// hosting a shell pty. Sibling to `Pane::Pty` (which is a full pane),
     /// designed for "I want to run one command without rearranging my
@@ -3559,6 +3572,8 @@ impl App {
             nav_forward: Vec::new(),
             last_click: None,
             last_list_scroll_at: None,
+            git_palette_filter: String::new(),
+            git_palette_filter_focused: false,
             pending_format_save: None,
             pending_will_save: None,
             pending_cookie_edit: None,

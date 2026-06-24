@@ -348,6 +348,31 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // Git-palette filter input — when focused, intercept typing /
+    // backspace / Esc here so the keys don't fall through to the
+    // editor.
+    if app.git_palette_filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.git_palette_filter.clear();
+                app.git_palette_filter_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.git_palette_filter.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.git_palette_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+                app.git_palette_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Menu-bar dropdown — intercept keys before anything else so
     // Esc / arrows / Enter target the menu instead of the editor.
     if app.menu_open.is_some() && handle_menu_key(app, key) {
@@ -5463,6 +5488,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.click_git_rail(hit);
                 return;
+            }
+            // Git-palette filter input — click to focus + start typing.
+            if let Some(r) = app.rects.git_palette_filter_input
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.git_palette_filter_focused = true;
+                return;
+            }
+            // Click anywhere else inside the rail (or outside) while
+            // the filter is focused → unfocus (keeps the typed text
+            // so navigating doesn't lose what they typed).
+            if app.git_palette_filter_focused {
+                app.git_palette_filter_focused = false;
             }
             // Git-palette row (the GitKraken-style panel shown when
             // `ActivitySection::Git` is active). Maps to the same

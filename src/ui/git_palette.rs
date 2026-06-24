@@ -50,9 +50,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // action. Cleared on entry so the previous frame's rects don't
     // steal clicks at cells we're no longer painting.
     app.rects.git_palette_rows.clear();
+    app.rects.git_palette_filter_input = None;
 
     let mut y = area.y;
     let snap = app.git.snapshot().clone();
+    // Lower-cased filter for case-insensitive substring matching
+    // throughout the palette.
+    let filter_lc = app.git_palette_filter.to_ascii_lowercase();
+    let matches_filter = |s: &str| -> bool {
+        filter_lc.is_empty() || s.to_ascii_lowercase().contains(&filter_lc)
+    };
 
     // ── repo header ───────────────────────────────────────────
     let repo_name = app
@@ -118,31 +125,111 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     y += 1;
 
-    // 1-row separator before sections start.
+    // 1-row separator before the filter input.
     y += 1;
 
-    // ── LOCAL section ─────────────────────────────────────────
+    // ── filter input ──────────────────────────────────────────
+    // A single-row text input prefixed with a magnifier glyph.
+    // Click to focus + type → updates `git_palette_filter`. Esc
+    // unfocuses + clears (handled in tui dispatch_key).
     if y < area.y + area.height {
+        let focused = app.git_palette_filter_focused;
+        let bg_chip = t.bg2;
+        let fg_chip = if app.git_palette_filter.is_empty() && !focused {
+            t.comment
+        } else {
+            t.fg
+        };
+        let filter_text = if app.git_palette_filter.is_empty() {
+            "Filter (branches, worktrees, tags, …)".to_string()
+        } else {
+            app.git_palette_filter.clone()
+        };
+        let max_text = (area.width as usize).saturating_sub(5);
+        let display = if filter_text.chars().count() > max_text {
+            let mut s: String = filter_text
+                .chars()
+                .skip(filter_text.chars().count() - max_text)
+                .collect();
+            s.insert(0, '…');
+            s
+        } else {
+            filter_text
+        };
+        let cursor = if focused { "▏" } else { " " };
+        let pad =
+            (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(
+                "\u{F0349} ",
+                Style::default().fg(t.comment).bg(bg_chip),
+            ),
+            Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
+            Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
+            Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
+            Span::styled(" ", Style::default().bg(bg)),
+        ]);
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(line), row_rect);
+        app.rects.git_palette_filter_input = Some(row_rect);
+        y += 1;
+    }
+
+    // 1-row separator before sections start.
+    if y < area.y + area.height {
+        y += 1;
+    }
+
+    // ── LOCAL section ─────────────────────────────────────────
+    // Pre-filter local branches before grouping so empty folder
+    // rows don't appear when the filter excludes all their items.
+    // Cloning the names avoids holding an immutable borrow on
+    // `app.git_rail.branches` while we later mutate `app.rects`.
+    let local_filtered: Vec<(usize, String)> = app
+        .git_rail
+        .branches
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| matches_filter(&b.name))
+        .map(|(i, b)| (i, b.name.clone()))
+        .collect();
+    if y < area.y + area.height && !local_filtered.is_empty() {
         y = draw_section_header(
             frame,
             app,
             area,
             y,
             "LOCAL",
-            app.git_rail.branches.len(),
+            local_filtered.len(),
             bg,
         );
     }
     // Folder-group local branches by their `/` prefix so a repo
     // with `bugfix/*`, `chore/*`, `feature/*` collapses into a
     // few folder rows instead of dumping 50+ branches flat.
-    let local_names: Vec<&str> = app
-        .git_rail
-        .branches
-        .iter()
-        .map(|b| b.name.as_str())
+    let local_filtered_names: Vec<&str> =
+        local_filtered.iter().map(|(_, n)| n.as_str()).collect();
+    let local_groups_indirect = group_by_folder(&local_filtered_names);
+    // Re-map the inner indices from "index into filtered list" →
+    // "index into git_rail.branches".
+    let local_groups: Vec<(String, Vec<usize>)> = local_groups_indirect
+        .into_iter()
+        .map(|(folder, inner_idxs)| {
+            (
+                folder,
+                inner_idxs
+                    .into_iter()
+                    .map(|inner| local_filtered[inner].0)
+                    .collect(),
+            )
+        })
         .collect();
-    let local_groups = group_by_folder(&local_names);
     for (folder, idxs) in &local_groups {
         if y >= area.y + area.height {
             break;
@@ -228,27 +315,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // ── REMOTE section ────────────────────────────────────────
-    if !app.git_rail.remote_branches.is_empty() && y < area.y + area.height {
+    // Pre-filter remote branches (filter applies to the full
+    // remote ref, including the `origin/` host prefix). Collect
+    // owned data so the rest of the section doesn't keep an
+    // immutable borrow on `app.git_rail.remote_branches` while
+    // we mutate `app.rects` to push click rects.
+    let remote_filtered_idxs_and_names: Vec<(usize, String)> = app
+        .git_rail
+        .remote_branches
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| matches_filter(r))
+        .map(|(i, r)| (i, r.clone()))
+        .collect();
+    if !remote_filtered_idxs_and_names.is_empty() && y < area.y + area.height {
         y = draw_section_header(
             frame,
             app,
             area,
             y,
             "REMOTE",
-            app.git_rail.remote_branches.len(),
+            remote_filtered_idxs_and_names.len(),
             bg,
         );
         // Same folder grouping shape as LOCAL — remotes like
         // `origin/bugfix/foo` collapse under `bugfix/` after the
         // `origin/` prefix is stripped.
-        let remote_stripped: Vec<String> = app
-            .git_rail
-            .remote_branches
+        let remote_stripped: Vec<String> = remote_filtered_idxs_and_names
             .iter()
-            .map(|r| {
-                // Strip the first path component (`origin/`,
-                // `upstream/`, etc.) so the folder grouping keys
-                // off the meaningful prefix.
+            .map(|(_, r)| {
                 if let Some(slash) = r.find('/') {
                     r[slash + 1..].to_string()
                 } else {
@@ -257,7 +352,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             })
             .collect();
         let stripped_refs: Vec<&str> = remote_stripped.iter().map(|s| s.as_str()).collect();
-        let remote_groups = group_by_folder(&stripped_refs);
+        let remote_groups_indirect = group_by_folder(&stripped_refs);
+        let remote_groups: Vec<(String, Vec<usize>)> = remote_groups_indirect
+            .into_iter()
+            .map(|(folder, inner_idxs)| {
+                (
+                    folder,
+                    inner_idxs
+                        .into_iter()
+                        .map(|inner| remote_filtered_idxs_and_names[inner].0)
+                        .collect(),
+                )
+            })
+            .collect();
         for (folder, idxs) in &remote_groups {
             if y >= area.y + area.height {
                 break;
@@ -297,14 +404,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     break;
                 }
                 let full = &app.git_rail.remote_branches[i];
-                // The full string is what we'd checkout; the
-                // display is the within-folder leaf.
+                // Strip the host prefix (`origin/`, `upstream/`)
+                // for display, then optionally strip the folder
+                // prefix too.
+                let stripped = full
+                    .find('/')
+                    .map(|s| &full[s + 1..])
+                    .unwrap_or(full.as_str());
                 let display = if folder.is_empty() {
-                    remote_stripped[i].clone()
+                    stripped.to_string()
                 } else {
-                    remote_stripped[i]
+                    stripped
                         .strip_prefix(&format!("{folder}/"))
-                        .unwrap_or(&remote_stripped[i])
+                        .unwrap_or(stripped)
                         .to_string()
                 };
                 let row_rect = Rect {
@@ -348,6 +460,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         for (i, wt) in app.git_rail.worktrees.iter().enumerate() {
             if y >= area.y + area.height {
                 break;
+            }
+            let dir_match = wt
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| matches_filter(s))
+                .unwrap_or(false);
+            if !matches_filter(&wt.label) && !dir_match {
+                continue;
             }
             let marker = if wt.is_current { "⤿" } else { "·" };
             let marker_color = if wt.is_current { t.yellow } else { t.fg };
@@ -413,6 +534,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         for (i, pr) in app.git_rail.pulls.iter().enumerate() {
             if y >= area.y + area.height {
                 break;
+            }
+            if !matches_filter(&pr.title) && !matches_filter(&pr.number_label) {
+                continue;
             }
             let host_color = match pr.host_tag {
                 "BB" => t.blue,
@@ -485,6 +609,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             if y >= area.y + area.height {
                 break;
             }
+            if !matches_filter(&st.summary) {
+                continue;
+            }
             // The summary is `WIP on branch: <hash> <message>`.
             // We display just the trailing message for compactness;
             // the full summary is in the row's hover tooltip target.
@@ -538,6 +665,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         for (i, tag) in app.git_rail.tags.iter().enumerate() {
             if y >= area.y + area.height {
                 break;
+            }
+            if !matches_filter(tag) {
+                continue;
             }
             let row_rect = Rect {
                 x: area.x,
