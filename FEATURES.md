@@ -136,6 +136,46 @@ The complete, organised feature inventory. For the front-door overview see
 - **Scratch terminal** — a quick docked terminal strip.
 - **Tasks** — `[tasks.*]` config + a task launcher; startup tasks.
 
+## Dock widgets
+
+- **Three-tier UI** — full panes (split-tree) / dock widgets (corner-pinned
+  mini-panels in the editor body) / status chrome. The middle tier is for
+  things you want visible next to the buffer rather than instead of it.
+- **Four corners** — `BottomLeft` / `BottomRight` / `TopLeft` / `TopRight`.
+  Widgets sharing a corner stack inward (bottom corners upward, top corners
+  downward); per-corner stack capped at 50 % of the editor height.
+- **Content variants** — `Text` (static, via `dock.new_text*`) and `LogTail`
+  (per-frame re-read of a file's last N lines, via `dock.new_log_tail`;
+  default path `<workspace>/.mnml/run.log`). The title bar shows a `▼N`
+  chip when the file has more lines than fit.
+- **Size presets** — Small (0.25 × 0.15) / Medium (0.5 × 0.25, default) /
+  Large (0.5 × 0.4) / Wide (0.9 × 0.25) / Tall (0.5 × 0.5). Fractions clamped
+  to `0.15..=0.9`.
+- **Layout modes** — `Overlay` (default; paints on top of the editor) and
+  `Inline` (claims a strip at the top/bottom edge; editor reflows around it).
+  Multiple inline widgets at the same edge tile horizontally; combined strip
+  heights capped at 50 % of editor height.
+- **Opacity modes** — `Solid` (default; full bg) and `Translucent` (skips body
+  bg so editor text shows through; title + border keep their bg).
+- **Kebab menu** — `⋮` glyph at the right end of the title bar (also right-click
+  the widget body). Sections: Resize / Move to / Layout / Opacity / Rename… /
+  Close. Current values get a `●` marker; the highlight pre-positions on the
+  row that matches the widget's current state. Drops up when it would clip
+  into the statusline.
+- **Drag-to-move** — click + hold the title bar; a cyan ghost chip `⇲ <title>`
+  follows the cursor, and a translucent `░` overlay paints on the actual
+  landing rect (with a `⤴ Top-left` / `⤵ Top-right` label) so the drop target
+  is unambiguous. Magnetic snap within 8 cells of another widget's body
+  center: the dragged widget inherits the target's corner and reorders in
+  the vec to sit adjacent (above if cursor was above the target's center,
+  below otherwise).
+- **Empty-state chip** — a faint ` + dock ` chip at the bottom-right of the
+  editor body when no widgets exist. Click to spawn a default Note 1.
+- **Session persistence** — the widget vec (positions, sizes, corners,
+  content, layout, opacity) round-trips through `.mnml/session.json`. Older
+  session files without the layout / opacity fields default to `Overlay` /
+  `Solid` cleanly via serde.
+
 ## HTTP request client
 
 - **Request files** — send `.http` / `.rest` / `.curl` files, with multi-block

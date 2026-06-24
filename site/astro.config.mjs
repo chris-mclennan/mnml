@@ -88,6 +88,7 @@ export default defineConfig({
             { label: 'Activity bar', slug: 'manual/activity-bar' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'Editing', slug: 'manual/editing' },
+            { label: 'Dock widgets', slug: 'manual/dock-widgets' },
             { label: 'Coming from NvChad', slug: 'manual/coming-from-nvchad' },
             { label: 'Coming from VS Code', slug: 'manual/coming-from-vscode' },
             { label: 'Cheatsheet — NvChad chord map', slug: 'manual/cheatsheet-nvchad' },
