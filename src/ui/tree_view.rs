@@ -95,16 +95,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .min(git_needed)
         .min(remaining_for_git);
     let git_height = git_cap.max(1);
+    // How many rows of GIT content didn't fit. When > 0,
+    // `draw_git_section` appends a `… N more` indicator on its
+    // last row so the user knows the list is clipped (instead of
+    // wondering if there are silently-hidden entries below).
+    // The indicator takes 1 row itself, so we subtract one more
+    // from the displayed count to avoid lying about how many are
+    // hidden.
+    let git_overflow_rows: u16 = if git_height < git_needed {
+        // git_needed counts the header but git_height also counts
+        // it, so the diff is content rows that didn't fit.
+        git_needed.saturating_sub(git_height)
+    } else {
+        0
+    };
     // Cache for the mouse-down drag-resize handler so it can use
     // these as the drag anchor.
     app.rects.integration_section_h = integration_height;
     app.rects.git_section_h = git_height;
-    // Bottom-pad GIT by 1 row when collapsed so the chevron-only
-    // header doesn't sit flush against the rail's bottom edge —
-    // visually anchors it as a real section header rather than a
-    // stray row. Expanded GIT runs to the bottom edge as before
-    // (the branch list provides its own visual weight there).
-    let git_bottom_pad: u16 = if !app.git_section_expanded { 1 } else { 0 };
+    // Always reserve 1 row of rail-bg below the GIT section so the
+    // last visible row never kisses the statusline. Doubles as the
+    // "no more content below" affordance — combined with the
+    // overflow-indicator row at the bottom of `draw_git_section`,
+    // the user can always tell whether they're seeing the full list
+    // or a clipped view.
+    let git_bottom_pad: u16 = 1;
     let git_top_y = area.y + area.height - git_height - git_bottom_pad;
     let integration_top_y = git_top_y.saturating_sub(integration_height + 1); // +1 separator
     // Workspace section gets everything above the integration section
@@ -327,7 +342,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if body_y >= area.y + area.height {
         return;
     }
-    draw_git_section(frame, app, area, body_y, nerd);
+    draw_git_section(frame, app, area, body_y, nerd, git_overflow_rows);
 }
 
 /// The four per-workspace action chips that hang off the right edge of
@@ -1372,7 +1387,14 @@ fn draw_extra_workspace_section(
 /// Draw the GIT section: a "branches" sub-label, the branch rows, a
 /// "worktrees" sub-label, the worktree rows. Sub-labels are dim, not
 /// selectable. Records click-rects in `app.rects.git_rail_rows`.
-fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, _nerd: bool) {
+fn draw_git_section(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    start_y: u16,
+    _nerd: bool,
+    overflow_rows: u16,
+) {
     let rail_bg = theme::cur().bg_darker;
     let width = area.width as usize;
     let avail = (area.y + area.height).saturating_sub(start_y) as usize;
@@ -1600,6 +1622,30 @@ fn draw_git_section(frame: &mut Frame, app: &mut App, area: Rect, start_y: u16, 
     if app.git_rail.is_empty() {
         // Friendly placeholder so the user sees the section even outside a repo.
         push_sublabel(&mut lines, "no git repo here", width, rail_bg);
+    }
+
+    // When content didn't fit (`overflow_rows > 0`), the last
+    // visible row becomes a `… N more` indicator so the user can
+    // tell they're looking at a clipped view. We replace the LAST
+    // line in `lines` (not append), otherwise the indicator itself
+    // would overflow. The displayed count accounts for the row the
+    // indicator occupies (one row of content is now an indicator
+    // row, so `overflow + 1` items are effectively hidden).
+    if overflow_rows > 0 && !lines.is_empty() {
+        let hidden = overflow_rows as usize + 1;
+        let s = format!("  … {hidden} more");
+        let pad = width.saturating_sub(s.chars().count());
+        let last_idx = lines.len() - 1;
+        lines[last_idx] = Line::from(vec![
+            Span::styled(
+                s,
+                Style::default()
+                    .fg(theme::cur().comment)
+                    .bg(rail_bg)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)),
+        ]);
     }
 
     let body = git_body_rect(area, start_y);
