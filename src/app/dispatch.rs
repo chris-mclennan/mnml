@@ -496,10 +496,33 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     None
 }
 
+/// Minimum gap between APPLIED wheel-scroll events on slow-scroll
+/// surfaces (tree, git rail, extra-workspace trees, integrations
+/// list). Throttles macOS Terminal / Ghostty / iTerm2 smooth-scroll
+/// bursts down to one row per real wheel notch.
+const LIST_SCROLL_THROTTLE_MS: u128 = 80;
+
+/// Returns true when this wheel event should be applied (and
+/// stamps `last_list_scroll_at`); false when it should be dropped
+/// as too-close-on-the-heels.
+fn list_scroll_gate(app: &mut App) -> bool {
+    let now = std::time::Instant::now();
+    let drop = app
+        .last_list_scroll_at
+        .is_some_and(|prev| now.duration_since(prev).as_millis() < LIST_SCROLL_THROTTLE_MS);
+    if !drop {
+        app.last_list_scroll_at = Some(now);
+    }
+    !drop
+}
+
 pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     if let Some(tr) = app.rects.tree
         && contains(tr, x, y)
     {
+        if !list_scroll_gate(app) {
+            return;
+        }
         for _ in 0..delta.unsigned_abs() {
             if delta < 0 {
                 app.tree.move_up();
@@ -517,6 +540,9 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .iter()
         .find(|(r, _, _)| contains(*r, x, y))
     {
+        if !list_scroll_gate(app) {
+            return;
+        }
         if let Some(ws) = app.extra_workspaces.get_mut(ws_idx) {
             for _ in 0..delta.unsigned_abs() {
                 if delta < 0 {
@@ -546,6 +572,9 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .iter()
         .any(|(r, _)| contains(*r, x, y))
     {
+        if !list_scroll_gate(app) {
+            return;
+        }
         for _ in 0..delta.unsigned_abs() {
             if delta < 0 {
                 app.git_rail_move_up();

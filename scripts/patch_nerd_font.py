@@ -179,20 +179,34 @@ def main() -> int:
             )
             continue
 
-        # Scale the SVG. We must NOT overflow the monospace advance
-        # horizontally — tmnl's `cell.wgsl` clips each cell to
-        # `cell_size`, so anything past `cell_w` is chopped (the
-        # symptom: the Codex cloud lost its left + right edges). So
-        # target_w = cell_w * 1.0 exactly; the vertical direction
-        # has headroom (cell_h is ~em).
-        target_w = cell_w * 1.0
-        target_h = em * 0.85
+        # Scale the SVG. Two knobs:
+        #   `width` — fraction of the monospace advance the glyph is
+        #     allowed to span. 1.0 = stays inside one cell; 1.4 =
+        #     ~20% overflow on each side. Modern terminals (Apple
+        #     Terminal, Ghostty, iTerm2, kitty) render that overflow
+        #     into surrounding cells without clipping; mnml's
+        #     integration row paints the glyph as `"  glyph "` so
+        #     the overflow lands on whitespace.
+        #   `height` — vertical fill as a fraction of em. 1.0 fills
+        #     the em-square; 0.85 leaves headroom for asc/descenders.
+        # Override either per-glyph via
+        # `--glyph PATH:CP:NAME:width=1.6:height=0.95`.
+        # Defaults bumped 2026-06-23: was width=1.0, height=0.85
+        # (sized for tmnl's per-cell clip). Modern terminals render
+        # overflow fine; the larger defaults match the visual weight
+        # of stock Nerd Font glyphs.
+        width_frac = float(extras.get("width", "1.4"))
+        height_frac = float(extras.get("height", "1.0"))
+        target_w = cell_w * width_frac
+        target_h = em * height_frac
         scale = min(target_w / glyph_w, target_h / glyph_h)
         glyph.transform((scale, 0.0, 0.0, scale, 0.0, 0.0))
 
         # Re-bbox post-scale, then translate so the glyph sits
         # visually-centered in the line height + horizontally
-        # centered within the cell.
+        # centered within the cell. Centering uses `cell_w` (not
+        # `target_w`) so an overflow glyph sticks out symmetrically
+        # on both sides of the cell.
         bbox = glyph.boundingBox()
         dx = -bbox[0] + (cell_w - (bbox[2] - bbox[0])) / 2
         # Vertical center for monospace cells (ascent ~0.75, descent

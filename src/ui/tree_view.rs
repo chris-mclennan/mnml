@@ -725,23 +725,11 @@ fn draw_integration_section(
             "teal" => t.teal,
             _ => t.fg,
         };
-        // Claude (U+F8B0) and Codex (U+F8B1) are patched into the
-        // mnml Nerd Font as 2-cell-wide glyphs (most terminals render
-        // PUA codepoints as wide); the rest of the integration icons
-        // are 1-cell. Compensate by trimming a trailing space on the
-        // wide rows so the leading space + glyph + trailing space
-        // sum to the same VISUAL width as ` glyph  ` does on 1-cell
-        // rows. Both columns (icon left-edge + label left-edge) line
-        // up across all rows.
-        //
-        //   1-cell glyph: ` g  ` → cells [_ g _ _] → label at col 4
-        //   2-cell glyph: ` g ` → cells [_ g g _] → label at col 4
-        let wide_glyph = matches!(glyph.as_str(), "\u{F8B0}" | "\u{F8B1}");
-        let icon_part = if wide_glyph {
-            format!(" {g} ")
-        } else {
-            format!(" {g}  ")
-        };
+        // 2-cell left indent so INTEGRATIONS rows visually nest under
+        // the section header (matches the GIT section's `  marker `
+        // indent). Single-space gap after the glyph keeps the
+        // icon-to-label spacing uniform across wide / narrow glyphs.
+        let icon_part = format!("  {g} ");
         // Truncate the label to fit the rail width (icon takes 4
         // cells, leaving width - 4 for the label).
         let label_cells = width.saturating_sub(icon_part.chars().count());

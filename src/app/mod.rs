@@ -2584,6 +2584,14 @@ pub struct App {
     /// different cell. Read by `dispatch_mouse` to upgrade count==2 → word
     /// select, count==3 → line select.
     pub last_click: Option<(std::time::Instant, u16, u16, u8)>,
+    /// Timestamp of the last wheel-scroll event we APPLIED to a slow-
+    /// scroll surface (tree / git rail / sidebar list). macOS Terminal +
+    /// Ghostty + iTerm2 fire several scroll events per real wheel
+    /// notch under smooth-scrolling; without a throttle the cursor in
+    /// a short list runs past the visible area on a single notch.
+    /// `dispatch::scroll_under` drops events that arrive within
+    /// `LIST_SCROLL_THROTTLE_MS` of the previous applied one.
+    pub last_list_scroll_at: Option<std::time::Instant>,
     /// When `[editor] format_on_save = true`, `save_active` fires
     /// `lsp.format` and stashes `(path, deadline)` here. The next
     /// `LspEvent::Formatting` matching `path` applies + chains a save; if
@@ -3478,6 +3486,7 @@ impl App {
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
             last_click: None,
+            last_list_scroll_at: None,
             pending_format_save: None,
             pending_will_save: None,
             pending_cookie_edit: None,
