@@ -226,8 +226,11 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
         app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(target));
         return true;
     }
-    // Alt+<letter> — open the menu whose label starts with <letter>
-    // (case-insensitive).
+    // Alt+<letter> — open the menu whose FIRST ALPHABETIC char
+    // matches. For the brand menu (`>  mnml`), that's `m`; for
+    // `File`, `f`; etc. Matching the first alpha char (instead of
+    // strictly the first char) lets the brand menu have an Alt
+    // shortcut too, despite leading with a non-alpha prompt mark.
     if key.modifiers.contains(KeyModifiers::ALT)
         && let KeyCode::Char(ch) = key.code
     {
@@ -235,7 +238,7 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
         if let Some((i, _)) = menus.iter().enumerate().find(|(_, m)| {
             m.label
                 .chars()
-                .next()
+                .find(|c| c.is_ascii_alphabetic())
                 .is_some_and(|c| c.to_ascii_lowercase() == ch_lower)
         }) {
             app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(i));

@@ -940,13 +940,11 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
                 .menu_open
                 .as_ref()
                 .is_some_and(|s| s.menu_idx == i);
-            // Always reveal the Alt+<letter> accelerator underlines.
-            // Terminals can't send key events for modifier keys alone
-            // (no "Alt down" event), so the Windows-style press-Alt-
-            // to-reveal pattern isn't achievable. Always-on underlines
-            // give the user a permanent reference for which letter
-            // opens which menu.
-            let any_menu_open = true;
+            // Underlines only show while a menu is open. Brand-menu
+            // wordmark is exempt — `mnml` shouldn't have a random
+            // letter underlined; its accelerator is the menu icon
+            // itself.
+            let any_menu_open = app.menu_open.is_some();
             // Foreground matches the palette/search chip's `t.comment`
             // (dim grey); background stays on the chrome row's
             // `t.bg_dark`. When open, invert to a cyan highlight so
@@ -993,7 +991,10 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
                 if is_brand_mark && !ch.is_whitespace() && !is_open {
                     style = style.fg(t.cyan);
                 }
-                if any_menu_open && Some(idx) == first_alpha_idx {
+                // Brand menu's wordmark is exempt — its identity is
+                // the icon, not a letter. Other menus underline the
+                // first alpha char as the Alt+letter accelerator.
+                if any_menu_open && !is_brand_menu && Some(idx) == first_alpha_idx {
                     style = style.add_modifier(Modifier::UNDERLINED);
                 }
                 // BOLD the brand icon AND its wordmark text.
