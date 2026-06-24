@@ -114,12 +114,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // space). Pre-compute the total so the per-buffer tab strip's
     // scroll math reserves enough width.
     // The cluster lives on the palette-bar chrome row, not the
-    // bufferline itself. The H/V split buttons DO live on the
-    // bufferline — reserve the rightmost SPLIT_BUTTONS_W cells
-    // for them so the tab strip's scroll math doesn't run them over.
+    // bufferline itself. The terminal + H/V split buttons (+ the
+    // optional AI button) DO live on the bufferline — reserve the
+    // rightmost `split_buttons_width(app)` cells for them so the
+    // tab strip's scroll math doesn't run them over.
+    let cluster_w = split_buttons_width(app);
     let tabs_max_x = area
         .x
-        .saturating_add(area.width.saturating_sub(SPLIT_BUTTONS_W));
+        .saturating_add(area.width.saturating_sub(cluster_w));
 
     // Disambiguated labels — when two open editors share a filename, prepend
     // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
@@ -667,13 +669,27 @@ pub fn paint_right_cluster(
 /// discoverable split + terminal path even when the per-leaf
 /// tab strip doesn't paint its own buttons.
 pub const SPLIT_BUTTONS_W: u16 = 9;
+/// Width when the optional AI button is enabled (3 base buttons + 1).
+pub const SPLIT_BUTTONS_W_WITH_AI: u16 = 12;
 
-/// Paint the terminal + H / V split buttons at the right end of
-/// `area`. Registers click rects in `app.rects.split_strip_buttons`
-/// (H/V) and `app.rects.split_strip_term_buttons` (terminal).
+/// Total width the cluster needs given the user's config.
+pub fn split_buttons_width(app: &App) -> u16 {
+    if app.config.ui.tab_bar_ai_icon == "none" {
+        SPLIT_BUTTONS_W
+    } else {
+        SPLIT_BUTTONS_W_WITH_AI
+    }
+}
+
+/// Paint the AI (optional) + terminal + H / V split buttons at the
+/// right end of `area`. Registers click rects in:
+///   - `app.rects.split_strip_ai_buttons` (AI launch)
+///   - `app.rects.split_strip_term_buttons` (terminal)
+///   - `app.rects.split_strip_buttons` (H/V)
 /// No-op when there's no active leaf.
 pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
-    if area.width < SPLIT_BUTTONS_W {
+    let total_w = split_buttons_width(app);
+    if area.width < total_w {
         return;
     }
     let Some(active) = app.active else {
@@ -692,13 +708,40 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     //     ("split down").
     //   - `\u{ea85}` nf-cod-terminal — click opens a new shell in
     //     a split below the active leaf.
+    //   - `\u{F8B0}` / `\u{F8B1}` — mnml-patched Claude Code / Codex
+    //     brand glyphs. Painted only when `[ui] tab_bar_ai_icon` is
+    //     set to a non-"none" value.
     let term_glyph = if nerd { "\u{ea85}" } else { "$" };
     let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
     let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let bg = t.bg_darker;
-    let mut bx = area.x + area.width - SPLIT_BUTTONS_W;
+    let mut bx = area.x + area.width - total_w;
 
-    // Terminal button (leftmost).
+    // AI button (leftmost in the cluster) — only when configured.
+    let ai_kind = app.config.ui.tab_bar_ai_icon.as_str();
+    if ai_kind != "none" {
+        let (ai_glyph, ai_fallback, ai_fg) = match ai_kind {
+            "codex" => ("\u{F8B1}", "C", t.cyan),
+            _ => ("\u{F8B0}", "*", t.orange),
+        };
+        let glyph = if nerd { ai_glyph } else { ai_fallback };
+        let ai_rect = Rect {
+            x: bx,
+            y: area.y,
+            width: 3,
+            height: 1,
+        };
+        let ai_line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(glyph, Style::default().fg(ai_fg).bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
+        ]);
+        frame.render_widget(Paragraph::new(ai_line), ai_rect);
+        app.rects.split_strip_ai_buttons.push((ai_rect, active));
+        bx += 3;
+    }
+
+    // Terminal button.
     let term_rect = Rect {
         x: bx,
         y: area.y,

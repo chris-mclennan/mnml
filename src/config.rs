@@ -474,6 +474,34 @@ pub struct UiConfig {
     /// projects_dir = "~/Projects"
     /// ```
     pub projects_dir: String,
+
+    /// VS Code-style menu bar (File / Edit / View / Go / Run / Term /
+    /// Help) on the chrome row. Three modes:
+    ///   - `"always"` (default) — words always visible; click to drop
+    ///     down, Alt+F / F10 to open via keyboard.
+    ///   - `"auto"` — hidden until summoned via Alt+letter, F10, or
+    ///     mouse-at-top-row.
+    ///   - `"hidden"` — never visible; palette-only flow stays pure.
+    ///
+    /// ```toml
+    /// [ui]
+    /// menu_bar = "always"
+    /// ```
+    pub menu_bar: String,
+
+    /// Optional AI-launch button on the right end of every tab
+    /// bar, immediately left of the terminal button. Click → fires
+    /// the corresponding `ai.*` palette command (drops a Claude
+    /// Code / Codex pane). Three values:
+    ///   - `"none"` (default) — no AI button on the tab bar.
+    ///   - `"claude_code"` — Claude Code launcher.
+    ///   - `"codex"` — Codex launcher.
+    ///
+    /// ```toml
+    /// [ui]
+    /// tab_bar_ai_icon = "claude_code"
+    /// ```
+    pub tab_bar_ai_icon: String,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -988,6 +1016,8 @@ impl Default for Config {
                 now_playing_source: "auto".to_string(),
                 preferred_music_app: "mixr".to_string(),
                 projects_dir: String::new(),
+                menu_bar: "always".to_string(),
+                tab_bar_ai_icon: "none".to_string(),
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1169,6 +1199,14 @@ struct RawUi {
     /// at config load. See [`UiConfig::projects_dir`].
     #[serde(default)]
     projects_dir: Option<String>,
+    /// Menu-bar mode. `"always"` / `"auto"` / `"hidden"`.
+    /// See [`UiConfig::menu_bar`].
+    #[serde(default)]
+    menu_bar: Option<String>,
+    /// Tab-bar AI icon. `"none"` / `"claude_code"` / `"codex"`.
+    /// See [`UiConfig::tab_bar_ai_icon`].
+    #[serde(default)]
+    tab_bar_ai_icon: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1469,6 +1507,18 @@ impl Config {
             let normalized = s.trim().to_ascii_lowercase();
             if matches!(normalized.as_str(), "mixr" | "music" | "spotify") {
                 self.ui.preferred_music_app = normalized;
+            }
+        }
+        if let Some(s) = raw.ui.menu_bar {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "always" | "auto" | "hidden") {
+                self.ui.menu_bar = normalized;
+            }
+        }
+        if let Some(s) = raw.ui.tab_bar_ai_icon {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "none" | "claude_code" | "codex") {
+                self.ui.tab_bar_ai_icon = normalized;
             }
         }
         if let Some(s) = raw.ui.projects_dir {

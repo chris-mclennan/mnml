@@ -2184,10 +2184,16 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.activity_git",
-            title: "Activity: show Source Control",
+            title: "Activity: open git graph",
             group: "view",
             keys: &[],
-            run: |app| app.set_activity_section(crate::app::ActivitySection::Git),
+            // The git-graph pane is mnml's "all git ops live here"
+            // surface, so the activity-bar Git icon now jumps
+            // straight there instead of switching to the placeholder
+            // sub-panel that used to render at `ActivitySection::Git`.
+            run: |app| {
+                crate::command::run("git.graph", app);
+            },
         },
         Command {
             id: "view.activity_debug",

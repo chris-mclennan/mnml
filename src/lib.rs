@@ -88,6 +88,7 @@ pub(crate) mod signature;
 pub(crate) mod snippets;
 pub(crate) mod tools;
 pub(crate) mod tree;
+pub mod menu_bar;
 pub mod tui;
 pub mod ui;
 pub mod update_apply;
@@ -114,11 +115,18 @@ pub enum GitToolbarAction {
     Stash,
     /// `git stash pop` of the most-recent stash
     StashPop,
-    /// Spawn a shell pty pane (`term.shell`)
-    Terminal,
     /// Open the reflog picker — recovery surface for "I just rebased
     /// and lost a commit" flows.
     Reflog,
+    /// `git fetch --all --prune` across every configured repo, then
+    /// refresh the rail's branch / worktree / PR lists.
+    RefreshRepos,
+    /// Cycle the active repo when the workspace has multiple
+    /// `[[workspaces]]` or detected git roots. Fires the
+    /// `git.next_repo` palette command.
+    SwitchRepo,
+    /// Toggle the per-line blame gutter (`git.blame_toggle`).
+    BlameToggle,
     /// Undo the last commit — `git reset --soft HEAD~1` (keeps the
     /// changes staged; never touches the working tree). The undone
     /// commit's hash is captured so `Redo` can re-point HEAD back.

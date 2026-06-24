@@ -204,11 +204,163 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
     }
 }
 
+/// Try to summon a menu via Alt+<letter> or F10. Returns true when a
+/// menu was opened (caller should stop further key dispatch). Called
+/// from `dispatch_key` only when no menu is currently open and the
+/// `[ui] menu_bar` mode isn't `"hidden"`.
+fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
+    let menus = crate::menu_bar::bar();
+    // F10 — open the first menu whose label is alphabetic
+    // (skip the brand menu, whose label starts with a Nerd Font
+    // glyph). Falls back to index 0 if no alphabetic menu exists.
+    if key.code == KeyCode::F(10) && key.modifiers.is_empty() && !menus.is_empty() {
+        let target = menus
+            .iter()
+            .position(|m| {
+                m.label
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+            })
+            .unwrap_or(0);
+        app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(target));
+        return true;
+    }
+    // Alt+<letter> — open the menu whose label starts with <letter>
+    // (case-insensitive).
+    if key.modifiers.contains(KeyModifiers::ALT)
+        && let KeyCode::Char(ch) = key.code
+    {
+        let ch_lower = ch.to_ascii_lowercase();
+        if let Some((i, _)) = menus.iter().enumerate().find(|(_, m)| {
+            m.label
+                .chars()
+                .next()
+                .is_some_and(|c| c.to_ascii_lowercase() == ch_lower)
+        }) {
+            app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(i));
+            return true;
+        }
+    }
+    false
+}
+
+/// Handle a key while a menu dropdown is open. Returns true when the
+/// key was consumed by the menu (caller should stop dispatch).
+fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
+    let menus = crate::menu_bar::bar();
+    let Some(open) = app.menu_open.as_ref().cloned() else {
+        return false;
+    };
+    let Some(menu) = menus.get(open.menu_idx) else {
+        return false;
+    };
+    match key.code {
+        KeyCode::Esc => {
+            app.menu_open = None;
+            true
+        }
+        KeyCode::Left => {
+            let n = menus.len();
+            if n > 1 {
+                let prev = (open.menu_idx + n - 1) % n;
+                app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(prev));
+            }
+            true
+        }
+        KeyCode::Right => {
+            let n = menus.len();
+            if n > 1 {
+                let next = (open.menu_idx + 1) % n;
+                app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(next));
+            }
+            true
+        }
+        KeyCode::Up => {
+            let n = menu.items.len();
+            if n > 0 {
+                // Skip past Separators by walking until we hit an
+                // Action. `usize::MAX` (fresh-mouse-open) wraps to last.
+                let start = if open.item_idx == usize::MAX {
+                    n - 1
+                } else {
+                    (open.item_idx + n - 1) % n
+                };
+                let new_idx = walk_to_action(&menu.items, start, false);
+                if let Some(s) = app.menu_open.as_mut() {
+                    s.item_idx = new_idx;
+                    s.keyboard_opened = true;
+                }
+            }
+            true
+        }
+        KeyCode::Down => {
+            let n = menu.items.len();
+            if n > 0 {
+                let start = if open.item_idx == usize::MAX {
+                    0
+                } else {
+                    (open.item_idx + 1) % n
+                };
+                let new_idx = walk_to_action(&menu.items, start, true);
+                if let Some(s) = app.menu_open.as_mut() {
+                    s.item_idx = new_idx;
+                    s.keyboard_opened = true;
+                }
+            }
+            true
+        }
+        KeyCode::Enter => {
+            if let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
+                menu.items.get(open.item_idx)
+            {
+                let id = *command_id;
+                app.menu_open = None;
+                crate::command::run(id, app);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Walk through `items` starting at `start`, in the given direction
+/// (`true` = forward, `false` = backward), returning the index of the
+/// first Action found. Returns `start` if no Action exists.
+fn walk_to_action(items: &[crate::menu_bar::MenuItem], start: usize, forward: bool) -> usize {
+    let n = items.len();
+    let mut idx = start;
+    for _ in 0..n {
+        if matches!(items.get(idx), Some(crate::menu_bar::MenuItem::Action { .. })) {
+            return idx;
+        }
+        idx = if forward {
+            (idx + 1) % n
+        } else {
+            (idx + n - 1) % n
+        };
+    }
+    start
+}
+
 pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // Any keystroke cancels a pending hover tooltip / divider highlight —
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // Menu-bar dropdown — intercept keys before anything else so
+    // Esc / arrows / Enter target the menu instead of the editor.
+    if app.menu_open.is_some() && handle_menu_key(app, key) {
+        return;
+    }
+    // Menu summon — Alt+letter opens the corresponding menu,
+    // F10 opens the first menu. Gated by menu_bar mode != "hidden".
+    if app.menu_open.is_none()
+        && app.config.ui.menu_bar != "hidden"
+        && try_open_menu_from_key(app, key)
+    {
+        return;
+    }
     // 2026-06-22 — Esc during an in-flight tree-file drag aborts
     // the drag: clears tree_drag + the drop-zone overlay. User
     // can release the mouse anywhere safely after that without
@@ -4706,6 +4858,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.close_split_tab(leaf_active, tab_pane);
                 return;
             }
+            // AI launch button in the split-strip cluster.
+            // Focus the clicked leaf, then fire the configured
+            // `ai.*` command (Claude Code / Codex).
+            if let Some(&(_, leaf_active)) = app
+                .rects
+                .split_strip_ai_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                let cmd = match app.config.ui.tab_bar_ai_icon.as_str() {
+                    "codex" => "ai.codex",
+                    _ => "ai.claude_code",
+                };
+                app.active = Some(leaf_active);
+                app.focus = crate::focus::Focus::Pane;
+                crate::command::run(cmd, app);
+                return;
+            }
             // Terminal button in the split-strip cluster.
             // Focus the clicked leaf, then open a shell in a
             // split (mirrors the `term.shell` palette command).
@@ -4981,7 +5151,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                app.set_activity_section(section);
+                // The Git icon opens the git graph pane directly —
+                // it's mnml's "all git ops live here" surface, so
+                // the placeholder section sub-panel is bypassed.
+                if matches!(section, crate::app::ActivitySection::Git) {
+                    crate::command::run("git.graph", app);
+                } else {
+                    app.set_activity_section(section);
+                }
                 return;
             }
             // Gear icon at the bottom of the activity bar → pop the
@@ -5037,6 +5214,52 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     crate::command::run(&cmd, app);
                 }
                 return;
+            }
+            // Menu-bar item click — fire the palette command and
+            // close the dropdown.
+            if let Some(&(_, item_idx)) = app
+                .rects
+                .menu_bar_items
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                && let Some(open) = app.menu_open.as_ref().cloned()
+            {
+                let menus = crate::menu_bar::bar();
+                if let Some(menu) = menus.get(open.menu_idx)
+                    && let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
+                        menu.items.get(item_idx)
+                {
+                    let id = *command_id;
+                    app.menu_open = None;
+                    crate::command::run(id, app);
+                }
+                return;
+            }
+            // Menu-bar word click — toggle the dropdown.
+            if let Some(&(_, menu_idx)) = app
+                .rects
+                .menu_bar_words
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                let already_open = app
+                    .menu_open
+                    .as_ref()
+                    .is_some_and(|s| s.menu_idx == menu_idx);
+                app.menu_open = if already_open {
+                    None
+                } else {
+                    Some(crate::menu_bar::MenuOpenState::new_mouse(menu_idx))
+                };
+                return;
+            }
+            // Click anywhere else while a menu is open → close it.
+            // Fall through to the rest of the dispatch (the click
+            // still hits the underlying target).
+            if app.menu_open.is_some() {
+                app.menu_open = None;
+                // Don't return — the click goes through to the
+                // underlying target (e.g. an editor pane, a tab).
             }
             // `> INTEGRATIONS` section header — arm drag-resize. On
             // mouse-up: !moved → toggle collapse; moved → commit

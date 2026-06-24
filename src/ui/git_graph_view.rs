@@ -853,7 +853,14 @@ fn compute_column_widths(total: usize, graph_w: usize, auto: ColAutoSize) -> Col
         w.sha = 9;
         remaining -= 9 + 3;
     }
-    if remaining >= 11 + 3 {
+    // 13 cells for "DATE / TIME" (11) + sort glyph (` ▲` / ` ▼` /
+    // `  `, 2 cells). 11 was just enough for the label without
+    // the glyph and truncated to `…E / TIME` once the glyph was
+    // appended.
+    if remaining >= 13 + 3 {
+        w.age = 13;
+        remaining -= 13 + 3;
+    } else if remaining >= 11 + 3 {
         w.age = 11;
         remaining -= 11 + 3;
     } else if remaining >= 6 + 3 {
@@ -1981,7 +1988,7 @@ pub fn draw_git_toolbar(
         &str,
         crate::GitToolbarAction,
         ratatui::style::Color,
-    ); 11] = [
+    ); 13] = [
         (
             "Undo",
             "\u{F054C}",
@@ -2053,11 +2060,25 @@ pub fn draw_git_toolbar(
             t.orange,
         ),
         (
-            "Term",
-            "\u{F018D}",
-            ">",
-            crate::GitToolbarAction::Terminal,
-            t.comment,
+            "Refresh",
+            "\u{EB37}",
+            "↻",
+            crate::GitToolbarAction::RefreshRepos,
+            t.cyan,
+        ),
+        (
+            "Switch",
+            "\u{F062C}",
+            "⇄",
+            crate::GitToolbarAction::SwitchRepo,
+            t.blue,
+        ),
+        (
+            "Blame",
+            "\u{F02A0}",
+            "B",
+            crate::GitToolbarAction::BlameToggle,
+            t.yellow,
         ),
     ];
 

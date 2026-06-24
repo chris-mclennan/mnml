@@ -1793,6 +1793,13 @@ pub struct PaneRects {
     /// flips `App.integration_section_expanded` (same pattern as
     /// `tree_toggle` / `git_section_toggle`).
     pub integration_section_toggle: Option<Rect>,
+    /// `(rect, menu_idx)` per menu word on the chrome row. Click to
+    /// drop the corresponding menu. Cleared + repopulated every frame.
+    pub menu_bar_words: Vec<(Rect, usize)>,
+    /// `(rect, item_idx)` per item row in the currently-open menu
+    /// dropdown. Empty when no menu is open. Used for click + hover-
+    /// highlight dispatch.
+    pub menu_bar_items: Vec<(Rect, usize)>,
     /// Current rendered height (rows) of the INTEGRATIONS section.
     /// Set every frame by `tree_view::draw` so the mouse-down handler
     /// can capture it as the drag-resize anchor.
@@ -1962,6 +1969,12 @@ pub struct PaneRects {
     /// Click → focus that leaf + open a new shell pane via
     /// `App::open_shell()`. Cleared + repopulated every frame.
     pub split_strip_term_buttons: Vec<(Rect, PaneId)>,
+    /// `(rect, pane_id)` per visible AI-launch button in the
+    /// split-strip cluster. Painted when `[ui] tab_bar_ai_icon`
+    /// is set to a non-`"none"` value. Left click → fires the
+    /// configured `ai.*` command; right click → opens a context
+    /// menu to switch between Claude Code / Codex / Hide.
+    pub split_strip_ai_buttons: Vec<(Rect, PaneId)>,
     /// The whole central split-tree area.
     pub body: Option<Rect>,
     /// `(text_area, pane_id)` per visible editor leaf — the editable region
@@ -2971,6 +2984,11 @@ pub struct App {
     /// otherwise. Carries the `original` Config snapshot for the
     /// Esc/cancel revert path. See `app/settings.rs` for the schema.
     pub settings_overlay: Option<settings::SettingsOverlayState>,
+    /// Active menu-bar dropdown state. `Some` while a menu is open;
+    /// `None` otherwise. Driven by mouse click on a menu word, Alt+
+    /// letter, or F10. See `src/menu_bar.rs` for the bar layout
+    /// + `src/ui/menu_bar.rs` for the renderer.
+    pub menu_open: Option<crate::menu_bar::MenuOpenState>,
     /// "+ Add integration" discovery overlay state. Opened by the `+`
     /// chip on the sidebar's INTEGRATIONS header or `integrations.add`.
     /// See `app/discovery.rs`.
@@ -3616,6 +3634,7 @@ impl App {
             dragging: None,
             close_prompt: None,
             settings_overlay: None,
+            menu_open: None,
             discovery_overlay: None,
             help_overlay: None,
             prompt: None,
@@ -6495,10 +6514,16 @@ impl App {
             crate::GitToolbarAction::Commit => self.open_commit_prompt(),
             crate::GitToolbarAction::Stash => self.open_stash_prompt(),
             crate::GitToolbarAction::StashPop => self.run_git_stash_pop(),
-            crate::GitToolbarAction::Terminal => {
-                crate::command::run("term.shell", self);
-            }
             crate::GitToolbarAction::Reflog => self.open_git_reflog(),
+            crate::GitToolbarAction::RefreshRepos => {
+                crate::command::run("git.refresh_repos", self);
+            }
+            crate::GitToolbarAction::SwitchRepo => {
+                crate::command::run("git.next_repo", self);
+            }
+            crate::GitToolbarAction::BlameToggle => {
+                crate::command::run("git.blame_toggle", self);
+            }
             crate::GitToolbarAction::Undo => self.git_undo_last_commit(),
             crate::GitToolbarAction::Redo => self.git_redo_commit(),
         }

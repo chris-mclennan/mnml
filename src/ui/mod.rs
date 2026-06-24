@@ -81,6 +81,7 @@ pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
 pub mod request_view;
+pub mod menu_bar;
 pub mod scratch_term_view;
 pub mod scrollbar;
 pub mod settings_overlay;
@@ -101,7 +102,7 @@ pub mod yank_flash_overlay;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::App;
@@ -207,6 +208,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // other's contribution.
     app.rects.split_strip_buttons.clear();
     app.rects.split_strip_term_buttons.clear();
+    app.rects.split_strip_ai_buttons.clear();
 
     // Split off the bottom statusline + cmdline bar (each 1 row, full width).
     // Cmdline bar sits BELOW the statusline (vim/neovim convention: the
@@ -584,6 +586,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Startup picker — drawn last among modal overlays so it sits on
     // top of welcome/about/etc. when launched from the .app.
     startup_picker::draw(frame, app, area);
+    // Menu-bar dropdown — paints on top of everything else so it
+    // overlays the editor body / overlays when open. Mouse-up
+    // outside the dropdown closes it (see tui.rs dispatch).
+    menu_bar::draw_dropdown(frame, app);
     // …and the flash highlight paints last so it can sit on top of even
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).
@@ -902,6 +908,101 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     let ascii = app.config.ui.ascii_icons;
     frame.render_widget(Block::default().style(Style::default().bg(t.bg_dark)), area);
+
+    // Menu-bar words (File / Edit / View / …) — far-left of the
+    // chrome row, before any centered cluster, matching the
+    // standard macOS / Windows / Linux menu-bar position.
+    // Visibility per `[ui] menu_bar` mode.
+    app.rects.menu_bar_words.clear();
+    let menu_mode = app.config.ui.menu_bar.as_str();
+    let menu_visible = matches!(menu_mode, "always")
+        || (menu_mode == "auto" && app.menu_open.is_some());
+    if menu_visible {
+        let menus = crate::menu_bar::bar();
+        let mut mx = area.x;
+        for (i, m) in menus.iter().enumerate() {
+            let label_w = m.label.chars().count() as u16 + 2;
+            if mx.saturating_add(label_w) > area.x + area.width {
+                break;
+            }
+            let word_rect = Rect {
+                x: mx,
+                y: area.y,
+                width: label_w,
+                height: 1,
+            };
+            let is_open = app
+                .menu_open
+                .as_ref()
+                .is_some_and(|s| s.menu_idx == i);
+            // Any menu open ⇒ reveal accelerator underlines on EVERY
+            // menu word so the user can keyboard-navigate without
+            // having to memorise Alt+letter mappings.
+            let any_menu_open = app.menu_open.is_some();
+            // Foreground matches the palette/search chip's `t.comment`
+            // (dim grey); background stays on the chrome row's
+            // `t.bg_dark`. When open, invert to a cyan highlight so
+            // the active menu reads as the focal target.
+            let (word_fg, word_bg) = if is_open {
+                (t.bg_dark, t.cyan)
+            } else {
+                (t.comment, t.bg_dark)
+            };
+            let base_style = Style::default()
+                .fg(word_fg)
+                .bg(word_bg)
+                .add_modifier(if is_open {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                });
+            // The leading character of an ASCII-letter label is the
+            // Alt+<letter> accelerator. Underline it when ANY menu
+            // is open so the user discovers the shortcut while
+            // browsing.
+            let first_alpha_idx = m
+                .label
+                .chars()
+                .position(|c| c.is_ascii_alphabetic());
+            // The brand menu is the one whose first char isn't an
+            // ASCII letter — its leading `>` is the prompt-mark
+            // brand, the rest is the wordmark.
+            let is_brand_menu = m
+                .label
+                .chars()
+                .next()
+                .is_some_and(|c| !c.is_ascii_alphabetic() && c != ' ');
+            let mut spans: Vec<Span<'static>> = Vec::with_capacity(m.label.chars().count() + 2);
+            spans.push(Span::styled(" ", base_style));
+            for (idx, ch) in m.label.chars().enumerate() {
+                let mut style = base_style;
+                // Resting-state brand-mark glyphs (all chars before
+                // the wordmark, e.g. `>` and `_` in `>_  mnml`) pop
+                // in accent (cyan). Open-state inverts the whole
+                // word, so we leave it alone there.
+                let is_brand_mark =
+                    is_brand_menu && first_alpha_idx.is_some_and(|fa| idx < fa);
+                if is_brand_mark && !ch.is_whitespace() && !is_open {
+                    style = style.fg(t.cyan);
+                }
+                if any_menu_open && Some(idx) == first_alpha_idx {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                // BOLD the brand icon AND its wordmark text.
+                if is_brand_menu && !ch.is_whitespace() {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                spans.push(Span::styled(ch.to_string(), style));
+            }
+            spans.push(Span::styled(" ", base_style));
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(Line::from(spans)),
+                word_rect,
+            );
+            app.rects.menu_bar_words.push((word_rect, i));
+            mx = mx.saturating_add(label_w);
+        }
+    }
 
     let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
     let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
@@ -2006,11 +2107,13 @@ fn paint_leaf_tab_strip(
     // the buttons. Tabs that don't fit get clipped per the
     // existing chip_w logic.
     const SPLIT_BTN_W: u16 = 3;
-    // Three buttons now: terminal + V-split + H-split.
-    const SPLIT_BTNS_TOTAL: u16 = SPLIT_BTN_W * 3;
+    // Three base buttons (terminal + V-split + H-split) plus the
+    // optional AI button when `[ui] tab_bar_ai_icon != "none"`.
+    let ai_enabled = app.config.ui.tab_bar_ai_icon != "none";
+    let split_btns_total: u16 = SPLIT_BTN_W * if ai_enabled { 4 } else { 3 };
     let mut chip_x = strip.x;
     let strip_right = strip.x + strip.width;
-    let tabs_right = strip_right.saturating_sub(SPLIT_BTNS_TOTAL);
+    let tabs_right = strip_right.saturating_sub(split_btns_total);
 
     for &id in tabs {
         if chip_x >= tabs_right {
@@ -2148,9 +2251,32 @@ fn paint_leaf_tab_strip(
     let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
     let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let dim_fg = t.comment;
-    let mut bx = strip_right.saturating_sub(SPLIT_BTNS_TOTAL);
+    let mut bx = strip_right.saturating_sub(split_btns_total);
 
-    // Terminal button (leftmost).
+    // AI button (leftmost in cluster) — only when configured.
+    if ai_enabled {
+        let (ai_glyph, ai_fallback, ai_fg) = match app.config.ui.tab_bar_ai_icon.as_str() {
+            "codex" => ("\u{F8B1}", "C", t.cyan),
+            _ => ("\u{F8B0}", "*", t.orange),
+        };
+        let glyph = if nerd { ai_glyph } else { ai_fallback };
+        let ai_rect = Rect {
+            x: bx,
+            y: strip.y,
+            width: SPLIT_BTN_W,
+            height: 1,
+        };
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(strip_bg)),
+            Span::styled(glyph, Style::default().fg(ai_fg).bg(strip_bg)),
+            Span::styled(" ", Style::default().bg(strip_bg)),
+        ]);
+        frame.render_widget(Paragraph::new(line), ai_rect);
+        app.rects.split_strip_ai_buttons.push((ai_rect, active));
+        bx = bx.saturating_add(SPLIT_BTN_W);
+    }
+
+    // Terminal button.
     {
         let term_rect = Rect {
             x: bx,
