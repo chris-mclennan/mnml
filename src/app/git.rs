@@ -2472,6 +2472,42 @@ impl App {
     }
 
     /// Checkout the branch a `PickerKind::Branches` item id encodes.
+    /// Highlight the commit referenced by `ref_name` (branch /
+    /// remote-branch / tag / `stash@{N}`) in the focused git-graph
+    /// pane. No-op when there's no active GitGraph pane or git can't
+    /// resolve the ref. Used by the git-palette's left-click handler
+    /// — GitKraken-style "click to jump to commit, right-click to
+    /// act".
+    pub fn git_jump_to_ref(&mut self, ref_name: &str) {
+        let repo = self.active_repo_path().to_path_buf();
+        let Some(sha) = crate::git::commit::rev_parse(&repo, ref_name) else {
+            self.toast(format!("git: cannot resolve `{ref_name}`"));
+            return;
+        };
+        // Find the FIRST git-graph pane and jump there. If multiple
+        // are open we just hit the first — opening the activity-bar
+        // Git icon always foregrounds one anyway.
+        let Some((pane_idx, idx_in_graph)) = self.panes.iter_mut().enumerate().find_map(
+            |(i, p)| match p {
+                crate::pane::Pane::GitGraph(g) => g
+                    .find_by_hash_prefix(&sha)
+                    .map(|commit_idx| (i, commit_idx)),
+                _ => None,
+            },
+        ) else {
+            // Couldn't find the sha in any open graph pane —
+            // either no graph is open or the commit isn't in
+            // the current view (filtered out, etc.). Open one.
+            crate::command::run("git.graph", self);
+            return;
+        };
+        if let Some(crate::pane::Pane::GitGraph(g)) = self.panes.get_mut(pane_idx) {
+            g.jump_to_commit(idx_in_graph);
+        }
+        self.active = Some(pane_idx);
+        self.focus = crate::focus::Focus::Pane;
+    }
+
     pub fn checkout_branch(&mut self, id: &str) {
         let repo = self.active_repo_path().to_path_buf();
         let from_branch = crate::git::branch::current(&repo);

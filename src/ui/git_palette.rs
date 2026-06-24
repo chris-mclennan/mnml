@@ -141,7 +141,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             t.fg
         };
         let filter_text = if app.git_palette_filter.is_empty() {
-            "Filter (branches, worktrees, tags, …)".to_string()
+            "Filter…".to_string()
         } else {
             app.git_palette_filter.clone()
         };

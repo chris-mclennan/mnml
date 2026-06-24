@@ -5574,38 +5574,44 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
+                // GitKraken-style: left-click on a ref (branch /
+                // remote / worktree / tag / stash) HIGHLIGHTS the
+                // ref's commit in the open git-graph pane. The
+                // action (checkout / cd / pop / etc.) lives on
+                // the right-click context menu. PRs still open in
+                // the browser since they're not graph commits.
                 match hit {
                     crate::ui::git_palette::GitPaletteHit::Branch(i) => {
-                        app.click_git_rail(crate::git::rail::GitRailHit::Branch(i));
+                        if let Some(b) = app.git_rail.branches.get(i) {
+                            let name = b.name.clone();
+                            app.git_jump_to_ref(&name);
+                        }
                     }
                     crate::ui::git_palette::GitPaletteHit::Worktree(i) => {
-                        app.click_git_rail(crate::git::rail::GitRailHit::Worktree(i));
+                        if let Some(wt) = app.git_rail.worktrees.get(i) {
+                            let label = wt.label.clone();
+                            app.git_jump_to_ref(&label);
+                        }
                     }
                     crate::ui::git_palette::GitPaletteHit::Pull(i) => {
+                        // PRs aren't commits — open in browser
+                        // (same as the legacy rail).
                         app.click_git_rail(crate::git::rail::GitRailHit::Pull(i));
                     }
                     crate::ui::git_palette::GitPaletteHit::RemoteBranch(i) => {
-                        // Checkout the remote branch — git will
-                        // auto-create a local tracking branch.
                         if let Some(name) = app.git_rail.remote_branches.get(i).cloned() {
-                            app.checkout_branch(&name);
+                            app.git_jump_to_ref(&name);
                         }
                     }
                     crate::ui::git_palette::GitPaletteHit::Stash(i) => {
-                        // Click a stash → show its summary as a
-                        // toast. Right-click handles pop / apply /
-                        // drop (lands when the context menu does).
                         if let Some(st) = app.git_rail.stashes.get(i) {
                             let id = st.id.clone();
-                            let summary = st.summary.clone();
-                            app.toast(format!("{id}: {summary}"));
+                            app.git_jump_to_ref(&id);
                         }
                     }
                     crate::ui::git_palette::GitPaletteHit::Tag(i) => {
-                        // Click a tag → checkout (creates a
-                        // detached HEAD).
                         if let Some(name) = app.git_rail.tags.get(i).cloned() {
-                            app.checkout_branch(&name);
+                            app.git_jump_to_ref(&name);
                         }
                     }
                 }
