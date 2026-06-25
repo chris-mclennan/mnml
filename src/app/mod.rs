@@ -1527,6 +1527,26 @@ pub fn open_url_external(url: &str) {
 /// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
 /// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
 /// headless / sandboxed env where none of those are available is fine).
+/// True when a binary named `mnml` is reachable via the user's
+/// `PATH`. Used by the startup PATH hint so we only nag users
+/// whose `mnml` command would actually fail when typed in a
+/// fresh shell.
+pub fn mnml_on_path() -> bool {
+    let path = match std::env::var_os("PATH") {
+        Some(p) => p,
+        None => return false,
+    };
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join("mnml");
+        if let Ok(meta) = std::fs::metadata(&candidate)
+            && meta.is_file()
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Listening TCP ports for a process tree rooted at `root_pid`.
 /// Shells out to:
 ///   1. `pgrep -P <pid>` to enumerate direct children.
@@ -6109,6 +6129,31 @@ impl App {
                 trimmed.to_string()
             };
         }
+    }
+
+    /// `setup.install_to_path` — show an actionable hint with
+    /// the exact command to install mnml so `mnml .` works from
+    /// anywhere. Doesn't touch /usr/local/bin itself (sudo
+    /// territory; user may want a different prefix). The hint
+    /// goes to a long-lived toast plus stays visible on the
+    /// welcome screen.
+    pub fn show_install_to_path_hint(&mut self) {
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "<path-to-mnml-binary>".to_string());
+        let on_path = crate::app::mnml_on_path();
+        if on_path {
+            self.toast("mnml is already on PATH (✓)");
+            return;
+        }
+        let cmd = format!("sudo ln -sf {exe} /usr/local/bin/mnml");
+        self.toast(format!(
+            "Install to PATH: run this in a terminal → {cmd}"
+        ));
+        // Also copy the command to the clipboard so the user
+        // can paste it directly.
+        self.clipboard.set(cmd, false);
+        self.toast("command copied to clipboard");
     }
 
     /// Listening TCP ports for a Pty's process tree (root pid +

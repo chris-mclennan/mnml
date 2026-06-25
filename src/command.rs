@@ -3856,6 +3856,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_open_devtools_hint(),
         },
         Command {
+            id: "setup.install_to_path",
+            title: "Setup: install mnml to PATH (so `mnml .` works anywhere)",
+            group: "view",
+            keys: &[],
+            run: |app| app.show_install_to_path_hint(),
+        },
+        Command {
             id: "browser.network_throttle",
             title: "Browser: network throttle picker (Online/Offline/3G/WiFi)",
             group: "browser",

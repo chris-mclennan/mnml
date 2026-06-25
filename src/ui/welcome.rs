@@ -110,6 +110,44 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     body.push(Line::from(""));
 
+    // Install-to-PATH hint — shown only when `mnml` isn't on
+    // PATH. One-line nudge plus a palette-command suggestion;
+    // safe to ignore.
+    if !crate::app::mnml_on_path() {
+        body.push(Line::from(vec![
+            Span::styled(
+                " Tip ",
+                Style::default()
+                    .fg(t.bg_dark)
+                    .bg(t.yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  install mnml to PATH so ",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ),
+            Span::styled(
+                "mnml .",
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " works anywhere — palette: ",
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ),
+            Span::styled(
+                "setup.install_to_path",
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        body.push(Line::from(""));
+    }
+
     // Recent Files — only if we have any, and the screen has room.
     // Capture the screen Y of each row so clicks can route.
     let mut recent_rect_starts: Vec<(usize, std::path::PathBuf)> = Vec::new();
