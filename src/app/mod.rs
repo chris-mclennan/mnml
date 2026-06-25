@@ -6200,11 +6200,20 @@ impl App {
             session_id.to_string(),
         );
         // Find an existing Pty pane to host the new session as a tab.
+        // Prefer `self.active` when it's a Pty — that pane is the
+        // active in its leaf, so `set_leaf_pane` inside
+        // `add_pty_tab` will swap it correctly. Fall back to the
+        // first Pty by index only if no Pty is currently focused
+        // (rare; mostly cold-start).
         let existing_pty = self
-            .panes
-            .iter()
-            .enumerate()
-            .find_map(|(i, p)| matches!(p, crate::pane::Pane::Pty(_)).then_some(i));
+            .active
+            .filter(|&i| matches!(self.panes.get(i), Some(crate::pane::Pane::Pty(_))))
+            .or_else(|| {
+                self.panes
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, p)| matches!(p, crate::pane::Pane::Pty(_)).then_some(i))
+            });
         match existing_pty {
             Some(strip_owner) => self.add_pty_tab(strip_owner, profile),
             None => self.open_pty(profile),
