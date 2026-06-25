@@ -608,6 +608,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // takes priority on the unlikely overlap).
         whichkey::draw_vim_operators(frame, app, area);
     }
+    // Workspaces editor — modal overlay opened from Settings →
+    // Manage workspaces. Drawn BEFORE prompts + context menus so
+    // those still appear on top when the user opens them from a
+    // workspace row (Edit name → prompt, kebab → context menu).
+    workspaces_editor::draw(frame, app);
     if app.close_prompt.is_some() {
         close_prompt::draw(frame, app, area);
     } else {
@@ -670,9 +675,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Workspace-picker dropdown — same overlay treatment, anchored
     // below the workspace header chevron.
     workspace_picker::draw(frame, app);
-    // Workspaces editor — modal overlay opened from Settings →
-    // Manage workspaces.
-    workspaces_editor::draw(frame, app);
     // …and the flash highlight paints last so it can sit on top of even
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).
