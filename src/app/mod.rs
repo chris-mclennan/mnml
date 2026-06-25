@@ -2788,6 +2788,18 @@ pub struct App {
     /// `dispatch::scroll_under` drops events that arrive within
     /// `LIST_SCROLL_THROTTLE_MS` of the previous applied one.
     pub last_list_scroll_at: Option<std::time::Instant>,
+    /// Token bucket for the wheel-flywheel dampener — Logitech
+    /// MX-style free-spin wheels keep emitting real OS wheel
+    /// events for several seconds after the user physically
+    /// releases the wheel, which the coalescer can't tell apart
+    /// from active scrolling. The bucket drains on each batched
+    /// scroll (one token per line) and refills on idle. A hard
+    /// flick burns the bucket; the ringing-down flywheel events
+    /// then arrive faster than refill, so the cursor stops.
+    pub scroll_bucket: f32,
+    /// Last instant we refilled the scroll bucket. Used to compute
+    /// elapsed seconds for the leaky-bucket refill.
+    pub scroll_bucket_last_refill: Option<std::time::Instant>,
     /// When `[editor] format_on_save = true`, `save_active` fires
     /// `lsp.format` and stashes `(path, deadline)` here. The next
     /// `LspEvent::Formatting` matching `path` applies + chains a save; if
@@ -3756,6 +3768,8 @@ impl App {
             nav_forward: Vec::new(),
             last_click: None,
             last_list_scroll_at: None,
+            scroll_bucket: 25.0,
+            scroll_bucket_last_refill: None,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             workspace_picker_open: false,

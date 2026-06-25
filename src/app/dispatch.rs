@@ -503,6 +503,41 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
 /// one shot (which would feel like a teleport, not a scroll).
 const LIST_SCROLL_PER_BATCH_CAP: i32 = 8;
 
+/// Bucket capacity (in lines) for the flywheel dampener. One
+/// "good flick" worth of intentional scroll.
+const SCROLL_BUCKET_MAX: f32 = 25.0;
+
+/// Refill rate (lines per second) for the flywheel dampener.
+/// Steady-state active scrolling at ~12 lines/sec or slower
+/// stays in the bucket indefinitely; a free-spin wheel that
+/// keeps firing past intent will burn through and start
+/// dropping events.
+const SCROLL_BUCKET_REFILL: f32 = 12.0;
+
+/// Apply the leaky-bucket scroll budget. Caller asks for `delta`
+/// lines; we refill the bucket based on elapsed time since the
+/// last call, then spend up to `delta` tokens. Returns the
+/// magnitude that should actually be applied (always same sign
+/// as input). 0 ⇒ drop the event entirely.
+fn budgeted_scroll(app: &mut App, delta: i32) -> i32 {
+    if delta == 0 {
+        return 0;
+    }
+    let now = std::time::Instant::now();
+    if let Some(prev) = app.scroll_bucket_last_refill {
+        let elapsed = now.duration_since(prev).as_secs_f32();
+        app.scroll_bucket =
+            (app.scroll_bucket + elapsed * SCROLL_BUCKET_REFILL).min(SCROLL_BUCKET_MAX);
+    } else {
+        app.scroll_bucket = SCROLL_BUCKET_MAX;
+    }
+    app.scroll_bucket_last_refill = Some(now);
+    let want = delta.unsigned_abs() as f32;
+    let spend = want.min(app.scroll_bucket).floor();
+    app.scroll_bucket -= spend;
+    delta.signum() * (spend as i32)
+}
+
 /// Clamp the (already-coalesced) batched scroll magnitude to a
 /// sane per-tick movement for list/tree surfaces. Replaced the
 /// 80ms time-gate that used to spread bursts over time — that
@@ -514,6 +549,10 @@ fn list_scroll_clamp(delta: i32) -> i32 {
 }
 
 pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
+    let delta = budgeted_scroll(app, delta);
+    if delta == 0 {
+        return;
+    }
     if let Some(tr) = app.rects.tree
         && contains(tr, x, y)
     {
