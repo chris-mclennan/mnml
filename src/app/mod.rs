@@ -6186,15 +6186,29 @@ impl App {
         }
     }
 
-    /// Resume a Claude Code session by session id — opens a fresh
-    /// pty pane with `--resume <sid>`. Used by the rail agents
-    /// panel's row-click handler.
+    /// Resume a Claude Code session by session id. Used by the
+    /// rail agents panel's row-click handler.
+    ///
+    /// If there's already a Pty pane open, add the resumed
+    /// session as a TAB inside that pane group (no split). Only
+    /// when there's no Pty at all do we let `open_pty` carve out
+    /// a new split — otherwise every click here would chain into
+    /// an ever-deeper split tree.
     pub fn resume_claude_session_in_pty(&mut self, session_id: &str) {
         let profile = crate::pty_pane::BinaryProfile::claude_code_resume(
             self.workspace.clone(),
             session_id.to_string(),
         );
-        self.open_pty(profile);
+        // Find an existing Pty pane to host the new session as a tab.
+        let existing_pty = self
+            .panes
+            .iter()
+            .enumerate()
+            .find_map(|(i, p)| matches!(p, crate::pane::Pane::Pty(_)).then_some(i));
+        match existing_pty {
+            Some(strip_owner) => self.add_pty_tab(strip_owner, profile),
+            None => self.open_pty(profile),
+        }
     }
 
     /// Refresh the rail Agents panel's cached snapshot if it's
