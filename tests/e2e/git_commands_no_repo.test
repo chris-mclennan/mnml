@@ -9,10 +9,10 @@ key esc
 
 command git.merge
 wait 50
-expect screen contains "no other branches"
+expect screen contains "detached HEAD — checkout a branch first"
 
 key esc
 
 command git.rebase
 wait 50
-expect screen contains "no branches to rebase"
+expect screen contains "detached HEAD — checkout a branch first"

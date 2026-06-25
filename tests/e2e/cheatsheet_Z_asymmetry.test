@@ -1,13 +1,12 @@
-# Verify the `Z` chord's asymmetric semantics in the cheatsheet.
+# Cheatsheet collapse chords (2026-06-21 — moved off lowercase z/Z so
+# vim's `z` fold-prefix + `ZZ` save-quit don't collide):
+#   - `C` toggles the focused section's collapsed state.
+#   - `X` toggles collapse-all ↔ expand-all.
 #
-# Spec (per CLAUDE.md & code reading):
-#   - Press Z when nothing is collapsed → collapse_all().
-#   - Press Z when ≥1 section is collapsed → expand_all().
-#
-# Edge case (the actual bug): if the user collapses ONE section with
-# `z`, then presses `Z`, the code branch `if c.collapsed.is_empty()`
-# is FALSE, so `Z` does `expand_all()` — wiping the user's single
-# collapse instead of collapsing the rest. This .test reproduces.
+# `X` collapses everything UNLESS all sections are already collapsed
+# (then it expands all). So collapsing ONE section with `C` and then
+# pressing `X` collapses the REST — it must NOT wipe the single
+# collapse (the old `Z` asymmetry bug, now fixed).
 
 write hello.rs "fn main() {}"
 open hello.rs
@@ -15,12 +14,11 @@ open hello.rs
 command view.cheatsheet
 expect screen contains "Cheatsheet"
 
-# Step 1: collapse ONE section with `z`.
-key z
+# Step 1: collapse the focused section with `C`.
+key C
 expect screen contains "(collapsed)"
 
-# Step 2: press `Z` — naively the user expects collapse-all, but the
-# code branches on `collapsed.is_empty()`, so it triggers expand_all.
-# After Z, NO section should still be collapsed.
-key Z
-expect screen lacks "(collapsed)"
+# Step 2: `X` with one section collapsed → collapse_all (not expand_all),
+# so sections stay collapsed rather than the single collapse being wiped.
+key X
+expect screen contains "(collapsed)"

@@ -17,8 +17,9 @@ open hello.rs
 command view.cheatsheet
 expect screen contains "Cheatsheet"
 
-# Collapse all so we have a known-collapsed state.
-key Z
+# Collapse all so we have a known-collapsed state (`X` = toggle
+# collapse-all; from nothing-collapsed it collapses everything).
+key X
 
 # Filter for something that DEFINITELY won't match any group name —
 # but if filtered correctly, all `(collapsed)` headers should
@@ -26,8 +27,8 @@ key Z
 key /
 type ZZZNEVERMATCHESZZZ
 
-# BUG: collapsed headers still render even though the filter has
-# zero matches. We expect to see "no matches" in a correct world.
-# Run shows the bug — the screen still shows collapsed section
-# headers, so "no matches" is NOT shown.
-expect screen contains "(collapsed)"
+# Fixed: the filter now drops collapsed section headers when no rows
+# under them match, so a non-matching query shows "no matches" rather
+# than leftover `(collapsed)` headers.
+expect screen lacks "(collapsed)"
+expect screen contains "no matches"

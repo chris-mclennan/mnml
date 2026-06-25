@@ -8,14 +8,16 @@ open data.txt
 command editor.use_vim
 
 # Open the cmdline. Type "wr" — Tab cycles. Multiple matches now exist:
+# - ai.write_branch_name (id-contains "wr", score 200)
 # - ai.write_tests (id-contains "wr", score 200)
 # - view.toggle_wrap (id-contains "wr", score 200)
 # - write (EX prefix, score 150)
-# First Tab picks the alphabetically-first at the highest score tier.
+# First Tab picks the alphabetically-first at the highest score tier
+# (`ai.write_branch_name` sorts before `ai.write_tests`).
 key :
 type "wr"
 key tab
-expect screen contains ":ai.write_tests"
+expect screen contains ":ai.write_branch_name"
 key escape
 
 # "ta" has many matches. tab.* commands (id-prefix, score 300) outrank

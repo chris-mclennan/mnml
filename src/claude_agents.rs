@@ -1516,7 +1516,9 @@ fn read_pid_cwd(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         let p = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-        return Some(p.to_string_lossy().into_owned());
+        // Tail expression (this is the whole fn body on Linux; the
+        // non-Linux block is cfg'd out) — no `return` needed.
+        Some(p.to_string_lossy().into_owned())
     }
     #[cfg(not(target_os = "linux"))]
     {
