@@ -144,7 +144,15 @@ fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Re
     let mut spans: Vec<Span> = Vec::new();
     let mut x = strip.x;
     let right_limit = strip.x + strip.width;
-    for (id, label, exited) in &ptys {
+    // 2026-06-25 — when there's only ONE Pty pane, the bufferline at
+    // the very top already shows it as a tab, so this strip's label
+    // would just duplicate that info ("phantom" tab). Skip the label
+    // chips and only paint the `+ new session` chip (which the
+    // bufferline's `+` can't substitute for — that one opens a file
+    // tab, not a Pty session). When there are 2+ Ptys the strip
+    // earns its row by acting as a session-switcher.
+    let labels: &[(PaneId, String, bool)] = if ptys.len() >= 2 { &ptys } else { &[] };
+    for (id, label, exited) in labels {
         // ` <label> × ` — chip body (label) + close badge. Truncate
         // long names so the strip stays tidy.
         let mut shown: String = label.chars().take(18).collect();
