@@ -48,9 +48,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let cost_w: u16 = 12;
     let tokens_w: u16 = 14;
     let pad = 2u16;
-    let workspace_w = inner
-        .width
-        .saturating_sub(cost_w + tokens_w + pad * 3);
+    let workspace_w = inner.width.saturating_sub(cost_w + tokens_w + pad * 3);
 
     // Header row + click rects per column.
     let header_y = inner.y;
@@ -93,7 +91,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         ),
         Span::raw(" ".repeat(pad as usize)),
         Span::styled(
-            format!("{:>w$}", format!("tokens{tokens_arrow}"), w = tokens_w as usize),
+            format!(
+                "{:>w$}",
+                format!("tokens{tokens_arrow}"),
+                w = tokens_w as usize
+            ),
             header_color(SpendSortKey::Tokens),
         ),
         Span::raw(" ".repeat(pad as usize)),
@@ -172,14 +174,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         let abs_i = scroll + rel_i;
         let sel = abs_i == p.selected;
         let row_style = if sel {
-            Style::default().fg(t.bg_dark).bg(t.yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(t.bg_dark)
+                .bg(t.yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(t.fg)
         };
         let tok_str = format_tokens(*tokens);
         let cost_str = format!("${cost:.4}");
         lines.push(Line::from(vec![
-            Span::styled(format!("{:<w$}", clip(ws, workspace_w as usize), w = workspace_w as usize), row_style),
+            Span::styled(
+                format!(
+                    "{:<w$}",
+                    clip(ws, workspace_w as usize),
+                    w = workspace_w as usize
+                ),
+                row_style,
+            ),
             Span::raw(" ".repeat(pad as usize)),
             Span::styled(format!("{:>w$}", tok_str, w = tokens_w as usize), row_style),
             Span::raw(" ".repeat(pad as usize)),

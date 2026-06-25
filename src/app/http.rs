@@ -56,10 +56,8 @@ pub fn extract_proto_skeleton(s: &str) -> String {
         let default = match ty {
             "string" | "bytes" => "\"\"".to_string(),
             "bool" => "false".to_string(),
-            "int32" | "int64" | "uint32" | "uint64" | "sint32" | "sint64"
-            | "fixed32" | "fixed64" | "sfixed32" | "sfixed64" | "float" | "double" => {
-                "0".to_string()
-            }
+            "int32" | "int64" | "uint32" | "uint64" | "sint32" | "sint64" | "fixed32"
+            | "fixed64" | "sfixed32" | "sfixed64" | "float" | "double" => "0".to_string(),
             _ => "{}".to_string(), // assume nested message
         };
         let value = if parts[0] == "repeated" {
@@ -258,15 +256,24 @@ impl App {
         const COMMON_HEADERS: &[(&str, &str)] = &[
             // Content negotiation
             ("Accept", "Acceptable media types for the response"),
-            ("Accept-Encoding", "Acceptable content encodings (gzip, br, …)"),
+            (
+                "Accept-Encoding",
+                "Acceptable content encodings (gzip, br, …)",
+            ),
             ("Accept-Language", "Preferred natural languages"),
             ("Accept-Charset", "Preferred character sets"),
             ("Content-Type", "Media type of the request body"),
             ("Content-Length", "Size of the request body in bytes"),
-            ("Content-Encoding", "Encoding applied to the body (gzip, br, …)"),
+            (
+                "Content-Encoding",
+                "Encoding applied to the body (gzip, br, …)",
+            ),
             ("Content-Disposition", "Attachment / inline indicator"),
             // Auth + identity
-            ("Authorization", "Credentials for authentication (Bearer, Basic, …)"),
+            (
+                "Authorization",
+                "Credentials for authentication (Bearer, Basic, …)",
+            ),
             ("Cookie", "HTTP cookies"),
             ("X-Api-Key", "API key (convention)"),
             ("X-Auth-Token", "Auth token (convention)"),
@@ -274,20 +281,38 @@ impl App {
             ("Cache-Control", "Caching directives (no-cache, max-age=…)"),
             ("Pragma", "Implementation-specific cache directives"),
             ("If-Match", "Conditional request — match this ETag"),
-            ("If-None-Match", "Conditional request — NOT this ETag (caching)"),
-            ("If-Modified-Since", "Conditional request — modified after this date"),
-            ("If-Unmodified-Since", "Conditional request — not modified since"),
+            (
+                "If-None-Match",
+                "Conditional request — NOT this ETag (caching)",
+            ),
+            (
+                "If-Modified-Since",
+                "Conditional request — modified after this date",
+            ),
+            (
+                "If-Unmodified-Since",
+                "Conditional request — not modified since",
+            ),
             // Routing / origin
             ("Host", "Target hostname (usually auto-set by clients)"),
             ("Origin", "Origin of the request (CORS)"),
             ("Referer", "URL of the referring page"),
             ("User-Agent", "Client identification string"),
             // CORS preflight (request side)
-            ("Access-Control-Request-Method", "CORS preflight — intended method"),
-            ("Access-Control-Request-Headers", "CORS preflight — intended headers"),
+            (
+                "Access-Control-Request-Method",
+                "CORS preflight — intended method",
+            ),
+            (
+                "Access-Control-Request-Headers",
+                "CORS preflight — intended headers",
+            ),
             // Proxy / forwarding
             ("X-Forwarded-For", "Original client IP (proxy chain)"),
-            ("X-Forwarded-Proto", "Original scheme (http/https) through proxy"),
+            (
+                "X-Forwarded-Proto",
+                "Original scheme (http/https) through proxy",
+            ),
             ("X-Forwarded-Host", "Original Host header through proxy"),
             ("X-Real-IP", "Original client IP (nginx convention)"),
             // Tracing / debugging
@@ -303,7 +328,9 @@ impl App {
         ];
         let items: Vec<PickerItem> = COMMON_HEADERS
             .iter()
-            .map(|(name, hint)| PickerItem::new(name.to_string(), name.to_string(), hint.to_string()))
+            .map(|(name, hint)| {
+                PickerItem::new(name.to_string(), name.to_string(), hint.to_string())
+            })
             .collect();
         self.open_picker(Picker::new(
             PickerKind::HttpHeader,
@@ -453,7 +480,11 @@ impl App {
             return;
         }
         match std::fs::write(&p, &body) {
-            Ok(()) => self.toast(format!("save: wrote {} bytes → {}", body.len(), p.display())),
+            Ok(()) => self.toast(format!(
+                "save: wrote {} bytes → {}",
+                body.len(),
+                p.display()
+            )),
             Err(e) => self.toast(format!("save: write {}: {e}", p.display())),
         }
     }
@@ -756,8 +787,7 @@ impl App {
         let pane = Pane::Websocket(crate::websocket::WebsocketPane::connect(url.clone()));
         match self.active {
             Some(cur) => {
-                let new_id =
-                    self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
                 self.active = Some(new_id);
             }
             None => {
@@ -776,10 +806,7 @@ impl App {
         // Prefer the pane we were focused on at prompt-open time
         // (stashed in `pending_ws_send_pane`). Fall back to current
         // focus for backward compat / direct callers.
-        let target = self
-            .pending_ws_send_pane
-            .take()
-            .or(self.active);
+        let target = self.pending_ws_send_pane.take().or(self.active);
         let Some(i) = target else {
             self.toast("ws: no focused pane");
             return;
@@ -828,10 +855,7 @@ impl App {
                 return;
             }
         };
-        let url = cfg
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        let url = cfg.get("url").and_then(|v| v.as_str()).map(str::to_string);
         let Some(url) = url else {
             self.toast("ws.send: missing 'url' field");
             return;
@@ -873,12 +897,7 @@ impl App {
         std::thread::Builder::new()
             .name("mnml-ws-send".into())
             .spawn(move || {
-                let result = run_websocat_send(
-                    &worker_url,
-                    &worker_msg,
-                    timeout_ms,
-                    &headers,
-                );
+                let result = run_websocat_send(&worker_url, &worker_msg, timeout_ms, &headers);
                 let _ = tx.send(WsSendReply {
                     url: worker_url,
                     message: worker_msg,
@@ -909,10 +928,7 @@ impl App {
                         body.push_str("\n## stderr\n\n");
                         body.push_str(&stderr);
                     }
-                    self.toast(format!(
-                        "ws: ok ({}ms) → [ws-response]",
-                        out.elapsed_ms
-                    ));
+                    self.toast(format!("ws: ok ({}ms) → [ws-response]", out.elapsed_ms));
                 }
                 Err(e) => {
                     body.push_str(&format!("\n## error\n\n{e}\n"));
@@ -998,10 +1014,7 @@ impl App {
                     body.push_str(l);
                     body.push('\n');
                 }
-                self.open_scratch_with_text(
-                    format!("[ws-history-{host}]"),
-                    body,
-                );
+                self.open_scratch_with_text(format!("[ws-history-{host}]"), body);
             }
         }
         // 2) Start a fresh connection to the URL.
@@ -1048,9 +1061,7 @@ impl App {
             .map(String::from)
             .collect();
         if services.is_empty() {
-            self.toast(
-                "grpc.discover: no services (server may lack reflection support)",
-            );
+            self.toast("grpc.discover: no services (server may lack reflection support)");
             return;
         }
         self.pending_grpc_host = Some(host);
@@ -1142,9 +1153,7 @@ impl App {
             "{{\n  \"server\": \"{host}\",\n  \"method\": \"{method}\",\n  \"plaintext\": true,\n  \"message\": {req_skeleton}\n}}\n"
         );
         self.open_scratch_with_text("[grpc-discover]".to_string(), body);
-        self.toast(format!(
-            "grpc.discover: ✓ {method} — edit + :grpc.send"
-        ));
+        self.toast(format!("grpc.discover: ✓ {method} — edit + :grpc.send"));
     }
 
     pub fn grpc_send_active(&mut self) {
@@ -1193,10 +1202,7 @@ impl App {
                 }
             }
         }
-        cmd.arg("-d")
-            .arg(&message)
-            .arg(&server)
-            .arg(&method);
+        cmd.arg("-d").arg(&message).arg(&server).arg(&method);
         self.toast(format!("grpc: firing {method} → {server}…"));
         let output = match cmd.output() {
             Ok(o) => o,
@@ -1348,9 +1354,7 @@ impl App {
             Some(Pane::Request(rp)) => match &rp.state {
                 RunState::Done(rv) => (rp.source_path.clone(), rv.body.clone()),
                 RunState::Streaming(_) => {
-                    self.toast(
-                        "schema: stream still open — wait for close before revalidating",
-                    );
+                    self.toast("schema: stream still open — wait for close before revalidating");
                     return;
                 }
                 _ => {
@@ -1365,9 +1369,7 @@ impl App {
         };
         let result = crate::http::schema::validate_for(source_path.as_deref(), &body);
         let summary = match &result.status {
-            crate::http::schema::SchemaStatus::Valid => {
-                "✓ schema re-validated: valid".to_string()
-            }
+            crate::http::schema::SchemaStatus::Valid => "✓ schema re-validated: valid".to_string(),
             crate::http::schema::SchemaStatus::Invalid => {
                 format!("✗ schema re-validated: {} error(s)", result.errors.len())
             }
@@ -1437,7 +1439,10 @@ impl App {
         use crate::request_pane::EditField;
         let mut items = vec![
             MenuItem::new("Send", MenuAction::Command("http.send")),
-            MenuItem::new("Paste curl from clipboard", MenuAction::Command("http.paste_curl")),
+            MenuItem::new(
+                "Paste curl from clipboard",
+                MenuAction::Command("http.paste_curl"),
+            ),
             MenuItem::new("Copy as curl", MenuAction::Command("http.copy_curl")),
             MenuItem::new(
                 "Switch to Response",
@@ -1741,11 +1746,7 @@ impl App {
             return;
         }
         items.sort_by(|a, b| a.label.cmp(&b.label));
-        self.open_picker(Picker::new(
-            PickerKind::LookupFile,
-            "Lookup file",
-            items,
-        ));
+        self.open_picker(Picker::new(PickerKind::LookupFile, "Lookup file", items));
     }
 
     /// Accept handler for `PickerKind::LookupFile`. Spawns a
@@ -1816,11 +1817,7 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(i, item)| {
-                        PickerItem::new(
-                            i.to_string(),
-                            item.label.clone(),
-                            item.id.clone(),
-                        )
+                        PickerItem::new(i.to_string(), item.label.clone(), item.id.clone())
                     })
                     .collect();
                 self.pending_lookup_items = parsed;
@@ -1936,9 +1933,7 @@ impl App {
                 use std::io::Write;
                 for row in &entries {
                     if let Ok(line) = serde_json::to_string(row) {
-                        if f.write_all(line.as_bytes()).is_ok()
-                            && f.write_all(b"\n").is_ok()
-                        {
+                        if f.write_all(line.as_bytes()).is_ok() && f.write_all(b"\n").is_ok() {
                             written += 1;
                         }
                     }
@@ -1948,7 +1943,10 @@ impl App {
                     log_path.display()
                 ));
             }
-            Err(e) => self.toast(format!("http.capture_now: open {}: {e}", log_path.display())),
+            Err(e) => self.toast(format!(
+                "http.capture_now: open {}: {e}",
+                log_path.display()
+            )),
         }
     }
 
@@ -2192,8 +2190,8 @@ impl App {
             }
         };
         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
-            rp.state = crate::request_pane::RunState::Done(Box::new(
-                crate::request_pane::ResponseView {
+            rp.state =
+                crate::request_pane::RunState::Done(Box::new(crate::request_pane::ResponseView {
                     status: mock.status,
                     status_text: mock.status_text,
                     headers: mock.headers,
@@ -2203,8 +2201,7 @@ impl App {
                     captures: Vec::new(),
                     schema_result: None,
                     sse_event_count: 0,
-                },
-            ));
+                }));
             rp.view = crate::request_pane::ViewMode::Response;
         }
         self.toast(format!("replayed mock ({})", mock_path.display()));
@@ -2243,7 +2240,8 @@ impl App {
                 .iter()
                 .find(|b| cursor_row >= b.start_line && cursor_row <= b.end_line)
                 .unwrap_or(&blocks[0]);
-            let src = lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n");
+            let src =
+                lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n");
             (b.request.clone(), src)
         } else {
             match http::parse(&text) {
@@ -2294,7 +2292,9 @@ impl App {
         self.http_bench_rx = Some(rx);
         self.http_bench_started = Some(std::time::Instant::now());
         self.http_bench_progress = Some((progress, n));
-        self.toast(format!("http.bench: firing {n}× ({concurrency} concurrent)…"));
+        self.toast(format!(
+            "http.bench: firing {n}× ({concurrency} concurrent)…"
+        ));
     }
 
     /// Drain the in-flight `http.bench` result and surface it via
@@ -2322,7 +2322,9 @@ impl App {
                     .to_string();
                 self.clipboard.set(trace.clone(), false);
                 self.open_scratch_with_text("[bench-trace]".to_string(), trace);
-                self.toast(format!("{headline} · full trace → [bench-trace] + clipboard"));
+                self.toast(format!(
+                    "{headline} · full trace → [bench-trace] + clipboard"
+                ));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -2455,7 +2457,13 @@ impl App {
         }
         let safe_name: String = name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let Some(cur) = self.active else { return };
         let header_value = match self.panes.get(cur) {
@@ -2468,7 +2476,11 @@ impl App {
             _ => None,
         };
         let Some(value) = header_value else { return };
-        let path = self.workspace.join(".mnml").join("auth").join(format!("{safe_name}.txt"));
+        let path = self
+            .workspace
+            .join(".mnml")
+            .join("auth")
+            .join(format!("{safe_name}.txt"));
         if let Some(parent) = path.parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
@@ -2490,17 +2502,9 @@ impl App {
         let entries: Vec<PickerItem> = match std::fs::read_dir(&auth_dir) {
             Ok(rd) => rd
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path()
-                        .extension()
-                        .is_some_and(|x| x == "txt")
-                })
+                .filter(|e| e.path().extension().is_some_and(|x| x == "txt"))
                 .filter_map(|e| {
-                    let stem = e
-                        .path()
-                        .file_stem()?
-                        .to_string_lossy()
-                        .into_owned();
+                    let stem = e.path().file_stem()?.to_string_lossy().into_owned();
                     let preview = std::fs::read_to_string(e.path())
                         .ok()
                         .map(|s| {
@@ -2888,7 +2892,11 @@ impl App {
             rp.commit_headers();
         }
         let (request, script, source_path) = match self.panes.get(pane_id) {
-            Some(Pane::Request(rp)) => (rp.request.clone(), rp.script.clone(), rp.source_path.clone()),
+            Some(Pane::Request(rp)) => (
+                rp.request.clone(),
+                rp.script.clone(),
+                rp.source_path.clone(),
+            ),
             _ => return,
         };
         let job_id = self.spawn_http_job(request, script, source_path);
@@ -2924,7 +2932,10 @@ impl App {
         // CookieJar::cookie_header_for.
         let jar = self.cookie_jar.clone();
         if let Some(host) = crate::cookie_jar::CookieJar::host_of(&request.url)
-            && !request.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+            && !request
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("cookie"))
             && let Ok(j) = jar.lock()
             && let Some(cookie) = j.cookie_header_for(&host)
         {
@@ -3313,7 +3324,9 @@ impl App {
                     walk(sub, &new_prefix, out_dir, counter, written);
                     continue;
                 }
-                let Some(req) = item.get("request") else { continue };
+                let Some(req) = item.get("request") else {
+                    continue;
+                };
                 let method = req
                     .get("method")
                     .and_then(|m| m.as_str())
@@ -3422,7 +3435,9 @@ impl App {
         }
         let mut written = 0usize;
         for (i, entry) in entries.iter().enumerate() {
-            let Some(req) = entry.get("request") else { continue };
+            let Some(req) = entry.get("request") else {
+                continue;
+            };
             let method = req
                 .get("method")
                 .and_then(|m| m.as_str())
@@ -3449,7 +3464,10 @@ impl App {
                     curl.push_str(&format!(" \\\n  -H '{name}: {value}'"));
                 }
             }
-            if let Some(post) = req.get("postData").and_then(|p| p.get("text")).and_then(|t| t.as_str())
+            if let Some(post) = req
+                .get("postData")
+                .and_then(|p| p.get("text"))
+                .and_then(|t| t.as_str())
                 && !post.is_empty()
             {
                 let escaped = post.replace('\'', "'\\''");
@@ -3460,7 +3478,10 @@ impl App {
             // component to ASCII alphanum/underscore.
             let host_path = {
                 let stripped = url.split('?').next().unwrap_or(url);
-                let after_scheme = stripped.split_once("://").map(|(_, r)| r).unwrap_or(stripped);
+                let after_scheme = stripped
+                    .split_once("://")
+                    .map(|(_, r)| r)
+                    .unwrap_or(stripped);
                 after_scheme
                     .chars()
                     .map(|c| if c.is_alphanumeric() { c } else { '_' })
@@ -3519,7 +3540,11 @@ impl App {
         let value = value.trim();
         let Some(cur) = self.active else { return };
         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
-            let sep = if rp.request.url.contains('?') { '&' } else { '?' };
+            let sep = if rp.request.url.contains('?') {
+                '&'
+            } else {
+                '?'
+            };
             rp.request.url.push(sep);
             rp.request.url.push_str(key);
             rp.request.url.push('=');
@@ -3657,23 +3682,15 @@ impl App {
             headers: Vec::new(),
             body: None,
         };
-        let mut pane = RequestPane::new(
-            None,
-            request,
-            crate::http::script::Script::default(),
-            0,
-        );
+        let mut pane = RequestPane::new(None, request, crate::http::script::Script::default(), 0);
         pane.view = ViewMode::Edit;
         pane.focus = EditField::Url;
-        pane.state = RunState::Failed(
-            "(not sent — type a URL, then press `r` to fire)".to_string(),
-        );
+        pane.state =
+            RunState::Failed("(not sent — type a URL, then press `r` to fire)".to_string());
         let new_id = match self.active {
-            Some(cur) => self.split_leaf_with(
-                cur,
-                crate::layout::SplitDir::Vertical,
-                Pane::Request(pane),
-            ),
+            Some(cur) => {
+                self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Request(pane))
+            }
             None => {
                 self.panes.push(Pane::Request(pane));
                 let new_id = self.panes.len() - 1;
@@ -3783,17 +3800,11 @@ impl App {
                 let started = std::time::Instant::now();
                 let resp = req.send().map_err(|e| format!("send: {e}"))?;
                 let status = resp.status().as_u16();
-                let status_text = resp
-                    .status()
-                    .canonical_reason()
-                    .unwrap_or("")
-                    .to_string();
+                let status_text = resp.status().canonical_reason().unwrap_or("").to_string();
                 let headers: Vec<(String, String)> = resp
                     .headers()
                     .iter()
-                    .map(|(k, v)| {
-                        (k.as_str().to_string(), v.to_str().unwrap_or("").to_string())
-                    })
+                    .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
                     .collect();
                 // Open message → App allocates Streaming state.
                 if tx
@@ -3895,10 +3906,9 @@ impl App {
                             // 2026-06-21 SEV-3 fix: capture any
                             // prior Done into prev_response BEFORE
                             // overwriting state with Streaming.
-                            if let RunState::Done(prev) = std::mem::replace(
-                                &mut rp.state,
-                                RunState::Sending,
-                            ) {
+                            if let RunState::Done(prev) =
+                                std::mem::replace(&mut rp.state, RunState::Sending)
+                            {
                                 rp.prev_response = Some(prev);
                             }
                             rp.state = RunState::Streaming(Box::new(ResponseView {
@@ -3915,11 +3925,7 @@ impl App {
                         }
                     }
                 }
-                SseStreamMsg::Event {
-                    job_id,
-                    name,
-                    data,
-                } => {
+                SseStreamMsg::Event { job_id, name, data } => {
                     if let Some((pid, _)) = self
                         .panes
                         .iter()
@@ -3956,17 +3962,16 @@ impl App {
                     {
                         if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
                             let source_path = rp.source_path.clone();
-                            if let RunState::Streaming(rv) = std::mem::replace(
-                                &mut rp.state,
-                                RunState::Sending,
-                            ) {
+                            if let RunState::Streaming(rv) =
+                                std::mem::replace(&mut rp.state, RunState::Sending)
+                            {
                                 let mut rv = *rv;
                                 // captures stays untouched — was
                                 // being cleared as part of the
                                 // event-counter hack.
-                                rv.schema_result = source_path.as_deref().map(|p| {
-                                    crate::http::schema::validate_for(Some(p), &rv.body)
-                                });
+                                rv.schema_result = source_path
+                                    .as_deref()
+                                    .map(|p| crate::http::schema::validate_for(Some(p), &rv.body));
                                 rp.state = RunState::Done(Box::new(rv));
                             }
                         }
@@ -4034,10 +4039,9 @@ impl App {
                     // previous Done into prev_response so
                     // :http.diff_last_two can compare. Done →
                     // prev_response; new rv → state.
-                    if let RunState::Done(prev) = std::mem::replace(
-                        &mut rp.state,
-                        RunState::Done(Box::new(rv)),
-                    ) {
+                    if let RunState::Done(prev) =
+                        std::mem::replace(&mut rp.state, RunState::Done(Box::new(rv)))
+                    {
                         rp.prev_response = Some(prev);
                     }
                 }

@@ -1,37 +1,71 @@
 //! Embedded terminal — one [`PtySession`] is the `Pane::Pty` payload: a live pty
 //! plus a child process (`$SHELL`, `claude`, `codex`, …) whose output is parsed
-//! into a [`vt100`] grid the renderer reads. A reader thread pumps the pty's
-//! output into a `Mutex<vt100::Parser<TitleSink>>`; outbound keystrokes go through the pty's
-//! write half on the UI thread (event-driven, so no writer thread needed).
-//! Dropping the session kills the child and joins the reader.
+//! by [`libghostty_vt`] into a grid the renderer reads. libghostty-vt's terminal
+//! is `!Send`/`!Sync`, so it lives on the UI thread: a reader thread pumps the
+//! pty's raw bytes over an mpsc channel, and [`PtySession::pump`] drains them
+//! into the terminal each frame. Outbound keystrokes — and the terminal's own
+//! query responses (DSR/DA/…, captured via `on_pty_write`) — go through the
+//! pty's write half on the UI thread. Dropping the session kills the child and
+//! joins the reader.
 //!
 //! Each pty is a pane in the split tree — no separate tab strip;
 //! multiple shells = multiple splits.
 
+use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use libghostty_vt::render::{CellIterator, CursorViewport, RowIterator};
+use libghostty_vt::style::{RgbColor, Underline};
+use libghostty_vt::terminal::ScrollViewport;
+use libghostty_vt::{RenderState, Terminal, TerminalOptions};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-/// How many lines of output vt100 keeps for scroll-back (`Shift+PgUp` / wheel).
+/// How many lines of scroll-back libghostty-vt keeps (`Shift+PgUp` / wheel).
 const SCROLLBACK_LINES: usize = 5000;
 
-/// vt100 0.16 delivers the OSC window title (`ESC]0;…` / `ESC]2;…`)
-/// through a [`vt100::Callbacks`] impl rather than storing it on
-/// `Screen`. This sink keeps the latest title so [`PtySession::tab_label`]
-/// can pick it up — Claude Code / Codex / a shell all name their own
-/// session this way.
-#[derive(Default)]
-pub struct TitleSink {
-    title: String,
+/// One rendered cell — a flat, owned snapshot the renderers read so they never
+/// touch libghostty's lending iterators or FFI lifetimes directly.
+#[derive(Clone, Default)]
+pub struct RenderCell {
+    /// The grapheme cluster for this column (empty ⇒ blank).
+    pub text: String,
+    /// Resolved foreground; `None` ⇒ use the terminal default.
+    pub fg: Option<RgbColor>,
+    /// Resolved background; `None` ⇒ use the terminal default.
+    pub bg: Option<RgbColor>,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub inverse: bool,
 }
 
-impl vt100::Callbacks for TitleSink {
-    fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
-        self.title = String::from_utf8_lossy(title).into_owned();
+/// A whole-frame snapshot of the visible grid — produced by
+/// [`PtySession::render_grid`], consumed by the pty renderers.
+pub struct RenderGrid {
+    pub rows: u16,
+    pub cols: u16,
+    /// Row-major, `rows * cols` cells.
+    pub cells: Vec<RenderCell>,
+    pub default_fg: RgbColor,
+    pub default_bg: RgbColor,
+    /// `(col, row)` of the cursor when visible + in the live viewport.
+    pub cursor: Option<(u16, u16)>,
+}
+
+impl RenderGrid {
+    /// Cell at `(row, col)`, or `None` if out of range.
+    pub fn cell(&self, row: u16, col: u16) -> Option<&RenderCell> {
+        if row >= self.rows || col >= self.cols {
+            return None;
+        }
+        self.cells
+            .get(row as usize * self.cols as usize + col as usize)
     }
 }
 
@@ -156,14 +190,25 @@ impl BinaryProfile {
     }
 }
 
-/// One live pty + child + vt100 grid. Drop to kill the child + join the reader.
+/// One live pty + child + libghostty-vt grid. Drop to kill the child + join
+/// the reader.
 pub struct PtySession {
     pub profile: BinaryProfile,
     /// User-set session name (`:rename`). Shown in the pty-pane tab strip
     /// + the bufferline tab in place of `profile.label` when present.
     pub display_name: Option<String>,
-    /// Shared with the reader thread (it writes, the renderer reads).
-    pub parser: Arc<Mutex<vt100::Parser<TitleSink>>>,
+    /// libghostty-vt terminal — `!Send`/`!Sync`, so it lives only on the UI
+    /// thread. Fed raw pty bytes (from `rx`) by [`PtySession::pump`].
+    term: Terminal<'static, 'static>,
+    /// Render state for reading the grid each frame. `RefCell` so the renderers
+    /// can read through a `&self` while `update` takes `&mut`.
+    render_state: RefCell<RenderState<'static>>,
+    /// Raw pty output shipped from the reader thread; drained by `pump`.
+    rx: Receiver<Vec<u8>>,
+    /// Bytes the terminal wants written back to the pty (DSR/DA query replies,
+    /// captured by the `on_pty_write` callback during `vt_write`); flushed by
+    /// `pump`.
+    responses: Rc<RefCell<Vec<u8>>>,
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
     reader: Option<JoinHandle<()>>,
@@ -232,20 +277,34 @@ impl PtySession {
             .map_err(|e| format!("spawn {}: {e} — is it on PATH?", profile.exe))?;
         drop(pair.slave);
 
-        let parser = Arc::new(Mutex::new(vt100::Parser::new_with_callbacks(
-            rows,
+        let mut term = Terminal::new(TerminalOptions {
             cols,
-            SCROLLBACK_LINES,
-            TitleSink::default(),
-        )));
+            rows,
+            max_scrollback: SCROLLBACK_LINES,
+        })
+        .map_err(|e| format!("ghostty terminal: {e:?}"))?;
+        // Buffer the terminal's pty-write requests (query replies — DSR/DA/…)
+        // so `pump` can flush them back to the child. libghostty forbids
+        // `vt_write` during this callback, so we only stash bytes here.
+        let responses = Rc::new(RefCell::new(Vec::new()));
+        {
+            let sink = Rc::clone(&responses);
+            term.on_pty_write(move |_term, data| {
+                sink.borrow_mut().extend_from_slice(data);
+            })
+            .map_err(|e| format!("ghostty on_pty_write: {e:?}"))?;
+        }
+        let render_state =
+            RefCell::new(RenderState::new().map_err(|e| format!("ghostty render state: {e:?}"))?);
+
         let exited = Arc::new(Mutex::new(false));
         let bytes_seen = Arc::new(AtomicU64::new(0));
+        let (tx, rx) = channel::<Vec<u8>>();
 
         let mut reader_handle = pair
             .master
             .try_clone_reader()
             .map_err(|e| format!("clone pty reader: {e}"))?;
-        let r_parser = Arc::clone(&parser);
         let r_exited = Arc::clone(&exited);
         let r_bytes = Arc::clone(&bytes_seen);
         let reader = std::thread::Builder::new()
@@ -261,8 +320,10 @@ impl PtySession {
                             return;
                         }
                         Ok(n) => {
-                            if let Ok(mut p) = r_parser.lock() {
-                                p.process(&buf[..n]);
+                            // Ship raw bytes to the UI thread, which owns the
+                            // (!Send) terminal and feeds them in via `pump`.
+                            if tx.send(buf[..n].to_vec()).is_err() {
+                                return; // receiver (the session) was dropped
                             }
                             r_bytes.fetch_add(n as u64, Ordering::Relaxed);
                         }
@@ -279,7 +340,10 @@ impl PtySession {
         Ok(PtySession {
             profile,
             display_name: None,
-            parser,
+            term,
+            render_state,
+            rx,
+            responses,
             writer,
             master: pair.master,
             reader: Some(reader),
@@ -294,6 +358,32 @@ impl PtySession {
         })
     }
 
+    /// Drain raw pty output from the reader thread into the terminal, then
+    /// flush any query replies the terminal produced (via `on_pty_write`) back
+    /// to the pty. Call once per frame on the UI thread, before rendering.
+    pub fn pump(&mut self) {
+        let mut wrote = false;
+        while let Ok(chunk) = self.rx.try_recv() {
+            self.term.vt_write(&chunk);
+            wrote = true;
+        }
+        if wrote {
+            let mut out = self.responses.borrow_mut();
+            if !out.is_empty() {
+                let _ = self.writer.write_all(&out);
+                let _ = self.writer.flush();
+                out.clear();
+            }
+        }
+    }
+
+    /// Snapshot the visible grid into a flat, owned [`RenderGrid`] the renderers
+    /// index directly — all of libghostty's lending-iterator + FFI-lifetime
+    /// handling stays inside [`snapshot_grid`].
+    pub fn render_grid(&self) -> RenderGrid {
+        snapshot_grid(&self.term, &mut self.render_state.borrow_mut())
+    }
+
     /// Reset the unread counter to "all read" — called when the
     /// user focuses this pane. After this, `unread_bytes()`
     /// returns 0 until the reader produces more output.
@@ -304,7 +394,8 @@ impl PtySession {
     /// How many bytes have arrived since the last `mark_seen`.
     /// Used by the sessions panel to render the `🔔` bell badge.
     pub fn unread_bytes(&self) -> u64 {
-        self.bytes_processed().saturating_sub(self.bytes_seen_on_focus)
+        self.bytes_processed()
+            .saturating_sub(self.bytes_seen_on_focus)
     }
 
     /// Tick — refresh `last_output_at` when `bytes_seen` has
@@ -332,9 +423,8 @@ impl PtySession {
             pixel_width: 0,
             pixel_height: 0,
         });
-        if let Ok(mut p) = self.parser.lock() {
-            p.screen_mut().set_size(rows, cols);
-        }
+        // libghostty's resize takes (cols, rows, cell_w_px, cell_h_px).
+        let _ = self.term.resize(cols, rows, 0, 0);
     }
 
     pub fn write_bytes(&mut self, bytes: &[u8]) {
@@ -342,25 +432,19 @@ impl PtySession {
         let _ = self.writer.flush();
     }
 
-    /// Scroll the view `delta` lines further into the scroll-back history (negative
-    /// ⇒ back toward the live bottom). Clamped by vt100 to the available history.
-    pub fn scroll_history(&self, delta: isize) {
-        if let Ok(mut p) = self.parser.lock() {
-            let cur = p.screen().scrollback() as isize;
-            p.screen_mut().set_scrollback((cur + delta).max(0) as usize);
-        }
+    /// Scroll the view `delta` lines further into the scroll-back history
+    /// (negative ⇒ back toward the live bottom). libghostty's `Delta` is
+    /// "up is negative", so we negate the old vt100 "+ = further back" sign.
+    pub fn scroll_history(&mut self, delta: isize) {
+        self.term.scroll_viewport(ScrollViewport::Delta(-delta));
     }
-    /// Jump to the oldest line (`usize::MAX` is clamped to the max history).
-    pub fn scroll_to_top(&self) {
-        if let Ok(mut p) = self.parser.lock() {
-            p.screen_mut().set_scrollback(usize::MAX);
-        }
+    /// Jump to the oldest line in scroll-back.
+    pub fn scroll_to_top(&mut self) {
+        self.term.scroll_viewport(ScrollViewport::Top);
     }
     /// Back to the live view (bottom).
-    pub fn scroll_to_bottom(&self) {
-        if let Ok(mut p) = self.parser.lock() {
-            p.screen_mut().set_scrollback(0);
-        }
+    pub fn scroll_to_bottom(&mut self) {
+        self.term.scroll_viewport(ScrollViewport::Bottom);
     }
 
     pub fn is_exited(&self) -> bool {
@@ -408,19 +492,13 @@ impl PtySession {
     /// it as the tab name. Falls through to OSC title / profile label
     /// when no match is found.
     pub fn tab_label_with_prefixes(&self, prefixes: &[String]) -> String {
-        let (osc, glyph, screen_text) = match self.parser.lock() {
-            Ok(p) => {
-                let s = p.screen();
-                let osc = p.callbacks().title.clone();
-                let glyph = detect_spinner_glyph(s);
-                let text = if self.display_name.is_none() && !prefixes.is_empty() {
-                    Some(screen_to_text(s))
-                } else {
-                    None
-                };
-                (osc, glyph, text)
-            }
-            Err(_) => (String::new(), None, None),
+        let osc = self.term.title().map(|s| s.to_string()).unwrap_or_default();
+        let grid = self.render_grid();
+        let glyph = detect_spinner_glyph(&grid);
+        let screen_text = if self.display_name.is_none() && !prefixes.is_empty() {
+            Some(grid_to_text(&grid))
+        } else {
+            None
         };
 
         // Priority: user rename > ticket scan > OSC title > profile.label.
@@ -437,27 +515,84 @@ impl PtySession {
     }
 }
 
-/// Concatenate a vt100 Screen's visible cells into a plain-text string,
-/// row-major with newlines between rows. Wide-cell continuations are
-/// skipped; empty cells become a single space.
+/// Build a flat [`RenderGrid`] from a terminal + render state. Contains all of
+/// libghostty's lending-iterator + FFI-lifetime handling in one place (shared
+/// by [`PtySession::render_grid`] and the unit tests).
+fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> RenderGrid {
+    let cols = term.cols().unwrap_or(0);
+    let mut grid = RenderGrid {
+        rows: 0,
+        cols,
+        cells: Vec::new(),
+        default_fg: RgbColor {
+            r: 0xff,
+            g: 0xff,
+            b: 0xff,
+        },
+        default_bg: RgbColor { r: 0, g: 0, b: 0 },
+        cursor: None,
+    };
+
+    let Ok(snapshot) = rs.update(term) else {
+        return grid;
+    };
+    if let Ok(colors) = snapshot.colors() {
+        grid.default_fg = colors.foreground;
+        grid.default_bg = colors.background;
+    }
+    if snapshot.cursor_visible().unwrap_or(false)
+        && let Ok(Some(CursorViewport { x, y, .. })) = snapshot.cursor_viewport()
+    {
+        grid.cursor = Some((x, y));
+    }
+
+    if let (Ok(mut rows_h), Ok(mut cells_h)) = (RowIterator::new(), CellIterator::new())
+        && let Ok(mut row_iter) = rows_h.update(&snapshot)
+    {
+        while let Some(row) = row_iter.next() {
+            let mut row_cells: Vec<RenderCell> = Vec::with_capacity(cols as usize);
+            if let Ok(mut cell_iter) = cells_h.update(row) {
+                while let Some(cell) = cell_iter.next() {
+                    let text: String = cell
+                        .graphemes()
+                        .map(|g| g.into_iter().collect())
+                        .unwrap_or_default();
+                    let st = cell.style().ok();
+                    row_cells.push(RenderCell {
+                        text,
+                        fg: cell.fg_color().ok().flatten(),
+                        bg: cell.bg_color().ok().flatten(),
+                        bold: st.as_ref().map(|s| s.bold).unwrap_or(false),
+                        italic: st.as_ref().map(|s| s.italic).unwrap_or(false),
+                        underline: st
+                            .as_ref()
+                            .map(|s| s.underline != Underline::None)
+                            .unwrap_or(false),
+                        inverse: st.as_ref().map(|s| s.inverse).unwrap_or(false),
+                    });
+                }
+            }
+            // Keep every row exactly `cols` wide so `RenderGrid::cell`'s
+            // row-major indexing stays aligned.
+            row_cells.resize(cols as usize, RenderCell::default());
+            grid.cells.extend(row_cells);
+            grid.rows += 1;
+        }
+    }
+    grid
+}
+
+/// Concatenate a [`RenderGrid`]'s visible cells into a plain-text string,
+/// row-major with newlines between rows. Empty cells become a single space.
 ///
 /// Used by [`scan_for_ticket`] to extract searchable text from a pty.
-fn screen_to_text(screen: &vt100::Screen) -> String {
-    let (rows, cols) = screen.size();
-    let mut text = String::with_capacity((rows as usize) * (cols as usize + 1));
-    for r in 0..rows {
-        for c in 0..cols {
-            let Some(cell) = screen.cell(r, c) else {
-                text.push(' ');
-                continue;
-            };
-            if cell.is_wide_continuation() {
-                continue;
-            }
-            if cell.has_contents() {
-                text.push_str(cell.contents());
-            } else {
-                text.push(' ');
+fn grid_to_text(grid: &RenderGrid) -> String {
+    let mut text = String::with_capacity((grid.rows as usize) * (grid.cols as usize + 1));
+    for r in 0..grid.rows {
+        for c in 0..grid.cols {
+            match grid.cell(r, c) {
+                Some(cell) if !cell.text.is_empty() => text.push_str(&cell.text),
+                _ => text.push(' '),
             }
         }
         text.push('\n');
@@ -551,17 +686,16 @@ fn is_shell_profile(exe: &str) -> bool {
 /// Claude idle, or a non-Claude program. The two-signal (glyph +
 /// ellipsis) test rejects unrelated lines that merely contain a star.
 /// Bottom-up scan: Claude's spinner sits near the input prompt.
-fn detect_spinner_glyph(screen: &vt100::Screen) -> Option<char> {
+fn detect_spinner_glyph(grid: &RenderGrid) -> Option<char> {
     const SPINNER_CHARS: &[char] = &[
         '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅', '◐', '◓', '◑',
         '◒',
     ];
-    let (rows, cols) = screen.size();
-    for row in (0..rows).rev() {
+    for row in (0..grid.rows).rev() {
         let mut line = String::new();
-        for col in 0..cols {
-            if let Some(c) = screen.cell(row, col) {
-                line.push_str(c.contents());
+        for col in 0..grid.cols {
+            if let Some(c) = grid.cell(row, col) {
+                line.push_str(&c.text);
             }
         }
         let Some(glyph) = line.chars().find(|c| SPINNER_CHARS.contains(c)) else {
@@ -697,36 +831,60 @@ mod tests {
         );
     }
 
+    /// Build a [`RenderGrid`] by feeding `chunks` to a fresh libghostty
+    /// terminal — the unit-test stand-in for a live pty.
+    fn test_grid(rows: u16, cols: u16, chunks: &[&[u8]]) -> RenderGrid {
+        let mut term = Terminal::new(TerminalOptions {
+            cols,
+            rows,
+            max_scrollback: 0,
+        })
+        .unwrap();
+        for c in chunks {
+            term.vt_write(c);
+        }
+        let mut rs = RenderState::new().unwrap();
+        snapshot_grid(&term, &mut rs)
+    }
+
     #[test]
-    fn screen_to_text_round_trip() {
-        // Sanity-check that screen_to_text + scan_for_ticket compose
-        // correctly through a real vt100 grid.
-        let mut parser = vt100::Parser::new(10, 60, 0);
-        parser.process(b"first line\r\n");
-        parser.process(b"mentioned TE-42 in passing\r\n");
-        parser.process(b"then TE-99 came up\r\n");
-        let text = screen_to_text(parser.screen());
+    fn grid_to_text_round_trip() {
+        // Sanity-check that grid_to_text + scan_for_ticket compose correctly
+        // through a real libghostty grid.
+        let grid = test_grid(
+            10,
+            60,
+            &[
+                b"first line\r\n",
+                b"mentioned TE-42 in passing\r\n",
+                b"then TE-99 came up\r\n",
+            ],
+        );
+        let text = grid_to_text(&grid);
         let prefixes = [p("TE-")];
         assert_eq!(scan_for_ticket(&text, &prefixes), Some("TE-99".to_string()));
     }
 
     #[test]
     fn detect_spinner_glyph_finds_claude_spinner() {
-        let mut p = vt100::Parser::new(6, 60, 0);
-        p.process(b"idle output line\r\n");
-        p.process("✽ Wandering… (3s · esc to interrupt)\r\n".as_bytes());
-        assert_eq!(detect_spinner_glyph(p.screen()), Some('✽'));
+        let grid = test_grid(
+            6,
+            60,
+            &[
+                b"idle output line\r\n",
+                "✽ Wandering… (3s · esc to interrupt)\r\n".as_bytes(),
+            ],
+        );
+        assert_eq!(detect_spinner_glyph(&grid), Some('✽'));
     }
 
     #[test]
     fn detect_spinner_glyph_none_without_a_spinner() {
-        let mut p = vt100::Parser::new(6, 60, 0);
-        p.process(b"just some normal output\r\nno spinner here\r\n");
-        assert!(detect_spinner_glyph(p.screen()).is_none());
+        let grid = test_grid(6, 60, &[b"just some normal output\r\nno spinner here\r\n"]);
+        assert!(detect_spinner_glyph(&grid).is_none());
         // A spinner glyph but no ellipsis → rejected (two-signal combo).
-        let mut p2 = vt100::Parser::new(6, 60, 0);
-        p2.process("✽ a starred heading\r\n".as_bytes());
-        assert!(detect_spinner_glyph(p2.screen()).is_none());
+        let grid2 = test_grid(6, 60, &["✽ a starred heading\r\n".as_bytes()]);
+        assert!(detect_spinner_glyph(&grid2).is_none());
     }
 
     #[test]

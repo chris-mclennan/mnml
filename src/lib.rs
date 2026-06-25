@@ -23,11 +23,11 @@ pub mod app;
 // from clipboard text; `cookies`: small cookie-jar helpers; `sse`:
 // minimal Server-Sent Events parser (Anthropic/OpenAI streams).
 pub mod auth;
-pub mod websocket;
 pub mod cookie_jar;
 pub mod cookies;
 pub mod jwt;
 pub mod sse;
+pub mod websocket;
 // `mod aws` was split out to the standalone mnml-aws-codebuild
 // binary in 2026-06.
 // `mod azdevops` was split out to the standalone mnml-forge-azdevops
@@ -37,7 +37,6 @@ pub(crate) mod buffer;
 pub(crate) mod cdp;
 pub(crate) mod cheatsheet;
 pub(crate) mod claude_agents;
-pub(crate) mod peek_overlay;
 pub(crate) mod clipboard;
 pub(crate) mod command;
 pub(crate) mod completion;
@@ -55,6 +54,7 @@ pub(crate) mod focus;
 pub(crate) mod formatter;
 pub(crate) mod fuzzy;
 pub(crate) mod git;
+pub(crate) mod peek_overlay;
 // `mod github` was split out to the standalone mnml-forge-github
 // binary in 2026-06.
 // `mod gitlab` was split out to the standalone mnml-forge-gitlab
@@ -77,6 +77,8 @@ pub(crate) mod pane;
 pub(crate) mod picker;
 // `mod pipeline_log` was removed after the 2026-06 SCM split — no
 // in-tree host populates it any more.
+pub mod dock;
+pub mod menu_bar;
 pub(crate) mod playwright;
 pub(crate) mod prompt;
 pub(crate) mod pty_pane;
@@ -88,8 +90,6 @@ pub(crate) mod signature;
 pub(crate) mod snippets;
 pub(crate) mod tools;
 pub(crate) mod tree;
-pub mod dock;
-pub mod menu_bar;
 pub mod tui;
 pub mod ui;
 pub mod update_apply;

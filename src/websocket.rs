@@ -238,11 +238,7 @@ fn host_of_url(url: &str) -> String {
     }
 }
 
-fn worker(
-    url: String,
-    tx: Sender<WsMsg>,
-    out_rx: Receiver<OutMsg>,
-) {
+fn worker(url: String, tx: Sender<WsMsg>, out_rx: Receiver<OutMsg>) {
     use tungstenite::Message;
 
     let parsed_url = match tungstenite::http::Uri::try_from(&url[..]) {
@@ -309,8 +305,7 @@ fn worker(
                 return;
             }
             Ok(_) => {} // ping / pong handled by tungstenite
-            Err(tungstenite::Error::ConnectionClosed)
-            | Err(tungstenite::Error::AlreadyClosed) => {
+            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
                 let _ = tx.send(WsMsg::State(WsState::Closed));
                 return;
             }
@@ -338,9 +333,10 @@ fn persist_history(url: &str, outgoing: bool, text: &str) {
         return;
     };
     let host = host_of_url(url);
-    let slug = host
-        .replace(['/', ':'], "_")
-        .replace(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.' && c != '-', "_");
+    let slug = host.replace(['/', ':'], "_").replace(
+        |c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.' && c != '-',
+        "_",
+    );
     if slug.is_empty() {
         return;
     }

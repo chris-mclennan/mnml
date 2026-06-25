@@ -149,10 +149,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // 1 cell of separation so a long workspace name truncates
     // with `…` instead of pushing the chips off the right edge.
     const CHIP_RESERVE: usize = 4 * 3 + 1;
-    let chrome_used = chev_str.chars().count()
-        + CURRENT_DOT_W
-        + dropdown_glyph.chars().count()
-        + CHIP_RESERVE;
+    let chrome_used =
+        chev_str.chars().count() + CURRENT_DOT_W + dropdown_glyph.chars().count() + CHIP_RESERVE;
     let max_name_w = (area.width as usize).saturating_sub(chrome_used);
     let ws_name = crate::ui::clip_to_cells(&ws_name, max_name_w.max(4));
     let header_used = chev_str.chars().count()
@@ -189,10 +187,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             chev_str,
             Style::default().fg(theme::cur().comment).bg(rail_bg),
         ),
-        Span::styled(
-            "● ",
-            Style::default().fg(theme::cur().green).bg(rail_bg),
-        ),
+        Span::styled("● ", Style::default().fg(theme::cur().green).bg(rail_bg)),
         Span::styled(
             ws_name.clone(),
             Style::default()
@@ -527,9 +522,7 @@ fn draw_add_repo_row(
             ),
             Span::styled(
                 label.to_string(),
-                Style::default()
-                    .fg(theme::cur().comment)
-                    .bg(rail_bg),
+                Style::default().fg(theme::cur().comment).bg(rail_bg),
             ),
         ])),
         row_rect,
@@ -1286,10 +1279,7 @@ fn draw_extra_workspace_section(
             chev_str,
             Style::default().fg(theme::cur().comment).bg(rail_bg),
         ),
-        Span::styled(
-            "○ ",
-            Style::default().fg(theme::cur().comment).bg(rail_bg),
-        ),
+        Span::styled("○ ", Style::default().fg(theme::cur().comment).bg(rail_bg)),
         Span::styled(
             name.clone(),
             Style::default()
@@ -1357,8 +1347,8 @@ fn draw_extra_workspace_section(
     // primary tree's `focused` checks Focus::Tree +
     // RailSection::Workspace; we do the analogous check via the
     // dedicated extra-workspace focus field.
-    let focused = matches!(app.focus, crate::focus::Focus::Tree)
-        && app.focused_extra_ws == Some(ws_idx);
+    let focused =
+        matches!(app.focus, crate::focus::Focus::Tree) && app.focused_extra_ws == Some(ws_idx);
     let cursor = app.extra_workspaces[ws_idx].tree.cursor();
 
     let mut lines: Vec<Line> = Vec::with_capacity(h);
@@ -1915,9 +1905,7 @@ mod tests {
         let buf = term.backend().buffer();
 
         let is_visible = |x: u16, y: u16| -> bool {
-            x < buf.area.width
-                && y < buf.area.height
-                && !buf[(x, y)].symbol().trim().is_empty()
+            x < buf.area.width && y < buf.area.height && !buf[(x, y)].symbol().trim().is_empty()
         };
 
         // Guard: if the TestBackend's width clipped every chip out
@@ -1943,7 +1931,9 @@ mod tests {
                 if rect.x > 0 && is_visible(rect.x - 1, y) {
                     panic!(
                         "tree_icon_button rect `{label}` at ({x},{y},{w}x{h}): visible glyph at ({lx},{y}) is OUTSIDE the rect (off-by-one to the left)",
-                        x = rect.x, w = rect.width, h = rect.height,
+                        x = rect.x,
+                        w = rect.width,
+                        h = rect.height,
                         lx = rect.x - 1,
                     );
                 }
@@ -1951,7 +1941,9 @@ mod tests {
                 if is_visible(right_x, y) {
                     panic!(
                         "tree_icon_button rect `{label}` at ({x},{y},{w}x{h}): visible glyph at ({rx},{y}) is OUTSIDE the rect (off-by-one to the right)",
-                        x = rect.x, w = rect.width, h = rect.height,
+                        x = rect.x,
+                        w = rect.width,
+                        h = rect.height,
                         rx = right_x,
                     );
                 }

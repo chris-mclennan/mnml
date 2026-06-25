@@ -63,18 +63,15 @@ pub struct StashRow {
 }
 
 pub fn stashes(workspace: &Path) -> Vec<StashRow> {
-    lines_of(
-        workspace,
-        &["stash", "list", "--format=%gd\x1f%gs"],
-    )
-    .into_iter()
-    .filter_map(|line| {
-        line.split_once('\x1f').map(|(id, summary)| StashRow {
-            id: id.to_string(),
-            summary: summary.to_string(),
+    lines_of(workspace, &["stash", "list", "--format=%gd\x1f%gs"])
+        .into_iter()
+        .filter_map(|line| {
+            line.split_once('\x1f').map(|(id, summary)| StashRow {
+                id: id.to_string(),
+                summary: summary.to_string(),
+            })
         })
-    })
-    .collect()
+        .collect()
 }
 
 /// Remote-tracking branch names (`origin/main`, …), minus the `*/HEAD` aliases.
@@ -228,13 +225,7 @@ pub fn rebase(workspace: &Path, branch: &str) -> Result<(), String> {
 pub fn worktree_add(workspace: &Path, path: &Path, branch: &str) -> Result<(), String> {
     run(
         workspace,
-        &[
-            "worktree",
-            "add",
-            "--",
-            &path.to_string_lossy(),
-            branch,
-        ],
+        &["worktree", "add", "--", &path.to_string_lossy(), branch],
     )
 }
 

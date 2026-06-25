@@ -3015,7 +3015,10 @@ impl InputHandler for VimInputHandler {
     fn operator_menu_hint(&self) -> Option<(String, Vec<(char, &'static str, bool)>)> {
         // Only show in Normal / Visual modes. Insert + cmdline
         // don't have operator chords.
-        if !matches!(self.mode, VimMode::Normal | VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock) {
+        if !matches!(
+            self.mode,
+            VimMode::Normal | VimMode::Visual | VimMode::VisualLine | VimMode::VisualBlock
+        ) {
             return None;
         }
         match self.prefix {
@@ -3050,7 +3053,10 @@ impl InputHandler for VimInputHandler {
             )),
             Prefix::Z => Some((
                 "Z".to_string(),
-                vec![('Z', "save & quit (:x)", false), ('Q', "quit without save (:q!)", false)],
+                vec![
+                    ('Z', "save & quit (:x)", false),
+                    ('Q', "quit without save (:q!)", false),
+                ],
             )),
             Prefix::ZFold => Some((
                 "z".to_string(),

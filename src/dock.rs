@@ -111,12 +111,7 @@ impl DockWidget {
     /// Place a default-sized text widget at any corner. The 4
     /// per-corner palette commands (`dock.new_text_bl` etc.) use
     /// this so they share the default sizing without diverging.
-    pub fn new_text_at<S: Into<String>>(
-        id: usize,
-        corner: DockCorner,
-        title: S,
-        body: S,
-    ) -> Self {
+    pub fn new_text_at<S: Into<String>>(id: usize, corner: DockCorner, title: S, body: S) -> Self {
         DockWidget {
             id,
             corner,
@@ -150,11 +145,7 @@ pub fn push_text_at(app: &mut crate::app::App, corner: DockCorner) {
 
 /// Push a log-tail widget. `path` is whatever the user supplied
 /// (tilde-expanded by the prompt before this is called).
-pub fn push_log_tail(
-    app: &mut crate::app::App,
-    corner: DockCorner,
-    path: std::path::PathBuf,
-) {
+pub fn push_log_tail(app: &mut crate::app::App, corner: DockCorner, path: std::path::PathBuf) {
     let id = app.dock_widget_next_id;
     app.dock_widget_next_id += 1;
     let title = path

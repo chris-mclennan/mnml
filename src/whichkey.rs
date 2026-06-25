@@ -209,13 +209,7 @@ pub fn root() -> &'static Leader {
                                         ('s', cmd("npm.start", "npm start")),
                                         ('i', cmd("npm.install", "npm install")),
                                         ('l', cmd("npm.lint", "npm run lint")),
-                                        (
-                                            'x',
-                                            cmd(
-                                                "npm.run_script",
-                                                "run an npm script (prompt)",
-                                            ),
-                                        ),
+                                        ('x', cmd("npm.run_script", "run an npm script (prompt)")),
                                     ],
                                 ),
                             ),
@@ -238,13 +232,7 @@ pub fn root() -> &'static Leader {
                                         ('b', cmd("go.build", "go build")),
                                         ('r', cmd("go.run", "go run .")),
                                         ('v', cmd("go.vet", "go vet ./...")),
-                                        (
-                                            'p',
-                                            cmd(
-                                                "go.run_path",
-                                                "go run <path> (prompt)",
-                                            ),
-                                        ),
+                                        ('p', cmd("go.run_path", "go run <path> (prompt)")),
                                     ],
                                 ),
                             ),

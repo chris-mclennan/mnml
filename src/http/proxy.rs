@@ -75,10 +75,8 @@ pub fn run(opts: Options) -> Result<usize, String> {
 
     // Chrome's user-data-dir for this run — keep it fresh so cached
     // auth from a prior session doesn't leak into the log.
-    let profile_dir = std::env::temp_dir().join(format!(
-        "mnml-proxy-profile-{}",
-        std::process::id()
-    ));
+    let profile_dir =
+        std::env::temp_dir().join(format!("mnml-proxy-profile-{}", std::process::id()));
     fs::create_dir_all(&profile_dir).map_err(|e| format!("mkdir profile: {e}"))?;
 
     let (event_tx, event_rx) = mpsc::channel::<CdpEvent>();
@@ -134,9 +132,7 @@ pub fn run(opts: Options) -> Result<usize, String> {
             && started.elapsed() >= Duration::from_secs(cap)
         {
             if opts.verbose {
-                eprintln!(
-                    "mnml proxy: --seconds {cap} elapsed, stopping ({written} captured)"
-                );
+                eprintln!("mnml proxy: --seconds {cap} elapsed, stopping ({written} captured)");
             }
             break;
         }

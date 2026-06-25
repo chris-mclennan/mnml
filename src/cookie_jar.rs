@@ -36,7 +36,10 @@ impl CookieJar {
             return Self::new();
         };
         let Ok(parsed): Result<serde_json::Value, _> = serde_json::from_str(&text) else {
-            eprintln!("cookie_jar: {} is not valid JSON; starting fresh", path.display());
+            eprintln!(
+                "cookie_jar: {} is not valid JSON; starting fresh",
+                path.display()
+            );
             return Self::new();
         };
         let mut by_host = HashMap::new();
@@ -148,9 +151,10 @@ impl CookieJar {
 
     /// Iterate `(host, name, value)` for picker / inspection.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str, &str)> {
-        self.by_host
-            .iter()
-            .flat_map(|(h, ps)| ps.iter().map(move |(n, v)| (h.as_str(), n.as_str(), v.as_str())))
+        self.by_host.iter().flat_map(|(h, ps)| {
+            ps.iter()
+                .map(move |(n, v)| (h.as_str(), n.as_str(), v.as_str()))
+        })
     }
 
     /// Extract the host from a URL string. Simple parser — splits

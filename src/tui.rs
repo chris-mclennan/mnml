@@ -448,7 +448,10 @@ fn walk_to_action(items: &[crate::menu_bar::MenuItem], start: usize, forward: bo
     let n = items.len();
     let mut idx = start;
     for _ in 0..n {
-        if matches!(items.get(idx), Some(crate::menu_bar::MenuItem::Action { .. })) {
+        if matches!(
+            items.get(idx),
+            Some(crate::menu_bar::MenuItem::Action { .. })
+        ) {
             return idx;
         }
         idx = if forward {
@@ -478,7 +481,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.workspace_picker_filter.pop();
                 return;
             }
-            KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
                 app.workspace_picker_filter.push(c);
                 return;
             }
@@ -668,7 +675,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.git_palette_filter_focused = false;
                 return;
             }
-            KeyCode::Char(c) if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
                 app.git_palette_filter.push(c);
                 return;
             }
@@ -1169,10 +1180,8 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // swallow them. Intercept first when we're on a Request pane
     // in Edit view so tab cycling works in both input modes.
     // api-workflow third hunt SEV-2.
-    if matches!(
-        key.code,
-        KeyCode::Char(']') | KeyCode::Char('[')
-    ) && key.modifiers.contains(KeyModifiers::CONTROL)
+    if matches!(key.code, KeyCode::Char(']') | KeyCode::Char('['))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(app.focus, Focus::Pane)
         && let Some(cur) = app.active
         && let Some(Pane::Request(rp)) = app.panes.get_mut(cur)
@@ -1836,8 +1845,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // a separate finding).
     if is_view_only_pane(app.panes.get(i)) {
         // `:` → open ex-command prompt, same as the tree handler.
-        if matches!(key.code, KeyCode::Char(':'))
-            && !key.modifiers.contains(KeyModifiers::CONTROL)
+        if matches!(key.code, KeyCode::Char(':')) && !key.modifiers.contains(KeyModifiers::CONTROL)
         {
             app.open_ex_command_prompt();
             return;
@@ -1849,9 +1857,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             && key.modifiers.contains(KeyModifiers::CONTROL)
             && app.config.editor.input_style == "vim"
         {
-            if let Some(editor_id) =
-                app.panes.iter().position(|p| matches!(p, Pane::Editor(_)))
-            {
+            if let Some(editor_id) = app.panes.iter().position(|p| matches!(p, Pane::Editor(_))) {
                 app.active = Some(editor_id);
                 app.focus = crate::focus::Focus::Pane;
                 handle_pane_key(app, key);
@@ -2525,9 +2531,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         p.show_help = !p.show_help;
                     }
                 }
-                KeyCode::Char(c)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                         p.query.push(c);
                         p.selected = 0;
@@ -4516,22 +4520,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 })
             {
                 if let Some(w) = app.dock_widgets.iter().find(|w| w.id == id) {
-                    app.dock_kebab_menu =
-                        Some(crate::dock::KebabMenuState::build(w, x, y));
+                    app.dock_kebab_menu = Some(crate::dock::KebabMenuState::build(w, x, y));
                 }
                 return;
             }
             // 2026-06-21 vscode-mouse SEV-2: right-click on a
             // Claude Agents dashboard row → 7-item context menu.
-            if let Some(&(_, pid, row_idx)) = app
-                .rects
-                .list_rows
-                .iter()
-                .find(|(r, pid, _)| {
-                    matches!(app.panes.get(*pid), Some(Pane::ClaudeAgents(_)))
-                        && crate::app::dispatch::contains(*r, x, y)
-                })
-            {
+            if let Some(&(_, pid, row_idx)) = app.rects.list_rows.iter().find(|(r, pid, _)| {
+                matches!(app.panes.get(*pid), Some(Pane::ClaudeAgents(_)))
+                    && crate::app::dispatch::contains(*r, x, y)
+            }) {
                 app.open_dashboard_row_context_menu(pid, row_idx, (x, y));
                 return;
             }
@@ -5152,8 +5150,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     // HTTP verb). Click an item → method set.
                     // Width ≤ 12 disambiguates the chip rect from
                     // the wider headers/body rows.
-                    let chip_clicked = matches!(field, crate::request_pane::EditField::Method)
-                        && rect.width <= 12;
+                    let chip_clicked =
+                        matches!(field, crate::request_pane::EditField::Method) && rect.width <= 12;
                     if chip_clicked {
                         let _ = rp;
                         app.open_method_dropdown((x, y));
@@ -5404,9 +5402,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                             && now.duration_since(prev) < std::time::Duration::from_millis(450)
                 );
                 app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
-                if is_double
-                    && let Some(Pane::Editor(b)) = app.panes.get_mut(tab_pane)
-                {
+                if is_double && let Some(Pane::Editor(b)) = app.panes.get_mut(tab_pane) {
                     b.is_preview = false;
                 }
                 app.switch_split_tab(leaf_active, tab_pane);
@@ -5960,8 +5956,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 if let Some(w) = app.dock_widgets.iter().find(|w| w.id == id) {
-                    app.dock_kebab_menu =
-                        Some(crate::dock::KebabMenuState::build(w, r.x, r.y));
+                    app.dock_kebab_menu = Some(crate::dock::KebabMenuState::build(w, r.x, r.y));
                 }
                 return;
             }
@@ -6056,9 +6051,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // keyboard while open). Click anywhere outside the
             // picker closes it.
             if app.workspace_picker_open
-                && app.rects.workspace_picker_filter_input.is_none_or(|r| {
-                    !crate::app::dispatch::contains(r, x, y)
-                })
+                && app
+                    .rects
+                    .workspace_picker_filter_input
+                    .is_none_or(|r| !crate::app::dispatch::contains(r, x, y))
                 && app
                     .rects
                     .workspace_picker_rows
@@ -6561,9 +6557,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         .find(|w| w.id == target_id)
                         .map(|w| w.corner);
                     if let Some(corner) = target_corner {
-                        if let Some(w) =
-                            app.dock_widgets.iter_mut().find(|w| w.id == drag_id)
-                        {
+                        if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == drag_id) {
                             w.corner = corner;
                         }
                         // Move the dragged widget in the vec to sit
@@ -6571,8 +6565,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         // target based on the cursor's side.
                         let target_mid_y = target_rect.y + target_rect.height / 2;
                         let put_before = y < target_mid_y;
-                        if let Some(src_idx) =
-                            app.dock_widgets.iter().position(|w| w.id == drag_id)
+                        if let Some(src_idx) = app.dock_widgets.iter().position(|w| w.id == drag_id)
                         {
                             let dragged = app.dock_widgets.remove(src_idx);
                             // Re-locate the target after removal.
@@ -6598,9 +6591,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         (true, false) => crate::dock::DockCorner::BottomLeft,
                         (false, false) => crate::dock::DockCorner::BottomRight,
                     };
-                    if let Some(w) =
-                        app.dock_widgets.iter_mut().find(|w| w.id == drag_id)
-                    {
+                    if let Some(w) = app.dock_widgets.iter_mut().find(|w| w.id == drag_id) {
                         w.corner = new_corner;
                     }
                 }
@@ -6614,8 +6605,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if !drag.moved {
                     match drag.kind {
                         crate::app::RailSectionKind::Integrations => {
-                            app.integration_section_expanded =
-                                !app.integration_section_expanded;
+                            app.integration_section_expanded = !app.integration_section_expanded;
                         }
                         crate::app::RailSectionKind::Git => {
                             app.toggle_git_section_expanded();
@@ -6649,8 +6639,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // drop_tree_file_on_pane already falls back to
                 // open_path when there's no pane under the
                 // cursor; we just need to call it.
-                let empty_editor = app.rects.pane_bodies.is_empty()
-                    && tree_rect.is_none();
+                let empty_editor = app.rects.pane_bodies.is_empty() && tree_rect.is_none();
                 if (over_body || empty_editor) && !src_is_dir {
                     app.tree_drag = None;
                     app.drop_tree_file_on_pane(src_path, x, y);

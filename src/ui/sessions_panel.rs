@@ -67,10 +67,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if pty_indices.is_empty() {
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                "No sessions yet.",
-                Style::default().fg(t.comment).bg(bg),
-            ),
+            Span::styled("No sessions yet.", Style::default().fg(t.comment).bg(bg)),
         ]);
         frame.render_widget(
             Paragraph::new(empty),
@@ -85,7 +82,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(
                 "ai.claude_code to start one.",
-                Style::default().fg(t.comment).bg(bg).add_modifier(Modifier::DIM),
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
             ),
         ]);
         frame.render_widget(
@@ -187,7 +187,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             name_spans.push(Span::styled("  ", Style::default().bg(bg)));
             name_spans.push(Span::styled(
                 format!("🔔 {count_str}"),
-                Style::default().fg(t.orange).bg(bg).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(t.orange)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
             ));
         }
         frame.render_widget(
@@ -206,7 +209,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .clone()
             .unwrap_or_else(|| "(no branch)".to_string());
         let cwd_label = cwd
-            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+            .and_then(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_default();
         let mut row2_spans = vec![
             Span::styled("  ", Style::default().bg(bg)),
@@ -215,7 +222,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ];
         if !cwd_label.is_empty() {
             row2_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
-            row2_spans.push(Span::styled(cwd_label, Style::default().fg(t.comment).bg(bg)));
+            row2_spans.push(Span::styled(
+                cwd_label,
+                Style::default().fg(t.comment).bg(bg),
+            ));
         }
         frame.render_widget(
             Paragraph::new(Line::from(row2_spans)),

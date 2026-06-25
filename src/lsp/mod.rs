@@ -678,10 +678,7 @@ impl LspManager {
                             Some(install) => {
                                 format!("LSP: {} not installed — `{install}`", sc.cmd)
                             }
-                            None => format!(
-                                "LSP: {} not installed — install it on PATH",
-                                sc.cmd
-                            ),
+                            None => format!("LSP: {} not installed — install it on PATH", sc.cmd),
                         }
                     } else {
                         format!("LSP: {} unavailable", sc.cmd)
@@ -1229,9 +1226,7 @@ fn install_hint_for(cmd: &str) -> Option<&'static str> {
         .unwrap_or(cmd);
     match base {
         "rust-analyzer" => Some("rustup component add rust-analyzer"),
-        "typescript-language-server" => {
-            Some("npm i -g typescript typescript-language-server")
-        }
+        "typescript-language-server" => Some("npm i -g typescript typescript-language-server"),
         "tsserver" => Some("npm i -g typescript"),
         "pylsp" => Some("pip install python-lsp-server"),
         "pyright" | "pyright-langserver" => Some("npm i -g pyright"),

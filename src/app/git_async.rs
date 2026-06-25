@@ -246,11 +246,7 @@ pub fn spawn_git_loader() -> (Sender<GitJob>, Receiver<GitResult>) {
                         result: crate::git::branch::delete_branch(&repo, &name),
                         name,
                     },
-                    GitJob::WorktreeAdd {
-                        repo,
-                        path,
-                        branch,
-                    } => GitResult::WorktreeAdded {
+                    GitJob::WorktreeAdd { repo, path, branch } => GitResult::WorktreeAdded {
                         result: crate::git::branch::worktree_add(&repo, &path, &branch),
                         path,
                         branch,

@@ -21,7 +21,9 @@ impl App {
     /// the Themes picker, applies the highlighted theme live so
     /// the user can see it before committing.
     pub fn on_picker_moved(&mut self) {
-        let Some(p) = self.picker.as_ref() else { return };
+        let Some(p) = self.picker.as_ref() else {
+            return;
+        };
         if !matches!(p.kind, crate::picker::PickerKind::Themes) {
             return;
         }
@@ -761,7 +763,9 @@ impl App {
                         jar.remove(host, name)
                     };
                     if removed {
-                        let Ok(jar) = self.cookie_jar.lock() else { return };
+                        let Ok(jar) = self.cookie_jar.lock() else {
+                            return;
+                        };
                         let _ = jar.save(&self.workspace);
                         drop(jar);
                         self.toast(format!("cookies: removed {host} · {name}"));

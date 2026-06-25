@@ -42,7 +42,6 @@ fn parse_hex_color(hex: &str) -> Option<Color> {
 const MAX_VISIBLE: usize = 8;
 const MAX_WIDTH: u16 = 110;
 
-
 pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     // Always clear the previous frame's rect registrations — the
     // popup is render-time-computed, no stale state survives.
@@ -60,10 +59,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     // Check (1) first to mirror `pending_display`'s precedence.
     let line: String = if let Some(text) = app.no_pane_cmdline.clone() {
         text
-    } else if let Some(text) = app
-        .active_editor()
-        .and_then(|b| b.input.cmdline_get())
-    {
+    } else if let Some(text) = app.active_editor().and_then(|b| b.input.cmdline_get()) {
         text
     } else {
         return;
@@ -117,11 +113,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     // 2026-06-19 — polish: show command title alongside id, mark
     // recent rows with ★. Recent-set + per-row title lookup
     // (registry().get) are cheap — one HashMap probe per row.
-    let recent_set: std::collections::HashSet<&str> = app
-        .recent_commands
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
+    let recent_set: std::collections::HashSet<&str> =
+        app.recent_commands.iter().map(|s| s.as_str()).collect();
     let id_w = state
         .matches
         .iter()
@@ -172,8 +165,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     // 2026-06-20 — border color is configurable via Settings →
     // Color row `ui.cmdline_popup_border_color`. Empty string =
     // theme yellow. Invalid hex falls back to theme yellow.
-    let border_color = parse_hex_color(&app.config.ui.cmdline_popup_border_color)
-        .unwrap_or(t.yellow);
+    let border_color =
+        parse_hex_color(&app.config.ui.cmdline_popup_border_color).unwrap_or(t.yellow);
     let block_style = Style::default().fg(t.fg).bg(t.bg_darker);
     let block = Block::default()
         .borders(Borders::ALL)
@@ -250,11 +243,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         };
 
         // Pad the id to id_w so the title column aligns.
-        let id_padded = format!(
-            "{:<width$}",
-            match_text,
-            width = id_w as usize
-        );
+        let id_padded = format!("{:<width$}", match_text, width = id_w as usize);
         let mut spans = vec![
             Span::styled(marker.to_string(), marker_style),
             Span::styled(id_padded, id_style),
@@ -264,11 +253,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
             // Pad title so the key column is right-aligned at
             // inner.width (preserves visual alignment when the
             // title is shorter than title_w).
-            let title_padded = format!(
-                "{:<width$}",
-                t_str,
-                width = title_w as usize
-            );
+            let title_padded = format!("{:<width$}", t_str, width = title_w as usize);
             spans.push(Span::styled(title_padded, title_style));
         }
         // Key chord column — right side, dim style. Shows the
@@ -314,8 +299,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Line::from(spans))
-                .style(Style::default().bg(t.bg_darker)),
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(t.bg_darker)),
             row_rect,
         );
         app.rects.cmdline_popup_items.push((row_rect, idx));
@@ -324,10 +308,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
     // "(N more — Tab to cycle)" hint row if truncated.
     if extra_row == 1 {
         let hint = format!("  ({} more — Tab to cycle)", total - visible);
-        let truncated: String = hint
-            .chars()
-            .take(inner.width as usize)
-            .collect();
+        let truncated: String = hint.chars().take(inner.width as usize).collect();
         let row_y = inner.y + visible as u16;
         let row_rect = Rect {
             x: inner.x,

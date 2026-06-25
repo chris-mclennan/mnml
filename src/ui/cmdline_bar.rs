@@ -67,11 +67,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // each has been running. Elapsed comes from App.*_started
     // (Instant); falls back to no-suffix if a stamp is missing.
     let now = std::time::Instant::now();
-    let fmt_with_elapsed = |name: &str, start: Option<std::time::Instant>| {
-        match start {
-            Some(s) => format!("{name} ({}s)", now.duration_since(s).as_secs()),
-            None => name.to_string(),
-        }
+    let fmt_with_elapsed = |name: &str, start: Option<std::time::Instant>| match start {
+        Some(s) => format!("{name} ({}s)", now.duration_since(s).as_secs()),
+        None => name.to_string(),
     };
     let mut inflight: Vec<String> = Vec::new();
     if app.http_bench_rx.is_some() {
@@ -147,19 +145,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 name.trim_matches(['[', ']']).to_string(),
             ));
         } else {
-            spans.push(Span::styled(
-                t_msg,
-                Style::default().fg(t.comment).bg(bg),
-            ));
+            spans.push(Span::styled(t_msg, Style::default().fg(t.comment).bg(bg)));
         }
     }
     if !inflight_text.is_empty() {
         // Pad to right-align the inflight indicator. Computed
         // against the visible width of the toast on the left.
-        let toast_w: usize = spans
-            .iter()
-            .map(|s| s.content.chars().count())
-            .sum();
+        let toast_w: usize = spans.iter().map(|s| s.content.chars().count()).sum();
         let inflight_chars = inflight_text.chars().count();
         let pad = (area.width as usize)
             .saturating_sub(toast_w + inflight_chars)

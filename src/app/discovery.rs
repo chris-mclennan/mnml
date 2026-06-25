@@ -305,8 +305,7 @@ impl App {
     /// U+F300+ is the recommended user-add range, well clear of
     /// Nerd Fonts' own `nf-*` glyphs.
     fn next_free_pua_codepoint(&self) -> Option<u32> {
-        let mut taken: std::collections::HashSet<u32> =
-            std::collections::HashSet::new();
+        let mut taken: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for ic in &self.config.ui.integration_icons {
             if let Some(c) = ic.glyph.chars().next() {
                 taken.insert(c as u32);
@@ -354,9 +353,7 @@ impl App {
             return;
         }
         let Some(cp) = self.next_free_pua_codepoint() else {
-            self.toast(
-                "PUA range U+F300–F8FF exhausted — remove an integration first",
-            );
+            self.toast("PUA range U+F300–F8FF exhausted — remove an integration first");
             return;
         };
         // Default in/out font paths — same convention as the
@@ -369,10 +366,8 @@ impl App {
                 return;
             }
         };
-        let font_in = home
-            .join("Library/Fonts/JetBrainsMonoNerdFont-Regular.ttf");
-        let font_out = home
-            .join("Library/Fonts/JetBrainsMonoNerdFont-Regular-mnml.ttf");
+        let font_in = home.join("Library/Fonts/JetBrainsMonoNerdFont-Regular.ttf");
+        let font_out = home.join("Library/Fonts/JetBrainsMonoNerdFont-Regular-mnml.ttf");
         if !font_in.exists() {
             self.toast(format!(
                 "font not found: {} — install JetBrainsMono Nerd Font first",
@@ -474,9 +469,7 @@ impl App {
         }
         match persist_integration_icons(&self.config.ui.integration_icons) {
             Ok(_) => self.toast(format!("removed {id} from rail")),
-            Err(e) => self.toast(format!(
-                "removed in-memory (persist failed: {e})"
-            )),
+            Err(e) => self.toast(format!("removed in-memory (persist failed: {e})")),
         }
     }
 

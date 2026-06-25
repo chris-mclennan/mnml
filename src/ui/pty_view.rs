@@ -1,8 +1,10 @@
-//! Renders a `Pane::Pty` — the [`vt100`] grid the reader thread maintains, cell
-//! by cell, into the pane's area. Resizes the pty session to the rendered area
-//! first (so the child draws at the right size). Returns the on-screen cursor
-//! cell when focused so `ui::draw` can place the caret.
+//! Renders a `Pane::Pty` — the libghostty-vt grid (snapshotted into a flat
+//! [`RenderGrid`](crate::pty_pane::RenderGrid)), cell by cell, into the pane's
+//! area. Resizes the pty session to the rendered area first (so the child draws
+//! at the right size). Returns the on-screen cursor cell when focused so
+//! `ui::draw` can place the caret.
 
+use libghostty_vt::style::RgbColor;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -12,6 +14,7 @@ use ratatui::widgets::Paragraph;
 use crate::app::App;
 use crate::layout::PaneId;
 use crate::pane::Pane;
+use crate::pty_pane::RenderCell;
 use crate::ui::theme;
 
 pub fn draw(
@@ -53,13 +56,8 @@ pub fn draw(
     };
     session.resize(area.height, area.width);
     let exited = session.is_exited();
-    // Recover from a poisoned lock rather than panicking the UI.
-    let parser = match session.parser.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    let screen = parser.screen();
-    let (rows, cols) = screen.size();
+    let grid = session.render_grid();
+    let (rows, cols) = (grid.rows, grid.cols);
 
     let def_fg = theme::cur().fg;
     let def_bg = theme::cur().bg_dark;
@@ -69,19 +67,15 @@ pub fn draw(
         let mut text = String::new();
         let mut style: Option<Style> = None;
         for c in 0..cols {
-            let Some(cell) = screen.cell(r, c) else {
+            let Some(cell) = grid.cell(r, c) else {
                 push_run(&mut spans, &mut text, &mut style, " ", Style::default());
                 continue;
             };
-            if cell.is_wide_continuation() {
-                continue; // the wide grapheme was emitted by its left cell
-            }
             let s = cell_style(cell, def_fg, def_bg);
-            // vt100 0.16: `Cell::contents()` returns `&str`.
-            let g: &str = if cell.has_contents() {
-                cell.contents()
-            } else {
+            let g: &str = if cell.text.is_empty() {
                 " "
+            } else {
+                &cell.text
             };
             push_run(&mut spans, &mut text, &mut style, g, s);
         }
@@ -109,8 +103,12 @@ pub fn draw(
 
     app.rects.editor_panes.push((area, pane_id));
 
-    if focused && !exited && !screen.hide_cursor() && screen.scrollback() == 0 {
-        let (cr, cc) = screen.cursor_position();
+    // `grid.cursor` is `Some((col, row))` only when the cursor is visible and
+    // in the live viewport (libghostty returns `None` while scrolled back).
+    if focused
+        && !exited
+        && let Some((cc, cr)) = grid.cursor
+    {
         let cx = area.x + cc.min(area.width.saturating_sub(1));
         let cy = area.y + cr.min(area.height.saturating_sub(1));
         return Some((cx, cy));
@@ -243,25 +241,25 @@ fn push_run(
     }
 }
 
-fn cell_style(cell: &vt100::Cell, def_fg: Color, def_bg: Color) -> Style {
-    let conv = |c: vt100::Color, def: Color| match c {
-        vt100::Color::Default => def,
-        vt100::Color::Idx(i) => Color::Indexed(i),
-        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+fn cell_style(cell: &RenderCell, def_fg: Color, def_bg: Color) -> Style {
+    // libghostty resolves palette-indexed colors to RGB; `None` ⇒ default.
+    let conv = |c: Option<RgbColor>, def: Color| match c {
+        Some(rgb) => Color::Rgb(rgb.r, rgb.g, rgb.b),
+        None => def,
     };
-    let mut fg = conv(cell.fgcolor(), def_fg);
-    let mut bg = conv(cell.bgcolor(), def_bg);
-    if cell.inverse() {
+    let mut fg = conv(cell.fg, def_fg);
+    let mut bg = conv(cell.bg, def_bg);
+    if cell.inverse {
         std::mem::swap(&mut fg, &mut bg);
     }
     let mut s = Style::default().fg(fg).bg(bg);
-    if cell.bold() {
+    if cell.bold {
         s = s.add_modifier(Modifier::BOLD);
     }
-    if cell.italic() {
+    if cell.italic {
         s = s.add_modifier(Modifier::ITALIC);
     }
-    if cell.underline() {
+    if cell.underline {
         s = s.add_modifier(Modifier::UNDERLINED);
     }
     s

@@ -1069,10 +1069,7 @@ impl App {
                     self.pending_peek_definition = false;
                     match crate::peek_overlay::PeekOverlay::load(path.clone(), line) {
                         Some(po) => self.peek_overlay = Some(po),
-                        None => self.toast(format!(
-                            "peek: can't read {}",
-                            path.display()
-                        )),
+                        None => self.toast(format!("peek: can't read {}", path.display())),
                     }
                 } else {
                     self.open_path(&path);
@@ -1673,14 +1670,13 @@ impl App {
             self.toast("no active pane");
             return;
         };
-        let (toast_label, ok) = if let Some(crate::pane::Pane::Diagnostics(d)) =
-            self.panes.get_mut(cur)
-        {
-            d.cycle_severity_filter();
-            (d.severity_label().to_string(), true)
-        } else {
-            (String::new(), false)
-        };
+        let (toast_label, ok) =
+            if let Some(crate::pane::Pane::Diagnostics(d)) = self.panes.get_mut(cur) {
+                d.cycle_severity_filter();
+                (d.severity_label().to_string(), true)
+            } else {
+                (String::new(), false)
+            };
         if ok {
             self.toast(format!("diagnostics filter: {toast_label}"));
         } else {

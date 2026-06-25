@@ -89,9 +89,7 @@ fn paint_corner_stack(
         .dock_widgets
         .iter()
         .enumerate()
-        .filter(|(_, w)| {
-            w.corner == corner && matches!(w.layout, crate::dock::Layout::Overlay)
-        })
+        .filter(|(_, w)| w.corner == corner && matches!(w.layout, crate::dock::Layout::Overlay))
         .map(|(i, w)| (i, w.clone()))
         .collect();
     if indexed.is_empty() {
@@ -108,12 +106,11 @@ fn paint_corner_stack(
     // visually-topmost widget gets the last (smallest) y. For
     // top corners we stack downward, so iterate forward.
     let is_bottom = matches!(corner, DockCorner::BottomLeft | DockCorner::BottomRight);
-    let order: Box<dyn Iterator<Item = &(usize, crate::dock::DockWidget)>> =
-        if is_bottom {
-            Box::new(indexed.iter().rev())
-        } else {
-            Box::new(indexed.iter())
-        };
+    let order: Box<dyn Iterator<Item = &(usize, crate::dock::DockWidget)>> = if is_bottom {
+        Box::new(indexed.iter().rev())
+    } else {
+        Box::new(indexed.iter())
+    };
 
     for (_, w) in order {
         // Clamp the user's fractions to a sane range so a widget
@@ -135,19 +132,13 @@ fn paint_corner_stack(
         // bottom edge; the new widget sits with its bottom edge at
         // `area.y + area.height - painted_h - widget_h`.
         let (x, y) = match corner {
-            DockCorner::BottomLeft => (
-                area.x,
-                area.y + area.height - painted_h - widget_h,
-            ),
+            DockCorner::BottomLeft => (area.x, area.y + area.height - painted_h - widget_h),
             DockCorner::BottomRight => (
                 area.x + area.width - widget_w,
                 area.y + area.height - painted_h - widget_h,
             ),
             DockCorner::TopLeft => (area.x, area.y + painted_h),
-            DockCorner::TopRight => (
-                area.x + area.width - widget_w,
-                area.y + painted_h,
-            ),
+            DockCorner::TopRight => (area.x + area.width - widget_w, area.y + painted_h),
         };
         let widget_rect = Rect {
             x,
@@ -189,7 +180,9 @@ fn paint_corner_stack(
             let title_fg = if is_dragging { t.bg } else { t.fg };
             let kebab_glyph = "⋮";
             let drag_hint = if is_dragging { " ⇲ " } else { "" };
-            let title_w = inner.width.saturating_sub(2 + drag_hint.chars().count() as u16);
+            let title_w = inner
+                .width
+                .saturating_sub(2 + drag_hint.chars().count() as u16);
             let title_clipped: String = w.title.chars().take(title_w as usize).collect();
             let pad = (title_w as usize).saturating_sub(title_clipped.chars().count());
             let title_line = Line::from(vec![
@@ -202,10 +195,7 @@ fn paint_corner_stack(
                 ),
                 Span::styled(" ".repeat(pad), Style::default().bg(title_bg)),
                 Span::styled(drag_hint, Style::default().fg(title_fg).bg(title_bg)),
-                Span::styled(
-                    kebab_glyph,
-                    Style::default().fg(title_fg).bg(title_bg),
-                ),
+                Span::styled(kebab_glyph, Style::default().fg(title_fg).bg(title_bg)),
                 Span::styled(" ", Style::default().bg(title_bg)),
             ]);
             let title_rect = Rect {
@@ -671,13 +661,9 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
         let sel_fg = t.bg;
         let sel_mod = Modifier::BOLD;
         let (text, fg, bg, indent, modifier) = match item {
-            crate::dock::KebabMenuItem::Header(h) => (
-                h.to_string(),
-                t.comment,
-                t.bg2,
-                "",
-                Modifier::BOLD,
-            ),
+            crate::dock::KebabMenuItem::Header(h) => {
+                (h.to_string(), t.comment, t.bg2, "", Modifier::BOLD)
+            }
             crate::dock::KebabMenuItem::Separator => (
                 "─".repeat(inner.width as usize),
                 t.comment,
@@ -690,7 +676,11 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                 if is_selected { sel_fg } else { t.fg },
                 if is_selected { sel_bg } else { t.bg2 },
                 "  ",
-                if is_selected { sel_mod } else { Modifier::empty() },
+                if is_selected {
+                    sel_mod
+                } else {
+                    Modifier::empty()
+                },
             ),
             crate::dock::KebabMenuItem::MoveTo(c) => {
                 let label = match c {
@@ -705,7 +695,11 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                     if is_selected { sel_fg } else { t.fg },
                     if is_selected { sel_bg } else { t.bg2 },
                     "",
-                    if is_selected { sel_mod } else { Modifier::empty() },
+                    if is_selected {
+                        sel_mod
+                    } else {
+                        Modifier::empty()
+                    },
                 )
             }
             crate::dock::KebabMenuItem::SetLayout(l) => {
@@ -719,7 +713,11 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                     if is_selected { sel_fg } else { t.fg },
                     if is_selected { sel_bg } else { t.bg2 },
                     "",
-                    if is_selected { sel_mod } else { Modifier::empty() },
+                    if is_selected {
+                        sel_mod
+                    } else {
+                        Modifier::empty()
+                    },
                 )
             }
             crate::dock::KebabMenuItem::SetOpacity(o) => {
@@ -727,13 +725,21 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                     Opacity::Solid => "Solid",
                     Opacity::Translucent => "Translucent",
                 };
-                let marker = if cur_opacity == Some(*o) { "● " } else { "  " };
+                let marker = if cur_opacity == Some(*o) {
+                    "● "
+                } else {
+                    "  "
+                };
                 (
                     format!("{marker}{label}"),
                     if is_selected { sel_fg } else { t.fg },
                     if is_selected { sel_bg } else { t.bg2 },
                     "",
-                    if is_selected { sel_mod } else { Modifier::empty() },
+                    if is_selected {
+                        sel_mod
+                    } else {
+                        Modifier::empty()
+                    },
                 )
             }
             crate::dock::KebabMenuItem::Rename => (
@@ -741,14 +747,22 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
                 if is_selected { sel_fg } else { t.fg },
                 if is_selected { sel_bg } else { t.bg2 },
                 "  ",
-                if is_selected { sel_mod } else { Modifier::empty() },
+                if is_selected {
+                    sel_mod
+                } else {
+                    Modifier::empty()
+                },
             ),
             crate::dock::KebabMenuItem::Close => (
                 "Close".to_string(),
                 if is_selected { sel_fg } else { t.red },
                 if is_selected { sel_bg } else { t.bg2 },
                 "  ",
-                if is_selected { sel_mod } else { Modifier::empty() },
+                if is_selected {
+                    sel_mod
+                } else {
+                    Modifier::empty()
+                },
             ),
         };
         // Right-pad the row so the bg fills the full menu width
@@ -777,12 +791,7 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
 /// Render static text into the widget's body. Naive char-boundary
 /// line-wrap; long single words just clip at the right edge. Good
 /// enough for v1 — proper word-wrap can land later.
-fn render_text_body(
-    frame: &mut Frame,
-    body_rect: Rect,
-    text: &str,
-    t: crate::ui::theme::Theme,
-) {
+fn render_text_body(frame: &mut Frame, body_rect: Rect, text: &str, t: crate::ui::theme::Theme) {
     let mut lines: Vec<Line> = Vec::with_capacity(body_rect.height as usize);
     let max_w = body_rect.width as usize;
     for raw in text.lines() {

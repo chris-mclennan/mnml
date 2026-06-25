@@ -94,14 +94,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.agents_panel_filter.clone()
         };
         let cursor = if focused { "▏" } else { " " };
-        let pad = (area.width as usize)
-            .saturating_sub(3 + display.chars().count() + 1 + 1);
+        let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                "\u{F0349} ",
-                Style::default().fg(t.comment).bg(bg_chip),
-            ),
+            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
             Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
             Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
             Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
@@ -136,10 +132,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                         .bg(bg)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    "(Claude · Codex)",
-                    Style::default().fg(t.comment).bg(bg),
-                ),
+                Span::styled("(Claude · Codex)", Style::default().fg(t.comment).bg(bg)),
             ])),
             new_rect,
         );
@@ -190,7 +183,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let spinner = spinner_frame();
-    let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)], &str, ratatui::style::Color); 3] = [
+    let sections: [(
+        &str,
+        &[(usize, &crate::claude_agents::AgentRow)],
+        &str,
+        ratatui::style::Color,
+    ); 3] = [
         ("Action needed", &action_needed[..], "!", t.red),
         ("Running", &running[..], spinner, t.cyan),
         ("Done", &done[..], "✓", t.green),
@@ -238,8 +236,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .or_else(|| r.last_user_msg.clone())
                 .unwrap_or_else(|| "(no messages)".to_string());
             let max_msg = (area.width as usize).saturating_sub(ws_label.chars().count() + 8);
-            let msg_clip: String =
-                last_msg.lines().next().unwrap_or("").chars().take(max_msg).collect();
+            let msg_clip: String = last_msg
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(max_msg)
+                .collect();
             let row_rect = Rect {
                 x: area.x,
                 y,
@@ -248,10 +251,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             let line = Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    glyph.to_string(),
-                    Style::default().fg(glyph_color).bg(bg),
-                ),
+                Span::styled(glyph.to_string(), Style::default().fg(glyph_color).bg(bg)),
                 Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(ws_label, Style::default().fg(t.fg).bg(bg)),
                 Span::styled("  ", Style::default().bg(bg)),

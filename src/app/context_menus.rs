@@ -70,11 +70,7 @@ impl App {
     /// Lets the user edit the chip's glyph/color/tooltip in place
     /// or remove it without opening the discovery overlay first.
     /// `icon_idx` is the position in `config.ui.integration_icons`.
-    pub fn open_integration_chip_context_menu(
-        &mut self,
-        icon_idx: usize,
-        anchor: (u16, u16),
-    ) {
+    pub fn open_integration_chip_context_menu(&mut self, icon_idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let Some(icon) = self.config.ui.integration_icons.get(icon_idx) else {
             return;

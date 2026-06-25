@@ -119,9 +119,7 @@ impl Layout {
     pub fn has_splits(&self) -> bool {
         matches!(self, Layout::Split { .. })
             || match self {
-                Layout::Split { first, second, .. } => {
-                    first.has_splits() || second.has_splits()
-                }
+                Layout::Split { first, second, .. } => first.has_splits() || second.has_splits(),
                 _ => false,
             }
     }

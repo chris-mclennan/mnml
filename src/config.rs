@@ -1732,11 +1732,10 @@ pub fn resolve_default_workspace() -> Option<PathBuf> {
 /// written, or when the existing TOML is invalid (we won't blindly
 /// overwrite a config the user might be debugging).
 pub fn persist_default_workspace(path: Option<&Path>) -> Result<PathBuf, String> {
-    let cfg_path = user_config_path()
-        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    let cfg_path =
+        user_config_path().ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
     if let Some(parent) = cfg_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
     let updated = upsert_startup_default_workspace(&existing, path);
@@ -1779,7 +1778,10 @@ fn upsert_startup_default_workspace(src: &str, path: Option<&Path>) -> String {
             // Leaving the [startup] table without having replaced
             // the line — if we have a value to write, inject it
             // immediately before this next-table header.
-            if in_startup && !replaced && let Some(w) = want_line.as_ref() {
+            if in_startup
+                && !replaced
+                && let Some(w) = want_line.as_ref()
+            {
                 out.push_str(w);
                 out.push('\n');
                 replaced = true;
@@ -1807,7 +1809,10 @@ fn upsert_startup_default_workspace(src: &str, path: Option<&Path>) -> String {
     }
     // Reached EOF while still in [startup] without seeing the key —
     // append the line just before EOF.
-    if in_startup && !replaced && let Some(w) = want_line.as_ref() {
+    if in_startup
+        && !replaced
+        && let Some(w) = want_line.as_ref()
+    {
         out.push_str(w);
         out.push('\n');
     }
@@ -1833,11 +1838,10 @@ fn upsert_startup_default_workspace(src: &str, path: Option<&Path>) -> String {
 /// written, or an error string when the existing TOML is malformed
 /// enough that we'd rather not blindly overwrite.
 pub fn persist_ui_projects_dir(value: Option<&str>) -> Result<PathBuf, String> {
-    let cfg_path = user_config_path()
-        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    let cfg_path =
+        user_config_path().ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
     if let Some(parent) = cfg_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
     let updated = upsert_global_string(&existing, "ui", "projects_dir", value);
@@ -1851,12 +1855,7 @@ pub fn persist_ui_projects_dir(value: Option<&str>) -> Result<PathBuf, String> {
 /// understand multi-line strings (fine for single-line quoted
 /// values). Same shape as `upsert_startup_default_workspace`; a
 /// future refactor could collapse the two.
-fn upsert_global_string(
-    src: &str,
-    table: &str,
-    key: &str,
-    value: Option<&str>,
-) -> String {
+fn upsert_global_string(src: &str, table: &str, key: &str, value: Option<&str>) -> String {
     let want_line = value.filter(|v| !v.is_empty()).map(|v| {
         let mut s = String::with_capacity(key.len() + v.len() + 6);
         s.push_str(key);
@@ -1875,7 +1874,10 @@ fn upsert_global_string(
         let trimmed = line.trim_start();
         if trimmed.starts_with('[') {
             let header = trimmed.trim_end();
-            if in_table && !replaced && let Some(w) = want_line.as_ref() {
+            if in_table
+                && !replaced
+                && let Some(w) = want_line.as_ref()
+            {
                 out.push_str(w);
                 out.push('\n');
                 replaced = true;
@@ -1899,7 +1901,10 @@ fn upsert_global_string(
         out.push_str(line);
         out.push('\n');
     }
-    if in_table && !replaced && let Some(w) = want_line.as_ref() {
+    if in_table
+        && !replaced
+        && let Some(w) = want_line.as_ref()
+    {
         out.push_str(w);
         out.push('\n');
     }
@@ -2087,7 +2092,9 @@ pub fn persist_workspaces_to_global(workspaces: &[WorkspaceConfig]) -> Result<Pa
     let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
     let stripped = strip_workspaces_blocks(&existing);
     let mut out = stripped.trim_end().to_string();
-    out.push_str("\n\n# ── Workspace picker (auto-managed by Settings → Manage workspaces…) ─────────\n");
+    out.push_str(
+        "\n\n# ── Workspace picker (auto-managed by Settings → Manage workspaces…) ─────────\n",
+    );
     for w in workspaces {
         out.push_str("[[workspaces]]\n");
         out.push_str(&format!("name = {}\n", toml_quote(&w.name)));
@@ -2111,8 +2118,7 @@ pub fn persist_workspaces_to_global(workspaces: &[WorkspaceConfig]) -> Result<Pa
         }
         out.push('\n');
     }
-    std::fs::write(&cfg_path, &out)
-        .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    std::fs::write(&cfg_path, &out).map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
     Ok(cfg_path)
 }
 

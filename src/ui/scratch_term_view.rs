@@ -2,6 +2,7 @@
 //! body. Sibling to `Pane::Pty` (full pane); this one is a fixed-height
 //! overlay strip that survives pane switches.
 
+use libghostty_vt::style::RgbColor;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -9,6 +10,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::App;
+use crate::pty_pane::RenderCell;
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -47,12 +49,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let session = &mut scratch.session;
     session.resize(inner.height, inner.width);
-    let parser = match session.parser.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    let screen = parser.screen();
-    let (rows, cols) = screen.size();
+    let grid = session.render_grid();
+    let (rows, cols) = (grid.rows, grid.cols);
 
     let def_fg = t.fg;
     let def_bg = t.bg_dark;
@@ -62,19 +60,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let mut text = String::new();
         let mut style: Option<Style> = None;
         for c in 0..cols {
-            let Some(cell) = screen.cell(r, c) else {
+            let Some(cell) = grid.cell(r, c) else {
                 push_run(&mut spans, &mut text, &mut style, " ", Style::default());
                 continue;
             };
-            if cell.is_wide_continuation() {
-                continue;
-            }
             let s = cell_style(cell, def_fg, def_bg);
-            // vt100 0.16: `Cell::contents()` returns `&str`.
-            let g: &str = if cell.has_contents() {
-                cell.contents()
-            } else {
+            let g: &str = if cell.text.is_empty() {
                 " "
+            } else {
+                &cell.text
             };
             push_run(&mut spans, &mut text, &mut style, g, s);
         }
@@ -105,25 +99,24 @@ fn push_run(
     }
 }
 
-fn cell_style(cell: &vt100::Cell, def_fg: Color, def_bg: Color) -> Style {
-    let conv = |c: vt100::Color, def: Color| match c {
-        vt100::Color::Default => def,
-        vt100::Color::Idx(i) => Color::Indexed(i),
-        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+fn cell_style(cell: &RenderCell, def_fg: Color, def_bg: Color) -> Style {
+    let conv = |c: Option<RgbColor>, def: Color| match c {
+        Some(rgb) => Color::Rgb(rgb.r, rgb.g, rgb.b),
+        None => def,
     };
-    let mut fg = conv(cell.fgcolor(), def_fg);
-    let mut bg = conv(cell.bgcolor(), def_bg);
-    if cell.inverse() {
+    let mut fg = conv(cell.fg, def_fg);
+    let mut bg = conv(cell.bg, def_bg);
+    if cell.inverse {
         std::mem::swap(&mut fg, &mut bg);
     }
     let mut s = Style::default().fg(fg).bg(bg);
-    if cell.bold() {
+    if cell.bold {
         s = s.add_modifier(Modifier::BOLD);
     }
-    if cell.italic() {
+    if cell.italic {
         s = s.add_modifier(Modifier::ITALIC);
     }
-    if cell.underline() {
+    if cell.underline {
         s = s.add_modifier(Modifier::UNDERLINED);
     }
     s

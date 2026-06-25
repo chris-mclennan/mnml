@@ -119,9 +119,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // rightmost `split_buttons_width(app)` cells for them so the
     // tab strip's scroll math doesn't run them over.
     let cluster_w = split_buttons_width(app);
-    let tabs_max_x = area
-        .x
-        .saturating_add(area.width.saturating_sub(cluster_w));
+    let tabs_max_x = area.x.saturating_add(area.width.saturating_sub(cluster_w));
 
     // Disambiguated labels — when two open editors share a filename, prepend
     // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
@@ -267,9 +265,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // nf-md-lan — websocket connection.
             Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
             // nf-md-currency-usd — AI spend report.
-            Pane::SpendReport(_) => {
-                (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange)
-            }
+            Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
         };
         // Status badge priority:
         //   dirty   → ● / *  (orange — any tab)
@@ -541,7 +537,12 @@ pub fn paint_right_cluster(
                 .add_modifier(Modifier::BOLD),
         ));
         app.rects.launcher_icon_rects.push((
-            Rect { x: cluster_x, y: area.y, width: 3, height: 1 },
+            Rect {
+                x: cluster_x,
+                y: area.y,
+                width: 3,
+                height: 1,
+            },
             i,
         ));
         cluster_x += 3;
@@ -589,7 +590,12 @@ pub fn paint_right_cluster(
             }
             spans.push(Span::styled(label, chip_style));
             app.rects.bufferline_tab_page_chips.push((
-                Rect { x: cluster_x, y: area.y, width: label_w, height: 1 },
+                Rect {
+                    x: cluster_x,
+                    y: area.y,
+                    width: label_w,
+                    height: 1,
+                },
                 i,
             ));
             cluster_x += label_w;
@@ -600,7 +606,12 @@ pub fn paint_right_cluster(
                     Style::default().fg(chip_fg).bg(chip_bg),
                 ));
                 app.rects.bufferline_tab_page_close.push((
-                    Rect { x: cluster_x, y: area.y, width: 1, height: 1 },
+                    Rect {
+                        x: cluster_x,
+                        y: area.y,
+                        width: 1,
+                        height: 1,
+                    },
                     i,
                 ));
                 cluster_x += 2;

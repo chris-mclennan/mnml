@@ -390,9 +390,7 @@ fn draw_edit(
         Rect {
             x: area.x + 2 + method_chip_len + 2,
             y: method_y,
-            width: area
-                .width
-                .saturating_sub(2 + method_chip_len + 2),
+            width: area.width.saturating_sub(2 + method_chip_len + 2),
             height: 1,
         },
         pane_id,
@@ -441,7 +439,10 @@ fn draw_edit(
             };
             let chip_w = display.chars().count() as u16;
             spans.push(Span::styled(display, style));
-            spans.push(Span::styled(" ".to_string(), Style::default().bg(t.bg_dark)));
+            spans.push(Span::styled(
+                " ".to_string(),
+                Style::default().bg(t.bg_dark),
+            ));
             tabs.push((
                 Rect {
                     x: area.x + col,
@@ -461,149 +462,149 @@ fn draw_edit(
     let cur_tab = rp.edit_tab;
 
     if cur_tab == crate::request_pane::EditTab::Headers {
-    // Headers (editable as `Key: Value` text; one line per entry)
-    let h_focus = rp.focus == EditField::Headers;
-    let headers_label_y = rows.len() as u16;
-    rows.push(Line::from(vec![
-        bar_span(h_focus),
-        Span::styled("Headers".to_string(), label_style(h_focus)),
-    ]));
-    register_field(fields, headers_label_y, EditField::Headers);
-    let hb = &rp.headers_buffer;
-    if hb.is_empty() {
-        let empty_y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            "    (none — type `Name: value` to add)".to_string(),
-            dim,
-        )]));
-        register_field(fields, empty_y, EditField::Headers);
-        if h_focus && focused && caret.is_none() {
-            let y = (rows.len() - 1) as u16;
-            *caret = Some((area.x + 4, y));
-        }
-    } else {
-        // Style each header line as `<key in cyan> : <value in fg>` —
-        // editing model is still the flat textarea (the user types `Name:
-        // value\n` like before), but at render time we split on the first
-        // `:` to color-code. Lines without `:` (mid-edit) render in dim
-        // gray as a hint they're not yet a valid header.
-        let key_style = Style::default()
-            .fg(t.cyan)
-            .bg(t.bg_dark)
-            .add_modifier(Modifier::BOLD);
-        let sep_style = Style::default().fg(t.comment).bg(t.bg_dark);
-        let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
-        let plain_dim = Style::default().fg(t.comment).bg(t.bg_dark);
-        for (i, line) in hb.lines().enumerate() {
-            let spans: Vec<Span> = if let Some(colon) = line.find(':') {
-                let (k, rest) = line.split_at(colon);
-                // Skip the `:` itself; preserve any leading space in the value.
-                let v = &rest[1..];
-                vec![
-                    Span::styled("    ".to_string(), val_style),
-                    Span::styled(k.to_string(), key_style),
-                    Span::styled(":".to_string(), sep_style),
-                    Span::styled(v.to_string(), val_style),
-                ]
-            } else {
-                vec![Span::styled(format!("    {line}"), plain_dim)]
-            };
-            let row_y = rows.len() as u16;
-            rows.push(Line::from(spans));
-            register_field(fields, row_y, EditField::Headers);
+        // Headers (editable as `Key: Value` text; one line per entry)
+        let h_focus = rp.focus == EditField::Headers;
+        let headers_label_y = rows.len() as u16;
+        rows.push(Line::from(vec![
+            bar_span(h_focus),
+            Span::styled("Headers".to_string(), label_style(h_focus)),
+        ]));
+        register_field(fields, headers_label_y, EditField::Headers);
+        let hb = &rp.headers_buffer;
+        if hb.is_empty() {
+            let empty_y = rows.len() as u16;
+            rows.push(Line::from(vec![Span::styled(
+                "    (none — type `Name: value` to add)".to_string(),
+                dim,
+            )]));
+            register_field(fields, empty_y, EditField::Headers);
             if h_focus && focused && caret.is_none() {
-                let start = nth_line_start(hb, i);
-                let end = nth_line_end(hb, i);
-                if rp.headers_cursor >= start && rp.headers_cursor <= end {
-                    let col_in_line =
-                        hb[start..rp.headers_cursor.min(hb.len())].chars().count() as u16;
-                    let y = (rows.len() - 1) as u16;
-                    *caret = Some((area.x + 4 + col_in_line, y));
+                let y = (rows.len() - 1) as u16;
+                *caret = Some((area.x + 4, y));
+            }
+        } else {
+            // Style each header line as `<key in cyan> : <value in fg>` —
+            // editing model is still the flat textarea (the user types `Name:
+            // value\n` like before), but at render time we split on the first
+            // `:` to color-code. Lines without `:` (mid-edit) render in dim
+            // gray as a hint they're not yet a valid header.
+            let key_style = Style::default()
+                .fg(t.cyan)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD);
+            let sep_style = Style::default().fg(t.comment).bg(t.bg_dark);
+            let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
+            let plain_dim = Style::default().fg(t.comment).bg(t.bg_dark);
+            for (i, line) in hb.lines().enumerate() {
+                let spans: Vec<Span> = if let Some(colon) = line.find(':') {
+                    let (k, rest) = line.split_at(colon);
+                    // Skip the `:` itself; preserve any leading space in the value.
+                    let v = &rest[1..];
+                    vec![
+                        Span::styled("    ".to_string(), val_style),
+                        Span::styled(k.to_string(), key_style),
+                        Span::styled(":".to_string(), sep_style),
+                        Span::styled(v.to_string(), val_style),
+                    ]
+                } else {
+                    vec![Span::styled(format!("    {line}"), plain_dim)]
+                };
+                let row_y = rows.len() as u16;
+                rows.push(Line::from(spans));
+                register_field(fields, row_y, EditField::Headers);
+                if h_focus && focused && caret.is_none() {
+                    let start = nth_line_start(hb, i);
+                    let end = nth_line_end(hb, i);
+                    if rp.headers_cursor >= start && rp.headers_cursor <= end {
+                        let col_in_line =
+                            hb[start..rp.headers_cursor.min(hb.len())].chars().count() as u16;
+                        let y = (rows.len() - 1) as u16;
+                        *caret = Some((area.x + 4 + col_in_line, y));
+                    }
                 }
             }
+            if h_focus && focused && caret.is_none() && hb.ends_with('\n') {
+                let y = rows.len() as u16;
+                rows.push(plain(String::new(), body_style));
+                *caret = Some((area.x + 4, y));
+            }
         }
-        if h_focus && focused && caret.is_none() && hb.ends_with('\n') {
-            let y = rows.len() as u16;
-            rows.push(plain(String::new(), body_style));
-            *caret = Some((area.x + 4, y));
-        }
-    }
     } // end Headers tab
 
     if cur_tab == crate::request_pane::EditTab::Body {
-    // Body
-    let b_focus = rp.focus == EditField::Body;
-    let body_label_y = rows.len() as u16;
-    let body = rp.request.body.as_deref().unwrap_or("");
-    // 2026-06-20 — detect content type from body shape so the
-    // user sees what mnml thinks the body is. JSON / XML /
-    // form-encoded / plain.
-    let detected = detect_body_kind(body);
-    let kind_label = if let Some(k) = detected {
-        format!("  ({k}) — Ctrl+Shift+F formats JSON")
-    } else {
-        String::new()
-    };
-    rows.push(Line::from(vec![
-        bar_span(b_focus),
-        Span::styled("Body".to_string(), label_style(b_focus)),
-        Span::styled(
-            kind_label,
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::DIM),
-        ),
-    ]));
-    register_field(fields, body_label_y, EditField::Body);
-    if body.is_empty() {
-        let empty_y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            "    (empty)".to_string(),
-            dim,
-        )]));
-        register_field(fields, empty_y, EditField::Body);
-    } else {
-        for (i, line) in body.lines().enumerate() {
-            let row_y = rows.len() as u16;
-            // 2026-06-19 — keyboard hunt SEV-3 v2: when
-            // [ui] show_whitespace is on, render `\t` as `→` and
-            // leading spaces as `·` (matching the editor view) so
-            // a user typing Tab in the multi-line Body field
-            // actually sees something happen.
-            let rendered = if show_ws {
-                line.replace('\t', "→")
-            } else {
-                line.to_string()
-            };
+        // Body
+        let b_focus = rp.focus == EditField::Body;
+        let body_label_y = rows.len() as u16;
+        let body = rp.request.body.as_deref().unwrap_or("");
+        // 2026-06-20 — detect content type from body shape so the
+        // user sees what mnml thinks the body is. JSON / XML /
+        // form-encoded / plain.
+        let detected = detect_body_kind(body);
+        let kind_label = if let Some(k) = detected {
+            format!("  ({k}) — Ctrl+Shift+F formats JSON")
+        } else {
+            String::new()
+        };
+        rows.push(Line::from(vec![
+            bar_span(b_focus),
+            Span::styled("Body".to_string(), label_style(b_focus)),
+            Span::styled(
+                kind_label,
+                Style::default()
+                    .fg(t.comment)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]));
+        register_field(fields, body_label_y, EditField::Body);
+        if body.is_empty() {
+            let empty_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                format!("    {rendered}"),
-                Style::default().fg(t.grey_fg).bg(t.bg_dark),
+                "    (empty)".to_string(),
+                dim,
             )]));
-            register_field(fields, row_y, EditField::Body);
-            if b_focus && focused && caret.is_none() {
-                let body_offset_of_line_start = nth_line_start(body, i);
-                let body_offset_of_line_end = nth_line_end(body, i);
-                if rp.body_cursor >= body_offset_of_line_start
-                    && rp.body_cursor <= body_offset_of_line_end
-                {
-                    let col_in_line = body
-                        [body_offset_of_line_start..rp.body_cursor.min(body.len())]
-                        .chars()
-                        .count() as u16;
-                    let y = (rows.len() - 1) as u16;
-                    let prefix_cols = 4u16;
-                    *caret = Some((area.x + prefix_cols + col_in_line, y));
+            register_field(fields, empty_y, EditField::Body);
+        } else {
+            for (i, line) in body.lines().enumerate() {
+                let row_y = rows.len() as u16;
+                // 2026-06-19 — keyboard hunt SEV-3 v2: when
+                // [ui] show_whitespace is on, render `\t` as `→` and
+                // leading spaces as `·` (matching the editor view) so
+                // a user typing Tab in the multi-line Body field
+                // actually sees something happen.
+                let rendered = if show_ws {
+                    line.replace('\t', "→")
+                } else {
+                    line.to_string()
+                };
+                rows.push(Line::from(vec![Span::styled(
+                    format!("    {rendered}"),
+                    Style::default().fg(t.grey_fg).bg(t.bg_dark),
+                )]));
+                register_field(fields, row_y, EditField::Body);
+                if b_focus && focused && caret.is_none() {
+                    let body_offset_of_line_start = nth_line_start(body, i);
+                    let body_offset_of_line_end = nth_line_end(body, i);
+                    if rp.body_cursor >= body_offset_of_line_start
+                        && rp.body_cursor <= body_offset_of_line_end
+                    {
+                        let col_in_line = body
+                            [body_offset_of_line_start..rp.body_cursor.min(body.len())]
+                            .chars()
+                            .count() as u16;
+                        let y = (rows.len() - 1) as u16;
+                        let prefix_cols = 4u16;
+                        *caret = Some((area.x + prefix_cols + col_in_line, y));
+                    }
                 }
             }
+            // Trailing newline ⇒ caret on an empty line at the end.
+            if b_focus && focused && caret.is_none() && body.ends_with('\n') {
+                let y = rows.len() as u16;
+                rows.push(plain(String::new(), body_style));
+                *caret = Some((area.x + 4, y));
+            }
         }
-        // Trailing newline ⇒ caret on an empty line at the end.
-        if b_focus && focused && caret.is_none() && body.ends_with('\n') {
-            let y = rows.len() as u16;
-            rows.push(plain(String::new(), body_style));
-            *caret = Some((area.x + 4, y));
-        }
-    }
     } // end Body tab
 
     // 2026-06-19 — mouse hunt SEV-2 #5: Params/Vars/Source content
@@ -716,7 +717,9 @@ fn draw_edit(
             .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
             .map(|(_, v)| v.clone());
         let summary = match current.as_deref() {
-            Some(v) if v.starts_with("Bearer ") => format!("Bearer · {}", &v[7..].chars().take(20).collect::<String>()),
+            Some(v) if v.starts_with("Bearer ") => {
+                format!("Bearer · {}", &v[7..].chars().take(20).collect::<String>())
+            }
             Some(v) if v.starts_with("Basic ") => "Basic · (base64 user:pass)".to_string(),
             Some(v) if v.len() > 24 => format!("{}…", &v[..22]),
             Some(v) => v.to_string(),
@@ -753,15 +756,13 @@ fn draw_edit(
                 "save_preset" => t.green,
                 _ => t.fg,
             };
-            rows.push(Line::from(vec![
-                Span::styled(
-                    format!("    {label}"),
-                    Style::default()
-                        .fg(color)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
+            rows.push(Line::from(vec![Span::styled(
+                format!("    {label}"),
+                Style::default()
+                    .fg(color)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            )]));
             auth_rows_local.push((
                 Rect {
                     x: area.x,
@@ -889,7 +890,8 @@ fn draw_edit(
         let s_focus = rp.focus == EditField::Source;
         let hint_y = rows.len() as u16;
         rows.push(Line::from(vec![Span::styled(
-            "    Source — type / paste curl or .http here · :http.paste_source (Ctrl+Enter)".to_string(),
+            "    Source — type / paste curl or .http here · :http.paste_source (Ctrl+Enter)"
+                .to_string(),
             dim,
         )]));
         register_tab_row(fields, hint_y);
@@ -921,9 +923,8 @@ fn draw_edit(
                     let start = nth_line_start(src, i);
                     let end = nth_line_end(src, i);
                     if rp.source_cursor >= start && rp.source_cursor <= end {
-                        let col = src[start..rp.source_cursor.min(src.len())]
-                            .chars()
-                            .count() as u16;
+                        let col =
+                            src[start..rp.source_cursor.min(src.len())].chars().count() as u16;
                         let yy = (rows.len() - 1) as u16;
                         *caret = Some((area.x + 4 + col, yy));
                     }
@@ -1201,22 +1202,18 @@ fn schema_footer_line(
         .and_then(|s| s.to_str())
         .unwrap_or("");
     match &sr.status {
-        SchemaStatus::Valid => Line::from(vec![
-            Span::styled(
-                format!("  ✓ Schema valid ({sidecar})"),
-                Style::default()
-                    .fg(t.green)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
+        SchemaStatus::Valid => Line::from(vec![Span::styled(
+            format!("  ✓ Schema valid ({sidecar})"),
+            Style::default()
+                .fg(t.green)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )]),
         SchemaStatus::Invalid => {
             let n = sr.errors.len();
             let plural = if n == 1 { "error" } else { "errors" };
             Line::from(vec![Span::styled(
-                format!(
-                    "  ✗ Schema: {n} {plural} ({sidecar}) — :http.show_schema_errors"
-                ),
+                format!("  ✗ Schema: {n} {plural} ({sidecar}) — :http.show_schema_errors"),
                 Style::default()
                     .fg(t.red)
                     .bg(t.bg_dark)
