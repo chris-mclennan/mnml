@@ -19,6 +19,9 @@ pub struct HelpOverlayState {
     /// First visible line in the rendered list. Bounded by the
     /// renderer when paging.
     pub scroll: usize,
+    /// Section names currently collapsed (don't render their
+    /// binding rows). Default: empty = all expanded. Per-session.
+    pub collapsed: std::collections::HashSet<String>,
 }
 
 /// One row in the help overlay — either a section header or a binding.
@@ -90,6 +93,21 @@ impl crate::app::App {
         if let Some(state) = self.help_overlay.as_mut() {
             let new = (state.scroll as isize + delta).max(0) as usize;
             state.scroll = new;
+        }
+    }
+
+    /// Toggle the collapsed state of a help section by name. Used
+    /// by the renderer's click handler.
+    pub fn toggle_help_section(&mut self, name: &str) {
+        if let Some(state) = self.help_overlay.as_mut() {
+            if state.collapsed.contains(name) {
+                state.collapsed.remove(name);
+            } else {
+                state.collapsed.insert(name.to_string());
+            }
+            // Reset scroll so the user doesn't lose their place when
+            // the layout shifts.
+            state.scroll = 0;
         }
     }
 }

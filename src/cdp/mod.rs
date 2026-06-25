@@ -148,6 +148,29 @@ pub fn set_device_metrics_override(
     )
 }
 
+/// `Network.emulateNetworkConditions` — throttle (or restore) the
+/// page's network. `offline=true` simulates no connection;
+/// non-zero `latency_ms` adds RTT; throughput values are bytes/s
+/// (use `-1` for "no throttling" on a particular axis).
+pub fn emulate_network_conditions(
+    id: i64,
+    offline: bool,
+    latency_ms: u32,
+    download_bps: i32,
+    upload_bps: i32,
+) -> String {
+    rpc(
+        id,
+        "Network.emulateNetworkConditions",
+        serde_json::json!({
+            "offline": offline,
+            "latency": latency_ms,
+            "downloadThroughput": download_bps,
+            "uploadThroughput": upload_bps,
+        }),
+    )
+}
+
 /// `Emulation.clearDeviceMetricsOverride` — drop any device-metrics
 /// override and let the page render with the real window dimensions.
 pub fn clear_device_metrics_override(id: i64) -> String {

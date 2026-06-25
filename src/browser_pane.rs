@@ -1591,6 +1591,33 @@ impl BrowserPane {
     /// together; both are fire-and-forget (no reply handling needed —
     /// effects show on the next navigation / reload). The pane records
     /// the preset index so the header chip can render it.
+    /// Throttle (or restore) the page's network via
+    /// `Network.emulateNetworkConditions`. `download_bps` /
+    /// `upload_bps` are bytes/sec (use `-1` for "no cap on
+    /// that axis"); `latency_ms` is added RTT.
+    pub fn set_network_throttle(
+        &mut self,
+        label: &str,
+        offline: bool,
+        latency_ms: u32,
+        download_bps: i32,
+        upload_bps: i32,
+    ) {
+        if self.closed {
+            return;
+        }
+        self.send(move |id| {
+            crate::cdp::emulate_network_conditions(
+                id,
+                offline,
+                latency_ms,
+                download_bps,
+                upload_bps,
+            )
+        });
+        self.push(LogKind::System, format!("network: {label}"));
+    }
+
     pub fn set_device(&mut self, preset_index: usize) {
         if self.closed {
             return;

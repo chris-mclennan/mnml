@@ -664,6 +664,68 @@ impl App {
         }
     }
 
+    /// Open a network-throttle picker over canned presets
+    /// (Online / Offline / Slow 3G / Fast 3G / WiFi). Accept fires
+    /// `Network.emulateNetworkConditions` on the active browser
+    /// pane via `browser_set_network_throttle`.
+    pub fn open_browser_network_throttle_picker(&mut self) {
+        use crate::picker::PickerItem;
+        if self.active_browser().is_none() {
+            self.toast("no browser pane open");
+            return;
+        }
+        let items = vec![
+            PickerItem::new(
+                "none",
+                "Online — no throttling".to_string(),
+                "real network".to_string(),
+            ),
+            PickerItem::new(
+                "offline",
+                "Offline — simulate no network".to_string(),
+                "no requests".to_string(),
+            ),
+            PickerItem::new(
+                "slow3g",
+                "Slow 3G".to_string(),
+                "400ms RTT · 400/400 Kbps".to_string(),
+            ),
+            PickerItem::new(
+                "fast3g",
+                "Fast 3G".to_string(),
+                "150ms RTT · 1.5/750 Kbps".to_string(),
+            ),
+            PickerItem::new(
+                "wifi",
+                "WiFi".to_string(),
+                "2ms RTT · 30/15 Mbps".to_string(),
+            ),
+        ];
+        self.open_picker(crate::picker::Picker::new(
+            crate::picker::PickerKind::BrowserNetworkThrottle,
+            "Network throttle".to_string(),
+            items,
+        ));
+    }
+
+    /// Accept handler for the network-throttle picker — apply a
+    /// preset to the active browser pane.
+    pub fn browser_set_network_throttle(&mut self, id: &str) {
+        let (offline, latency, dl, ul, label) = match id {
+            "none" => (false, 0, -1, -1, "Online — no throttling"),
+            "offline" => (true, 0, 0, 0, "Offline"),
+            "slow3g" => (false, 400, 400 * 1024 / 8, 400 * 1024 / 8, "Slow 3G"),
+            "fast3g" => (false, 150, 1_500 * 1024 / 8, 750 * 1024 / 8, "Fast 3G"),
+            "wifi" => (false, 2, 30_000 * 1024 / 8, 15_000 * 1024 / 8, "WiFi"),
+            _ => return,
+        };
+        let Some(b) = self.active_browser_mut() else {
+            return;
+        };
+        b.set_network_throttle(label, offline, latency, dl, ul);
+        self.toast(format!("network: {label}"));
+    }
+
     /// `m` in a browser pane (or `browser.device_picker`) — open a picker
     /// over [`crate::browser_pane::DEVICE_PRESETS`] plus a top "Reset"
     /// entry. Accept ⇒ `browser_set_device` or `browser_clear_device`.

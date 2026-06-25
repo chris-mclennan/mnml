@@ -2718,6 +2718,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_diagnostics_pane(),
         },
         Command {
+            id: "lsp.diagnostics_filter",
+            title: "LSP: cycle diagnostics severity filter (All ↔ Warnings ↔ Errors)",
+            group: "lsp",
+            keys: &[],
+            run: |app| app.cycle_diagnostics_filter(),
+        },
+        Command {
             id: "lsp.completion",
             title: "LSP: complete at cursor (→ picker)",
             group: "lsp",
@@ -3847,6 +3854,13 @@ fn builtin_commands() -> Vec<Command> {
             group: "browser",
             keys: &[],
             run: |app| app.browser_open_devtools_hint(),
+        },
+        Command {
+            id: "browser.network_throttle",
+            title: "Browser: network throttle picker (Online/Offline/3G/WiFi)",
+            group: "browser",
+            keys: &[],
+            run: |app| app.open_browser_network_throttle_picker(),
         },
         Command {
             id: "ai.write_branch_name",

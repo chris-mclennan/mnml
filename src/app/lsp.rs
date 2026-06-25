@@ -1664,6 +1664,30 @@ impl App {
 
     /// Rebuild the item list of any open diagnostics pane (called when
     /// diagnostics change, or on the pane's `r` key).
+    /// Cycle the severity filter on the active diagnostics pane —
+    /// All ↔ Warnings+Errors ↔ Errors only. No-op when there's no
+    /// diagnostics pane open; toasts the new label so the change
+    /// is visible.
+    pub fn cycle_diagnostics_filter(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("no active pane");
+            return;
+        };
+        let (toast_label, ok) = if let Some(crate::pane::Pane::Diagnostics(d)) =
+            self.panes.get_mut(cur)
+        {
+            d.cycle_severity_filter();
+            (d.severity_label().to_string(), true)
+        } else {
+            (String::new(), false)
+        };
+        if ok {
+            self.toast(format!("diagnostics filter: {toast_label}"));
+        } else {
+            self.toast("open the diagnostics pane first (lsp.diagnostics)");
+        }
+    }
+
     pub fn refresh_diagnostics_panes(&mut self) {
         if !self.panes.iter().any(|p| matches!(p, Pane::Diagnostics(_))) {
             return;

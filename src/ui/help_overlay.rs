@@ -53,6 +53,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
 
     let rows = build_help(&app.keymap);
     let scroll = app.help_overlay.as_ref().map(|s| s.scroll).unwrap_or(0);
+    let collapsed: std::collections::HashSet<String> = app
+        .help_overlay
+        .as_ref()
+        .map(|s| s.collapsed.clone())
+        .unwrap_or_default();
+    app.rects.help_section_headers.clear();
 
     // Compute key-column width — wide enough for the widest chord
     // string in the visible window, capped so the title column stays
@@ -67,18 +73,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         .unwrap_or(8)
         .clamp(8, 20);
 
+    // Two-pass build so we can drop binding rows for collapsed
+    // sections AND track which section each line corresponds to
+    // (for click hit-testing).
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(rows.len());
+    // Section name for each *visible* line — `None` for binding
+    // rows (only header rows are clickable).
+    let mut header_names: Vec<Option<String>> = Vec::with_capacity(rows.len());
+    let mut current_section: Option<String> = None;
+    let mut section_collapsed = false;
     for row in &rows {
         match row {
             HelpRow::Section(name) => {
+                current_section = Some(name.to_string());
+                section_collapsed = collapsed.contains(*name);
+                let chev = if section_collapsed { "▸" } else { "▾" };
                 lines.push(Line::from(Span::styled(
-                    format!("── {name} ──"),
+                    format!("{chev} ── {name} ──"),
                     Style::default()
                         .fg(t.comment)
                         .add_modifier(Modifier::BOLD | Modifier::DIM),
                 )));
+                header_names.push(Some(name.to_string()));
             }
             HelpRow::Binding { keys, title, .. } => {
+                if section_collapsed {
+                    continue;
+                }
                 let kc = if keys.is_empty() { "·" } else { keys.as_str() };
                 let pad = key_col_w.saturating_sub(kc.chars().count());
                 lines.push(Line::from(vec![
@@ -86,9 +107,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                     Span::raw(" ".repeat(pad + 2)),
                     Span::styled((*title).to_string(), Style::default().fg(t.fg)),
                 ]));
+                header_names.push(None);
             }
         }
     }
+    let _ = current_section;
 
     // Scroll-window: reserve 1 row for the hint bar.
     let body_h = (inner.height as usize).saturating_sub(1);
@@ -103,7 +126,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     };
     frame.render_widget(Paragraph::new(window), body_rect);
 
-    let hint = "↑↓ / j k scroll · PageUp/Down faster · Esc / F1 close";
+    // Register click rects for visible section headers.
+    for (visible_idx, header_name) in header_names
+        .iter()
+        .skip(scroll)
+        .take(body_h)
+        .enumerate()
+    {
+        if let Some(name) = header_name {
+            let row_rect = Rect {
+                x: inner.x,
+                y: inner.y + visible_idx as u16,
+                width: inner.width,
+                height: 1,
+            };
+            app.rects
+                .help_section_headers
+                .push((row_rect, name.clone()));
+        }
+    }
+
+    let hint =
+        "↑↓ / j k scroll · PageUp/Down faster · click section ▾/▸ to collapse · Esc / F1 close";
     let hint_rect = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),

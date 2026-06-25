@@ -1397,6 +1397,27 @@ fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
         KeyCode::PageDown => app.help_scroll(10),
         KeyCode::Home => app.help_scroll(-1_000_000),
         KeyCode::End => app.help_scroll(1_000_000),
+        // `c` collapses ALL sections; `e` expands all. Quick way
+        // to scan or focus.
+        KeyCode::Char('c') => {
+            if let Some(state) = app.help_overlay.as_mut() {
+                // Collect all section names from current registry
+                // — match what the renderer iterates over.
+                let rows = crate::app::help::build_help(&app.keymap);
+                for r in &rows {
+                    if let crate::app::help::HelpRow::Section(name) = r {
+                        state.collapsed.insert((*name).to_string());
+                    }
+                }
+                state.scroll = 0;
+            }
+        }
+        KeyCode::Char('e') => {
+            if let Some(state) = app.help_overlay.as_mut() {
+                state.collapsed.clear();
+                state.scroll = 0;
+            }
+        }
         _ => {}
     }
 }
@@ -4109,6 +4130,27 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // events swallowed so a stray click on the editor underneath
     // doesn't bleed through. 2026-06-07 SEV-2 VS-Code-mouse hunt fix
     // ("Settings overlay accepts no mouse input — swallows clicks").
+    // Help overlay — section header click toggles collapse; wheel
+    // scrolls. Same modal-overlay shape as Settings.
+    if app.help_overlay.is_some() {
+        match m.kind {
+            MouseEventKind::ScrollUp => app.help_scroll(-1),
+            MouseEventKind::ScrollDown => app.help_scroll(1),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let header_hit = app
+                    .rects
+                    .help_section_headers
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                    .map(|(_, name)| name.clone());
+                if let Some(name) = header_hit {
+                    app.toggle_help_section(&name);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
     if app.settings_overlay.is_some() {
         match m.kind {
             MouseEventKind::ScrollUp => app.settings_move_row(-1),
@@ -5367,6 +5409,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(r, x, y)
             {
                 let _ = crate::command::run("git.graph", app);
+                return;
+            }
+            // Statusline test-runner chip → focus the test pane.
+            if let Some(r) = app.rects.statusline_test_chip
+                && crate::app::dispatch::contains(r, x, y)
+                && let Some((_, pane_idx)) = app.last_test_run
+                && pane_idx < app.panes.len()
+            {
+                app.active = Some(pane_idx);
+                app.focus_pane();
                 return;
             }
             // Statusline mode chip → toggle input style (vim ↔ standard).

@@ -301,6 +301,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
+    // Test-runner chip — `🧪 <label>`. Shown when the user has
+    // launched a test pane in this session (cargo / npm / pytest /
+    // go / playwright) and that pane is still alive. Click →
+    // focus the pane. Cleared when the pane closes.
+    app.rects.statusline_test_chip = None;
+    let test_chip_label = match &app.last_test_run {
+        Some((label, pane_idx)) => {
+            // Drop the entry silently when the pane has been
+            // closed since we recorded it — keeps the chip
+            // honest.
+            if *pane_idx < app.panes.len() {
+                Some((label.clone(), *pane_idx))
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+    let mut test_seg_idx: Option<usize> = None;
+    if let Some((label, _pane_idx)) = test_chip_label.clone() {
+        test_seg_idx = Some(right.len());
+        right.push(Seg::new(
+            format!(" \u{1F9EA} {label} "),
+            theme::cur().bg_darker,
+            theme::cur().yellow,
+        ));
+    }
     // Now-playing chip — pushed first so it's the leftmost segment of
     // the right cluster (closer to centre). Doubles as the mixr launch
     // button: shows the track from whatever player the background
@@ -651,6 +678,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_wrap_chip = to_rect(wrap_seg_idx, &right_rects);
     app.rects.statusline_autosave_chip = to_rect(autosave_seg_idx, &right_rects);
     app.rects.statusline_filesize_chip = to_rect(filesize_seg_idx, &right_rects);
+    // Test-runner chip — translate seg index → screen rect like
+    // the others above.
+    if let Some(idx) = test_seg_idx
+        && let Some(&(start, w)) = right_rects.get(idx)
+        && w > 0
+    {
+        app.rects.statusline_test_chip = Some(Rect {
+            x: right_lane_x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        });
+    }
     app.rects.statusline_lncol_chip = to_rect(lncol_seg_idx, &right_rects);
 
     // Register the git-branch chip's click rect for `git.graph` routing.

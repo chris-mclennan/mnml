@@ -504,6 +504,9 @@ impl App {
                     self.browser_set_device(idx);
                 }
             }
+            PickerKind::BrowserNetworkThrottle => {
+                self.browser_set_network_throttle(&item.id);
+            }
             PickerKind::Snippets => {
                 if let Ok(idx) = item.id.parse::<usize>() {
                     self.snippet_insert_at_cursor(idx);

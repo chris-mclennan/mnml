@@ -312,6 +312,11 @@ impl App {
         let cmdline = format!("{bin} {subcmd}");
         let profile = crate::pty_pane::BinaryProfile::task(&label, &cmdline, root);
         self.open_pty(profile);
+        // Record for the statusline `🧪` chip — `open_pty` appends
+        // to `panes`, so the last index is this new pty.
+        if !self.panes.is_empty() {
+            self.last_test_run = Some((label, self.panes.len() - 1));
+        }
     }
 
     /// `test.run_all` — the whole Playwright suite.

@@ -1937,6 +1937,13 @@ pub struct PaneRects {
     /// list. Click → context menu (Edit name / Edit path / Set
     /// group / Delete).
     pub workspaces_editor_kebabs: Vec<(Rect, usize)>,
+    /// `(rect, section_name)` per visible section header in the
+    /// help overlay. Click toggles the section's collapsed state
+    /// via `App::toggle_help_section`.
+    pub help_section_headers: Vec<(Rect, String)>,
+    /// Click rect for the `🧪 <label>` statusline chip — shown
+    /// while `last_test_run` is set. Click → focus the test pane.
+    pub statusline_test_chip: Option<Rect>,
     /// Strip reserved at the top of the editor body for inline
     /// dock widgets at TL / TR corners. Editor body is shrunk by
     /// `height` from the top. `None` = no inline top widgets.
@@ -3069,6 +3076,11 @@ pub struct App {
     /// panes and 1-row status chrome). v1 ships bottom-left
     /// `Text` widgets only — see `src/dock.rs` + `src/ui/dock.rs`.
     pub dock_widgets: Vec<crate::dock::DockWidget>,
+    /// `(label, pane_idx)` of the most recently launched test
+    /// runner pane (cargo / npm / pytest / go / playwright). Used
+    /// by the statusline to surface a clickable chip → focus the
+    /// pane. Cleared when the pane is closed.
+    pub last_test_run: Option<(String, usize)>,
     /// Monotonically-increasing id for new dock widgets. Each
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
@@ -3804,6 +3816,7 @@ impl App {
             workspaces_edit_target_path: None,
             workspaces_edit_target_group: None,
             dock_widgets: Vec::new(),
+            last_test_run: None,
             dock_widget_next_id: 0,
             dock_drag_id: None,
             dock_drag_cursor: None,

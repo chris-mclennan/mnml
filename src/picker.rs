@@ -48,6 +48,11 @@ pub enum PickerKind {
     /// (or clear emulation if `"reset"`). Populated by
     /// `browser.device_picker`.
     BrowserDevices,
+    /// Picker over network-throttle presets — accepts the preset
+    /// id (`"none" | "offline" | "slow3g" | "fast3g" | "wifi"`)
+    /// and fires `Network.emulateNetworkConditions` on the
+    /// active browser pane.
+    BrowserNetworkThrottle,
     /// `id` = the index (as a string) into [`crate::app::App::pending_snippets`].
     /// Accept ⇒ insert the snippet's expansion at the active editor's cursor.
     Snippets,
