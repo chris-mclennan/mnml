@@ -1929,6 +1929,14 @@ pub struct PaneRects {
     /// the sessions panel. Click → spawns a Claude Code pane
     /// (most common case; a follow-up could open a picker).
     pub session_new_chip: Option<Rect>,
+    /// Click rects for the workspaces-editor overlay. Each row is
+    /// `(rect, idx_or_action_code)` — `idx_or_action_code < 0` is
+    /// reserved for action rows (`-1 = Add`, `-2 = Close`).
+    pub workspaces_editor_rows: Vec<(Rect, i32)>,
+    /// `(rect, idx)` per `⋮` kebab glyph in the workspaces editor
+    /// list. Click → context menu (Edit name / Edit path / Set
+    /// group / Delete).
+    pub workspaces_editor_kebabs: Vec<(Rect, usize)>,
     /// Strip reserved at the top of the editor body for inline
     /// dock widgets at TL / TR corners. Editor body is shrunk by
     /// `height` from the top. `None` = no inline top widgets.
@@ -3041,6 +3049,22 @@ pub struct App {
     /// Filter input for the workspace picker (case-insensitive
     /// substring match against workspace name + group label).
     pub workspace_picker_filter: String,
+    /// `true` while the workspaces editor overlay is open
+    /// (opened from Settings → "Manage workspaces…"). The overlay
+    /// lists configured `[[workspaces]]` and offers add / edit /
+    /// delete. Esc closes.
+    pub workspaces_editor_open: bool,
+    /// Selected row index in the workspaces editor (used by
+    /// keyboard nav). Last row = the `+ Add workspace…` action.
+    pub workspaces_editor_selected: usize,
+    /// `Some(idx)` while a workspace rename prompt is open;
+    /// commit applies the new name to `config.workspaces[idx]`
+    /// and persists.
+    pub workspaces_edit_target_name: Option<usize>,
+    /// `Some(idx)` while a workspace path-edit prompt is open.
+    pub workspaces_edit_target_path: Option<usize>,
+    /// `Some(idx)` while a workspace group-edit prompt is open.
+    pub workspaces_edit_target_group: Option<usize>,
     /// Corner-pinned dock widgets (third UI tier between full
     /// panes and 1-row status chrome). v1 ships bottom-left
     /// `Text` widgets only — see `src/dock.rs` + `src/ui/dock.rs`.
@@ -3774,6 +3798,11 @@ impl App {
             git_palette_filter_focused: false,
             workspace_picker_open: false,
             workspace_picker_filter: String::new(),
+            workspaces_editor_open: false,
+            workspaces_editor_selected: 0,
+            workspaces_edit_target_name: None,
+            workspaces_edit_target_path: None,
+            workspaces_edit_target_group: None,
             dock_widgets: Vec::new(),
             dock_widget_next_id: 0,
             dock_drag_id: None,
@@ -6084,6 +6113,156 @@ impl App {
         self.session_port_cache
             .insert(root_pid, (std::time::Instant::now(), ports.clone()));
         ports
+    }
+
+    /// Open the workspaces editor overlay. Dispatched from the
+    /// Settings overlay's `Manage workspaces…` row.
+    pub fn open_workspaces_editor(&mut self) {
+        // Close settings first so the new overlay shows on top
+        // cleanly.
+        self.settings_overlay = None;
+        self.workspaces_editor_open = true;
+        self.workspaces_editor_selected = 0;
+    }
+
+    pub fn close_workspaces_editor(&mut self) {
+        self.workspaces_editor_open = false;
+    }
+
+    /// Remove the workspace at `idx`. Persists immediately.
+    pub fn workspaces_editor_delete(&mut self, idx: usize) {
+        if idx >= self.config.workspaces.len() {
+            return;
+        }
+        let name = self.config.workspaces[idx].name.clone();
+        self.config.workspaces.remove(idx);
+        if self.workspaces_editor_selected >= self.config.workspaces.len() {
+            self.workspaces_editor_selected =
+                self.config.workspaces.len().saturating_sub(1);
+        }
+        match crate::config::persist_workspaces_to_global(&self.config.workspaces) {
+            Ok(_) => self.toast(format!("removed workspace {name}")),
+            Err(e) => self.toast(format!("save workspaces: {e}")),
+        }
+    }
+
+    /// Open the rename prompt for workspace `idx`. Commit handler
+    /// (`commit_workspace_rename`) applies + persists.
+    pub fn workspaces_editor_open_rename(&mut self, idx: usize) {
+        let Some(w) = self.config.workspaces.get(idx) else {
+            return;
+        };
+        let seed = w.name.clone();
+        self.workspaces_edit_target_name = Some(idx);
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::WorkspaceRename,
+            "Workspace name (empty = revert to basename)",
+            seed,
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Open the path-edit prompt for workspace `idx`.
+    pub fn workspaces_editor_open_path(&mut self, idx: usize) {
+        let Some(w) = self.config.workspaces.get(idx) else {
+            return;
+        };
+        let seed = w.path.to_string_lossy().into_owned();
+        self.workspaces_edit_target_path = Some(idx);
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::WorkspacePathEdit,
+            "Path (tilde-expanded; must exist)",
+            seed,
+        );
+        self.prompt = Some(prompt);
+    }
+
+    /// Open the group-edit prompt for workspace `idx`.
+    pub fn workspaces_editor_open_group(&mut self, idx: usize) {
+        let Some(w) = self.config.workspaces.get(idx) else {
+            return;
+        };
+        let seed = w.group.clone().unwrap_or_default();
+        self.workspaces_edit_target_group = Some(idx);
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::WorkspaceGroupEdit,
+            "Group (e.g. 'work', 'personal'; empty = ungrouped)",
+            seed,
+        );
+        self.prompt = Some(prompt);
+    }
+
+    pub fn commit_workspace_rename(&mut self, typed: &str) {
+        let Some(idx) = self.workspaces_edit_target_name.take() else {
+            return;
+        };
+        let Some(w) = self.config.workspaces.get_mut(idx) else {
+            return;
+        };
+        let trimmed = typed.trim();
+        w.name = if trimmed.is_empty() {
+            w.path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| w.path.to_string_lossy().into_owned())
+        } else {
+            trimmed.to_string()
+        };
+        let _ = crate::config::persist_workspaces_to_global(&self.config.workspaces);
+    }
+
+    pub fn commit_workspace_path_edit(&mut self, typed: &str) {
+        let Some(idx) = self.workspaces_edit_target_path.take() else {
+            return;
+        };
+        let Some(w) = self.config.workspaces.get_mut(idx) else {
+            return;
+        };
+        let expanded = if let Some(rest) = typed.strip_prefix("~/")
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            std::path::PathBuf::from(home).join(rest)
+        } else {
+            std::path::PathBuf::from(typed.trim())
+        };
+        if !expanded.exists() {
+            self.toast(format!("path doesn't exist: {}", expanded.display()));
+            return;
+        }
+        w.path = expanded;
+        let _ = crate::config::persist_workspaces_to_global(&self.config.workspaces);
+    }
+
+    pub fn commit_workspace_group_edit(&mut self, typed: &str) {
+        let Some(idx) = self.workspaces_edit_target_group.take() else {
+            return;
+        };
+        let Some(w) = self.config.workspaces.get_mut(idx) else {
+            return;
+        };
+        let trimmed = typed.trim();
+        w.group = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        let _ = crate::config::persist_workspaces_to_global(&self.config.workspaces);
+    }
+
+    /// Open the kebab menu for a workspace row in the editor.
+    pub fn open_workspaces_editor_kebab(&mut self, idx: usize, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(w) = self.config.workspaces.get(idx) else {
+            return;
+        };
+        let title = Some(w.name.clone());
+        let items = vec![
+            MenuItem::new("Edit name…", MenuAction::WorkspaceEditName(idx)),
+            MenuItem::new("Edit path…", MenuAction::WorkspaceEditPath(idx)),
+            MenuItem::new("Edit group…", MenuAction::WorkspaceEditGroup(idx)),
+            MenuItem::new("Delete", MenuAction::WorkspaceDelete(idx)),
+        ];
+        self.context_menu = Some(ContextMenu::new(title, anchor, items));
     }
 
     /// Build + open the sessions-panel context menu for one

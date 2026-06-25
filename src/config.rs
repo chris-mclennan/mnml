@@ -2072,6 +2072,83 @@ pub fn scaffold_workspace(path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Rewrite the `[[workspaces]]` blocks in the global config file
+/// (`~/.config/mnml/config.toml`) to match `workspaces`. Strips
+/// every existing `[[workspaces]]` table-array entry (incl. any
+/// blank line that immediately follows the closing field block)
+/// and appends fresh entries at the end of the file. Used by the
+/// in-app workspace editor — the existing `upsert_toml_kv` only
+/// handles `[section] key = value` shapes, not table arrays.
+pub fn persist_workspaces_to_global(workspaces: &[WorkspaceConfig]) -> Result<PathBuf, String> {
+    let cfg_path = home_config_path().ok_or("no HOME / XDG_CONFIG_HOME")?;
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    let stripped = strip_workspaces_blocks(&existing);
+    let mut out = stripped.trim_end().to_string();
+    out.push_str("\n\n# ── Workspace picker (auto-managed by Settings → Manage workspaces…) ─────────\n");
+    for w in workspaces {
+        out.push_str("[[workspaces]]\n");
+        out.push_str(&format!("name = {}\n", toml_quote(&w.name)));
+        // Re-shorten absolute paths under HOME back to `~/…` for
+        // readability — the loader tilde-expands on read.
+        let path_str = w.path.to_string_lossy().into_owned();
+        let path_display = if let Some(home) = std::env::var_os("HOME") {
+            let home = home.to_string_lossy().into_owned();
+            if path_str.starts_with(&home) {
+                let rest = path_str.trim_start_matches(&home).trim_start_matches('/');
+                format!("~/{rest}")
+            } else {
+                path_str.clone()
+            }
+        } else {
+            path_str.clone()
+        };
+        out.push_str(&format!("path = {}\n", toml_quote(&path_display)));
+        if let Some(group) = w.group.as_ref() {
+            out.push_str(&format!("group = {}\n", toml_quote(group)));
+        }
+        out.push('\n');
+    }
+    std::fs::write(&cfg_path, &out)
+        .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    Ok(cfg_path)
+}
+
+/// Remove every `[[workspaces]]` table-array entry from `src`,
+/// including the lines until the next blank line or `[`-headed
+/// table. Used by `persist_workspaces_to_global` before emitting
+/// a fresh block from the current state.
+fn strip_workspaces_blocks(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut in_ws_block = false;
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        if trimmed == "[[workspaces]]" {
+            in_ws_block = true;
+            continue;
+        }
+        if in_ws_block {
+            if trimmed.is_empty() {
+                in_ws_block = false;
+                continue;
+            }
+            if trimmed.starts_with('[') {
+                in_ws_block = false;
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+            // Inside a workspace block — drop the line.
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
 fn home_config_path() -> Option<PathBuf> {
     // Respect $XDG_CONFIG_HOME, else ~/.config.
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")

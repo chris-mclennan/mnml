@@ -93,6 +93,14 @@ pub enum MenuAction {
     /// Sessions panel — close (kill child + drop pane) the pty
     /// at `pane_id`.
     SessionClose(usize),
+    /// Workspaces editor — open the rename prompt for the row.
+    WorkspaceEditName(usize),
+    /// Workspaces editor — open the path-edit prompt.
+    WorkspaceEditPath(usize),
+    /// Workspaces editor — open the group-edit prompt.
+    WorkspaceEditGroup(usize),
+    /// Workspaces editor — remove the workspace at this index.
+    WorkspaceDelete(usize),
     /// Open a rendered-markdown preview for `path` in a split. Surfaced from
     /// the tree (right-click an `.md`/`.markdown`/`.mdx`/`.mkd` file) and
     /// from a bufferline tab right-click on the same.

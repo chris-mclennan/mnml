@@ -86,6 +86,7 @@ pub mod git_palette;
 pub mod menu_bar;
 pub mod sessions_panel;
 pub mod workspace_picker;
+pub mod workspaces_editor;
 pub mod scratch_term_view;
 pub mod scrollbar;
 pub mod settings_overlay;
@@ -669,6 +670,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Workspace-picker dropdown — same overlay treatment, anchored
     // below the workspace header chevron.
     workspace_picker::draw(frame, app);
+    // Workspaces editor — modal overlay opened from Settings →
+    // Manage workspaces.
+    workspaces_editor::draw(frame, app);
     // …and the flash highlight paints last so it can sit on top of even
     // the discovery panel (if the user picks a category whose rect lies
     // beneath the panel, the highlight will still flash through).

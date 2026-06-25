@@ -1487,6 +1487,18 @@ impl App {
             crate::prompt::PromptKind::GitTagDelete => {
                 self.confirm_tag_delete(p.input.clone());
             }
+            crate::prompt::PromptKind::WorkspaceRename => {
+                let typed = p.input.clone();
+                self.commit_workspace_rename(&typed);
+            }
+            crate::prompt::PromptKind::WorkspacePathEdit => {
+                let typed = p.input.clone();
+                self.commit_workspace_path_edit(&typed);
+            }
+            crate::prompt::PromptKind::WorkspaceGroupEdit => {
+                let typed = p.input.clone();
+                self.commit_workspace_group_edit(&typed);
+            }
             crate::prompt::PromptKind::LspWorkspaceSymbol => {
                 let q = p.input.clone();
                 self.run_workspace_symbol_query(&q);

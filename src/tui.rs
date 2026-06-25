@@ -485,6 +485,52 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Workspaces editor overlay — intercept keyboard so arrows
+    // navigate, Enter edits, n adds, d deletes, Esc closes.
+    if app.workspaces_editor_open && app.prompt.is_none() && app.context_menu.is_none() {
+        let total = app.config.workspaces.len() + 1; // +1 for the "Add" action row
+        match key.code {
+            KeyCode::Esc => {
+                app.close_workspaces_editor();
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if app.workspaces_editor_selected > 0 {
+                    app.workspaces_editor_selected -= 1;
+                } else {
+                    app.workspaces_editor_selected = total.saturating_sub(1);
+                }
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.workspaces_editor_selected =
+                    (app.workspaces_editor_selected + 1) % total.max(1);
+                return;
+            }
+            KeyCode::Enter => {
+                let sel = app.workspaces_editor_selected;
+                if sel < app.config.workspaces.len() {
+                    app.workspaces_editor_open_rename(sel);
+                } else {
+                    // + Add row.
+                    crate::command::run("view.add_workspace", app);
+                }
+                return;
+            }
+            KeyCode::Char('n') => {
+                crate::command::run("view.add_workspace", app);
+                return;
+            }
+            KeyCode::Char('d') => {
+                let sel = app.workspaces_editor_selected;
+                if sel < app.config.workspaces.len() {
+                    app.workspaces_editor_delete(sel);
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
     // Dock widget kebab menu — when open, intercept keys so they
     // navigate the menu rather than falling through to editor /
     // tree handlers.
@@ -5833,6 +5879,43 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     let title = w.title.clone();
                     app.toast(format!("dock: {title}"));
                 }
+                return;
+            }
+            // Workspaces editor kebab `⋮` click → open per-row menu.
+            if app.workspaces_editor_open
+                && let Some(&(_, idx)) = app
+                    .rects
+                    .workspaces_editor_kebabs
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.open_workspaces_editor_kebab(idx, (x, y));
+                return;
+            }
+            // Workspaces editor row click → focus + Enter
+            // equivalent (rename for normal rows; add for the
+            // `+ Add` action).
+            if app.workspaces_editor_open
+                && let Some(&(_, code)) = app
+                    .rects
+                    .workspaces_editor_rows
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                if code >= 0 {
+                    let idx = code as usize;
+                    app.workspaces_editor_selected = idx;
+                    app.workspaces_editor_open_rename(idx);
+                } else {
+                    crate::command::run("view.add_workspace", app);
+                }
+                return;
+            }
+            // Click outside the overlay (when open) closes it.
+            if app.workspaces_editor_open && app.context_menu.is_none() {
+                // Fall through normally; clicks anywhere outside
+                // dismiss like Esc.
+                app.close_workspaces_editor();
                 return;
             }
             // Workspace-picker chevron → toggle the dropdown.

@@ -187,6 +187,15 @@ pub enum PromptKind {
     /// matches the tag's name exactly. Tag name held in
     /// `App.pending_tag_delete`.
     GitTagDelete,
+    /// Workspaces editor — apply the typed value to
+    /// `config.workspaces[App::workspaces_edit_target_name].name`
+    /// then persist.
+    WorkspaceRename,
+    /// Workspaces editor — apply path edit (tilde-expanded; must
+    /// exist on disk).
+    WorkspacePathEdit,
+    /// Workspaces editor — apply group label edit (empty = ungrouped).
+    WorkspaceGroupEdit,
     /// Accept ⇒ reverse-apply the hunk against the working tree
     /// (`crate::git::diff::discard_hunk`) *iff* the typed text matches
     /// the literal word `discard` exactly. Hunk identity is held in

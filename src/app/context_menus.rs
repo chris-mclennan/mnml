@@ -505,6 +505,10 @@ impl App {
             SessionRename(pid) => self.open_session_rename_prompt(pid),
             SessionSetColor(pid, color) => self.set_session_color(pid, color),
             SessionClose(pid) => self.close_session(pid),
+            WorkspaceEditName(idx) => self.workspaces_editor_open_rename(idx),
+            WorkspaceEditPath(idx) => self.workspaces_editor_open_path(idx),
+            WorkspaceEditGroup(idx) => self.workspaces_editor_open_group(idx),
+            WorkspaceDelete(idx) => self.workspaces_editor_delete(idx),
             PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active, true),
             OpenUrl(url) => {
                 open_url_external(&url);

@@ -180,6 +180,10 @@ pub struct ColorRow {
 /// specially by both the renderer (no choice list) and the dispatcher.
 pub const RESET_ALL_KEY: &str = "__reset_all__";
 
+/// Sentinel `key` for the "Manage workspaces…" row. Enter opens
+/// the dedicated workspaces editor overlay.
+pub const MANAGE_WORKSPACES_KEY: &str = "__manage_workspaces__";
+
 /// Build the full settings list for the current `Config`. Recomputed
 /// per render — cheap.
 pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
@@ -577,6 +581,17 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         cfg.session.restore,
         d.session.restore,
     ));
+
+    // ── Workspaces ────────────────────────────────────────────────
+    out.push(SettingItem::Section("Workspaces"));
+    let ws_count = cfg.workspaces.len();
+    out.push(SettingItem::Row(SettingRow {
+        key: MANAGE_WORKSPACES_KEY,
+        label: "Manage workspaces…",
+        options: vec![format!("{ws_count} configured")],
+        current_idx: 0,
+        modified: false,
+    }));
 
     // ── Reset ─────────────────────────────────────────────────────
     out.push(SettingItem::Section("Reset"));
@@ -1050,6 +1065,12 @@ impl App {
         let Some(row) = rows.get(state.selected_row) else {
             return;
         };
+        if row.row_key() == Some(MANAGE_WORKSPACES_KEY) {
+            // Defer to the dedicated overlay — see
+            // `App::open_workspaces_editor`.
+            self.open_workspaces_editor();
+            return;
+        }
         if row.row_key() == Some(RESET_ALL_KEY) {
             // Wipe the live config back to defaults. `original` stays
             // — Esc would still revert to the pre-open snapshot if
