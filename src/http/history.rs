@@ -79,10 +79,10 @@ fn append_global(workspace: &Path, entry: &Entry, ts: u128) {
     let Some(path) = global_history_path() else {
         return;
     };
-    if let Some(parent) = path.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return;
-        }
+    if let Some(parent) = path.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return;
     }
     let workspace_label = workspace
         .file_name()

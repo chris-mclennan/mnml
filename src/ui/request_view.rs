@@ -107,7 +107,9 @@ pub fn draw(
 
     // Section divider + Response panel
     rows.push(Line::from(Span::styled(
-        format!("{}", "─".repeat(area.width.saturating_sub(2) as usize)),
+        "─"
+            .repeat(area.width.saturating_sub(2) as usize)
+            .to_string(),
         Style::default().fg(t.bg3).bg(t.bg_dark),
     )));
     rows.push(Line::from(Span::styled(
@@ -153,27 +155,30 @@ pub fn draw(
             width: area.width,
             height: AI_ROWS,
         };
-        let mut ai_lines: Vec<Line> = Vec::new();
-        ai_lines.push(Line::from(Span::styled(
-            format!("{}", "─".repeat(area.width.saturating_sub(2) as usize)),
-            Style::default().fg(t.bg3).bg(t.bg_dark),
-        )));
-        ai_lines.push(Line::from(vec![
-            Span::styled(
-                "  ai".to_string(),
-                Style::default()
-                    .fg(t.orange)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "   (click here to ask a custom question · `a` for quick debug)".to_string(),
-                Style::default()
-                    .fg(t.comment)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::UNDERLINED),
-            ),
-        ]));
+        let ai_lines: Vec<Line> = vec![
+            Line::from(Span::styled(
+                "─"
+                    .repeat(area.width.saturating_sub(2) as usize)
+                    .to_string(),
+                Style::default().fg(t.bg3).bg(t.bg_dark),
+            )),
+            Line::from(vec![
+                Span::styled(
+                    "  ai".to_string(),
+                    Style::default()
+                        .fg(t.orange)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "   (click here to ask a custom question · `a` for quick debug)".to_string(),
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::UNDERLINED),
+                ),
+            ]),
+        ];
         frame.render_widget(
             Paragraph::new(ai_lines).style(Style::default().bg(t.bg_dark)),
             ai_strip,

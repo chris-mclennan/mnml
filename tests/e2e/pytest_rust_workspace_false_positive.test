@@ -18,6 +18,7 @@ shell mkdir -p tests
 # Rust workspace is misleading.
 command pytest.run
 wait 200
-# Currently this does NOT toast — it tries to spawn pytest.
-# We're documenting this: we expect "no pyproject.toml" but get a pty pane.
-expect screen lacks "no pyproject.toml"
+# Fixed: a bare `tests/` dir in a non-Python workspace no longer triggers
+# pytest detection — `pytest.run` toasts "no pyproject.toml" instead of
+# spawning pytest against a Rust codebase.
+expect screen contains "no pyproject.toml"

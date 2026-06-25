@@ -419,6 +419,6 @@ pub fn read_ws_history() -> Vec<(String, u128, usize)> {
         .into_iter()
         .map(|(url, (ts, count))| (url, ts, count))
         .collect();
-    rows.sort_by(|a, b| b.1.cmp(&a.1));
+    rows.sort_by_key(|b| std::cmp::Reverse(b.1));
     rows
 }

@@ -78,26 +78,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 height: 1,
             },
         );
-        let hint = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                "ai.claude_code to start one.",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(hint),
-            Rect {
-                x: area.x,
-                y: y + 1,
-                width: area.width,
-                height: 1,
-            },
-        );
-        return;
+        // Advance past the message + a gap, then fall through (don't
+        // `return`) so the "+ New session" row below still renders — you
+        // need it to start your *first* session from this panel.
+        y += 2;
     }
 
     let active_pid = app.active;
@@ -314,13 +298,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
         app.rects.session_tabs.push((tab_rect, pid));
         y += TAB_H;
+        // Blank line between sessions for breathing room.
+        y += 1;
     }
 
     // `+ New session` row — last interactive row at the bottom
     // of the panel. Click → spawn a Claude Code pane (the most
     // common single-click case). A future picker could let the
     // user pick Claude / Codex / shell here.
-    if y + 1 <= area.y + area.height {
+    if y < area.y + area.height {
         let new_rect = Rect {
             x: area.x,
             y,
@@ -390,6 +376,21 @@ fn detect_ticket(
     None
 }
 
+/// Cheap git branch lookup — shells out to `git symbolic-ref --short HEAD`.
+/// Returns None for non-repos / detached HEAD.
+fn current_branch(cwd: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "-q", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!b.is_empty()).then_some(b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,19 +426,4 @@ mod tests {
     fn detect_ticket_returns_none_when_no_prefixes() {
         assert_eq!(detect_ticket(&[], None, Some("TKT-9"), "claude code"), None);
     }
-}
-
-/// Cheap git branch lookup — shells out to `git symbolic-ref --short HEAD`.
-/// Returns None for non-repos / detached HEAD.
-fn current_branch(cwd: &std::path::Path) -> Option<String> {
-    let out = std::process::Command::new("git")
-        .args(["symbolic-ref", "--short", "-q", "HEAD"])
-        .current_dir(cwd)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!b.is_empty()).then_some(b)
 }

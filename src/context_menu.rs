@@ -18,6 +18,10 @@ pub enum MenuAction {
     RevealInFinder(PathBuf),
     /// Hand `path` to the OS's default app — `open` / `xdg-open` / `start`.
     OpenExternally(PathBuf),
+    /// Open a shell pty pane with its cwd set to `dir` (the right-clicked
+    /// folder, or a right-clicked file's parent folder) — VS Code's
+    /// "Open in Integrated Terminal".
+    OpenTerminal(PathBuf),
     /// Copy `text` (a workspace-relative path) to the clipboard.
     CopyPath(String),
     /// Promote the right-clicked folder to the primary workspace.

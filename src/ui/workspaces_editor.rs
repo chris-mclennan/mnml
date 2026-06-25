@@ -48,7 +48,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .max()
         .unwrap_or(8);
 
-    let inner_w = (max_label + max_path + max_group + 16).min(96).max(48) as u16;
+    let inner_w = (max_label + max_path + max_group + 16).clamp(48, 96) as u16;
     let inner_h = (app.config.workspaces.len() + 6) as u16;
     let w = inner_w.min(screen.width.saturating_sub(4));
     let h = inner_h.min(screen.height.saturating_sub(4));
@@ -195,7 +195,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer.
-    if y + 1 <= inner.y + inner.height {
+    if y < inner.y + inner.height {
         let footer = Line::from(vec![Span::styled(
             "  ↑↓ select · Shift+↑↓ reorder · Enter edit · n new · d delete · Esc close",
             Style::default().fg(t.comment).bg(t.bg2),

@@ -33,7 +33,8 @@ impl App {
             vec![
                 MenuItem::new("Set as workspace", MenuAction::SetAsWorkspace(path.clone())),
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
-                MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
+                MenuItem::new("New folder…", MenuAction::NewFolder(parent.clone())),
+                MenuItem::new("Open in terminal", MenuAction::OpenTerminal(parent)),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
@@ -54,7 +55,8 @@ impl App {
             }
             items.extend([
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
-                MenuItem::new("New folder…", MenuAction::NewFolder(parent)),
+                MenuItem::new("New folder…", MenuAction::NewFolder(parent.clone())),
+                MenuItem::new("Open in terminal", MenuAction::OpenTerminal(parent)),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
@@ -452,6 +454,9 @@ impl App {
                 let _ = std::process::Command::new("open").arg("-R").arg(&p).spawn();
             }
             OpenExternally(p) => open_path_external(&p),
+            OpenTerminal(dir) => {
+                self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(dir)));
+            }
             CopyPath(text) => {
                 self.clipboard.set(text.clone(), false);
                 self.toast(format!("copied {text}"));

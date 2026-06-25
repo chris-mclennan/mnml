@@ -259,6 +259,10 @@ fn view_menu() -> MenuDef {
                 command_id: "view.toggle_tree",
             },
             MenuItem::Action {
+                label: "Cycle menu bar (always / auto / hidden)",
+                command_id: "view.menu_bar_cycle",
+            },
+            MenuItem::Action {
                 label: "Toggle bufferline",
                 command_id: "view.toggle_bufferline",
             },

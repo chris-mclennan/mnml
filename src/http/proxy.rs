@@ -106,15 +106,14 @@ pub fn run(opts: Options) -> Result<usize, String> {
                 last_event = Instant::now();
                 if let Some(method) = v.get("method").and_then(|m| m.as_str())
                     && method == "Network.requestWillBeSent"
+                    && let Some(row) = decode_network_request(&v)
                 {
-                    if let Some(row) = decode_network_request(&v) {
-                        if opts.verbose {
-                            eprintln!("  {} {}", row.method, row.url);
-                        }
-                        if let Ok(line) = serde_json::to_string(&row) {
-                            let _ = writeln!(log, "{line}");
-                            written += 1;
-                        }
+                    if opts.verbose {
+                        eprintln!("  {} {}", row.method, row.url);
+                    }
+                    if let Ok(line) = serde_json::to_string(&row) {
+                        let _ = writeln!(log, "{line}");
+                        written += 1;
                     }
                 }
             }

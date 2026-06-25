@@ -348,7 +348,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // rail's right-edge column (the separator between rail and editor),
         // not a full-height border. `tree_edge.x` is 1 col left of that edge
         // (the hit zone is 3 cols wide, centered on the edge), so draw the
-        // grip at the hit zone's center = `edge.x + 1` = the edge itself.
+        // grip at the hit zone's center = `edge.x + edge.width / 2` = the edge.
         if let Some(edge) = app.rects.tree_edge
             && edge.height >= 3
         {
@@ -1880,13 +1880,8 @@ fn paint_leaf_tab_strip(
         let is_active = id == active;
         // Active chip: bg2 + bright fg. Inactive: bg_darker + dim fg.
         let chip_bg = if is_active { t.bg2 } else { strip_bg };
-        let chip_fg = if is_active && leaf_focused {
-            t.fg
-        } else if is_active {
-            t.fg
-        } else {
-            t.comment
-        };
+        let _ = leaf_focused;
+        let chip_fg = if is_active { t.fg } else { t.comment };
         let title = pane.title();
         let dirty = pane.is_dirty();
         let (glyph, icon_color) = icon_for_pane(pane, nerd);
@@ -2417,7 +2412,7 @@ mod palette_bar_tests {
         );
 
         // === STAGE 4: mouse-up over pane → drop succeeds ===
-        let initial_layouts: Vec<_> = app.layouts.iter().map(|l| l.clone()).collect();
+        let initial_layouts: Vec<_> = app.layouts.to_vec();
         let _ = initial_layouts;
         crate::tui::dispatch_mouse(
             &mut app,
@@ -2507,7 +2502,6 @@ mod palette_bar_tests {
     /// move) and asserts the ghost chip text appears on screen.
     #[test]
     fn drag_ghost_paints_during_armed_drag() {
-        use std::path::PathBuf;
         let d = tempfile::tempdir().unwrap();
         let ws = d.path().to_path_buf();
         std::fs::write(ws.join("dragme.txt"), "drag me").unwrap();

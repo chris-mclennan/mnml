@@ -2,6 +2,13 @@
 // `initialize` capabilities; the macro can recurse past the default 128
 // frames. 256 is comfortable.
 #![recursion_limit = "256"]
+// `doc_lazy_continuation`: mnml's doc comments deliberately use aligned,
+// non-indented continuation lines for module / keymap lists (see the crate
+// docs below) — that house style is intentional, not a lint to chase.
+// `type_complexity`: the UI layer carries some genuinely complex closure /
+// tuple types (render callbacks, rect registries) where a `type` alias would
+// hurt readability more than help.
+#![allow(clippy::doc_lazy_continuation, clippy::type_complexity)]
 
 //! mnml — a NvChad-style terminal IDE.
 //!

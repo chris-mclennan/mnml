@@ -143,7 +143,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, cmdline_bar: Rect) {
         .unwrap_or(0);
     // 2 (marker) + id + 3 (sep) + title + 3 (sep) + key hint
     let needed = 2 + id_w + 3 + title_w + if key_w > 0 { 3 + key_w } else { 0 };
-    let inner_w = needed.max(20).min(MAX_WIDTH - 2);
+    let inner_w = needed.clamp(20, MAX_WIDTH - 2);
     let box_w = (inner_w + 2).min(cmdline_bar.width);
     // +2 for top + bottom border; +1 if we need the "(N more)" row;
     // +1 for the chord-hint footer (always shown).

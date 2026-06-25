@@ -93,10 +93,10 @@ pub fn extract_image_attachments(
 }
 
 fn resolve_path(path: &str, workspace: &Path) -> PathBuf {
-    if let Some(stripped) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(stripped);
-        }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
     }
     let p = PathBuf::from(path);
     if p.is_absolute() {

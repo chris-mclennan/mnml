@@ -439,7 +439,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| matches_filter(s))
+                .map(&matches_filter)
                 .unwrap_or(false);
             if !matches_filter(&wt.label) && !dir_match {
                 continue;

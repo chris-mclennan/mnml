@@ -194,8 +194,6 @@ fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Opt
 /// Does the `.env` file at `path` contain a (non-comment) line
 /// for `key`? Used by `write_env_var` to decide which file gets
 /// the write when both `.mnml/env/` and `.rqst/env/` exist.
-/// Extract the host portion from a wss:// or ws:// URL.
-
 fn file_contains_env_key(path: &std::path::Path, key: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
@@ -345,9 +343,7 @@ impl App {
     pub fn accept_http_header(&mut self, name: &str) {
         let Some(cur) = self.active else { return };
         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
-            let to_insert = if rp.headers_buffer.is_empty() {
-                format!("{name}: ")
-            } else if rp.headers_buffer.ends_with('\n') {
+            let to_insert = if rp.headers_buffer.is_empty() || rp.headers_buffer.ends_with('\n') {
                 format!("{name}: ")
             } else {
                 format!("\n{name}: ")
@@ -1561,7 +1557,7 @@ impl App {
         }
         self.open_picker(Picker::new(
             PickerKind::EnvVars,
-            &format!("Env vars · {env_name}.env"),
+            format!("Env vars · {env_name}.env"),
             items,
         ));
     }
@@ -1823,7 +1819,7 @@ impl App {
                 self.pending_lookup_items = parsed;
                 self.open_picker(Picker::new(
                     PickerKind::LookupItem,
-                    &format!("Lookup item · {label}"),
+                    format!("Lookup item · {label}"),
                     items,
                 ));
             }
@@ -1932,10 +1928,11 @@ impl App {
             Ok(mut f) => {
                 use std::io::Write;
                 for row in &entries {
-                    if let Ok(line) = serde_json::to_string(row) {
-                        if f.write_all(line.as_bytes()).is_ok() && f.write_all(b"\n").is_ok() {
-                            written += 1;
-                        }
+                    if let Ok(line) = serde_json::to_string(row)
+                        && f.write_all(line.as_bytes()).is_ok()
+                        && f.write_all(b"\n").is_ok()
+                    {
+                        written += 1;
                     }
                 }
                 self.toast(format!(
@@ -2606,7 +2603,7 @@ impl App {
         }
         self.open_picker(Picker::new(
             PickerKind::CookiesDelete,
-            &format!("Delete cookie ({total} total)"),
+            format!("Delete cookie ({total} total)"),
             items,
         ));
     }
@@ -2644,7 +2641,7 @@ impl App {
         }
         self.open_picker(Picker::new(
             PickerKind::Cookies,
-            &format!("Cookies ({total} total)"),
+            format!("Cookies ({total} total)"),
             items,
         ));
     }
@@ -3901,28 +3898,27 @@ impl App {
                         .iter()
                         .enumerate()
                         .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                        && let Some(Pane::Request(rp)) = self.panes.get_mut(pid)
                     {
-                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
-                            // 2026-06-21 SEV-3 fix: capture any
-                            // prior Done into prev_response BEFORE
-                            // overwriting state with Streaming.
-                            if let RunState::Done(prev) =
-                                std::mem::replace(&mut rp.state, RunState::Sending)
-                            {
-                                rp.prev_response = Some(prev);
-                            }
-                            rp.state = RunState::Streaming(Box::new(ResponseView {
-                                status,
-                                status_text,
-                                headers,
-                                body: String::new(),
-                                elapsed: started.elapsed(),
-                                assertions: Vec::new(),
-                                captures: Vec::new(),
-                                schema_result: None,
-                                sse_event_count: 0,
-                            }));
+                        // 2026-06-21 SEV-3 fix: capture any
+                        // prior Done into prev_response BEFORE
+                        // overwriting state with Streaming.
+                        if let RunState::Done(prev) =
+                            std::mem::replace(&mut rp.state, RunState::Sending)
+                        {
+                            rp.prev_response = Some(prev);
                         }
+                        rp.state = RunState::Streaming(Box::new(ResponseView {
+                            status,
+                            status_text,
+                            headers,
+                            body: String::new(),
+                            elapsed: started.elapsed(),
+                            assertions: Vec::new(),
+                            captures: Vec::new(),
+                            schema_result: None,
+                            sse_event_count: 0,
+                        }));
                     }
                 }
                 SseStreamMsg::Event { job_id, name, data } => {
@@ -3931,22 +3927,20 @@ impl App {
                         .iter()
                         .enumerate()
                         .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                        && let Some(Pane::Request(rp)) = self.panes.get_mut(pid)
+                        && let RunState::Streaming(rv) = &mut rp.state
                     {
-                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid)
-                            && let RunState::Streaming(rv) = &mut rp.state
-                        {
-                            if !name.is_empty() {
-                                rv.body.push_str(&format!("[{name}]\n"));
-                            }
-                            rv.body.push_str(&data);
-                            rv.body.push_str("\n\n");
-                            // 2026-06-21 api-workflow SEV-2: proper
-                            // per-pane SSE event counter. Was
-                            // pushing empty ("", "") into captures
-                            // — abused as a counter, then clobbered
-                            // any real @capture results on Close.
-                            rv.sse_event_count = rv.sse_event_count.saturating_add(1);
+                        if !name.is_empty() {
+                            rv.body.push_str(&format!("[{name}]\n"));
                         }
+                        rv.body.push_str(&data);
+                        rv.body.push_str("\n\n");
+                        // 2026-06-21 api-workflow SEV-2: proper
+                        // per-pane SSE event counter. Was
+                        // pushing empty ("", "") into captures
+                        // — abused as a counter, then clobbered
+                        // any real @capture results on Close.
+                        rv.sse_event_count = rv.sse_event_count.saturating_add(1);
                     }
                 }
                 SseStreamMsg::Close { job_id } => {
@@ -3959,21 +3953,20 @@ impl App {
                         .iter()
                         .enumerate()
                         .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                        && let Some(Pane::Request(rp)) = self.panes.get_mut(pid)
                     {
-                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
-                            let source_path = rp.source_path.clone();
-                            if let RunState::Streaming(rv) =
-                                std::mem::replace(&mut rp.state, RunState::Sending)
-                            {
-                                let mut rv = *rv;
-                                // captures stays untouched — was
-                                // being cleared as part of the
-                                // event-counter hack.
-                                rv.schema_result = source_path
-                                    .as_deref()
-                                    .map(|p| crate::http::schema::validate_for(Some(p), &rv.body));
-                                rp.state = RunState::Done(Box::new(rv));
-                            }
+                        let source_path = rp.source_path.clone();
+                        if let RunState::Streaming(rv) =
+                            std::mem::replace(&mut rp.state, RunState::Sending)
+                        {
+                            let mut rv = *rv;
+                            // captures stays untouched — was
+                            // being cleared as part of the
+                            // event-counter hack.
+                            rv.schema_result = source_path
+                                .as_deref()
+                                .map(|p| crate::http::schema::validate_for(Some(p), &rv.body));
+                            rp.state = RunState::Done(Box::new(rv));
                         }
                     }
                 }
@@ -3983,10 +3976,9 @@ impl App {
                         .iter()
                         .enumerate()
                         .find(|(_, p)| matches!(p, Pane::Request(r) if r.job_id == job_id))
+                        && let Some(Pane::Request(rp)) = self.panes.get_mut(pid)
                     {
-                        if let Some(Pane::Request(rp)) = self.panes.get_mut(pid) {
-                            rp.state = RunState::Failed(error);
-                        }
+                        rp.state = RunState::Failed(error);
                     }
                 }
             }

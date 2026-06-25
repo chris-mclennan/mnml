@@ -8,6 +8,10 @@ shell git config user.name "mnml test"
 shell echo '{"name":"app","scripts":{"test":"jest"}}' > package.json
 shell git add package.json
 shell git commit -q -m "init"
+# Force the initial branch to `main` — CI runners often have no
+# `init.defaultBranch`, so `git init` lands on `master` and the
+# `checkout main` below would otherwise fail (pathspec did not match).
+shell git branch -M main
 shell git checkout -q -b feature/auth
 shell git checkout -q -b feature/dashboard
 shell git checkout -q main

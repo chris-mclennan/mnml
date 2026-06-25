@@ -996,7 +996,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Tab | KeyCode::Enter => {
-                app.completion_accept();
+                // While a snippet placeholder cycle is active, Tab advances to
+                // the next placeholder (dismissing this popup) instead of
+                // accepting a completion — otherwise an as-you-type popup that
+                // happened to be open races with the snippet's Tab and steals
+                // it (the flaky-on-CI snippet failures). Enter still accepts.
+                if key.code == KeyCode::Tab && app.snippet_session.is_some() {
+                    app.completion = None;
+                    app.snippet_next_placeholder();
+                } else {
+                    app.completion_accept();
+                }
                 return;
             }
             KeyCode::Up => {
@@ -2752,10 +2762,10 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('q') => app.close_active_pane(),
             _ => {
                 // Any non-`g` key clears the gg latch silently.
-                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
-                    if p.pending_g {
-                        p.pending_g = false;
-                    }
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i)
+                    && p.pending_g
+                {
+                    p.pending_g = false;
                 }
             }
         }
@@ -3901,122 +3911,118 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     // 2026-06-21 — Spend Report column header click: cycle
     // asc/desc on that column (or set it as the sort key).
-    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-        if let Some(&(_, pid, key)) = app
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(&(_, pid, key)) = app
             .rects
             .spend_headers
             .iter()
             .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
-        {
-            app.active = Some(pid);
-            app.focus_pane();
-            if let Some(Pane::SpendReport(p)) = app.panes.get_mut(pid) {
-                if p.sort_by == key {
-                    p.sort_desc = !p.sort_desc;
-                } else {
-                    p.sort_by = key;
-                    p.sort_desc = true;
-                }
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        if let Some(Pane::SpendReport(p)) = app.panes.get_mut(pid) {
+            if p.sort_by == key {
+                p.sort_desc = !p.sort_desc;
+            } else {
+                p.sort_by = key;
+                p.sort_desc = true;
             }
-            return;
         }
+        return;
     }
 
     // 2026-06-21 vscode-mouse SEV-2: Claude Agents topbar chip
     // clicks cycle the corresponding pane state. Was: chips
     // looked like buttons but weren't registered.
-    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-        if let Some(&(_, pid, kind)) = app
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(&(_, pid, kind)) = app
             .rects
             .claude_agents_topbar_chips
             .iter()
             .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
-        {
-            app.active = Some(pid);
-            app.focus_pane();
-            use crate::ui::TopbarChipKind;
-            match kind {
-                TopbarChipKind::View => {
-                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
-                        p.cycle_detail();
-                    }
-                }
-                TopbarChipKind::Sort => {
-                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
-                        p.cycle_sort();
-                    }
-                }
-                TopbarChipKind::Group => {
-                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
-                        p.cycle_group_by();
-                    }
-                }
-                TopbarChipKind::Source => {
-                    if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
-                        use crate::claude_agents::AgentSource;
-                        p.source_filter = match p.source_filter {
-                            None => Some(AgentSource::Claude),
-                            Some(AgentSource::Claude) => Some(AgentSource::Codex),
-                            Some(AgentSource::Codex) => None,
-                        };
-                        p.selected = 0;
-                    }
-                }
-                TopbarChipKind::Workspace => {
-                    app.claude_agents_toggle_workspace_only();
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        use crate::ui::TopbarChipKind;
+        match kind {
+            TopbarChipKind::View => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                    p.cycle_detail();
                 }
             }
-            return;
+            TopbarChipKind::Sort => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                    p.cycle_sort();
+                }
+            }
+            TopbarChipKind::Group => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                    p.cycle_group_by();
+                }
+            }
+            TopbarChipKind::Source => {
+                if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
+                    use crate::claude_agents::AgentSource;
+                    p.source_filter = match p.source_filter {
+                        None => Some(AgentSource::Claude),
+                        Some(AgentSource::Claude) => Some(AgentSource::Codex),
+                        Some(AgentSource::Codex) => None,
+                    };
+                    p.selected = 0;
+                }
+            }
+            TopbarChipKind::Workspace => {
+                app.claude_agents_toggle_workspace_only();
+            }
         }
+        return;
     }
 
     // 2026-06-21 vscode-mouse SEV-2: WS pane [Send] button click
     // sends the typed message (parity with Enter chord).
-    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-        if let Some(&(_, pid)) = app
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(&(_, pid)) = app
             .rects
             .ws_send_buttons
             .iter()
             .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        {
-            app.active = Some(pid);
-            app.focus_pane();
-            if let Some(Pane::Websocket(p)) = app.panes.get_mut(pid) {
-                p.send_input();
-            }
-            return;
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        if let Some(Pane::Websocket(p)) = app.panes.get_mut(pid) {
+            p.send_input();
         }
+        return;
     }
 
     // 2026-06-21 vscode-mouse SEV-2: cheatsheet section header
     // click toggles collapse. Same intent as the `C` chord but
     // reachable via mouse — the chip didn't look clickable
     // before, now it acts on click.
-    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
-        if let Some(group) = app
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(group) = app
             .rects
             .cheatsheet_headers
             .iter()
             .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             .map(|(_, g)| g.clone())
+    {
+        // Find the focused cheatsheet pane id; if none, no-op.
+        if let Some(pid) = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Cheatsheet(_)))
         {
-            // Find the focused cheatsheet pane id; if none, no-op.
-            if let Some(pid) = app
-                .panes
-                .iter()
-                .position(|p| matches!(p, Pane::Cheatsheet(_)))
-            {
-                if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(pid) {
-                    if c.collapsed.contains(&group) {
-                        c.collapsed.remove(&group);
-                    } else {
-                        c.collapsed.insert(group);
-                    }
+            if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(pid) {
+                if c.collapsed.contains(&group) {
+                    c.collapsed.remove(&group);
+                } else {
+                    c.collapsed.insert(group);
                 }
-                app.active = Some(pid);
-                app.focus_pane();
-                return;
             }
+            app.active = Some(pid);
+            app.focus_pane();
+            return;
         }
     }
 
@@ -5475,18 +5481,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // the matching pane (substring match on pane title).
             if let Some((r, name)) = app.rects.cmdline_toast_target.clone()
                 && crate::app::dispatch::contains(r, x, y)
-            {
-                if let Some((idx, _)) = app
+                && let Some((idx, _)) = app
                     .panes
                     .iter()
                     .enumerate()
                     .find(|(_, p)| p.title().contains(&name))
-                {
-                    app.active = Some(idx);
-                    app.focus_pane();
-                    app.reveal_pane(idx);
-                    return;
-                }
+            {
+                app.active = Some(idx);
+                app.focus_pane();
+                app.reveal_pane(idx);
+                return;
             }
             if app.no_pane_cmdline.is_none()
                 && let Some(r) = app.rects.cmdline_bar
@@ -5875,33 +5879,32 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         if let Some(row) = app.tree.selected_row() {
                             app.begin_tree_drag(row.path.clone(), row.is_dir, y);
                         }
-                        if let Some(row) = app.tree.selected_row() {
-                            if row.is_dir {
-                                // Multi-repo workspace: clicking a depth-0
-                                // repo dir also switches the active repo
-                                // (so the git rail / branches / PRs follow
-                                // the user's focus). The dir then expands /
-                                // collapses normally.
-                                if row.depth == 0 && app.repos.len() > 1 {
-                                    let repo_hit =
-                                        app.repos.iter().position(|r| r.path == row.path);
-                                    if let Some(idx) = repo_hit
-                                        && idx != app.active_repo
-                                    {
-                                        app.switch_active_repo(idx);
-                                    }
+                        if let Some(row) = app.tree.selected_row()
+                            && row.is_dir
+                        {
+                            // Multi-repo workspace: clicking a depth-0
+                            // repo dir also switches the active repo
+                            // (so the git rail / branches / PRs follow
+                            // the user's focus). The dir then expands /
+                            // collapses normally.
+                            if row.depth == 0 && app.repos.len() > 1 {
+                                let repo_hit = app.repos.iter().position(|r| r.path == row.path);
+                                if let Some(idx) = repo_hit
+                                    && idx != app.active_repo
+                                {
+                                    app.switch_active_repo(idx);
                                 }
-                                app.tree.toggle_current();
                             }
-                            // Files: the open is DEFERRED to mouse-up. On a
-                            // plain click the Up handler opens it (preview, or
-                            // a permanent tab on double-click); if the user
-                            // instead click-holds and drags, it becomes a
-                            // drag (onto a pane body → drag-to-split; onto a
-                            // tree dir → move-in-tree) and never opens here.
-                            // Opening on Down made a drag impossible — the
-                            // file flashed open the instant you pressed.
+                            app.tree.toggle_current();
                         }
+                        // Files: the open is DEFERRED to mouse-up. On a
+                        // plain click the Up handler opens it (preview, or
+                        // a permanent tab on double-click); if the user
+                        // instead click-holds and drags, it becomes a
+                        // drag (onto a pane body → drag-to-split; onto a
+                        // tree dir → move-in-tree) and never opens here.
+                        // Opening on Down made a drag impossible — the
+                        // file flashed open the instant you pressed.
                     }
                 }
                 return;
@@ -6101,6 +6104,31 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(r, x, y)
             {
                 crate::command::run("ai.claude_code", app);
+                return;
+            }
+            // View-mode toggle chip → switch between by-status
+            // and by-workspace grouping.
+            if let Some(r) = app.rects.agents_panel_view_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.agents_panel_group_by_workspace = !app.agents_panel_group_by_workspace;
+                app.agents_panel_expanded_workspaces.clear();
+                return;
+            }
+            // Workspace header (by-workspace view only) → toggle
+            // expansion for that workspace.
+            if let Some((_, ws)) = app
+                .rects
+                .agents_panel_workspace_headers
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .cloned()
+            {
+                if app.agents_panel_expanded_workspaces.contains(&ws) {
+                    app.agents_panel_expanded_workspaces.remove(&ws);
+                } else {
+                    app.agents_panel_expanded_workspaces.insert(ws);
+                }
                 return;
             }
             if let Some(&(_, row_idx)) = app
@@ -6603,15 +6631,15 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // moved, treat as a click → toggle the section's
             // collapse state. If it did move, commit the new
             // `*_user_max_h` (already updated on each drag tick).
-            if let Some(drag) = app.rail_section_drag.take() {
-                if !drag.moved {
-                    match drag.kind {
-                        crate::app::RailSectionKind::Integrations => {
-                            app.integration_section_expanded = !app.integration_section_expanded;
-                        }
-                        crate::app::RailSectionKind::Git => {
-                            app.toggle_git_section_expanded();
-                        }
+            if let Some(drag) = app.rail_section_drag.take()
+                && !drag.moved
+            {
+                match drag.kind {
+                    crate::app::RailSectionKind::Integrations => {
+                        app.integration_section_expanded = !app.integration_section_expanded;
+                    }
+                    crate::app::RailSectionKind::Git => {
+                        app.toggle_git_section_expanded();
                     }
                 }
             }
@@ -6690,10 +6718,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                                 && now.duration_since(prev) < std::time::Duration::from_millis(450)
                     );
                     app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
-                    if is_double {
-                        if let Some(Pane::Editor(b)) = app.panes.get_mut(src) {
-                            b.is_preview = false;
-                        }
+                    if is_double && let Some(Pane::Editor(b)) = app.panes.get_mut(src) {
+                        b.is_preview = false;
                     }
                     app.reveal_pane(src);
                 }

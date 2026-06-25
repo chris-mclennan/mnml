@@ -1565,11 +1565,11 @@ fn scan_listening_ports(root_pid: u32) -> Vec<u16> {
             && o.status.success()
         {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
-                if let Ok(child) = line.trim().parse::<u32>() {
-                    if !pids.contains(&child) {
-                        pids.push(child);
-                        frontier.push(child);
-                    }
+                if let Ok(child) = line.trim().parse::<u32>()
+                    && !pids.contains(&child)
+                {
+                    pids.push(child);
+                    frontier.push(child);
                 }
             }
         }
@@ -1597,10 +1597,10 @@ fn scan_listening_ports(root_pid: u32) -> Vec<u16> {
             let name = line.split_whitespace().nth(8).unwrap_or("");
             if let Some(colon) = name.rfind(':') {
                 let port_str = &name[colon + 1..];
-                if let Ok(port) = port_str.trim_end_matches(" (LISTEN)").parse::<u16>() {
-                    if !ports.contains(&port) {
-                        ports.push(port);
-                    }
+                if let Ok(port) = port_str.trim_end_matches(" (LISTEN)").parse::<u16>()
+                    && !ports.contains(&port)
+                {
+                    ports.push(port);
                 }
             }
         }
@@ -1798,6 +1798,9 @@ pub enum ScrollbarKind {
     /// dispatcher ignores `pane_id`. `total` = visible-row count;
     /// `viewport` = tree body height.
     Tree,
+    /// The agents rail panel (`app.agents_panel_scroll`) — not a pane.
+    /// `total` = content-row count; `viewport` = panel body height.
+    AgentsPanel,
 }
 
 impl ScrollbarKind {
@@ -1963,10 +1966,19 @@ pub struct PaneRects {
     /// `(rect, row_idx)` per agent row in the rail Agents panel.
     /// Click → focus the row's session (resume / open transcript).
     pub agents_panel_rows: Vec<(Rect, usize)>,
+    /// The scrollable content area of the agents panel (below the fixed
+    /// header rows) — used to route wheel events to `agents_panel_scroll`.
+    pub agents_panel_area: Option<Rect>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
     pub agents_panel_new_chip: Option<Rect>,
+    /// Click rect for the view-mode toggle (`status` ↔ `workspace`)
+    /// in the panel header.
+    pub agents_panel_view_chip: Option<Rect>,
+    /// `(rect, workspace_label)` per workspace group header in
+    /// the by-workspace view. Click → toggle collapse.
+    pub agents_panel_workspace_headers: Vec<(Rect, String)>,
     /// Click rects for the workspaces-editor overlay. Each row is
     /// `(rect, idx_or_action_code)` — `idx_or_action_code < 0` is
     /// reserved for action rows (`-1 = Add`, `-2 = Close`).
@@ -3123,12 +3135,30 @@ pub struct App {
     pub agents_panel_rows: Vec<crate::claude_agents::AgentRow>,
     /// When `agents_panel_rows` was last refreshed.
     pub agents_panel_built_at: Option<std::time::Instant>,
+    /// Receiver for the off-main-thread build worker. `Some` means
+    /// a refresh is in flight; the next `tick()` drains it.
+    pub agents_panel_rx: Option<std::sync::mpsc::Receiver<Vec<crate::claude_agents::AgentRow>>>,
     /// `/`-style substring filter for the rail agents panel
     /// (workspace / session id / last_msg). Case-insensitive.
     pub agents_panel_filter: String,
+    /// Top-row scroll offset for the agents panel's content list (the
+    /// session rows scroll; the filter + `+ New session` header stays put).
+    /// Clamped to the content height each render.
+    pub agents_panel_scroll: usize,
     /// `true` while the user's keyboard focus is in the rail
     /// agents panel's filter input.
     pub agents_panel_filter_focused: bool,
+    /// `true` to group rail Agents panel rows by workspace
+    /// (collapsible per-workspace groups) instead of by status.
+    /// Toggled by `g` while the section is active, or by clicking
+    /// the view-mode chip in the panel header.
+    pub agents_panel_group_by_workspace: bool,
+    /// Workspace labels EXPANDED in the by-workspace view —
+    /// default empty means everything is collapsed. Click a
+    /// workspace header to add/remove from this set. Cleared
+    /// when toggling out of workspace view so re-entering starts
+    /// fresh.
+    pub agents_panel_expanded_workspaces: std::collections::HashSet<String>,
     /// Monotonically-increasing id for new dock widgets. Each
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
@@ -3865,7 +3895,11 @@ impl App {
             last_test_run: None,
             agents_panel_rows: Vec::new(),
             agents_panel_built_at: None,
+            agents_panel_rx: None,
+            agents_panel_group_by_workspace: false,
+            agents_panel_expanded_workspaces: std::collections::HashSet::new(),
             agents_panel_filter: String::new(),
+            agents_panel_scroll: 0,
             agents_panel_filter_focused: false,
             dock_widget_next_id: 0,
             dock_drag_id: None,
@@ -6161,23 +6195,54 @@ impl App {
         }
     }
 
-    /// Resume a Claude Code session by session id — opens a fresh
-    /// pty pane with `--resume <sid>`. Used by the rail agents
-    /// panel's row-click handler.
+    /// Resume a Claude Code session by session id. Used by the
+    /// rail agents panel's row-click handler.
+    ///
+    /// If there's already a Pty pane open, add the resumed
+    /// session as a TAB inside that pane group (no split). Only
+    /// when there's no Pty at all do we let `open_pty` carve out
+    /// a new split — otherwise every click here would chain into
+    /// an ever-deeper split tree.
     pub fn resume_claude_session_in_pty(&mut self, session_id: &str) {
         let profile = crate::pty_pane::BinaryProfile::claude_code_resume(
             self.workspace.clone(),
             session_id.to_string(),
         );
-        self.open_pty(profile);
+        // Find an existing Pty pane to host the new session as a tab.
+        // Prefer `self.active` when it's a Pty — that pane is the
+        // active in its leaf, so `set_leaf_pane` inside
+        // `add_pty_tab` will swap it correctly. Fall back to the
+        // first Pty by index only if no Pty is currently focused
+        // (rare; mostly cold-start).
+        let existing_pty = self
+            .active
+            .filter(|&i| matches!(self.panes.get(i), Some(crate::pane::Pane::Pty(_))))
+            .or_else(|| {
+                self.panes
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, p)| matches!(p, crate::pane::Pane::Pty(_)).then_some(i))
+            });
+        match existing_pty {
+            Some(strip_owner) => self.add_pty_tab(strip_owner, profile),
+            None => self.open_pty(profile),
+        }
     }
 
     /// Refresh the rail Agents panel's cached snapshot if it's
-    /// older than `AGENTS_PANEL_REFRESH`. Cheap enough to call
-    /// every frame — the actual scan only fires when the
-    /// timestamp says we're due.
+    /// older than `AGENTS_PANEL_REFRESH`. Spawns the actual scan
+    /// (file read + jsonl parse for every transcript — easily
+    /// hundreds of ms with many sessions) on a WORKER THREAD so
+    /// the UI stays responsive. The next `App::tick()` drains the
+    /// channel and swaps in the fresh snapshot.
     pub fn refresh_agents_panel_if_due(&mut self) {
-        const AGENTS_PANEL_REFRESH: std::time::Duration = std::time::Duration::from_secs(5);
+        // 30s — the rail is a heads-up display, not a live tail.
+        // The full Pane::ClaudeAgents has its own faster refresh
+        // tick when the user opens it.
+        const AGENTS_PANEL_REFRESH: std::time::Duration = std::time::Duration::from_secs(30);
+        if self.agents_panel_rx.is_some() {
+            return; // a refresh is already in flight
+        }
         let due = self
             .agents_panel_built_at
             .map(|t| t.elapsed() >= AGENTS_PANEL_REFRESH)
@@ -6186,9 +6251,35 @@ impl App {
             return;
         }
         let anchor = self.workspace.clone();
-        let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
-        self.agents_panel_rows = pane.rows;
-        self.agents_panel_built_at = Some(std::time::Instant::now());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
+            let _ = tx.send(pane.rows);
+        });
+        self.agents_panel_rx = Some(rx);
+    }
+
+    /// Drain the agents-panel refresh worker. Called once per
+    /// `tick()` — non-blocking; pulls the result if ready and
+    /// stamps `built_at`.
+    pub fn drain_agents_panel_refresh(&mut self) {
+        let Some(rx) = self.agents_panel_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(rows) => {
+                self.agents_panel_rows = rows;
+                self.agents_panel_built_at = Some(std::time::Instant::now());
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Worker still running — put the receiver back.
+                self.agents_panel_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // Worker died without sending — drop and try again
+                // on the next tick.
+            }
+        }
     }
 
     /// `setup.install_to_path` — show an actionable hint with
@@ -8336,9 +8427,14 @@ impl App {
     /// (the rect was painted last frame; the user could have closed
     /// the pane in between).
     pub fn set_pane_scroll(&mut self, pane_id: PaneId, kind: ScrollbarKind, scroll: usize) {
-        // The file tree isn't a pane — its scroll lives on `self.tree`.
+        // The file tree + agents panel aren't panes — their scroll lives on
+        // dedicated App fields.
         if matches!(kind, ScrollbarKind::Tree) {
             self.tree.scroll = scroll;
+            return;
+        }
+        if matches!(kind, ScrollbarKind::AgentsPanel) {
+            self.agents_panel_scroll = scroll;
             return;
         }
         // Resolved up-front: a scrollbar drag follows the same policy
@@ -9278,10 +9374,10 @@ impl App {
     /// as `r` key in the pane. Preserves filter/group state.
     pub fn refresh_claude_agents_pane(&mut self) {
         let Some(i) = self.active else { return };
-        if matches!(self.panes.get(i), Some(Pane::ClaudeAgents(_))) {
-            if let Some(Pane::ClaudeAgents(c)) = self.panes.get_mut(i) {
-                c.refresh_in_place();
-            }
+        if matches!(self.panes.get(i), Some(Pane::ClaudeAgents(_)))
+            && let Some(Pane::ClaudeAgents(c)) = self.panes.get_mut(i)
+        {
+            c.refresh_in_place();
         }
     }
 
@@ -10485,6 +10581,8 @@ impl App {
         if let Some(scratch) = self.scratch_term.as_mut() {
             scratch.session.pump();
         }
+        // Agents rail panel — pull the worker's snapshot if ready.
+        self.drain_agents_panel_refresh();
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();

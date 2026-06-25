@@ -452,7 +452,7 @@ fn proxy_subcommand(argv: Vec<String>) -> ExitCode {
         eprintln!("{usage}");
         return ExitCode::FAILURE;
     }
-    if opts.workspace == PathBuf::from(".") {
+    if opts.workspace.as_path() == std::path::Path::new(".") {
         opts.workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     }
     match mnml::http::proxy::run(opts) {

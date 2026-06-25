@@ -167,11 +167,11 @@ impl AgentRow {
     /// we know the tool name, surfaces it (`▸ Bash`); otherwise falls
     /// back to the generic badge.
     pub fn state_badge(&self) -> String {
-        if matches!(self.state, AgentState::ToolCall) {
-            if let Some(name) = &self.current_tool {
-                let short: String = name.chars().take(8).collect();
-                return format!("▸ {short}");
-            }
+        if matches!(self.state, AgentState::ToolCall)
+            && let Some(name) = &self.current_tool
+        {
+            let short: String = name.chars().take(8).collect();
+            return format!("▸ {short}");
         }
         self.state.badge().to_string()
     }
@@ -740,10 +740,7 @@ impl ClaudeAgentsPane {
                 .iter()
                 .position(|&i| self.rows.get(i).map(|r| &r.session_id) == Some(&sid))
         });
-        self.selected = match resolved {
-            Some(idx) => idx,
-            None => 0,
-        };
+        self.selected = resolved.unwrap_or_default();
         // Belt-and-suspenders clamp: if filter+rolloff produced
         // an empty visible set, leave selected at 0.
         if !new_visible.is_empty() {
@@ -1519,7 +1516,9 @@ fn read_pid_cwd(pid: u32) -> Option<String> {
     #[cfg(target_os = "linux")]
     {
         let p = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-        return Some(p.to_string_lossy().into_owned());
+        // Tail expression (this is the whole fn body on Linux; the
+        // non-Linux block is cfg'd out) — no `return` needed.
+        Some(p.to_string_lossy().into_owned())
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1693,13 +1692,11 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                     for block in content {
                         let bt = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         match bt {
-                            "text" => {
-                                if text_acc.is_none() {
-                                    text_acc = block
-                                        .get("text")
-                                        .and_then(|t| t.as_str())
-                                        .map(|s| truncate(s, 200));
-                                }
+                            "text" if text_acc.is_none() => {
+                                text_acc = block
+                                    .get("text")
+                                    .and_then(|t| t.as_str())
+                                    .map(|s| truncate(s, 200));
                             }
                             "tool_use" => {
                                 let name = block
@@ -1809,10 +1806,10 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                 // tool-use count.
                 if let Some(serde_json::Value::Array(arr)) = content {
                     for b in arr {
-                        if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                            if let Some(id) = b.get("tool_use_id").and_then(|i| i.as_str()) {
-                                pending.remove(id);
-                            }
+                        if b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                            && let Some(id) = b.get("tool_use_id").and_then(|i| i.as_str())
+                        {
+                            pending.remove(id);
                         }
                     }
                 }
@@ -1865,10 +1862,10 @@ fn read_byte_range(path: &std::path::Path, start: u64, end: u64) -> Option<Strin
     f.take(end - start).read_to_end(&mut buf).ok()?;
     let s = String::from_utf8_lossy(&buf).into_owned();
     // If `start > 0`, the first line is partial — drop it.
-    if start > 0 {
-        if let Some(nl) = s.find('\n') {
-            return Some(s[nl + 1..].to_string());
-        }
+    if start > 0
+        && let Some(nl) = s.find('\n')
+    {
+        return Some(s[nl + 1..].to_string());
     }
     Some(s)
 }
@@ -1886,10 +1883,10 @@ fn read_tail(path: &std::path::Path, cap: usize) -> std::io::Result<String> {
     f.take(cap as u64).read_to_end(&mut buf)?;
     // If we seeked past byte 0, the first line is partial — drop it.
     let s = String::from_utf8_lossy(&buf).into_owned();
-    if start > 0 {
-        if let Some(nl) = s.find('\n') {
-            return Ok(s[nl + 1..].to_string());
-        }
+    if start > 0
+        && let Some(nl) = s.find('\n')
+    {
+        return Ok(s[nl + 1..].to_string());
     }
     Ok(s)
 }
@@ -1983,7 +1980,7 @@ pub fn search_all_transcripts(query: &str) -> Vec<SearchHit> {
         };
         for f in rd.flatten() {
             let p = f.path();
-            if !p.extension().is_some_and(|e| e == "jsonl") {
+            if p.extension().is_none_or(|e| e != "jsonl") {
                 continue;
             }
             let mtime = f
@@ -1994,7 +1991,7 @@ pub fn search_all_transcripts(query: &str) -> Vec<SearchHit> {
             files.push((p, mtime, workspace.clone()));
         }
     }
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     let mut hits: Vec<SearchHit> = Vec::new();
     const HIT_CAP: usize = 200;
@@ -2159,42 +2156,42 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
         // stubbed-out with "format isn't parsed yet" comment 3
         // commits after the parser actually shipped (ff174d2).
         let path = row.transcript_path.clone();
-        if path.is_file() {
-            if let Ok(f) = std::fs::File::open(&path) {
-                use std::io::BufRead;
-                let reader = std::io::BufReader::new(f);
-                for line in reader.lines().map_while(Result::ok) {
-                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
-                        continue;
-                    };
-                    // Codex transcript shape (rollout-*.jsonl):
-                    // each line has a `payload.type`. user_message
-                    // / assistant_message carry `content` strings;
-                    // function_call / function_call_output carry
-                    // tool invocations. Stream them as headings.
-                    let payload = v.get("payload").unwrap_or(&v);
-                    let ty = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                    match ty {
-                        "user_message" => {
-                            if let Some(c) = payload.get("content").and_then(|c| c.as_str()) {
-                                out.push_str(&format!("## User\n\n{c}\n\n"));
-                            }
+        if path.is_file()
+            && let Ok(f) = std::fs::File::open(&path)
+        {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(f);
+            for line in reader.lines().map_while(Result::ok) {
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                    continue;
+                };
+                // Codex transcript shape (rollout-*.jsonl):
+                // each line has a `payload.type`. user_message
+                // / assistant_message carry `content` strings;
+                // function_call / function_call_output carry
+                // tool invocations. Stream them as headings.
+                let payload = v.get("payload").unwrap_or(&v);
+                let ty = payload.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                match ty {
+                    "user_message" => {
+                        if let Some(c) = payload.get("content").and_then(|c| c.as_str()) {
+                            out.push_str(&format!("## User\n\n{c}\n\n"));
                         }
-                        "assistant_message" => {
-                            if let Some(c) = payload.get("content").and_then(|c| c.as_str()) {
-                                out.push_str(&format!("## Codex\n\n{c}\n\n"));
-                            }
-                        }
-                        "function_call" => {
-                            let name = payload.get("name").and_then(|s| s.as_str()).unwrap_or("?");
-                            let args = payload
-                                .get("arguments")
-                                .and_then(|s| s.as_str())
-                                .unwrap_or("");
-                            out.push_str(&format!("### tool: `{name}`\n\n```\n{args}\n```\n\n"));
-                        }
-                        _ => {}
                     }
+                    "assistant_message" => {
+                        if let Some(c) = payload.get("content").and_then(|c| c.as_str()) {
+                            out.push_str(&format!("## Codex\n\n{c}\n\n"));
+                        }
+                    }
+                    "function_call" => {
+                        let name = payload.get("name").and_then(|s| s.as_str()).unwrap_or("?");
+                        let args = payload
+                            .get("arguments")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("");
+                        out.push_str(&format!("### tool: `{name}`\n\n```\n{args}\n```\n\n"));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -2361,7 +2358,7 @@ pub fn spend_today() -> SpendToday {
             };
             for f in rd.flatten() {
                 let fp = f.path();
-                if !fp.extension().is_some_and(|e| e == "jsonl") {
+                if fp.extension().is_none_or(|e| e != "jsonl") {
                     continue;
                 }
                 let Ok(meta) = f.metadata() else { continue };
@@ -2534,12 +2531,12 @@ fn scan_running_pids(source: AgentSource) -> Vec<(String, u32, String)> {
 fn parse_session_id_arg(cmdline: &str) -> Option<String> {
     let mut tokens = cmdline.split_whitespace();
     while let Some(t) = tokens.next() {
-        if t == "--session-id" || t == "--resume" {
-            if let Some(v) = tokens.next() {
-                // UUID sanity check.
-                if v.len() == 36 && v.matches('-').count() == 4 {
-                    return Some(v.to_string());
-                }
+        if (t == "--session-id" || t == "--resume")
+            && let Some(v) = tokens.next()
+        {
+            // UUID sanity check.
+            if v.len() == 36 && v.matches('-').count() == 4 {
+                return Some(v.to_string());
             }
         }
     }

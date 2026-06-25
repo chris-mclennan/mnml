@@ -177,7 +177,7 @@ impl SpendReportPane {
         let mut v = self.snapshot.per_workspace.clone();
         match self.sort_by {
             SpendSortKey::Workspace => v.sort_by(|a, b| a.0.cmp(&b.0)),
-            SpendSortKey::Tokens => v.sort_by(|a, b| a.1.cmp(&b.1)),
+            SpendSortKey::Tokens => v.sort_by_key(|a| a.1),
             SpendSortKey::Cost => {
                 v.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
             }

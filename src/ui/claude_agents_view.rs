@@ -517,7 +517,7 @@ fn render_row(
     let model_pad = format!("{:<14}", clip(&model, 14));
     let age = row
         .last_activity
-        .map(|t| age_label(t))
+        .map(age_label)
         .unwrap_or_else(|| "?".to_string());
     let tokens = format_tokens(row.tokens);
     let cost = format_cost(row.cost_usd);
@@ -878,7 +878,7 @@ fn format_cost(usd: f64) -> String {
     } else if usd >= 0.01 {
         format!("${usd:.3}")
     } else if usd > 0.0 {
-        format!("<$0.01")
+        "<$0.01".to_string()
     } else {
         "—".to_string()
     }

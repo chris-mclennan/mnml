@@ -643,6 +643,9 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
 
     let mut y = inner.y;
     let mut item_rects: Vec<(Rect, usize)> = Vec::new();
+    // `y` advances per drawn row but also gates the early `break` below, so the
+    // explicit counter is clearer here than a zipped range.
+    #[allow(clippy::explicit_counter_loop)]
     for (idx, item) in menu.items.iter().enumerate() {
         if y >= inner.y + inner.height {
             break;
