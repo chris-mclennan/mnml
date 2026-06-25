@@ -22,6 +22,13 @@ use crate::app::App;
 use crate::claude_agents::AgentState;
 use crate::ui::theme;
 
+/// Match the file-browser's chevron convention: nf-fa-angle-down
+/// for open, nf-fa-angle-right for closed. Same glyphs as
+/// `src/ui/tree_view.rs` so collapsible groups read the same
+/// across the rail.
+const CHEVRON_OPEN: &str = "\u{f107}";
+const CHEVRON_CLOSED: &str = "\u{f105}";
+
 /// 6-frame partial-circle spinner. Cycles based on the system
 /// clock so every rendered frame advances naturally — no need to
 /// track tick state on App.
@@ -291,14 +298,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 groups.push((r.workspace.clone(), vec![(i, r)]));
             }
         }
-        let collapsed = app.agents_panel_collapsed_workspaces.clone();
+        // Default: every workspace collapsed. `expanded` set
+        // tracks the workspaces the user has opened. Sort rows
+        // inside each group newest-first, and sort groups by
+        // their newest-row's activity.
+        for (_, items) in &mut groups {
+            items.sort_by(|(_, a), (_, b)| b.last_activity.cmp(&a.last_activity));
+        }
+        groups.sort_by(|(_, a_rows), (_, b_rows)| {
+            let a_newest = a_rows.first().map(|(_, r)| r.last_activity);
+            let b_newest = b_rows.first().map(|(_, r)| r.last_activity);
+            b_newest.cmp(&a_newest)
+        });
+        let expanded = app.agents_panel_expanded_workspaces.clone();
         let mut workspace_headers: Vec<(Rect, String)> = Vec::new();
         for (ws, rows) in &groups {
             if y >= area.y + area.height {
                 break;
             }
-            let is_collapsed = collapsed.contains(ws);
-            let chev = if is_collapsed { "▸" } else { "▾" };
+            let is_expanded = expanded.contains(ws);
+            let chev = if is_expanded {
+                CHEVRON_OPEN
+            } else {
+                CHEVRON_CLOSED
+            };
             let header = Line::from(vec![
                 Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
@@ -318,7 +341,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             frame.render_widget(Paragraph::new(header), header_rect);
             workspace_headers.push((header_rect, ws.clone()));
             y += 1;
-            if !is_collapsed {
+            if is_expanded {
                 for &(i, r) in rows {
                     render_row(frame, &mut y, i, r, &mut click_targets);
                 }
@@ -343,6 +366,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             done.push((i, r));
         }
+    }
+    // Newest-first in each section.
+    for v in [&mut action_needed, &mut running, &mut done] {
+        v.sort_by(|(_, a), (_, b)| b.last_activity.cmp(&a.last_activity));
     }
     let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)]); 3] = [
         ("Action needed", &action_needed[..]),

@@ -3143,9 +3143,12 @@ pub struct App {
     /// Toggled by `g` while the section is active, or by clicking
     /// the view-mode chip in the panel header.
     pub agents_panel_group_by_workspace: bool,
-    /// Workspace labels collapsed in the by-workspace view.
-    /// Cleared when switching back to by-status grouping.
-    pub agents_panel_collapsed_workspaces: std::collections::HashSet<String>,
+    /// Workspace labels EXPANDED in the by-workspace view —
+    /// default empty means everything is collapsed. Click a
+    /// workspace header to add/remove from this set. Cleared
+    /// when toggling out of workspace view so re-entering starts
+    /// fresh.
+    pub agents_panel_expanded_workspaces: std::collections::HashSet<String>,
     /// Monotonically-increasing id for new dock widgets. Each
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
@@ -3886,7 +3889,7 @@ impl App {
             agents_panel_built_at: None,
             agents_panel_rx: None,
             agents_panel_group_by_workspace: false,
-            agents_panel_collapsed_workspaces: std::collections::HashSet::new(),
+            agents_panel_expanded_workspaces: std::collections::HashSet::new(),
             agents_panel_filter: String::new(),
             agents_panel_filter_focused: false,
             dock_widget_next_id: 0,

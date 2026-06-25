@@ -6112,11 +6112,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 app.agents_panel_group_by_workspace =
                     !app.agents_panel_group_by_workspace;
-                app.agents_panel_collapsed_workspaces.clear();
+                app.agents_panel_expanded_workspaces.clear();
                 return;
             }
             // Workspace header (by-workspace view only) → toggle
-            // collapse for that workspace.
+            // expansion for that workspace.
             if let Some((_, ws)) = app
                 .rects
                 .agents_panel_workspace_headers
@@ -6124,10 +6124,10 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                 .cloned()
             {
-                if app.agents_panel_collapsed_workspaces.contains(&ws) {
-                    app.agents_panel_collapsed_workspaces.remove(&ws);
+                if app.agents_panel_expanded_workspaces.contains(&ws) {
+                    app.agents_panel_expanded_workspaces.remove(&ws);
                 } else {
-                    app.agents_panel_collapsed_workspaces.insert(ws);
+                    app.agents_panel_expanded_workspaces.insert(ws);
                 }
                 return;
             }
