@@ -151,15 +151,19 @@ impl App {
             .map(|w| w.name.clone())
             .unwrap_or_else(|| format!("workspace {ws_idx}"));
         let path = self.extra_workspaces.get(ws_idx).map(|w| w.root.clone());
-        let mut items = vec![MenuItem::new("Toggle expand", MenuAction::Command(""))];
-        // Replace the Command("") placeholder with a no-op since we don't
-        // have a per-extra "toggle" command; the click action will toggle
-        // directly via the rect handler in tui.rs. Keep the row for menu
-        // parity. Switching workspaces still routes through the picker.
-        items[0] = MenuItem::new(
+        // Set as current — direct switch to this workspace without
+        // going through the picker (mirrors the workspace picker
+        // dropdown's row click). `ws_idx` in extra_workspaces is
+        // 0-based; `switch_workspace` uses 1-based since 0 is the
+        // primary, so we pass `ws_idx + 1`.
+        let mut items = vec![MenuItem::new(
+            "Set as current workspace",
+            MenuAction::SwitchToExtraWorkspace(ws_idx + 1),
+        )];
+        items.push(MenuItem::new(
             "Switch workspace…",
             MenuAction::Command("view.switch_workspace"),
-        );
+        ));
         items.push(MenuItem::new(
             "Remove this workspace",
             MenuAction::Command("view.remove_workspace"),
@@ -509,6 +513,9 @@ impl App {
             WorkspaceEditPath(idx) => self.workspaces_editor_open_path(idx),
             WorkspaceEditGroup(idx) => self.workspaces_editor_open_group(idx),
             WorkspaceDelete(idx) => self.workspaces_editor_delete(idx),
+            WorkspaceMoveUp(idx) => self.workspaces_editor_move_up(idx),
+            WorkspaceMoveDown(idx) => self.workspaces_editor_move_down(idx),
+            SwitchToExtraWorkspace(idx) => self.switch_workspace(idx),
             PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active, true),
             OpenUrl(url) => {
                 open_url_external(&url);

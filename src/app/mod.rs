@@ -6129,6 +6129,37 @@ impl App {
         self.workspaces_editor_open = false;
     }
 
+    /// Move the workspace at `idx` up by one row (no-op when
+    /// already at the top). Persists immediately so reordering
+    /// survives a restart.
+    pub fn workspaces_editor_move_up(&mut self, idx: usize) {
+        if idx == 0 || idx >= self.config.workspaces.len() {
+            return;
+        }
+        self.config.workspaces.swap(idx, idx - 1);
+        self.workspaces_editor_selected = idx - 1;
+        if let Err(e) =
+            crate::config::persist_workspaces_to_global(&self.config.workspaces)
+        {
+            self.toast(format!("save workspaces: {e}"));
+        }
+    }
+
+    /// Move the workspace at `idx` down by one row (no-op at the
+    /// last position). Persists immediately.
+    pub fn workspaces_editor_move_down(&mut self, idx: usize) {
+        if idx + 1 >= self.config.workspaces.len() {
+            return;
+        }
+        self.config.workspaces.swap(idx, idx + 1);
+        self.workspaces_editor_selected = idx + 1;
+        if let Err(e) =
+            crate::config::persist_workspaces_to_global(&self.config.workspaces)
+        {
+            self.toast(format!("save workspaces: {e}"));
+        }
+    }
+
     /// Remove the workspace at `idx`. Persists immediately.
     pub fn workspaces_editor_delete(&mut self, idx: usize) {
         if idx >= self.config.workspaces.len() {
@@ -6256,12 +6287,24 @@ impl App {
             return;
         };
         let title = Some(w.name.clone());
-        let items = vec![
+        let mut items = vec![
             MenuItem::new("Edit name…", MenuAction::WorkspaceEditName(idx)),
             MenuItem::new("Edit path…", MenuAction::WorkspaceEditPath(idx)),
             MenuItem::new("Edit group…", MenuAction::WorkspaceEditGroup(idx)),
-            MenuItem::new("Delete", MenuAction::WorkspaceDelete(idx)),
         ];
+        if idx > 0 {
+            items.push(MenuItem::new(
+                "Move up",
+                MenuAction::WorkspaceMoveUp(idx),
+            ));
+        }
+        if idx + 1 < self.config.workspaces.len() {
+            items.push(MenuItem::new(
+                "Move down",
+                MenuAction::WorkspaceMoveDown(idx),
+            ));
+        }
+        items.push(MenuItem::new("Delete", MenuAction::WorkspaceDelete(idx)));
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
     }
 

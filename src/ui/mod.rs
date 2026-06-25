@@ -2122,7 +2122,7 @@ fn icon_for_pane(
 }
 
 /// Cell-width-aware clip with `…` suffix.
-fn clip_to_cells(s: &str, max_cells: usize) -> String {
+pub(crate) fn clip_to_cells(s: &str, max_cells: usize) -> String {
     if s.chars().count() <= max_cells {
         return s.to_string();
     }

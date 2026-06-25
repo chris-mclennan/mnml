@@ -494,6 +494,37 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.close_workspaces_editor();
                 return;
             }
+            // Reorder (Shift+↑/↓ and `K`/`J`) MUST be matched
+            // before the bare Up/Down arms below — otherwise the
+            // unguarded ↑/↓ arms swallow the Shift variant.
+            KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                let sel = app.workspaces_editor_selected;
+                if sel < app.config.workspaces.len() {
+                    app.workspaces_editor_move_up(sel);
+                }
+                return;
+            }
+            KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                let sel = app.workspaces_editor_selected;
+                if sel < app.config.workspaces.len() {
+                    app.workspaces_editor_move_down(sel);
+                }
+                return;
+            }
+            KeyCode::Char('K') => {
+                let sel = app.workspaces_editor_selected;
+                if sel < app.config.workspaces.len() {
+                    app.workspaces_editor_move_up(sel);
+                }
+                return;
+            }
+            KeyCode::Char('J') => {
+                let sel = app.workspaces_editor_selected;
+                if sel < app.config.workspaces.len() {
+                    app.workspaces_editor_move_down(sel);
+                }
+                return;
+            }
             KeyCode::Up | KeyCode::Char('k') => {
                 if app.workspaces_editor_selected > 0 {
                     app.workspaces_editor_selected -= 1;

@@ -101,6 +101,15 @@ pub enum MenuAction {
     WorkspaceEditGroup(usize),
     /// Workspaces editor — remove the workspace at this index.
     WorkspaceDelete(usize),
+    /// Workspaces editor — swap with the row above.
+    WorkspaceMoveUp(usize),
+    /// Workspaces editor — swap with the row below.
+    WorkspaceMoveDown(usize),
+    /// Switch to the workspace at the given 1-based index — 0 is
+    /// the primary; 1.. map to entries in `[[workspaces]]`. Used
+    /// by the "Set as current" right-click on an extra workspace
+    /// header.
+    SwitchToExtraWorkspace(usize),
     /// Open a rendered-markdown preview for `path` in a split. Surfaced from
     /// the tree (right-click an `.md`/`.markdown`/`.mdx`/`.mkd` file) and
     /// from a bufferline tab right-click on the same.

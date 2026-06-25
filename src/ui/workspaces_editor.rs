@@ -188,7 +188,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Footer.
     if y + 1 <= inner.y + inner.height {
         let footer = Line::from(vec![Span::styled(
-            "  ↑↓ select · Enter edit · n new · d delete · Esc close",
+            "  ↑↓ select · Shift+↑↓ reorder · Enter edit · n new · d delete · Esc close",
             Style::default().fg(t.comment).bg(t.bg2),
         )]);
         frame.render_widget(

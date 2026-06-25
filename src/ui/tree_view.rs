@@ -142,8 +142,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Workspace-picker dropdown chevron — sits immediately after
     // the workspace name. Click to toggle the picker dropdown.
     let dropdown_glyph = " ▾ ";
-    let header_used =
-        chev_str.chars().count() + ws_name.chars().count() + dropdown_glyph.chars().count();
+    // Account for the leading `● ` dot we now paint for the
+    // current workspace.
+    const CURRENT_DOT_W: usize = 2;
+    // Reserve room for the action chips (4 × 3 cells = 12) plus
+    // 1 cell of separation so a long workspace name truncates
+    // with `…` instead of pushing the chips off the right edge.
+    const CHIP_RESERVE: usize = 4 * 3 + 1;
+    let chrome_used = chev_str.chars().count()
+        + CURRENT_DOT_W
+        + dropdown_glyph.chars().count()
+        + CHIP_RESERVE;
+    let max_name_w = (area.width as usize).saturating_sub(chrome_used);
+    let ws_name = crate::ui::clip_to_cells(&ws_name, max_name_w.max(4));
+    let header_used = chev_str.chars().count()
+        + CURRENT_DOT_W
+        + ws_name.chars().count()
+        + dropdown_glyph.chars().count();
     let header_rect = Rect {
         x: area.x,
         y: area.y,
@@ -155,6 +170,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // toggle the picker on click.
     let dropdown_x = area.x
         + chev_str.chars().count() as u16
+        + CURRENT_DOT_W as u16
         + ws_name.chars().count() as u16;
     app.rects.workspace_picker_chevron = Some(Rect {
         x: dropdown_x,
@@ -162,15 +178,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         width: dropdown_glyph.chars().count() as u16,
         height: 1,
     });
+    // Primary workspace = the "current" one. Mark with a
+    // filled `● ` green dot before the name + bold green name
+    // styling. Extra workspaces (rendered below by
+    // `draw_extra_workspace_section`) get a hollow indicator
+    // so the user can see at a glance which workspace they're
+    // operating in.
     let mut spans = vec![
         Span::styled(
             chev_str,
             Style::default().fg(theme::cur().comment).bg(rail_bg),
         ),
         Span::styled(
+            "● ",
+            Style::default().fg(theme::cur().green).bg(rail_bg),
+        ),
+        Span::styled(
             ws_name.clone(),
             Style::default()
-                .fg(theme::cur().fg)
+                .fg(theme::cur().green)
                 .bg(rail_bg)
                 .add_modifier(Modifier::BOLD),
         ),
@@ -213,13 +239,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // ── `+ repo` row — a single right-aligned chip on its own row, sitting
-    //    just below the last workspace section's content and above the GIT
-    //    separator. Only drawn if there's space for it AND the workspace
-    //    section is expanded (otherwise the rail header alone implies "add
-    //    repo" via the [+] chip in the workspace header anyway).
-    if next_y < ws_end_y {
-        draw_add_repo_row(frame, app, area, next_y, nerd, rail_bg);
+    // ── `+ Add workspace` row — sits below the last workspace
+    //    section with a 1-row blank gap above it so the affordance
+    //    visibly belongs to the workspaces group, not the last
+    //    row's chrome.
+    if next_y + 1 < ws_end_y {
+        draw_add_repo_row(frame, app, area, next_y + 1, nerd, rail_bg);
     }
 
     // ── INTEGRATIONS section: pinned just above GIT (with a blank
@@ -471,31 +496,22 @@ fn draw_add_repo_row(
 ) {
     let width = area.width as usize;
     let glyph = if nerd { "\u{F0419}" } else { "+" };
-    // Visible chip = the glyph itself, no surrounding padding.
-    // Click rect width matches the glyph's DISPLAY-CELL width:
-    // - ascii `+`: 1 cell
-    // - nerd `󰐙`: 2 cells (the codepoint paints centered across 2
-    //   terminal cells; the click target is those 2 cells exactly)
-    //
-    // 2026-06-19 user-feedback iteration: 4-cell `" glyph "` felt
-    // too wide; 3-cell `" glyph"` was asymmetric (1-cell padding on
-    // the left, none on the right because the right edge IS the
-    // glyph). 2 cells = symmetric, visible = clickable, no off-by-
-    // one possible.
-    // 2026-06-19 — vscode-user-mouse agent caught `w=1` in
-    // rects.json for the workspace `+` chip. Root cause:
-    // `unicode_width` treats PUA codepoints (`\u{F0419}` etc.) as
-    // 1-cell wide — it has no way to know nerd-fonts paint them
-    // across 2 terminal cells. Hardcode 2 for the nerd path; ascii
-    // `+` is genuinely 1 cell.
-    let chip_w = if nerd { 2usize } else { 1usize };
-    // 1-cell right margin so the chip doesn't sit flush against the
-    // rail's right border. User-requested 2026-06-19.
+    // 2026-06-24 user feedback: bare `+` chip sitting too close to
+    // the last workspace row + no text label meant the affordance
+    // was easy to miss. Two changes:
+    //   - Paint a 1-row blank gap above this row (handled at the
+    //     CALL SITE — bump `y` before drawing).
+    //   - Show the glyph + a dim " Add workspace" label so the
+    //     button telegraphs what it does.
+    let label = " Add workspace";
+    let chip_glyph_w = if nerd { 2usize } else { 1usize };
+    let label_w = label.chars().count();
     let right_margin = 1usize;
-    if width < chip_w + right_margin + 1 {
+    let total = chip_glyph_w + label_w + right_margin;
+    if width < total + 1 {
         return;
     }
-    let pad = width.saturating_sub(chip_w + right_margin);
+    let pad = width.saturating_sub(total);
     let row_rect = Rect {
         x: area.x,
         y,
@@ -509,14 +525,22 @@ fn draw_add_repo_row(
                 glyph.to_string(),
                 Style::default().fg(theme::cur().green).bg(rail_bg),
             ),
+            Span::styled(
+                label.to_string(),
+                Style::default()
+                    .fg(theme::cur().comment)
+                    .bg(rail_bg),
+            ),
         ])),
         row_rect,
     );
+    // Click rect spans the glyph + the label so the user can hit
+    // either part.
     app.rects.tree_icon_buttons.push((
         Rect {
             x: area.x + pad as u16,
             y,
-            width: chip_w as u16,
+            width: (chip_glyph_w + label_w) as u16,
             height: 1,
         },
         "view.add_workspace",
@@ -1239,7 +1263,17 @@ fn draw_extra_workspace_section(
     };
     let chev = section_chev(expanded, nerd);
     let chev_str = format!(" {chev} ");
-    let used = chev_str.chars().count() + name.chars().count();
+    // Hollow `○ ` indicator pairs with the primary workspace's
+    // filled `● ` so the user can see at a glance which is the
+    // current one and which are extras.
+    //
+    // Truncate the name with `…` so the action chips stay visible
+    // on narrow rails. Same chip-reserve as the primary header.
+    const EXTRA_CHIP_RESERVE: usize = 4 * 3 + 1;
+    let extra_chrome = chev_str.chars().count() + 2 + EXTRA_CHIP_RESERVE;
+    let max_extra_name_w = (area.width as usize).saturating_sub(extra_chrome);
+    let name = crate::ui::clip_to_cells(&name, max_extra_name_w.max(4));
+    let used = chev_str.chars().count() + 2 + name.chars().count();
     let header_rect = Rect {
         x: area.x,
         y: header_y,
@@ -1250,6 +1284,10 @@ fn draw_extra_workspace_section(
     let mut spans = vec![
         Span::styled(
             chev_str,
+            Style::default().fg(theme::cur().comment).bg(rail_bg),
+        ),
+        Span::styled(
+            "○ ",
             Style::default().fg(theme::cur().comment).bg(rail_bg),
         ),
         Span::styled(
