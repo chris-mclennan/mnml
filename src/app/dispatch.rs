@@ -496,35 +496,30 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     None
 }
 
-/// Minimum gap between APPLIED wheel-scroll events on slow-scroll
-/// surfaces (tree, git rail, extra-workspace trees, integrations
-/// list). Throttles macOS Terminal / Ghostty / iTerm2 smooth-scroll
-/// bursts down to one row per real wheel notch.
-const LIST_SCROLL_THROTTLE_MS: u128 = 80;
+/// Per-frame cap on the magnitude of a coalesced batched scroll
+/// applied to a tree/list surface. The event-loop coalescer
+/// already caps at 40 events; this is a final safety clamp so a
+/// huge batch can't move the cursor across hundreds of rows in
+/// one shot (which would feel like a teleport, not a scroll).
+const LIST_SCROLL_PER_BATCH_CAP: i32 = 8;
 
-/// Returns true when this wheel event should be applied (and
-/// stamps `last_list_scroll_at`); false when it should be dropped
-/// as too-close-on-the-heels.
-fn list_scroll_gate(app: &mut App) -> bool {
-    let now = std::time::Instant::now();
-    let drop = app
-        .last_list_scroll_at
-        .is_some_and(|prev| now.duration_since(prev).as_millis() < LIST_SCROLL_THROTTLE_MS);
-    if !drop {
-        app.last_list_scroll_at = Some(now);
-    }
-    !drop
+/// Clamp the (already-coalesced) batched scroll magnitude to a
+/// sane per-tick movement for list/tree surfaces. Replaced the
+/// 80ms time-gate that used to spread bursts over time — that
+/// just delayed the over-scroll instead of stopping it.
+fn list_scroll_clamp(delta: i32) -> i32 {
+    let sign = delta.signum();
+    let mag = delta.unsigned_abs() as i32;
+    sign * mag.min(LIST_SCROLL_PER_BATCH_CAP)
 }
 
 pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     if let Some(tr) = app.rects.tree
         && contains(tr, x, y)
     {
-        if !list_scroll_gate(app) {
-            return;
-        }
-        for _ in 0..delta.unsigned_abs() {
-            if delta < 0 {
+        let d = list_scroll_clamp(delta);
+        for _ in 0..d.unsigned_abs() {
+            if d < 0 {
                 app.tree.move_up();
             } else {
                 app.tree.move_down();
@@ -540,12 +535,10 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .iter()
         .find(|(r, _, _)| contains(*r, x, y))
     {
-        if !list_scroll_gate(app) {
-            return;
-        }
+        let d = list_scroll_clamp(delta);
         if let Some(ws) = app.extra_workspaces.get_mut(ws_idx) {
-            for _ in 0..delta.unsigned_abs() {
-                if delta < 0 {
+            for _ in 0..d.unsigned_abs() {
+                if d < 0 {
                     ws.tree.move_up();
                 } else {
                     ws.tree.move_down();
@@ -572,11 +565,9 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .iter()
         .any(|(r, _)| contains(*r, x, y))
     {
-        if !list_scroll_gate(app) {
-            return;
-        }
-        for _ in 0..delta.unsigned_abs() {
-            if delta < 0 {
+        let d = list_scroll_clamp(delta);
+        for _ in 0..d.unsigned_abs() {
+            if d < 0 {
                 app.git_rail_move_up();
             } else {
                 app.git_rail_move_down();
