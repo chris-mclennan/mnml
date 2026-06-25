@@ -127,12 +127,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     frame.render_widget(Paragraph::new(window), body_rect);
 
     // Register click rects for visible section headers.
-    for (visible_idx, header_name) in header_names
-        .iter()
-        .skip(scroll)
-        .take(body_h)
-        .enumerate()
-    {
+    for (visible_idx, header_name) in header_names.iter().skip(scroll).take(body_h).enumerate() {
         if let Some(name) = header_name {
             let row_rect = Rect {
                 x: inner.x,

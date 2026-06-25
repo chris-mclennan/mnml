@@ -1519,7 +1519,9 @@ impl App {
                 }
                 let resp_text = match &rp.state {
                     RunState::Sending => "(still in flight — wait for it)".to_string(),
-                    RunState::Streaming(r) => format!("(streaming · {} bytes so far)\n{}", r.body.len(), r.body),
+                    RunState::Streaming(r) => {
+                        format!("(streaming · {} bytes so far)\n{}", r.body.len(), r.body)
+                    }
                     RunState::Failed(e) => format!("transport error: {e}"),
                     RunState::Done(r) => {
                         let mut s = format!("{} {}\n", r.status, r.status_text);
@@ -1561,7 +1563,9 @@ impl App {
                 }
                 let resp_text = match &rp.state {
                     RunState::Sending => "(still in flight — wait for it)".to_string(),
-                    RunState::Streaming(r) => format!("(streaming · {} bytes so far)\n{}", r.body.len(), r.body),
+                    RunState::Streaming(r) => {
+                        format!("(streaming · {} bytes so far)\n{}", r.body.len(), r.body)
+                    }
                     RunState::Failed(e) => format!("transport error: {e}"),
                     RunState::Done(r) => {
                         let mut s = format!("{} {}\n", r.status, r.status_text);
@@ -1750,13 +1754,9 @@ impl App {
                             body.push('\n');
                         }
                         body.push_str("```\n");
-                        self.open_scratch_with_text(
-                            "[recompose-suggestions]".to_string(),
-                            body,
-                        );
+                        self.open_scratch_with_text("[recompose-suggestions]".to_string(), body);
                         toasts.push(
-                            "ai.recompose_branch: ready → [recompose-suggestions]"
-                                .to_string(),
+                            "ai.recompose_branch: ready → [recompose-suggestions]".to_string(),
                         );
                     }
                     Err(e) => toasts.push(format!("ai.recompose_branch: {e}")),
@@ -1783,10 +1783,7 @@ impl App {
                             .trim_end_matches("```")
                             .trim()
                             .to_string();
-                        self.open_scratch_with_text(
-                            "[diff-explanation]".to_string(),
-                            clean,
-                        );
+                        self.open_scratch_with_text("[diff-explanation]".to_string(), clean);
                         toasts.push("ai.explain_diff: ready → [diff-explanation]".to_string());
                     }
                     Err(e) => toasts.push(format!("ai.explain_diff: {e}")),
@@ -2079,11 +2076,11 @@ impl App {
             .current_dir(self.active_repo_path())
             .output();
         let merge_base = match mb_out {
-            Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout).trim().to_string()
-            }
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
             _ => {
-                self.toast(format!("ai.recompose_branch: merge-base HEAD..{base} failed"));
+                self.toast(format!(
+                    "ai.recompose_branch: merge-base HEAD..{base} failed"
+                ));
                 return;
             }
         };
@@ -2138,9 +2135,7 @@ impl App {
         );
         let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
         self.pending_recompose_branch_job = Some(job_id);
-        self.toast(format!(
-            "ai.recompose_branch: asking Claude (vs {base})…"
-        ));
+        self.toast(format!("ai.recompose_branch: asking Claude (vs {base})…"));
     }
 
     /// `:ai.explain_diff` — ask Claude to walk through the staged

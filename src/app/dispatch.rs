@@ -1026,9 +1026,7 @@ pub(crate) fn handle_scm_row_click(
             }
         }
         if is_double_click {
-            app.claude_agents_action(
-                crate::claude_agents::ClaudeAgentsAction::OpenTranscript,
-            );
+            app.claude_agents_action(crate::claude_agents::ClaudeAgentsAction::OpenTranscript);
         }
         return;
     }

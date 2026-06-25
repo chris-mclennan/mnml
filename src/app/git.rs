@@ -1457,10 +1457,7 @@ impl App {
                     result,
                 }) => match result {
                     Ok(()) => {
-                        self.toast(format!(
-                            "worktree added at {} ({branch})",
-                            path.display()
-                        ));
+                        self.toast(format!("worktree added at {} ({branch})", path.display()));
                         self.after_git_change();
                         self.add_workspace_runtime(path, None);
                     }
@@ -2284,7 +2281,11 @@ impl App {
                 PickerItem::new(path.clone(), label, w.label.clone())
             })
             .collect();
-        self.open_picker(Picker::new(PickerKind::GitWorktreeOpen, "Open worktree", items));
+        self.open_picker(Picker::new(
+            PickerKind::GitWorktreeOpen,
+            "Open worktree",
+            items,
+        ));
     }
 
     /// `:git.worktree_remove` — picker over linked worktrees;
@@ -2358,11 +2359,7 @@ impl App {
         self.toast(format!("adding worktree at {}…", path.display()));
         let _ = self
             .git_loader_tx
-            .send(crate::app::git_async::GitJob::WorktreeAdd {
-                repo,
-                path,
-                branch,
-            });
+            .send(crate::app::git_async::GitJob::WorktreeAdd { repo, path, branch });
     }
 
     /// `:git.recent_branches` — picker over local branches sorted
@@ -2393,11 +2390,7 @@ impl App {
                 PickerItem::new(format!("local:{b}"), label, detail)
             })
             .collect();
-        self.open_picker(Picker::new(
-            PickerKind::Branches,
-            "Recent branches",
-            items,
-        ));
+        self.open_picker(Picker::new(PickerKind::Branches, "Recent branches", items));
     }
 
     /// `:git.copy_current_branch` — copy the active repo's current
@@ -2487,14 +2480,17 @@ impl App {
         // Find the FIRST git-graph pane and jump there. If multiple
         // are open we just hit the first — opening the activity-bar
         // Git icon always foregrounds one anyway.
-        let Some((pane_idx, idx_in_graph)) = self.panes.iter_mut().enumerate().find_map(
-            |(i, p)| match p {
-                crate::pane::Pane::GitGraph(g) => g
-                    .find_by_hash_prefix(&sha)
-                    .map(|commit_idx| (i, commit_idx)),
-                _ => None,
-            },
-        ) else {
+        let Some((pane_idx, idx_in_graph)) =
+            self.panes
+                .iter_mut()
+                .enumerate()
+                .find_map(|(i, p)| match p {
+                    crate::pane::Pane::GitGraph(g) => g
+                        .find_by_hash_prefix(&sha)
+                        .map(|commit_idx| (i, commit_idx)),
+                    _ => None,
+                })
+        else {
             // Couldn't find the sha in any open graph pane —
             // either no graph is open or the commit isn't in
             // the current view (filtered out, etc.). Open one.
@@ -2838,11 +2834,7 @@ impl App {
     /// leaves the stash on the list; Drop removes it without
     /// applying. The Drop action goes through the standard
     /// confirm flow.
-    pub fn open_git_palette_stash_context_menu(
-        &mut self,
-        stash_idx: usize,
-        anchor: (u16, u16),
-    ) {
+    pub fn open_git_palette_stash_context_menu(&mut self, stash_idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let Some(st) = self.git_rail.stashes.get(stash_idx) else {
             return;
@@ -2863,11 +2855,7 @@ impl App {
 
     /// Right-click on a git-palette TAG row → context menu with
     /// Checkout (already the click action) and Delete.
-    pub fn open_git_palette_tag_context_menu(
-        &mut self,
-        tag_idx: usize,
-        anchor: (u16, u16),
-    ) {
+    pub fn open_git_palette_tag_context_menu(&mut self, tag_idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let Some(name) = self.git_rail.tags.get(tag_idx).cloned() else {
             return;
@@ -2878,7 +2866,10 @@ impl App {
                 format!("Checkout {name}"),
                 MenuAction::GitCheckoutBranch(name.clone()),
             ),
-            MenuItem::new(format!("Delete tag {name}…"), MenuAction::GitTagDelete(name)),
+            MenuItem::new(
+                format!("Delete tag {name}…"),
+                MenuAction::GitTagDelete(name),
+            ),
         ];
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
     }

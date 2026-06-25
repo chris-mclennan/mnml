@@ -169,10 +169,8 @@ fn format_summary(
             let lo = min + range * i as u64 / BUCKETS as u64;
             let hi = min + range * (i + 1) as u64 / BUCKETS as u64;
             let bar_len = (c as usize * BAR_W) / peak as usize;
-            let bar: String = std::iter::repeat('█').take(bar_len).collect();
-            out.push_str(&format!(
-                "    {lo:>4}–{hi:<4} ms │{bar:<BAR_W$}│ {c}\n"
-            ));
+            let bar: String = std::iter::repeat_n('█', bar_len).collect();
+            out.push_str(&format!("    {lo:>4}–{hi:<4} ms │{bar:<BAR_W$}│ {c}\n"));
         }
     }
     if !errs.is_empty() {

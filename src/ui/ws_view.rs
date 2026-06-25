@@ -14,7 +14,13 @@ use crate::pane::Pane;
 use crate::ui::theme;
 use crate::websocket::WsState;
 
-pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: bool) -> Option<(u16, u16)> {
+pub fn draw(
+    frame: &mut Frame,
+    app: &mut App,
+    id: PaneId,
+    area: Rect,
+    focused: bool,
+) -> Option<(u16, u16)> {
     let Some(Pane::Websocket(p)) = app.panes.get(id) else {
         return None;
     };

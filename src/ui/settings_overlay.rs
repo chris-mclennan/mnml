@@ -350,7 +350,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // 2026-06-19 — earlier hint said "Enter save" but Enter on a
     // Text row entered edit mode (then Enter again to commit +
     // persist). Now distinguishes the two roles.
-    let hint = "←→ adjust · ↑↓ move · Enter edit/save · r reset · R reset all · click out / Esc done";
+    let hint =
+        "←→ adjust · ↑↓ move · Enter edit/save · r reset · R reset all · click out / Esc done";
     let hint_line = truncate_line_to_width(
         &Line::from(Span::styled(
             hint.to_string(),

@@ -393,15 +393,10 @@ impl App {
             };
             let target = arr
                 .iter()
-                .find(|t| {
-                    t.get("url").and_then(|u| u.as_str()) == Some(cur_url.as_str())
-                })
+                .find(|t| t.get("url").and_then(|u| u.as_str()) == Some(cur_url.as_str()))
                 .or_else(|| arr.first());
             let Some(t) = target else { return };
-            let Some(dt_url) = t
-                .get("devtoolsFrontendUrl")
-                .and_then(|u| u.as_str())
-            else {
+            let Some(dt_url) = t.get("devtoolsFrontendUrl").and_then(|u| u.as_str()) else {
                 return;
             };
             let full = if dt_url.starts_with("http") {
@@ -1418,9 +1413,7 @@ impl App {
                 .and_then(|h| h.as_object())
                 .map(|obj| {
                     obj.iter()
-                        .filter_map(|(k, v)| {
-                            v.as_str().map(|s| (k.clone(), s.to_string()))
-                        })
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                         .collect()
                 })
                 .unwrap_or_default();

@@ -304,7 +304,8 @@ impl PtySession {
     /// How many bytes have arrived since the last `mark_seen`.
     /// Used by the sessions panel to render the `🔔` bell badge.
     pub fn unread_bytes(&self) -> u64 {
-        self.bytes_processed().saturating_sub(self.bytes_seen_on_focus)
+        self.bytes_processed()
+            .saturating_sub(self.bytes_seen_on_focus)
     }
 
     /// Tick — refresh `last_output_at` when `bytes_seen` has

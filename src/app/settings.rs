@@ -924,9 +924,8 @@ impl App {
         if let Some(state) = self.settings_overlay.as_ref()
             && self.config.default_workspace != state.original.default_workspace
         {
-            match crate::config::persist_default_workspace(
-                self.config.default_workspace.as_deref(),
-            ) {
+            match crate::config::persist_default_workspace(self.config.default_workspace.as_deref())
+            {
                 Ok(_) => {}
                 Err(e) => {
                     self.toast(format!(
@@ -1253,7 +1252,9 @@ impl App {
         let original_pd = state.original.ui.projects_dir.clone();
         let current_pd = self.config.ui.projects_dir.clone();
         let dws_result = if original_dws != current_dws {
-            Some(crate::config::persist_default_workspace(current_dws.as_deref()))
+            Some(crate::config::persist_default_workspace(
+                current_dws.as_deref(),
+            ))
         } else {
             None
         };

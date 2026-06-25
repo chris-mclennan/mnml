@@ -442,7 +442,7 @@ impl Buffer {
                     // save + get "no changes to save" silently.
                     dirty: true,
                     is_preview: false,
-            is_pinned: false,
+                    is_pinned: false,
                     saved_text: String::new(),
                     language_ext: ext,
                     input: input::make_handler(cfg),

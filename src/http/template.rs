@@ -40,10 +40,7 @@ impl EnvSet {
         // Read the legacy .rqst path first so .mnml overrides on the
         // SAME key win in the final map.
         for sub in [".rqst", ".mnml"] {
-            let path = workspace
-                .join(sub)
-                .join("env")
-                .join(format!("{name}.env"));
+            let path = workspace.join(sub).join("env").join(format!("{name}.env"));
             if let Ok(text) = fs::read_to_string(&path) {
                 for line in text.lines() {
                     if let Some((k, v)) = parse_env_line(line) {

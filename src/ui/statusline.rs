@@ -362,7 +362,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .unwrap_or(false);
     let (mixr_play_seg_idx, mixr_ffwd_seg_idx, mixr_seg_idx) = if has_track_loaded {
         // Three-segment transport cluster.
-        let np = app.now_playing.as_ref().expect("guarded by has_track_loaded");
+        let np = app
+            .now_playing
+            .as_ref()
+            .expect("guarded by has_track_loaded");
         // Combine artist + title when the source separates them.
         // Mixr bakes "Artist - Title" into `track` and uses `detail`
         // for bpm, so its `track` already reads well by itself. macOS

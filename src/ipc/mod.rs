@@ -827,8 +827,14 @@ pub fn rects_dump_json(app: &App) -> String {
     }
     one!("tree_toggle", app.rects.tree_toggle);
     one!("tree_edge", app.rects.tree_edge);
-    one!("integration_section_toggle", app.rects.integration_section_toggle);
-    one!("statusline_workspace_chip", app.rects.statusline_workspace_chip);
+    one!(
+        "integration_section_toggle",
+        app.rects.integration_section_toggle
+    );
+    one!(
+        "statusline_workspace_chip",
+        app.rects.statusline_workspace_chip
+    );
     one!("statusline_branch_chip", app.rects.statusline_branch_chip);
     one!("statusline_mode_chip", app.rects.statusline_mode_chip);
     one!("statusline_clock_chip", app.rects.statusline_clock_chip);
@@ -852,10 +858,20 @@ pub fn rects_dump_json(app: &App) -> String {
     // to be subject to the same chip-overlap bug pattern that
     // motivated the audit toolkit.
     for (r, idx) in &app.rects.extra_workspace_toggles {
-        push_rect(&mut out, &mut first, &format!("extra_workspace_toggle:{idx}"), *r);
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("extra_workspace_toggle:{idx}"),
+            *r,
+        );
     }
     for (r, idx) in &app.rects.discovery_integration_rows {
-        push_rect(&mut out, &mut first, &format!("discovery_integration_row:{idx}"), *r);
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("discovery_integration_row:{idx}"),
+            *r,
+        );
     }
     for (r, _) in &app.rects.git_rail_rows {
         push_rect(&mut out, &mut first, "git_rail_row", *r);
@@ -896,7 +912,12 @@ pub fn rects_dump_json(app: &App) -> String {
         );
     }
     for (r, idx) in &app.rects.context_menu_items {
-        push_rect(&mut out, &mut first, &format!("context_menu_item:{idx}"), *r);
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("context_menu_item:{idx}"),
+            *r,
+        );
     }
     // 2026-06-19 — api-workflow third hunt: tabbed Edit-view chip
     // rects weren't in the dump, making the click bug undetectable

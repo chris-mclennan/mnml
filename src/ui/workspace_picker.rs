@@ -41,9 +41,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // Filter check — match on name OR group.
         let name_lc = w.name.to_ascii_lowercase();
         let group_lc = group.to_ascii_lowercase();
-        if !filter_lc.is_empty()
-            && !name_lc.contains(&filter_lc)
-            && !group_lc.contains(&filter_lc)
+        if !filter_lc.is_empty() && !name_lc.contains(&filter_lc) && !group_lc.contains(&filter_lc)
         {
             continue;
         }
@@ -105,13 +103,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             t.fg
         };
         let cursor = "▏";
-        let pad =
-            (inner.width as usize).saturating_sub(display.chars().count() + 1 + 1);
+        let pad = (inner.width as usize).saturating_sub(display.chars().count() + 1 + 1);
         let line = Line::from(vec![
-            Span::styled(
-                "\u{F0349} ",
-                Style::default().fg(t.comment).bg(t.bg2),
-            ),
+            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(t.bg2)),
             Span::styled(display, Style::default().fg(fg).bg(t.bg2)),
             Span::styled(cursor, Style::default().fg(t.cyan).bg(t.bg2)),
             Span::styled(" ".repeat(pad), Style::default().bg(t.bg2)),
@@ -136,15 +130,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             break;
         }
         if !group.is_empty() {
-            let header_line = Line::from(vec![
-                Span::styled(
-                    format!(" {group} "),
-                    Style::default()
-                        .fg(t.comment)
-                        .bg(t.bg2)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]);
+            let header_line = Line::from(vec![Span::styled(
+                format!(" {group} "),
+                Style::default()
+                    .fg(t.comment)
+                    .bg(t.bg2)
+                    .add_modifier(Modifier::BOLD),
+            )]);
             frame.render_widget(
                 Paragraph::new(header_line),
                 Rect {
@@ -167,10 +159,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             let ws_idx = i + 1;
             let line = Line::from(vec![
                 Span::styled("  ", Style::default().bg(t.bg2)),
-                Span::styled(
-                    w_cfg.name.clone(),
-                    Style::default().fg(t.fg).bg(t.bg2),
-                ),
+                Span::styled(w_cfg.name.clone(), Style::default().fg(t.fg).bg(t.bg2)),
             ]);
             let row = Rect {
                 x: inner.x,

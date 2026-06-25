@@ -57,9 +57,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Lower-cased filter for case-insensitive substring matching
     // throughout the palette.
     let filter_lc = app.git_palette_filter.to_ascii_lowercase();
-    let matches_filter = |s: &str| -> bool {
-        filter_lc.is_empty() || s.to_ascii_lowercase().contains(&filter_lc)
-    };
+    let matches_filter =
+        |s: &str| -> bool { filter_lc.is_empty() || s.to_ascii_lowercase().contains(&filter_lc) };
 
     // ── repo header ───────────────────────────────────────────
     let repo_name = app
@@ -99,7 +98,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         Span::styled("⎇ ", Style::default().fg(t.purple).bg(bg)),
         Span::styled(
             branch.clone(),
-            Style::default().fg(t.fg).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.fg)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ),
     ];
     if snap.ahead > 0 {
@@ -157,14 +159,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             filter_text
         };
         let cursor = if focused { "▏" } else { " " };
-        let pad =
-            (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
+        let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                "\u{F0349} ",
-                Style::default().fg(t.comment).bg(bg_chip),
-            ),
+            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
             Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
             Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
             Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
@@ -200,21 +198,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|(i, b)| (i, b.name.clone()))
         .collect();
     if y < area.y + area.height && !local_filtered.is_empty() {
-        y = draw_section_header(
-            frame,
-            app,
-            area,
-            y,
-            "LOCAL",
-            local_filtered.len(),
-            bg,
-        );
+        y = draw_section_header(frame, app, area, y, "LOCAL", local_filtered.len(), bg);
     }
     // Folder-group local branches by their `/` prefix so a repo
     // with `bugfix/*`, `chore/*`, `feature/*` collapses into a
     // few folder rows instead of dumping 50+ branches flat.
-    let local_filtered_names: Vec<&str> =
-        local_filtered.iter().map(|(_, n)| n.as_str()).collect();
+    let local_filtered_names: Vec<&str> = local_filtered.iter().map(|(_, n)| n.as_str()).collect();
     let local_groups_indirect = group_by_folder(&local_filtered_names);
     // Re-map the inner indices from "index into filtered list" →
     // "index into git_rail.branches".
@@ -240,14 +229,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // Folder header row, e.g. `▾ bugfix (2)`.
             let folder_line = Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    "▾ ",
-                    Style::default().fg(t.comment).bg(bg),
-                ),
-                Span::styled(
-                    folder.clone(),
-                    Style::default().fg(t.fg).bg(bg),
-                ),
+                Span::styled("▾ ", Style::default().fg(t.comment).bg(bg)),
+                Span::styled(folder.clone(), Style::default().fg(t.fg).bg(bg)),
                 Span::styled(
                     format!("  ({})", idxs.len()),
                     Style::default().fg(t.comment).bg(bg),
@@ -374,14 +357,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 let folder_line = Line::from(vec![
                     Span::styled("  ", Style::default().bg(bg)),
-                    Span::styled(
-                        "▾ ",
-                        Style::default().fg(t.comment).bg(bg),
-                    ),
-                    Span::styled(
-                        folder.clone(),
-                        Style::default().fg(t.fg).bg(bg),
-                    ),
+                    Span::styled("▾ ", Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(folder.clone(), Style::default().fg(t.fg).bg(bg)),
                     Span::styled(
                         format!("  ({})", idxs.len()),
                         Style::default().fg(t.comment).bg(bg),
@@ -428,10 +405,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let line = Line::from(vec![
                     Span::styled(indent, Style::default().bg(bg)),
                     Span::styled("⎈ ", Style::default().fg(t.blue).bg(bg)),
-                    Span::styled(
-                        display,
-                        Style::default().fg(t.fg).bg(bg),
-                    ),
+                    Span::styled(display, Style::default().fg(t.fg).bg(bg)),
                 ]);
                 let _ = full;
                 frame.render_widget(Paragraph::new(line), row_rect);
@@ -465,7 +439,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|s| matches_filter(s))
+                .map(&matches_filter)
                 .unwrap_or(false);
             if !matches_filter(&wt.label) && !dir_match {
                 continue;
@@ -500,13 +474,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
                     shown,
-                    Style::default().fg(t.fg).bg(bg).add_modifier(
-                        if wt.is_current {
+                    Style::default()
+                        .fg(t.fg)
+                        .bg(bg)
+                        .add_modifier(if wt.is_current {
                             Modifier::BOLD
                         } else {
                             Modifier::empty()
-                        },
-                    ),
+                        }),
                 ),
             ]);
             frame.render_widget(Paragraph::new(line), row_rect);
@@ -574,13 +549,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
                     title_disp,
-                    Style::default().fg(t.fg).bg(bg).add_modifier(
-                        if pr.is_current_branch {
+                    Style::default()
+                        .fg(t.fg)
+                        .bg(bg)
+                        .add_modifier(if pr.is_current_branch {
                             Modifier::BOLD
                         } else {
                             Modifier::empty()
-                        },
-                    ),
+                        }),
                 ),
             ]);
             frame.render_widget(Paragraph::new(line), row_rect);
@@ -623,7 +599,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let width = area.width as usize;
             let avail = width.saturating_sub(5);
             let display = if summary_short.chars().count() > avail {
-                let mut s: String = summary_short.chars().take(avail.saturating_sub(1)).collect();
+                let mut s: String = summary_short
+                    .chars()
+                    .take(avail.saturating_sub(1))
+                    .collect();
                 s.push('…');
                 s
             } else {
@@ -653,15 +632,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── TAGS section ──────────────────────────────────────────
     if !app.git_rail.tags.is_empty() && y < area.y + area.height {
-        y = draw_section_header(
-            frame,
-            app,
-            area,
-            y,
-            "TAGS",
-            app.git_rail.tags.len(),
-            bg,
-        );
+        y = draw_section_header(frame, app, area, y, "TAGS", app.git_rail.tags.len(), bg);
         for (i, tag) in app.git_rail.tags.iter().enumerate() {
             if y >= area.y + area.height {
                 break;
@@ -704,8 +675,7 @@ fn draw_section_header(
     let count_str = format!("{count}");
     let label_w = label.chars().count();
     let count_w = count_str.chars().count();
-    let pad = (area.width as usize)
-        .saturating_sub(1 + label_w + 1 + count_w + 1);
+    let pad = (area.width as usize).saturating_sub(1 + label_w + 1 + count_w + 1);
     let line = Line::from(vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(

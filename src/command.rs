@@ -3140,8 +3140,7 @@ fn builtin_commands() -> Vec<Command> {
             // affects every Browser pane in this session until restart.
             keys: &[],
             run: |app| {
-                app.config.browser.autocapture_to_log =
-                    !app.config.browser.autocapture_to_log;
+                app.config.browser.autocapture_to_log = !app.config.browser.autocapture_to_log;
                 app.toast(if app.config.browser.autocapture_to_log {
                     "browser autocapture → captured/log.jsonl: ON"
                 } else {

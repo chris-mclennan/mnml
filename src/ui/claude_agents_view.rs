@@ -51,7 +51,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     };
     let group_label = p.group_by.label();
     let header_text = if p.filter_mode {
-        format!(" Claude Agents · /{} · enter applies · esc clears ", p.query)
+        format!(
+            " Claude Agents · /{} · enter applies · esc clears ",
+            p.query
+        )
     } else if !p.query.is_empty() {
         // 2026-06-21 design-critic + claude-agents SEV-3: when a
         // text filter is active, the header used to drop sort /
@@ -123,8 +126,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let vis = p.visible_indices();
     if vis.is_empty() {
         let empty_text = if p.query.is_empty() {
-            "  no Claude sessions found under ~/.claude/projects/ in the last 7 days"
-                .to_string()
+            "  no Claude sessions found under ~/.claude/projects/ in the last 7 days".to_string()
         } else {
             format!("  no sessions match {:?}", p.query)
         };
@@ -161,9 +163,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         ));
         for &vi in indices {
             let row_idx = vis[vi];
-            let marked = p
-                .multi_selected
-                .contains(&p.rows[row_idx].session_id);
+            let marked = p.multi_selected.contains(&p.rows[row_idx].session_id);
             row_line_positions.insert(vi, all_lines.len());
             all_lines.push(render_row(
                 &p.rows[row_idx],
@@ -215,8 +215,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     // rows area showing the visible window vs total height.
     if all_lines.len() > body_h && rows_area.width > 1 {
         let total = all_lines.len();
-        let bar_h = ((body_h as f64 / total as f64) * body_h as f64)
-            .max(1.0) as usize;
+        let bar_h = ((body_h as f64 / total as f64) * body_h as f64).max(1.0) as usize;
         let bar_top = ((scroll as f64 / total as f64) * body_h as f64) as usize;
         for i in 0..body_h {
             let in_bar = i >= bar_top && i < bar_top + bar_h;
@@ -232,10 +231,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
                 width: 1,
                 height: 1,
             };
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(glyph, style))),
-                area,
-            );
+            frame.render_widget(Paragraph::new(Line::from(Span::styled(glyph, style))), area);
         }
     }
 
@@ -263,12 +259,18 @@ fn draw_topbar(
     spans.push(Span::styled(" ", label_style));
     spans.push(Span::styled(
         format!("● {} live  ", agg.streaming),
-        Style::default().fg(t.green).bg(bg).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(t.green)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD),
     ));
     if agg.tool_calls > 0 {
         spans.push(Span::styled(
             format!("▸ {} tool  ", agg.tool_calls),
-            Style::default().fg(t.yellow).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.yellow)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     spans.push(Span::styled(
@@ -286,13 +288,19 @@ fn draw_topbar(
     if agg.total_cost_usd > 0.0 {
         spans.push(Span::styled(
             format!("≈ {}  ", format_cost(agg.total_cost_usd)),
-            Style::default().fg(t.orange).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.orange)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     if agg.pending_confirms > 0 {
         spans.push(Span::styled(
             format!("⚠ {} pending tool  ", agg.pending_confirms),
-            Style::default().fg(t.red).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.red)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     // Track byte offsets of clickable chips so we can register
@@ -328,9 +336,16 @@ fn draw_topbar(
     let mut register = |kind: super::TopbarChipKind, label: &str, off: &mut u16| {
         let w = label.chars().count() as u16;
         let x = area.x.saturating_add(*off);
-        rects
-            .claude_agents_topbar_chips
-            .push((Rect { x, y: area.y, width: w, height: 1 }, pane_id, kind));
+        rects.claude_agents_topbar_chips.push((
+            Rect {
+                x,
+                y: area.y,
+                width: w,
+                height: 1,
+            },
+            pane_id,
+            kind,
+        ));
         *off = off.saturating_add(w);
     };
 
@@ -367,11 +382,7 @@ enum SectionKey {
     Workspace(String),
 }
 
-fn build_groups(
-    mode: GroupBy,
-    vis: &[usize],
-    rows: &[AgentRow],
-) -> Vec<(SectionKey, Vec<usize>)> {
+fn build_groups(mode: GroupBy, vis: &[usize], rows: &[AgentRow]) -> Vec<(SectionKey, Vec<usize>)> {
     use std::collections::BTreeMap;
     match mode {
         GroupBy::Source => {
@@ -476,7 +487,10 @@ fn render_row(
 ) -> Line<'static> {
     let bg = if selected { t.bg2 } else { t.bg_dark };
     let mark = if selected { "▸ " } else { "  " };
-    let mark_style = Style::default().fg(t.cyan).bg(bg).add_modifier(Modifier::BOLD);
+    let mark_style = Style::default()
+        .fg(t.cyan)
+        .bg(bg)
+        .add_modifier(Modifier::BOLD);
     let multi_glyph = if multi_marked { "☑" } else { " " };
 
     let state_color = match row.state {
@@ -503,7 +517,7 @@ fn render_row(
     let model_pad = format!("{:<14}", clip(&model, 14));
     let age = row
         .last_activity
-        .map(|t| age_label(t))
+        .map(age_label)
         .unwrap_or_else(|| "?".to_string());
     let tokens = format_tokens(row.tokens);
     let cost = format_cost(row.cost_usd);
@@ -526,11 +540,7 @@ fn render_row(
     let todos_chip = if row.todos.is_empty() {
         String::new()
     } else {
-        let done = row
-            .todos
-            .iter()
-            .filter(|t| t.status == "completed")
-            .count();
+        let done = row.todos.iter().filter(|t| t.status == "completed").count();
         format!("  ☑ {done}/{}", row.todos.len())
     };
 
@@ -540,35 +550,76 @@ fn render_row(
         String::new()
     };
 
-    let row_chars =
-        state.chars().count() + workspace_pad.chars().count() + 8 + model_pad.chars().count()
-            + age.chars().count() + tokens.chars().count() + rate.chars().count() + cost.chars().count()
-            + pid.chars().count() + pending.chars().count() + todos_chip.chars().count() + 24;
+    let row_chars = state.chars().count()
+        + workspace_pad.chars().count()
+        + 8
+        + model_pad.chars().count()
+        + age.chars().count()
+        + tokens.chars().count()
+        + rate.chars().count()
+        + cost.chars().count()
+        + pid.chars().count()
+        + pending.chars().count()
+        + todos_chip.chars().count()
+        + 24;
     let pad = (width as usize).saturating_sub(row_chars + 4);
 
     Line::from(vec![
         Span::styled(
             multi_glyph.to_string(),
-            Style::default().fg(t.green).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.green)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!(" {source_glyph}"),
-            Style::default().fg(source_color).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(source_color)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(mark.to_string(), mark_style),
         Span::styled(
             state,
-            Style::default().fg(state_color).bg(bg).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(state_color)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("  {workspace_pad}"), Style::default().fg(t.fg).bg(bg)),
+        Span::styled(
+            format!("  {workspace_pad}"),
+            Style::default().fg(t.fg).bg(bg),
+        ),
         Span::styled(format!("  {sid}"), Style::default().fg(t.comment).bg(bg)),
-        Span::styled(format!("  {model_pad}"), Style::default().fg(source_color).bg(bg)),
+        Span::styled(
+            format!("  {model_pad}"),
+            Style::default().fg(source_color).bg(bg),
+        ),
         Span::styled(format!("  {:<6}", age), Style::default().fg(t.cyan).bg(bg)),
-        Span::styled(format!("  {:>6}", tokens), Style::default().fg(t.yellow).bg(bg)),
-        Span::styled(format!("  {:>7}", rate), Style::default().fg(t.green).bg(bg)),
-        Span::styled(format!("  {:>7}", cost), Style::default().fg(t.orange).bg(bg)),
-        Span::styled(format!("  {:>6}", pid), Style::default().fg(t.comment).bg(bg)),
-        Span::styled(pending, Style::default().fg(t.red).bg(bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("  {:>6}", tokens),
+            Style::default().fg(t.yellow).bg(bg),
+        ),
+        Span::styled(
+            format!("  {:>7}", rate),
+            Style::default().fg(t.green).bg(bg),
+        ),
+        Span::styled(
+            format!("  {:>7}", cost),
+            Style::default().fg(t.orange).bg(bg),
+        ),
+        Span::styled(
+            format!("  {:>6}", pid),
+            Style::default().fg(t.comment).bg(bg),
+        ),
+        Span::styled(
+            pending,
+            Style::default()
+                .fg(t.red)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(todos_chip, Style::default().fg(t.green).bg(bg)),
         Span::styled(" ".repeat(pad), Style::default().bg(bg)),
     ])
@@ -616,20 +667,28 @@ fn draw_detail(
             if let Some(u) = &row.last_user_msg {
                 lines.push(Line::from(vec![
                     Span::styled("  user: ", Style::default().fg(t.cyan).bg(t.bg_dark)),
-                    Span::styled(clip(u, (area.width as usize).saturating_sub(10)), value_style),
+                    Span::styled(
+                        clip(u, (area.width as usize).saturating_sub(10)),
+                        value_style,
+                    ),
                 ]));
             }
             if let Some(a) = &row.last_assistant_msg {
                 lines.push(Line::from(vec![
                     Span::styled("  asst: ", Style::default().fg(t.purple).bg(t.bg_dark)),
-                    Span::styled(clip(a, (area.width as usize).saturating_sub(10)), value_style),
+                    Span::styled(
+                        clip(a, (area.width as usize).saturating_sub(10)),
+                        value_style,
+                    ),
                 ]));
             }
             lines.push(Line::from(Span::styled(
                 format!(
                     "  {} events parsed in tail  ·  pid {}",
                     row.event_count,
-                    row.pid.map(|p| format!("{p}")).unwrap_or_else(|| "—".to_string())
+                    row.pid
+                        .map(|p| format!("{p}"))
+                        .unwrap_or_else(|| "—".to_string())
                 ),
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
@@ -731,10 +790,7 @@ fn draw_detail(
             } else {
                 for b in &row.recent_bash {
                     lines.push(Line::from(vec![
-                        Span::styled(
-                            "  $ ",
-                            Style::default().fg(t.green).bg(t.bg_dark),
-                        ),
+                        Span::styled("  $ ", Style::default().fg(t.green).bg(t.bg_dark)),
                         Span::styled(
                             clip(b, (area.width as usize).saturating_sub(6)),
                             value_style,
@@ -822,7 +878,7 @@ fn format_cost(usd: f64) -> String {
     } else if usd >= 0.01 {
         format!("${usd:.3}")
     } else if usd > 0.0 {
-        format!("<$0.01")
+        "<$0.01".to_string()
     } else {
         "—".to_string()
     }
@@ -841,15 +897,24 @@ const HELP_LINES: &[HelpEntry] = &[
     HelpEntry::Row("Home / End", "first / last row"),
     HelpEntry::Section("Filters"),
     HelpEntry::Row("/", "filter by text (workspace · id · model · last msg)"),
-    HelpEntry::Row("0 / 1 / 2 / 3 / 4", "filter by state (all / live / tool / idle / ended)"),
+    HelpEntry::Row(
+        "0 / 1 / 2 / 3 / 4",
+        "filter by state (all / live / tool / idle / ended)",
+    ),
     HelpEntry::Row("> / <", "cycle source filter (all → claude → codex → all)"),
-    HelpEntry::Row("W", "toggle workspace-only filter (capital — bare w is vim word-motion)"),
+    HelpEntry::Row(
+        "W",
+        "toggle workspace-only filter (capital — bare w is vim word-motion)",
+    ),
     HelpEntry::Row("Ctrl+L", "clear all filters at once"),
     HelpEntry::Section("Layout"),
     HelpEntry::Row("gg / G", "jump to top / bottom of list (vim canonical)"),
     HelpEntry::Row("Ctrl+G", "cycle grouping (by source ↔ by workspace)"),
     HelpEntry::Row("s", "cycle sort key (state → tokens↓ → cost↓ → recent → …)"),
-    HelpEntry::Row("v", "cycle drill-down view (Summary → Todos → Files → Bash → Agents)"),
+    HelpEntry::Row(
+        "v",
+        "cycle drill-down view (Summary → Todos → Files → Bash → Agents)",
+    ),
     HelpEntry::Row("r", "refresh now · p pause/resume the 3s auto-refresh"),
     HelpEntry::Section("Selection"),
     HelpEntry::Row("space", "toggle multi-select on the focused row"),
@@ -874,8 +939,15 @@ pub fn help_overlay(t: &theme::Theme, width: u16) -> Vec<Line<'static>> {
     let mut lines: Vec<Line> = Vec::new();
     let bg = t.bg2;
     lines.push(Line::from(Span::styled(
-        format!(" {:<width$}", " Claude Agents — help (? to close)", width = width as usize - 1),
-        Style::default().fg(t.yellow).bg(bg).add_modifier(Modifier::BOLD),
+        format!(
+            " {:<width$}",
+            " Claude Agents — help (? to close)",
+            width = width as usize - 1
+        ),
+        Style::default()
+            .fg(t.yellow)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD),
     )));
     for entry in HELP_LINES {
         match entry {

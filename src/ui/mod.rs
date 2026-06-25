@@ -40,12 +40,12 @@ pub mod browser_view;
 pub mod bufferline;
 pub mod cheatsheet_view;
 pub mod claude_agents_view;
-pub mod peek_overlay_view;
-pub mod ws_view;
 pub mod close_prompt;
 pub mod cmdline_bar;
-pub mod cmdline_popup_view;
 pub mod cmdline_history_view;
+pub mod cmdline_popup_view;
+pub mod peek_overlay_view;
+pub mod ws_view;
 // codebuilds_view moved to mnml-aws-codebuild.
 pub mod completion;
 pub mod context_menu;
@@ -76,20 +76,18 @@ pub mod md_preview;
 pub mod outline_view;
 pub mod picker;
 // pipeline_log_view removed after 2026-06 SCM split.
+pub mod agents_panel;
 pub mod discovery_overlay;
+pub mod dock;
+pub mod git_palette;
+pub mod menu_bar;
 pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
 pub mod request_view;
-pub mod agents_panel;
-pub mod dock;
-pub mod git_palette;
-pub mod menu_bar;
-pub mod sessions_panel;
-pub mod workspace_picker;
-pub mod workspaces_editor;
 pub mod scratch_term_view;
 pub mod scrollbar;
+pub mod sessions_panel;
 pub mod settings_overlay;
 pub mod signature;
 pub mod startup_picker;
@@ -98,6 +96,8 @@ pub mod tests_view;
 pub mod theme;
 pub mod toast_stack;
 pub mod tooltip;
+pub mod workspace_picker;
+pub mod workspaces_editor;
 // `trace_view` moved to mnml-test-playwright in 2026-06.
 pub mod tree_view;
 pub mod welcome;
@@ -437,8 +437,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             let h_frac = w.height_frac.clamp(0.15, 0.9);
             let h = (area_h as f32 * h_frac) as u16;
             match w.corner {
-                crate::dock::DockCorner::BottomLeft
-                | crate::dock::DockCorner::BottomRight => {
+                crate::dock::DockCorner::BottomLeft | crate::dock::DockCorner::BottomRight => {
                     if h > bottom_h {
                         bottom_h = h;
                     }
@@ -729,12 +728,8 @@ fn render_layout(
             // a horizontal row of tab chips (one per pane in the
             // leaf's `tabs`). The body area shrinks by 1 row.
             let is_split_leaf = !path.is_empty();
-            let has_own_tab_strip =
-                matches!(app.panes.get(*id), Some(crate::pane::Pane::Pty(_)));
-            let body_area = if is_split_leaf
-                && !has_own_tab_strip
-                && area.height >= 2
-            {
+            let has_own_tab_strip = matches!(app.panes.get(*id), Some(crate::pane::Pane::Pty(_)));
+            let body_area = if is_split_leaf && !has_own_tab_strip && area.height >= 2 {
                 let strip = ratatui::layout::Rect {
                     x: area.x,
                     y: area.y,
@@ -1004,8 +999,8 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // Visibility per `[ui] menu_bar` mode.
     app.rects.menu_bar_words.clear();
     let menu_mode = app.config.ui.menu_bar.as_str();
-    let menu_visible = matches!(menu_mode, "always")
-        || (menu_mode == "auto" && app.menu_open.is_some());
+    let menu_visible =
+        matches!(menu_mode, "always") || (menu_mode == "auto" && app.menu_open.is_some());
     if menu_visible {
         let menus = crate::menu_bar::bar();
         let mut mx = area.x;
@@ -1020,10 +1015,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
                 width: label_w,
                 height: 1,
             };
-            let is_open = app
-                .menu_open
-                .as_ref()
-                .is_some_and(|s| s.menu_idx == i);
+            let is_open = app.menu_open.as_ref().is_some_and(|s| s.menu_idx == i);
             // Underlines only show while a menu is open. Brand-menu
             // wordmark is exempt — `mnml` shouldn't have a random
             // letter underlined; its accelerator is the menu icon
@@ -1053,10 +1045,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             // Alt+<letter> accelerator. Underline it when ANY menu
             // is open so the user discovers the shortcut while
             // browsing.
-            let first_alpha_idx = m
-                .label
-                .chars()
-                .position(|c| c.is_ascii_alphabetic());
+            let first_alpha_idx = m.label.chars().position(|c| c.is_ascii_alphabetic());
             // The brand menu is the one whose first char isn't an
             // ASCII letter — its leading `>` is the prompt-mark
             // brand, the rest is the wordmark.
@@ -1073,8 +1062,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
                 // the wordmark, e.g. `>` and `_` in `>_  mnml`) pop
                 // in accent (cyan). Open-state inverts the whole
                 // word, so we leave it alone there.
-                let is_brand_mark =
-                    is_brand_menu && first_alpha_idx.is_some_and(|fa| idx < fa);
+                let is_brand_mark = is_brand_menu && first_alpha_idx.is_some_and(|fa| idx < fa);
                 if is_brand_mark && !ch.is_whitespace() && !is_open {
                     style = style.fg(t.cyan);
                 }
@@ -1288,7 +1276,6 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         app.rects.bufferline_window_close = None;
     }
 }
-
 
 /// Activity-bar Debug section — DAP launcher + at-a-glance status.
 /// Shows whether a session is running, the watch + breakpoint counts,
@@ -1892,13 +1879,8 @@ fn paint_leaf_tab_strip(
         let is_active = id == active;
         // Active chip: bg2 + bright fg. Inactive: bg_darker + dim fg.
         let chip_bg = if is_active { t.bg2 } else { strip_bg };
-        let chip_fg = if is_active && leaf_focused {
-            t.fg
-        } else if is_active {
-            t.fg
-        } else {
-            t.comment
-        };
+        let _ = leaf_focused;
+        let chip_fg = if is_active { t.fg } else { t.comment };
         let title = pane.title();
         let dirty = pane.is_dirty();
         let (glyph, icon_color) = icon_for_pane(pane, nerd);
@@ -1964,10 +1946,7 @@ fn paint_leaf_tab_strip(
         }
         let line = Line::from(vec![
             Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
-            Span::styled(
-                icon_text,
-                Style::default().fg(icon_color).bg(chip_bg),
-            ),
+            Span::styled(icon_text, Style::default().fg(icon_color).bg(chip_bg)),
             Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
             Span::styled(name_clipped, name_style),
             Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
@@ -1984,9 +1963,7 @@ fn paint_leaf_tab_strip(
 
         // Register click rects: whole chip → switch active.
         // Active chip's × (4th-from-end of the chip) → close.
-        app.rects
-            .split_tab_chips
-            .push((chip_rect, active, id));
+        app.rects.split_tab_chips.push((chip_rect, active, id));
         if is_active && painted_w >= 3 {
             // The × sits at: pad(1) + icon(1) + gap(1) + name + gap(1) → 4+name_w from chip_x
             // Actually let me compute it from the right: the trailing pad is 1, then × is 1.
@@ -1997,9 +1974,7 @@ fn paint_leaf_tab_strip(
                 width: 1,
                 height: 1,
             };
-            app.rects
-                .split_tab_close
-                .push((close_rect, active, id));
+            app.rects.split_tab_close.push((close_rect, active, id));
         }
 
         chip_x = chip_x.saturating_add(painted_w);
@@ -2077,9 +2052,7 @@ fn paint_leaf_tab_strip(
             Span::styled(" ", Style::default().bg(strip_bg)),
         ]);
         frame.render_widget(Paragraph::new(line), btn_rect);
-        app.rects
-            .split_strip_buttons
-            .push((btn_rect, active, dir));
+        app.rects.split_strip_buttons.push((btn_rect, active, dir));
         bx = bx.saturating_add(SPLIT_BTN_W);
     }
 }
@@ -2087,10 +2060,7 @@ fn paint_leaf_tab_strip(
 /// Pick a `(glyph, color)` for any pane kind — duplicates the
 /// dispatch in `bufferline::draw` but kept inline here so the
 /// per-leaf tab strip doesn't need a public API on bufferline.
-fn icon_for_pane(
-    pane: &crate::pane::Pane,
-    nerd: bool,
-) -> (&'static str, ratatui::style::Color) {
+fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui::style::Color) {
     use crate::pane::Pane;
     match pane {
         Pane::Editor(b) => {
@@ -2316,10 +2286,7 @@ mod palette_bar_tests {
         // chip — cluster should vanish completely (still above
         // the 80-col palette-bar-visible cutoff).
         let row = render_palette_bar_row(82, 3);
-        assert!(
-            !row.contains("TABS"),
-            "TABS must be hidden: {row:?}"
-        );
+        assert!(!row.contains("TABS"), "TABS must be hidden: {row:?}");
         // No tab chip
         assert!(!row.contains(" 1 "), "no tab chip allowed: {row:?}");
     }
@@ -2336,9 +2303,7 @@ mod palette_bar_tests {
     ///   - ghost / overlay paint code paths regress
     #[test]
     fn full_drag_flow_paints_ghost_and_overlay() {
-        use ratatui::crossterm::event::{
-            KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-        };
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let d = tempfile::tempdir().unwrap();
         let ws = d.path().to_path_buf();
         std::fs::write(ws.join("a.txt"), "alpha").unwrap();
@@ -2414,10 +2379,7 @@ mod palette_bar_tests {
             },
         );
         assert!(
-            app.tree_drag
-                .as_ref()
-                .map(|d| d.armed)
-                .unwrap_or(false),
+            app.tree_drag.as_ref().map(|d| d.armed).unwrap_or(false),
             "tree_drag should arm on cursor motion during drag (Moved event)"
         );
         assert!(
@@ -2430,9 +2392,7 @@ mod palette_bar_tests {
         let buf = term.backend().buffer();
         let screen: String = (0..buf.area.height)
             .map(|y| {
-                let row: String = (0..buf.area.width)
-                    .map(|x| buf[(x, y)].symbol())
-                    .collect();
+                let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
                 row + "\n"
             })
             .collect();
@@ -2451,7 +2411,7 @@ mod palette_bar_tests {
         );
 
         // === STAGE 4: mouse-up over pane → drop succeeds ===
-        let initial_layouts: Vec<_> = app.layouts.iter().map(|l| l.clone()).collect();
+        let initial_layouts: Vec<_> = app.layouts.to_vec();
         let _ = initial_layouts;
         crate::tui::dispatch_mouse(
             &mut app,
@@ -2523,9 +2483,7 @@ mod palette_bar_tests {
         let buf = term.backend().buffer();
         let screen: String = (0..buf.area.height)
             .map(|y| {
-                let row: String = (0..buf.area.width)
-                    .map(|x| buf[(x, y)].symbol())
-                    .collect();
+                let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
                 row + "\n"
             })
             .collect();
@@ -2543,7 +2501,6 @@ mod palette_bar_tests {
     /// move) and asserts the ghost chip text appears on screen.
     #[test]
     fn drag_ghost_paints_during_armed_drag() {
-        use std::path::PathBuf;
         let d = tempfile::tempdir().unwrap();
         let ws = d.path().to_path_buf();
         std::fs::write(ws.join("dragme.txt"), "drag me").unwrap();
@@ -2564,9 +2521,7 @@ mod palette_bar_tests {
         // somewhere on screen. Scan all rows.
         let screen: String = (0..buf.area.height)
             .map(|y| {
-                let row: String = (0..buf.area.width)
-                    .map(|x| buf[(x, y)].symbol())
-                    .collect();
+                let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
                 row + "\n"
             })
             .collect();

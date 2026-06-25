@@ -403,7 +403,8 @@ fn chain_subcommand(argv: Vec<String>) -> ExitCode {
 /// CI / scripted captures (the in-app `http.capture_now` covers
 /// the interactive case).
 fn proxy_subcommand(argv: Vec<String>) -> ExitCode {
-    let usage = "usage: mnml proxy --url URL [--workspace DIR] [--seconds N] [--idle-ms N] [--quiet]";
+    let usage =
+        "usage: mnml proxy --url URL [--workspace DIR] [--seconds N] [--idle-ms N] [--quiet]";
     let mut opts = mnml::http::proxy::Options::default();
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
@@ -451,7 +452,7 @@ fn proxy_subcommand(argv: Vec<String>) -> ExitCode {
         eprintln!("{usage}");
         return ExitCode::FAILURE;
     }
-    if opts.workspace == PathBuf::from(".") {
+    if opts.workspace.as_path() == std::path::Path::new(".") {
         opts.workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     }
     match mnml::http::proxy::run(opts) {
@@ -493,7 +494,8 @@ fn sync_subcommand(argv: Vec<String>) -> ExitCode {
             }
         }
     }
-    let ws = workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let ws =
+        workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     match mnml::http::sources::run_sync(&ws) {
         Ok((trace, total)) => {
             print!("{trace}");

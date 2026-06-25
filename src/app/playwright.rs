@@ -206,9 +206,7 @@ impl App {
             && std::fs::read_dir(root.join("tests"))
                 .map(|rd| {
                     rd.filter_map(|e| e.ok()).any(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .starts_with("test_")
+                        e.file_name().to_string_lossy().starts_with("test_")
                             && e.file_name().to_string_lossy().ends_with(".py")
                     })
                 })
@@ -245,10 +243,7 @@ impl App {
     ///     picker over them. Accept fires `go run ./cmd/<pick>`.
     pub fn run_go_subcommand(&mut self, subcmd: &str) {
         if subcmd == "run ." {
-            let root = crate::app::playwright::find_manifest_dir(
-                &self.workspace,
-                &["go.mod"],
-            );
+            let root = crate::app::playwright::find_manifest_dir(&self.workspace, &["go.mod"]);
             if let Some(root) = root {
                 let cmd_dir = root.join("cmd");
                 let entries: Vec<std::path::PathBuf> = std::fs::read_dir(&cmd_dir)
@@ -262,8 +257,16 @@ impl App {
                 match entries.len() {
                     0 => {} // fall through to default `go run .`
                     1 => {
-                        let app = entries[0].file_name().unwrap().to_string_lossy().to_string();
-                        return self.run_manifest_command("go.mod", "go", &format!("run ./cmd/{app}"));
+                        let app = entries[0]
+                            .file_name()
+                            .unwrap()
+                            .to_string_lossy()
+                            .to_string();
+                        return self.run_manifest_command(
+                            "go.mod",
+                            "go",
+                            &format!("run ./cmd/{app}"),
+                        );
                     }
                     _ => {
                         use crate::picker::{Picker, PickerItem, PickerKind};
@@ -548,7 +551,10 @@ impl App {
 /// of `manifests`. Returns the matching directory or `None`. Used
 /// by the npm/pytest/cargo/go runners to handle monorepo subdirs
 /// the way the tools themselves do (2026-06-21 SEV-2 fix).
-pub fn find_manifest_dir(start: &std::path::Path, manifests: &[&str]) -> Option<std::path::PathBuf> {
+pub fn find_manifest_dir(
+    start: &std::path::Path,
+    manifests: &[&str],
+) -> Option<std::path::PathBuf> {
     let mut cur = start.to_path_buf();
     loop {
         for m in manifests {

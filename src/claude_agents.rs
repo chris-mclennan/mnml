@@ -282,7 +282,8 @@ pub struct ClaudeAgentsPane {
     /// derive `tokens_per_min` as a moving average over the last
     /// few samples. Capped at `TOKEN_SAMPLE_RING` entries per
     /// session; oldest fall off.
-    pub token_samples: std::collections::HashMap<String, std::collections::VecDeque<(SystemTime, u64)>>,
+    pub token_samples:
+        std::collections::HashMap<String, std::collections::VecDeque<(SystemTime, u64)>>,
     /// PIDs we've sent SIGTERM to, with the timestamp. Polled on
     /// the next refresh: if the PID is still alive 2s+ after our
     /// TERM, escalate to SIGKILL.
@@ -457,8 +458,14 @@ impl ClaudeAgentsPane {
                             Some(u) => u,
                             None => continue,
                         };
-                        let i = usage.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                        let o = usage.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                        let i = usage
+                            .get("input_tokens")
+                            .and_then(|n| n.as_u64())
+                            .unwrap_or(0);
+                        let o = usage
+                            .get("output_tokens")
+                            .and_then(|n| n.as_u64())
+                            .unwrap_or(0);
                         let cc = usage
                             .get("cache_creation_input_tokens")
                             .and_then(|n| n.as_u64())
@@ -470,10 +477,8 @@ impl ClaudeAgentsPane {
                         totals.tokens = totals.tokens.saturating_add(i + o);
                         totals.input_tokens = totals.input_tokens.saturating_add(i);
                         totals.output_tokens = totals.output_tokens.saturating_add(o);
-                        totals.cache_create_tokens =
-                            totals.cache_create_tokens.saturating_add(cc);
-                        totals.cache_read_tokens =
-                            totals.cache_read_tokens.saturating_add(cr);
+                        totals.cache_create_tokens = totals.cache_create_tokens.saturating_add(cc);
+                        totals.cache_read_tokens = totals.cache_read_tokens.saturating_add(cr);
                     }
                     if let Some(m) = model {
                         let extra_cost = estimate_cost(
@@ -535,7 +540,10 @@ impl ClaudeAgentsPane {
                 continue;
             }
             let (oldest_ts, oldest_tokens) = entry[0];
-            let dt = now.duration_since(oldest_ts).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+            let dt = now
+                .duration_since(oldest_ts)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
             let dtok = row.tokens.saturating_sub(oldest_tokens);
             if dt > 0.5 && dtok > 0 {
                 row.tokens_per_min = Some((dtok as f64) * 60.0 / dt);
@@ -555,11 +563,7 @@ impl ClaudeAgentsPane {
     /// full `refresh_in_place`, and stable for the cursor. Returns
     /// `true` if the row was actually updated.
     pub fn live_tail_selected(&mut self) -> bool {
-        let Some(vi) = self
-            .visible_indices()
-            .get(self.selected)
-            .copied()
-        else {
+        let Some(vi) = self.visible_indices().get(self.selected).copied() else {
             return false;
         };
         let Some(row) = self.rows.get(vi) else {
@@ -600,10 +604,7 @@ impl ClaudeAgentsPane {
         // keep the higher of (lifetime, tail) so the user always
         // sees monotonically-growing totals while still picking up
         // freshly-streamed lifelike updates.
-        let lifetime = self
-            .lifetime_cache
-            .get(&self.rows[vi].session_id)
-            .cloned();
+        let lifetime = self.lifetime_cache.get(&self.rows[vi].session_id).cloned();
         if let Some(row) = self.rows.get_mut(vi) {
             if let Some(m) = stats.model.clone() {
                 row.model = Some(m);
@@ -631,9 +632,7 @@ impl ClaudeAgentsPane {
             row.cache_read_tokens = lt
                 .map(|l| l.cache_read_tokens.max(stats.cache_read_tokens))
                 .unwrap_or(stats.cache_read_tokens);
-            row.cost_usd = lt
-                .map(|l| l.cost_usd.max(cost))
-                .unwrap_or(cost);
+            row.cost_usd = lt.map(|l| l.cost_usd.max(cost)).unwrap_or(cost);
             row.event_count = stats.event_count;
             row.last_user_msg = stats.last_user_msg;
             row.last_assistant_msg = stats.last_assistant_msg;
@@ -666,10 +665,7 @@ impl ClaudeAgentsPane {
             std::collections::HashMap::new();
         for row in &self.rows {
             let sid_short: String = row.session_id.chars().take(8).collect();
-            new_snapshot.insert(
-                row.session_id.clone(),
-                (row.state, row.pending_tool_uses),
-            );
+            new_snapshot.insert(row.session_id.clone(), (row.state, row.pending_tool_uses));
             if was_empty {
                 continue;
             }
@@ -740,14 +736,11 @@ impl ClaudeAgentsPane {
         // clamp to the new visible range.
         let new_visible = self.visible_indices();
         let resolved = prior_sid.and_then(|sid| {
-            new_visible.iter().position(|&i| {
-                self.rows.get(i).map(|r| &r.session_id) == Some(&sid)
-            })
+            new_visible
+                .iter()
+                .position(|&i| self.rows.get(i).map(|r| &r.session_id) == Some(&sid))
         });
-        self.selected = match resolved {
-            Some(idx) => idx,
-            None => 0,
-        };
+        self.selected = resolved.unwrap_or_default();
         // Belt-and-suspenders clamp: if filter+rolloff produced
         // an empty visible set, leave selected at 0.
         if !new_visible.is_empty() {
@@ -766,8 +759,9 @@ impl ClaudeAgentsPane {
                 AgentState::Ended => a.ended += 1,
             }
             a.total_tokens = a.total_tokens.saturating_add(r.tokens);
-            a.pending_confirms =
-                a.pending_confirms.saturating_add(r.pending_tool_uses as u64);
+            a.pending_confirms = a
+                .pending_confirms
+                .saturating_add(r.pending_tool_uses as u64);
             a.total_cost_usd += r.cost_usd;
         }
         a
@@ -807,9 +801,7 @@ impl ClaudeAgentsPane {
                 {
                     return false;
                 }
-                if self.workspace_only
-                    && !self.anchor_workspace.as_os_str().is_empty()
-                {
+                if self.workspace_only && !self.anchor_workspace.as_os_str().is_empty() {
                     let cwd_ok = r
                         .cwd
                         .as_deref()
@@ -1096,8 +1088,7 @@ fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
 /// codex rows until that lands.
 fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     let mut rows: Vec<AgentRow> = Vec::new();
-    let sessions_dir = std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".codex/sessions"));
+    let sessions_dir = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex/sessions"));
 
     // 2026-06-21 — Codex CLI doesn't emit `--session-id <uuid>` in
     // its cmdline (only Claude does), so the sid-based pgrep match
@@ -1136,7 +1127,9 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             if session_id.len() != 36 || session_id.matches('-').count() != 4 {
                 continue;
             }
-            let Ok(meta) = std::fs::metadata(&p) else { continue };
+            let Ok(meta) = std::fs::metadata(&p) else {
+                continue;
+            };
             let mtime = meta.modified().ok();
             if let Some(t) = mtime
                 && let Ok(age) = SystemTime::now().duration_since(t)
@@ -1161,8 +1154,7 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                             if claimed_pids.contains(p_pid) {
                                 return None;
                             }
-                            (p_cwd.as_deref() == Some(disk_cwd.as_str()))
-                                .then_some(*p_pid)
+                            (p_cwd.as_deref() == Some(disk_cwd.as_str())).then_some(*p_pid)
                         })
                     })
                 });
@@ -1196,9 +1188,7 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             // (Anthropic separates them; OpenAI nests). Subtract so
             // we don't bill the cached portion at BOTH the full
             // input rate AND the cache-read rate.
-            let net_input = stats
-                .input_tokens
-                .saturating_sub(stats.cache_read_tokens);
+            let net_input = stats.input_tokens.saturating_sub(stats.cache_read_tokens);
             let cost = stats
                 .model
                 .as_deref()
@@ -1303,13 +1293,21 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
 /// descends 3 levels (year/month/day).
 fn walk_codex_sessions(root: &std::path::Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
-    let Ok(years) = std::fs::read_dir(root) else { return out };
+    let Ok(years) = std::fs::read_dir(root) else {
+        return out;
+    };
     for y in years.flatten() {
-        let Ok(months) = std::fs::read_dir(y.path()) else { continue };
+        let Ok(months) = std::fs::read_dir(y.path()) else {
+            continue;
+        };
         for m in months.flatten() {
-            let Ok(days) = std::fs::read_dir(m.path()) else { continue };
+            let Ok(days) = std::fs::read_dir(m.path()) else {
+                continue;
+            };
             for d in days.flatten() {
-                let Ok(files) = std::fs::read_dir(d.path()) else { continue };
+                let Ok(files) = std::fs::read_dir(d.path()) else {
+                    continue;
+                };
                 for f in files.flatten() {
                     let p = f.path();
                     if p.extension().is_some_and(|e| e == "jsonl") {
@@ -1365,8 +1363,7 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
     };
     // Pair function_call ↔ function_call_output by call_id so we
     // can derive pending tool count.
-    let mut pending_calls: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut pending_calls: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut last_assistant_was_tool = false;
     for line in text.lines() {
         stats.event_count += 1;
@@ -1385,7 +1382,10 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
                 if let Some(c) = payload.and_then(|p| p.get("cwd")).and_then(|c| c.as_str()) {
                     stats.cwd = Some(c.to_string());
                 }
-                if let Some(m) = payload.and_then(|p| p.get("model")).and_then(|m| m.as_str()) {
+                if let Some(m) = payload
+                    .and_then(|p| p.get("model"))
+                    .and_then(|m| m.as_str())
+                {
                     stats.model = Some(m.to_string());
                 }
             }
@@ -1437,18 +1437,19 @@ fn parse_codex_tail(path: &std::path::Path) -> CodexTailStats {
                     .and_then(|p| p.get("role"))
                     .and_then(|r| r.as_str())
                     .unwrap_or("");
-                let content = payload.and_then(|p| p.get("content")).and_then(|c| c.as_array());
-                let text = content
-                    .and_then(|arr| {
-                        arr.iter().find_map(|b| {
-                            let bt = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                            if bt == "input_text" || bt == "output_text" {
-                                b.get("text").and_then(|t| t.as_str()).map(String::from)
-                            } else {
-                                None
-                            }
-                        })
-                    });
+                let content = payload
+                    .and_then(|p| p.get("content"))
+                    .and_then(|c| c.as_array());
+                let text = content.and_then(|arr| {
+                    arr.iter().find_map(|b| {
+                        let bt = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if bt == "input_text" || bt == "output_text" {
+                            b.get("text").and_then(|t| t.as_str()).map(String::from)
+                        } else {
+                            None
+                        }
+                    })
+                });
                 let Some(text) = text else { continue };
                 let text = text.trim();
                 if text.starts_with("<environment_context>")
@@ -1658,8 +1659,14 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                     stats.model = Some(model.to_string());
                 }
                 if let Some(usage) = msg.and_then(|m| m.get("usage")) {
-                    let i = usage.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                    let o = usage.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                    let i = usage
+                        .get("input_tokens")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    let o = usage
+                        .get("output_tokens")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
                     let cc = usage
                         .get("cache_creation_input_tokens")
                         .and_then(|n| n.as_u64())
@@ -1674,20 +1681,20 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                     stats.cache_create_tokens = stats.cache_create_tokens.saturating_add(cc);
                     stats.cache_read_tokens = stats.cache_read_tokens.saturating_add(cr);
                 }
-                if let Some(content) = msg.and_then(|m| m.get("content")).and_then(|c| c.as_array())
+                if let Some(content) = msg
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
                 {
                     let mut text_acc: Option<String> = None;
                     let mut tool_name: Option<String> = None;
                     for block in content {
                         let bt = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
                         match bt {
-                            "text" => {
-                                if text_acc.is_none() {
-                                    text_acc = block
-                                        .get("text")
-                                        .and_then(|t| t.as_str())
-                                        .map(|s| truncate(s, 200));
-                                }
+                            "text" if text_acc.is_none() => {
+                                text_acc = block
+                                    .get("text")
+                                    .and_then(|t| t.as_str())
+                                    .map(|s| truncate(s, 200));
                             }
                             "tool_use" => {
                                 let name = block
@@ -1710,8 +1717,9 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                                 // Per-tool sidecars.
                                 match name.as_str() {
                                     "TaskCreate" | "TodoWrite" => {
-                                        if let Some(arr) =
-                                            input.and_then(|i| i.get("todos")).and_then(|t| t.as_array())
+                                        if let Some(arr) = input
+                                            .and_then(|i| i.get("todos"))
+                                            .and_then(|t| t.as_array())
                                         {
                                             stats.todos = arr
                                                 .iter()
@@ -1733,16 +1741,18 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                                         }
                                     }
                                     "Bash" => {
-                                        if let Some(cmd) =
-                                            input.and_then(|i| i.get("command")).and_then(|c| c.as_str())
+                                        if let Some(cmd) = input
+                                            .and_then(|i| i.get("command"))
+                                            .and_then(|c| c.as_str())
                                         {
                                             stats.recent_bash.insert(0, truncate(cmd, 96));
                                             stats.recent_bash.truncate(10);
                                         }
                                     }
                                     "Edit" | "Write" | "NotebookEdit" => {
-                                        if let Some(p) =
-                                            input.and_then(|i| i.get("file_path")).and_then(|f| f.as_str())
+                                        if let Some(p) = input
+                                            .and_then(|i| i.get("file_path"))
+                                            .and_then(|f| f.as_str())
                                         {
                                             let entry = RecentFile {
                                                 tool: name.clone(),
@@ -1765,7 +1775,8 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                                             .and_then(|i| i.get("description"))
                                             .and_then(|s| s.as_str())
                                             .unwrap_or("");
-                                        stats.recent_subagents
+                                        stats
+                                            .recent_subagents
                                             .insert(0, format!("{sub_type}: {desc}"));
                                         stats.recent_subagents.truncate(5);
                                     }
@@ -1787,18 +1798,14 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
                 }
             }
             "user" => {
-                let content = v
-                    .get("message")
-                    .and_then(|m| m.get("content"));
+                let content = v.get("message").and_then(|m| m.get("content"));
                 // Look for tool_result blocks first — match them
                 // against the pending set so we can compute pending
                 // tool-use count.
                 if let Some(serde_json::Value::Array(arr)) = content {
                     for b in arr {
                         if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                            if let Some(id) =
-                                b.get("tool_use_id").and_then(|i| i.as_str())
-                            {
+                            if let Some(id) = b.get("tool_use_id").and_then(|i| i.as_str()) {
                                 pending.remove(id);
                             }
                         }
@@ -1966,10 +1973,12 @@ pub fn search_all_transcripts(query: &str) -> Vec<SearchHit> {
             .and_then(|s| s.to_str())
             .map(decode_workspace_label)
             .unwrap_or_else(|| "?".to_string());
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for f in rd.flatten() {
             let p = f.path();
-            if !p.extension().is_some_and(|e| e == "jsonl") {
+            if p.extension().is_none_or(|e| e != "jsonl") {
                 continue;
             }
             let mtime = f
@@ -1980,7 +1989,7 @@ pub fn search_all_transcripts(query: &str) -> Vec<SearchHit> {
             files.push((p, mtime, workspace.clone()));
         }
     }
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     let mut hits: Vec<SearchHit> = Vec::new();
     const HIT_CAP: usize = 200;
@@ -1992,7 +2001,9 @@ pub fn search_all_transcripts(query: &str) -> Vec<SearchHit> {
             .to_string();
         // Stream-read line-by-line; transcripts can be huge so a
         // BufReader keeps memory bounded.
-        let Ok(f) = std::fs::File::open(&path) else { continue };
+        let Ok(f) = std::fs::File::open(&path) else {
+            continue;
+        };
         use std::io::BufRead;
         let reader = std::io::BufReader::new(f);
         for line in reader.lines().map_while(Result::ok) {
@@ -2076,14 +2087,18 @@ fn extract_assistant_snippet(v: &serde_json::Value, q: &str) -> Option<(SearchRo
                 let input = block.get("input");
                 match name {
                     "Bash" => {
-                        if let Some(cmd) = input.and_then(|i| i.get("command")).and_then(|c| c.as_str())
+                        if let Some(cmd) = input
+                            .and_then(|i| i.get("command"))
+                            .and_then(|c| c.as_str())
                             && cmd.to_lowercase().contains(q)
                         {
                             return Some((SearchRole::ToolBash, truncate(cmd, 160)));
                         }
                     }
                     "Edit" | "Write" | "Read" => {
-                        if let Some(p) = input.and_then(|i| i.get("file_path")).and_then(|f| f.as_str())
+                        if let Some(p) = input
+                            .and_then(|i| i.get("file_path"))
+                            .and_then(|f| f.as_str())
                             && p.to_lowercase().contains(q)
                         {
                             return Some((SearchRole::ToolEdit, format!("{name} {p}")));
@@ -2125,7 +2140,9 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
         out.push_str(&format!(
             "# Codex session {sid_short}\n\n_workspace: {} · pid: {} · state: {} · model: {}_\n\n",
             row.workspace,
-            row.pid.map(|p| p.to_string()).unwrap_or_else(|| "—".to_string()),
+            row.pid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "—".to_string()),
             row.state.badge(),
             row.model.as_deref().unwrap_or("?"),
         ));
@@ -2169,9 +2186,7 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
                                 .get("arguments")
                                 .and_then(|s| s.as_str())
                                 .unwrap_or("");
-                            out.push_str(&format!(
-                                "### tool: `{name}`\n\n```\n{args}\n```\n\n"
-                            ));
+                            out.push_str(&format!("### tool: `{name}`\n\n```\n{args}\n```\n\n"));
                         }
                         _ => {}
                     }
@@ -2212,8 +2227,10 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
                 }
             }
             "assistant" => {
-                if let Some(content) =
-                    v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())
+                if let Some(content) = v
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
                 {
                     let mut header_written = false;
                     for block in content {
@@ -2230,7 +2247,8 @@ pub fn export_transcript_as_markdown(row: &AgentRow) -> Result<(String, String),
                                 }
                             }
                             "tool_use" => {
-                                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+                                let name =
+                                    block.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                                 let input = block.get("input").unwrap_or(&serde_json::Value::Null);
                                 if !header_written {
                                     out.push_str("## 🤖 Assistant\n\n");
@@ -2333,10 +2351,12 @@ pub fn spend_today() -> SpendToday {
                 .and_then(|s| s.to_str())
                 .map(decode_workspace_label)
                 .unwrap_or_else(|| "?".to_string());
-            let Ok(rd) = std::fs::read_dir(&p) else { continue };
+            let Ok(rd) = std::fs::read_dir(&p) else {
+                continue;
+            };
             for f in rd.flatten() {
                 let fp = f.path();
-                if !fp.extension().is_some_and(|e| e == "jsonl") {
+                if fp.extension().is_none_or(|e| e != "jsonl") {
                     continue;
                 }
                 let Ok(meta) = f.metadata() else { continue };
@@ -2368,11 +2388,11 @@ pub fn spend_today() -> SpendToday {
         }
     }
     // Codex
-    if let Some(root) = std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".codex/sessions"))
-    {
+    if let Some(root) = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex/sessions")) {
         for fp in walk_codex_sessions(&root) {
-            let Ok(meta) = std::fs::metadata(&fp) else { continue };
+            let Ok(meta) = std::fs::metadata(&fp) else {
+                continue;
+            };
             let Ok(mt) = meta.modified() else { continue };
             if mt < cutoff {
                 continue;
@@ -2382,7 +2402,15 @@ pub fn spend_today() -> SpendToday {
             let cost = stats
                 .model
                 .as_deref()
-                .map(|m| estimate_cost(m, net_input, stats.output_tokens, 0, stats.cache_read_tokens))
+                .map(|m| {
+                    estimate_cost(
+                        m,
+                        net_input,
+                        stats.output_tokens,
+                        0,
+                        stats.cache_read_tokens,
+                    )
+                })
                 .unwrap_or(0.0);
             let workspace = stats
                 .cwd
@@ -2445,13 +2473,7 @@ fn price_per_mt(model: &str) -> (f64, f64, f64, f64) {
 }
 
 /// Estimate cost for a row's accumulated tokens. Returns USD.
-fn estimate_cost(
-    model: &str,
-    input: u64,
-    output: u64,
-    cache_create: u64,
-    cache_read: u64,
-) -> f64 {
+fn estimate_cost(model: &str, input: u64, output: u64, cache_create: u64, cache_read: u64) -> f64 {
     let (in_pmt, out_pmt, cw_pmt, cr_pmt) = price_per_mt(model);
     let f = |n: u64| n as f64 / 1_000_000.0;
     f(input) * in_pmt + f(output) * out_pmt + f(cache_create) * cw_pmt + f(cache_read) * cr_pmt
@@ -2477,9 +2499,15 @@ fn scan_running_pids(source: AgentSource) -> Vec<(String, u32, String)> {
     let mut found: Vec<(String, u32, String)> = Vec::new();
     for line in text.lines() {
         let mut parts = line.splitn(2, ' ');
-        let Some(pid_str) = parts.next() else { continue };
-        let Some(cmdline) = parts.next() else { continue };
-        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+        let Some(pid_str) = parts.next() else {
+            continue;
+        };
+        let Some(cmdline) = parts.next() else {
+            continue;
+        };
+        let Ok(pid) = pid_str.parse::<u32>() else {
+            continue;
+        };
         // Defensive: pgrep -af "claude" hits any cmdline containing
         // "claude" — filter to ones where the binary actually
         // matches. The first token is the exe path.

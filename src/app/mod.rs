@@ -645,7 +645,10 @@ fn expand_mark_refs(line: &str, lookup: &dyn Fn(char) -> Option<usize>) -> Strin
 /// - Trailing arg of `:colorscheme`/`:colo` ⇒ theme names.
 /// - Trailing arg of a path-accepting command ⇒ workspace-rooted
 ///   file/dir lookup using the user's typed prefix.
-pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Option<CmdlineCompleteState> {
+pub(crate) fn compute_cmdline_completions_for_app(
+    app: &App,
+    line: &str,
+) -> Option<CmdlineCompleteState> {
     use crate::input::vim::EX_COMPLETION_NAMES;
     let split_at = line.rfind(char::is_whitespace).map(|i| i + 1).unwrap_or(0);
     let head = &line[..split_at];
@@ -723,11 +726,7 @@ pub(crate) fn compute_cmdline_completions_for_app(app: &App, line: &str) -> Opti
                 score = 100;
             }
             if score > 0 {
-                if let Some(pos) = app
-                    .recent_commands
-                    .iter()
-                    .position(|r| r == cmd.id)
-                {
+                if let Some(pos) = app.recent_commands.iter().position(|r| r == cmd.id) {
                     score += (50 - pos as i32).max(0);
                 }
                 scored.push((score, cmd.id.to_string()));
@@ -2291,8 +2290,7 @@ pub struct PaneRects {
     /// 2026-06-21 vscode-mouse SEV-2 — `(rect, pane_id, kind)`
     /// per Claude Agents dashboard topbar chip. Click cycles the
     /// corresponding state (sort / group / source / ws / view).
-    pub claude_agents_topbar_chips:
-        Vec<(Rect, usize, crate::ui::TopbarChipKind)>,
+    pub claude_agents_topbar_chips: Vec<(Rect, usize, crate::ui::TopbarChipKind)>,
     /// 2026-06-21 — column headers in the Spend Report pane.
     /// `(rect, pane_id, sort_key)`. Click cycles asc/desc on that
     /// column (or sets it as the sort key if it wasn't).
@@ -3003,8 +3001,7 @@ pub struct App {
     /// In-flight `http.sync` worker result channel. `Some(rx)`
     /// while the background fetch is running; `App::tick` drains
     /// it. None when idle. Phase 2 of the rqst→mnml port-back.
-    pub http_sync_rx:
-        Option<std::sync::mpsc::Receiver<Result<(String, usize), String>>>,
+    pub http_sync_rx: Option<std::sync::mpsc::Receiver<Result<(String, usize), String>>>,
     /// In-flight `http.bench` worker result channel. Same shape /
     /// drain pattern as `http_sync_rx`; payload is the bench's
     /// trace string (multi-line summary the user will see in a
@@ -3130,8 +3127,7 @@ pub struct App {
     pub agents_panel_built_at: Option<std::time::Instant>,
     /// Receiver for the off-main-thread build worker. `Some` means
     /// a refresh is in flight; the next `tick()` drains it.
-    pub agents_panel_rx:
-        Option<std::sync::mpsc::Receiver<Vec<crate::claude_agents::AgentRow>>>,
+    pub agents_panel_rx: Option<std::sync::mpsc::Receiver<Vec<crate::claude_agents::AgentRow>>>,
     /// `/`-style substring filter for the rail agents panel
     /// (workspace / session id / last_msg). Case-insensitive.
     pub agents_panel_filter: String,
@@ -3164,8 +3160,7 @@ pub struct App {
     /// 2-second cache: pid → (refreshed_at, listening TCP ports).
     /// The sessions-panel renderer queries this; the underlying
     /// `lsof` shell-out runs at most once per pid per 2 seconds.
-    pub session_port_cache:
-        std::collections::HashMap<u32, (std::time::Instant, Vec<u16>)>,
+    pub session_port_cache: std::collections::HashMap<u32, (std::time::Instant, Vec<u16>)>,
     /// Live cursor position during a dock drag. Updated on every
     /// Mouse Drag event while `dock_drag_id` is set; consumed by
     /// the renderer to paint the ghost next to the cursor + the
@@ -3800,8 +3795,7 @@ impl App {
         };
         let tree_width = config.ui.tree_width;
         let git_section_expanded_default = config.ui.git_section_default_expanded;
-        let integrations_section_expanded_default =
-            config.ui.integrations_section_default_expanded;
+        let integrations_section_expanded_default = config.ui.integrations_section_default_expanded;
         Ok(App {
             workspace,
             config,
@@ -4112,9 +4106,7 @@ impl App {
     /// editor's input handler for its current prefix state; the
     /// popup renders whenever the user is one key deep into a
     /// multi-key vim chord (g…, d…, Ctrl+W…, […, ]…, z…).
-    pub fn vim_operator_menu(
-        &self,
-    ) -> Option<(String, Vec<(char, &'static str, bool)>)> {
+    pub fn vim_operator_menu(&self) -> Option<(String, Vec<(char, &'static str, bool)>)> {
         let i = self.active?;
         let Some(Pane::Editor(b)) = self.panes.get(i) else {
             return None;
@@ -5180,7 +5172,8 @@ impl App {
             self.reveal_pane(new_id);
             return;
         };
-        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Editor(buf));
+        let new_id =
+            self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Editor(buf));
         self.active = Some(new_id);
         self.focus = Focus::Pane;
     }
@@ -5204,7 +5197,8 @@ impl App {
             self.reveal_pane(new_id);
             return;
         };
-        let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Editor(buf));
+        let new_id =
+            self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Editor(buf));
         self.active = Some(new_id);
         self.focus = Focus::Pane;
     }
@@ -6230,8 +6224,7 @@ impl App {
         // 30s — the rail is a heads-up display, not a live tail.
         // The full Pane::ClaudeAgents has its own faster refresh
         // tick when the user opens it.
-        const AGENTS_PANEL_REFRESH: std::time::Duration =
-            std::time::Duration::from_secs(30);
+        const AGENTS_PANEL_REFRESH: std::time::Duration = std::time::Duration::from_secs(30);
         if self.agents_panel_rx.is_some() {
             return; // a refresh is already in flight
         }
@@ -6290,9 +6283,7 @@ impl App {
             return;
         }
         let cmd = format!("sudo ln -sf {exe} /usr/local/bin/mnml");
-        self.toast(format!(
-            "Install to PATH: run this in a terminal → {cmd}"
-        ));
+        self.toast(format!("Install to PATH: run this in a terminal → {cmd}"));
         // Also copy the command to the clipboard so the user
         // can paste it directly.
         self.clipboard.set(cmd, false);
@@ -6339,9 +6330,7 @@ impl App {
         }
         self.config.workspaces.swap(idx, idx - 1);
         self.workspaces_editor_selected = idx - 1;
-        if let Err(e) =
-            crate::config::persist_workspaces_to_global(&self.config.workspaces)
-        {
+        if let Err(e) = crate::config::persist_workspaces_to_global(&self.config.workspaces) {
             self.toast(format!("save workspaces: {e}"));
         }
     }
@@ -6354,9 +6343,7 @@ impl App {
         }
         self.config.workspaces.swap(idx, idx + 1);
         self.workspaces_editor_selected = idx + 1;
-        if let Err(e) =
-            crate::config::persist_workspaces_to_global(&self.config.workspaces)
-        {
+        if let Err(e) = crate::config::persist_workspaces_to_global(&self.config.workspaces) {
             self.toast(format!("save workspaces: {e}"));
         }
     }
@@ -6369,8 +6356,7 @@ impl App {
         let name = self.config.workspaces[idx].name.clone();
         self.config.workspaces.remove(idx);
         if self.workspaces_editor_selected >= self.config.workspaces.len() {
-            self.workspaces_editor_selected =
-                self.config.workspaces.len().saturating_sub(1);
+            self.workspaces_editor_selected = self.config.workspaces.len().saturating_sub(1);
         }
         match crate::config::persist_workspaces_to_global(&self.config.workspaces) {
             Ok(_) => self.toast(format!("removed workspace {name}")),
@@ -6494,10 +6480,7 @@ impl App {
             MenuItem::new("Edit group…", MenuAction::WorkspaceEditGroup(idx)),
         ];
         if idx > 0 {
-            items.push(MenuItem::new(
-                "Move up",
-                MenuAction::WorkspaceMoveUp(idx),
-            ));
+            items.push(MenuItem::new("Move up", MenuAction::WorkspaceMoveUp(idx)));
         }
         if idx + 1 < self.config.workspaces.len() {
             items.push(MenuItem::new(
@@ -6511,11 +6494,7 @@ impl App {
 
     /// Build + open the sessions-panel context menu for one
     /// Pty pane (right-click on a session tab).
-    pub fn open_session_tab_context_menu(
-        &mut self,
-        pane_id: usize,
-        anchor: (u16, u16),
-    ) {
+    pub fn open_session_tab_context_menu(&mut self, pane_id: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let label = match self.panes.get(pane_id) {
             Some(crate::pane::Pane::Pty(s)) => s
@@ -6531,10 +6510,7 @@ impl App {
                 "Color: Green",
                 MenuAction::SessionSetColor(pane_id, "green"),
             ),
-            MenuItem::new(
-                "Color: Blue",
-                MenuAction::SessionSetColor(pane_id, "blue"),
-            ),
+            MenuItem::new("Color: Blue", MenuAction::SessionSetColor(pane_id, "blue")),
             MenuItem::new(
                 "Color: Yellow",
                 MenuAction::SessionSetColor(pane_id, "yellow"),
@@ -6543,22 +6519,13 @@ impl App {
                 "Color: Orange",
                 MenuAction::SessionSetColor(pane_id, "orange"),
             ),
-            MenuItem::new(
-                "Color: Red",
-                MenuAction::SessionSetColor(pane_id, "red"),
-            ),
+            MenuItem::new("Color: Red", MenuAction::SessionSetColor(pane_id, "red")),
             MenuItem::new(
                 "Color: Purple",
                 MenuAction::SessionSetColor(pane_id, "purple"),
             ),
-            MenuItem::new(
-                "Color: Cyan",
-                MenuAction::SessionSetColor(pane_id, "cyan"),
-            ),
-            MenuItem::new(
-                "Color: None",
-                MenuAction::SessionSetColor(pane_id, "none"),
-            ),
+            MenuItem::new("Color: Cyan", MenuAction::SessionSetColor(pane_id, "cyan")),
+            MenuItem::new("Color: None", MenuAction::SessionSetColor(pane_id, "none")),
             MenuItem::new("Close session", MenuAction::SessionClose(pane_id)),
         ];
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
@@ -9360,9 +9327,9 @@ impl App {
             self.reveal_pane(id);
             return;
         }
-        let pane = Pane::ClaudeAgents(
-            crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor),
-        );
+        let pane = Pane::ClaudeAgents(crate::claude_agents::ClaudeAgentsPane::build_anchored(
+            anchor,
+        ));
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
@@ -9443,8 +9410,8 @@ impl App {
             let pane = Pane::SpendReport(crate::pane::SpendReportPane::fresh());
             match self.active {
                 Some(cur) => {
-                    let new_id = self
-                        .split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                    let new_id =
+                        self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
                     self.active = Some(new_id);
                 }
                 None => {
@@ -9497,8 +9464,7 @@ impl App {
         ));
         // Group by workspace so the scratch reads top-down.
         use std::collections::BTreeMap;
-        let mut grouped: BTreeMap<String, Vec<&crate::claude_agents::SearchHit>> =
-            BTreeMap::new();
+        let mut grouped: BTreeMap<String, Vec<&crate::claude_agents::SearchHit>> = BTreeMap::new();
         for h in &hits {
             grouped.entry(h.workspace.clone()).or_default().push(h);
         }
@@ -9548,8 +9514,7 @@ impl App {
                 }
                 _ => (false, false),
             };
-            let transitions = if do_full
-                && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
+            let transitions = if do_full && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
             {
                 p.refresh_in_place();
                 Some(p.compute_transitions())
@@ -9561,9 +9526,7 @@ impl App {
                     self.toast(msg);
                 }
             }
-            if do_tail
-                && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i)
-            {
+            if do_tail && let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
                 p.live_tail_selected();
             }
         }
@@ -9573,11 +9536,7 @@ impl App {
     /// dashboard. Surfaces 4 actions for the clicked file:
     /// Open (single-pane), Reveal in tree, Yank workspace-relative
     /// path, Copy file contents to a scratch buffer.
-    pub fn open_dashboard_file_context_menu(
-        &mut self,
-        path: String,
-        anchor: (u16, u16),
-    ) {
+    pub fn open_dashboard_file_context_menu(&mut self, path: String, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let pb = std::path::PathBuf::from(&path);
         let rel = crate::app::rel_path(&self.workspace, &pb);
@@ -9589,10 +9548,7 @@ impl App {
             MenuItem::new("Open", MenuAction::OpenPath(pb.clone())),
             MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(pb.clone())),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
-            MenuItem::new(
-                "Open externally",
-                MenuAction::OpenExternally(pb),
-            ),
+            MenuItem::new("Open externally", MenuAction::OpenExternally(pb)),
         ];
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
@@ -9632,10 +9588,7 @@ impl App {
                 "Yank session id",
                 MenuAction::Command("ai.dashboard.yank_session_id"),
             ),
-            MenuItem::new(
-                "Yank cwd",
-                MenuAction::Command("ai.dashboard.yank_cwd"),
-            ),
+            MenuItem::new("Yank cwd", MenuAction::Command("ai.dashboard.yank_cwd")),
             MenuItem::new(
                 "Export as markdown",
                 MenuAction::Command("ai.dashboard.export_markdown"),
@@ -9679,13 +9632,12 @@ impl App {
             ClaudeAgentsAction::KillPrompt => {
                 // Batch mode: if any rows are multi-selected, kill
                 // them all (after one confirm prompt).
-                let batch: Vec<(String, u32)> = if let Some(Pane::ClaudeAgents(pane)) =
-                    self.panes.get(i)
-                {
-                    pane.multi_selected_pids()
-                } else {
-                    Vec::new()
-                };
+                let batch: Vec<(String, u32)> =
+                    if let Some(Pane::ClaudeAgents(pane)) = self.panes.get(i) {
+                        pane.multi_selected_pids()
+                    } else {
+                        Vec::new()
+                    };
                 if !batch.is_empty() {
                     self.pending_kill_batch = batch.clone();
                     self.pending_kill_pid = None;
@@ -9722,10 +9674,7 @@ impl App {
                         let path = dir.join(format!("{stem}.md"));
                         match std::fs::write(&path, &md) {
                             Ok(()) => {
-                                self.toast(format!(
-                                    "exported → {}",
-                                    path.display()
-                                ));
+                                self.toast(format!("exported → {}", path.display()));
                                 self.open_path(&path);
                             }
                             Err(e) => self.toast(format!("export write: {e}")),
@@ -9744,10 +9693,8 @@ impl App {
                     .unwrap_or_else(|| self.workspace.clone());
                 match row.source {
                     AgentSource::Claude => {
-                        let profile = crate::pty_pane::BinaryProfile::claude_code_resume(
-                            cwd,
-                            sid.clone(),
-                        );
+                        let profile =
+                            crate::pty_pane::BinaryProfile::claude_code_resume(cwd, sid.clone());
                         self.open_pty(profile);
                         self.toast(format!(
                             "resuming claude session {}…",

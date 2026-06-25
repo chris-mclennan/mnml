@@ -97,7 +97,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ".repeat(pad as usize), Style::default().bg(bg)),
             Span::styled(
                 view_chip,
-                Style::default().fg(t.bg).bg(t.cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(t.bg)
+                    .bg(t.cyan)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ", Style::default().bg(bg)),
         ])),
@@ -127,14 +130,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.agents_panel_filter.clone()
         };
         let cursor = if focused { "▏" } else { " " };
-        let pad = (area.width as usize)
-            .saturating_sub(3 + display.chars().count() + 1 + 1);
+        let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                "\u{F0349} ",
-                Style::default().fg(t.comment).bg(bg_chip),
-            ),
+            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
             Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
             Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
             Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
@@ -169,10 +168,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                         .bg(bg)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    "(Claude · Codex)",
-                    Style::default().fg(t.comment).bg(bg),
-                ),
+                Span::styled("(Claude · Codex)", Style::default().fg(t.comment).bg(bg)),
             ])),
             new_rect,
         );
@@ -254,8 +250,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .clone()
             .or_else(|| r.last_user_msg.clone())
             .unwrap_or_else(|| "(no messages)".to_string());
-        let max_msg =
-            (area.width as usize).saturating_sub(ws_label.chars().count() + 8);
+        let max_msg = (area.width as usize).saturating_sub(ws_label.chars().count() + 8);
         let msg_clip: String = last_msg
             .lines()
             .next()
@@ -286,8 +281,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // Group by workspace. Insertion order = first-seen
         // workspace order (which roughly corresponds to most
         // recent activity due to the rail's existing sort).
-        let mut groups: Vec<(String, Vec<(usize, &crate::claude_agents::AgentRow)>)> =
-            Vec::new();
+        let mut groups: Vec<(String, Vec<(usize, &crate::claude_agents::AgentRow)>)> = Vec::new();
         for (i, r) in app.agents_panel_rows.iter().enumerate() {
             if !matches_filter(r) {
                 continue;
@@ -303,7 +297,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // inside each group newest-first, and sort groups by
         // their newest-row's activity.
         for (_, items) in &mut groups {
-            items.sort_by(|(_, a), (_, b)| b.last_activity.cmp(&a.last_activity));
+            items.sort_by_key(|(_, b)| std::cmp::Reverse(b.last_activity));
         }
         groups.sort_by(|(_, a_rows), (_, b_rows)| {
             let a_newest = a_rows.first().map(|(_, r)| r.last_activity);
@@ -369,7 +363,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     // Newest-first in each section.
     for v in [&mut action_needed, &mut running, &mut done] {
-        v.sort_by(|(_, a), (_, b)| b.last_activity.cmp(&a.last_activity));
+        v.sort_by_key(|(_, b)| std::cmp::Reverse(b.last_activity));
     }
     let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)]); 3] = [
         ("Action needed", &action_needed[..]),

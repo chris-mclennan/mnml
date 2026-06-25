@@ -48,7 +48,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .max()
         .unwrap_or(8);
 
-    let inner_w = (max_label + max_path + max_group + 16).min(96).max(48) as u16;
+    let inner_w = (max_label + max_path + max_group + 16).clamp(48, 96) as u16;
     let inner_h = (app.config.workspaces.len() + 6) as u16;
     let w = inner_w.min(screen.width.saturating_sub(4));
     let h = inner_h.min(screen.height.saturating_sub(4));
@@ -72,15 +72,24 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let header = Line::from(vec![
         Span::styled(
             "  Name",
-            Style::default().fg(t.comment).bg(t.bg2).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg2)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "  Path",
-            Style::default().fg(t.comment).bg(t.bg2).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg2)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "  Group",
-            Style::default().fg(t.comment).bg(t.bg2).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg2)
+                .add_modifier(Modifier::BOLD),
         ),
     ]);
     frame.render_widget(
@@ -129,7 +138,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(
                 path_padded,
-                Style::default().fg(if is_sel { t.bg } else { t.comment }).bg(bg),
+                Style::default()
+                    .fg(if is_sel { t.bg } else { t.comment })
+                    .bg(bg),
             ),
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(group_str, Style::default().fg(fg).bg(bg)),
@@ -155,9 +166,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             ))),
             kebab_rect,
         );
-        app.rects
-            .workspaces_editor_rows
-            .push((row_rect, i as i32));
+        app.rects.workspaces_editor_rows.push((row_rect, i as i32));
         app.rects.workspaces_editor_kebabs.push((kebab_rect, i));
         y += 1;
     }
@@ -186,7 +195,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer.
-    if y + 1 <= inner.y + inner.height {
+    if y < inner.y + inner.height {
         let footer = Line::from(vec![Span::styled(
             "  ↑↓ select · Shift+↑↓ reorder · Enter edit · n new · d delete · Esc close",
             Style::default().fg(t.comment).bg(t.bg2),

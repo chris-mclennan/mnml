@@ -152,7 +152,10 @@ pub fn run(
         // single-request `App::spawn_http_job` cookie logic.
         if let Some(jar_arc) = cookie_jar.as_ref()
             && let Some(host) = crate::cookie_jar::CookieJar::host_of(&req.url)
-            && !req.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("cookie"))
+            && !req
+                .headers
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case("cookie"))
             && let Ok(j) = jar_arc.lock()
             && let Some(cookie) = j.cookie_header_for(&host)
         {

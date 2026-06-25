@@ -100,7 +100,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         // panel renders them dim with a `[fixed]` tail so the user
         // knows.
         let readonly = matches!(panel.mode, IntegrationEditMode::Edit)
-            && matches!(field, IntegrationEditField::Id | IntegrationEditField::Command);
+            && matches!(
+                field,
+                IntegrationEditField::Id | IntegrationEditField::Command
+            );
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::styled(prefix, Style::default().fg(t.cyan)));
         spans.push(Span::styled(format!("{label:<12}"), label_style));
@@ -117,10 +120,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             ));
         } else if is_focused && !readonly {
             // Caret on the focused text field — a thin block at end.
-            spans.push(Span::styled(
-                "▏".to_string(),
-                Style::default().fg(t.cyan),
-            ));
+            spans.push(Span::styled("▏".to_string(), Style::default().fg(t.cyan)));
         }
         if readonly {
             spans.push(Span::styled(
@@ -182,10 +182,7 @@ fn field_label(field: IntegrationEditField) -> &'static str {
     }
 }
 
-fn field_value(
-    panel: &IntegrationEditState,
-    field: IntegrationEditField,
-) -> (String, Style) {
+fn field_value(panel: &IntegrationEditState, field: IntegrationEditField) -> (String, Style) {
     let t = theme::cur();
     let dim = Style::default().fg(t.comment);
     let normal = Style::default().fg(t.fg);
