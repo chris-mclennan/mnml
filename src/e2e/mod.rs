@@ -771,24 +771,7 @@ pub fn run_path(root: &Path) -> (Vec<TestOutcome>, bool) {
         }
     }
     files.sort();
-    // Retry a failing .test up to twice. A couple of tests (snippet
-    // placeholder Tab-navigation) are timing-sensitive under CI load and
-    // flake ~independently; `run_test` builds a fresh App + temp workspace
-    // each call, so retries are fully independent. A genuinely broken test
-    // still fails all three attempts.
-    let outcomes: Vec<TestOutcome> = files
-        .iter()
-        .map(|p| {
-            let mut outcome = run_test(p);
-            for _ in 0..2 {
-                if outcome.passed {
-                    break;
-                }
-                outcome = run_test(p);
-            }
-            outcome
-        })
-        .collect();
+    let outcomes: Vec<TestOutcome> = files.iter().map(|p| run_test(p)).collect();
     let all_passed = outcomes.iter().all(|o| o.passed);
     (outcomes, all_passed)
 }

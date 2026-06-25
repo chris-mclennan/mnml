@@ -996,7 +996,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Tab | KeyCode::Enter => {
-                app.completion_accept();
+                // While a snippet placeholder cycle is active, Tab advances to
+                // the next placeholder (dismissing this popup) instead of
+                // accepting a completion — otherwise an as-you-type popup that
+                // happened to be open races with the snippet's Tab and steals
+                // it (the flaky-on-CI snippet failures). Enter still accepts.
+                if key.code == KeyCode::Tab && app.snippet_session.is_some() {
+                    app.completion = None;
+                    app.snippet_next_placeholder();
+                } else {
+                    app.completion_accept();
+                }
                 return;
             }
             KeyCode::Up => {
