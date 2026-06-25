@@ -1800,6 +1800,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "int-enum"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e366a1634cccc76b4cfd3e7580de9b605e4d93f1edac48d786c1f867c0def495"
+dependencies = [
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "ioctl-rs"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1919,6 +1931,26 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libghostty-vt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04c77176dd05b2b5718046d807e786473f463ea6d478d56f8c0105e2fe6f71f5"
+dependencies = [
+ "bitflags 2.11.1",
+ "int-enum",
+ "libghostty-vt-sys",
+]
+
+[[package]]
+name = "libghostty-vt-sys"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "404671567c0ac43389a69ae424eefc89390a25d3a5386a54249cdaf13e01b411"
+dependencies = [
+ "pkg-config",
+]
 
 [[package]]
 name = "libloading"
@@ -2121,6 +2153,8 @@ dependencies = [
  "ignore",
  "image",
  "jsonschema",
+ "libghostty-vt",
+ "libghostty-vt-sys",
  "portable-pty",
  "ratatui",
  "regex",
@@ -2737,6 +2771,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "proc-macro2-diagnostics"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af066a9c399a26e020ada66a034357a868728e72cd426f3adcd35f80d88d88c8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+ "version_check",
 ]
 
 [[package]]

@@ -1,0 +1,5 @@
+# Link the cross-built libghostty-vt prebuilt (see vendor/libghostty-vt/).
+# libghostty-vt-sys's pkg-config feature consumes these .pc files instead of
+# building ghostty from Zig source (which can't link on macOS 26).
+[env]
+PKG_CONFIG_PATH = { value = "vendor/libghostty-vt/pkgconfig", relative = true, force = true }

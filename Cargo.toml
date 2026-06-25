@@ -2,7 +2,7 @@
 name = "mnml-rs"
 version = "0.1.4"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.90"
 description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."
 authors = ["Chris McLennan"]
 license = "MIT OR Apache-2.0"
@@ -94,6 +94,13 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # scrollback.
 portable-pty = "0.8"
 vt100 = "0.16"
+# Ghostty terminal-emulation core (replacing vt100 for Pane::Pty). Links a
+# cross-built prebuilt `libghostty-vt.a` via pkg-config (see vendor/libghostty-vt/
+# + .cargo/config.toml) so no Zig toolchain is needed on macOS — ghostty pins
+# Zig 0.15.2, which can't link on macOS 26. The `pkg-config` feature on the -sys
+# crate makes it consume the prebuilt instead of building ghostty from source.
+libghostty-vt = "0.2.0"
+libghostty-vt-sys = { version = "0.2.0", features = ["pkg-config"] }
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
 tree-sitter-ruby = "0.23.1"

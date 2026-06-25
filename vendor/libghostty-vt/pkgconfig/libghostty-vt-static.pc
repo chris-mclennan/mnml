@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/..
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: libghostty-vt-static
+URL: https://github.com/ghostty-org/ghostty
+Description: Ghostty VT library (static, cross-built for macОS arm64)
+Version: 0.1.0-dev
+Cflags: -I${includedir}
+Libs: ${libdir}/libghostty-vt.a

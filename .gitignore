@@ -7,3 +7,7 @@
 .claude/scheduled_tasks.lock
 .claude/state/
 .claude/coordination/
+
+# libghostty-vt cross-built prebuilt (binary; regenerate via vendor/libghostty-vt/README.md)
+/vendor/libghostty-vt/lib/*.a
+/vendor/libghostty-vt/lib/*.dylib
