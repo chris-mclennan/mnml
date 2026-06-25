@@ -132,7 +132,8 @@ impl App {
     /// Used by the cargo.* family of palette commands. Toasts when
     /// no Cargo.toml is found in the workspace or any parent.
     pub fn run_cargo_subcommand(&mut self, subcmd: &str) {
-        self.run_manifest_command("Cargo.toml", "cargo", subcmd);
+        let slug = subcmd.split_whitespace().next().unwrap_or(subcmd);
+        self.run_manifest_command("Cargo.toml", "cargo", slug, subcmd);
     }
 
     /// Open a prompt for an npm script name, then run
@@ -157,7 +158,7 @@ impl App {
             self.toast("npm.run_script: empty script name");
             return;
         }
-        self.run_npm_subcommand(&format!("run {script}"));
+        self.run_npm_subcommand(&script, &format!("run {script}"));
     }
 
     /// `:go.run_path` — prompt for a package path, then run
@@ -188,8 +189,8 @@ impl App {
 
     /// `npm <subcmd>` (test / run dev / build / start / install /
     /// lint). Requires a package.json at the workspace root.
-    pub fn run_npm_subcommand(&mut self, subcmd: &str) {
-        self.run_manifest_command("package.json", "npm", subcmd);
+    pub fn run_npm_subcommand(&mut self, slug: &str, subcmd: &str) {
+        self.run_manifest_command("package.json", "npm", slug, subcmd);
     }
 
     /// `pytest <args>`. Requires pyproject.toml OR setup.py OR
@@ -265,6 +266,7 @@ impl App {
                         return self.run_manifest_command(
                             "go.mod",
                             "go",
+                            "run",
                             &format!("run ./cmd/{app}"),
                         );
                     }
@@ -287,10 +289,21 @@ impl App {
                 }
             }
         }
-        self.run_manifest_command("go.mod", "go", subcmd);
+        let slug = subcmd.split_whitespace().next().unwrap_or(subcmd);
+        self.run_manifest_command("go.mod", "go", slug, subcmd);
     }
 
-    pub(crate) fn run_manifest_command(&mut self, manifest: &str, bin: &str, subcmd: &str) {
+    /// `slug` is the command's toast identity (e.g. `build` for `npm.build`,
+    /// which runs `npm run build`) — it can't be derived from `subcmd`
+    /// reliably, since `npm.run`→"run dev" wants "run" but `npm.build`→
+    /// "run build" wants "build".
+    pub(crate) fn run_manifest_command(
+        &mut self,
+        manifest: &str,
+        bin: &str,
+        slug: &str,
+        subcmd: &str,
+    ) {
         // 2026-06-21 multilang+lsp-cheat-test SEV-2: was checking
         // only `self.workspace.join(manifest)`, so subdir of a
         // monorepo (e.g. `/repo/cmd/server` with go.mod at /repo/)
@@ -300,11 +313,6 @@ impl App {
         let root = find_manifest_dir(&self.workspace, &[manifest])
             .unwrap_or_else(|| self.workspace.clone());
         if !root.join(manifest).exists() {
-            // Embedding the full `subcmd` (could be multi-word
-            // like "run dev" or "clippy --all-targets") into the
-            // command ID slug produced `npm.run dev: no package.json…`.
-            // Use just the first word.
-            let slug = subcmd.split_whitespace().next().unwrap_or(subcmd);
             self.toast(format!(
                 "{bin}.{slug}: no {manifest} found in {} or any parent",
                 self.workspace.display()

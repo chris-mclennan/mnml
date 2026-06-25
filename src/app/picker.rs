@@ -739,7 +739,7 @@ impl App {
             }
             PickerKind::GoRunCmd => {
                 let app = item.id.clone();
-                self.run_manifest_command("go.mod", "go", &format!("run ./cmd/{app}"));
+                self.run_manifest_command("go.mod", "go", "run", &format!("run ./cmd/{app}"));
             }
             PickerKind::GrpcService => {
                 let service = item.id.clone();
