@@ -6105,6 +6105,32 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 crate::command::run("ai.claude_code", app);
                 return;
             }
+            // View-mode toggle chip → switch between by-status
+            // and by-workspace grouping.
+            if let Some(r) = app.rects.agents_panel_view_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.agents_panel_group_by_workspace =
+                    !app.agents_panel_group_by_workspace;
+                app.agents_panel_collapsed_workspaces.clear();
+                return;
+            }
+            // Workspace header (by-workspace view only) → toggle
+            // collapse for that workspace.
+            if let Some((_, ws)) = app
+                .rects
+                .agents_panel_workspace_headers
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .cloned()
+            {
+                if app.agents_panel_collapsed_workspaces.contains(&ws) {
+                    app.agents_panel_collapsed_workspaces.remove(&ws);
+                } else {
+                    app.agents_panel_collapsed_workspaces.insert(ws);
+                }
+                return;
+            }
             if let Some(&(_, row_idx)) = app
                 .rects
                 .agents_panel_rows

@@ -134,7 +134,7 @@ fn brand_menu() -> MenuDef {
 
 fn file_menu() -> MenuDef {
     MenuDef {
-        label: "File",
+        label: "file",
         items: vec![
             MenuItem::Action {
                 label: "New file",
@@ -177,7 +177,7 @@ fn file_menu() -> MenuDef {
 
 fn edit_menu() -> MenuDef {
     MenuDef {
-        label: "Edit",
+        label: "edit",
         items: vec![
             MenuItem::Action {
                 label: "Find…",
@@ -210,7 +210,7 @@ fn edit_menu() -> MenuDef {
 
 fn selection_menu() -> MenuDef {
     MenuDef {
-        label: "Selection",
+        label: "selection",
         items: vec![
             MenuItem::Action {
                 label: "Expand selection",
@@ -247,7 +247,7 @@ fn selection_menu() -> MenuDef {
 
 fn view_menu() -> MenuDef {
     MenuDef {
-        label: "View",
+        label: "view",
         items: vec![
             MenuItem::Action {
                 label: "Command palette",
@@ -285,7 +285,7 @@ fn view_menu() -> MenuDef {
 
 fn go_menu() -> MenuDef {
     MenuDef {
-        label: "Go",
+        label: "go",
         items: vec![
             MenuItem::Action {
                 label: "Go to file…",
@@ -318,7 +318,7 @@ fn go_menu() -> MenuDef {
 
 fn run_menu() -> MenuDef {
     MenuDef {
-        label: "Run",
+        label: "run",
         items: vec![
             MenuItem::Action {
                 label: "Start debugging",
@@ -351,7 +351,7 @@ fn run_menu() -> MenuDef {
 
 fn terminal_menu() -> MenuDef {
     MenuDef {
-        label: "Terminal",
+        label: "terminal",
         items: vec![
             MenuItem::Action {
                 label: "New terminal (split below)",
@@ -371,7 +371,7 @@ fn terminal_menu() -> MenuDef {
 
 fn window_menu() -> MenuDef {
     MenuDef {
-        label: "Window",
+        label: "window",
         items: vec![
             MenuItem::Action {
                 label: "Reopen closed tab",
@@ -396,7 +396,7 @@ fn window_menu() -> MenuDef {
 
 fn help_menu() -> MenuDef {
     MenuDef {
-        label: "Help",
+        label: "help",
         items: vec![
             MenuItem::Action {
                 label: "Welcome",

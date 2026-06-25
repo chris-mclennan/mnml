@@ -1964,6 +1964,12 @@ pub struct PaneRects {
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
     pub agents_panel_new_chip: Option<Rect>,
+    /// Click rect for the view-mode toggle (`status` ↔ `workspace`)
+    /// in the panel header.
+    pub agents_panel_view_chip: Option<Rect>,
+    /// `(rect, workspace_label)` per workspace group header in
+    /// the by-workspace view. Click → toggle collapse.
+    pub agents_panel_workspace_headers: Vec<(Rect, String)>,
     /// Click rects for the workspaces-editor overlay. Each row is
     /// `(rect, idx_or_action_code)` — `idx_or_action_code < 0` is
     /// reserved for action rows (`-1 = Add`, `-2 = Close`).
@@ -3122,12 +3128,24 @@ pub struct App {
     pub agents_panel_rows: Vec<crate::claude_agents::AgentRow>,
     /// When `agents_panel_rows` was last refreshed.
     pub agents_panel_built_at: Option<std::time::Instant>,
+    /// Receiver for the off-main-thread build worker. `Some` means
+    /// a refresh is in flight; the next `tick()` drains it.
+    pub agents_panel_rx:
+        Option<std::sync::mpsc::Receiver<Vec<crate::claude_agents::AgentRow>>>,
     /// `/`-style substring filter for the rail agents panel
     /// (workspace / session id / last_msg). Case-insensitive.
     pub agents_panel_filter: String,
     /// `true` while the user's keyboard focus is in the rail
     /// agents panel's filter input.
     pub agents_panel_filter_focused: bool,
+    /// `true` to group rail Agents panel rows by workspace
+    /// (collapsible per-workspace groups) instead of by status.
+    /// Toggled by `g` while the section is active, or by clicking
+    /// the view-mode chip in the panel header.
+    pub agents_panel_group_by_workspace: bool,
+    /// Workspace labels collapsed in the by-workspace view.
+    /// Cleared when switching back to by-status grouping.
+    pub agents_panel_collapsed_workspaces: std::collections::HashSet<String>,
     /// Monotonically-increasing id for new dock widgets. Each
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
@@ -3866,6 +3884,9 @@ impl App {
             last_test_run: None,
             agents_panel_rows: Vec::new(),
             agents_panel_built_at: None,
+            agents_panel_rx: None,
+            agents_panel_group_by_workspace: false,
+            agents_panel_collapsed_workspaces: std::collections::HashSet::new(),
             agents_panel_filter: String::new(),
             agents_panel_filter_focused: false,
             dock_widget_next_id: 0,
@@ -6174,12 +6195,20 @@ impl App {
     }
 
     /// Refresh the rail Agents panel's cached snapshot if it's
-    /// older than `AGENTS_PANEL_REFRESH`. Cheap enough to call
-    /// every frame — the actual scan only fires when the
-    /// timestamp says we're due.
+    /// older than `AGENTS_PANEL_REFRESH`. Spawns the actual scan
+    /// (file read + jsonl parse for every transcript — easily
+    /// hundreds of ms with many sessions) on a WORKER THREAD so
+    /// the UI stays responsive. The next `App::tick()` drains the
+    /// channel and swaps in the fresh snapshot.
     pub fn refresh_agents_panel_if_due(&mut self) {
+        // 30s — the rail is a heads-up display, not a live tail.
+        // The full Pane::ClaudeAgents has its own faster refresh
+        // tick when the user opens it.
         const AGENTS_PANEL_REFRESH: std::time::Duration =
-            std::time::Duration::from_secs(5);
+            std::time::Duration::from_secs(30);
+        if self.agents_panel_rx.is_some() {
+            return; // a refresh is already in flight
+        }
         let due = self
             .agents_panel_built_at
             .map(|t| t.elapsed() >= AGENTS_PANEL_REFRESH)
@@ -6188,9 +6217,35 @@ impl App {
             return;
         }
         let anchor = self.workspace.clone();
-        let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
-        self.agents_panel_rows = pane.rows;
-        self.agents_panel_built_at = Some(std::time::Instant::now());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
+            let _ = tx.send(pane.rows);
+        });
+        self.agents_panel_rx = Some(rx);
+    }
+
+    /// Drain the agents-panel refresh worker. Called once per
+    /// `tick()` — non-blocking; pulls the result if ready and
+    /// stamps `built_at`.
+    pub fn drain_agents_panel_refresh(&mut self) {
+        let Some(rx) = self.agents_panel_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(rows) => {
+                self.agents_panel_rows = rows;
+                self.agents_panel_built_at = Some(std::time::Instant::now());
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Worker still running — put the receiver back.
+                self.agents_panel_rx = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // Worker died without sending — drop and try again
+                // on the next tick.
+            }
+        }
     }
 
     /// `setup.install_to_path` — show an actionable hint with
@@ -10523,6 +10578,8 @@ impl App {
                 s.tick_activity();
             }
         }
+        // Agents rail panel — pull the worker's snapshot if ready.
+        self.drain_agents_panel_refresh();
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();

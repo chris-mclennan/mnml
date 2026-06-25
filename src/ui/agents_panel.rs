@@ -55,28 +55,54 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.agents_panel_rows.clear();
     app.rects.agents_panel_new_chip = None;
     app.rects.agents_panel_filter_input = None;
+    app.rects.agents_panel_view_chip = None;
+    app.rects.agents_panel_workspace_headers.clear();
 
     let mut y = area.y;
 
-    // Header.
+    // Header with view-mode toggle chip on the right.
+    let view_label = if app.agents_panel_group_by_workspace {
+        "workspace"
+    } else {
+        "status"
+    };
+    let view_chip = format!(" view: {view_label} ");
+    let view_w = view_chip.chars().count() as u16;
+    let header_left = "AGENTS";
+    let header_used = 1 + header_left.chars().count() as u16 + view_w + 1;
+    let pad = (area.width).saturating_sub(header_used);
+    let header_row = Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: 1,
+    };
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
-                "AGENTS",
+                header_left.to_string(),
                 Style::default()
                     .fg(t.comment)
                     .bg(bg)
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(" ".repeat(pad as usize), Style::default().bg(bg)),
+            Span::styled(
+                view_chip,
+                Style::default().fg(t.bg).bg(t.cyan).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" ", Style::default().bg(bg)),
         ])),
-        Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: 1,
-        },
+        header_row,
     );
+    let chip_rect = Rect {
+        x: area.x + 1 + header_left.chars().count() as u16 + pad,
+        y,
+        width: view_w,
+        height: 1,
+    };
+    app.rects.agents_panel_view_chip = Some(chip_rect);
     y += 1;
 
     // Filter input.
@@ -150,6 +176,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // 1-row gap before sections.
     y += 1;
 
+    // First-load placeholder — the worker hasn't reported back
+    // yet OR there genuinely are no sessions. Shown until the
+    // first scan completes.
+    if app.agents_panel_built_at.is_none() && y < area.y + area.height {
+        let label = if app.agents_panel_rx.is_some() {
+            "Scanning sessions…"
+        } else {
+            "No sessions yet."
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(label, Style::default().fg(t.comment).bg(bg)),
+            ])),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        return;
+    }
+
     // Partition rows by status. Action Needed comes from
     // `pending_tool_uses > 0` (the row is waiting on a tool
     // confirm). Streaming → Running. Idle / Ended → Done.
@@ -173,6 +223,112 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         parts.iter().any(|p| p.contains(&filter_lc))
     };
 
+    let spinner = spinner_frame();
+    // Helper closure to render one row.
+    let mut click_targets: Vec<(Rect, usize)> = Vec::new();
+    let render_row = |frame: &mut Frame,
+                      y: &mut u16,
+                      i: usize,
+                      r: &crate::claude_agents::AgentRow,
+                      click_targets: &mut Vec<(Rect, usize)>| {
+        if *y >= area.y + area.height {
+            return;
+        }
+        let (glyph, glyph_color) = if r.pending_tool_uses > 0 {
+            ("!", t.red)
+        } else if matches!(r.state, AgentState::Streaming | AgentState::ToolCall) {
+            (spinner, t.cyan)
+        } else {
+            ("✓", t.green)
+        };
+        let ws_label = r.workspace.clone();
+        let last_msg = r
+            .last_assistant_msg
+            .clone()
+            .or_else(|| r.last_user_msg.clone())
+            .unwrap_or_else(|| "(no messages)".to_string());
+        let max_msg =
+            (area.width as usize).saturating_sub(ws_label.chars().count() + 8);
+        let msg_clip: String = last_msg
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(max_msg)
+            .collect();
+        let row_rect = Rect {
+            x: area.x,
+            y: *y,
+            width: area.width,
+            height: 1,
+        };
+        let line = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(glyph.to_string(), Style::default().fg(glyph_color).bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(ws_label, Style::default().fg(t.fg).bg(bg)),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(msg_clip, Style::default().fg(t.comment).bg(bg)),
+        ]);
+        frame.render_widget(Paragraph::new(line), row_rect);
+        click_targets.push((row_rect, i));
+        *y += 1;
+    };
+
+    if app.agents_panel_group_by_workspace {
+        // Group by workspace. Insertion order = first-seen
+        // workspace order (which roughly corresponds to most
+        // recent activity due to the rail's existing sort).
+        let mut groups: Vec<(String, Vec<(usize, &crate::claude_agents::AgentRow)>)> =
+            Vec::new();
+        for (i, r) in app.agents_panel_rows.iter().enumerate() {
+            if !matches_filter(r) {
+                continue;
+            }
+            if let Some(slot) = groups.iter_mut().find(|(w, _)| w == &r.workspace) {
+                slot.1.push((i, r));
+            } else {
+                groups.push((r.workspace.clone(), vec![(i, r)]));
+            }
+        }
+        let collapsed = app.agents_panel_collapsed_workspaces.clone();
+        let mut workspace_headers: Vec<(Rect, String)> = Vec::new();
+        for (ws, rows) in &groups {
+            if y >= area.y + area.height {
+                break;
+            }
+            let is_collapsed = collapsed.contains(ws);
+            let chev = if is_collapsed { "▸" } else { "▾" };
+            let header = Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    format!("{chev} {ws}  ({})", rows.len()),
+                    Style::default()
+                        .fg(t.fg)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]);
+            let header_rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(header), header_rect);
+            workspace_headers.push((header_rect, ws.clone()));
+            y += 1;
+            if !is_collapsed {
+                for &(i, r) in rows {
+                    render_row(frame, &mut y, i, r, &mut click_targets);
+                }
+            }
+        }
+        app.rects.agents_panel_workspace_headers = workspace_headers;
+        app.rects.agents_panel_rows = click_targets;
+        return;
+    }
+
     let mut action_needed: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
     let mut running: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
     let mut done: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
@@ -188,20 +344,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             done.push((i, r));
         }
     }
-
-    let spinner = spinner_frame();
-    let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)], &str, ratatui::style::Color); 3] = [
-        ("Action needed", &action_needed[..], "!", t.red),
-        ("Running", &running[..], spinner, t.cyan),
-        ("Done", &done[..], "✓", t.green),
+    let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)]); 3] = [
+        ("Action needed", &action_needed[..]),
+        ("Running", &running[..]),
+        ("Done", &done[..]),
     ];
-
-    let mut click_targets: Vec<(Rect, usize)> = Vec::new();
-    for (label, items, glyph, glyph_color) in sections {
+    for (label, items) in sections {
         if items.is_empty() || y >= area.y + area.height {
             continue;
         }
-        // Section header.
         let header = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
@@ -227,41 +378,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         y += 1;
         for &(i, r) in items {
-            if y >= area.y + area.height {
-                break;
-            }
-            // Truncate label for the rail width.
-            let ws_label = r.workspace.clone();
-            let last_msg = r
-                .last_assistant_msg
-                .clone()
-                .or_else(|| r.last_user_msg.clone())
-                .unwrap_or_else(|| "(no messages)".to_string());
-            let max_msg = (area.width as usize).saturating_sub(ws_label.chars().count() + 8);
-            let msg_clip: String =
-                last_msg.lines().next().unwrap_or("").chars().take(max_msg).collect();
-            let row_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            let line = Line::from(vec![
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    glyph.to_string(),
-                    Style::default().fg(glyph_color).bg(bg),
-                ),
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(ws_label, Style::default().fg(t.fg).bg(bg)),
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(msg_clip, Style::default().fg(t.comment).bg(bg)),
-            ]);
-            frame.render_widget(Paragraph::new(line), row_rect);
-            click_targets.push((row_rect, i));
-            y += 1;
+            render_row(frame, &mut y, i, r, &mut click_targets);
         }
-        // 1-row gap between sections.
         if y < area.y + area.height {
             y += 1;
         }
