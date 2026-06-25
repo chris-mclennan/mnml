@@ -390,8 +390,13 @@ fn workspace_action_chip_specs(
         ("\u{EAC5}", "↕") // collapse-all
     };
     [
-        ("\u{EA80}", "f+", "file.new", t.blue),
-        ("\u{EA7F}", "d+", "file.new_folder", t.yellow),
+        // 2026-06-24 — user-reported swap: the visually-rendered
+        // glyphs in mnml's patched font are folder-shape (EA80,
+        // blue) + file-shape (EA7F, yellow), but the upstream
+        // codicon mapping is the opposite. Match command to
+        // visible icon, not to upstream codepoint name.
+        ("\u{EA80}", "d+", "file.new_folder", t.blue),
+        ("\u{EA7F}", "f+", "file.new", t.yellow),
         ("\u{EB37}", "↺", "tree.refresh", t.cyan),
         (
             collapse_glyph,
