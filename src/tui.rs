@@ -4218,6 +4218,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::Down(MouseButton::Right) => {
+            // Right-click on a session tab → context menu.
+            if let Some(&(_, pid)) = app
+                .rects
+                .session_tabs
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.open_session_tab_context_menu(pid, (x, y));
+                return;
+            }
             // Right-click on a dock widget (body, title, or kebab)
             // → open the kebab menu anchored at the click. Same
             // menu as the `⋮` glyph; gives power users a faster
@@ -5764,6 +5774,30 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             if app.git_palette_filter_focused {
                 app.git_palette_filter_focused = false;
             }
+            // Sessions panel `+ New session` chip → spawn a Claude
+            // Code pane (the most common case). Checked BEFORE
+            // tab clicks so a click on the chip wins.
+            if let Some(r) = app.rects.session_new_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                crate::command::run("ai.claude_code", app);
+                return;
+            }
+            // Sessions panel tab (vertical-tab strip shown when
+            // `ActivitySection::Sessions` is active). Click →
+            // focus that Pty pane. Also arms a drag — mouse-up
+            // over another tab swaps them.
+            if let Some(&(_, pid)) = app
+                .rects
+                .session_tabs
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.active = Some(pid);
+                app.focus_pane();
+                app.session_drag_pid = Some(pid);
+                return;
+            }
             // Git-palette row (the GitKraken-style panel shown when
             // `ActivitySection::Git` is active). Maps to the same
             // `GitRailHit` dispatch as the legacy rail.
@@ -6129,6 +6163,30 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // (above/below based on cursor Y vs target center).
             //
             // Fallback: existing quadrant-of-editor-body logic.
+            // Sessions panel drag — released over another session
+            // tab swaps the two panes in `app.panes` so the
+            // visible order matches the drop position.
+            if let Some(src_pid) = app.session_drag_pid.take()
+                && let Some(&(_, dst_pid)) = app
+                    .rects
+                    .session_tabs
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                && src_pid != dst_pid
+                && src_pid < app.panes.len()
+                && dst_pid < app.panes.len()
+            {
+                app.panes.swap(src_pid, dst_pid);
+                // The active pane id stays pointing at the same
+                // physical pane (now at the dst index, since we
+                // swapped). Re-route active so it follows the
+                // drag.
+                if app.active == Some(src_pid) {
+                    app.active = Some(dst_pid);
+                } else if app.active == Some(dst_pid) {
+                    app.active = Some(src_pid);
+                }
+            }
             if let Some(drag_id) = app.dock_drag_id.take()
                 && let Some(body) = app.rects.body
                 && body.width > 0

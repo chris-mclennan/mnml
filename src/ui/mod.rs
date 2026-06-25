@@ -84,6 +84,7 @@ pub mod request_view;
 pub mod dock;
 pub mod git_palette;
 pub mod menu_bar;
+pub mod sessions_panel;
 pub mod workspace_picker;
 pub mod scratch_term_view;
 pub mod scrollbar;
@@ -325,6 +326,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
             crate::app::ActivitySection::Git => {
                 git_palette::draw(frame, app, content_area);
+            }
+            crate::app::ActivitySection::Sessions => {
+                sessions_panel::draw(frame, app, content_area);
             }
         }
         // For non-Explorer sections the tree_view click rects aren't

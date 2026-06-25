@@ -176,6 +176,20 @@ pub struct PtySession {
     /// Total bytes the reader has processed — the event loop snapshots this to
     /// know when to redraw (an idle pty shouldn't force per-tick repaints).
     pub bytes_seen: Arc<AtomicU64>,
+    /// `bytes_seen` snapshot at the last time the user focused
+    /// this pane. Unread count = `bytes_seen - bytes_seen_on_focus`.
+    /// Reset to current bytes_seen when the pane is focused.
+    pub bytes_seen_on_focus: u64,
+    /// Last system-clock instant at which `bytes_seen` advanced.
+    /// Used by the sessions panel to decide running vs idle.
+    pub last_output_at: Option<std::time::Instant>,
+    /// `bytes_seen` snapshot at the prior tick — used together
+    /// with `last_output_at` to detect new output.
+    pub last_bytes_snapshot: u64,
+    /// Optional per-session accent color name (`"green"`, `"blue"`,
+    /// …) used by the sessions panel. `None` ⇒ default active-
+    /// color. Reset to `None` via the kebab's "None" choice.
+    pub accent_color: Option<String>,
 }
 
 impl PtySession {
@@ -273,7 +287,35 @@ impl PtySession {
             exited,
             last_size: (rows, cols),
             bytes_seen,
+            bytes_seen_on_focus: 0,
+            last_output_at: None,
+            last_bytes_snapshot: 0,
+            accent_color: None,
         })
+    }
+
+    /// Reset the unread counter to "all read" — called when the
+    /// user focuses this pane. After this, `unread_bytes()`
+    /// returns 0 until the reader produces more output.
+    pub fn mark_seen(&mut self) {
+        self.bytes_seen_on_focus = self.bytes_processed();
+    }
+
+    /// How many bytes have arrived since the last `mark_seen`.
+    /// Used by the sessions panel to render the `🔔` bell badge.
+    pub fn unread_bytes(&self) -> u64 {
+        self.bytes_processed().saturating_sub(self.bytes_seen_on_focus)
+    }
+
+    /// Tick — refresh `last_output_at` when `bytes_seen` has
+    /// moved since the last tick. Called from the event loop's
+    /// per-frame Pty maintenance pass.
+    pub fn tick_activity(&mut self) {
+        let now_bytes = self.bytes_processed();
+        if now_bytes > self.last_bytes_snapshot {
+            self.last_bytes_snapshot = now_bytes;
+            self.last_output_at = Some(std::time::Instant::now());
+        }
     }
 
     /// Resize the pty (and the parser grid) to `rows × cols`. No-op when
@@ -327,6 +369,13 @@ impl PtySession {
 
     pub fn bytes_processed(&self) -> u64 {
         self.bytes_seen.load(Ordering::Relaxed)
+    }
+
+    /// PID of the child process the pty is hosting (the shell or
+    /// Claude or whatever). Used by the sessions-panel port
+    /// scanner to discover listening TCP ports.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.process_id()
     }
 
     pub fn title(&self) -> String {

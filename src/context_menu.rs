@@ -83,6 +83,16 @@ pub enum MenuAction {
     /// local tracking branch). Wraps `App::checkout_branch` which
     /// already handles the remote-ref form.
     GitRemoteCheckout(String),
+    /// Sessions panel — open the rename prompt for the pty pane
+    /// at `pane_id`. Reuses `PromptKind::PtySessionName`.
+    SessionRename(usize),
+    /// Sessions panel — set the per-pane accent color to a
+    /// named theme color (Green / Blue / Yellow / Orange / Red /
+    /// Purple / Cyan / None).
+    SessionSetColor(usize, &'static str),
+    /// Sessions panel — close (kill child + drop pane) the pty
+    /// at `pane_id`.
+    SessionClose(usize),
     /// Open a rendered-markdown preview for `path` in a split. Surfaced from
     /// the tree (right-click an `.md`/`.markdown`/`.mdx`/`.mkd` file) and
     /// from a bufferline tab right-click on the same.

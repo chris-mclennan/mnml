@@ -1,0 +1,433 @@
+//! cmux-style vertical session-tab strip. Renders in the rail
+//! content area when `ActivitySection::Sessions` is active.
+//!
+//! Each tab shows the session's display name, the git branch of
+//! its cwd, and the cwd basename. Click → focus that Pty pane.
+//!
+//! Slice 1 (this commit): basic list + click-to-focus. Bells,
+//! status, ticket detection, right-click menu, drag-reorder, and
+//! port detection land in slices 2-5.
+
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
+};
+
+use crate::app::App;
+use crate::pane::Pane;
+use crate::ui::theme;
+
+/// Height in rows for one session tab.
+const TAB_H: u16 = 3;
+
+pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = theme::cur();
+    let bg = t.bg_darker;
+    frame.render_widget(Block::default().style(Style::default().bg(bg)), area);
+    if area.height < 2 || area.width < 8 {
+        return;
+    }
+    app.rects.session_tabs.clear();
+    app.rects.session_new_chip = None;
+
+    // Header.
+    let header = Line::from(vec![
+        Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(
+            "SESSIONS",
+            Style::default()
+                .fg(t.comment)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(header),
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
+    );
+    let mut y = area.y + 2;
+
+    // Collect Pty panes — index in `app.panes` doubles as the
+    // focus target for the click handler.
+    let pty_indices: Vec<usize> = app
+        .panes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| matches!(p, Pane::Pty(_)).then_some(i))
+        .collect();
+
+    if pty_indices.is_empty() {
+        let empty = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(
+                "No sessions yet.",
+                Style::default().fg(t.comment).bg(bg),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(empty),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        let hint = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(
+                "ai.claude_code to start one.",
+                Style::default().fg(t.comment).bg(bg).add_modifier(Modifier::DIM),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(hint),
+            Rect {
+                x: area.x,
+                y: y + 1,
+                width: area.width,
+                height: 1,
+            },
+        );
+        return;
+    }
+
+    let active_pid = app.active;
+    for &pid in &pty_indices {
+        if y + TAB_H > area.y + area.height {
+            break;
+        }
+        let pane = match app.panes.get(pid) {
+            Some(p) => p,
+            None => continue,
+        };
+        let Pane::Pty(s) = pane else { continue };
+
+        let is_active = active_pid == Some(pid);
+        let tab_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: TAB_H,
+        };
+
+        // 1-cell accent on the left edge: user-set color always
+        // wins; otherwise green for active, transparent for idle.
+        let accent_color = match s.accent_color.as_deref() {
+            Some("green") => t.green,
+            Some("blue") => t.blue,
+            Some("yellow") => t.yellow,
+            Some("orange") => t.orange,
+            Some("red") => t.red,
+            Some("purple") => t.purple,
+            Some("cyan") => t.cyan,
+            _ => {
+                if is_active {
+                    t.green
+                } else {
+                    bg
+                }
+            }
+        };
+        for row in 0..TAB_H {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ",
+                    Style::default().bg(accent_color),
+                ))),
+                Rect {
+                    x: area.x,
+                    y: y + row,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+
+        // Row 1: name (bold when active) + optional bell badge.
+        // Name resolves user-rename → Jira ticket from branch /
+        // profile label → profile label, in that order.
+        let cwd = s.profile.cwd.as_ref();
+        let branch_for_lookup = cwd.and_then(|p| current_branch(p));
+        let detected_ticket = detect_ticket(
+            &app.config.ui.ticket_prefixes,
+            s.display_name.as_deref(),
+            branch_for_lookup.as_deref(),
+            &s.profile.label,
+        );
+        let label = s.display_name.clone().unwrap_or_else(|| {
+            detected_ticket
+                .clone()
+                .unwrap_or_else(|| s.profile.label.clone())
+        });
+        let name_style = Style::default().fg(t.fg).bg(bg).add_modifier(if is_active {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
+        let unread = s.unread_bytes();
+        let mut name_spans = vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(label, name_style),
+        ];
+        if unread > 0 && !is_active {
+            let count_str = if unread > 999 {
+                "999+".to_string()
+            } else {
+                unread.to_string()
+            };
+            name_spans.push(Span::styled("  ", Style::default().bg(bg)));
+            name_spans.push(Span::styled(
+                format!("🔔 {count_str}"),
+                Style::default().fg(t.orange).bg(bg).add_modifier(Modifier::BOLD),
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(name_spans)),
+            Rect {
+                x: area.x + 1,
+                y,
+                width: area.width - 1,
+                height: 1,
+            },
+        );
+
+        // Row 2: ⎇ <branch> · <cwd basename>.
+        // Cwd already captured above for ticket detection.
+        let branch = branch_for_lookup
+            .clone()
+            .unwrap_or_else(|| "(no branch)".to_string());
+        let cwd_label = cwd
+            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+            .unwrap_or_default();
+        let mut row2_spans = vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled("⎇ ", Style::default().fg(t.purple).bg(bg)),
+            Span::styled(branch, Style::default().fg(t.fg).bg(bg)),
+        ];
+        if !cwd_label.is_empty() {
+            row2_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
+            row2_spans.push(Span::styled(cwd_label, Style::default().fg(t.comment).bg(bg)));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(row2_spans)),
+            Rect {
+                x: area.x + 1,
+                y: y + 1,
+                width: area.width - 1,
+                height: 1,
+            },
+        );
+
+        // Row 3: status + optional detected ticket chip + bottom
+        // separator. Status thresholds:
+        //   - <2s since last output → running (green).
+        //   - <30s → recent (comment).
+        //   - else → idle (grey).
+        //   - exited child → exited (red).
+        let (status_text, status_color) = if s.is_exited() {
+            ("exited", t.red)
+        } else {
+            match s.last_output_at {
+                Some(at) => {
+                    let elapsed = at.elapsed();
+                    if elapsed < std::time::Duration::from_secs(2) {
+                        ("running", t.green)
+                    } else if elapsed < std::time::Duration::from_secs(30) {
+                        ("recent", t.comment)
+                    } else {
+                        ("idle", t.grey)
+                    }
+                }
+                None => ("idle", t.grey),
+            }
+        };
+        let mut row3_spans = vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(status_text, Style::default().fg(status_color).bg(bg)),
+        ];
+        if let Some(ticket) = detected_ticket
+            && s.display_name.is_none()
+        {
+            // Only show the ticket chip when it wasn't already
+            // used as the label (i.e. user has a custom rename).
+            row3_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
+            row3_spans.push(Span::styled(ticket, Style::default().fg(t.cyan).bg(bg)));
+        }
+        // Capture the pid before the row3 paint so we can release
+        // the &Pane borrow and re-borrow App mutably for the
+        // session_ports cache lookup.
+        let pty_pid_opt = s.pid();
+        let row3_rect = Rect {
+            x: area.x + 1,
+            y: y + 2,
+            width: area.width - 1,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(Line::from(row3_spans)), row3_rect);
+        // Listening ports (cached) — append as a `:3000` chip
+        // after the status text on row 3.
+        if let Some(pid) = pty_pid_opt {
+            let ports = app.session_ports(pid);
+            if !ports.is_empty() {
+                let chip_text: String = ports
+                    .iter()
+                    .map(|p| format!(":{p}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let chip_w = chip_text.chars().count() as u16;
+                if row3_rect.width > chip_w + 6 {
+                    let chip_rect = Rect {
+                        x: row3_rect.x + row3_rect.width - chip_w - 1,
+                        y: row3_rect.y,
+                        width: chip_w,
+                        height: 1,
+                    };
+                    frame.render_widget(
+                        Paragraph::new(Line::from(Span::styled(
+                            chip_text,
+                            Style::default().fg(t.blue).bg(bg),
+                        ))),
+                        chip_rect,
+                    );
+                }
+            }
+        }
+
+        app.rects.session_tabs.push((tab_rect, pid));
+        y += TAB_H;
+    }
+
+    // `+ New session` row — last interactive row at the bottom
+    // of the panel. Click → spawn a Claude Code pane (the most
+    // common single-click case). A future picker could let the
+    // user pick Claude / Codex / shell here.
+    if y + 1 <= area.y + area.height {
+        let new_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        let line = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(
+                "+ New session",
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(line), new_rect);
+        app.rects.session_new_chip = Some(new_rect);
+    }
+}
+
+/// Find a Jira-style ticket (`PREFIX-<digits>`) in any of the
+/// candidate strings, using the user's configured `[ui]
+/// ticket_prefixes`. Returns the first match in display →
+/// branch → label order, or `None`.
+fn detect_ticket(
+    prefixes: &[String],
+    display_name: Option<&str>,
+    branch: Option<&str>,
+    label: &str,
+) -> Option<String> {
+    if prefixes.is_empty() {
+        return None;
+    }
+    for candidate in [display_name.unwrap_or(""), branch.unwrap_or(""), label] {
+        if candidate.is_empty() {
+            continue;
+        }
+        for p in prefixes {
+            let p = p.as_str();
+            if p.is_empty() {
+                continue;
+            }
+            // Find `<prefix><digits>`. Case-insensitive prefix
+            // match; digits required.
+            let needle = p.to_ascii_lowercase();
+            let hay = candidate.to_ascii_lowercase();
+            let mut idx = 0;
+            while let Some(pos) = hay[idx..].find(&needle) {
+                let start = idx + pos;
+                let after = start + needle.len();
+                let suffix = &candidate[after..];
+                let digit_end = suffix
+                    .char_indices()
+                    .take_while(|(_, c)| c.is_ascii_digit())
+                    .last()
+                    .map(|(i, c)| i + c.len_utf8());
+                if let Some(de) = digit_end
+                    && de > 0
+                {
+                    return Some(candidate[start..after + de].to_string());
+                }
+                idx = after;
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_ticket_finds_jira_in_branch() {
+        let prefixes = vec!["TKT-".to_string(), "MIX-".to_string()];
+        assert_eq!(
+            detect_ticket(&prefixes, None, Some("feature/TKT-123-fix"), "claude code"),
+            Some("TKT-123".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_ticket_case_insensitive() {
+        let prefixes = vec!["TKT-".to_string()];
+        assert_eq!(
+            detect_ticket(&prefixes, Some("tkt-9 review"), None, "claude code"),
+            Some("tkt-9".to_string())
+        );
+    }
+
+    #[test]
+    fn detect_ticket_skips_when_no_digits() {
+        let prefixes = vec!["TKT-".to_string()];
+        assert_eq!(
+            detect_ticket(&prefixes, None, Some("TKT-foo"), "claude code"),
+            None
+        );
+    }
+
+    #[test]
+    fn detect_ticket_returns_none_when_no_prefixes() {
+        assert_eq!(detect_ticket(&[], None, Some("TKT-9"), "claude code"), None);
+    }
+}
+
+/// Cheap git branch lookup — shells out to `git symbolic-ref --short HEAD`.
+/// Returns None for non-repos / detached HEAD.
+fn current_branch(cwd: &std::path::Path) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "-q", "HEAD"])
+        .current_dir(cwd)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!b.is_empty()).then_some(b)
+}

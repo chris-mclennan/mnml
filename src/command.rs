@@ -2210,6 +2210,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::Integrations),
         },
         Command {
+            id: "view.activity_sessions",
+            title: "Activity: show Sessions (vertical session tabs)",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Sessions),
+        },
+        Command {
             id: "view.git_commit_focus",
             title: "Activity: focus the Git section's commit textarea",
             group: "view",

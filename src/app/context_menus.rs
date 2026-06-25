@@ -502,6 +502,9 @@ impl App {
             GitStashDrop(id) => self.git_stash_drop_prompt(&id),
             GitTagDelete(name) => self.git_tag_delete_prompt(&name),
             GitRemoteCheckout(name) => self.checkout_branch(&name),
+            SessionRename(pid) => self.open_session_rename_prompt(pid),
+            SessionSetColor(pid, color) => self.set_session_color(pid, color),
+            SessionClose(pid) => self.close_session(pid),
             PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active, true),
             OpenUrl(url) => {
                 open_url_external(&url);

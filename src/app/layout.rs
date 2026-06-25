@@ -1577,8 +1577,13 @@ impl App {
     }
 
     pub fn focus_pane(&mut self) {
-        if self.active.is_some() {
+        if let Some(pid) = self.active {
             self.focus = Focus::Pane;
+            // Reset the unread-bytes counter on the active Pty
+            // pane so the sessions panel's bell badge clears.
+            if let Some(crate::pane::Pane::Pty(s)) = self.panes.get_mut(pid) {
+                s.mark_seen();
+            }
         }
     }
 

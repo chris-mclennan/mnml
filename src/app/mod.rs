@@ -1527,6 +1527,69 @@ pub fn open_url_external(url: &str) {
 /// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
 /// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
 /// headless / sandboxed env where none of those are available is fine).
+/// Listening TCP ports for a process tree rooted at `root_pid`.
+/// Shells out to:
+///   1. `pgrep -P <pid>` to enumerate direct children.
+///   2. `lsof -i -n -P -p <pid>` to read the pid's open sockets,
+///      keeping only `LISTEN` rows.
+/// Repeats step 1 transitively to scoop up grandchildren (a
+/// shell that spawned `node server.js` etc.). Failed shell-outs
+/// are silently skipped — empty vec is fine for the renderer.
+fn scan_listening_ports(root_pid: u32) -> Vec<u16> {
+    let mut pids: Vec<u32> = vec![root_pid];
+    let mut frontier: Vec<u32> = vec![root_pid];
+    while let Some(p) = frontier.pop() {
+        let out = std::process::Command::new("pgrep")
+            .args(["-P", &p.to_string()])
+            .output();
+        if let Ok(o) = out
+            && o.status.success()
+        {
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                if let Ok(child) = line.trim().parse::<u32>() {
+                    if !pids.contains(&child) {
+                        pids.push(child);
+                        frontier.push(child);
+                    }
+                }
+            }
+        }
+    }
+    let mut ports: Vec<u16> = Vec::new();
+    // One lsof per pid set — comma-joined for a single shell-out.
+    let pid_arg: String = pids
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    if pid_arg.is_empty() {
+        return ports;
+    }
+    let out = std::process::Command::new("lsof")
+        .args(["-iTCP", "-sTCP:LISTEN", "-n", "-P", "-p", &pid_arg])
+        .output();
+    if let Ok(o) = out
+        && o.status.success()
+    {
+        for line in String::from_utf8_lossy(&o.stdout).lines().skip(1) {
+            // Columns: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME
+            // The NAME column for a TCP listener looks like:
+            //   *:3000 (LISTEN)  or  127.0.0.1:3000 (LISTEN)
+            let name = line.split_whitespace().nth(8).unwrap_or("");
+            if let Some(colon) = name.rfind(':') {
+                let port_str = &name[colon + 1..];
+                if let Ok(port) = port_str.trim_end_matches(" (LISTEN)").parse::<u16>() {
+                    if !ports.contains(&port) {
+                        ports.push(port);
+                    }
+                }
+            }
+        }
+    }
+    ports.sort_unstable();
+    ports
+}
+
 fn open_path_external(path: &std::path::Path) {
     let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("open", &[])
@@ -1620,6 +1683,11 @@ pub enum ActivitySection {
     Git,
     Debug,
     Integrations,
+    /// Vertical-tab strip of open Pty sessions (Claude / Codex /
+    /// shell panes). Each tab shows the session name + git
+    /// branch + cwd + a notification ring when there's unread
+    /// output. Click a tab → focus that pane.
+    Sessions,
 }
 
 impl ActivitySection {
@@ -1642,6 +1710,8 @@ impl ActivitySection {
                 "Integrations",
                 "view.activity_integrations",
             ),
+            // nf-md-tab — cmux-style vertical session tabs
+            Self::Sessions => ("\u{F0392}", "T", "Sessions", "view.activity_sessions"),
         }
     }
 
@@ -1653,6 +1723,7 @@ impl ActivitySection {
             Self::Git,
             Self::Debug,
             Self::Integrations,
+            Self::Sessions,
         ]
     }
 }
@@ -1850,6 +1921,14 @@ pub struct PaneRects {
     /// (shown only when `dock_widgets.is_empty()`). Click → fires
     /// `dock.new_text`.
     pub dock_empty_chip: Option<Rect>,
+    /// `(rect, pane_id)` per session tab in the cmux-style
+    /// `ActivitySection::Sessions` panel. Click → focus that
+    /// Pty pane.
+    pub session_tabs: Vec<(Rect, usize)>,
+    /// Click rect for the `+ New session` row at the bottom of
+    /// the sessions panel. Click → spawns a Claude Code pane
+    /// (most common case; a follow-up could open a picker).
+    pub session_new_chip: Option<Rect>,
     /// Strip reserved at the top of the editor body for inline
     /// dock widgets at TL / TR corners. Editor body is shrunk by
     /// `height` from the top. `None` = no inline top widgets.
@@ -2962,6 +3041,15 @@ pub struct App {
     /// title bar. Mouse-up resolves the drag to a new corner
     /// based on the cursor's final quadrant in the editor area.
     pub dock_drag_id: Option<usize>,
+    /// `Some(pane_id)` while the user is mid-drag on a session
+    /// tab in the sessions panel. Mouse-up over another tab
+    /// swaps the two panes in `App::panes`. None ⇒ idle.
+    pub session_drag_pid: Option<usize>,
+    /// 2-second cache: pid → (refreshed_at, listening TCP ports).
+    /// The sessions-panel renderer queries this; the underlying
+    /// `lsof` shell-out runs at most once per pid per 2 seconds.
+    pub session_port_cache:
+        std::collections::HashMap<u32, (std::time::Instant, Vec<u16>)>,
     /// Live cursor position during a dock drag. Updated on every
     /// Mouse Drag event while `dock_drag_id` is set; consumed by
     /// the renderer to paint the ghost next to the cursor + the
@@ -3676,6 +3764,8 @@ impl App {
             dock_widget_next_id: 0,
             dock_drag_id: None,
             dock_drag_cursor: None,
+            session_drag_pid: None,
+            session_port_cache: std::collections::HashMap::new(),
             dock_kebab_menu: None,
             dock_rename_target: None,
             pending_format_save: None,
@@ -5962,6 +6052,109 @@ impl App {
             } else {
                 trimmed.to_string()
             };
+        }
+    }
+
+    /// Listening TCP ports for a Pty's process tree (root pid +
+    /// recursive children). Cached for 2 seconds; first call per
+    /// pid shells out to `lsof` + `pgrep`. Empty vec on
+    /// unavailable / not-listening / lsof failure.
+    pub fn session_ports(&mut self, root_pid: u32) -> Vec<u16> {
+        const TTL: std::time::Duration = std::time::Duration::from_secs(2);
+        if let Some((at, ports)) = self.session_port_cache.get(&root_pid)
+            && at.elapsed() < TTL
+        {
+            return ports.clone();
+        }
+        let ports = scan_listening_ports(root_pid);
+        self.session_port_cache
+            .insert(root_pid, (std::time::Instant::now(), ports.clone()));
+        ports
+    }
+
+    /// Build + open the sessions-panel context menu for one
+    /// Pty pane (right-click on a session tab).
+    pub fn open_session_tab_context_menu(
+        &mut self,
+        pane_id: usize,
+        anchor: (u16, u16),
+    ) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let label = match self.panes.get(pane_id) {
+            Some(crate::pane::Pane::Pty(s)) => s
+                .display_name
+                .clone()
+                .unwrap_or_else(|| s.profile.label.clone()),
+            _ => return,
+        };
+        let title = Some(label);
+        let items = vec![
+            MenuItem::new("Rename…", MenuAction::SessionRename(pane_id)),
+            MenuItem::new(
+                "Color: Green",
+                MenuAction::SessionSetColor(pane_id, "green"),
+            ),
+            MenuItem::new(
+                "Color: Blue",
+                MenuAction::SessionSetColor(pane_id, "blue"),
+            ),
+            MenuItem::new(
+                "Color: Yellow",
+                MenuAction::SessionSetColor(pane_id, "yellow"),
+            ),
+            MenuItem::new(
+                "Color: Orange",
+                MenuAction::SessionSetColor(pane_id, "orange"),
+            ),
+            MenuItem::new(
+                "Color: Red",
+                MenuAction::SessionSetColor(pane_id, "red"),
+            ),
+            MenuItem::new(
+                "Color: Purple",
+                MenuAction::SessionSetColor(pane_id, "purple"),
+            ),
+            MenuItem::new(
+                "Color: Cyan",
+                MenuAction::SessionSetColor(pane_id, "cyan"),
+            ),
+            MenuItem::new(
+                "Color: None",
+                MenuAction::SessionSetColor(pane_id, "none"),
+            ),
+            MenuItem::new("Close session", MenuAction::SessionClose(pane_id)),
+        ];
+        self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
+    /// Open the rename prompt for a specific Pty pane (the
+    /// sessions panel context menu's "Rename…" target). Sets
+    /// `App::active` to that pane first so the commit handler
+    /// (`rename_active_pty`) acts on it.
+    pub fn open_session_rename_prompt(&mut self, pane_id: usize) {
+        if !matches!(self.panes.get(pane_id), Some(crate::pane::Pane::Pty(_))) {
+            return;
+        }
+        self.active = Some(pane_id);
+        self.open_rename_session_prompt();
+    }
+
+    /// Set the accent color of a specific Pty pane. `"none"`
+    /// clears back to the default active color.
+    pub fn set_session_color(&mut self, pane_id: usize, color: &'static str) {
+        if let Some(crate::pane::Pane::Pty(s)) = self.panes.get_mut(pane_id) {
+            s.accent_color = match color {
+                "none" | "" => None,
+                other => Some(other.to_string()),
+            };
+        }
+    }
+
+    /// Sessions panel — close the Pty at `pane_id` (kills the
+    /// child via the standard `close_pane` path).
+    pub fn close_session(&mut self, pane_id: usize) {
+        if matches!(self.panes.get(pane_id), Some(crate::pane::Pane::Pty(_))) {
+            self.close_pane(pane_id);
         }
     }
 
@@ -9966,6 +10159,14 @@ impl App {
 
     pub fn tick(&mut self) {
         self.git.tick();
+        // Sessions panel relies on per-Pty activity timestamps for
+        // its running / idle status chip. Cheap loop — just bumps
+        // an Instant when bytes_seen advanced.
+        for p in self.panes.iter_mut() {
+            if let crate::pane::Pane::Pty(s) = p {
+                s.tick_activity();
+            }
+        }
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();
