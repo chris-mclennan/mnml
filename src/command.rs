@@ -418,6 +418,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_bufferline(),
         },
         Command {
+            id: "view.menu_bar_cycle",
+            title: "Cycle menu bar visibility (always → auto-hide → hidden)",
+            group: "view",
+            keys: &[],
+            run: |app| app.cycle_menu_bar(),
+        },
+        Command {
             id: "view.toggle_todo_highlight",
             title: "Toggle TODO/FIXME/HACK/XXX keyword highlight",
             group: "view",

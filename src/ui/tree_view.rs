@@ -986,6 +986,11 @@ fn draw_workspace_files(
     let multi_repo = app.repos.len() > 1;
     let active_repo_path = app.repos.get(app.active_repo).map(|r| r.path.clone());
 
+    // Reserve the rightmost column for a scrollbar when the tree overflows
+    // its viewport (matches the list-pane convention — see `ui::scrollbar`).
+    let needs_sb = rows.len() > h;
+    let sb_w: u16 = if needs_sb { 1 } else { 0 };
+
     let mut lines: Vec<Line> = Vec::with_capacity(h);
     const ROOT_INDENT: &str = "  ";
     for (vi, row) in rows.iter().enumerate().skip(app.tree.scroll).take(h) {
@@ -1098,7 +1103,8 @@ fn draw_workspace_files(
         };
         let repo_marker_width = repo_marker.chars().count();
         let used = prefix_width + repo_marker_width + row.name.chars().count() + badge_width;
-        let pad = width.saturating_sub(used);
+        // Keep the badge clear of the reserved scrollbar column.
+        let pad = width.saturating_sub(sb_w as usize).saturating_sub(used);
         let mut spans = vec![
             Span::styled(chev_part, Style::default().fg(theme::cur().comment).bg(bg)),
             Span::styled(icon_part, Style::default().fg(prefix_color).bg(bg)),
@@ -1120,7 +1126,34 @@ fn draw_workspace_files(
         lines.push(Line::from(spans));
     }
     let drew = lines.len() as u16;
-    frame.render_widget(Paragraph::new(lines), inner);
+    let body = Rect {
+        width: inner.width.saturating_sub(sb_w),
+        ..inner
+    };
+    frame.render_widget(Paragraph::new(lines), body);
+    if needs_sb {
+        let sb_area = Rect {
+            x: inner.x + body.width,
+            y: inner.y,
+            width: sb_w,
+            height: inner.height,
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            sb_area,
+            &theme::cur(),
+            rows.len(),
+            h,
+            app.tree.scroll,
+        );
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: sb_area,
+            pane_id: 0,
+            total: rows.len(),
+            viewport: h,
+            kind: crate::app::ScrollbarKind::Tree,
+        });
+    }
     // Hover preview: when the cursor's on an image row and the cache
     // is warm, paint a small card at the bottom-left of the tree area.
     // The image escape lands post-`terminal.draw()` so it covers the

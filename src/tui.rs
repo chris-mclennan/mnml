@@ -4823,17 +4823,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            // Grab a scrollbar (editor / diff / embedded-diff) before
+            // Grab the rail's right-edge resize handle first — its grip
+            // band shares the rail's rightmost column with the file-tree
+            // scrollbar, so the (specific, ~4-row) resize zone must win
+            // there before the (full-height) scrollbar claims the click.
+            if app.begin_tree_edge_drag(x, y) {
+                return;
+            }
+            // Grab a scrollbar (editor / diff / embedded-diff / tree) before
             // any pane-level handler — the bar sits inside the pane's
             // own rect, so without this short-circuit a click on the
             // bar would also land in the editor / row-select handlers
             // below and shift the cursor / row selection.
             if app.begin_scrollbar_drag(x, y) {
-                return;
-            }
-            // Grab the rail's right-edge handle? (cheaper / more specific
-            // than a split divider — try this first.)
-            if app.begin_tree_edge_drag(x, y) {
                 return;
             }
             // Grab the GitGraph commit-list ↔ detail-panel divider?

@@ -220,6 +220,25 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: line_numbers_idx != line_numbers_default_idx,
     }));
 
+    // Menu bar visibility — always shown / auto-hide / hidden.
+    let menu_bar_idx = match cfg.ui.menu_bar.as_str() {
+        "auto" => 1,
+        "hidden" => 2,
+        _ => 0,
+    };
+    let menu_bar_default_idx = match d.ui.menu_bar.as_str() {
+        "auto" => 1,
+        "hidden" => 2,
+        _ => 0,
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "ui.menu_bar",
+        label: "Menu bar",
+        options: vec!["always".into(), "auto".into(), "hidden".into()],
+        current_idx: menu_bar_idx,
+        modified: menu_bar_idx != menu_bar_default_idx,
+    }));
+
     out.push(bool_row(
         "ui.cursor_line",
         "Cursor line",
@@ -663,6 +682,16 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             cfg.ui.now_playing_source = new.to_string();
             changed
         }
+        "ui.menu_bar" => {
+            let new = match opt_idx {
+                1 => "auto",
+                2 => "hidden",
+                _ => "always",
+            };
+            let changed = cfg.ui.menu_bar != new;
+            cfg.ui.menu_bar = new.to_string();
+            changed
+        }
         "ui.preferred_music_app" => {
             let new = match opt_idx {
                 1 => "music",
@@ -861,6 +890,7 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
         "ui.preferred_music_app" => {
             vec![("ui", "preferred_music_app", q(&cfg.ui.preferred_music_app))]
         }
+        "ui.menu_bar" => vec![("ui", "menu_bar", q(&cfg.ui.menu_bar))],
         "ui.theme" => vec![("ui", "theme", q(&cfg.ui.theme))],
         "ui.cmdline_popup_border_color" => vec![(
             "ui",
@@ -977,6 +1007,20 @@ impl App {
                 break;
             }
         }
+    }
+
+    /// `view.menu_bar_cycle` — cycle the menu-bar visibility
+    /// (always → auto → hidden → …), persisting the choice. Surfaced in the
+    /// View menu as a quick alternative to the Settings row.
+    pub fn cycle_menu_bar(&mut self) {
+        let next = match self.config.ui.menu_bar.as_str() {
+            "always" => 1, // → auto
+            "auto" => 2,   // → hidden
+            _ => 0,        // hidden / anything → always
+        };
+        apply_setting(&mut self.config, "ui.menu_bar", next);
+        self.persist_setting_to_workspace("ui.menu_bar");
+        self.toast(format!("menu bar: {}", self.config.ui.menu_bar));
     }
 
     /// Move the focused row by `delta` (positive = down). Skips

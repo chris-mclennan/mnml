@@ -1794,6 +1794,10 @@ pub enum ScrollbarKind {
     /// scrollbar kind. `total` = widest line (chars); `viewport` =
     /// visible text columns. Drag/click maps the X axis, not Y.
     EditorHScroll,
+    /// The file-tree rail (`app.tree.scroll`) — not a pane, so the
+    /// dispatcher ignores `pane_id`. `total` = visible-row count;
+    /// `viewport` = tree body height.
+    Tree,
 }
 
 impl ScrollbarKind {
@@ -8412,6 +8416,11 @@ impl App {
     /// (the rect was painted last frame; the user could have closed
     /// the pane in between).
     pub fn set_pane_scroll(&mut self, pane_id: PaneId, kind: ScrollbarKind, scroll: usize) {
+        // The file tree isn't a pane — its scroll lives on `self.tree`.
+        if matches!(kind, ScrollbarKind::Tree) {
+            self.tree.scroll = scroll;
+            return;
+        }
         // Resolved up-front: a scrollbar drag follows the same policy
         // as the mouse wheel (see `Self::cursor_follows_wheel`). Read
         // before the &mut borrow on `self.panes` below.
