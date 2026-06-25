@@ -344,10 +344,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.rects.tree_toggle = None;
             app.rects.tree_icon_buttons.clear();
         }
-        // Tiny drag-handle indicator — a 3-row vertical grip centered on
-        // the rail's right edge (not a full-height border). Telegraphs
-        // "you can drag this column to resize" without painting a visible
-        // separator line down the whole rail.
+        // Tiny drag-handle indicator — a 2-row vertical grip sitting ON the
+        // rail's right-edge column (the separator between rail and editor),
+        // not a full-height border. `tree_edge.x` is 1 col left of that edge
+        // (the hit zone is 3 cols wide, centered on the edge), so draw the
+        // grip at the hit zone's center = `edge.x + edge.width / 2` = the edge.
         if let Some(edge) = app.rects.tree_edge
             && edge.height >= 3
         {
@@ -360,7 +361,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             let grip_h: u16 = 2;
             let grip_y = edge.y + edge.height.saturating_sub(grip_h) / 2;
             let grip_rect = Rect {
-                x: edge.x,
+                x: edge.x + edge.width / 2,
                 y: grip_y,
                 width: 1,
                 height: grip_h,
