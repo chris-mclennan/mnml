@@ -553,6 +553,24 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     if delta == 0 {
         return;
     }
+    // Wheel over the agents rail panel → scroll its content list. Checked
+    // first + gated on the active section so the (stale) tree rect, which
+    // overlaps the same rail region, can't shadow it. The render clamps the
+    // offset to the content height each frame.
+    if app.active_section == crate::app::ActivitySection::Agents
+        && let Some(ar) = app.rects.agents_panel_area
+        && contains(ar, x, y)
+    {
+        let d = list_scroll_clamp(delta);
+        if d < 0 {
+            app.agents_panel_scroll = app
+                .agents_panel_scroll
+                .saturating_sub(d.unsigned_abs() as usize);
+        } else {
+            app.agents_panel_scroll = app.agents_panel_scroll.saturating_add(d as usize);
+        }
+        return;
+    }
     if let Some(tr) = app.rects.tree
         && contains(tr, x, y)
     {

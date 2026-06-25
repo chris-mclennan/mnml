@@ -227,16 +227,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     let spinner = spinner_frame();
-    // Helper closure to render one row.
-    let mut click_targets: Vec<(Rect, usize)> = Vec::new();
-    let render_row = |frame: &mut Frame,
-                      y: &mut u16,
-                      i: usize,
-                      r: &crate::claude_agents::AgentRow,
-                      click_targets: &mut Vec<(Rect, usize)>| {
-        if *y >= area.y + area.height {
-            return;
-        }
+    // Build one session row's Line (owned — borrows nothing from `app`, so
+    // the content list can outlive the `agents_panel_rows` borrow below).
+    let make_row = |r: &crate::claude_agents::AgentRow| -> Line<'static> {
         let (glyph, glyph_color) = if r.pending_tool_uses > 0 {
             ("!", t.red)
         } else if matches!(r.state, AgentState::Streaming | AgentState::ToolCall) {
@@ -258,29 +251,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .chars()
             .take(max_msg)
             .collect();
-        let row_rect = Rect {
-            x: area.x,
-            y: *y,
-            width: area.width,
-            height: 1,
-        };
-        let line = Line::from(vec![
+        Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(glyph.to_string(), Style::default().fg(glyph_color).bg(bg)),
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(ws_label, Style::default().fg(t.fg).bg(bg)),
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(msg_clip, Style::default().fg(t.comment).bg(bg)),
-        ]);
-        frame.render_widget(Paragraph::new(line), row_rect);
-        click_targets.push((row_rect, i));
-        *y += 1;
+        ])
     };
 
-    if app.agents_panel_group_by_workspace {
-        // Group by workspace. Insertion order = first-seen
-        // workspace order (which roughly corresponds to most
-        // recent activity due to the rail's existing sort).
+    // Build a flat content list (headers + session rows) for whichever view
+    // mode is active. The borrow of `app.agents_panel_rows` ends with this
+    // `let` (the rows are cloned into owned Lines), freeing `app` to mutate.
+    let content: Vec<PanelRow> = if app.agents_panel_group_by_workspace {
+        // Group by workspace. Insertion order = first-seen workspace order
+        // (roughly most-recent activity, thanks to the rail's sort).
         let mut groups: Vec<(String, Vec<(usize, &crate::claude_agents::AgentRow)>)> = Vec::new();
         for (i, r) in app.agents_panel_rows.iter().enumerate() {
             if !matches_filter(r) {
@@ -292,10 +278,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 groups.push((r.workspace.clone(), vec![(i, r)]));
             }
         }
-        // Default: every workspace collapsed. `expanded` set
-        // tracks the workspaces the user has opened. Sort rows
-        // inside each group newest-first, and sort groups by
-        // their newest-row's activity.
+        // Sort rows newest-first within each group, and groups by their
+        // newest row's activity.
         for (_, items) in &mut groups {
             items.sort_by_key(|(_, b)| std::cmp::Reverse(b.last_activity));
         }
@@ -305,105 +289,159 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             b_newest.cmp(&a_newest)
         });
         let expanded = app.agents_panel_expanded_workspaces.clone();
-        let mut workspace_headers: Vec<(Rect, String)> = Vec::new();
+        let mut content = Vec::new();
         for (ws, rows) in &groups {
-            if y >= area.y + area.height {
-                break;
-            }
             let is_expanded = expanded.contains(ws);
             let chev = if is_expanded {
                 CHEVRON_OPEN
             } else {
                 CHEVRON_CLOSED
             };
-            let header = Line::from(vec![
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    format!("{chev} {ws}  ({})", rows.len()),
-                    Style::default()
-                        .fg(t.fg)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]);
-            let header_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            frame.render_widget(Paragraph::new(header), header_rect);
-            workspace_headers.push((header_rect, ws.clone()));
-            y += 1;
+            content.push(PanelRow::WsHeader(
+                ws.clone(),
+                Line::from(vec![
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        format!("{chev} {ws}  ({})", rows.len()),
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+            ));
             if is_expanded {
                 for &(i, r) in rows {
-                    render_row(frame, &mut y, i, r, &mut click_targets);
+                    content.push(PanelRow::Session(i, make_row(r)));
                 }
             }
         }
-        app.rects.agents_panel_workspace_headers = workspace_headers;
-        app.rects.agents_panel_rows = click_targets;
-        return;
-    }
+        content
+    } else {
+        let mut action_needed: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
+        let mut running: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
+        let mut done: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
+        for (i, r) in app.agents_panel_rows.iter().enumerate() {
+            if !matches_filter(r) {
+                continue;
+            }
+            if r.pending_tool_uses > 0 {
+                action_needed.push((i, r));
+            } else if matches!(r.state, AgentState::Streaming | AgentState::ToolCall) {
+                running.push((i, r));
+            } else {
+                done.push((i, r));
+            }
+        }
+        for v in [&mut action_needed, &mut running, &mut done] {
+            v.sort_by_key(|(_, b)| std::cmp::Reverse(b.last_activity));
+        }
+        let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)]); 3] = [
+            ("Action needed", &action_needed[..]),
+            ("Running", &running[..]),
+            ("Done", &done[..]),
+        ];
+        let mut content = Vec::new();
+        for (label, items) in sections {
+            if items.is_empty() {
+                continue;
+            }
+            content.push(PanelRow::Header(Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    label.to_string(),
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  ({})", items.len()),
+                    Style::default().fg(t.comment).bg(bg),
+                ),
+            ])));
+            for &(i, r) in items {
+                content.push(PanelRow::Session(i, make_row(r)));
+            }
+            content.push(PanelRow::Blank);
+        }
+        content
+    };
 
-    let mut action_needed: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
-    let mut running: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
-    let mut done: Vec<(usize, &crate::claude_agents::AgentRow)> = Vec::new();
-    for (i, r) in app.agents_panel_rows.iter().enumerate() {
-        if !matches_filter(r) {
-            continue;
-        }
-        if r.pending_tool_uses > 0 {
-            action_needed.push((i, r));
-        } else if matches!(r.state, AgentState::Streaming | AgentState::ToolCall) {
-            running.push((i, r));
-        } else {
-            done.push((i, r));
-        }
-    }
-    // Newest-first in each section.
-    for v in [&mut action_needed, &mut running, &mut done] {
-        v.sort_by_key(|(_, b)| std::cmp::Reverse(b.last_activity));
-    }
-    let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)]); 3] = [
-        ("Action needed", &action_needed[..]),
-        ("Running", &running[..]),
-        ("Done", &done[..]),
-    ];
-    for (label, items) in sections {
-        if items.is_empty() || y >= area.y + area.height {
-            continue;
-        }
-        let header = Line::from(vec![
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                label.to_string(),
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  ({})", items.len()),
-                Style::default().fg(t.comment).bg(bg),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(header),
-            Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            },
-        );
-        y += 1;
-        for &(i, r) in items {
-            render_row(frame, &mut y, i, r, &mut click_targets);
-        }
-        if y < area.y + area.height {
-            y += 1;
+    // Window the content against the visible height, applying the scroll
+    // offset and reserving a column for a scrollbar when it overflows.
+    let content_top = y;
+    let content_bottom = area.y + area.height;
+    let visible_h = content_bottom.saturating_sub(content_top) as usize;
+    let total = content.len();
+    let needs_sb = visible_h > 0 && total > visible_h;
+    let sb_w: u16 = if needs_sb { 1 } else { 0 };
+    let row_w = area.width.saturating_sub(sb_w);
+
+    let max_scroll = total.saturating_sub(visible_h);
+    app.agents_panel_scroll = app.agents_panel_scroll.min(max_scroll);
+    let scroll = app.agents_panel_scroll;
+
+    let mut click_targets: Vec<(Rect, usize)> = Vec::new();
+    let mut workspace_headers: Vec<(Rect, String)> = Vec::new();
+    for (vi, item) in content.into_iter().enumerate().skip(scroll).take(visible_h) {
+        let row_rect = Rect {
+            x: area.x,
+            y: content_top + (vi - scroll) as u16,
+            width: row_w,
+            height: 1,
+        };
+        match item {
+            PanelRow::Session(idx, line) => {
+                frame.render_widget(Paragraph::new(line), row_rect);
+                click_targets.push((row_rect, idx));
+            }
+            PanelRow::Header(line) => {
+                frame.render_widget(Paragraph::new(line), row_rect);
+            }
+            PanelRow::WsHeader(ws, line) => {
+                frame.render_widget(Paragraph::new(line), row_rect);
+                workspace_headers.push((row_rect, ws));
+            }
+            PanelRow::Blank => {}
         }
     }
     app.rects.agents_panel_rows = click_targets;
+    app.rects.agents_panel_workspace_headers = workspace_headers;
+    app.rects.agents_panel_area = Some(Rect {
+        x: area.x,
+        y: content_top,
+        width: area.width,
+        height: visible_h as u16,
+    });
+
+    if needs_sb {
+        let sb_area = Rect {
+            x: area.x + row_w,
+            y: content_top,
+            width: sb_w,
+            height: visible_h as u16,
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(frame, sb_area, &t, total, visible_h, scroll);
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: sb_area,
+            pane_id: 0,
+            total,
+            viewport: visible_h,
+            kind: crate::app::ScrollbarKind::AgentsPanel,
+        });
+    }
+}
+
+/// One flat row of the agents panel's scrollable content list — built for
+/// whichever view mode is active, then windowed against the visible height.
+enum PanelRow {
+    /// A session row; carries the `agents_panel_rows` index for click routing.
+    Session(usize, ratatui::text::Line<'static>),
+    /// A section header (Action needed / Running / Done).
+    Header(ratatui::text::Line<'static>),
+    /// A workspace group header; carries the workspace for click routing.
+    WsHeader(String, ratatui::text::Line<'static>),
+    /// A blank spacer row (section gap).
+    Blank,
 }

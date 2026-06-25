@@ -1798,6 +1798,9 @@ pub enum ScrollbarKind {
     /// dispatcher ignores `pane_id`. `total` = visible-row count;
     /// `viewport` = tree body height.
     Tree,
+    /// The agents rail panel (`app.agents_panel_scroll`) — not a pane.
+    /// `total` = content-row count; `viewport` = panel body height.
+    AgentsPanel,
 }
 
 impl ScrollbarKind {
@@ -1963,6 +1966,9 @@ pub struct PaneRects {
     /// `(rect, row_idx)` per agent row in the rail Agents panel.
     /// Click → focus the row's session (resume / open transcript).
     pub agents_panel_rows: Vec<(Rect, usize)>,
+    /// The scrollable content area of the agents panel (below the fixed
+    /// header rows) — used to route wheel events to `agents_panel_scroll`.
+    pub agents_panel_area: Option<Rect>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
@@ -3135,6 +3141,10 @@ pub struct App {
     /// `/`-style substring filter for the rail agents panel
     /// (workspace / session id / last_msg). Case-insensitive.
     pub agents_panel_filter: String,
+    /// Top-row scroll offset for the agents panel's content list (the
+    /// session rows scroll; the filter + `+ New session` header stays put).
+    /// Clamped to the content height each render.
+    pub agents_panel_scroll: usize,
     /// `true` while the user's keyboard focus is in the rail
     /// agents panel's filter input.
     pub agents_panel_filter_focused: bool,
@@ -3889,6 +3899,7 @@ impl App {
             agents_panel_group_by_workspace: false,
             agents_panel_expanded_workspaces: std::collections::HashSet::new(),
             agents_panel_filter: String::new(),
+            agents_panel_scroll: 0,
             agents_panel_filter_focused: false,
             dock_widget_next_id: 0,
             dock_drag_id: None,
@@ -8416,9 +8427,14 @@ impl App {
     /// (the rect was painted last frame; the user could have closed
     /// the pane in between).
     pub fn set_pane_scroll(&mut self, pane_id: PaneId, kind: ScrollbarKind, scroll: usize) {
-        // The file tree isn't a pane — its scroll lives on `self.tree`.
+        // The file tree + agents panel aren't panes — their scroll lives on
+        // dedicated App fields.
         if matches!(kind, ScrollbarKind::Tree) {
             self.tree.scroll = scroll;
+            return;
+        }
+        if matches!(kind, ScrollbarKind::AgentsPanel) {
+            self.agents_panel_scroll = scroll;
             return;
         }
         // Resolved up-front: a scrollbar drag follows the same policy
