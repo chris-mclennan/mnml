@@ -78,26 +78,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 height: 1,
             },
         );
-        let hint = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(
-                "ai.claude_code to start one.",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]);
-        frame.render_widget(
-            Paragraph::new(hint),
-            Rect {
-                x: area.x,
-                y: y + 1,
-                width: area.width,
-                height: 1,
-            },
-        );
-        return;
+        // Advance past the message + a gap, then fall through (don't
+        // `return`) so the "+ New session" row below still renders — you
+        // need it to start your *first* session from this panel.
+        y += 2;
     }
 
     let active_pid = app.active;
@@ -314,6 +298,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
         app.rects.session_tabs.push((tab_rect, pid));
         y += TAB_H;
+        // Blank line between sessions for breathing room.
+        y += 1;
     }
 
     // `+ New session` row — last interactive row at the bottom
