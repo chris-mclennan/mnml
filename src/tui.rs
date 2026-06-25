@@ -622,6 +622,34 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Agents rail filter — when focused, intercept typing /
+    // backspace / Esc.
+    if app.agents_panel_filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.agents_panel_filter.clear();
+                app.agents_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.agents_panel_filter.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.agents_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.agents_panel_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Git-palette filter input — when focused, intercept typing /
     // backspace / Esc here so the keys don't fall through to the
     // editor.
@@ -6062,6 +6090,39 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             {
                 crate::command::run("ai.claude_code", app);
                 return;
+            }
+            // Agents rail panel — filter input, + New, and row
+            // clicks.
+            if let Some(r) = app.rects.agents_panel_filter_input
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.agents_panel_filter_focused = true;
+                return;
+            }
+            if let Some(r) = app.rects.agents_panel_new_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                crate::command::run("ai.claude_code", app);
+                return;
+            }
+            if let Some(&(_, row_idx)) = app
+                .rects
+                .agents_panel_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                // Resume the clicked session in a fresh pty
+                // (mirrors the existing dashboard's `R` chord).
+                if let Some(row) = app.agents_panel_rows.get(row_idx).cloned() {
+                    let session_id = row.session_id.clone();
+                    app.resume_claude_session_in_pty(&session_id);
+                }
+                return;
+            }
+            // Click anywhere else inside the rail while the agents
+            // filter is focused → unfocus.
+            if app.agents_panel_filter_focused {
+                app.agents_panel_filter_focused = false;
             }
             // Sessions panel tab (vertical-tab strip shown when
             // `ActivitySection::Sessions` is active). Click →

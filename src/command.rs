@@ -2217,6 +2217,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::Sessions),
         },
         Command {
+            id: "view.activity_agents",
+            title: "Activity: show Agents (Claude / Codex dashboard)",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Agents),
+        },
+        Command {
             id: "view.git_commit_focus",
             title: "Activity: focus the Git section's commit textarea",
             group: "view",

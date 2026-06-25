@@ -1708,6 +1708,11 @@ pub enum ActivitySection {
     /// branch + cwd + a notification ring when there's unread
     /// output. Click a tab → focus that pane.
     Sessions,
+    /// Cross-workspace Claude / Codex agents dashboard in the rail.
+    /// Rows grouped by status (Action Needed / Running / Done)
+    /// with an animated spinner glyph on running rows, filter
+    /// input + `+ New` at the top.
+    Agents,
 }
 
 impl ActivitySection {
@@ -1732,6 +1737,8 @@ impl ActivitySection {
             ),
             // nf-md-tab — cmux-style vertical session tabs
             Self::Sessions => ("\u{F0392}", "T", "Sessions", "view.activity_sessions"),
+            // nf-md-robot — agents (Claude / Codex) dashboard
+            Self::Agents => ("\u{F06A9}", "A", "Agents", "view.activity_agents"),
         }
     }
 
@@ -1744,6 +1751,7 @@ impl ActivitySection {
             Self::Debug,
             Self::Integrations,
             Self::Sessions,
+            Self::Agents,
         ]
     }
 }
@@ -1949,6 +1957,13 @@ pub struct PaneRects {
     /// the sessions panel. Click → spawns a Claude Code pane
     /// (most common case; a follow-up could open a picker).
     pub session_new_chip: Option<Rect>,
+    /// `(rect, row_idx)` per agent row in the rail Agents panel.
+    /// Click → focus the row's session (resume / open transcript).
+    pub agents_panel_rows: Vec<(Rect, usize)>,
+    /// Click rect for the filter input at the top of the panel.
+    pub agents_panel_filter_input: Option<Rect>,
+    /// Click rect for the `+ New` row at the top of the panel.
+    pub agents_panel_new_chip: Option<Rect>,
     /// Click rects for the workspaces-editor overlay. Each row is
     /// `(rect, idx_or_action_code)` — `idx_or_action_code < 0` is
     /// reserved for action rows (`-1 = Add`, `-2 = Close`).
@@ -3101,6 +3116,18 @@ pub struct App {
     /// by the statusline to surface a clickable chip → focus the
     /// pane. Cleared when the pane is closed.
     pub last_test_run: Option<(String, usize)>,
+    /// Cached snapshot for the rail `Agents` panel — rebuilt
+    /// every `AGENTS_PANEL_REFRESH` while the section is active.
+    /// `None` ⇒ never built.
+    pub agents_panel_rows: Vec<crate::claude_agents::AgentRow>,
+    /// When `agents_panel_rows` was last refreshed.
+    pub agents_panel_built_at: Option<std::time::Instant>,
+    /// `/`-style substring filter for the rail agents panel
+    /// (workspace / session id / last_msg). Case-insensitive.
+    pub agents_panel_filter: String,
+    /// `true` while the user's keyboard focus is in the rail
+    /// agents panel's filter input.
+    pub agents_panel_filter_focused: bool,
     /// Monotonically-increasing id for new dock widgets. Each
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
@@ -3837,6 +3864,10 @@ impl App {
             workspaces_edit_target_group: None,
             dock_widgets: Vec::new(),
             last_test_run: None,
+            agents_panel_rows: Vec::new(),
+            agents_panel_built_at: None,
+            agents_panel_filter: String::new(),
+            agents_panel_filter_focused: false,
             dock_widget_next_id: 0,
             dock_drag_id: None,
             dock_drag_cursor: None,
@@ -6129,6 +6160,37 @@ impl App {
                 trimmed.to_string()
             };
         }
+    }
+
+    /// Resume a Claude Code session by session id — opens a fresh
+    /// pty pane with `--resume <sid>`. Used by the rail agents
+    /// panel's row-click handler.
+    pub fn resume_claude_session_in_pty(&mut self, session_id: &str) {
+        let profile = crate::pty_pane::BinaryProfile::claude_code_resume(
+            self.workspace.clone(),
+            session_id.to_string(),
+        );
+        self.open_pty(profile);
+    }
+
+    /// Refresh the rail Agents panel's cached snapshot if it's
+    /// older than `AGENTS_PANEL_REFRESH`. Cheap enough to call
+    /// every frame — the actual scan only fires when the
+    /// timestamp says we're due.
+    pub fn refresh_agents_panel_if_due(&mut self) {
+        const AGENTS_PANEL_REFRESH: std::time::Duration =
+            std::time::Duration::from_secs(5);
+        let due = self
+            .agents_panel_built_at
+            .map(|t| t.elapsed() >= AGENTS_PANEL_REFRESH)
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        let anchor = self.workspace.clone();
+        let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
+        self.agents_panel_rows = pane.rows;
+        self.agents_panel_built_at = Some(std::time::Instant::now());
     }
 
     /// `setup.install_to_path` — show an actionable hint with

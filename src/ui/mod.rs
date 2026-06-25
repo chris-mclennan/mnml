@@ -81,6 +81,7 @@ pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
 pub mod request_view;
+pub mod agents_panel;
 pub mod dock;
 pub mod git_palette;
 pub mod menu_bar;
@@ -330,6 +331,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
             crate::app::ActivitySection::Sessions => {
                 sessions_panel::draw(frame, app, content_area);
+            }
+            crate::app::ActivitySection::Agents => {
+                agents_panel::draw(frame, app, content_area);
             }
         }
         // For non-Explorer sections the tree_view click rects aren't
