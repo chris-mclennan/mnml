@@ -753,6 +753,16 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_claude_agents_pane(),
         },
+        // Discoverability alias — old docs / muscle memory called
+        // it `agents_dashboard`. Kept as a palette entry so `:ag`
+        // finds it (fuzzy match needs a 'g' in the name).
+        Command {
+            id: "ai.agents_dashboard",
+            title: "AI: open Claude Agents dashboard (alias for ai.dashboard)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_agents_pane(),
+        },
         Command {
             id: "lsp.inlay_hints_toggle",
             title: "LSP: toggle inlay hints (type / parameter chips)",

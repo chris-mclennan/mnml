@@ -3630,7 +3630,7 @@ pub struct App {
     pub pending_grpc_host: Option<String>,
     /// True while a chain run is in flight; gates double-submits.
     pub http_chain_in_flight: bool,
-    /// Pending kill (SIGTERM) target for `:ai.agents_dashboard`'s
+    /// Pending kill (SIGTERM) target for `:ai.dashboard`'s
     /// confirm prompt. Set when the user presses `K` on a row;
     /// resolved on prompt accept.
     pub pending_kill_pid: Option<u32>,
@@ -9797,7 +9797,7 @@ impl App {
         }
     }
 
-    /// `:ai.agents_dashboard` — open (or refresh) the Claude Code
+    /// `:ai.dashboard` — open (or refresh) the Claude Code
     /// agents dashboard pane. Scans `~/.claude/projects/` for every
     /// session file modified in the last 7 days, cross-references
     /// running `claude` PIDs via `pgrep`, and renders one row per

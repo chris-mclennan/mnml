@@ -3960,6 +3960,43 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
+    // Cmdline popup wheel scroll — route ScrollUp/ScrollDown to
+    // the popup nav when the cursor is over the popup body. Must
+    // be checked BEFORE other handlers since the popup overlays
+    // the chrome row and could otherwise leak to the underlying
+    // pane wheel handler. Also handles click-to-select on a row.
+    if app.cmdline_popup_is_showing() {
+        let over_popup = app
+            .rects
+            .cmdline_popup_items
+            .iter()
+            .any(|(r, _)| crate::app::dispatch::contains(*r, x, y));
+        if over_popup {
+            match m.kind {
+                MouseEventKind::ScrollUp => {
+                    app.cmdline_popup_move(-1);
+                    return;
+                }
+                MouseEventKind::ScrollDown => {
+                    app.cmdline_popup_move(1);
+                    return;
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(&(_, idx)) = app
+                        .rects
+                        .cmdline_popup_items
+                        .iter()
+                        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                    {
+                        app.cmdline_popup_accept(idx);
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+    }
+
     // 2026-06-21 — Spend Report column header click: cycle
     // asc/desc on that column (or set it as the sort key).
     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
