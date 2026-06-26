@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/mnml-bridge"]
+resolver = "2"
+
 [package]
 name = "mnml-rs"
 version = "0.1.4"

@@ -1,0 +1,20 @@
+[package]
+name = "mnml-bridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Bridge / Mount protocol for mnml sibling tools — wire types + client + server helpers for siblings that want richer integration than a plain Pty pane."
+authors = ["Chris McLennan"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/chris-mclennan/mnml"
+homepage = "https://github.com/chris-mclennan/mnml"
+readme = "README.md"
+keywords = ["tui", "ratatui", "mnml", "ipc", "plugin"]
+categories = ["development-tools", "command-line-interface"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

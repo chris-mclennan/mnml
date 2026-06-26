@@ -2144,6 +2144,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnml-bridge"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "mnml-rs"
 version = "0.1.4"
 dependencies = [
