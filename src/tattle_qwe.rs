@@ -28,7 +28,7 @@ const ACCOUNT: &str = "164153407337";
 /// DynamoDB table name (see qwe-runner's CDK stack).
 const TABLE: &str = "qwe-runner-runs";
 /// ECS log group for the claude-runner container.
-const LOG_GROUP: &str = "/ecs/qwe-runner/claude-runner";
+pub const LOG_GROUP: &str = "/ecs/qwe-runner/claude-runner";
 /// Only surface runs in the last N hours — keeps the rail tidy
 /// when historical rows accumulate.
 const RECENT_HOURS: u64 = 24;

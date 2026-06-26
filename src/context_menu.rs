@@ -124,6 +124,16 @@ pub enum MenuAction {
     /// Copy a literal string to the clipboard. Used by the git rail's
     /// `Pull` row context menu ("Copy URL").
     CopyText(String),
+    /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
+    /// pane, pre-filtered to the given log group + filter pattern.
+    /// Used by the Cloud Agents row context menu's "Tail logs in
+    /// mnml" entry — handoffs the runId as a filter so the pane
+    /// shows only that run's log lines.
+    OpenCloudWatchPane {
+        log_group: String,
+        filter: String,
+        label: String,
+    },
     /// Diff pane / embedded diff: open `<rel_path>` at the file's
     /// pre-commit revision (`git show <hash>:<rel>`) as a scratch
     /// buffer. The user can read the file as it existed at that

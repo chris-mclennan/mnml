@@ -526,6 +526,13 @@ impl App {
                 self.clipboard.set(text.clone(), false);
                 self.toast("copied URL");
             }
+            OpenCloudWatchPane {
+                log_group,
+                filter,
+                label,
+            } => {
+                self.open_cloudwatch_pane(&log_group, &filter, &label);
+            }
             DiffOpenAtRevision { hash, rel } => self.open_file_at_revision(&hash, &rel),
             DiffHunkAction {
                 pane_id,

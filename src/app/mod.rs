@@ -1548,12 +1548,18 @@ pub fn s3_prefix_to_console_url(s3_url: &str) -> String {
 /// whose `mnml` command would actually fail when typed in a
 /// fresh shell.
 pub fn mnml_on_path() -> bool {
+    binary_on_path("mnml")
+}
+
+/// Generalised version of `mnml_on_path` — true when a binary
+/// named `name` is reachable via the user's `PATH`.
+pub fn binary_on_path(name: &str) -> bool {
     let path = match std::env::var_os("PATH") {
         Some(p) => p,
         None => return false,
     };
     for dir in std::env::split_paths(&path) {
-        let candidate = dir.join("mnml");
+        let candidate = dir.join(name);
         if let Ok(meta) = std::fs::metadata(&candidate)
             && meta.is_file()
         {
@@ -6599,7 +6605,21 @@ impl App {
             });
         let mut items = vec![
             MenuItem::new("Copy runId", MenuAction::CopyText(row.session_id.clone())),
-            MenuItem::new("Open CloudWatch logs", MenuAction::OpenUrl(cloudwatch_url)),
+            // Sibling-tool integration: spawns `mnml-aws-cloudwatch-logs`
+            // in a Pty pane, pre-filtered to this run's runId. Lets
+            // the user read the logs without leaving mnml.
+            MenuItem::new(
+                "Tail logs in mnml",
+                MenuAction::OpenCloudWatchPane {
+                    log_group: crate::tattle_qwe::LOG_GROUP.to_string(),
+                    filter: row.session_id.clone(),
+                    label: format!("qwe: {}", row.workspace),
+                },
+            ),
+            MenuItem::new(
+                "Open CloudWatch in browser",
+                MenuAction::OpenUrl(cloudwatch_url),
+            ),
         ];
         if let Some(pr) = meta.as_ref().and_then(|m| m.pr_url.clone()) {
             items.push(MenuItem::new("Open PR", MenuAction::OpenUrl(pr)));
@@ -6608,11 +6628,39 @@ impl App {
             // Build an S3 console URL from the s3:// prefix.
             let console = s3_prefix_to_console_url(&prefix);
             items.push(MenuItem::new(
-                "Open S3 artifacts",
+                "Open S3 artifacts in browser",
                 MenuAction::OpenUrl(console),
             ));
         }
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
+    /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
+    /// pane. Friendly error toast when the binary isn't on PATH.
+    pub fn open_cloudwatch_pane(&mut self, log_group: &str, filter: &str, label: &str) {
+        if !binary_on_path("mnml-aws-cloudwatch-logs") {
+            self.toast(
+                "mnml-aws-cloudwatch-logs not installed — cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs",
+            );
+            return;
+        }
+        let profile = crate::pty_pane::BinaryProfile {
+            label: label.to_string(),
+            exe: "mnml-aws-cloudwatch-logs".to_string(),
+            args: vec![
+                "--log-group".to_string(),
+                log_group.to_string(),
+                "--log-group-name".to_string(),
+                label.to_string(),
+                "--filter".to_string(),
+                filter.to_string(),
+            ],
+            cwd: Some(self.workspace.clone()),
+            env: Vec::new(),
+            session_id: None,
+        };
+        self.open_pty(profile);
+        self.toast(format!("tailing {log_group} · filter={filter}"));
     }
 
     pub fn open_session_tab_context_menu(&mut self, pane_id: usize, anchor: (u16, u16)) {
