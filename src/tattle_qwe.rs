@@ -43,29 +43,17 @@ pub fn collect_cloud_rows() -> Vec<AgentRow> {
         .unwrap_or(UNIX_EPOCH);
     let cutoff_iso = system_time_to_iso(cutoff);
 
-    // `aws dynamodb scan` against the GSI is cheaper, but a simple
-    // `scan + filter-expression` on createdAt is reliable and
-    // matches the auth surface we already have. ~few-KB response
-    // per call; runs once per refresh tick.
-    let out = Command::new("aws")
-        .args([
-            "dynamodb",
-            "scan",
-            "--table-name",
-            TABLE,
-            "--region",
-            REGION,
-            "--filter-expression",
-            "createdAt > :since",
-            "--expression-attribute-values",
-            &format!("{{\":since\":{{\"S\":\"{cutoff_iso}\"}}}}"),
-            "--output",
-            "json",
-        ])
-        .output();
-    let bytes = match out {
-        Ok(o) if o.status.success() => o.stdout,
-        _ => return Vec::new(),
+    // `aws dynamodb scan` with a `createdAt > :since` filter. If the
+    // user hasn't set `AWS_PROFILE`, try a couple of well-known
+    // Tattle profile names so the integration "just works" for the
+    // common SSO setup. Silent failure when nothing works — the rail
+    // just doesn't show cloud rows.
+    let bytes = run_scan(&cutoff_iso, None)
+        .or_else(|| run_scan(&cutoff_iso, Some("claude-ro")))
+        .or_else(|| run_scan(&cutoff_iso, Some("tattle-dev")));
+    let bytes = match bytes {
+        Some(b) => b,
+        None => return Vec::new(),
     };
     let json: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
@@ -153,6 +141,32 @@ fn parse_run_record(item: &serde_json::Value) -> Option<AgentRow> {
         pending_tool_uses,
         tokens_per_min: None,
     })
+}
+
+/// Single `aws dynamodb scan` invocation. Returns `Some(stdout)`
+/// on success, `None` on any failure (no auth, no network, …).
+fn run_scan(cutoff_iso: &str, profile: Option<&str>) -> Option<Vec<u8>> {
+    let mut cmd = Command::new("aws");
+    cmd.args([
+        "dynamodb",
+        "scan",
+        "--table-name",
+        TABLE,
+        "--region",
+        REGION,
+        "--filter-expression",
+        "createdAt > :since",
+        "--expression-attribute-values",
+        &format!("{{\":since\":{{\"S\":\"{cutoff_iso}\"}}}}"),
+        "--output",
+        "json",
+    ]);
+    if let Some(p) = profile {
+        cmd.env("AWS_PROFILE", p);
+    }
+    cmd.output()
+        .ok()
+        .and_then(|o| o.status.success().then_some(o.stdout))
 }
 
 /// Format a `SystemTime` as a UTC ISO-8601 string. DynamoDB stores

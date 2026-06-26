@@ -170,14 +170,52 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.pty_tabs.clear();
         app.rects.pty_tab_new.clear();
         app.rects.pty_tab_close.clear();
+        // Reserve a 1-row hint footer at the bottom so the user can
+        // always find their way out of zen mode. The chrome row
+        // costs ~1% of the screen but eliminates the "I'm stuck"
+        // failure mode the user reported.
+        let (body_area, hint_area) = if area.height >= 4 {
+            (
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: area.height - 1,
+                },
+                Some(Rect {
+                    x: area.x,
+                    y: area.y + area.height - 1,
+                    width: area.width,
+                    height: 1,
+                }),
+            )
+        } else {
+            (area, None)
+        };
         let layout = app.layout().clone();
         let cursor_pos: Option<(u16, u16)> = if matches!(layout, Layout::Empty) {
-            welcome::draw(frame, app, area);
+            welcome::draw(frame, app, body_area);
             None
         } else {
             let mut path = Vec::new();
-            render_layout(frame, app, &layout, area, &mut path)
+            render_layout(frame, app, &layout, body_area, &mut path)
         };
+        if let Some(hint) = hint_area {
+            let t = theme::cur();
+            let label = " Zen mode  ·  Esc to exit  ·  :view.zen toggle ";
+            let pad = (hint.width as usize).saturating_sub(label.chars().count());
+            let line = Line::from(vec![
+                Span::styled(
+                    label,
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::DIM),
+                ),
+                Span::styled(" ".repeat(pad), Style::default().bg(t.bg_dark)),
+            ]);
+            frame.render_widget(Paragraph::new(line), hint);
+        }
         // Overlays still work in zen — picker, prompt, which-key, popups.
         if app.picker.is_some() {
             picker::draw(frame, app, area);

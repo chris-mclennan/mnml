@@ -468,6 +468,21 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // Zen-mode escape hatch: when zen is on and no overlay is
+    // claiming Esc, treat Esc as "exit zen" so the user is never
+    // trapped. Overlays (picker / prompt / which-key) get first
+    // dibs by returning before this check below.
+    if app.zen_mode
+        && key.code == KeyCode::Esc
+        && app.picker.is_none()
+        && app.prompt.is_none()
+        && app.whichkey.is_none()
+        && app.context_menu.is_none()
+        && app.menu_open.is_none()
+    {
+        app.toggle_zen_mode();
+        return;
+    }
     // Workspace-picker dropdown — when open, intercept keys so they
     // navigate the picker (not the editor below).
     if app.workspace_picker_open {
