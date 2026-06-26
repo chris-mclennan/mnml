@@ -98,6 +98,7 @@ pub(crate) mod shell_prompt;
 pub(crate) mod signature;
 pub(crate) mod snippets;
 pub(crate) mod tattle_qwe;
+pub(crate) mod tattle_qwe_trigger;
 pub(crate) mod tools;
 pub(crate) mod tree;
 pub mod tui;

@@ -276,6 +276,11 @@ pub enum PromptKind {
     /// `mount.open` palette command for developer / testing flows
     /// while siblings get ported to the Bridge tier-4 protocol.
     MountBinary,
+    /// Accept ⇒ fire a qwe-runner cloud run for the typed ticket
+    /// (`TE-NNNN`). Default flow = triage, env = prod (mirrors
+    /// smoke.sh). Used by the `cloud_agents.new_run` palette
+    /// command.
+    CloudRunTicket,
 }
 
 #[derive(Debug)]

@@ -2693,6 +2693,11 @@ pub struct App {
     /// `set-activity-badge` IPC command. `count = 0` clears
     /// (we remove the key on zero to keep the map tidy).
     pub activity_badges: std::collections::HashMap<String, u32>,
+    /// `Some(rx)` while a `+ New cloud run` trigger is in flight
+    /// on a worker thread. Drained in `tick`; result surfaces as
+    /// a toast.
+    pub cloud_run_pending:
+        Option<std::sync::mpsc::Receiver<crate::tattle_qwe_trigger::TriggerResult>>,
     /// Search activity-bar section: input + results state. The input
     /// captures keystrokes when `search_input_focused == true`; results
     /// render below the input regardless of focus.
@@ -3932,6 +3937,7 @@ impl App {
             active_section: ActivitySection::Explorer,
             mount_manifests,
             activity_badges: std::collections::HashMap::new(),
+            cloud_run_pending: None,
             search_query: String::new(),
             search_cursor: 0,
             search_hits: Vec::new(),
@@ -6361,6 +6367,62 @@ impl App {
     /// command_id suffix (e.g. `"agents"` for `view.activity_agents`).
     pub fn activity_badge_for(&self, section_id: &str) -> u32 {
         self.activity_badges.get(section_id).copied().unwrap_or(0)
+    }
+
+    /// Prompt for a Jira ticket then fire a qwe-runner cloud
+    /// run via `aws ecs run-task`. Used by the
+    /// `cloud_agents.new_run` palette command.
+    pub fn prompt_cloud_run(&mut self) {
+        use crate::prompt::{Prompt, PromptKind};
+        self.prompt = Some(Prompt::new(
+            PromptKind::CloudRunTicket,
+            "New cloud run — Jira ticket (TE-NNNN)",
+        ));
+    }
+
+    /// Fire the trigger on a background thread + surface result
+    /// via toast. The Cloud Agents panel will pick up the new
+    /// row on its next 30s refresh.
+    pub fn fire_cloud_run(&mut self, ticket: &str) {
+        let ticket = ticket.trim().to_string();
+        if ticket.is_empty() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::tattle_qwe_trigger::trigger_run(&ticket));
+        });
+        self.cloud_run_pending = Some(rx);
+        self.toast("firing cloud run…");
+    }
+
+    /// Drain a pending cloud-run trigger result and surface as a
+    /// toast. Called per tick.
+    pub fn drain_cloud_run_trigger(&mut self) {
+        let Some(rx) = self.cloud_run_pending.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(crate::tattle_qwe_trigger::TriggerResult::Ok {
+                run_id,
+                task_arn: _,
+            }) => {
+                self.toast(format!("cloud run started · {run_id}"));
+                // Force-refresh the agents panel so the new row
+                // appears within seconds rather than after the
+                // 30s drift.
+                self.agents_panel_built_at = None;
+            }
+            Ok(crate::tattle_qwe_trigger::TriggerResult::Err(e)) => {
+                self.toast(format!("cloud run failed: {e}"));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.cloud_run_pending = Some(rx);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.toast("cloud run trigger died without reporting");
+            }
+        }
     }
 
     /// Refresh the manifest list — re-scans both manifest dirs.
@@ -10999,6 +11061,8 @@ impl App {
         }
         // Agents rail panel — pull the worker's snapshot if ready.
         self.drain_agents_panel_refresh();
+        // Cloud-run trigger result, if a `+ New cloud run` is in flight.
+        self.drain_cloud_run_trigger();
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();

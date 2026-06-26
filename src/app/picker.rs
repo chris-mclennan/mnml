@@ -1554,6 +1554,10 @@ impl App {
                 let typed = p.input.clone();
                 self.open_mount(&typed);
             }
+            crate::prompt::PromptKind::CloudRunTicket => {
+                let typed = p.input.clone();
+                self.fire_cloud_run(&typed);
+            }
         }
     }
 }

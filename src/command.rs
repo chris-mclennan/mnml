@@ -2238,6 +2238,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::CloudAgents),
         },
         Command {
+            id: "cloud_agents.new_run",
+            title: "Cloud agents: fire a new qwe-runner run for a Jira ticket",
+            group: "view",
+            keys: &[],
+            run: |app| app.prompt_cloud_run(),
+        },
+        Command {
             id: "view.git_commit_focus",
             title: "Activity: focus the Git section's commit textarea",
             group: "view",
