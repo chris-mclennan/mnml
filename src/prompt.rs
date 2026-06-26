@@ -281,6 +281,11 @@ pub enum PromptKind {
     /// smoke.sh). Used by the `cloud_agents.new_run` palette
     /// command.
     CloudRunTicket,
+    /// Accept ⇒ if the input starts with `y`, call
+    /// `App::install_sibling` for the family id captured in
+    /// `App::pending_install_family_id`. Used by the "X not
+    /// installed — install? y/n" prompt.
+    SiblingInstallConfirm,
 }
 
 #[derive(Debug)]

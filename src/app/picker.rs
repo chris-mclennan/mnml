@@ -792,6 +792,10 @@ impl App {
                     self.toast(format!("cookies: copied {pair}"));
                 }
             }
+            PickerKind::SiblingInstall => {
+                let id = item.id.clone();
+                self.install_sibling(&id);
+            }
         }
     }
 
@@ -1066,6 +1070,7 @@ impl App {
         self.pending_delete_branch = None;
         self.pending_worktree_remove = None;
         self.pending_branch_source = None;
+        self.pending_install_family_id = None;
         self.rename_preview_state = None;
         // 2026-06-21 — power-user-ws-git SEV-1: Esc on the
         // `:git.worktree_add` path prompt left
@@ -1557,6 +1562,10 @@ impl App {
             crate::prompt::PromptKind::CloudRunTicket => {
                 let typed = p.input.clone();
                 self.fire_cloud_run(&typed);
+            }
+            crate::prompt::PromptKind::SiblingInstallConfirm => {
+                let typed = p.input.clone();
+                self.install_sibling_confirm_resolve(&typed);
             }
         }
     }

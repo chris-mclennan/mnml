@@ -237,6 +237,10 @@ pub enum PickerKind {
     /// server) and optionally seed the message log with the
     /// last N messages via a `[ws-history-<host>]` scratch.
     WsHistory,
+    /// `id` = a `family_catalog::FamilySibling::id`. Accept ⇒
+    /// `App::install_sibling(id)`. Used by the `mounts.install` /
+    /// `sibling.install` palette commands.
+    SiblingInstall,
 }
 
 #[derive(Debug, Clone)]

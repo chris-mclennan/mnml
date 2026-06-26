@@ -60,6 +60,43 @@ pub struct IconTemplate {
     pub tooltip: &'static str,
 }
 
+/// Mount manifest stub — present for catalog entries whose sibling
+/// speaks the Bridge tier-4 Mount protocol (renders into an mnml
+/// pane via UDS). Look up via `mount_stub_for(id)`. Used by the
+/// auto-installer to write a real `<id>.toml` manifest after
+/// `cargo install` completes. Pty-only siblings (most) have no
+/// entry — `mount_stub_for` returns None.
+#[derive(Copy, Clone, Debug)]
+pub struct MountStub {
+    /// Display label shown in the activity-bar tooltip + pane title.
+    pub name: &'static str,
+    /// Nerd Font glyph used as the activity-bar icon.
+    pub icon: &'static str,
+    /// Named theme color — one of the names allowed by
+    /// `mount_manifest::ALLOWED_COLORS`.
+    pub color: &'static str,
+}
+
+/// Look up the Mount manifest stub for a given family `id`. Returns
+/// None for Pty-only siblings. Kept as a separate table from
+/// `CATALOG` so existing entries don't need to grow a field every
+/// time the Mount story expands.
+pub fn mount_stub_for(id: &str) -> Option<MountStub> {
+    MOUNT_STUBS
+        .iter()
+        .find(|(catalog_id, _)| *catalog_id == id)
+        .map(|(_, stub)| *stub)
+}
+
+const MOUNT_STUBS: &[(&str, MountStub)] = &[(
+    "tattle_tests",
+    MountStub {
+        name: "Tattle tests",
+        icon: "\u{F0668}", // nf-md-checkbox-marked-circle-outline
+        color: "green",
+    },
+)];
+
 #[derive(Copy, Clone, Debug)]
 pub struct FamilySibling {
     /// Stable id (matches the `IntegrationIcon.id` we'd register).
@@ -92,12 +129,21 @@ impl FamilySibling {
 
     /// The full `cargo install` invocation a user would run. Returns
     /// a no-op note for built-in entries (they ship with mnml core).
+    ///
+    /// When `pinned_version == "main"` we drop the `--tag` flag so
+    /// the command tracks HEAD (used for in-development siblings
+    /// that haven't tagged a release yet). Mirrors the same guard in
+    /// `sibling_install::cargo_install_argv` — both the display
+    /// string and the actual cargo invocation match.
     pub fn install_command(&self) -> String {
         if self.is_builtin() {
             return format!(
                 "({} is built into mnml core — no install needed)",
                 self.binary
             );
+        }
+        if self.pinned_version == "main" {
+            return format!("cargo install --git {} {}", self.repo_url, self.binary);
         }
         format!(
             "cargo install --git {} --tag {} {}",
@@ -603,6 +649,24 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Tattle inbox browser (INTERNAL — dev/staging only)",
         },
     },
+    // First Mount-capable sibling — renders into an mnml pane via
+    // the Bridge tier-4 UDS protocol (not a Pty). MountStub at the
+    // top of this file describes the activity-bar icon the
+    // auto-installer registers on install.
+    FamilySibling {
+        id: "tattle_tests",
+        binary: "mnml-tattle-tests",
+        category: Category::Tattle,
+        repo_url: "https://github.com/chris-mclennan/mnml-tattle-tests",
+        pinned_version: "main",
+        one_liner: "Tattle 3-env TestExecutions browser (Mount — INTERNAL)",
+        icon: IconTemplate {
+            glyph: "\u{F0668}", // nf-md-checkbox-marked-circle-outline
+            fallback: "Tt",
+            color: "green",
+            tooltip: "Tattle test executions (INTERNAL)",
+        },
+    },
     // ── Virtualization & containers ───────────────────────────
     FamilySibling {
         id: "docker",
@@ -884,6 +948,20 @@ mod tests {
         assert!(cmd.contains("--tag"));
         assert!(cmd.contains("mnml-aws-lambda"));
         assert!(cmd.starts_with("cargo install"));
+    }
+
+    #[test]
+    fn install_command_skips_tag_when_pin_is_main() {
+        // tattle_tests is the first catalog entry pinned to `main`
+        // (no tagged release yet). The yank-able install command
+        // must omit `--tag main` (cargo would fail looking for a
+        // tag named `main`). Mirrors the same guard in
+        // sibling_install::cargo_install_argv.
+        let s = find_by_binary("mnml-tattle-tests").expect("tattle_tests in catalog");
+        let cmd = s.install_command();
+        assert!(cmd.contains("--git"));
+        assert!(!cmd.contains("--tag"), "got: {cmd}");
+        assert!(cmd.contains("mnml-tattle-tests"));
     }
 
     #[test]

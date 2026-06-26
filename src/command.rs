@@ -3698,6 +3698,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.refresh_mount_manifests(),
         },
         Command {
+            id: "mounts.install",
+            title: "Mounts: install a Mount-capable family sibling (auto-registers manifest)",
+            group: "mount",
+            keys: &[],
+            run: |app| app.open_mount_install_picker(),
+        },
+        Command {
+            id: "sibling.install",
+            title: "Sibling: install any family sibling by id (Pty or Mount)",
+            group: "mount",
+            keys: &[],
+            run: |app| app.open_sibling_install_picker(),
+        },
+        Command {
             id: "term.rename",
             title: "Terminal: rename this session (shown in the tab)",
             group: "term",

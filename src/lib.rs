@@ -94,6 +94,7 @@ pub(crate) mod regex_outline;
 pub(crate) mod request_pane;
 pub(crate) mod scm;
 pub(crate) mod shell_prompt;
+pub(crate) mod sibling_install;
 pub(crate) mod signature;
 pub(crate) mod snippets;
 pub(crate) mod tattle_qwe;

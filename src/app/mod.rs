@@ -2702,6 +2702,10 @@ pub struct App {
     /// a toast.
     pub cloud_run_pending:
         Option<std::sync::mpsc::Receiver<crate::tattle_qwe_trigger::TriggerResult>>,
+    /// Family id captured when a `prompt_install_sibling` opens the
+    /// "X not installed — install? y/n" prompt. Resolved by the
+    /// prompt accept handler to fire the install.
+    pub pending_install_family_id: Option<String>,
     /// Search activity-bar section: input + results state. The input
     /// captures keystrokes when `search_input_focused == true`; results
     /// render below the input regardless of focus.
@@ -3942,6 +3946,7 @@ impl App {
             mount_manifests,
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
+            pending_install_family_id: None,
             search_query: String::new(),
             search_cursor: 0,
             search_hits: Vec::new(),
@@ -6429,6 +6434,153 @@ impl App {
         }
     }
 
+    /// Run `cargo install` for the family entry with `family_id` in
+    /// a fresh Pty pane. Toasts a friendly message if the id isn't
+    /// in the catalog. When the entry has a Mount stub, ALSO writes
+    /// `~/.config/mnml/mounts/<id>.toml` so the activity-bar icon
+    /// shows up immediately (clicking it before install completes
+    /// will toast the install hint via `binary_on_path`).
+    pub fn install_sibling(&mut self, family_id: &str) {
+        let Some(sibling) = crate::sibling_install::lookup(family_id) else {
+            self.toast(format!("install: unknown sibling `{family_id}`"));
+            return;
+        };
+        if sibling.is_builtin() {
+            self.toast(format!(
+                "{} is built into mnml — no install needed",
+                sibling.binary
+            ));
+            return;
+        }
+        // Mount-specific: write the manifest first so the icon
+        // appears immediately. The install Pty runs in parallel; user
+        // sees both progress + icon.
+        let mount_msg = match crate::family_catalog::mount_stub_for(family_id) {
+            Some(stub) => {
+                match crate::sibling_install::write_mount_manifest(family_id, &stub, sibling.binary)
+                {
+                    Ok(path) => {
+                        self.refresh_mount_manifests();
+                        Some(format!("manifest → {}", path.display()))
+                    }
+                    Err(e) => Some(format!("manifest write failed: {e}")),
+                }
+            }
+            None => None,
+        };
+        // Spawn the install in a Pty pane so user can watch progress.
+        let argv = crate::sibling_install::cargo_install_argv(sibling);
+        let label = format!("install: {}", sibling.binary);
+        let profile = crate::pty_pane::BinaryProfile {
+            label,
+            exe: argv[0].clone(),
+            args: argv[1..].to_vec(),
+            cwd: Some(self.workspace.clone()),
+            env: Vec::new(),
+            session_id: None,
+        };
+        self.open_pty(profile);
+        let mut toast = format!("installing {} — watch the pty pane", sibling.binary);
+        if let Some(extra) = mount_msg {
+            toast.push_str(" · ");
+            toast.push_str(&extra);
+        }
+        self.toast(toast);
+    }
+
+    /// Show a yes/no confirm prompt to install the named family
+    /// sibling. Accept fires `install_sibling`. Used by the
+    /// "X not installed" toasts that previously just gave the
+    /// install command and bailed.
+    pub fn prompt_install_sibling(&mut self, family_id: &str) {
+        let Some(sibling) = crate::sibling_install::lookup(family_id) else {
+            return;
+        };
+        let title = format!("{} not installed. Install via cargo? (y/n)", sibling.binary);
+        self.pending_install_family_id = Some(family_id.to_string());
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::SiblingInstallConfirm,
+            title,
+        ));
+    }
+
+    /// Accept handler for the SiblingInstallConfirm prompt. The
+    /// dispatcher matches on the prompt's first character so this
+    /// just fires the install when the input starts with `y`.
+    pub fn install_sibling_confirm_resolve(&mut self, input: &str) {
+        let id = self.pending_install_family_id.take();
+        if input.trim().to_ascii_lowercase().starts_with('y')
+            && let Some(family_id) = id
+        {
+            self.install_sibling(&family_id);
+        }
+    }
+
+    /// Open a picker over Mount-capable family siblings — i.e.
+    /// catalog entries that have a `MountStub` registered. Accept
+    /// fires `install_sibling`, which writes the manifest +
+    /// spawns `cargo install` in a Pty pane. Used by the
+    /// `mounts.install` palette command.
+    pub fn open_mount_install_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = crate::family_catalog::CATALOG
+            .iter()
+            .filter(|s| crate::family_catalog::mount_stub_for(s.id).is_some())
+            .map(|s| {
+                let installed = binary_on_path(s.binary);
+                let detail = if installed {
+                    format!("INSTALLED · {}", s.one_liner)
+                } else {
+                    s.one_liner.to_string()
+                };
+                PickerItem::new(s.id.to_string(), s.binary.to_string(), detail)
+            })
+            .collect();
+        if items.is_empty() {
+            self.toast("no Mount-capable siblings in the catalog yet");
+            return;
+        }
+        self.open_picker(Picker::new(
+            PickerKind::SiblingInstall,
+            "Install Mount sibling",
+            items,
+        ));
+    }
+
+    /// Like `open_mount_install_picker` but spans the entire catalog
+    /// (Pty + Mount siblings). Used by the `sibling.install` palette
+    /// command and the AI tool.
+    pub fn open_sibling_install_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = crate::family_catalog::CATALOG
+            .iter()
+            .filter(|s| !s.is_builtin())
+            .map(|s| {
+                let installed = binary_on_path(s.binary);
+                let kind_tag = if crate::family_catalog::mount_stub_for(s.id).is_some() {
+                    "Mount"
+                } else {
+                    "Pty"
+                };
+                let detail = if installed {
+                    format!("INSTALLED · {} · {}", kind_tag, s.one_liner)
+                } else {
+                    format!("{} · {}", kind_tag, s.one_liner)
+                };
+                PickerItem::new(s.id.to_string(), s.binary.to_string(), detail)
+            })
+            .collect();
+        if items.is_empty() {
+            self.toast("catalog is empty");
+            return;
+        }
+        self.open_picker(Picker::new(
+            PickerKind::SiblingInstall,
+            "Install family sibling",
+            items,
+        ));
+    }
+
     /// Refresh the manifest list — re-scans both manifest dirs.
     /// Called by the `mounts.refresh` palette command + on app
     /// resume from background.
@@ -6924,9 +7076,7 @@ impl App {
     /// pane. Friendly error toast when the binary isn't on PATH.
     pub fn open_cloudwatch_pane(&mut self, log_group: &str, filter: &str, label: &str) {
         if !binary_on_path("mnml-aws-cloudwatch-logs") {
-            self.toast(
-                "mnml-aws-cloudwatch-logs not installed — cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs",
-            );
+            self.prompt_install_sibling("cloudwatch_logs");
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {
@@ -6953,9 +7103,7 @@ impl App {
     /// when the binary isn't on PATH.
     pub fn open_s3_pane(&mut self, bucket: &str, prefix: &str, label: &str) {
         if !binary_on_path("mnml-fs-s3") {
-            self.toast(
-                "mnml-fs-s3 not installed — cargo install --git https://github.com/chris-mclennan/mnml-fs-s3",
-            );
+            self.prompt_install_sibling("s3");
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {

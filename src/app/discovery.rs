@@ -901,27 +901,14 @@ impl App {
             ));
             return;
         };
-        let profile = crate::pty_pane::BinaryProfile {
-            label: format!("install: {}", catalog.binary),
-            exe: "cargo".to_string(),
-            args: vec![
-                "install".to_string(),
-                "--git".to_string(),
-                catalog.repo_url.to_string(),
-                "--tag".to_string(),
-                catalog.pinned_version.to_string(),
-                catalog.binary.to_string(),
-            ],
-            cwd: None,
-            env: vec![],
-            session_id: None,
-        };
+        let id = catalog.id.to_string();
+        // 2026-06-26 — delegate to the unified install path so the
+        // discovery overlay, palette command (`mounts.install` /
+        // `sibling.install`), AI tool, and the y/n install prompt
+        // all funnel through the same logic — `main`-pin handling,
+        // Mount manifest writing, Pty spawn shape.
         self.close_discovery_overlay();
-        self.open_pty(profile);
-        self.toast(format!(
-            "installing {} — watch the pty pane; re-open + when done",
-            catalog.binary
-        ));
+        self.install_sibling(&id);
     }
 }
 

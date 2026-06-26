@@ -200,6 +200,12 @@ pub enum IpcCommand {
     /// dir. Each entry has `{x, y, w, h, label}`. Used by the
     /// click-rect audit + by ad-hoc debugging (`./run.sh dump-rects`).
     DumpRects,
+    /// Install a family sibling by catalog id — runs cargo install
+    /// in a Pty pane and (if the entry has a MountStub) writes the
+    /// activity-bar manifest. Equivalent to the user invoking the
+    /// `mounts.install` / `sibling.install` palette pickers and
+    /// selecting `id`. Used by the AI tool `install_mnml_sibling`.
+    InstallSibling { id: String },
     /// Stop the loop.
     Quit,
     /// Stop the loop with the restart exit code (the `run.sh` wrapper rebuilds + relaunches).
@@ -452,6 +458,10 @@ fn parse_command(line: &str) -> IpcCommand {
             _ => IpcCommand::Unknown(line.to_string()),
         },
         "dump-rects" => IpcCommand::DumpRects,
+        "install-sibling" => match raw.id {
+            Some(id) => IpcCommand::InstallSibling { id },
+            None => IpcCommand::Unknown(line.to_string()),
+        },
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
         _ => IpcCommand::Unknown(line.to_string()),
@@ -855,6 +865,10 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             ])
         }
         IpcCommand::DumpRects => json_event(&[("event", "dump_rects")]),
+        IpcCommand::InstallSibling { id } => {
+            app.install_sibling(id);
+            json_event(&[("event", "install_sibling"), ("id", id)])
+        }
         IpcCommand::Quit => {
             // Scripts/E2E know what they're doing — force, bypassing the dirty guard.
             app.should_quit = true;
@@ -1190,6 +1204,14 @@ mod tests {
         assert!(matches!(parse_command(r#"{"cmd":"snapshot"}"#), Snapshot));
         assert!(matches!(parse_command(r#"{"cmd":"quit"}"#), Quit));
         assert!(matches!(parse_command(r#"{"cmd":"restart"}"#), Restart));
+        assert!(matches!(
+            parse_command(r#"{"cmd":"install-sibling","id":"tattle_tests"}"#),
+            InstallSibling { .. }
+        ));
+        assert!(matches!(
+            parse_command(r#"{"cmd":"install-sibling"}"#),
+            Unknown(_)
+        ));
         assert!(matches!(parse_command(r#"{"cmd":"bogus"}"#), Unknown(_)));
         // Malformed JSON ⇒ Unknown, never a panic.
         assert!(matches!(parse_command("not json at all"), Unknown(_)));
