@@ -6766,7 +6766,24 @@ impl App {
             items.push(MenuItem::new("Open PR", MenuAction::OpenUrl(pr)));
         }
         if let Some(prefix) = meta.as_ref().and_then(|m| m.s3_artifact_prefix.clone()) {
-            // Build an S3 console URL from the s3:// prefix.
+            // Split `s3://bucket/key/prefix/` → bucket + prefix
+            // so we can hand them to mnml-fs-s3 as separate
+            // CLI args (the sibling expects `--bucket` and
+            // `--prefix` rather than a single s3:// URL).
+            let stripped = prefix.strip_prefix("s3://").unwrap_or(&prefix);
+            let (bucket, key_prefix) = match stripped.split_once('/') {
+                Some((b, p)) => (b.to_string(), p.to_string()),
+                None => (stripped.to_string(), String::new()),
+            };
+            items.push(MenuItem::new(
+                "Browse S3 artifacts in mnml",
+                MenuAction::OpenS3Pane {
+                    bucket: bucket.clone(),
+                    prefix: key_prefix,
+                    label: format!("s3: {}", row.workspace),
+                },
+            ));
+            // Browser fallback for users without mnml-fs-s3.
             let console = s3_prefix_to_console_url(&prefix);
             items.push(MenuItem::new(
                 "Open S3 artifacts in browser",
@@ -6802,6 +6819,35 @@ impl App {
         };
         self.open_pty(profile);
         self.toast(format!("tailing {log_group} · filter={filter}"));
+    }
+
+    /// Spawn the `mnml-fs-s3` sibling tool in a Pty pane,
+    /// pre-filtered to `bucket` + `prefix`. Friendly error toast
+    /// when the binary isn't on PATH.
+    pub fn open_s3_pane(&mut self, bucket: &str, prefix: &str, label: &str) {
+        if !binary_on_path("mnml-fs-s3") {
+            self.toast(
+                "mnml-fs-s3 not installed — cargo install --git https://github.com/chris-mclennan/mnml-fs-s3",
+            );
+            return;
+        }
+        let profile = crate::pty_pane::BinaryProfile {
+            label: label.to_string(),
+            exe: "mnml-fs-s3".to_string(),
+            args: vec![
+                "--bucket".to_string(),
+                bucket.to_string(),
+                "--prefix".to_string(),
+                prefix.to_string(),
+                "--bucket-name".to_string(),
+                label.to_string(),
+            ],
+            cwd: Some(self.workspace.clone()),
+            env: Vec::new(),
+            session_id: None,
+        };
+        self.open_pty(profile);
+        self.toast(format!("browsing s3://{bucket}/{prefix}"));
     }
 
     pub fn open_session_tab_context_menu(&mut self, pane_id: usize, anchor: (u16, u16)) {

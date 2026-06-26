@@ -533,6 +533,13 @@ impl App {
             } => {
                 self.open_cloudwatch_pane(&log_group, &filter, &label);
             }
+            OpenS3Pane {
+                bucket,
+                prefix,
+                label,
+            } => {
+                self.open_s3_pane(&bucket, &prefix, &label);
+            }
             DiffOpenAtRevision { hash, rel } => self.open_file_at_revision(&hash, &rel),
             DiffHunkAction {
                 pane_id,

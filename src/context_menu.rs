@@ -134,6 +134,15 @@ pub enum MenuAction {
         filter: String,
         label: String,
     },
+    /// Spawn the `mnml-fs-s3` sibling in a Pty pane, pre-filtered
+    /// to a specific bucket + prefix. Used by the Cloud Agents
+    /// row context menu's "Open S3 artifacts in mnml" entry —
+    /// drops the user straight into the qwe-run's artifact tree.
+    OpenS3Pane {
+        bucket: String,
+        prefix: String,
+        label: String,
+    },
     /// Diff pane / embedded diff: open `<rel_path>` at the file's
     /// pre-commit revision (`git show <hash>:<rel>`) as a scratch
     /// buffer. The user can read the file as it existed at that
