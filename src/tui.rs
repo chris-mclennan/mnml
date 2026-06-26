@@ -5710,6 +5710,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 if matches!(section, crate::app::ActivitySection::Git) {
                     crate::command::run("git.graph", app);
                 }
+                if let crate::app::ActivitySection::Mount(idx) = section {
+                    app.open_mount_from_manifest(idx);
+                }
                 return;
             }
             // Gear icon at the bottom of the activity bar → pop the

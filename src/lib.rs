@@ -87,6 +87,7 @@ pub(crate) mod picker;
 pub mod dock;
 pub mod menu_bar;
 pub(crate) mod mount;
+pub(crate) mod mount_manifest;
 pub(crate) mod playwright;
 pub(crate) mod prompt;
 pub(crate) mod pty_pane;

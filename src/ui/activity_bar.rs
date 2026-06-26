@@ -133,4 +133,59 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // 2 rows per icon for breathing room.
         y = y.saturating_add(2);
     }
+    // Manifest-registered Mount sections. Rendered after the
+    // builtins so they live in the "this workspace's tools" zone
+    // visually distinct from the always-on builtins.
+    for (idx, manifest) in app.mount_manifests.clone().iter().enumerate() {
+        if y >= icons_end_y {
+            break;
+        }
+        let section = crate::app::ActivitySection::Mount(idx as u16);
+        let is_active = app.active_section == section;
+        let glyph = if nerd {
+            manifest.icon.as_str()
+        } else {
+            // Fall back to the first character of the name.
+            manifest.name.get(..1).unwrap_or("M")
+        };
+        let color = manifest.color_for_theme(&t);
+        let style = if is_active {
+            Style::default()
+                .fg(color)
+                .bg(bar_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(t.comment)
+                .bg(bar_bg)
+                .add_modifier(Modifier::DIM)
+        };
+        let row = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        if is_active && area.width >= 1 {
+            let accent_rect = Rect {
+                x: area.x,
+                y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from("▌")).style(Style::default().fg(color).bg(bar_bg)),
+                accent_rect,
+            );
+        }
+        let glyph_rect = Rect {
+            x: icon_x,
+            y,
+            width: area.width.saturating_sub(1),
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(Line::from(glyph)).style(style), glyph_rect);
+        app.rects.activity_bar_icons.push((row, section));
+        y = y.saturating_add(2);
+    }
 }

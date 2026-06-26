@@ -3682,6 +3682,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.prompt_mount_open(),
         },
         Command {
+            id: "mounts.refresh",
+            title: "Mounts: re-scan manifests in .mnml/mounts/ + ~/.config/mnml/mounts/",
+            group: "mount",
+            keys: &[],
+            run: |app| app.refresh_mount_manifests(),
+        },
+        Command {
             id: "term.rename",
             title: "Terminal: rename this session (shown in the tab)",
             group: "term",

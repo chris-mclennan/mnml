@@ -378,6 +378,42 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             crate::app::ActivitySection::CloudAgents => {
                 cloud_agents_panel::draw(frame, app, content_area);
             }
+            crate::app::ActivitySection::Mount(idx) => {
+                // Rail content for a manifest-mounted sibling is
+                // intentionally minimal in slice 3 — the sibling's
+                // real UI is the Pane::Mount in the editor body,
+                // not in the rail. We surface the manifest name +
+                // a "Re-open" hint so the user can re-spawn if
+                // they closed the pane.
+                let t = theme::cur();
+                let manifest = app.mount_manifests.get(idx as usize).cloned();
+                let label = manifest
+                    .as_ref()
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| "Mount".to_string());
+                let body = vec![
+                    ratatui::text::Line::from(vec![ratatui::text::Span::styled(
+                        format!(" {label} "),
+                        ratatui::style::Style::default()
+                            .fg(t.fg)
+                            .bg(t.bg_darker)
+                            .add_modifier(ratatui::style::Modifier::BOLD),
+                    )]),
+                    ratatui::text::Line::from(""),
+                    ratatui::text::Line::from(vec![ratatui::text::Span::styled(
+                        " click the icon again to re-spawn ",
+                        ratatui::style::Style::default()
+                            .fg(t.comment)
+                            .bg(t.bg_darker),
+                    )]),
+                ];
+                frame.render_widget(
+                    ratatui::widgets::Block::default()
+                        .style(ratatui::style::Style::default().bg(t.bg_darker)),
+                    content_area,
+                );
+                frame.render_widget(ratatui::widgets::Paragraph::new(body), content_area);
+            }
         }
         // For non-Explorer sections the tree_view click rects aren't
         // populated; ensure they're at least cleared so a stale click

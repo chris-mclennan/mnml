@@ -1741,6 +1741,11 @@ pub enum ActivitySection {
     /// pty" action; they expose Copy runId / Open CloudWatch /
     /// Open PR instead.
     CloudAgents,
+    /// A manifest-registered Mount sibling — the u16 indexes
+    /// into `App::mount_manifests`. Icon, color, tooltip, and
+    /// binary come from the manifest. Manifest mounts render
+    /// in the activity bar after the builtin sections.
+    Mount(u16),
 }
 
 impl ActivitySection {
@@ -1774,6 +1779,11 @@ impl ActivitySection {
                 "Cloud agents",
                 "view.activity_cloud_agents",
             ),
+            // Manifest mounts have per-entry metadata that lives
+            // on `App::mount_manifests`; the activity-bar renderer
+            // resolves it dynamically. This `meta()` arm is a
+            // placeholder so the static API stays infallible.
+            Self::Mount(_) => ("\u{F0BD3}", "M", "Mount", ""),
         }
     }
 
@@ -2653,6 +2663,12 @@ pub struct App {
     /// tree + integrations + git). Toggled via the 4-cell vertical
     /// strip on the far left of the rail.
     pub active_section: ActivitySection,
+    /// Manifest-registered Mount siblings discovered at startup.
+    /// One entry per `mnml.toml` under
+    /// `<ws>/.mnml/mounts/` + `~/.config/mnml/mounts/`. Rendered
+    /// as extra activity-bar icons after the builtins. Indexed
+    /// by `ActivitySection::Mount(u16)`.
+    pub mount_manifests: Vec<crate::mount_manifest::MountManifest>,
     /// Search activity-bar section: input + results state. The input
     /// captures keystrokes when `search_input_focused == true`; results
     /// render below the input regardless of focus.
@@ -3877,6 +3893,7 @@ impl App {
         let tree_width = config.ui.tree_width;
         let git_section_expanded_default = config.ui.git_section_default_expanded;
         let integrations_section_expanded_default = config.ui.integrations_section_default_expanded;
+        let mount_manifests = crate::mount_manifest::load_all(&workspace);
         Ok(App {
             workspace,
             config,
@@ -3889,6 +3906,7 @@ impl App {
             tree,
             tree_visible: true,
             active_section: ActivitySection::Explorer,
+            mount_manifests,
             search_query: String::new(),
             search_cursor: 0,
             search_hits: Vec::new(),
@@ -6270,16 +6288,64 @@ impl App {
         self.prompt = Some(Prompt::new(PromptKind::MountBinary, "Mount binary"));
     }
 
+    /// Open a Mount from a manifest entry — used by the activity
+    /// bar click handler. If a Mount pane for this binary already
+    /// exists, focus it; otherwise spawn fresh.
+    pub fn open_mount_from_manifest(&mut self, idx: u16) {
+        let Some(manifest) = self.mount_manifests.get(idx as usize) else {
+            self.toast("mount: manifest gone — try mounts.refresh");
+            return;
+        };
+        let binary = manifest.binary.clone();
+        let label = manifest.name.clone();
+        // Focus an existing Mount for this binary if there is one
+        // (matches the "click activity bar icon to re-focus" muscle
+        // memory of every other section).
+        let existing = self.panes.iter().enumerate().find_map(|(i, p)| {
+            if let Pane::Mount(m) = p
+                && m.label == label
+            {
+                Some(i)
+            } else {
+                None
+            }
+        });
+        if let Some(pid) = existing {
+            self.active = Some(pid);
+            self.focus_pane();
+            return;
+        }
+        self.open_mount_with_label(&binary, &label);
+    }
+
+    /// Refresh the manifest list — re-scans both manifest dirs.
+    /// Called by the `mounts.refresh` palette command + on app
+    /// resume from background.
+    pub fn refresh_mount_manifests(&mut self) {
+        self.mount_manifests = crate::mount_manifest::load_all(&self.workspace);
+        self.toast(format!(
+            "mounts: {} manifest(s) loaded",
+            self.mount_manifests.len()
+        ));
+    }
+
     /// Spawn a hosted sibling as a `Pane::Mount`. Called by the
     /// MountBinary prompt's accept handler.
     pub fn open_mount(&mut self, binary: &str) {
+        let label = binary.rsplit('/').next().unwrap_or(binary).to_string();
+        self.open_mount_with_label(binary, &label);
+    }
+
+    /// Same as `open_mount` but with an explicit display label —
+    /// used by manifest mounts so the pane tab shows the manifest
+    /// `name` instead of the raw binary basename.
+    pub fn open_mount_with_label(&mut self, binary: &str, label: &str) {
         let geometry = mnml_bridge::Geometry { cols: 80, rows: 24 };
         let env = self.bridge_env();
         let workspace = self.workspace.clone();
-        let label = binary.rsplit('/').next().unwrap_or(binary).to_string();
         match crate::mount::MountSession::spawn(
             &workspace,
-            label,
+            label.to_string(),
             binary,
             &[],
             &env,
