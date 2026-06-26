@@ -34,6 +34,14 @@ jobs:
           repository: chris-mclennan/fim-engine
           path: fim-engine
 
+      # libghostty-vt-sys consumes the pkg-config feature via the
+      # `pkg-config` Rust crate, which shells out to the
+      # `pkg-config` binary. macOS runners have it via Xcode CLT;
+      # Ubuntu runners need it installed explicitly.
+      - name: Install pkg-config (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
