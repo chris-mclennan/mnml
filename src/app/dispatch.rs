@@ -243,15 +243,18 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
             // regressed the "type partial → ↓ → Enter fires
             // highlighted" UX. Restored the selected>0 fast-path
             // here.
-            let effective = if app.cmdline_popup_selected > 0 {
-                app.cmdline_popup_accept_current();
-                // accept_current rewrites the input handler's
-                // cmdline + the no_pane cmdline. Re-read whichever
-                // path was hosting it.
-                app.no_pane_cmdline
-                    .clone()
-                    .or_else(|| app.active_editor_mut().and_then(|b| b.input.cmdline_get()))
-                    .unwrap_or(typed.clone())
+            // 2026-06-26 — second look. First attempt called
+            // accept_current() but that's a no-op here — vim has
+            // already cleared its cmdline by the time CmdlineEnter
+            // dispatches, so accept_current's "where to write to"
+            // lookup early-returns and the rewrite never happens.
+            // The saved completion state is still alive though;
+            // read head + matches[selected] directly.
+            let effective = if app.cmdline_popup_selected > 0
+                && let Some(state) = app.cmdline_complete_state.as_ref()
+                && let Some(suffix) = state.matches.get(app.cmdline_popup_selected)
+            {
+                format!("{}{}", state.head, suffix)
             } else {
                 typed.clone()
             };
