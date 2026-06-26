@@ -6531,9 +6531,25 @@ impl App {
         };
         match rx.try_recv() {
             Ok((local_rows, cloud_rows, meta)) => {
+                // Count action-needed rows before moving the vecs
+                // into App state. For Tattle QWE rows, `staged` runs
+                // land with `pending_tool_uses = 1` per `parse_run_record`,
+                // so this matches the "awaiting your Slack approval"
+                // semantic the rail header already surfaces. Local
+                // rows count = sessions waiting on a tool-confirm.
+                let cloud_action_needed = cloud_rows
+                    .iter()
+                    .filter(|r| r.pending_tool_uses > 0)
+                    .count() as u32;
+                let local_action_needed = local_rows
+                    .iter()
+                    .filter(|r| r.pending_tool_uses > 0)
+                    .count() as u32;
                 self.agents_panel_rows = local_rows;
                 self.cloud_agents_rows = cloud_rows;
                 self.cloud_agents_meta = meta;
+                self.set_activity_badge("cloud_agents".to_string(), cloud_action_needed);
+                self.set_activity_badge("agents".to_string(), local_action_needed);
                 self.agents_panel_built_at = Some(std::time::Instant::now());
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
