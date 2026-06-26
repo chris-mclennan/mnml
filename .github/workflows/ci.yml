@@ -36,11 +36,23 @@ jobs:
 
       # libghostty-vt-sys consumes the pkg-config feature via the
       # `pkg-config` Rust crate, which shells out to the
-      # `pkg-config` binary. macOS runners have it via Xcode CLT;
-      # Ubuntu runners need it installed explicitly.
+      # `pkg-config` binary. Ubuntu runners need it installed.
       - name: Install pkg-config (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y pkg-config
+
+      # `[target.<triple>.env]` in .cargo/config.toml doesn't reach
+      # build scripts the way top-level `[env]` does, so set
+      # PKG_CONFIG_PATH explicitly here per-runner via $GITHUB_ENV.
+      # Path is relative to the workspace root (where cargo runs
+      # via `working-directory: mnml`).
+      - name: Set PKG_CONFIG_PATH for libghostty-vt
+        run: |
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            echo "PKG_CONFIG_PATH=${{ github.workspace }}/mnml/vendor/libghostty-vt/pkgconfig-darwin" >> "$GITHUB_ENV"
+          else
+            echo "PKG_CONFIG_PATH=${{ github.workspace }}/mnml/vendor/libghostty-vt/pkgconfig-linux" >> "$GITHUB_ENV"
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
