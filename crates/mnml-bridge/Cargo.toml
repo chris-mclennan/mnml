@@ -12,9 +12,17 @@ readme = "README.md"
 keywords = ["tui", "ratatui", "mnml", "ipc", "plugin"]
 categories = ["development-tools", "command-line-interface"]
 
+[features]
+default = ["client"]
+# Sibling-side convenience: Mount struct that wraps the UDS
+# connect + Hello handshake + send_frame + poll_input. Pulls
+# in ratatui for the Buffer → Cell converter.
+client = ["dep:ratatui"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ratatui = { version = "0.30", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

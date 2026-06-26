@@ -42,6 +42,12 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "client")]
+pub mod client;
+
+#[cfg(feature = "client")]
+pub use client::Mount;
+
 /// A single terminal cell — one grapheme + style. Mirrors
 /// ratatui's `buffer::Cell` shape but with serde derived.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
