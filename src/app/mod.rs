@@ -1523,6 +1523,23 @@ pub fn open_url_external(url: &str) {
         .spawn();
 }
 
+/// Convert an `s3://bucket/key/prefix/` URL to the AWS S3 console
+/// URL that browses that prefix. Used by the Cloud Agents right-
+/// click menu's "Open S3 artifacts" item.
+pub fn s3_prefix_to_console_url(s3_url: &str) -> String {
+    // Strip the leading `s3://` then split bucket / prefix on the
+    // first `/`. Falls back to the bare console URL when the
+    // input is malformed.
+    let stripped = s3_url.strip_prefix("s3://").unwrap_or(s3_url);
+    let (bucket, prefix) = match stripped.split_once('/') {
+        Some((b, p)) => (b, p),
+        None => (stripped, ""),
+    };
+    format!(
+        "https://us-east-1.console.aws.amazon.com/s3/buckets/{bucket}?prefix={prefix}&region=us-east-1"
+    )
+}
+
 /// Hand `path` to the OS's default app — `open <path>` on macOS, `xdg-open` on
 /// Linux, `cmd /C start` on Windows. Best-effort: errors are swallowed (so a
 /// headless / sandboxed env where none of those are available is fine).
@@ -1712,6 +1729,12 @@ pub enum ActivitySection {
     /// with an animated spinner glyph on running rows, filter
     /// input + `+ New` at the top.
     Agents,
+    /// Cloud agents only — Tattle QWE runner rows (and any
+    /// future cloud bots). Separated from `Agents` because the
+    /// affordances differ: cloud rows don't have a "resume in
+    /// pty" action; they expose Copy runId / Open CloudWatch /
+    /// Open PR instead.
+    CloudAgents,
 }
 
 impl ActivitySection {
@@ -1738,6 +1761,13 @@ impl ActivitySection {
             Self::Sessions => ("\u{F0392}", "T", "Sessions", "view.activity_sessions"),
             // nf-md-robot — agents (Claude / Codex) dashboard
             Self::Agents => ("\u{F06A9}", "A", "Agents", "view.activity_agents"),
+            // nf-md-cloud — cloud-only agents (Tattle QWE)
+            Self::CloudAgents => (
+                "\u{F0163}",
+                "C",
+                "Cloud agents",
+                "view.activity_cloud_agents",
+            ),
         }
     }
 
@@ -1751,6 +1781,7 @@ impl ActivitySection {
             Self::Integrations,
             Self::Sessions,
             Self::Agents,
+            Self::CloudAgents,
         ]
     }
 }
@@ -1979,6 +2010,13 @@ pub struct PaneRects {
     /// `(rect, workspace_label)` per workspace group header in
     /// the by-workspace view. Click → toggle collapse.
     pub agents_panel_workspace_headers: Vec<(Rect, String)>,
+    /// `(rect, row_idx)` per row in the Cloud Agents panel.
+    /// Click → copy runId + toast; right-click → context menu.
+    pub cloud_agents_rows: Vec<(Rect, usize)>,
+    /// The scrollable content area of the cloud panel.
+    pub cloud_agents_area: Option<Rect>,
+    /// Click rect for the filter input at the top of the cloud panel.
+    pub cloud_agents_filter_input: Option<Rect>,
     /// Click rects for the workspaces-editor overlay. Each row is
     /// `(rect, idx_or_action_code)` — `idx_or_action_code < 0` is
     /// reserved for action rows (`-1 = Add`, `-2 = Close`).
@@ -3137,7 +3175,17 @@ pub struct App {
     pub agents_panel_built_at: Option<std::time::Instant>,
     /// Receiver for the off-main-thread build worker. `Some` means
     /// a refresh is in flight; the next `tick()` drains it.
-    pub agents_panel_rx: Option<std::sync::mpsc::Receiver<Vec<crate::claude_agents::AgentRow>>>,
+    pub agents_panel_rx: Option<
+        std::sync::mpsc::Receiver<(
+            Vec<crate::claude_agents::AgentRow>, // local Claude/Codex rows
+            Vec<crate::claude_agents::AgentRow>, // cloud rows
+            std::collections::HashMap<String, crate::tattle_qwe::TattleQweMeta>,
+        )>,
+    >,
+    /// Cloud-only rows (Tattle QWE). Built by the same worker
+    /// thread that builds `agents_panel_rows`; rendered by the
+    /// Cloud Agents activity-bar panel.
+    pub cloud_agents_rows: Vec<crate::claude_agents::AgentRow>,
     /// `/`-style substring filter for the rail agents panel
     /// (workspace / session id / last_msg). Case-insensitive.
     pub agents_panel_filter: String,
@@ -3159,6 +3207,19 @@ pub struct App {
     /// when toggling out of workspace view so re-entering starts
     /// fresh.
     pub agents_panel_expanded_workspaces: std::collections::HashSet<String>,
+    /// `/`-style substring filter for the rail Cloud Agents panel.
+    /// Independent of the local agents panel filter.
+    pub cloud_agents_filter: String,
+    /// `true` while the user's keyboard focus is in the Cloud
+    /// Agents panel's filter input.
+    pub cloud_agents_filter_focused: bool,
+    /// Top-row scroll offset for the Cloud Agents content list.
+    pub cloud_agents_scroll: usize,
+    /// Per-runId cloud-row metadata (prUrl, s3 prefix, …) populated
+    /// by the qwe-runner scan. Keyed by runId (== `AgentRow.session_id`
+    /// for cloud rows). Lets the right-click menu build URLs without
+    /// bloating `AgentRow`.
+    pub cloud_agents_meta: std::collections::HashMap<String, crate::tattle_qwe::TattleQweMeta>,
     /// Monotonically-increasing id for new dock widgets. Each
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
@@ -3896,11 +3957,16 @@ impl App {
             agents_panel_rows: Vec::new(),
             agents_panel_built_at: None,
             agents_panel_rx: None,
+            cloud_agents_rows: Vec::new(),
             agents_panel_group_by_workspace: false,
             agents_panel_expanded_workspaces: std::collections::HashSet::new(),
             agents_panel_filter: String::new(),
             agents_panel_scroll: 0,
             agents_panel_filter_focused: false,
+            cloud_agents_filter: String::new(),
+            cloud_agents_filter_focused: false,
+            cloud_agents_scroll: 0,
+            cloud_agents_meta: std::collections::HashMap::new(),
             dock_widget_next_id: 0,
             dock_drag_id: None,
             dock_drag_cursor: None,
@@ -6254,20 +6320,12 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
-            let mut rows = pane.rows;
-            // Cloud rows from the Tattle qwe-runner DynamoDB
-            // table. Shell-out to `aws dynamodb scan`; silently
-            // empty when the user isn't SSO'd in.
-            rows.extend(crate::tattle_qwe::collect_cloud_rows());
-            // Re-sort so the cloud rows take their natural slot
-            // by activity (the inner sort uses state_rank +
-            // last_activity DESC).
-            rows.sort_by(|a, b| {
-                crate::claude_agents::state_rank(a.state)
-                    .cmp(&crate::claude_agents::state_rank(b.state))
-                    .then_with(|| b.last_activity.cmp(&a.last_activity))
-            });
-            let _ = tx.send(rows);
+            let local_rows = pane.rows;
+            // Cloud rows live in a SEPARATE list now (the Cloud
+            // Agents activity-bar section renders them). The
+            // local Agents view is local-only.
+            let (cloud_rows, meta) = crate::tattle_qwe::collect_cloud_rows_with_meta();
+            let _ = tx.send((local_rows, cloud_rows, meta));
         });
         self.agents_panel_rx = Some(rx);
     }
@@ -6280,8 +6338,10 @@ impl App {
             return;
         };
         match rx.try_recv() {
-            Ok(rows) => {
-                self.agents_panel_rows = rows;
+            Ok((local_rows, cloud_rows, meta)) => {
+                self.agents_panel_rows = local_rows;
+                self.cloud_agents_rows = cloud_rows;
+                self.cloud_agents_meta = meta;
                 self.agents_panel_built_at = Some(std::time::Instant::now());
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -6522,6 +6582,39 @@ impl App {
 
     /// Build + open the sessions-panel context menu for one
     /// Pty pane (right-click on a session tab).
+    /// Right-click on a row in the Cloud Agents rail panel.
+    /// Items vary by the run's state (PR-related only when shipped).
+    pub fn open_cloud_row_context_menu(&mut self, row_idx: usize, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(row) = self.cloud_agents_rows.get(row_idx).cloned() else {
+            return;
+        };
+        let meta = self.cloud_agents_meta.get(&row.session_id).cloned();
+        let title = Some(format!("{} · {}", row.workspace, row.session_id));
+        let cloudwatch_url = meta
+            .as_ref()
+            .map(|m| m.cloudwatch_url(&row.session_id))
+            .unwrap_or_else(|| {
+                crate::tattle_qwe::TattleQweMeta::default().cloudwatch_url(&row.session_id)
+            });
+        let mut items = vec![
+            MenuItem::new("Copy runId", MenuAction::CopyText(row.session_id.clone())),
+            MenuItem::new("Open CloudWatch logs", MenuAction::OpenUrl(cloudwatch_url)),
+        ];
+        if let Some(pr) = meta.as_ref().and_then(|m| m.pr_url.clone()) {
+            items.push(MenuItem::new("Open PR", MenuAction::OpenUrl(pr)));
+        }
+        if let Some(prefix) = meta.as_ref().and_then(|m| m.s3_artifact_prefix.clone()) {
+            // Build an S3 console URL from the s3:// prefix.
+            let console = s3_prefix_to_console_url(&prefix);
+            items.push(MenuItem::new(
+                "Open S3 artifacts",
+                MenuAction::OpenUrl(console),
+            ));
+        }
+        self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
     pub fn open_session_tab_context_menu(&mut self, pane_id: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let label = match self.panes.get(pane_id) {

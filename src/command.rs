@@ -2231,6 +2231,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::Agents),
         },
         Command {
+            id: "view.activity_cloud_agents",
+            title: "Activity: show Cloud agents (Tattle QWE runner)",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::CloudAgents),
+        },
+        Command {
             id: "view.git_commit_focus",
             title: "Activity: focus the Git section's commit textarea",
             group: "view",

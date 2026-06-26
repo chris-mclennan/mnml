@@ -77,6 +77,7 @@ pub mod outline_view;
 pub mod picker;
 // pipeline_log_view removed after 2026-06 SCM split.
 pub mod agents_panel;
+pub mod cloud_agents_panel;
 pub mod discovery_overlay;
 pub mod dock;
 pub mod git_palette;
@@ -372,6 +373,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
             crate::app::ActivitySection::Agents => {
                 agents_panel::draw(frame, app, content_area);
+            }
+            crate::app::ActivitySection::CloudAgents => {
+                cloud_agents_panel::draw(frame, app, content_area);
             }
         }
         // For non-Explorer sections the tree_view click rects aren't

@@ -672,6 +672,33 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Same idiom for the Cloud Agents panel filter.
+    if app.cloud_agents_filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.cloud_agents_filter.clear();
+                app.cloud_agents_filter_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.cloud_agents_filter.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.cloud_agents_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.cloud_agents_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Git-palette filter input — when focused, intercept typing /
     // backspace / Esc here so the keys don't fall through to the
     // editor.
@@ -4557,6 +4584,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_dashboard_row_context_menu(pid, row_idx, (x, y));
                 return;
             }
+            // Cloud Agents panel row → 3-item context menu:
+            // Copy runId · Open CloudWatch logs · Open PR (if set).
+            if let Some(&(_, row_idx)) = app
+                .rects
+                .cloud_agents_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.open_cloud_row_context_menu(row_idx, (x, y));
+                return;
+            }
             // 2026-06-21 — right-click on a Files drill-down panel
             // row in the dashboard → 4-item context menu
             // (Open / Reveal in tree / Yank path / Copy to scratch).
@@ -6178,10 +6216,36 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // Click anywhere else inside the rail while the agents
-            // filter is focused → unfocus.
+            // Cloud Agents panel — filter input + row clicks.
+            if let Some(r) = app.rects.cloud_agents_filter_input
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.cloud_agents_filter_focused = true;
+                return;
+            }
+            if let Some(&(_, row_idx)) = app
+                .rects
+                .cloud_agents_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                if let Some(row) = app.cloud_agents_rows.get(row_idx).cloned() {
+                    app.clipboard.set(row.session_id.clone(), false);
+                    let summary = row
+                        .last_assistant_msg
+                        .clone()
+                        .unwrap_or_else(|| "(cloud run)".to_string());
+                    app.toast(format!("{} · {} · runId copied", row.workspace, summary));
+                }
+                return;
+            }
+            // Click anywhere else inside the rail while either
+            // agents filter is focused → unfocus.
             if app.agents_panel_filter_focused {
                 app.agents_panel_filter_focused = false;
+            }
+            if app.cloud_agents_filter_focused {
+                app.cloud_agents_filter_focused = false;
             }
             // Sessions panel tab (vertical-tab strip shown when
             // `ActivitySection::Sessions` is active). Click →

@@ -16,20 +16,79 @@
 //!                                                  ↘ dismissed / failed
 
 use crate::claude_agents::{AgentRow, AgentSource, AgentState};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// AWS region the qwe-runner stack lives in.
 const REGION: &str = "us-east-1";
+/// AWS account id — used to build CloudWatch console URLs.
+const ACCOUNT: &str = "164153407337";
 /// DynamoDB table name (see qwe-runner's CDK stack).
 const TABLE: &str = "qwe-runner-runs";
+/// ECS log group for the claude-runner container.
+const LOG_GROUP: &str = "/ecs/qwe-runner/claude-runner";
 /// Only surface runs in the last N hours — keeps the rail tidy
 /// when historical rows accumulate.
 const RECENT_HOURS: u64 = 24;
 
-/// Scan the `qwe-runner-runs` table for recent rows and convert
-/// each to an `AgentRow`. Returns an empty vec when:
+/// Per-run metadata kept on `App` keyed by runId. Stores the
+/// cloud-specific URLs / state we need for the right-click menu
+/// but don't want to bolt onto every `AgentRow` (most rows are
+/// local Claude/Codex sessions that don't carry this data).
+#[derive(Debug, Clone, Default)]
+pub struct TattleQweMeta {
+    pub ticket: String,
+    pub flow: String,
+    pub state: String,
+    pub pr_url: Option<String>,
+    pub s3_artifact_prefix: Option<String>,
+}
+
+impl TattleQweMeta {
+    /// Build a CloudWatch Logs Insights URL pre-filtered to lines
+    /// mentioning this `runId`. Falls back to the bare log-group
+    /// URL when no runId is supplied — user can filter there.
+    pub fn cloudwatch_url(&self, run_id: &str) -> String {
+        // Logs Insights query syntax is `fields … | filter @message like /runId/`.
+        // URL-encoded to fit the AWS console's hash-router format.
+        let encoded_group = LOG_GROUP.replace('/', "$252F");
+        let query = format!(
+            "fields @timestamp, @message | filter @message like /{run_id}/ | sort @timestamp desc"
+        );
+        let encoded_query = urlencoding_minimal(&query);
+        format!(
+            "https://{REGION}.console.aws.amazon.com/cloudwatch/home?region={REGION}#logsV2:logs-insights$3FqueryDetail$3D~(end~0~start~-86400~timeType~'RELATIVE~unit~'seconds~editorString~'{encoded_query}~source~(~'{encoded_group}))?account={ACCOUNT}"
+        )
+    }
+}
+
+/// Tiny URL-encoder for the characters Logs-Insights syntax cares
+/// about. The console's bespoke `~` / `$3F` format is fussy, so we
+/// only escape the bits we know matter (space, pipe, slash, dot,
+/// quote, paren) — anything else is fine literal.
+fn urlencoding_minimal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for c in s.chars() {
+        match c {
+            ' ' => out.push_str("*20"),
+            '|' => out.push_str("*7c"),
+            '/' => out.push_str("*2f"),
+            '.' => out.push_str("*2e"),
+            ',' => out.push_str("*2c"),
+            '\'' => out.push_str("*27"),
+            '(' => out.push_str("*28"),
+            ')' => out.push_str("*29"),
+            '@' => out.push_str("*40"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// Scan the `qwe-runner-runs` table for recent rows. Returns
+/// (rows, per-runId metadata) — both empty when:
 ///   - `aws` CLI is not on PATH,
 ///   - the user isn't SSO'd in (`aws` returns 255),
 ///   - the table is empty / the user can't read it,
@@ -37,38 +96,40 @@ const RECENT_HOURS: u64 = 24;
 ///
 /// Logs nothing to stderr — silent failure is fine here; the rail
 /// just doesn't show cloud rows.
-pub fn collect_cloud_rows() -> Vec<AgentRow> {
+pub fn collect_cloud_rows_with_meta() -> (Vec<AgentRow>, HashMap<String, TattleQweMeta>) {
     let cutoff = SystemTime::now()
         .checked_sub(Duration::from_secs(RECENT_HOURS * 3600))
         .unwrap_or(UNIX_EPOCH);
     let cutoff_iso = system_time_to_iso(cutoff);
-
-    // `aws dynamodb scan` with a `createdAt > :since` filter. If the
-    // user hasn't set `AWS_PROFILE`, try a couple of well-known
-    // Tattle profile names so the integration "just works" for the
-    // common SSO setup. Silent failure when nothing works — the rail
-    // just doesn't show cloud rows.
     let bytes = run_scan(&cutoff_iso, None)
         .or_else(|| run_scan(&cutoff_iso, Some("claude-ro")))
         .or_else(|| run_scan(&cutoff_iso, Some("tattle-dev")));
     let bytes = match bytes {
         Some(b) => b,
-        None => return Vec::new(),
+        None => return (Vec::new(), HashMap::new()),
     };
     let json: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), HashMap::new()),
     };
     let items = match json.get("Items").and_then(|v| v.as_array()) {
         Some(a) => a,
-        None => return Vec::new(),
+        None => return (Vec::new(), HashMap::new()),
     };
-    items.iter().filter_map(parse_run_record).collect()
+    let mut rows = Vec::new();
+    let mut meta = HashMap::new();
+    for item in items {
+        if let Some((row, m)) = parse_run_record(item) {
+            meta.insert(row.session_id.clone(), m);
+            rows.push(row);
+        }
+    }
+    (rows, meta)
 }
 
 /// Parse one DynamoDB Item (in low-level type-wrapped form, i.e.
-/// `{"runId":{"S":"abc"},...}`) into an `AgentRow`.
-fn parse_run_record(item: &serde_json::Value) -> Option<AgentRow> {
+/// `{"runId":{"S":"abc"},...}`) into an `(AgentRow, TattleQweMeta)`.
+fn parse_run_record(item: &serde_json::Value) -> Option<(AgentRow, TattleQweMeta)> {
     let s = |k: &str| -> Option<String> {
         item.get(k)
             .and_then(|v| v.get("S"))
@@ -82,7 +143,15 @@ fn parse_run_record(item: &serde_json::Value) -> Option<AgentRow> {
     let created_at = s("createdAt").unwrap_or_default();
     let finished_at = s("finishedAt");
     let pr_url = s("prUrl");
+    let s3_prefix = s("s3ArtifactPrefix");
     let last_error = s("lastError");
+    let meta = TattleQweMeta {
+        ticket: ticket.clone(),
+        flow: flow.clone(),
+        state: state_str.clone(),
+        pr_url: pr_url.clone(),
+        s3_artifact_prefix: s3_prefix,
+    };
 
     let state = match state_str.as_str() {
         "started" | "approved" => AgentState::Streaming,
@@ -106,7 +175,7 @@ fn parse_run_record(item: &serde_json::Value) -> Option<AgentRow> {
         other => Some(other.to_string()),
     };
 
-    Some(AgentRow {
+    let row = AgentRow {
         source: AgentSource::TattleQwe,
         // Transcript path is meaningless for cloud rows — use a
         // sentinel that `.is_file()` returns false on, so any
@@ -140,7 +209,8 @@ fn parse_run_record(item: &serde_json::Value) -> Option<AgentRow> {
         recent_subagents: Vec::new(),
         pending_tool_uses,
         tokens_per_min: None,
-    })
+    };
+    Some((row, meta))
 }
 
 /// Single `aws dynamodb scan` invocation. Returns `Some(stdout)`

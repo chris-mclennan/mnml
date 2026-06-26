@@ -251,18 +251,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .chars()
             .take(max_msg)
             .collect();
-        // Source glyph — distinguishes cloud rows (Tattle QWE) from
-        // local Claude/Codex sessions at a glance. Local rows get
-        // a blank space so the columns line up.
-        let (src_glyph, src_color) = match r.source {
-            crate::claude_agents::AgentSource::TattleQwe => ("☁", t.blue),
-            _ => (" ", t.fg),
-        };
         Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(glyph.to_string(), Style::default().fg(glyph_color).bg(bg)),
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(src_glyph.to_string(), Style::default().fg(src_color).bg(bg)),
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(ws_label, Style::default().fg(t.fg).bg(bg)),
             Span::styled("  ", Style::default().bg(bg)),
