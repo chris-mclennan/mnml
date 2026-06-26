@@ -2391,9 +2391,58 @@ impl App {
                 // Last resort: maybe it names a registered command.
                 if crate::command::registry().get(other).is_some() {
                     crate::command::run(other, self);
-                } else {
-                    self.toast(format!(":{line} — unknown command"));
+                    return;
                 }
+                // 2026-06-26 — typed text isn't a known command.
+                // Fall back to the popup's highlighted match.
+                // vscode-style palette behaviour: if there's an
+                // obvious "what you probably meant", use it instead
+                // of erroring. Fixes the "type partial → ↓ to
+                // highlight → Enter fires partial" UX bug at its
+                // root — callers no longer need to substitute before
+                // calling run_ex_command. Recursion capped at 1 by
+                // checking resolved != line.
+                //
+                // We use the popup's CURRENT highlighted index when
+                // popup state exists (caller navigated with ↓/Tab);
+                // otherwise we compute completions on-the-fly and
+                // pick idx 0 (the top match). This means a fresh
+                // `:ag<Enter>` (no navigation) also works.
+                let resolved_opt: Option<String> = {
+                    let idx_from_state = self
+                        .cmdline_complete_state
+                        .as_ref()
+                        .and_then(|s| s.matches.get(self.cmdline_popup_selected).cloned())
+                        .map(|suffix| {
+                            let head = self
+                                .cmdline_complete_state
+                                .as_ref()
+                                .map(|s| s.head.clone())
+                                .unwrap_or_default();
+                            format!("{head}{suffix}")
+                        });
+                    idx_from_state.or_else(|| {
+                        crate::app::compute_cmdline_completions_for_app(self, line).and_then(
+                            |state| {
+                                state
+                                    .matches
+                                    .first()
+                                    .map(|m| format!("{}{}", state.head, m))
+                            },
+                        )
+                    })
+                };
+                if let Some(resolved) = resolved_opt
+                    && resolved != line
+                    && !resolved.trim().is_empty()
+                {
+                    // Clear popup state so the recursion can't loop.
+                    self.cmdline_complete_state = None;
+                    self.cmdline_popup_selected = 0;
+                    self.run_ex_command(&resolved);
+                    return;
+                }
+                self.toast(format!(":{line} — unknown command"));
             }
         }
     }
