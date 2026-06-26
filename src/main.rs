@@ -258,16 +258,11 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if app.config.ui.check_updates && !args.headless {
         app.update_check = Some(mnml::update_check::UpdateCheck::spawn());
     }
-    // First-launch "have you met the rest of the family?" — fires a
-    // one-shot toast per missing sibling. Skipped in headless mode.
-    if !args.headless
-        && let Some(offer) = mnml::family_offer::FamilyOffer::maybe_new()
-    {
-        for line in offer.hint_lines() {
-            app.toast(line);
-        }
-        offer.mark_shown();
-    }
+    // 2026-06-26 — first-launch family-sibling toast removed. Users
+    // discover + install siblings via the Integrations rail (rich
+    // surface with chip metadata + per-sibling enable/install)
+    // instead of a one-shot toast at startup. Drops the family-offer
+    // PATH walk from the startup path entirely.
 
     let result = if args.headless {
         mnml::headless::run(app)
