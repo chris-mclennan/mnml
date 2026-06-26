@@ -8,8 +8,13 @@
 .claude/state/
 .claude/coordination/
 
-# libghostty-vt prebuilt — the macOS-arm64 .a is tracked so CI
-# can link (8MB; small enough not to need git-lfs). dylibs stay
-# ignored because they're only for local dev / dynamic linking
-# experiments. Regenerate the .a via vendor/libghostty-vt/README.md.
-/vendor/libghostty-vt/lib/*.dylib
+# libghostty-vt prebuilts — static .a files for each supported
+# platform are tracked so CI can link without a Zig toolchain.
+# (macOS-arm64: 8MB, x86_64-linux: 14MB — small enough to skip
+# git-lfs.) Dynamic .dylib / .so are gitignored — only for local
+# dev / dynamic linking experiments. Regenerate via
+# vendor/libghostty-vt/build-*.sh + the README.md instructions.
+/vendor/libghostty-vt/**/*.dylib
+/vendor/libghostty-vt/**/*.so
+/vendor/libghostty-vt/**/*.so.*
+/vendor/libghostty-vt/out/
