@@ -75,6 +75,13 @@ struct RawCommand {
     from_col: Option<u16>,
     #[serde(default)]
     from_row: Option<u16>,
+    /// `open-pty`: argv to run (first element = executable).
+    #[serde(default)]
+    command: Vec<String>,
+    /// `open-pty`: optional working directory. Defaults to the
+    /// workspace when not supplied.
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 #[derive(Debug)]
@@ -162,6 +169,20 @@ pub enum IpcCommand {
     },
     /// Force a fresh dump of `screen.txt` / `status.json`.
     Snapshot,
+    /// Bridge tier-2: show a toast message in the host. Used by
+    /// siblings to surface progress / errors to the user without
+    /// a separate notification channel.
+    Toast(String),
+    /// Bridge tier-2: spawn a new Pty pane running `command` in
+    /// `cwd` (defaults to the workspace). The first element of
+    /// `command` is the executable; the rest are args. Used by
+    /// siblings to dispatch follow-on work (run a test, tail a
+    /// log) into a fresh mnml pane instead of as a detached child
+    /// the user can't see.
+    OpenPty {
+        cwd: Option<PathBuf>,
+        command: Vec<String>,
+    },
     /// Write every registered click-rect to `rects.json` in the IPC
     /// dir. Each entry has `{x, y, w, h, label}`. Used by the
     /// click-rect audit + by ad-hoc debugging (`./run.sh dump-rects`).
@@ -396,6 +417,20 @@ fn parse_command(line: &str) -> IpcCommand {
             None => IpcCommand::Unknown(line.to_string()),
         },
         "snapshot" => IpcCommand::Snapshot,
+        "toast" => match raw.text {
+            Some(t) => IpcCommand::Toast(t),
+            None => IpcCommand::Unknown(line.to_string()),
+        },
+        "open-pty" => {
+            if raw.command.is_empty() {
+                IpcCommand::Unknown(line.to_string())
+            } else {
+                IpcCommand::OpenPty {
+                    cwd: raw.cwd.map(PathBuf::from),
+                    command: raw.command,
+                }
+            }
+        }
         "dump-rects" => IpcCommand::DumpRects,
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
@@ -767,6 +802,30 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             ])
         }
         IpcCommand::Snapshot => json_event(&[("event", "snapshot")]),
+        IpcCommand::Toast(text) => {
+            app.toast(text.clone());
+            json_event(&[("event", "toast"), ("text", text)])
+        }
+        IpcCommand::OpenPty { cwd, command } => {
+            if command.is_empty() {
+                json_event(&[("event", "open_pty_error"), ("reason", "command empty")])
+            } else {
+                let exe = command[0].clone();
+                let args: Vec<String> = command[1..].to_vec();
+                let cwd_path = cwd.clone().unwrap_or_else(|| app.workspace.clone());
+                let label = exe.rsplit('/').next().unwrap_or(&exe).to_string();
+                let profile = crate::pty_pane::BinaryProfile {
+                    label,
+                    exe: exe.clone(),
+                    args,
+                    cwd: Some(cwd_path),
+                    env: Vec::new(),
+                    session_id: None,
+                };
+                app.open_pty(profile);
+                json_event(&[("event", "open_pty"), ("exe", &exe)])
+            }
+        }
         IpcCommand::DumpRects => json_event(&[("event", "dump_rects")]),
         IpcCommand::Quit => {
             // Scripts/E2E know what they're doing — force, bypassing the dirty guard.

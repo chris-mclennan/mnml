@@ -6202,15 +6202,41 @@ impl App {
         self.open_pty_dir(profile, crate::layout::SplitDir::Vertical);
     }
 
+    /// Bridge env — injected into every Pty spawned by mnml so
+    /// sibling tools (and any subprocess) can locate the host's
+    /// workspace / theme / IPC channel without parsing argv.
+    /// Used by the Bridge tier-1 integration (see Mount/Bridge
+    /// architecture notes).
+    pub fn bridge_env(&self) -> Vec<(String, String)> {
+        let ipc_dir = self.workspace.join(".mnml").join("ipc");
+        vec![
+            (
+                "MNML_WORKSPACE".to_string(),
+                self.workspace.display().to_string(),
+            ),
+            ("MNML_THEME".to_string(), self.config.ui.theme.clone()),
+            ("MNML_IPC_DIR".to_string(), ipc_dir.display().to_string()),
+        ]
+    }
+
     /// Like `open_pty` but caller picks the split direction. AI panes
     /// (Claude, Codex) use `Horizontal` so they dock alongside the
     /// editor on the right — the IDE-canonical "AI chat panel"
     /// placement.
     pub fn open_pty_dir(
         &mut self,
-        profile: crate::pty_pane::BinaryProfile,
+        mut profile: crate::pty_pane::BinaryProfile,
         dir: crate::layout::SplitDir,
     ) {
+        // Inject the bridge env vars BEFORE spawning so siblings see
+        // them on startup. Profile.env wins on key collision — caller
+        // can override if needed.
+        let bridge = self.bridge_env();
+        for (k, v) in bridge {
+            if !profile.env.iter().any(|(pk, _)| pk == &k) {
+                profile.env.push((k, v));
+            }
+        }
         // The initial size is a guess — `ui/pty_view` resizes the session to its
         // rendered area on the first frame.
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
