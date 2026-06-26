@@ -6155,11 +6155,26 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                // Resume the clicked session in a fresh pty
-                // (mirrors the existing dashboard's `R` chord).
                 if let Some(row) = app.agents_panel_rows.get(row_idx).cloned() {
-                    let session_id = row.session_id.clone();
-                    app.resume_claude_session_in_pty(&session_id);
+                    match row.source {
+                        crate::claude_agents::AgentSource::TattleQwe => {
+                            // Cloud rows can't be resumed locally —
+                            // copy the runId so the user can paste
+                            // it into Slack / a browser, and toast
+                            // what we know about the run.
+                            app.clipboard.set(row.session_id.clone(), false);
+                            let summary = row
+                                .last_assistant_msg
+                                .clone()
+                                .unwrap_or_else(|| "(cloud run)".to_string());
+                            app.toast(format!("{} · {} · runId copied", row.workspace, summary));
+                        }
+                        _ => {
+                            // Resume in a fresh pty — mirrors the
+                            // dashboard's `R` chord.
+                            app.resume_claude_session_in_pty(&row.session_id);
+                        }
+                    }
                 }
                 return;
             }
