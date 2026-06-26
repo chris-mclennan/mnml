@@ -6,6 +6,7 @@
 # Per-target paths so the static .a matches the host architecture:
 #   aarch64-apple-darwin → lib-aarch64-darwin/libghostty-vt.a
 #   x86_64-unknown-linux-gnu → lib-x86_64-linux/libghostty-vt.a
+#   aarch64-unknown-linux-gnu → lib-aarch64-linux/libghostty-vt.a
 #
 # `[target.<triple>.env]` only accepts plain string values (the
 # `{ value = ..., relative = true }` table form is top-level-only),
@@ -17,3 +18,6 @@ PKG_CONFIG_PATH = "vendor/libghostty-vt/pkgconfig-darwin"
 
 [target.x86_64-unknown-linux-gnu.env]
 PKG_CONFIG_PATH = "vendor/libghostty-vt/pkgconfig-linux"
+
+[target.aarch64-unknown-linux-gnu.env]
+PKG_CONFIG_PATH = "vendor/libghostty-vt/pkgconfig-linux-arm64"
