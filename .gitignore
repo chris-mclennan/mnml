@@ -8,6 +8,8 @@
 .claude/state/
 .claude/coordination/
 
-# libghostty-vt cross-built prebuilt (binary; regenerate via vendor/libghostty-vt/README.md)
-/vendor/libghostty-vt/lib/*.a
+# libghostty-vt prebuilt — the macOS-arm64 .a is tracked so CI
+# can link (8MB; small enough not to need git-lfs). dylibs stay
+# ignored because they're only for local dev / dynamic linking
+# experiments. Regenerate the .a via vendor/libghostty-vt/README.md.
 /vendor/libghostty-vt/lib/*.dylib

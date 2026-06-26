@@ -10,16 +10,18 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Strict checks on macOS + Ubuntu — fmt + clippy + test. These two
-  # share the same UDS-based pty pane path so most surface area is
-  # exercised by either runner; both gate the merge.
+  # macOS-only for now — the embedded terminal core (libghostty-vt)
+  # ships as a darwin-arm64 prebuilt; the Linux build of that static
+  # lib hasn't been cross-built yet. Linux CI can return once we
+  # either cross-build libghostty-vt for x86_64 or feature-gate it
+  # off on non-Apple targets. macOS gates the merge.
   check:
     name: fmt · clippy · test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     steps:
       # mnml depends on the fim-engine sibling crate by path (../fim-engine),
       # so check it out alongside this repo for the path dep to resolve.
@@ -45,7 +47,6 @@ jobs:
           key: ${{ matrix.os }}
 
       - name: rustfmt
-        if: matrix.os == 'ubuntu-latest'
         working-directory: mnml
         run: cargo fmt --all --check
 
