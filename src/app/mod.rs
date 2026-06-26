@@ -701,12 +701,16 @@ pub(crate) fn compute_cmdline_completions_for_app(
         //   T1 (300): id starts with token           (`http.s` → http.send)
         //   T2 (200): id contains token as substring (`http`   → http.send)
         //   T3 (150): EX_COMPLETION_NAMES prefix     (legacy vim ex commands)
-        //   T4 (100): title contains token (3+ chars) (`send`  → http.send)
+        //   T4 (100): title contains token (2+ chars) (`ag`    → ai.dashboard via "Agents")
         //
         // EX_COMPLETION_NAMES outranks title-contains so vim
-        // muscle memory (`:wr` → write, `:ta` → tabclose) survives.
-        // Title-contains gated to ≥3 chars to avoid flooding on
-        // short tokens like `:ta` (matches every "Tab" title).
+        // muscle memory (`:wr` → write, `:ta` → tabclose) survives:
+        // T3 (150) > T4 (100), so vim users hitting `:ta<Tab>` still
+        // get `tabclose` first; the title-fuzzy matches appear below.
+        // 2026-06-26 — gate lowered from 3 chars to 2. Solves the
+        // "I typed a short query that should fuzzy-match a command
+        // title but didn't" UX hole (e.g. `:ag` not finding
+        // `ai.dashboard` because the id has no 'g').
         // Recent-commands bump (+50 most-recent, decreasing)
         // applies within tiers.
         let token_lc = token.to_lowercase();
@@ -720,7 +724,7 @@ pub(crate) fn compute_cmdline_completions_for_app(
                 score = score.max(200);
             }
             if score == 0
-                && token.chars().count() >= 3
+                && token.chars().count() >= 2
                 && cmd.title.to_lowercase().contains(&token_lc)
             {
                 score = 100;

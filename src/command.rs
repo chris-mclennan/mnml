@@ -749,17 +749,9 @@ fn builtin_commands() -> Vec<Command> {
             // pgrep claude, renders one row per session with state /
             // model / tokens / cwd / last user+asst exchange. Useful
             // when you've got several CC sessions running and want a
-            // unified overview.
-            keys: &[],
-            run: |app| app.open_claude_agents_pane(),
-        },
-        // Discoverability alias — old docs / muscle memory called
-        // it `agents_dashboard`. Kept as a palette entry so `:ag`
-        // finds it (fuzzy match needs a 'g' in the name).
-        Command {
-            id: "ai.agents_dashboard",
-            title: "AI: open Claude Agents dashboard (alias for ai.dashboard)",
-            group: "ai",
+            // unified overview. `:ag` finds this via title-fuzzy
+            // (compute_cmdline_completions_for_app's 2-char title
+            // gate).
             keys: &[],
             run: |app| app.open_claude_agents_pane(),
         },
