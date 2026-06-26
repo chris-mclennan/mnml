@@ -86,6 +86,7 @@ pub(crate) mod picker;
 // in-tree host populates it any more.
 pub mod dock;
 pub mod menu_bar;
+pub(crate) mod mount;
 pub(crate) mod playwright;
 pub(crate) mod prompt;
 pub(crate) mod pty_pane;

@@ -266,6 +266,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
             // nf-md-currency-usd — AI spend report.
             Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
+            // nf-md-puzzle-outline — hosted sibling (Mount).
+            Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
         };
         // Status badge priority:
         //   dirty   → ● / *  (orange — any tab)

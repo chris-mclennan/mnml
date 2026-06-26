@@ -6261,6 +6261,55 @@ impl App {
         }
     }
 
+    /// Prompt for a binary name + open it as a hosted-sibling
+    /// Mount pane. Used by the `mount.open` palette command. The
+    /// binary must implement the `mnml-bridge` Mount protocol
+    /// (read `MNML_MOUNT_SOCKET`, connect, stream Frames).
+    pub fn prompt_mount_open(&mut self) {
+        use crate::prompt::{Prompt, PromptKind};
+        self.prompt = Some(Prompt::new(PromptKind::MountBinary, "Mount binary"));
+    }
+
+    /// Spawn a hosted sibling as a `Pane::Mount`. Called by the
+    /// MountBinary prompt's accept handler.
+    pub fn open_mount(&mut self, binary: &str) {
+        let geometry = mnml_bridge::Geometry { cols: 80, rows: 24 };
+        let env = self.bridge_env();
+        let workspace = self.workspace.clone();
+        let label = binary.rsplit('/').next().unwrap_or(binary).to_string();
+        match crate::mount::MountSession::spawn(
+            &workspace,
+            label,
+            binary,
+            &[],
+            &env,
+            Some(&workspace),
+            geometry,
+        ) {
+            Ok(session) => {
+                let pane = Pane::Mount(session);
+                match self.active {
+                    Some(cur) => {
+                        let new_id =
+                            self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                        self.active = Some(new_id);
+                    }
+                    None => {
+                        self.panes.push(pane);
+                        let id = self.panes.len() - 1;
+                        *self.layout_mut() = Layout::leaf(id);
+                        self.active = Some(id);
+                    }
+                }
+                self.focus = Focus::Pane;
+                self.toast(format!("mounted {binary}"));
+            }
+            Err(e) => {
+                self.toast(format!("mount failed: {e}"));
+            }
+        }
+    }
+
     /// `:rename` / `term.rename` — open a prompt to name the active pty
     /// session (Claude / Codex / shell). The name shows in the pty-pane
     /// tab strip + the bufferline tab. Seeded with the current name.
@@ -8756,6 +8805,7 @@ impl App {
             Pane::ClaudeAgents(p) => Some((p.tab_title(), false)),
             Pane::Websocket(p) => Some((p.tab_title(), false)),
             Pane::SpendReport(_) => Some(("AI spend (24h)".to_string(), false)),
+            Pane::Mount(m) => Some((m.label.clone(), false)),
         }
     }
 
@@ -10762,6 +10812,12 @@ impl App {
             if let crate::pane::Pane::Pty(s) = p {
                 s.pump();
                 s.tick_activity();
+            }
+            if let crate::pane::Pane::Mount(m) = p {
+                // Drain pending frames from the mount worker
+                // thread + detect sibling exit. Render reads
+                // `latest_frame` set here.
+                m.pump();
             }
         }
         if let Some(scratch) = self.scratch_term.as_mut() {

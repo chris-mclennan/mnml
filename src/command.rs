@@ -3675,6 +3675,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_shell(),
         },
         Command {
+            id: "mount.open",
+            title: "Mount: open a hosted sibling pane (prompts for binary)",
+            group: "mount",
+            keys: &[],
+            run: |app| app.prompt_mount_open(),
+        },
+        Command {
             id: "term.rename",
             title: "Terminal: rename this session (shown in the tab)",
             group: "term",

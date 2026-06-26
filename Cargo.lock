@@ -2164,6 +2164,7 @@ dependencies = [
  "jsonschema",
  "libghostty-vt",
  "libghostty-vt-sys",
+ "mnml-bridge",
  "portable-pty",
  "ratatui",
  "regex",

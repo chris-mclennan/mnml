@@ -82,6 +82,7 @@ pub mod discovery_overlay;
 pub mod dock;
 pub mod git_palette;
 pub mod menu_bar;
+pub mod mount_view;
 pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
@@ -819,6 +820,7 @@ fn render_layout(
                 Some(crate::pane::Pane::ClaudeAgents(_)) => 34,
                 Some(crate::pane::Pane::Websocket(_)) => 35,
                 Some(crate::pane::Pane::SpendReport(_)) => 36,
+                Some(crate::pane::Pane::Mount(_)) => 37,
                 _ => 0,
             };
             match kind {
@@ -862,6 +864,12 @@ fn render_layout(
                 }
                 36 => {
                     spend_report_view::draw(frame, app, *id, area, focused);
+                    None
+                }
+                37 => {
+                    if let Some(crate::pane::Pane::Mount(m)) = app.panes.get_mut(*id) {
+                        mount_view::draw(frame, m, area);
+                    }
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
@@ -2135,6 +2143,7 @@ fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui
         Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, theme::cur().purple),
         Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
         Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
+        Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
     }
 }
 

@@ -113,6 +113,12 @@ pub enum Pane {
     /// tokens + cost in the last 24h. Click column headers (or
     /// press `s`) to cycle the sort key.
     SpendReport(SpendReportPane),
+    /// A hosted sibling tool — owns the pane's body via the Bridge
+    /// tier-4 Mount protocol. The sibling streams cell+style frames
+    /// over a Unix socket; mnml stamps them into its own ratatui
+    /// frame. Input flows the other way (key/mouse events forwarded
+    /// when the pane has focus). See `src/mount.rs`.
+    Mount(crate::mount::MountSession),
 }
 
 /// State for [`Pane::SpendReport`]. Re-snapshots
@@ -513,6 +519,7 @@ impl Pane {
             Pane::ClaudeAgents(p) => p.tab_title(),
             Pane::Websocket(p) => p.tab_title(),
             Pane::SpendReport(_) => "AI spend (24h)".to_string(),
+            Pane::Mount(m) => m.label.clone(),
         }
     }
 
@@ -541,7 +548,8 @@ impl Pane {
             | Pane::Image(_)
             | Pane::ClaudeAgents(_)
             | Pane::Websocket(_)
-            | Pane::SpendReport(_) => false,
+            | Pane::SpendReport(_)
+            | Pane::Mount(_) => false,
         }
     }
 

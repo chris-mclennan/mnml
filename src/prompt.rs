@@ -272,6 +272,10 @@ pub enum PromptKind {
     /// The answer is relayed to the blocked agent worker through its
     /// confirm channel (`App::resolve_tool_confirm`).
     AiToolConfirm,
+    /// Accept ⇒ spawn `<input>` as a Mount pane. Used by the
+    /// `mount.open` palette command for developer / testing flows
+    /// while siblings get ported to the Bridge tier-4 protocol.
+    MountBinary,
 }
 
 #[derive(Debug)]

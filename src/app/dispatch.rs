@@ -914,6 +914,15 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     }
                 }
             }
+            Some(Pane::Mount(m)) => {
+                // Forward as a scroll event — sibling decides what
+                // to do with it (scroll a list, change a chart, …).
+                m.send_input(mnml_bridge::InputEvent::Scroll {
+                    col: 0,
+                    row: 0,
+                    dy: delta as i16,
+                });
+            }
             None => {}
         }
         // Each SCM/CI pane's max_idx depends on which view-mode is

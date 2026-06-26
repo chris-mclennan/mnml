@@ -1550,6 +1550,10 @@ impl App {
                 let typed = p.input.clone();
                 self.rename_dock_widget(&typed);
             }
+            crate::prompt::PromptKind::MountBinary => {
+                let typed = p.input.clone();
+                self.open_mount(&typed);
+            }
         }
     }
 }
