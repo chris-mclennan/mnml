@@ -97,11 +97,9 @@ tree-sitter-html = "0.23.2"
 # rustls so there's no system OpenSSL dependency, and the usual content-encodings.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "gzip", "brotli", "deflate"] }
 # Pty / AI-CLI panes — an embedded terminal (shell / claude / codex) per Pane::Pty.
-# portable-pty opens the pty + spawns the child; vt100 parses its output into a grid.
-# vt100 0.16 — generic Parser, set_size/set_scrollback on Screen, multi-screen
-# scrollback.
+# portable-pty opens the pty + spawns the child; libghostty-vt (below) parses
+# output into a grid. vt100 was the prior backend, removed 2026-06-26.
 portable-pty = "0.8"
-vt100 = "0.16"
 # Ghostty terminal-emulation core (replacing vt100 for Pane::Pty). Links a
 # cross-built prebuilt `libghostty-vt.a` via pkg-config (see vendor/libghostty-vt/
 # + .cargo/config.toml) so no Zig toolchain is needed on macOS — ghostty pins

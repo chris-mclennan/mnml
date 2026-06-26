@@ -10995,6 +10995,7 @@ impl App {
         }
         if let Some(scratch) = self.scratch_term.as_mut() {
             scratch.session.pump();
+            scratch.session.tick_activity();
         }
         // Agents rail panel — pull the worker's snapshot if ready.
         self.drain_agents_panel_refresh();

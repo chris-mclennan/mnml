@@ -553,6 +553,24 @@ fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> Rende
             let mut row_cells: Vec<RenderCell> = Vec::with_capacity(cols as usize);
             if let Ok(mut cell_iter) = cells_h.update(row) {
                 while let Some(cell) = cell_iter.next() {
+                    // Wide-char handling: libghostty marks the 2nd
+                    // column of a CJK/emoji glyph as `SpacerTail` (or
+                    // `SpacerHead` for end-of-row overflow). We push
+                    // an EMPTY RenderCell for spacer slots so column
+                    // alignment stays correct without painting a
+                    // spurious space underneath the wide glyph. The
+                    // Wide cell itself carries the multi-codepoint
+                    // grapheme; the host terminal visually spans it
+                    // across both columns.
+                    let wide = cell.raw_cell().ok().and_then(|c| c.wide().ok());
+                    if matches!(
+                        wide,
+                        Some(libghostty_vt::screen::CellWide::SpacerTail)
+                            | Some(libghostty_vt::screen::CellWide::SpacerHead)
+                    ) {
+                        row_cells.push(RenderCell::default());
+                        continue;
+                    }
                     let text: String = cell
                         .graphemes()
                         .map(|g| g.into_iter().collect())
@@ -579,6 +597,12 @@ fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> Rende
             grid.rows += 1;
         }
     }
+    // Clear libghostty's dirty bookkeeping now that we've consumed
+    // the frame — the contract is "caller resets dirty after
+    // rendering". Without this, snapshot.dirty() returns `Full`
+    // forever and any future incremental-redraw optimisation that
+    // gates on the dirty bit would always do a full walk.
+    let _ = snapshot.set_dirty(libghostty_vt::render::Dirty::Clean);
     grid
 }
 
