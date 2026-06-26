@@ -1800,6 +1800,24 @@ impl ActivitySection {
             Self::CloudAgents,
         ]
     }
+
+    /// Stable string id used as the badge map key (see
+    /// `App::activity_badges`). Builtins return the suffix of
+    /// their `view.activity_*` command id; Mount sections return
+    /// the manifest id, looked up via `App::mount_manifests`.
+    pub fn badge_key(&self, app: &crate::app::App) -> Option<String> {
+        match self {
+            Self::Explorer => Some("explorer".to_string()),
+            Self::Search => Some("search".to_string()),
+            Self::Git => Some("git".to_string()),
+            Self::Debug => Some("debug".to_string()),
+            Self::Integrations => Some("integrations".to_string()),
+            Self::Sessions => Some("sessions".to_string()),
+            Self::Agents => Some("agents".to_string()),
+            Self::CloudAgents => Some("cloud_agents".to_string()),
+            Self::Mount(idx) => app.mount_manifests.get(*idx as usize).map(|m| m.id.clone()),
+        }
+    }
 }
 
 /// Which underlying scroll value a `ScrollbarHit` controls. The dispatcher
@@ -2669,6 +2687,12 @@ pub struct App {
     /// as extra activity-bar icons after the builtins. Indexed
     /// by `ActivitySection::Mount(u16)`.
     pub mount_manifests: Vec<crate::mount_manifest::MountManifest>,
+    /// Notification badges on activity-bar sections — keyed by
+    /// the section's serialized id (e.g. `"agents"`, `"cloud_agents"`,
+    /// manifest mount id). Set by siblings via the
+    /// `set-activity-badge` IPC command. `count = 0` clears
+    /// (we remove the key on zero to keep the map tidy).
+    pub activity_badges: std::collections::HashMap<String, u32>,
     /// Search activity-bar section: input + results state. The input
     /// captures keystrokes when `search_input_focused == true`; results
     /// render below the input regardless of focus.
@@ -3907,6 +3931,7 @@ impl App {
             tree_visible: true,
             active_section: ActivitySection::Explorer,
             mount_manifests,
+            activity_badges: std::collections::HashMap::new(),
             search_query: String::new(),
             search_cursor: 0,
             search_hits: Vec::new(),
@@ -6316,6 +6341,26 @@ impl App {
             return;
         }
         self.open_mount_with_label(&binary, &label);
+    }
+
+    /// Set or clear an activity-bar notification badge. `count = 0`
+    /// removes the key (so the renderer's `.contains_key` check
+    /// can short-circuit). Called by the `set-activity-badge`
+    /// IPC command — sibling tools surface queue depths,
+    /// action-needed counts, etc. this way.
+    pub fn set_activity_badge(&mut self, section: String, count: u32) {
+        if count == 0 {
+            self.activity_badges.remove(&section);
+        } else {
+            self.activity_badges.insert(section, count);
+        }
+    }
+
+    /// Look up the badge count for a builtin section. Returns 0
+    /// when no badge is set. The string key is the section's
+    /// command_id suffix (e.g. `"agents"` for `view.activity_agents`).
+    pub fn activity_badge_for(&self, section_id: &str) -> u32 {
+        self.activity_badges.get(section_id).copied().unwrap_or(0)
     }
 
     /// Refresh the manifest list — re-scans both manifest dirs.

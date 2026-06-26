@@ -82,6 +82,12 @@ struct RawCommand {
     /// workspace when not supplied.
     #[serde(default)]
     cwd: Option<String>,
+    /// `set-activity-badge`: target section name.
+    #[serde(default)]
+    section: Option<String>,
+    /// `set-activity-badge`: notification count (0 clears).
+    #[serde(default)]
+    count: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -183,6 +189,13 @@ pub enum IpcCommand {
         cwd: Option<PathBuf>,
         command: Vec<String>,
     },
+    /// Bridge tier-2: set a notification badge on an activity-bar
+    /// section. `section` is either a builtin section name
+    /// (`"agents"`, `"cloud_agents"`, etc.) or a manifest-registered
+    /// Mount id. `count = 0` clears the badge. Used by siblings
+    /// that want to surface a queue depth, action-needed count,
+    /// etc. without taking focus.
+    SetActivityBadge { section: String, count: u32 },
     /// Write every registered click-rect to `rects.json` in the IPC
     /// dir. Each entry has `{x, y, w, h, label}`. Used by the
     /// click-rect audit + by ad-hoc debugging (`./run.sh dump-rects`).
@@ -431,6 +444,13 @@ fn parse_command(line: &str) -> IpcCommand {
                 }
             }
         }
+        "set-activity-badge" => match (raw.section, raw.count) {
+            (Some(s), Some(c)) => IpcCommand::SetActivityBadge {
+                section: s,
+                count: c,
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
         "dump-rects" => IpcCommand::DumpRects,
         "quit" => IpcCommand::Quit,
         "restart" => IpcCommand::Restart,
@@ -825,6 +845,14 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                 app.open_pty(profile);
                 json_event(&[("event", "open_pty"), ("exe", &exe)])
             }
+        }
+        IpcCommand::SetActivityBadge { section, count } => {
+            app.set_activity_badge(section.clone(), *count);
+            json_event(&[
+                ("event", "set_activity_badge"),
+                ("section", section),
+                ("count", &count.to_string()),
+            ])
         }
         IpcCommand::DumpRects => json_event(&[("event", "dump_rects")]),
         IpcCommand::Quit => {

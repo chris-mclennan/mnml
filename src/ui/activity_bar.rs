@@ -129,6 +129,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         frame.render_widget(Paragraph::new(Line::from(glyph)).style(style), glyph_rect);
+        // Notification badge — small orange dot or digit on the
+        // right edge of the icon row when a sibling has set one
+        // via the `set-activity-badge` IPC command. Goal: surface
+        // queue depth / action-needed counts without taking focus.
+        let badge_count = section
+            .badge_key(app)
+            .map(|k| app.activity_badge_for(&k))
+            .unwrap_or(0);
+        if badge_count > 0 && area.width >= 3 {
+            let badge_glyph = if badge_count == 1 {
+                "•".to_string()
+            } else if badge_count <= 9 {
+                badge_count.to_string()
+            } else {
+                "+".to_string()
+            };
+            let badge_rect = Rect {
+                x: area.x + area.width.saturating_sub(2),
+                y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(badge_glyph)).style(
+                    Style::default()
+                        .fg(t.orange)
+                        .bg(bar_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                badge_rect,
+            );
+        }
         app.rects.activity_bar_icons.push((row, *section));
         // 2 rows per icon for breathing room.
         y = y.saturating_add(2);
@@ -185,6 +217,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         frame.render_widget(Paragraph::new(Line::from(glyph)).style(style), glyph_rect);
+        // Notification badge for manifest mounts — same shape as
+        // for builtins above.
+        let badge_count = app.activity_badge_for(&manifest.id);
+        if badge_count > 0 && area.width >= 3 {
+            let badge_glyph = if badge_count == 1 {
+                "•".to_string()
+            } else if badge_count <= 9 {
+                badge_count.to_string()
+            } else {
+                "+".to_string()
+            };
+            let badge_rect = Rect {
+                x: area.x + area.width.saturating_sub(2),
+                y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(badge_glyph)).style(
+                    Style::default()
+                        .fg(t.orange)
+                        .bg(bar_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                badge_rect,
+            );
+        }
         app.rects.activity_bar_icons.push((row, section));
         y = y.saturating_add(2);
     }
