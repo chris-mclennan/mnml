@@ -13,7 +13,13 @@ keywords = ["tui", "ratatui", "mnml", "ipc", "plugin"]
 categories = ["development-tools", "command-line-interface"]
 
 [features]
-default = ["client"]
+# No default features — bare enablement is just the wire types
+# (Cell / HostMessage / SiblingMessage / read_message /
+# write_message). Siblings that want the Mount client opt in
+# with `features = ["client"]`; that's what pulls in ratatui.
+# This keeps siblings that only need theme/toast/open-pty IPC
+# slim (no ratatui-0.30 vs 0.29 duplicate).
+default = []
 # Sibling-side convenience: Mount struct that wraps the UDS
 # connect + Hello handshake + send_frame + poll_input. Pulls
 # in ratatui for the Buffer → Cell converter.
