@@ -36,6 +36,11 @@ pub enum AgentSource {
     /// present; the dashboard falls back to PID-only when not).
     /// pgrep matches the `codex` exe.
     Codex,
+    /// Tattle QWE runner — cloud agents running in AWS Fargate.
+    /// State lives in the DynamoDB `qwe-runner-runs` table. No
+    /// local pid; the row's "live" state derives from the
+    /// DynamoDB `state` field.
+    TattleQwe,
 }
 
 impl AgentSource {
@@ -43,12 +48,16 @@ impl AgentSource {
         match self {
             AgentSource::Claude => "claude",
             AgentSource::Codex => "codex",
+            AgentSource::TattleQwe => "tattle-qwe",
         }
     }
     pub fn exe_name(self) -> &'static str {
         match self {
             AgentSource::Claude => "claude",
             AgentSource::Codex => "codex",
+            // Tattle rows never come from a local pid scan — value
+            // unused. Kept for the exhaustive match.
+            AgentSource::TattleQwe => "",
         }
     }
 }
@@ -1540,7 +1549,7 @@ fn read_pid_cwd(pid: u32) -> Option<String> {
     }
 }
 
-fn state_rank(s: AgentState) -> u8 {
+pub fn state_rank(s: AgentState) -> u8 {
     match s {
         AgentState::Streaming => 0,
         AgentState::ToolCall => 1,

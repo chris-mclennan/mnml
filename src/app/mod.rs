@@ -6254,7 +6254,20 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
-            let _ = tx.send(pane.rows);
+            let mut rows = pane.rows;
+            // Cloud rows from the Tattle qwe-runner DynamoDB
+            // table. Shell-out to `aws dynamodb scan`; silently
+            // empty when the user isn't SSO'd in.
+            rows.extend(crate::tattle_qwe::collect_cloud_rows());
+            // Re-sort so the cloud rows take their natural slot
+            // by activity (the inner sort uses state_rank +
+            // last_activity DESC).
+            rows.sort_by(|a, b| {
+                crate::claude_agents::state_rank(a.state)
+                    .cmp(&crate::claude_agents::state_rank(b.state))
+                    .then_with(|| b.last_activity.cmp(&a.last_activity))
+            });
+            let _ = tx.send(rows);
         });
         self.agents_panel_rx = Some(rx);
     }
@@ -9734,6 +9747,12 @@ impl App {
                         let profile = crate::pty_pane::BinaryProfile::codex(cwd);
                         self.open_pty(profile);
                         self.toast("opened fresh codex (CLI is stateless)");
+                    }
+                    AgentSource::TattleQwe => {
+                        // Cloud row — no local resume. Surface
+                        // the runId / state in a toast so the user
+                        // can copy it / open CloudWatch logs.
+                        self.toast(format!("tattle-qwe run {sid} — cloud row, no local resume"));
                     }
                 }
             }
