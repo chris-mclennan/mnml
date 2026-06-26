@@ -11,8 +11,18 @@ open code.rs
 # Trigger expansion + type into the first two stops.
 type forr
 command snippet.expand
+# Extra render cycle after expansion so pending_tree_edits and the
+# snippet session's edits_consumed counter are settled. On a loaded
+# macOS CI runner the harness's 50ms render sleep can extend past the
+# 120ms highlights-idle gate, draining pending_tree_edits and putting
+# edits_consumed into an edge case where the first char of the next
+# tight type-loop misses its stop-shift. Two render ticks give the
+# snapshot a chance to stabilise before we start filling stop $1.
+wait 100
 type i
 key tab
+# Same guard before filling stop $2.
+wait 100
 type items
 
 # Sanity: before Backtab the line is "for i in items {".

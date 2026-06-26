@@ -1038,14 +1038,21 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             KeyCode::Tab | KeyCode::Enter => {
-                // While a snippet placeholder cycle is active, Tab advances to
-                // the next placeholder (dismissing this popup) instead of
+                // While a snippet placeholder cycle is active, Tab / Shift+Tab
+                // navigate placeholders (dismissing this popup) instead of
                 // accepting a completion — otherwise an as-you-type popup that
                 // happened to be open races with the snippet's Tab and steals
                 // it (the flaky-on-CI snippet failures). Enter still accepts.
+                // SHIFT modifier honoured so Shift+Tab retreats rather than
+                // inadvertently advancing forward (latent bug surfaced by the
+                // 2026-06-26 review of the flake).
                 if key.code == KeyCode::Tab && app.snippet_session.is_some() {
                     app.completion = None;
-                    app.snippet_next_placeholder();
+                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        app.snippet_prev_placeholder();
+                    } else {
+                        app.snippet_next_placeholder();
+                    }
                 } else {
                     app.completion_accept();
                 }
