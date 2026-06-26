@@ -195,7 +195,13 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-cloudwatch-logs",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs",
-        pinned_version: "v0.2.0",
+        // 2026-06-26 — was "v0.2.0" but that tag predates the
+        // 2026-06-22 tmnl-protocol removal and `cargo install`
+        // chokes trying to resolve the (now-gone) workspace member.
+        // Tracking `main` until a post-tmnl release is cut. Same
+        // issue probably affects most other AWS siblings tagged
+        // before 2026-06-22 — see TODO.md.
+        pinned_version: "main",
         one_liner: "Live tail CloudWatch log groups",
         icon: IconTemplate {
             glyph: "\u{F0E5C}", // nf-md-text-box-search

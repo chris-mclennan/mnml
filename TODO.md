@@ -87,5 +87,61 @@ Pick #2 for v1 if/when this lands. Discuss before coding.
 
 ## Other (uncategorized)
 
-_Nothing here yet — add items only after the shape is understood,
-not at the speculation stage._
+### Audit + re-tag siblings post-tmnl-protocol removal
+**Status:** caught 2026-06-26 when a user `:install`-ed
+`mnml-aws-cloudwatch-logs` and the build broke on a missing
+`tmnl-protocol` workspace member. Pinned `cloudwatch_logs` to
+`"main"` as a stopgap (see family_catalog.rs).
+
+Background: 2026-06-22 we ripped tmnl-protocol out of every
+sibling repo (mnml became terminal-agnostic — see commit
+ce99b59 / memory). Most sibling repos still have tagged
+releases (v0.1.0, v0.2.0, …) that predate the removal and
+reference `tmnl-protocol` as a path/workspace dep. `cargo
+install` on those tags fails immediately.
+
+Required work (per sibling, ~30 to audit):
+  1. In each `mnml-*` repo's main branch, verify the workspace
+     Cargo.toml no longer lists `tmnl-protocol`
+  2. If it still does, remove it + bump the version
+  3. Tag a new release (v0.1.1 / v0.2.1 / etc.)
+  4. Bump that sibling's `pinned_version` in
+     family_catalog.rs back from `"main"` to the new tag
+
+Easier in parallel — agent-able. Each sibling repo is small;
+the fix per repo is mechanical.
+
+Why deferred: cross-repo coordination + ~30 small PRs. The
+stopgap (pin → main) works for users who hit it one-off.
+
+### In-app icon designer for siblings + integrations
+**Status:** deferred 2026-06-26 — user asked for it.
+
+Today: each `family_catalog::FamilySibling` (35+ entries) carries
+a hand-picked Nerd Font glyph as its activity-bar / rail icon.
+Picking generic Nerd Font glyphs for real-company products
+(AWS Lambda → rocket, Datadog → dog, Stripe → card…) looks
+random and slightly off-brand. We already shipped one-off
+custom icons for Claude Code + Codex that the user actually
+liked. Want to generalize.
+
+Shape: user drops an image (PNG/SVG) on the rail/integrations
+overlay or runs `:icon.create <integration-id>`. We:
+  1. Open a designer pane that lets the user crop, threshold,
+     and scale the image into a 16×16 / 24×24 monochrome grid
+     (one cell per terminal cell).
+  2. Either embed it directly as a Sixel/Kitty graphics fragment
+     in the rail row (when the terminal supports it — we already
+     have this code path for image preview) OR encode it as a
+     custom-glyph entry in `~/.config/mnml/icons/` that the rail
+     renderer prefers over the Nerd Font fallback.
+
+Why deferred: needs decisions on (a) image → glyph algorithm
+(otsu threshold? edge-detect? user-painted?), (b) rendering
+substrate (Sixel vs. Kitty vs. precomputed font slots), and
+(c) how the user-stored icon overrides the catalog default.
+Don't build until shape is settled — a half-done image flow
+is worse than just keeping the Nerd Font icons.
+
+Pick up when the user has a few hours and an integration whose
+current glyph annoys them enough to drive the design.
