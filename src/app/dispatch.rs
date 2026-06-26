@@ -230,27 +230,41 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         CmdlinePopupMove(delta) => app.cmdline_popup_move(delta as isize),
         CmdlinePopupAcceptCurrentAndCommit => app.cmdline_popup_accept_current(),
         CmdlineEnter(typed) => {
-            // 2026-06-19 — earlier impl auto-substituted the
-            // popup's highlighted match if the typed first-word
-            // wasn't in the registry/EX_COMPLETION_NAMES. That
-            // broke legitimate vim abbreviations like `:reg`
-            // (handled by ex_commands.rs but not in
-            // EX_COMPLETION_NAMES). Now Enter just runs whatever
-            // is in the cmdline; users wanting the popup match
-            // use Tab/click first to insert it into the line.
-            // 2026-06-20 — mirror the ExCommand arm: also push
-            // onto App.ex_history so vim's `q:` window sees the
-            // entry (otherwise vim users' history lived only in
-            // the handler-side mirror, which the cmdline-history
-            // pane couldn't read).
-            if app.ex_history.last() != Some(&typed) {
-                app.ex_history.push(typed.clone());
+            // 2026-06-19 — earlier impl auto-substituted the popup's
+            // highlighted match unconditionally, which broke vim
+            // abbreviations like `:reg<Enter>` (was firing the first
+            // popup match `:registers` instead). Now only substitute
+            // when `cmdline_popup_selected > 0` — i.e. the user
+            // explicitly navigated via ↓ / Tab. Index 0 (auto-first)
+            // keeps the typed text. Mirrors the no_pane_cmdline_commit
+            // path in tui.rs:1329.
+            // 2026-06-26 — second look: the vim path was bypassing
+            // this guard entirely and just running `typed`, which
+            // regressed the "type partial → ↓ → Enter fires
+            // highlighted" UX. Restored the selected>0 fast-path
+            // here.
+            let effective = if app.cmdline_popup_selected > 0 {
+                app.cmdline_popup_accept_current();
+                // accept_current rewrites the input handler's
+                // cmdline + the no_pane cmdline. Re-read whichever
+                // path was hosting it.
+                app.no_pane_cmdline
+                    .clone()
+                    .or_else(|| app.active_editor_mut().and_then(|b| b.input.cmdline_get()))
+                    .unwrap_or(typed.clone())
+            } else {
+                typed.clone()
+            };
+            // 2026-06-20 — mirror the ExCommand arm: also push onto
+            // App.ex_history so vim's `q:` window sees the entry.
+            if app.ex_history.last() != Some(&effective) {
+                app.ex_history.push(effective.clone());
                 if app.ex_history.len() > 100 {
                     let drop = app.ex_history.len() - 100;
                     app.ex_history.drain(..drop);
                 }
             }
-            app.run_ex_command(&typed);
+            app.run_ex_command(&effective);
         }
         RepeatInsertStart { count, above } => app.repeat_insert_start(count as usize, above),
         FlashStart(a, b) => app.flash_start(a, b),
