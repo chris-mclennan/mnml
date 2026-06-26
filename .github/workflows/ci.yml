@@ -41,6 +41,14 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y pkg-config
 
+      # libghostty-vt prebuilts live on a GitHub release (~25MB
+      # total across 3 targets) rather than in git. Fetch them
+      # before any cargo command — the script is idempotent so a
+      # warm cargo cache hit doesn't re-download.
+      - name: Fetch libghostty-vt prebuilts
+        working-directory: mnml
+        run: bash vendor/libghostty-vt/fetch-prebuilts.sh
+
       # `[target.<triple>.env]` in .cargo/config.toml doesn't reach
       # build scripts the way top-level `[env]` does, so set
       # PKG_CONFIG_PATH explicitly here per-runner via $GITHUB_ENV.

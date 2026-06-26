@@ -8,12 +8,11 @@
 .claude/state/
 .claude/coordination/
 
-# libghostty-vt prebuilts — static .a files for each supported
-# platform are tracked so CI can link without a Zig toolchain.
-# (macOS-arm64: 8MB, x86_64-linux: 14MB — small enough to skip
-# git-lfs.) Dynamic .dylib / .so are gitignored — only for local
-# dev / dynamic linking experiments. Regenerate via
-# vendor/libghostty-vt/build-*.sh + the README.md instructions.
+# libghostty-vt prebuilts — the .a / .so / .dylib files are too
+# big to ship in git (37MB across 3 targets). They live on a
+# GitHub release; fetch with vendor/libghostty-vt/fetch-prebuilts.sh
+# (idempotent — CI + local devs run it once before cargo build).
+/vendor/libghostty-vt/**/*.a
 /vendor/libghostty-vt/**/*.dylib
 /vendor/libghostty-vt/**/*.so
 /vendor/libghostty-vt/**/*.so.*

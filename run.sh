@@ -103,6 +103,12 @@ case "${1:-start}" in
   start) [ "$#" -gt 0 ] && shift ;;   # the implicit default when run with no args
 esac
 
+# Make sure the libghostty-vt prebuilts are present (idempotent —
+# script skips files already at the right size). Required for any
+# cargo build of mnml; the prebuilts live on a GitHub release
+# rather than in git to keep the repo lean.
+bash "$REPO/vendor/libghostty-vt/fetch-prebuilts.sh" >/dev/null
+
 # Build profile.
 if [ "${MNML_RELEASE:-0}" = "1" ]; then
   BUILD=(cargo build --release --quiet)
