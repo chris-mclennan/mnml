@@ -58,10 +58,7 @@ fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>>
         // statusline chip tooltips.
         ratatui::crossterm::style::Print("\x1b[?1003h"),
         SetCursorStyle::SteadyBar,
-        // OSC 0/2 — sets the terminal window/tab title. Most terminals
-        // (Apple Terminal, iTerm2, Ghostty, Kitty, WezTerm, …) read this
-        // and display the title in the tab strip. Falls back silently on
-        // terminals that don't honor OSC sequences.
+        // OSC 0/2 — sets the terminal window/tab title.
         SetTitle(title),
     ) {
         let _ = disable_raw_mode();
@@ -69,7 +66,7 @@ fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>>
     }
     // Ask for the kitty keyboard protocol so chords the legacy encoding can't
     // express — `Ctrl+Shift+P`, `Ctrl+I` vs `Tab`, etc. — come through distinctly.
-    // No-op on terminals that don't support it; harmless if it errors.
+    // No-op on terminals that don't support it.
     if supports_keyboard_enhancement().unwrap_or(false) {
         let _ = execute!(
             out,
@@ -113,8 +110,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
 
     app.run_startup_tasks();
     // Background now-playing poller for the statusline miniplayer —
-    // real terminal loop only (headless / e2e skip it, so no
-    // `osascript` subprocess spawns in tests).
+    // real terminal loop only (headless / e2e skip it).
     app.start_now_playing_poller();
 
     loop {

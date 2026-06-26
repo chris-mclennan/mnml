@@ -247,22 +247,14 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // in this workspace (no `.mnml/.welcomed` marker), open it.
     app.maybe_show_welcome_on_launch();
     // Startup workspace picker (--startup-picker / MNML_STARTUP_PICKER=1).
-    // Shown by the mnml.app launcher to give a JetBrains-style "what
-    // do you want to open" chooser when launched from Finder.
     if mnml::app::App::want_startup_picker(args.startup_picker) {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());
     }
     // Background "is there a newer release?" check. Skipped in
-    // headless mode (no toast surface that makes sense) and when
-    // the user opted out via [ui] check_updates = false.
+    // headless mode and when the user opted out via [ui] check_updates = false.
     if app.config.ui.check_updates && !args.headless {
         app.update_check = Some(mnml::update_check::UpdateCheck::spawn());
     }
-    // 2026-06-26 — first-launch family-sibling toast removed. Users
-    // discover + install siblings via the Integrations rail (rich
-    // surface with chip metadata + per-sibling enable/install)
-    // instead of a one-shot toast at startup. Drops the family-offer
-    // PATH walk from the startup path entirely.
 
     let result = if args.headless {
         mnml::headless::run(app)
