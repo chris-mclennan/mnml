@@ -1448,17 +1448,12 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // Sidebar toggle — sits left of the back/forward arrows.
-    // Variants per state: `layout-sidebar-left` (\u{EBA6}) when
-    // the sidebar is OPEN, `layout-sidebar-left-off` (\u{EC02})
-    // when it's collapsed — matches macOS / VS Code muscle
-    // memory for the same icon. Click fires view.toggle_tree.
-    let sidebar_glyph = if ascii {
-        "|"
-    } else if app.tree_visible {
-        "\u{EBA6}"
-    } else {
-        "\u{EC02}"
-    };
+    // Single glyph (`layout-sidebar-left-off`, \u{EC02}) in both
+    // states. Color carries the state: cyan when sidebar is open,
+    // dim comment-fg when closed. The codicon `layout-sidebar-left`
+    // (\u{EBA6}) variant rendered poorly at TUI cell scale — its
+    // internal lines turned to noise — so we drop it.
+    let sidebar_glyph = if ascii { "|" } else { "\u{EC02}" };
     let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
     let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
     let magnify = if ascii { "?" } else { "\u{F0349}" };
