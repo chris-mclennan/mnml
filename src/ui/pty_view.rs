@@ -124,15 +124,26 @@ pub fn draw(
 fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Rect) {
     let t = theme::cur();
     let prefixes = &app.config.ui.ticket_prefixes;
-    // Gather pty panes in pane order: `(id, label, exited)`. The label
-    // resolves user-rename > ticket-scan > OSC title > profile.label —
-    // see `PtySession::tab_label_with_prefixes`.
+    // 2026-06-27 #613 — scope the tab strip to the SPLIT containing
+    // `active_id`. Previously this enumerated every Pty pane in
+    // `app.panes` globally, so two splits each with one Pty viewer
+    // showed "two tabs" in each strip — user-reported as "4 tabs"
+    // confusion. Filter via Layout::leaf_containing so a Pty in
+    // another split doesn't appear here.
+    let leaf_tabs: Option<Vec<PaneId>> =
+        app.layout().leaf_containing(active_id).map(|s| s.to_vec());
     let ptys: Vec<(PaneId, String, bool)> = app
         .panes
         .iter()
         .enumerate()
         .filter_map(|(id, p)| match p {
-            Pane::Pty(s) => Some((id, s.tab_label_with_prefixes(prefixes), s.is_exited())),
+            Pane::Pty(s) => {
+                let in_this_leaf = leaf_tabs.as_ref().map(|t| t.contains(&id)).unwrap_or(true);
+                if !in_this_leaf {
+                    return None;
+                }
+                Some((id, s.tab_label_with_prefixes(prefixes), s.is_exited()))
+            }
             _ => None,
         })
         .collect();

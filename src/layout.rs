@@ -90,6 +90,19 @@ impl Layout {
 
     /// Find the leaf containing `pane` (as active OR background
     /// tab) and return a mutable ref to its (active, tabs) for
+    /// Immutable counterpart to `leaf_containing_mut` — returns the
+    /// leaf's tab list (the per-split tab group `pane` is part of)
+    /// for read-only queries like "what tabs share this split?".
+    pub fn leaf_containing(&self, pane: PaneId) -> Option<&[PaneId]> {
+        match self {
+            Layout::Leaf { tabs, .. } if tabs.contains(&pane) => Some(tabs.as_slice()),
+            Layout::Split { first, second, .. } => first
+                .leaf_containing(pane)
+                .or_else(|| second.leaf_containing(pane)),
+            _ => None,
+        }
+    }
+
     /// in-place mutation.
     pub fn leaf_containing_mut(&mut self, pane: PaneId) -> Option<(&mut PaneId, &mut Vec<PaneId>)> {
         match self {
