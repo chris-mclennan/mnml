@@ -729,6 +729,14 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.new_cloud_agent_wizard_next();
                 return;
             }
+            KeyCode::Char(' ') => {
+                app.new_cloud_agent_wizard_toggle();
+                return;
+            }
+            KeyCode::Char('a') => {
+                app.new_cloud_agent_wizard_select_all();
+                return;
+            }
             KeyCode::Char(ch)
                 if !key
                     .modifiers

@@ -1547,6 +1547,32 @@ fn alternate_paths(path: &std::path::Path) -> Vec<PathBuf> {
 /// command. Wraps in `'…'` and replaces interior single quotes with the
 /// canonical `'\''` escape. Suitable for log-group names, CloudWatch
 /// stream IDs, region strings — strings that don't contain control bytes.
+/// Derive a Bitbucket `workspace/repo` slug from a local repo path
+/// by reading `.git/config`'s `origin` URL. Returns None if the
+/// remote isn't Bitbucket-shaped (no bitbucket.org host or no
+/// recognisable path). Handles both SSH (`git@bitbucket.org:ws/repo.git`)
+/// and HTTPS (`https://bitbucket.org/ws/repo.git`) forms.
+fn derive_bitbucket_slug(repo_path: &std::path::Path) -> Option<String> {
+    let cfg = std::fs::read_to_string(repo_path.join(".git").join("config")).ok()?;
+    let url = cfg.lines().find_map(|l| {
+        let t = l.trim();
+        t.strip_prefix("url = ").map(|s| s.to_string())
+    })?;
+    let after_host = if let Some(s) = url.strip_prefix("git@bitbucket.org:") {
+        s.to_string()
+    } else if let Some(s) = url.strip_prefix("https://bitbucket.org/") {
+        s.to_string()
+    } else if let Some(idx) = url.find("bitbucket.org") {
+        // Tolerate other forms like ssh://git@bitbucket.org/ws/repo.git
+        let tail = &url[idx + "bitbucket.org".len()..];
+        tail.trim_start_matches(['/', ':']).to_string()
+    } else {
+        return None;
+    };
+    let slug = after_host.trim_end_matches(".git").to_string();
+    Some(slug)
+}
+
 /// Open a URL string in the OS's default browser. Best-effort. Used by
 /// the GitHub-browse command + LSP gx URL opener.
 pub fn open_url_external(url: &str) {
@@ -10246,13 +10272,11 @@ impl App {
         let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
             return;
         };
+        use crate::new_cloud_agent_wizard::{Action, Source, WizardStep};
         let max = match w.step {
-            crate::new_cloud_agent_wizard::WizardStep::Kind => 2,
-            crate::new_cloud_agent_wizard::WizardStep::ClaudeAgent => 2,
-            crate::new_cloud_agent_wizard::WizardStep::ClaudeSandbox => 3,
-            crate::new_cloud_agent_wizard::WizardStep::ClaudeRemoteTarget => {
-                crate::new_cloud_agent_wizard::RemoteTarget::all().len()
-            }
+            WizardStep::Source => Source::all().len(),
+            WizardStep::PrList => w.pr_rows.len(),
+            WizardStep::Action => Action::all().len(),
             _ => 0,
         };
         if max == 0 {
@@ -10261,35 +10285,54 @@ impl App {
         let cur = w.focus_row as isize;
         let new = (cur + delta).rem_euclid(max as isize) as usize;
         w.focus_row = new;
-        // Side effects: radio selections apply immediately so the
-        // user can see the chosen option highlighted.
+        // Radio selections apply immediately so the user sees the
+        // chosen option highlighted; PrList does NOT (Space toggles).
         match w.step {
-            crate::new_cloud_agent_wizard::WizardStep::Kind => {
-                w.kind = match new {
-                    0 => crate::new_cloud_agent_wizard::AgentKind::TattleQwe,
-                    _ => crate::new_cloud_agent_wizard::AgentKind::ClaudeManaged,
-                };
-            }
-            crate::new_cloud_agent_wizard::WizardStep::ClaudeAgent => {
-                w.claude_agent_create_new = new == 0;
-            }
-            crate::new_cloud_agent_wizard::WizardStep::ClaudeSandbox => {
-                use crate::new_cloud_agent_wizard::SandboxMode;
-                w.claude_sandbox = match new {
-                    0 => SandboxMode::CloudSandbox,
-                    1 => SandboxMode::SelfHostedLocal,
-                    _ => SandboxMode::SelfHostedRemote,
-                };
-            }
-            crate::new_cloud_agent_wizard::WizardStep::ClaudeRemoteTarget => {
-                w.claude_remote = crate::new_cloud_agent_wizard::RemoteTarget::all()[new];
-            }
+            WizardStep::Source => w.source = Source::all()[new],
+            WizardStep::Action => w.action = Action::all()[new],
             _ => {}
         }
     }
 
+    /// Toggle the selected state of the focused PR row. No-op on
+    /// other steps.
+    pub fn new_cloud_agent_wizard_toggle(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        if !matches!(w.step, crate::new_cloud_agent_wizard::WizardStep::PrList) {
+            return;
+        }
+        let idx = w.focus_row;
+        if let Some(r) = w.pr_rows.get_mut(idx) {
+            r.selected = !r.selected;
+        }
+    }
+
+    /// Select / deselect all PRs (only on PrList step).
+    pub fn new_cloud_agent_wizard_select_all(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        if !matches!(w.step, crate::new_cloud_agent_wizard::WizardStep::PrList) {
+            return;
+        }
+        let any_selected = w.pr_rows.iter().any(|r| r.selected);
+        for r in w.pr_rows.iter_mut() {
+            r.selected = !any_selected;
+        }
+    }
+
     /// Advance the wizard to the next step OR submit if we're on
-    /// Review. No-op when the active pane isn't a wizard.
+    /// Review. No-op when the active pane isn't a wizard. When
+    /// stepping INTO PrList, kick off the PR-list fetcher worker
+    /// for the picked source.
     pub fn new_cloud_agent_wizard_next(&mut self) {
         let Some(id) = self.active else {
             return;
@@ -10297,9 +10340,48 @@ impl App {
         let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
             return;
         };
-        if !w.next_step() {
-            // We were on Review — submit.
+        let advanced = w.next_step();
+        if !advanced {
             self.new_cloud_agent_wizard_submit();
+            return;
+        }
+        // Side effect on step transition: load the PR list.
+        if matches!(
+            self.panes.get(id),
+            Some(Pane::NewCloudAgentWizard(p)) if matches!(p.step, crate::new_cloud_agent_wizard::WizardStep::PrList)
+        ) {
+            self.kick_off_pr_list_load(id);
+        }
+    }
+
+    fn kick_off_pr_list_load(&mut self, pane_id: usize) {
+        let source = match self.panes.get(pane_id) {
+            Some(Pane::NewCloudAgentWizard(p)) => p.source,
+            _ => return,
+        };
+        let repo_path = self.active_repo_path().to_path_buf();
+        if let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(pane_id) {
+            w.pr_rows.clear();
+            w.pr_err = None;
+            w.pr_loading = true;
+            use crate::new_cloud_agent_wizard::Source;
+            let rx = match source {
+                Source::GitHubPr => Some(crate::new_cloud_agent_wizard::spawn_gh_pr_fetcher(
+                    repo_path,
+                )),
+                Source::BitbucketPr => {
+                    let slug = derive_bitbucket_slug(&repo_path)
+                        .unwrap_or_else(|| "<workspace>/<repo>".to_string());
+                    Some(crate::new_cloud_agent_wizard::spawn_bitbucket_pr_fetcher(
+                        slug,
+                    ))
+                }
+                Source::ManualPrompt => None,
+            };
+            w.pr_rx = rx;
+            if w.pr_rx.is_none() {
+                w.pr_loading = false;
+            }
         }
     }
 
@@ -10313,7 +10395,7 @@ impl App {
         w.prev_step();
     }
 
-    /// Append a char to the focused text input. Step-specific.
+    /// Append a char to the focused text input on the CustomPrompt step.
     pub fn new_cloud_agent_wizard_type(&mut self, ch: char) {
         let Some(id) = self.active else {
             return;
@@ -10321,18 +10403,11 @@ impl App {
         let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
             return;
         };
-        use crate::new_cloud_agent_wizard::WizardStep;
-        match w.step {
-            WizardStep::TattleTicket => w.tattle_ticket.push(ch),
-            WizardStep::ClaudeAgent => {
-                if w.claude_agent_create_new {
-                    w.claude_agent_new_name.push(ch);
-                } else {
-                    w.claude_agent_id.push(ch);
-                }
-            }
-            WizardStep::Prompt => w.prompt.push(ch),
-            _ => {}
+        if matches!(
+            w.step,
+            crate::new_cloud_agent_wizard::WizardStep::CustomPrompt
+        ) {
+            w.custom_prompt.push(ch);
         }
     }
 
@@ -10343,22 +10418,11 @@ impl App {
         let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
             return;
         };
-        use crate::new_cloud_agent_wizard::WizardStep;
-        match w.step {
-            WizardStep::TattleTicket => {
-                w.tattle_ticket.pop();
-            }
-            WizardStep::ClaudeAgent => {
-                if w.claude_agent_create_new {
-                    w.claude_agent_new_name.pop();
-                } else {
-                    w.claude_agent_id.pop();
-                }
-            }
-            WizardStep::Prompt => {
-                w.prompt.pop();
-            }
-            _ => {}
+        if matches!(
+            w.step,
+            crate::new_cloud_agent_wizard::WizardStep::CustomPrompt
+        ) {
+            w.custom_prompt.pop();
         }
     }
 
@@ -10371,75 +10435,100 @@ impl App {
         }
     }
 
-    /// Submit the wizard. v1: Tattle QWE path routes to existing
-    /// `fire_cloud_run`; Claude managed agent path is stubbed
-    /// (saves config, toasts the API call we WOULD make — Phase 2
-    /// wires the actual HTTP).
+    /// Submit the wizard. Resolves the final prompt per the chosen
+    /// Action template (or the user's CustomPrompt), then for each
+    /// selected PR row spawns a Claude session in a Pty pane.
     pub fn new_cloud_agent_wizard_submit(&mut self) {
         let Some(id) = self.active else {
             return;
         };
+        use crate::new_cloud_agent_wizard::{Action, Source};
         let cfg = match self.panes.get(id) {
             Some(Pane::NewCloudAgentWizard(w)) => (
-                w.kind,
-                w.tattle_ticket.clone(),
-                w.prompt.clone(),
-                w.claude_agent_create_new,
-                w.claude_agent_new_name.clone(),
-                w.claude_agent_id.clone(),
-                w.claude_sandbox,
-                w.claude_remote,
+                w.source,
+                w.action,
+                w.custom_prompt.clone(),
+                w.pr_rows
+                    .iter()
+                    .filter(|r| r.selected)
+                    .map(|r| (r.number, r.title.clone()))
+                    .collect::<Vec<_>>(),
             ),
             _ => return,
         };
-        use crate::new_cloud_agent_wizard::AgentKind;
+        let template = cfg.1.prompt_template();
+        let make_prompt = |pr_num: u32| -> String {
+            if matches!(cfg.1, Action::Custom) {
+                format!("{}\n\n(context: PR #{})", cfg.2, pr_num)
+            } else {
+                template.replace("<num>", &pr_num.to_string())
+            }
+        };
         match cfg.0 {
-            AgentKind::TattleQwe => {
-                let ticket = cfg.1.trim().to_string();
-                if ticket.is_empty() {
-                    self.toast("ticket is empty — go back to step 2");
+            Source::ManualPrompt => {
+                let prompt = if matches!(cfg.1, Action::Custom) {
+                    cfg.2.clone()
+                } else {
+                    template.replace("<num>", "(no PR)")
+                };
+                if prompt.trim().is_empty() {
+                    self.toast("prompt is empty");
                     return;
                 }
-                self.fire_cloud_run(&ticket);
-                self.toast(format!("fired Tattle QWE run for {ticket}"));
+                self.spawn_claude_session_pty(prompt, None, "manual");
                 self.new_cloud_agent_wizard_close();
             }
-            AgentKind::ClaudeManaged => {
-                // Phase 2 will turn this into actual API calls.
-                // For now we summarise what WOULD be sent so the
-                // user can verify their config before we go live.
-                let agent_desc = if cfg.3 {
-                    format!("create '{}' agent", cfg.4)
-                } else {
-                    cfg.5.clone()
-                };
-                let sandbox_desc = match cfg.6 {
-                    crate::new_cloud_agent_wizard::SandboxMode::CloudSandbox => {
-                        "Anthropic cloud sandbox".to_string()
-                    }
-                    crate::new_cloud_agent_wizard::SandboxMode::SelfHostedLocal => {
-                        "self-hosted LOCAL · ant beta:worker poll".to_string()
-                    }
-                    crate::new_cloud_agent_wizard::SandboxMode::SelfHostedRemote => {
-                        format!("self-hosted REMOTE → {}", cfg.7.label())
-                    }
-                };
-                let msg = format!(
-                    "[wizard preview] would call Anthropic API: agent={} · sandbox={} · prompt={}",
-                    agent_desc,
-                    sandbox_desc,
-                    crate::cloud_agent_run::s3_console_url_for("dummy")
-                        .map(|_| cfg.2.clone())
-                        .unwrap_or(cfg.2)
-                );
-                if let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) {
-                    w.last_message = Some(
-                        "Claude managed agent path stubbed — phase 2 wires the actual API call. \
-Config logged for now."
-                            .to_string(),
-                    );
+            Source::GitHubPr | Source::BitbucketPr => {
+                if cfg.3.is_empty() {
+                    self.toast("no PRs selected — go back to step 2");
+                    return;
                 }
-                self.toast(msg);
+                let mut count = 0;
+                for (num, title) in &cfg.3 {
+                    let prompt = make_prompt(*num);
+                    let label = format!("claude PR#{num}");
+                    self.spawn_claude_session_pty(prompt, Some(*num), &label);
+                    count += 1;
+                    let _ = title;
+                }
+                self.toast(format!("fired {count} Claude session(s)"));
+                self.new_cloud_agent_wizard_close();
+            }
+        }
+    }
+
+    /// Spawn a `claude --print <prompt>` Pty pane. When `pr_number`
+    /// is Some, runs `gh pr checkout <num>` first so Claude works
+    /// against the PR's branch. Worker runs in the active repo's
+    /// directory.
+    fn spawn_claude_session_pty(&mut self, prompt: String, pr_number: Option<u32>, label: &str) {
+        let cwd = self.active_repo_path().to_path_buf();
+        // Build a one-shot shell script: checkout (if PR) then claude.
+        // The script runs in bash with `set -e` so a failing checkout
+        // doesn't silently drop into the wrong branch.
+        let escaped_prompt = prompt.replace('\'', "'\\''");
+        let script = match pr_number {
+            Some(n) => format!(
+                "set -e\necho '→ gh pr checkout {n}'\ngh pr checkout {n}\necho '→ claude --print'\nclaude --print '{escaped_prompt}'\n"
+            ),
+            None => format!("set -e\necho '→ claude --print'\nclaude --print '{escaped_prompt}'\n"),
+        };
+        let profile = crate::pty_pane::BinaryProfile {
+            label: label.to_string(),
+            exe: "bash".to_string(),
+            args: vec!["-c".to_string(), script],
+            cwd: Some(cwd),
+            env: Vec::new(),
+            session_id: None,
+        };
+        self.open_pty(profile);
+    }
+
+    /// Drain the PR list fetcher on every wizard pane each tick.
+    pub(crate) fn drain_new_cloud_agent_wizards(&mut self) {
+        for pane in self.panes.iter_mut() {
+            if let Pane::NewCloudAgentWizard(w) = pane {
+                let _ = w.drain();
             }
         }
     }
@@ -11789,6 +11878,8 @@ Config logged for now."
         // CloudAgentRun panes — pull fresh log lines + artifact rows
         // from their worker threads into the pane state.
         self.drain_cloud_agent_run_panes();
+        // NewCloudAgentWizard panes — drain PR-list fetcher.
+        self.drain_new_cloud_agent_wizards();
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();

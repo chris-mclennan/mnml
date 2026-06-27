@@ -1,7 +1,8 @@
-//! Renderer for `Pane::NewCloudAgentWizard`. Stacked-form layout:
-//!   • Header (step indicator)
-//!   • Step content (radios / text input)
-//!   • Footer (Back / Next / Submit + hint)
+//! Renderer for `Pane::NewCloudAgentWizard` (v2 — Claude Agent SDK).
+//! Stacked-form layout:
+//!   • Header (step indicator + breadcrumb)
+//!   • Step content (radio list / checkbox PR list / text input)
+//!   • Footer (Back / Next / Submit + hint or last_message)
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -11,19 +12,17 @@ use ratatui::widgets::Paragraph;
 
 use crate::app::App;
 use crate::layout::PaneId;
-use crate::new_cloud_agent_wizard::{AgentKind, RemoteTarget, SandboxMode, WizardStep};
+use crate::new_cloud_agent_wizard::{Action, Source, WizardStep};
 use crate::pane::Pane;
 use crate::ui::theme;
 
 /// Click-rect kinds inside the wizard.
 #[derive(Debug, Clone)]
 pub enum WizardHit {
-    /// Pick a radio option on the current step. Payload is the row
-    /// index — handler interprets per-step.
+    /// Pick a radio option / toggle a checkbox row. Payload is the
+    /// row index — handler interprets per-step.
     Option(usize),
-    /// Hit the Back button.
     Back,
-    /// Hit the Next / Submit button.
     Next,
 }
 
@@ -37,20 +36,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     app.rects.editor_panes.push((area, pane_id));
     app.rects.new_cloud_agent_wizard_hits.clear();
 
-    let step = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => p.step,
+    let (step, last_message) = match app.panes.get(pane_id) {
+        Some(Pane::NewCloudAgentWizard(p)) => (p.step, p.last_message.clone()),
         _ => return,
-    };
-    let last_message = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => p.last_message.clone(),
-        _ => None,
     };
 
     let mut y = area.y;
 
-    // ── header ──────────────────────────────────────────────────
     if y < area.y + area.height {
-        let title = format!("  + New Cloud Agent   ·   {}", step_label(step));
+        let title = format!(
+            "  + New Cloud Agent (Claude Agent SDK)   ·   {}",
+            step_label(step)
+        );
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 title,
@@ -69,10 +66,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         y += 1;
     }
     if y < area.y + area.height {
-        let crumbs = breadcrumbs(step);
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("  {crumbs}"),
+                format!("  {}", breadcrumbs(step)),
                 Style::default().fg(t.comment).bg(bg),
             ))),
             Rect {
@@ -85,9 +81,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         y += 2;
     }
 
-    // ── step body ───────────────────────────────────────────────
-    let body_top = y;
-    let body_h = area.y + area.height - y - 3; // 3 rows for footer + hint
+    let body_h = (area.y + area.height).saturating_sub(y + 3);
     if body_h == 0 {
         return;
     }
@@ -97,19 +91,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         width: area.width,
         height: body_h,
     };
-    let _ = body_top;
-    let next_y = match step {
-        WizardStep::Kind => draw_step_kind(frame, app, body, pane_id),
-        WizardStep::TattleTicket => draw_step_tattle_ticket(frame, app, body, pane_id),
-        WizardStep::ClaudeAgent => draw_step_claude_agent(frame, app, body, pane_id),
-        WizardStep::ClaudeSandbox => draw_step_claude_sandbox(frame, app, body, pane_id),
-        WizardStep::ClaudeRemoteTarget => draw_step_claude_remote_target(frame, app, body, pane_id),
-        WizardStep::Prompt => draw_step_prompt(frame, app, body, pane_id),
+    match step {
+        WizardStep::Source => draw_step_source(frame, app, body, pane_id),
+        WizardStep::PrList => draw_step_pr_list(frame, app, body, pane_id),
+        WizardStep::Action => draw_step_action(frame, app, body, pane_id),
+        WizardStep::CustomPrompt => draw_step_custom_prompt(frame, app, body, pane_id),
         WizardStep::Review => draw_step_review(frame, app, body, pane_id),
-    };
-    let _ = next_y;
+    }
 
-    // ── footer (Back / Next) + hint ─────────────────────────────
     let footer_y = area.y + area.height - 2;
     let hint_y = area.y + area.height - 1;
     let back_chip = " ← Back ";
@@ -132,7 +121,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         width: next_w,
         height: 1,
     };
-    let back_style = if matches!(step, WizardStep::Kind) {
+    let back_style = if matches!(step, WizardStep::Source) {
         Style::default().fg(t.comment).bg(t.bg2)
     } else {
         Style::default().fg(t.fg).bg(t.bg2)
@@ -156,11 +145,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         .new_cloud_agent_wizard_hits
         .push((next_rect, WizardHit::Next));
 
-    let hint = "  Tab move · ↑↓/jk select · Enter advance · Esc close ";
+    let default_hint = match step {
+        WizardStep::PrList => "  ↑↓/jk move · Space toggle · a all/none · Enter next · Esc close",
+        WizardStep::CustomPrompt => "  Type your prompt · Enter advances · Esc close",
+        _ => "  ↑↓/jk select · Enter advance · Esc close",
+    };
     let hint = if let Some(msg) = last_message.as_ref() {
         format!("  {msg}")
     } else {
-        hint.to_string()
+        default_hint.to_string()
     };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -178,24 +171,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
 
 fn step_label(s: WizardStep) -> &'static str {
     match s {
-        WizardStep::Kind => "Step 1 · Agent kind",
-        WizardStep::TattleTicket => "Step 2 · Pick ticket",
-        WizardStep::ClaudeAgent => "Step 2 · Agent",
-        WizardStep::ClaudeSandbox => "Step 3 · Sandbox mode",
-        WizardStep::ClaudeRemoteTarget => "Step 4 · Remote target",
-        WizardStep::Prompt => "Step · Initial task",
+        WizardStep::Source => "Step 1 · Source",
+        WizardStep::PrList => "Step 2 · Pick PRs",
+        WizardStep::Action => "Step 3 · Action",
+        WizardStep::CustomPrompt => "Step · Prompt",
         WizardStep::Review => "Step · Review & submit",
     }
 }
 
 fn breadcrumbs(s: WizardStep) -> String {
     match s {
-        WizardStep::Kind => "Kind".to_string(),
-        WizardStep::TattleTicket => "Kind › Ticket".to_string(),
-        WizardStep::ClaudeAgent => "Kind › Agent".to_string(),
-        WizardStep::ClaudeSandbox => "Kind › Agent › Sandbox".to_string(),
-        WizardStep::ClaudeRemoteTarget => "Kind › Agent › Sandbox › Remote".to_string(),
-        WizardStep::Prompt => "… › Task".to_string(),
+        WizardStep::Source => "Source".to_string(),
+        WizardStep::PrList => "Source › PRs".to_string(),
+        WizardStep::Action => "Source › PRs › Action".to_string(),
+        WizardStep::CustomPrompt => "… › Prompt".to_string(),
         WizardStep::Review => "… › Review".to_string(),
     }
 }
@@ -207,7 +196,6 @@ fn draw_radio_list(
     pane_id: PaneId,
     rows: &[(&'static str, &'static str, bool)],
 ) {
-    let _ = pane_id;
     let t = theme::cur();
     let bg = t.bg_dark;
     let focus = match app.panes.get(pane_id) {
@@ -261,40 +249,36 @@ fn draw_radio_list(
     }
 }
 
-fn draw_step_kind(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) -> u16 {
-    let kind = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => p.kind,
-        _ => return area.y,
+fn draw_step_source(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) {
+    let source = match app.panes.get(pane_id) {
+        Some(Pane::NewCloudAgentWizard(p)) => p.source,
+        _ => return,
     };
-    let rows = vec![
-        (
-            "Tattle QWE run",
-            "Trigger a qwe-runner ECS task for a Jira ticket",
-            matches!(kind, AgentKind::TattleQwe),
-        ),
-        (
-            "Claude managed agent",
-            "Anthropic-hosted Claude · cloud OR self-hosted sandbox",
-            matches!(kind, AgentKind::ClaudeManaged),
-        ),
-    ];
+    let rows: Vec<(&'static str, &'static str, bool)> = Source::all()
+        .iter()
+        .map(|s| (s.label(), s.hint(), *s == source))
+        .collect();
     draw_radio_list(frame, app, area, pane_id, &rows);
-    area.y + 2
 }
 
-fn draw_step_tattle_ticket(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) -> u16 {
+fn draw_step_pr_list(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) {
     let t = theme::cur();
     let bg = t.bg_dark;
-    let ticket = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => p.tattle_ticket.clone(),
-        _ => return area.y,
+    let (rows, loading, err, focus, total_selected) = match app.panes.get(pane_id) {
+        Some(Pane::NewCloudAgentWizard(p)) => (
+            p.pr_rows.clone(),
+            p.pr_loading,
+            p.pr_err.clone(),
+            p.focus_row,
+            p.selected_count(),
+        ),
+        _ => return,
     };
     let mut y = area.y;
-    let hint = "  Type a Jira ticket id (e.g. TE-13877) — flow defaults to triage, env to prod.";
-    if y < area.y + area.height {
+    if loading && y < area.y + area.height {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                hint,
+                "  Fetching open PRs…",
                 Style::default().fg(t.comment).bg(bg),
             ))),
             Rect {
@@ -304,26 +288,51 @@ fn draw_step_tattle_ticket(frame: &mut Frame, app: &mut App, area: Rect, pane_id
                 height: 1,
             },
         );
-        y += 2;
+        return;
     }
-    if y < area.y + area.height {
-        let label = if ticket.is_empty() {
-            "TE-".to_string()
-        } else {
-            ticket
-        };
+    if let Some(e) = err.as_ref() {
+        if y < area.y + area.height {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    format!("  ✗ {e}"),
+                    Style::default().fg(t.red).bg(bg),
+                ))),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+        }
+        return;
+    }
+    if rows.is_empty() && y < area.y + area.height {
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("    ", Style::default().bg(bg)),
-                Span::styled("Ticket  ", Style::default().fg(t.comment).bg(bg)),
-                Span::styled(
-                    format!(" {label} ▏"),
-                    Style::default()
-                        .fg(t.fg)
-                        .bg(t.bg2)
-                        .add_modifier(Modifier::BOLD),
+            Paragraph::new(Line::from(Span::styled(
+                "  No open PRs found.",
+                Style::default().fg(t.comment).bg(bg),
+            ))),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        return;
+    }
+    // Counter at top.
+    if y < area.y + area.height {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(
+                    "  {} of {} selected  ·  Space to toggle  ·  a = all/none",
+                    total_selected,
+                    rows.len()
                 ),
-            ])),
+                Style::default().fg(t.comment).bg(bg),
+            ))),
             Rect {
                 x: area.x,
                 y,
@@ -333,120 +342,86 @@ fn draw_step_tattle_ticket(frame: &mut Frame, app: &mut App, area: Rect, pane_id
         );
         y += 1;
     }
-    y
-}
-
-fn draw_step_claude_agent(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) -> u16 {
-    let p = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => (
-            p.claude_agent_create_new,
-            p.claude_agent_new_name.clone(),
-            p.claude_agent_id.clone(),
-        ),
-        _ => return area.y,
-    };
-    let (create_new, new_name, existing_id) = p;
-    let rows = vec![
-        (
-            "Create a new agent",
-            "POST /v1/agents — name + model + tools",
-            create_new,
-        ),
-        (
-            "Use existing agent",
-            "Paste an ag_… id from console.anthropic.com",
-            !create_new,
-        ),
-    ];
-    draw_radio_list(frame, app, area, pane_id, &rows);
-    let t = theme::cur();
-    let bg = t.bg_dark;
-    let extra_y = area.y + 3;
-    if extra_y < area.y + area.height {
-        let (label, val) = if create_new {
-            ("Name   ", new_name)
-        } else {
-            ("ag_id  ", existing_id)
+    for (i, r) in rows.iter().enumerate() {
+        if y >= area.y + area.height {
+            break;
+        }
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
         };
-        let display = if val.is_empty() {
-            " …".to_string()
+        let chk = if r.selected { "[x]" } else { "[ ]" };
+        let chk_style = if r.selected {
+            Style::default().fg(t.green).bg(bg)
         } else {
-            val
+            Style::default().fg(t.comment).bg(bg)
         };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("    ", Style::default().bg(bg)),
-                Span::styled(label.to_string(), Style::default().fg(t.comment).bg(bg)),
-                Span::styled(format!(" {display} ▏"), Style::default().fg(t.fg).bg(t.bg2)),
-            ])),
-            Rect {
-                x: area.x,
-                y: extra_y,
-                width: area.width,
-                height: 1,
-            },
-        );
+        let cursor = if i == focus { "▸" } else { " " };
+        let row_style = if i == focus {
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg2)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.fg).bg(bg)
+        };
+        let title: String = r.title.chars().take(60).collect();
+        let line = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(format!("{cursor} "), Style::default().fg(t.cyan).bg(bg)),
+            Span::styled(format!("{chk}  "), chk_style),
+            Span::styled(
+                format!("#{}", r.number),
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(title, row_style),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(
+                format!("by {}", r.author),
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]);
+        frame.render_widget(Paragraph::new(line), row_rect);
+        app.rects
+            .new_cloud_agent_wizard_hits
+            .push((row_rect, WizardHit::Option(i)));
+        y += 1;
     }
-    area.y + 4
 }
 
-fn draw_step_claude_sandbox(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) -> u16 {
-    let sandbox = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => p.claude_sandbox,
-        _ => return area.y,
+fn draw_step_action(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) {
+    let action = match app.panes.get(pane_id) {
+        Some(Pane::NewCloudAgentWizard(p)) => p.action,
+        _ => return,
     };
-    let rows = vec![
-        (
-            "Cloud sandbox (Anthropic-managed)",
-            "Default · zero setup · tool calls run on Anthropic infra",
-            matches!(sandbox, SandboxMode::CloudSandbox),
-        ),
-        (
-            "Self-hosted · LOCAL worker",
-            "ant beta:worker poll runs on this machine · uses local files + network",
-            matches!(sandbox, SandboxMode::SelfHostedLocal),
-        ),
-        (
-            "Self-hosted · REMOTE worker",
-            "Worker on Vercel / Cloudflare / Modal / AWS · survives laptop close",
-            matches!(sandbox, SandboxMode::SelfHostedRemote),
-        ),
-    ];
-    draw_radio_list(frame, app, area, pane_id, &rows);
-    area.y + 3
-}
-
-fn draw_step_claude_remote_target(
-    frame: &mut Frame,
-    app: &mut App,
-    area: Rect,
-    pane_id: PaneId,
-) -> u16 {
-    let picked = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => p.claude_remote,
-        _ => return area.y,
-    };
-    let rows: Vec<(&'static str, &'static str, bool)> = RemoteTarget::all()
+    let rows: Vec<(&'static str, &'static str, bool)> = Action::all()
         .iter()
-        .map(|tgt| (tgt.label(), tgt.hint(), *tgt == picked))
+        .map(|a| (a.label(), a.hint(), *a == action))
         .collect();
     draw_radio_list(frame, app, area, pane_id, &rows);
-    area.y + rows.len() as u16
 }
 
-fn draw_step_prompt(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) -> u16 {
+fn draw_step_custom_prompt(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) {
     let t = theme::cur();
     let bg = t.bg_dark;
     let prompt = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => p.prompt.clone(),
-        _ => return area.y,
+        Some(Pane::NewCloudAgentWizard(p)) => p.custom_prompt.clone(),
+        _ => return,
     };
     let mut y = area.y;
-    let hint = "  Initial task / prompt for the agent. Multi-line OK; metadata as KEY=VAL lines.";
     if y < area.y + area.height {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                hint,
+                "  Type a prompt — the agent receives this verbatim plus the PR context.",
                 Style::default().fg(t.comment).bg(bg),
             ))),
             Rect {
@@ -458,12 +433,12 @@ fn draw_step_prompt(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
         );
         y += 2;
     }
-    let display = if prompt.is_empty() {
-        "_".to_string()
-    } else {
-        prompt.replace('\n', " ⏎ ")
-    };
     if y < area.y + area.height {
+        let display = if prompt.is_empty() {
+            "_".to_string()
+        } else {
+            prompt.replace('\n', " ⏎ ")
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("    ", Style::default().bg(bg)),
@@ -478,46 +453,53 @@ fn draw_step_prompt(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
             },
         );
     }
-    y
 }
 
-fn draw_step_review(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) -> u16 {
+fn draw_step_review(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneId) {
     let t = theme::cur();
     let bg = t.bg_dark;
-    let summary = match app.panes.get(pane_id) {
-        Some(Pane::NewCloudAgentWizard(p)) => match p.kind {
-            AgentKind::TattleQwe => vec![
-                ("Kind  ", "Tattle QWE run".to_string()),
-                ("Ticket", p.tattle_ticket.clone()),
-                ("Flow  ", "triage (default)".to_string()),
-                ("Env   ", "prod (default)".to_string()),
-                ("Prompt", p.prompt.clone()),
-            ],
-            AgentKind::ClaudeManaged => {
-                let agent = if p.claude_agent_create_new {
-                    format!("create new · {}", p.claude_agent_new_name)
-                } else {
-                    p.claude_agent_id.clone()
-                };
-                let sandbox = match p.claude_sandbox {
-                    SandboxMode::CloudSandbox => "Anthropic cloud".to_string(),
-                    SandboxMode::SelfHostedLocal => "self-hosted · LOCAL".to_string(),
-                    SandboxMode::SelfHostedRemote => {
-                        format!("self-hosted · REMOTE → {}", p.claude_remote.label())
-                    }
-                };
-                vec![
-                    ("Kind   ", "Claude managed agent".to_string()),
-                    ("Agent  ", agent),
-                    ("Sandbox", sandbox),
-                    ("Prompt ", p.prompt.clone()),
-                ]
-            }
-        },
-        _ => return area.y,
+    let p = match app.panes.get(pane_id) {
+        Some(Pane::NewCloudAgentWizard(p)) => p,
+        _ => return,
     };
-    let mut y = area.y;
-    for (k, v) in summary {
+    let summary: Vec<(&str, String)> = match p.source {
+        Source::ManualPrompt => vec![
+            ("Source ", "Manual prompt (no PR list)".to_string()),
+            ("Action ", p.action.label().to_string()),
+            (
+                "Prompt ",
+                if matches!(p.action, Action::Custom) {
+                    p.custom_prompt.clone()
+                } else {
+                    p.action.prompt_template().to_string()
+                },
+            ),
+        ],
+        _ => {
+            let picks: Vec<String> = p
+                .pr_rows
+                .iter()
+                .filter(|r| r.selected)
+                .map(|r| format!("#{} {}", r.number, r.title))
+                .collect();
+            vec![
+                ("Source ", p.source.label().to_string()),
+                ("PRs    ", format!("{} selected", picks.len())),
+                ("Detail ", picks.join(" · ")),
+                ("Action ", p.action.label().to_string()),
+                (
+                    "Prompt ",
+                    if matches!(p.action, Action::Custom) {
+                        p.custom_prompt.clone()
+                    } else {
+                        p.action.prompt_template().to_string()
+                    },
+                ),
+            ]
+        }
+    };
+    for (i, (k, v)) in summary.into_iter().enumerate() {
+        let y = area.y + i as u16;
         if y >= area.y + area.height {
             break;
         }
@@ -526,11 +508,7 @@ fn draw_step_review(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
                 Span::styled("    ", Style::default().bg(bg)),
                 Span::styled(format!("{k} "), Style::default().fg(t.comment).bg(bg)),
                 Span::styled(
-                    if v.is_empty() {
-                        "—".to_string()
-                    } else {
-                        v.clone()
-                    },
+                    if v.is_empty() { "—".to_string() } else { v },
                     Style::default().fg(t.fg).bg(bg),
                 ),
             ])),
@@ -541,7 +519,5 @@ fn draw_step_review(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
                 height: 1,
             },
         );
-        y += 1;
     }
-    y
 }
