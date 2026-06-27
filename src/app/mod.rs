@@ -11115,19 +11115,12 @@ impl App {
             pane.session_event_rx = Some(crate::anthropic_api::spawn_session_event_stream(
                 row.session_id.clone(),
             ));
-            let pane = Pane::CloudAgentRun(pane);
-            match self.active {
-                Some(cur) => {
-                    let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
-                    self.active = Some(new_id);
-                }
-                None => {
-                    self.panes.push(pane);
-                    let id = self.panes.len() - 1;
-                    *self.layout_mut() = Layout::leaf(id);
-                    self.active = Some(id);
-                }
-            }
+            // Open as a tab in the focused leaf, not as a split —
+            // matches VS Code semantics. Push to panes vec, then
+            // reveal_pane() adds it to the active leaf's tabs.
+            self.panes.push(Pane::CloudAgentRun(pane));
+            let new_id = self.panes.len() - 1;
+            self.reveal_pane(new_id);
             self.focus = Focus::Pane;
             return;
         }
@@ -11189,19 +11182,9 @@ impl App {
             "/ecs/qwe-runner/claude-runner".to_string(),
         ));
         pane.artifacts_rx = Some(crate::cloud_agent_run::spawn_artifacts_fetcher(s3_prefix));
-        let pane = Pane::CloudAgentRun(pane);
-        match self.active {
-            Some(cur) => {
-                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
-                self.active = Some(new_id);
-            }
-            None => {
-                self.panes.push(pane);
-                let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::leaf(id);
-                self.active = Some(id);
-            }
-        }
+        self.panes.push(Pane::CloudAgentRun(pane));
+        let new_id = self.panes.len() - 1;
+        self.reveal_pane(new_id);
         self.focus = Focus::Pane;
     }
 
