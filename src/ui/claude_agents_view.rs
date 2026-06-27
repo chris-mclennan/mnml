@@ -37,6 +37,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         Some(AgentSource::Claude) => " · ✦claude",
         Some(AgentSource::Codex) => " · ◈codex",
         Some(AgentSource::TattleQwe) => " · ☁tattle-qwe",
+        Some(AgentSource::AnthropicManaged) => " · ☁managed",
         None => "",
     };
     let ws_chip = if p.workspace_only { " · this-ws" } else { "" };
@@ -325,6 +326,7 @@ fn draw_topbar(
             Some(crate::claude_agents::AgentSource::Claude) => "claude".to_string(),
             Some(crate::claude_agents::AgentSource::Codex) => "codex".to_string(),
             Some(crate::claude_agents::AgentSource::TattleQwe) => "tattle-qwe".to_string(),
+            Some(crate::claude_agents::AgentSource::AnthropicManaged) => "managed".to_string(),
         }
     );
     let ws_label = if p.workspace_only {
@@ -391,11 +393,13 @@ fn build_groups(mode: GroupBy, vis: &[usize], rows: &[AgentRow]) -> Vec<(Section
             let mut claude: Vec<usize> = Vec::new();
             let mut codex: Vec<usize> = Vec::new();
             let mut tattle: Vec<usize> = Vec::new();
+            let mut managed: Vec<usize> = Vec::new();
             for (vi, &row_idx) in vis.iter().enumerate() {
                 match rows[row_idx].source {
                     AgentSource::Claude => claude.push(vi),
                     AgentSource::Codex => codex.push(vi),
                     AgentSource::TattleQwe => tattle.push(vi),
+                    AgentSource::AnthropicManaged => managed.push(vi),
                 }
             }
             let mut out = Vec::new();
@@ -407,6 +411,9 @@ fn build_groups(mode: GroupBy, vis: &[usize], rows: &[AgentRow]) -> Vec<(Section
             }
             if !tattle.is_empty() {
                 out.push((SectionKey::Source(AgentSource::TattleQwe), tattle));
+            }
+            if !managed.is_empty() {
+                out.push((SectionKey::Source(AgentSource::AnthropicManaged), managed));
             }
             out
         }
@@ -464,6 +471,9 @@ fn section_header_keyed(
         SectionKey::Source(AgentSource::TattleQwe) => {
             ("Tattle QWE (cloud)".to_string(), t.blue, "☁")
         }
+        SectionKey::Source(AgentSource::AnthropicManaged) => {
+            ("Managed Agents".to_string(), t.cyan, "☁")
+        }
         SectionKey::Workspace(w) => (format!("workspace · {w}"), t.cyan, "▎"),
     };
     let cost_chip = if cost > 0.0 {
@@ -516,6 +526,7 @@ fn render_row(
         AgentSource::Claude => ("✦", t.purple),
         AgentSource::Codex => ("◈", t.teal),
         AgentSource::TattleQwe => ("☁", t.blue),
+        AgentSource::AnthropicManaged => ("☁", t.cyan),
     };
 
     let workspace_pad: String = format!("{:<14}", clip(&row.workspace, 14));

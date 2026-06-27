@@ -41,6 +41,12 @@ pub enum AgentSource {
     /// local pid; the row's "live" state derives from the
     /// DynamoDB `state` field.
     TattleQwe,
+    /// Anthropic Managed Agents session — orchestration on
+    /// Anthropic's side, sandbox runs in Anthropic cloud or a
+    /// self-hosted worker. State comes from
+    /// `anthropic_api::list_sessions()`. No local pid; "live"
+    /// state from the API `status` field.
+    AnthropicManaged,
 }
 
 impl AgentSource {
@@ -49,15 +55,16 @@ impl AgentSource {
             AgentSource::Claude => "claude",
             AgentSource::Codex => "codex",
             AgentSource::TattleQwe => "tattle-qwe",
+            AgentSource::AnthropicManaged => "managed",
         }
     }
     pub fn exe_name(self) -> &'static str {
         match self {
             AgentSource::Claude => "claude",
             AgentSource::Codex => "codex",
-            // Tattle rows never come from a local pid scan — value
-            // unused. Kept for the exhaustive match.
-            AgentSource::TattleQwe => "",
+            // Cloud-only rows never come from a local pid scan —
+            // value unused. Kept for the exhaustive match.
+            AgentSource::TattleQwe | AgentSource::AnthropicManaged => "",
         }
     }
 }

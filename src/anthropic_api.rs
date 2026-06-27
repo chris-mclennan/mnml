@@ -237,18 +237,22 @@ pub fn create_session(
 /// alongside Tattle QWE rows. Returns minimal fields — id, agent,
 /// status, created_at — enough to render rows; detail pane fetches
 /// per-session events separately.
-#[allow(dead_code)] // Used by Phase 3b.3 (panel row source merging) — keep for the imminent follow-up.
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
     pub id: String,
     pub title: Option<String>,
     pub status: String,
+    /// Reserved for sort-by-recency in a follow-up.
+    #[allow(dead_code)]
     pub created_at: Option<String>,
+    /// Reserved for cross-reference with `list_agents()` in a follow-up.
+    #[allow(dead_code)]
     pub agent_id: Option<String>,
+    /// Reserved for grouping rows by environment in a follow-up.
+    #[allow(dead_code)]
     pub environment_id: Option<String>,
 }
 
-#[allow(dead_code)]
 pub fn list_sessions(backend: &Backend) -> Result<Vec<SessionSummary>, String> {
     let req = Request {
         method: "GET".to_string(),
@@ -301,4 +305,74 @@ pub fn list_sessions(backend: &Backend) -> Result<Vec<SessionSummary>, String> {
         });
     }
     Ok(out)
+}
+
+/// Collect Managed Agents sessions for the Cloud Agents panel.
+/// Returns rows in the same `AgentRow` shape as the Tattle QWE
+/// scan, so the panel renderer can mix them. On any failure
+/// (missing creds, network, API error) returns an empty vec —
+/// matches the Tattle scan's silent-fallback shape so a missing
+/// backend doesn't blow up the panel.
+pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
+    use crate::claude_agents::{AgentRow, AgentSource, AgentState};
+    use std::path::PathBuf;
+    let backend = match detect_backend() {
+        Ok(b) => b,
+        Err(_) => return Vec::new(),
+    };
+    let sessions = match list_sessions(&backend) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[managed-agents] list_sessions: {e}");
+            return Vec::new();
+        }
+    };
+    sessions
+        .into_iter()
+        .map(|s| {
+            // Map Anthropic session status → mnml AgentState.
+            // Status strings per docs: pending, in_progress,
+            // idle, completed, failed, cancelled.
+            let state = match s.status.as_str() {
+                "in_progress" => AgentState::Streaming,
+                "pending" => AgentState::ToolCall,
+                "idle" => AgentState::Idle,
+                "completed" | "failed" | "cancelled" => AgentState::Ended,
+                _ => AgentState::Idle,
+            };
+            let workspace = s
+                .title
+                .clone()
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| "managed".to_string());
+            AgentRow {
+                source: AgentSource::AnthropicManaged,
+                transcript_path: PathBuf::from(format!("/dev/null/managed/{}", s.id)),
+                session_id: s.id,
+                workspace,
+                cwd: None,
+                git_branch: None,
+                model: None,
+                last_activity: None,
+                tokens: 0,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_create_tokens: 0,
+                cache_read_tokens: 0,
+                cost_usd: 0.0,
+                event_count: 0,
+                last_user_msg: None,
+                last_assistant_msg: s.title,
+                pid: None,
+                state,
+                current_tool: None,
+                todos: Vec::new(),
+                recent_bash: Vec::new(),
+                recent_files: Vec::new(),
+                recent_subagents: Vec::new(),
+                pending_tool_uses: 0,
+                tokens_per_min: None,
+            }
+        })
+        .collect()
 }

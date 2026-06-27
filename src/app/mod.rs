@@ -7001,9 +7001,12 @@ impl App {
             let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
             let local_rows = pane.rows;
             // Cloud rows live in a SEPARATE list now (the Cloud
-            // Agents activity-bar section renders them). The
-            // local Agents view is local-only.
-            let (cloud_rows, meta) = crate::tattle_qwe::collect_cloud_rows_with_meta();
+            // Agents activity-bar section renders them). Merge
+            // Tattle QWE (DynamoDB) + Anthropic Managed Agents
+            // (API) into one list — both are "cloud agents."
+            let (mut cloud_rows, meta) = crate::tattle_qwe::collect_cloud_rows_with_meta();
+            let managed = crate::anthropic_api::collect_managed_agent_rows();
+            cloud_rows.extend(managed);
             let _ = tx.send((local_rows, cloud_rows, meta));
         });
         self.agents_panel_rx = Some(rx);
@@ -11295,6 +11298,15 @@ impl App {
                         // the runId / state in a toast so the user
                         // can copy it / open CloudWatch logs.
                         self.toast(format!("tattle-qwe run {sid} — cloud row, no local resume"));
+                    }
+                    AgentSource::AnthropicManaged => {
+                        // Managed Agents session lives on
+                        // Anthropic's side — surface the
+                        // session id so user can open it in the
+                        // console.
+                        self.toast(format!(
+                            "managed-agent {sid} — open at https://platform.claude.com/sessions/{sid}"
+                        ));
                     }
                 }
             }

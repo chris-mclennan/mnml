@@ -2875,7 +2875,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         None => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => Some(AgentSource::Codex),
                         Some(AgentSource::Codex) => Some(AgentSource::TattleQwe),
-                        Some(AgentSource::TattleQwe) => None,
+                        Some(AgentSource::TattleQwe) => Some(AgentSource::AnthropicManaged),
+                        Some(AgentSource::AnthropicManaged) => None,
                     };
                     p.selected = 0;
                 }
@@ -2884,7 +2885,8 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     use crate::claude_agents::AgentSource;
                     p.source_filter = match p.source_filter {
-                        None => Some(AgentSource::TattleQwe),
+                        None => Some(AgentSource::AnthropicManaged),
+                        Some(AgentSource::AnthropicManaged) => Some(AgentSource::TattleQwe),
                         Some(AgentSource::TattleQwe) => Some(AgentSource::Codex),
                         Some(AgentSource::Codex) => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => None,
@@ -4244,7 +4246,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         None => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => Some(AgentSource::Codex),
                         Some(AgentSource::Codex) => Some(AgentSource::TattleQwe),
-                        Some(AgentSource::TattleQwe) => None,
+                        Some(AgentSource::TattleQwe) => Some(AgentSource::AnthropicManaged),
+                        Some(AgentSource::AnthropicManaged) => None,
                     };
                     p.selected = 0;
                 }
