@@ -2036,6 +2036,10 @@ pub struct PaneRects {
     /// arrows in the palette bar. Click → same as Ctrl+B
     /// (view.toggle_tree).
     pub palette_sidebar_button: Option<Rect>,
+    /// `+` chip just after the user's integration icons in the
+    /// palette bar's gap area. Click → `integrations.add`
+    /// (opens the discovery overlay so the user can add a sibling).
+    pub palette_add_integration_button: Option<Rect>,
     pub palette_back_button: Option<Rect>,
     /// Forward button (`→`) in the palette top-bar — `buffer.next`.
     pub palette_forward_button: Option<Rect>,

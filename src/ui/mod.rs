@@ -1202,9 +1202,10 @@ fn paint_integration_chips_in_gap(
     use ratatui::style::{Modifier, Style};
     use ratatui::text::Span;
     use ratatui::widgets::Paragraph;
-    if app.config.ui.integration_icons.is_empty() {
-        return;
-    }
+    // Even with no integrations configured, paint the `+` chip
+    // so the user has a discoverable entry point. The discovery
+    // overlay starts empty until they add their first sibling.
+    app.rects.palette_add_integration_button = None;
     // Leave a 1-cell margin from the chip's right edge and a 1-cell
     // margin before the cluster so the integrations group visually.
     let avail_left = chip_right_edge.saturating_add(1);
@@ -1220,12 +1221,17 @@ fn paint_integration_chips_in_gap(
     }
     let t = theme::cur();
     let nerd = !app.config.ui.ascii_icons;
-    // Right-align: paint from rightmost icon first toward the left.
-    let to_paint = app.config.ui.integration_icons.len().min(max_chips);
-    let total_w = (to_paint as u16) * per_chip;
-    let mut x = avail_right.saturating_sub(total_w);
-    // Iterate in original order (left-to-right) so the user sees
-    // their icons in declared order.
+    // LEFT-align: start right after the workspace chip / dropdown
+    // so integrations read as an extension of the palette cluster.
+    // Reserve 3 cells at the END for a `+` chip (clickable —
+    // opens integrations.add discovery overlay), so the user can
+    // add more integrations from right here.
+    let plus_w: u16 = 3;
+    let avail_for_chips = avail_w.saturating_sub(plus_w);
+    let chip_count = (avail_for_chips / per_chip) as usize;
+    let to_paint = app.config.ui.integration_icons.len().min(chip_count);
+    let mut x = avail_left;
+    // Iterate in original order so icons appear in declared order.
     for (i, icon) in app
         .config
         .ui
@@ -1264,6 +1270,30 @@ fn paint_integration_chips_in_gap(
         );
         app.rects.integration_icon_rects.push((chip_rect, i));
         x = x.saturating_add(3);
+    }
+    // `+` chip — opens the integrations discovery overlay so the
+    // user can add another sibling without leaving the palette
+    // bar. Always painted (as long as the gap had room reserved
+    // for it via plus_w above).
+    let plus_x = x;
+    if plus_x + 3 <= avail_right + 1 {
+        let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
+        let plus_rect = Rect {
+            x: plus_x,
+            y,
+            width: 3,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" {plus_glyph} "),
+                Style::default().fg(t.fg).bg(t.bg2),
+            )),
+            plus_rect,
+        );
+        app.rects.palette_add_integration_button = Some(plus_rect);
+    } else {
+        app.rects.palette_add_integration_button = None;
     }
 }
 
@@ -1374,10 +1404,18 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // Sidebar toggle (codicon: layout-sidebar-left) — sits left of
-    // the back/forward arrows. Click fires view.toggle_tree.
-    // Bright accent (cyan) when the sidebar is OPEN, muted when off.
-    let sidebar_glyph = if ascii { "|" } else { "\u{EBA6}" };
+    // Sidebar toggle — sits left of the back/forward arrows.
+    // Variants per state: `layout-sidebar-left` (\u{EBA6}) when
+    // the sidebar is OPEN, `layout-sidebar-left-off` (\u{EC02})
+    // when it's collapsed — matches macOS / VS Code muscle
+    // memory for the same icon. Click fires view.toggle_tree.
+    let sidebar_glyph = if ascii {
+        "|"
+    } else if app.tree_visible {
+        "\u{EBA6}"
+    } else {
+        "\u{EC02}"
+    };
     let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
     let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
     let magnify = if ascii { "?" } else { "\u{F0349}" };
@@ -1585,6 +1623,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         // rects from a wider frame don't steal clicks.
         app.rects.launcher_icon_rects.clear();
         app.rects.bufferline_new_tab_button = None;
+        app.rects.palette_add_integration_button = None;
         app.rects.bufferline_tab_page_chips.clear();
         app.rects.bufferline_tab_page_close.clear();
         app.rects.bufferline_theme_toggle = None;
