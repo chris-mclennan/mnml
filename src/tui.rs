@@ -4405,6 +4405,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.rects.tab_drop_target = None;
             }
         }
+        // Bufferline-tab drag fallback — same shape as the tree_drag
+        // path above. Without this the ghost / drop overlay never
+        // updates on terminals that emit Moved (no button) instead
+        // of Drag(Left) while the button is held during a tab drag.
+        if app.rects.bufferline_drag_tab.is_some() {
+            app.rects.bufferline_drag_ghost = Some((x, y));
+            app.update_tab_drop_target(x, y);
+        }
         let new_chip = crate::app::dispatch::hover_chip_at(app, x, y);
         let prev_chip = app.hover_chip.map(|(c, _)| c);
         if new_chip != prev_chip {
