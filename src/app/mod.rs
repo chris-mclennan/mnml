@@ -10830,6 +10830,34 @@ impl App {
             self.toast("cloud agent row not found");
             return;
         };
+        // Branch on source — managed agents have no AWS bits.
+        if matches!(
+            row.source,
+            crate::claude_agents::AgentSource::AnthropicManaged
+        ) {
+            let pane = crate::cloud_agent_run::CloudAgentRunPane::new_managed(
+                row.session_id.clone(),
+                row.last_assistant_msg.clone().unwrap_or_default(),
+                row.state.badge().to_string(),
+                None,
+                Some(row.workspace.clone()),
+            );
+            let pane = Pane::CloudAgentRun(pane);
+            match self.active {
+                Some(cur) => {
+                    let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                    self.active = Some(new_id);
+                }
+                None => {
+                    self.panes.push(pane);
+                    let id = self.panes.len() - 1;
+                    *self.layout_mut() = Layout::leaf(id);
+                    self.active = Some(id);
+                }
+            }
+            self.focus = Focus::Pane;
+            return;
+        }
         let meta = self.cloud_agents_meta.get(&row.session_id).cloned();
         let ticket = meta
             .as_ref()

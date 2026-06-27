@@ -53,8 +53,20 @@ pub enum ArtifactsEvent {
     Error(String),
 }
 
+/// Which cloud-agent backend produced this row. The renderer
+/// branches on this so the labels match the source — managed
+/// agents don't have Jira/CloudWatch/S3, they have an Anthropic
+/// Console session URL + an agent ID + an environment ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CloudRunSource {
+    #[default]
+    TattleQwe,
+    AnthropicManaged,
+}
+
 #[derive(Debug)]
 pub struct CloudAgentRunPane {
+    pub source: CloudRunSource,
     // ─── identity ────────────────────────────────────────────────
     pub run_id: String,
     pub ticket: String,
@@ -114,6 +126,7 @@ impl CloudAgentRunPane {
         s3_console_url: Option<String>,
     ) -> Self {
         Self {
+            source: CloudRunSource::TattleQwe,
             run_id,
             ticket,
             flow,
@@ -136,6 +149,55 @@ impl CloudAgentRunPane {
             artifacts_rx: None,
             log_scroll: 0,
             log_follow: true,
+        }
+    }
+
+    /// Build the pane for an Anthropic Managed Agents session.
+    /// Skips the AWS-specific fields (CloudWatch / S3); links
+    /// degenerate to the Anthropic Console session URL.
+    pub fn new_managed(
+        session_id: String,
+        title: String,
+        status: String,
+        agent_id: Option<String>,
+        environment_id: Option<String>,
+    ) -> Self {
+        let console_url = format!("https://platform.claude.com/sessions/{session_id}");
+        Self {
+            source: CloudRunSource::AnthropicManaged,
+            run_id: session_id,
+            // Repurpose the Tattle field names so the existing
+            // renderer's labels still make sense after we tweak
+            // them: ticket → agent id, flow → environment id.
+            ticket: agent_id.unwrap_or_else(|| "—".to_string()),
+            flow: environment_id.unwrap_or_else(|| "—".to_string()),
+            state: status,
+            workspace_name: if title.is_empty() {
+                "managed".to_string()
+            } else {
+                title
+            },
+            started_at: None,
+            last_activity: None,
+            jira_url: None,
+            // Anthropic Console session URL goes here so the
+            // existing "PR" row in the renderer becomes the
+            // console link. Renamed by source in the view.
+            pr_url: Some(console_url),
+            cloudwatch_url: String::new(),
+            s3_artifact_prefix: None,
+            s3_console_url: None,
+            logs: Vec::new(),
+            // No log/artifact workers for managed agents in v1.
+            logs_loading: false,
+            logs_err: None,
+            log_rx: None,
+            artifacts: Vec::new(),
+            artifacts_loading: false,
+            artifacts_err: None,
+            artifacts_rx: None,
+            log_scroll: 0,
+            log_follow: false,
         }
     }
 

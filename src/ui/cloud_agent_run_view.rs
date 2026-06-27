@@ -43,7 +43,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     let end_y = area.y + area.height;
 
     // ── header ───────────────────────────────────────────────────
-    let header_label = format!("☁ {} · {} · {}", p.ticket, p.flow, p.state);
+    use crate::cloud_agent_run::CloudRunSource;
+    let header_label = match p.source {
+        CloudRunSource::TattleQwe => format!("☁ {} · {} · {}", p.ticket, p.flow, p.state),
+        CloudRunSource::AnthropicManaged => {
+            format!("☁ Managed Agents · {} · {}", p.workspace_name, p.state)
+        }
+    };
     let header_style = Style::default()
         .fg(t.fg)
         .bg(bg)
@@ -99,20 +105,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     }
 
     // ── links ────────────────────────────────────────────────────
-    let links: Vec<(&str, Option<&String>, &str)> = vec![
-        ("Jira     ", p.jira_url.as_ref(), "open ticket in browser"),
-        ("PR       ", p.pr_url.as_ref(), "open pull request"),
-        (
-            "CloudWatch",
-            Some(&p.cloudwatch_url),
-            "open Logs Insights query",
-        ),
-        (
-            "S3 console",
-            p.s3_console_url.as_ref(),
-            "browse artifacts in AWS console",
-        ),
-    ];
+    let links: Vec<(&str, Option<&String>, &str)> = match p.source {
+        CloudRunSource::TattleQwe => vec![
+            ("Jira     ", p.jira_url.as_ref(), "open ticket in browser"),
+            ("PR       ", p.pr_url.as_ref(), "open pull request"),
+            (
+                "CloudWatch",
+                Some(&p.cloudwatch_url),
+                "open Logs Insights query",
+            ),
+            (
+                "S3 console",
+                p.s3_console_url.as_ref(),
+                "browse artifacts in AWS console",
+            ),
+        ],
+        CloudRunSource::AnthropicManaged => {
+            vec![("Session  ", p.pr_url.as_ref(), "open in Anthropic Console")]
+        }
+    };
     if y < end_y {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
@@ -189,7 +200,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     y += 1; // gap
 
     // ── artifacts ────────────────────────────────────────────────
-    if y < end_y {
+    // Managed Agents don't write S3 artifacts. Skip.
+    if matches!(p.source, CloudRunSource::AnthropicManaged) {
+        // fall through to logs section (also stubbed for managed).
+    } else if y < end_y {
         let count = p.artifacts.len();
         let header = if p.artifacts_loading {
             "  Artifacts (loading…)".to_string()
@@ -287,6 +301,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     y += 1;
 
     // ── logs ─────────────────────────────────────────────────────
+    // Managed Agents don't have a CloudWatch-style log stream
+    // yet (the session events stream is Phase 3c). Skip the
+    // section entirely for managed rows so the pane isn't padded
+    // with "Logs (following · 0 lines)" forever.
+    if matches!(p.source, CloudRunSource::AnthropicManaged) {
+        if y < end_y {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "  Logs · open in Anthropic Console (session-events stream not yet wired in mnml)",
+                    Style::default().fg(t.comment).bg(bg),
+                ))),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+        }
+        return;
+    }
     if y >= end_y {
         return;
     }

@@ -307,6 +307,20 @@ pub fn list_sessions(backend: &Backend) -> Result<Vec<SessionSummary>, String> {
     Ok(out)
 }
 
+/// Strip the tagged prefix off an Anthropic id (e.g.
+/// `env_01HqR2k7vXbZ9mNpL3wYcT8f` → `env_…7vXbZ9mNpL3wYcT8f`)
+/// so it fits the panel's narrow workspace column. Keeps the
+/// type tag for readability.
+fn short_id(id: &str) -> String {
+    let n = id.chars().count();
+    if n <= 14 {
+        return id.to_string();
+    }
+    let prefix: String = id.chars().take(4).collect();
+    let suffix: String = id.chars().skip(n.saturating_sub(8)).collect();
+    format!("{prefix}…{suffix}")
+}
+
 /// Collect Managed Agents sessions for the Cloud Agents panel.
 /// Returns rows in the same `AgentRow` shape as the Tattle QWE
 /// scan, so the panel renderer can mix them. On any failure
@@ -340,10 +354,15 @@ pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
                 "completed" | "failed" | "cancelled" => AgentState::Ended,
                 _ => AgentState::Idle,
             };
+            // Workspace column shows the env id (where the
+            // session runs) so user can tell at a glance which
+            // env it belongs to. Title goes to last_assistant_msg
+            // (the right column).
             let workspace = s
-                .title
+                .environment_id
                 .clone()
-                .filter(|t| !t.is_empty())
+                .filter(|e| !e.is_empty())
+                .map(|e| short_id(&e))
                 .unwrap_or_else(|| "managed".to_string());
             AgentRow {
                 source: AgentSource::AnthropicManaged,
@@ -362,7 +381,7 @@ pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
                 cost_usd: 0.0,
                 event_count: 0,
                 last_user_msg: None,
-                last_assistant_msg: s.title,
+                last_assistant_msg: s.title.or_else(|| Some(s.status.clone())),
                 pid: None,
                 state,
                 current_tool: None,
