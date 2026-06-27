@@ -226,21 +226,46 @@ impl App {
     }
 
     pub fn split_tab_into(&mut self, src: PaneId, zone: DropZone) {
-        // Need a sibling tab in the same leaf — splitting solo
-        // would leave an empty leaf. Bail with a toast in that case.
-        let other = self
+        // First try: a sibling tab in the same leaf (the
+        // common case — splice_pane_at handles it cleanly).
+        if let Some(target) = self
             .layout()
             .leaf_containing(src)
-            .and_then(|tabs| tabs.iter().find(|&&t| t != src).copied());
-        let Some(target) = other else {
-            self.toast("can't split: tab is alone in its pane");
+            .and_then(|tabs| tabs.iter().find(|&&t| t != src).copied())
+        {
+            self.splice_pane_at(src, target, zone);
+            self.active = Some(src);
+            self.focus = Focus::Pane;
             return;
-        };
-        // splice_pane_at(src, target, zone): removes src, then wraps
-        // `target`'s leaf with a Split whose other half is `src`.
-        self.splice_pane_at(src, target, zone);
-        self.active = Some(src);
-        self.focus = Focus::Pane;
+        }
+        // Fallback: src is alone in its leaf, but other panes
+        // exist in `app.panes` as orphans (visible in the global
+        // bufferline, not in any leaf — can happen via earlier
+        // buggy layout transitions or background-tab edge cases).
+        // Pick one orphan to fill the "stays behind" half of the
+        // split so we don't lose layout coverage.
+        let in_layout: std::collections::HashSet<PaneId> = (0..self.panes.len())
+            .filter(|&i| self.layouts.iter().any(|l| l.leaf_containing(i).is_some()))
+            .collect();
+        let orphan = (0..self.panes.len()).find(|&i| {
+            i != src
+                && !in_layout.contains(&i)
+                && !matches!(self.panes.get(i), Some(crate::pane::Pane::Pty(_)))
+        });
+        if let Some(orphan) = orphan {
+            // Bring the orphan into src's leaf as a tab, then run
+            // the normal split path. That way the orphan ends up
+            // in the original leaf's spot and src goes into the
+            // new half — same shape as the sibling case.
+            if let Some((_active, tabs)) = self.layout_mut().leaf_containing_mut(src) {
+                tabs.insert(0, orphan); // before src
+            }
+            self.splice_pane_at(src, orphan, zone);
+            self.active = Some(src);
+            self.focus = Focus::Pane;
+            return;
+        }
+        self.toast("can't split: tab is alone in its pane");
     }
 
     /// Place pane `src` next to leaf `target` per `zone`. Detaches `src` from
