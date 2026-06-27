@@ -7315,6 +7315,39 @@ impl App {
         let Some(row) = self.cloud_agents_rows.get(row_idx).cloned() else {
             return;
         };
+        // Managed-agent rows are a different beast — no CloudWatch
+        // / S3 / PR. Branch to a separate menu and return.
+        if matches!(
+            row.source,
+            crate::claude_agents::AgentSource::AnthropicManaged
+        ) {
+            let workspace = std::env::var("ANTHROPIC_AWS_WORKSPACE_ID")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "default".to_string());
+            let console_url = format!(
+                "https://platform.claude.com/workspaces/{workspace}/sessions/{}",
+                row.session_id
+            );
+            let title = Some(format!("{} · {}", row.workspace, row.session_id));
+            let items = vec![
+                MenuItem::new("View details", MenuAction::OpenCloudAgentRunDetail(row_idx)),
+                MenuItem::new(
+                    "Copy session id",
+                    MenuAction::CopyText(row.session_id.clone()),
+                ),
+                MenuItem::new(
+                    "Open in Anthropic Console",
+                    MenuAction::OpenUrl(console_url),
+                ),
+                MenuItem::new(
+                    "Stop session",
+                    MenuAction::StopManagedSession(row.session_id.clone()),
+                ),
+            ];
+            self.context_menu = Some(ContextMenu::new(title, anchor, items));
+            return;
+        }
         let meta = self.cloud_agents_meta.get(&row.session_id).cloned();
         let title = Some(format!("{} · {}", row.workspace, row.session_id));
         let cloudwatch_url = meta

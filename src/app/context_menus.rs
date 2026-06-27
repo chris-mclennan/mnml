@@ -461,6 +461,32 @@ impl App {
                 self.clipboard.set(text.clone(), false);
                 self.toast(format!("copied {text}"));
             }
+            OpenCloudAgentRunDetail(idx) => {
+                self.open_cloud_agent_run(idx);
+            }
+            StopManagedSession(session_id) => {
+                let tx = self.cloud_run_msg_tx.clone();
+                let sid = session_id.clone();
+                std::thread::spawn(move || {
+                    macro_rules! emit { ($($t:tt)*) => { let _ = tx.send(format!($($t)*)); }; }
+                    let backend = match crate::anthropic_api::detect_backend() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            emit!("stop · backend: {e}");
+                            return;
+                        }
+                    };
+                    match crate::anthropic_api::stop_session(&backend, &sid) {
+                        Ok(_) => {
+                            emit!("session {sid} stop requested");
+                        }
+                        Err(e) => {
+                            emit!("stop · {e}");
+                        }
+                    }
+                });
+                self.toast(format!("stopping {session_id}…"));
+            }
             SetAsWorkspace(p) => {
                 self.set_workspace_to(p);
             }

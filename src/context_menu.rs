@@ -124,6 +124,14 @@ pub enum MenuAction {
     /// Copy a literal string to the clipboard. Used by the git rail's
     /// `Pull` row context menu ("Copy URL").
     CopyText(String),
+    /// Open the CloudAgentRun detail pane for a row at `idx` in
+    /// `cloud_agents_rows`. Used by the managed-agent right-click
+    /// menu's "View details" entry.
+    OpenCloudAgentRunDetail(usize),
+    /// `POST /v1/sessions/{id}/stop` on an Anthropic Managed Agents
+    /// session — asks the worker to wind down cleanly. Used by
+    /// the managed-agent right-click menu's "Stop session" entry.
+    StopManagedSession(String),
     /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
     /// pane, pre-filtered to the given log group + filter pattern.
     /// Used by the Cloud Agents row context menu's "Tail logs in

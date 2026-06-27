@@ -420,6 +420,20 @@ pub fn create_session(
     })
 }
 
+/// `POST /v1/sessions/{id}/stop` — ask the worker to wind down the
+/// session cleanly (finishes the in-flight tool call, posts final
+/// status, releases the session). Used by the right-click "Stop
+/// session" entry on managed-agent rows.
+pub fn stop_session(backend: &Backend, session_id: &str) -> Result<(), String> {
+    let path = format!("/v1/sessions/{session_id}/stop");
+    let (status, body) = dispatch(backend, "POST", &path, Some("{}".to_string()))
+        .map_err(|e| format!("stop_session: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("stop_session HTTP {status}: {body}"));
+    }
+    Ok(())
+}
+
 /// `POST /v1/sessions/{id}/events` — send a user message into an
 /// existing session. This is the step that actually transitions
 /// the session from `idle` to `running` and produces output.
