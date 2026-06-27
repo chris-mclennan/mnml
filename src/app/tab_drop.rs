@@ -271,10 +271,29 @@ impl App {
                     DropZone::Bottom => (SplitDir::Vertical, false),
                     DropZone::Center => unreachable!(),
                 };
+                // PRESERVE the target leaf's full tab list. Old code
+                // built `Layout::leaf(target)` which silently
+                // orphaned every other tab that shared the same
+                // leaf (e.g. 3-tab leaf → split → 1 tab lost).
+                // Pull the post-remove_leaf leaf's tabs + active and
+                // use them for the target half. Fallback to
+                // [target] solo when target isn't in a leaf for
+                // some reason.
+                let (target_active, target_tabs): (PaneId, Vec<PaneId>) =
+                    if let Some((act, tabs)) = self.layout_mut().leaf_containing_mut(target) {
+                        (*act, tabs.clone())
+                    } else {
+                        (target, vec![target])
+                    };
+                let target_leaf = Layout::Leaf {
+                    tabs: target_tabs,
+                    active: target_active,
+                };
+                let src_leaf = Layout::leaf(src);
                 let (first, second) = if src_first {
-                    (Layout::leaf(src), Layout::leaf(target))
+                    (src_leaf, target_leaf)
                 } else {
-                    (Layout::leaf(target), Layout::leaf(src))
+                    (target_leaf, src_leaf)
                 };
                 self.layout_mut().replace_leaf(
                     target,
