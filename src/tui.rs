@@ -5626,7 +5626,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // `+` new tab, per-tabpage chip / close, theme toggle,
             // window close. Order matters (the `⊗` rect sits adjacent
             // to its chip; check close before chip).
-            // Palette top-bar — back / forward / chip / dropdown.
+            // Palette top-bar — sidebar / back / forward / chip / dropdown.
+            if let Some(r) = app.rects.palette_sidebar_button
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                let _ = crate::command::run("view.toggle_tree", app);
+                return;
+            }
             if let Some(r) = app.rects.palette_back_button
                 && crate::app::dispatch::contains(r, x, y)
             {

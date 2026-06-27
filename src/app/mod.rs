@@ -2032,6 +2032,10 @@ pub struct PaneRects {
     /// top-bar. Click → `app.open_command_palette()`.
     pub palette_search_chip: Option<Rect>,
     /// Back button (`←`) in the palette top-bar — `buffer.prev`.
+    /// Sidebar (rail) toggle icon — sits left of the back/forward
+    /// arrows in the palette bar. Click → same as Ctrl+B
+    /// (view.toggle_tree).
+    pub palette_sidebar_button: Option<Rect>,
     pub palette_back_button: Option<Rect>,
     /// Forward button (`→`) in the palette top-bar — `buffer.next`.
     pub palette_forward_button: Option<Rect>,

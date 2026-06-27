@@ -1294,6 +1294,10 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
+    // Sidebar toggle (codicon: layout-sidebar-left) — sits left of
+    // the back/forward arrows. Click fires view.toggle_tree.
+    // Bright accent (cyan) when the sidebar is OPEN, muted when off.
+    let sidebar_glyph = if ascii { "|" } else { "\u{EBA6}" };
     let back_glyph = if ascii { "<" } else { "\u{EA9B}" }; // codicon: arrow-left
     let fwd_glyph = if ascii { ">" } else { "\u{EA9C}" }; // codicon: arrow-right
     let magnify = if ascii { "?" } else { "\u{F0349}" };
@@ -1327,6 +1331,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     };
 
     // Button strings — each ` glyph ` = 3 cells.
+    let sidebar_str = format!(" {sidebar_glyph} ");
     let back_str = format!(" {back_glyph} ");
     let fwd_str = format!(" {fwd_glyph} ");
     let dropdown_str = format!(" {dropdown_glyph} ");
@@ -1342,6 +1347,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let nav_enabled = app.panes.len() > 1;
     let nav_fg = if nav_enabled { t.fg } else { t.comment };
 
+    let sidebar_w = sidebar_str.chars().count() as u16;
     let back_w = back_str.chars().count() as u16;
     let fwd_w = fwd_str.chars().count() as u16;
     let dropdown_w = dropdown_str.chars().count() as u16;
@@ -1353,7 +1359,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // vs the back/forward inter-button spacing; 1 cell is the
     // narrowest meaningful separator.
     const NAV_GAP: u16 = 1;
-    let total_w = back_w + fwd_w + NAV_GAP + chip_w + dropdown_w;
+    let total_w = sidebar_w + NAV_GAP + back_w + fwd_w + NAV_GAP + chip_w + dropdown_w;
     if total_w > area.width {
         // Window too narrow for the full layout — fall back to chip only,
         // centered. Skips arrows + dropdown until there's room.
@@ -1371,6 +1377,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             chip_rect,
         );
         app.rects.palette_search_chip = Some(chip_rect);
+        app.rects.palette_sidebar_button = None;
         app.rects.palette_back_button = None;
         app.rects.palette_forward_button = None;
         app.rects.palette_dropdown_button = None;
@@ -1379,6 +1386,22 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut x = area.x + (area.width - total_w) / 2;
     let y = area.y;
+
+    // Sidebar toggle — far left of the nav cluster.
+    let sidebar_rect = Rect {
+        x,
+        y,
+        width: sidebar_w,
+        height: 1,
+    };
+    let sidebar_fg = if app.tree_visible { t.cyan } else { t.comment };
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(sidebar_str)
+            .style(Style::default().fg(sidebar_fg).bg(t.bg_dark)),
+        sidebar_rect,
+    );
+    app.rects.palette_sidebar_button = Some(sidebar_rect);
+    x += sidebar_w + NAV_GAP;
 
     // Back button.
     let back_rect = Rect {
