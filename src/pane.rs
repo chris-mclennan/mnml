@@ -535,7 +535,7 @@ impl Pane {
             Pane::SpendReport(_) => "AI spend (24h)".to_string(),
             Pane::Mount(m) => m.label.clone(),
             Pane::CloudAgentRun(p) => format!("☁ {}", p.ticket),
-            Pane::NewCloudAgentWizard(_) => "+ New Cloud Agent".to_string(),
+            Pane::NewCloudAgentWizard(_) => "+ New Agent from PR".to_string(),
         }
     }
 

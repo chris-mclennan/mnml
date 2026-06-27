@@ -2247,8 +2247,8 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.prompt_cloud_run(),
         },
         Command {
-            id: "cloud_agents.new_wizard",
-            title: "Cloud agents: open the + New Cloud Agent wizard (Tattle / Claude managed)",
+            id: "agents.new_from_pr",
+            title: "Agents: + New session from a PR (Claude Agent SDK · multi-select + action)",
             group: "view",
             keys: &[],
             run: |app| app.open_new_cloud_agent_wizard(),

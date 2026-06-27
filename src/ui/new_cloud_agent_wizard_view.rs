@@ -45,7 +45,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
 
     if y < area.y + area.height {
         let title = format!(
-            "  + New Cloud Agent (Claude Agent SDK)   ·   {}",
+            "  + New Agent from PR (Claude Agent SDK)   ·   {}",
             step_label(step)
         );
         frame.render_widget(

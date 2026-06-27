@@ -6355,6 +6355,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 crate::command::run("ai.claude_code", app);
                 return;
             }
+            if let Some(r) = app.rects.agents_panel_pr_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_new_cloud_agent_wizard();
+                return;
+            }
             // View-mode toggle chip → switch between by-status
             // and by-workspace grouping.
             if let Some(r) = app.rects.agents_panel_view_chip
@@ -6416,12 +6422,6 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(r, x, y)
             {
                 app.cloud_agents_toggle_view();
-                return;
-            }
-            if let Some(r) = app.rects.cloud_agents_new_button
-                && crate::app::dispatch::contains(r, x, y)
-            {
-                app.open_new_cloud_agent_wizard();
                 return;
             }
             if let Some(r) = app.rects.cloud_agents_filter_input

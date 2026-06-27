@@ -2065,9 +2065,6 @@ pub struct PaneRects {
     /// Click rects inside the NewCloudAgentWizard pane (radios +
     /// Back/Next buttons). Cleared per-frame.
     pub new_cloud_agent_wizard_hits: Vec<(Rect, crate::ui::new_cloud_agent_wizard_view::WizardHit)>,
-    /// Click rect for the "+ New Cloud Agent" button in the Cloud
-    /// Agents panel header.
-    pub cloud_agents_new_button: Option<Rect>,
     /// Click rects for the two tabs ([Installed] [Marketplace])
     /// at the top of the integrations discovery overlay. Empty when
     /// the overlay is closed.
@@ -2127,6 +2124,12 @@ pub struct PaneRects {
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
     pub agents_panel_new_chip: Option<Rect>,
+    /// Click rect for the secondary "+ from PR" chip in the Agents
+    /// panel header — opens the new-agent wizard (Claude Agent SDK
+    /// + PR multi-select + action template). Sits next to the
+    /// existing "+ New session" chip that fires a single Claude
+    /// Code session.
+    pub agents_panel_pr_chip: Option<Rect>,
     /// Click rect for the view-mode toggle (`status` ↔ `workspace`)
     /// in the panel header.
     pub agents_panel_view_chip: Option<Rect>,
@@ -9467,7 +9470,7 @@ impl App {
             Pane::SpendReport(_) => Some(("AI spend (24h)".to_string(), false)),
             Pane::Mount(m) => Some((m.label.clone(), false)),
             Pane::CloudAgentRun(p) => Some((format!("☁ {}", p.ticket), false)),
-            Pane::NewCloudAgentWizard(_) => Some(("+ New Cloud Agent".to_string(), false)),
+            Pane::NewCloudAgentWizard(_) => Some(("+ New Agent from PR".to_string(), false)),
         }
     }
 

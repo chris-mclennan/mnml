@@ -61,6 +61,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     app.rects.agents_panel_rows.clear();
     app.rects.agents_panel_new_chip = None;
+    app.rects.agents_panel_pr_chip = None;
     app.rects.agents_panel_filter_input = None;
     app.rects.agents_panel_view_chip = None;
     app.rects.agents_panel_workspace_headers.clear();
@@ -158,21 +159,49 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             width: area.width,
             height: 1,
         };
+        // Two chips on the row: "+ New session" + "+ from PR".
+        // The first fires a single Claude Code session in the
+        // workspace; the second opens the wizard that picks PRs
+        // and fires one session per checked PR.
+        let new_chip_text = " + New session ";
+        let pr_chip_text = " + from PR ";
+        let new_w = new_chip_text.chars().count() as u16;
+        let pr_w = pr_chip_text.chars().count() as u16;
+        let pad = (area.width as usize).saturating_sub(1 + new_w as usize + 1 + pr_w as usize + 1);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
-                    "+ New session ",
+                    new_chip_text.to_string(),
                     Style::default()
-                        .fg(t.green)
-                        .bg(bg)
+                        .fg(t.bg_darker)
+                        .bg(t.green)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled("(Claude · Codex)", Style::default().fg(t.comment).bg(bg)),
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    pr_chip_text.to_string(),
+                    Style::default()
+                        .fg(t.bg_darker)
+                        .bg(t.cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
             ])),
             new_rect,
         );
-        app.rects.agents_panel_new_chip = Some(new_rect);
+        app.rects.agents_panel_new_chip = Some(Rect {
+            x: area.x + 1,
+            y,
+            width: new_w,
+            height: 1,
+        });
+        app.rects.agents_panel_pr_chip = Some(Rect {
+            x: area.x + 1 + new_w + 1,
+            y,
+            width: pr_w,
+            height: 1,
+        });
         y += 1;
     }
 

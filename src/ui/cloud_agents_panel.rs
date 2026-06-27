@@ -48,7 +48,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.cloud_agents_rows.clear();
     app.rects.cloud_agents_filter_input = None;
     app.rects.cloud_agents_view_chip = None;
-    app.rects.cloud_agents_new_button = None;
 
     let mut y = area.y;
     let header_row = Rect {
@@ -136,29 +135,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 1;
     }
 
-    // "+ New Cloud Agent" button — opens the wizard pane.
-    if y < area.y + area.height {
-        let btn_text = " + New Cloud Agent ";
-        let btn_w = btn_text.chars().count() as u16;
-        let btn_rect = Rect {
-            x: area.x + 2,
-            y,
-            width: btn_w,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                btn_text.to_string(),
-                Style::default()
-                    .fg(t.bg_dark)
-                    .bg(t.green)
-                    .add_modifier(Modifier::BOLD),
-            ))),
-            btn_rect,
-        );
-        app.rects.cloud_agents_new_button = Some(btn_rect);
-        y += 2; // gap before content
-    }
+    y += 1; // gap before content. The "+ New Cloud Agent" button
+    // that previously lived here was moved to the Agents panel
+    // (Claude Agent SDK + local runner is a LOCAL agent concept;
+    // Cloud Agents is reserved for runner-dispatched jobs like
+    // Tattle QWE / managed agents / Docker / ECS).
 
     // Cold-start placeholder.
     if app.agents_panel_built_at.is_none() && y < area.y + area.height {
