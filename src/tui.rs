@@ -5758,10 +5758,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                // 2026-06-22 — double-click on a per-leaf tab
-                // promotes a preview tab to a permanent one
-                // (matches bufferline-tab double-click). Re-uses
-                // `App::last_click` for the timing.
+                // 2026-06-27 — arm a drag like the bufferline tab
+                // handler does, so per-leaf tabs are also
+                // drag-to-split / drag-to-move. Without this,
+                // a click on a per-leaf tab activated the tab
+                // and returned, never setting bufferline_drag_tab,
+                // so subsequent Drag / Moved events did nothing.
+                // The bufferline_drag_tab field doubles as the
+                // drag-source for both global bufferline AND
+                // per-leaf strips — the pane id is the same.
+                app.rects.bufferline_drag_tab = Some(tab_pane);
+                // Switch the visible tab immediately so the click
+                // also activates as the user expects. The mouse-up
+                // handler will still see bufferline_drag_tab Some
+                // and route through drop / reveal logic.
                 let now = std::time::Instant::now();
                 let is_double = matches!(
                     app.last_click,
