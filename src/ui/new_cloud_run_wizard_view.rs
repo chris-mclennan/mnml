@@ -73,10 +73,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         y += 2;
     }
 
-    let body_h = (area.y + area.height).saturating_sub(y + 3);
-    if body_h == 0 {
+    // Size the body to fit exactly what the step needs — no
+    // padding to the pane bottom. The footer (Back/Next) sits
+    // right after the body so the user's eye doesn't have to
+    // travel to the bottom of a tall pane.
+    let max_body_h = (area.y + area.height).saturating_sub(y + 3);
+    if max_body_h == 0 {
         return;
     }
+    let needed = step_content_rows(step);
+    let body_h = needed.min(max_body_h);
     let body = Rect {
         x: area.x,
         y,
@@ -92,9 +98,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         CloudRunStep::Review => draw_step_review(frame, app, body, pane_id),
     }
 
-    // Footer
-    let footer_y = area.y + area.height - 2;
-    let hint_y = area.y + area.height - 1;
+    // Footer sits ONE blank row below the body, not at the pane
+    // bottom. If the pane is short, clamp to keep buttons visible.
+    let after_body = y + body_h + 1;
+    let pane_end = area.y + area.height;
+    let footer_y = after_body.min(pane_end.saturating_sub(2));
+    let hint_y = (footer_y + 1).min(pane_end.saturating_sub(1));
     let back_chip = " ← Back ";
     let next_label = if matches!(step, CloudRunStep::Review) {
         " Submit ✓ "
@@ -155,6 +164,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
             height: 1,
         },
     );
+}
+
+/// How many rows the body of each step actually fills. Used to
+/// shrink the body Rect so the Back/Next chips sit right under
+/// the choices instead of way down at the pane bottom.
+fn step_content_rows(s: CloudRunStep) -> u16 {
+    match s {
+        // 2 radio rows
+        CloudRunStep::Runner => 2,
+        // 2 radio rows + 1 blank + 1 input row
+        CloudRunStep::ManagedAgent => 4,
+        // 3 radio rows
+        CloudRunStep::ManagedSandbox => 3,
+        // 1 hint + 1 blank + 1 input row
+        CloudRunStep::QweTicket => 3,
+        // 1 hint + 1 blank + 1 input row
+        CloudRunStep::Prompt => 3,
+        // 4-5 summary rows (Tattle = 5, Managed = 4); use the max
+        CloudRunStep::Review => 5,
+    }
 }
 
 fn step_label(s: CloudRunStep) -> &'static str {
