@@ -2354,6 +2354,19 @@ pub struct PaneRects {
     /// the click handler can target the right leaf in the layout
     /// tree). Cleared + repopulated every frame by render_layout.
     pub split_tab_chips: Vec<(Rect, PaneId, PaneId)>,
+    /// Bounding rect of each per-leaf tab strip — `(rect,
+    /// leaf_active_pane)`. Records the full strip area, including
+    /// the empty space past the last chip. Used as a drop target
+    /// for tab drags: cursor over a strip → insert the dragged
+    /// tab into that leaf at the cursor's position (Chrome /
+    /// VS Code tab-bar drop). Cleared + repopulated each frame.
+    pub split_tab_strip_areas: Vec<(Rect, PaneId)>,
+    /// Insertion position hint while a tab drag hovers a strip.
+    /// `(strip_rect, insertion_x, leaf_active, insert_idx)`. The
+    /// renderer paints a thin vertical bar at `insertion_x` so the
+    /// user sees exactly where the dropped tab will land. None when
+    /// not over a strip.
+    pub tab_insert_hint: Option<(Rect, u16, PaneId, usize)>,
     /// Per-split tab close `×` chips. Same shape: (rect,
     /// leaf_active, tab_pane). Click → close that tab.
     pub split_tab_close: Vec<(Rect, PaneId, PaneId)>,

@@ -96,6 +96,125 @@ impl App {
     /// right-click "Split right/down/left/up" menu items. Needs a
     /// surviving sibling tab in the current leaf — splitting a
     /// solo tab off itself is a no-op (just leaves an empty leaf).
+    /// Drop a dragged tab onto a tab strip (Chrome / VS Code tab-bar
+    /// drop). Finds the strip under `(x, y)`, computes the insert
+    /// index from the cursor's x position relative to chips on
+    /// that strip, and moves `src` into the strip's leaf at that
+    /// index. Falls back to no-op when not over any strip.
+    /// Returns true when the drop landed.
+    pub fn drop_tab_on_strip(&mut self, src: PaneId, x: u16, y: u16) -> bool {
+        // Hit the strip first.
+        let strip_hit = self
+            .rects
+            .split_tab_strip_areas
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .copied();
+        let Some((_strip_rect, leaf_active)) = strip_hit else {
+            return false;
+        };
+        let insert_idx = self.tab_strip_insert_idx(leaf_active, x);
+        // Remove src from wherever it lives, then insert at idx.
+        self.layout_mut().remove_leaf(src);
+        if let Some((_active, tabs)) = self.layout_mut().active_leaf_mut(leaf_active) {
+            // Clamp index since remove_leaf may have shifted things.
+            let idx = insert_idx.min(tabs.len());
+            // Avoid double-insert if src is somehow already there.
+            if !tabs.contains(&src) {
+                tabs.insert(idx, src);
+            }
+        } else {
+            // Target leaf vanished — fall back to making src the
+            // visible leaf so we don't leave it orphaned.
+            self.layout_mut()
+                .replace_leaf(leaf_active, Layout::leaf(src));
+        }
+        // Flip the leaf's active to src so the drop is visible.
+        if let Some((active, _tabs)) = self.layout_mut().active_leaf_mut(leaf_active) {
+            *active = src;
+        }
+        self.active = Some(src);
+        self.focus = Focus::Pane;
+        true
+    }
+
+    /// Compute the insert index for a tab dropping at cursor `x`
+    /// on the strip belonging to `leaf_active`. Walks the strip's
+    /// chips in left-to-right order; the insert position is
+    /// "before the first chip whose center is to the right of x"
+    /// (or `tabs.len()` if no such chip — i.e. append).
+    pub(crate) fn tab_strip_insert_idx(&self, leaf_active: PaneId, x: u16) -> usize {
+        let mut chips: Vec<(u16, PaneId)> = self
+            .rects
+            .split_tab_chips
+            .iter()
+            .filter_map(|(r, leaf, pane)| {
+                if *leaf == leaf_active {
+                    Some((r.x + r.width / 2, *pane))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        chips.sort_by_key(|(cx, _)| *cx);
+        // Find the leaf's actual tab order so insert_idx maps to
+        // the right position. The chips are stored in render
+        // order which matches the tab vec.
+        let mut idx = 0;
+        for (cx, _pid) in &chips {
+            if x < *cx {
+                return idx;
+            }
+            idx += 1;
+        }
+        idx
+    }
+
+    /// Update `tab_insert_hint` while a tab drag is in flight.
+    /// Called from the Drag / Moved handlers. Sets None when the
+    /// cursor isn't over any strip.
+    pub fn update_tab_insert_hint(&mut self, x: u16, y: u16) {
+        let strip_hit = self
+            .rects
+            .split_tab_strip_areas
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .copied();
+        let Some((strip_rect, leaf_active)) = strip_hit else {
+            self.rects.tab_insert_hint = None;
+            return;
+        };
+        let idx = self.tab_strip_insert_idx(leaf_active, x);
+        // Pick the insertion-x: midpoint between the chip before
+        // idx and the chip at idx. For idx==0 → left edge of strip.
+        // For idx==len → right of the last chip.
+        let mut chips: Vec<u16> = self
+            .rects
+            .split_tab_chips
+            .iter()
+            .filter(|(_, leaf, _)| *leaf == leaf_active)
+            .map(|(r, _, _)| r.x + r.width)
+            .collect();
+        chips.sort();
+        let insertion_x = if idx == 0 {
+            strip_rect.x
+        } else if idx >= chips.len() {
+            chips.last().copied().unwrap_or(strip_rect.x)
+        } else {
+            let prev_end = chips[idx - 1];
+            let next_start = self
+                .rects
+                .split_tab_chips
+                .iter()
+                .filter(|(_, leaf, _)| *leaf == leaf_active)
+                .map(|(r, _, _)| r.x)
+                .min()
+                .unwrap_or(strip_rect.x);
+            (prev_end + next_start) / 2
+        };
+        self.rects.tab_insert_hint = Some((strip_rect, insertion_x, leaf_active, idx));
+    }
+
     pub fn split_tab_into(&mut self, src: PaneId, zone: DropZone) {
         // Need a sibling tab in the same leaf — splitting solo
         // would leave an empty leaf. Bail with a toast in that case.

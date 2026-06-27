@@ -600,6 +600,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // clicks would target deleted leaves.
     app.rects.split_tab_chips.clear();
     app.rects.split_tab_close.clear();
+    app.rects.split_tab_strip_areas.clear();
+    app.rects.tab_insert_hint = None;
     // Note: `split_strip_buttons` / `split_strip_term_buttons` are
     // NOT cleared here — they were cleared earlier in ui::draw,
     // before `bufferline::draw` populated them for the single-leaf
@@ -632,6 +634,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // that the drag is in flight (the drop-zone overlay alone is
     // easy to miss when the cursor is far from any pane edge).
     draw_tab_drag_ghost(frame, app);
+    // Insertion bar — thin vertical line at the position the
+    // dragged tab will land if dropped on a strip. Painted after
+    // the ghost so it sits on top.
+    draw_tab_insert_hint(frame, app);
 
     // Scratch terminal strip — paints below the body. Resizes the pty
     // so the shell knows about the new viewport.
@@ -824,6 +830,13 @@ fn render_layout(
                     width: area.width,
                     height: 1,
                 };
+                // Record the strip's bounding rect so tab drags
+                // can drop ONTO the strip — inserting the dragged
+                // tab into this leaf at the cursor's x position.
+                // Matches Chrome / VS Code tab-bar drop. The
+                // `pane_id` keys the strip to its leaf so the
+                // drop handler can find the right tab list.
+                app.rects.split_tab_strip_areas.push((strip, *id));
                 paint_leaf_tab_strip(frame, app, *id, &tabs_owned, strip, focused);
                 ratatui::layout::Rect {
                     x: area.x,
@@ -967,6 +980,39 @@ fn render_layout(
 /// chip showing the file's name near the cursor while the drag
 /// is armed and the mouse is past the origin row. Cleared
 /// automatically when `tree_drag` clears on mouse-up.
+/// Paint a thin cyan vertical bar at the insertion-x recorded in
+/// `tab_insert_hint`. Shows where the dragged tab will land when
+/// dropped on a strip. Tracks both the strip rect (for clipping)
+/// and the insertion x (where to paint).
+fn draw_tab_insert_hint(frame: &mut Frame, app: &App) {
+    use ratatui::style::Style;
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Paragraph;
+    let Some((strip_rect, insertion_x, _leaf, _idx)) = app.rects.tab_insert_hint else {
+        return;
+    };
+    if app.rects.bufferline_drag_tab.is_none() {
+        return;
+    }
+    let t = theme::cur();
+    let bar_x = insertion_x
+        .max(strip_rect.x)
+        .min(strip_rect.x + strip_rect.width.saturating_sub(1));
+    let bar_rect = Rect {
+        x: bar_x,
+        y: strip_rect.y,
+        width: 1,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "│".to_string(),
+            Style::default().fg(t.cyan),
+        ))),
+        bar_rect,
+    );
+}
+
 /// Floating chip showing the dragged tab's label, painted near
 /// the cursor while a bufferline tab drag is in flight. Same
 /// pattern as `draw_tree_drag_ghost`. Off when no drag.

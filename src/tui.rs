@@ -4412,6 +4412,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if app.rects.bufferline_drag_tab.is_some() {
             app.rects.bufferline_drag_ghost = Some((x, y));
             app.update_tab_drop_target(x, y);
+            app.update_tab_insert_hint(x, y);
         }
         let new_chip = crate::app::dispatch::hover_chip_at(app, x, y);
         let prev_chip = app.hover_chip.map(|(c, _)| c);
@@ -6854,6 +6855,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             if app.rects.bufferline_drag_tab.is_some() {
                 app.rects.bufferline_drag_ghost = Some((x, y));
                 app.update_tab_drop_target(x, y);
+                app.update_tab_insert_hint(x, y);
                 return;
             }
             if let Some(mut drag) = app.rail_section_drag {
@@ -7142,17 +7144,28 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // promotes a preview tab to a regular tab (the italic
             // becomes plain). Single click just reveals.
             if let Some(src) = app.rects.bufferline_drag_tab {
-                // Clear the ghost — mouse-up ends the drag visually
-                // regardless of which branch we take.
+                // Clear visuals first.
                 app.rects.bufferline_drag_ghost = None;
+                app.rects.tab_insert_hint = None;
+                // Released on a per-leaf tab strip → insert at the
+                // computed position. Tries this BEFORE other drop
+                // handlers so the strip area wins over the pane
+                // body just below it (drag-to-pane-body would
+                // otherwise split unintentionally).
+                if app.drop_tab_on_strip(src, x, y) {
+                    app.rects.bufferline_drag_tab = None;
+                    app.rects.tab_drop_target = None;
+                    return;
+                }
                 let over_body = app
                     .rects
                     .pane_bodies
                     .iter()
                     .any(|(r, _)| crate::app::dispatch::contains(*r, x, y));
-                // Released over a different tab → swap. (Moved here
-                // from the Drag handler so 2+ tab strips stop
-                // thrashing during the drag.)
+                // Released over a different bufferline tab → swap
+                // (kept as fallback for the single-leaf bufferline
+                // strip; per-leaf strips go through drop_tab_on_strip
+                // above which is positional).
                 let dst_tab = app
                     .rects
                     .bufferline_tabs
