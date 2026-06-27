@@ -1472,6 +1472,30 @@ fn builtin_commands() -> Vec<Command> {
                 app.integration_section_expanded = !app.integration_section_expanded;
             },
         },
+        // External-tool launchers: run if installed, else toast
+        // `brew install <pkg>`. Match the integration_icon commands
+        // (`:tools.htop` etc. — see config.rs default seeds).
+        Command {
+            id: "tools.htop",
+            title: "Tools: open htop (or hint brew install)",
+            group: "tools",
+            keys: &[],
+            run: |app| app.run_external_tool("htop"),
+        },
+        Command {
+            id: "tools.iftop",
+            title: "Tools: open iftop (or hint brew install)",
+            group: "tools",
+            keys: &[],
+            run: |app| app.run_external_tool("iftop"),
+        },
+        Command {
+            id: "tools.btop",
+            title: "Tools: open btop (or hint brew install)",
+            group: "tools",
+            keys: &[],
+            run: |app| app.run_external_tool("btop"),
+        },
         Command {
             id: "integrations.add",
             title: "Integrations: discover + add family siblings (opens overlay)",

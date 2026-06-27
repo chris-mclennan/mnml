@@ -7621,6 +7621,31 @@ impl App {
         self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(cwd)));
     }
 
+    /// External-tool launcher — htop / iftop / btop / etc. If the
+    /// binary is on PATH, opens it in a Pty pane; otherwise toasts
+    /// a `brew install <pkg>` hint. Wired to `:tools.<id>` palette
+    /// commands and to the integration_icon chips.
+    pub fn run_external_tool(&mut self, id: &str) {
+        let Some(tool) = crate::tools::EXTERNAL_TOOLS.iter().find(|t| t.id == id) else {
+            self.toast(format!("tools: unknown tool `{id}`"));
+            return;
+        };
+        if crate::tools::is_on_path(tool.binary) {
+            let ws = self.active_workspace_path().to_path_buf();
+            self.open_pty(crate::pty_pane::BinaryProfile::task(
+                "tools",
+                tool.binary,
+                ws,
+            ));
+            return;
+        }
+        self.toast(format!(
+            "{label}: not installed. Try `brew install {pkg}`",
+            label = tool.label,
+            pkg = tool.brew_pkg
+        ));
+    }
+
     /// Spawn a new pty session as a *tab* of the pty pane `strip_owner`
     /// — no split. The new session takes over `strip_owner`'s leaf;
     /// `strip_owner` becomes a background pane reachable via the tab

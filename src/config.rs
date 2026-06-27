@@ -898,7 +898,7 @@ impl Default for Config {
                         id: "htop".to_string(),
                         glyph: "\u{F085A}".to_string(), // nf-md-monitor_dashboard
                         fallback: "ht".to_string(),
-                        command: ":tools.htop".to_string(),
+                        command: "tools.htop".to_string(),
                         color: "green".to_string(),
                         tooltip: Some("htop — interactive process viewer".to_string()),
                         enabled: false,
@@ -907,11 +907,22 @@ impl Default for Config {
                         id: "iftop".to_string(),
                         glyph: "\u{F048D}".to_string(), // nf-md-network
                         fallback: "if".to_string(),
-                        command: ":tools.iftop".to_string(),
+                        command: "tools.iftop".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some(
                             "iftop — interactive bandwidth monitor (needs raw-socket privs)"
                                 .to_string(),
+                        ),
+                        enabled: false,
+                    },
+                    IntegrationIcon {
+                        id: "btop".to_string(),
+                        glyph: "\u{F085F}".to_string(), // nf-md-monitor_eye (resource monitor look)
+                        fallback: "bt".to_string(),
+                        command: "tools.btop".to_string(),
+                        color: "purple".to_string(),
+                        tooltip: Some(
+                            "btop — resource monitor (cpu / mem / disk / net)".to_string(),
                         ),
                         enabled: false,
                     },

@@ -217,6 +217,43 @@ pub const KNOWN_TOOLS: &[ToolEntry] = &[
     },
 ];
 
+/// External terminal-app catalog — htop, iftop, btop, etc. These
+/// are visible-binary tools the user runs interactively; the
+/// integration_icon's `:tools.<id>` command fires
+/// `App::run_external_tool(id)`, which either opens the binary in
+/// a Pty pane or toasts a `brew install` hint.
+///
+/// Kept separate from `KNOWN_TOOLS` (LSP/fmt/lint installed-state
+/// indicators) — same shape, but a different runtime gesture.
+pub struct ExternalTool {
+    pub id: &'static str,
+    pub binary: &'static str,
+    /// Homebrew formula name — usually the same as `binary`.
+    pub brew_pkg: &'static str,
+    pub label: &'static str,
+}
+
+pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
+    ExternalTool {
+        id: "htop",
+        binary: "htop",
+        brew_pkg: "htop",
+        label: "htop — interactive process viewer",
+    },
+    ExternalTool {
+        id: "iftop",
+        binary: "iftop",
+        brew_pkg: "iftop",
+        label: "iftop — interactive bandwidth monitor",
+    },
+    ExternalTool {
+        id: "btop",
+        binary: "btop",
+        brew_pkg: "btop",
+        label: "btop — resource monitor (cpu / mem / disk / net)",
+    },
+];
+
 /// Check whether `bin` is on `$PATH`. Walks PATH directories looking
 /// for a file matching `bin` (case-sensitive on Unix; honors `.exe` on
 /// Windows). Returns `true` on first hit.
