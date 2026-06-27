@@ -181,7 +181,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-codebuild",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-codebuild",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "AWS CodeBuild project + build viewer",
         icon: IconTemplate {
             glyph: "\u{F0E7B}", // nf-md-package_variant
@@ -215,7 +215,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-amplify",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-amplify",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Amplify apps + branches + deploy jobs",
         icon: IconTemplate {
             glyph: "\u{F087D}", // nf-md-rocket-launch
@@ -229,7 +229,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-lambda",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-lambda",
-        pinned_version: "v0.3.0",
+        pinned_version: "main",
         one_liner: "Lambda functions + env/concurrency/tracing detail + log-tail",
         icon: IconTemplate {
             glyph: "\u{F0EBF}",
@@ -243,7 +243,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-eventbridge",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-eventbridge",
-        pinned_version: "v0.2.0",
+        pinned_version: "main",
         one_liner: "EventBridge buses + rules + per-rule targets",
         icon: IconTemplate {
             glyph: "\u{F0CE0}",
@@ -257,7 +257,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-rds",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-rds",
-        pinned_version: "v0.2.0",
+        pinned_version: "main",
         one_liner: "RDS DB instances + Aurora clusters + log-tail handoff",
         icon: IconTemplate {
             glyph: "\u{F1C0}", // nf-fa-database
@@ -271,7 +271,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-ecs",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-ecs",
-        pinned_version: "v0.2.0",
+        pinned_version: "main",
         one_liner: "ECS clusters + services + log-tail handoff to cloudwatch-logs",
         icon: IconTemplate {
             glyph: "\u{F0F12}", // nf-md-server
@@ -285,7 +285,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-ecr",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-ecr",
-        pinned_version: "v0.2.0",
+        pinned_version: "main",
         one_liner: "ECR images + scan findings + critical/high color cues",
         icon: IconTemplate {
             glyph: "\u{F03D7}", // nf-md-archive
@@ -299,7 +299,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-cognito",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-cognito",
-        pinned_version: "v0.2.0",
+        pinned_version: "main",
         one_liner: "Cognito User Pool + users with `/` search/filter",
         icon: IconTemplate {
             glyph: "\u{F0004}", // nf-md-account_circle
@@ -313,7 +313,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-sqs",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-sqs",
-        pinned_version: "v0.2.0",
+        pinned_version: "main",
         one_liner: "SQS queues + DLQ correlation (↑/↓ chips)",
         icon: IconTemplate {
             glyph: "\u{F09FE}", // nf-md-mailbox_outline
@@ -327,7 +327,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-aws-sns",
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-sns",
-        pinned_version: "v0.3.0",
+        pinned_version: "main",
         one_liner: "SNS topics + subs · L handoff to SQS/Lambda · P publish test",
         icon: IconTemplate {
             glyph: "\u{F0A0F}", // nf-md-bullhorn_outline
@@ -345,7 +345,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mixr",
         category: Category::Music,
         repo_url: "https://github.com/chris-mclennan/mixr-rs",
-        pinned_version: "v0.1.3",
+        pinned_version: "main",
         one_liner: "Family DJ app — Pty pane",
         icon: IconTemplate {
             glyph: "\u{F075A}", // nf-md-music_note
@@ -360,7 +360,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-fs-s3",
         category: Category::Fs,
         repo_url: "https://github.com/chris-mclennan/mnml-fs-s3",
-        pinned_version: "v0.2.3",
+        pinned_version: "main",
         one_liner: "Amazon S3 bucket + object browser",
         icon: IconTemplate {
             glyph: "\u{F0162}", // nf-md-bucket_outline
@@ -374,7 +374,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-fs-azure-blob",
         category: Category::Fs,
         repo_url: "https://github.com/chris-mclennan/mnml-fs-azure-blob",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Azure Blob Storage accounts + containers + blobs",
         icon: IconTemplate {
             glyph: "\u{F0805}", // nf-md-microsoft_azure
@@ -389,7 +389,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-db-dynamodb",
         category: Category::Db,
         repo_url: "https://github.com/chris-mclennan/mnml-db-dynamodb",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "DynamoDB table browser (scan-based)",
         icon: IconTemplate {
             glyph: "\u{F1C0}", // nf-fa-database
@@ -404,7 +404,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-forge-bitbucket",
         category: Category::Forge,
         repo_url: "https://github.com/chris-mclennan/mnml-forge-bitbucket",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Bitbucket PR + pipeline viewer",
         icon: IconTemplate {
             glyph: "\u{F0CB1}",
@@ -418,7 +418,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-forge-github",
         category: Category::Forge,
         repo_url: "https://github.com/chris-mclennan/mnml-forge-github",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "GitHub PR + Actions viewer",
         icon: IconTemplate {
             glyph: "\u{F02A4}",
@@ -432,7 +432,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-forge-gitlab",
         category: Category::Forge,
         repo_url: "https://github.com/chris-mclennan/mnml-forge-gitlab",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "GitLab MR + pipeline viewer",
         icon: IconTemplate {
             glyph: "\u{F0BA3}",
@@ -446,7 +446,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-forge-azdevops",
         category: Category::Forge,
         repo_url: "https://github.com/chris-mclennan/mnml-forge-azdevops",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Azure DevOps PR + pipeline viewer",
         icon: IconTemplate {
             glyph: "\u{F0805}",
@@ -461,7 +461,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-tracker-jira",
         category: Category::Tracker,
         repo_url: "https://github.com/chris-mclennan/mnml-tracker-jira",
-        pinned_version: "v0.2.0",
+        pinned_version: "main",
         one_liner: "Jira ticket browser (JQL + auto-resolved tabs)",
         icon: IconTemplate {
             glyph: "\u{F0824}",
@@ -475,7 +475,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-tracker-linear",
         category: Category::Tracker,
         repo_url: "https://github.com/chris-mclennan/mnml-tracker-linear",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Linear issue browser",
         icon: IconTemplate {
             glyph: "\u{F12F2}",
@@ -490,7 +490,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-test-playwright",
         category: Category::Test,
         repo_url: "https://github.com/chris-mclennan/mnml-test-playwright",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Playwright trace viewer",
         icon: IconTemplate {
             glyph: "\u{F0E66}",
@@ -504,7 +504,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-test-cypress",
         category: Category::Test,
         repo_url: "https://github.com/chris-mclennan/mnml-test-cypress",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Cypress mochawesome result viewer",
         icon: IconTemplate {
             glyph: "\u{F0E66}",
@@ -540,7 +540,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-obs-datadog",
         category: Category::Obs,
         repo_url: "https://github.com/chris-mclennan/mnml-obs-datadog",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Datadog monitors + dashboards + logs + incidents",
         icon: IconTemplate {
             glyph: "\u{F1A0F}", // nf-md-dog
@@ -555,7 +555,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-msg-buttondown",
         category: Category::Msg,
         repo_url: "https://github.com/chris-mclennan/mnml-msg-buttondown",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Buttondown newsletter — drafts + sent + subscribers",
         icon: IconTemplate {
             glyph: "\u{F0EB1}", // nf-md-email_newsletter
@@ -569,7 +569,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-msg-slack",
         category: Category::Msg,
         repo_url: "https://github.com/chris-mclennan/mnml-msg-slack",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Slack — channels + DMs + threads + search + post",
         icon: IconTemplate {
             glyph: "\u{F03EF}", // nf-md-slack
@@ -583,7 +583,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-msg-teams",
         category: Category::Msg,
         repo_url: "https://github.com/chris-mclennan/mnml-msg-teams",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Microsoft Teams — teams + chats + threads + search + post",
         icon: IconTemplate {
             glyph: "\u{F0FA1}", // nf-md-microsoft_teams
@@ -597,7 +597,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-msg-mandrill",
         category: Category::Msg,
         repo_url: "https://github.com/chris-mclennan/mnml-msg-mandrill",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Mandrill — transactional email messages + templates + tags",
         icon: IconTemplate {
             glyph: "\u{F01EF}", // nf-md-email_check_outline
@@ -611,7 +611,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-msg-gmail",
         category: Category::Msg,
         repo_url: "https://github.com/chris-mclennan/mnml-msg-gmail",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Gmail — inbox + sent + labels + search + compose",
         icon: IconTemplate {
             glyph: "\u{F03BC}", // nf-md-gmail
@@ -626,7 +626,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-cdn-cloudflare",
         category: Category::Cdn,
         repo_url: "https://github.com/chris-mclennan/mnml-cdn-cloudflare",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Cloudflare — zones + DNS + Workers + Pages + security events",
         icon: IconTemplate {
             glyph: "\u{F0E7B}", // nf-md-cloud_outline (Cloudflare's brand glyph isn't in nerd fonts)
@@ -646,7 +646,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-tattle-inbox",
         category: Category::Tattle,
         repo_url: "https://github.com/chris-mclennan/mnml-tattle-inbox",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Tattle email + SMS test inbox (dev/staging — INTERNAL)",
         icon: IconTemplate {
             glyph: "\u{F01F0}", // nf-md-email_search_outline
@@ -679,7 +679,7 @@ pub const CATALOG: &[FamilySibling] = &[
         binary: "mnml-virt-docker",
         category: Category::Virt,
         repo_url: "https://github.com/chris-mclennan/mnml-virt-docker",
-        pinned_version: "v0.1.0",
+        pinned_version: "main",
         one_liner: "Docker — containers + images + volumes + networks + compose",
         icon: IconTemplate {
             glyph: "\u{F0868}", // nf-md-docker
