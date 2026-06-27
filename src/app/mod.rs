@@ -29,6 +29,7 @@ mod cdp;
 mod context_menus;
 mod dap;
 pub(crate) mod discovery;
+pub use discovery::DiscoveryTab;
 pub(crate) mod dispatch;
 mod ex_commands;
 mod find;
@@ -2031,6 +2032,10 @@ pub struct PaneRects {
     /// Click target for the `▾` dropdown chevron next to the
     /// workspace name. Toggles `App::workspace_picker_open`.
     pub workspace_picker_chevron: Option<Rect>,
+    /// Click rects for the two tabs ([Installed] [Marketplace])
+    /// at the top of the integrations discovery overlay. Empty when
+    /// the overlay is closed.
+    pub discovery_tab_chips: Vec<(Rect, crate::app::DiscoveryTab)>,
     /// Click rect for the workspace NAME (not the chevron) in the
     /// file-tree header. In multi-repo workspaces, clicking the
     /// name opens the repo picker; in single-repo workspaces, it

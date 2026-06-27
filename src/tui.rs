@@ -1592,6 +1592,9 @@ fn handle_discovery_overlay_key(app: &mut App, key: KeyEvent) {
         // user fills in id + command + glyph + color + fallback +
         // tooltip from scratch.
         KeyCode::Char('a') => app.open_integration_edit_add_custom(),
+        // `t` flips between Installed and Marketplace tabs at the
+        // top of the overlay.
+        KeyCode::Char('t') => app.discovery_toggle_tab(),
         _ => {}
     }
 }
@@ -4331,6 +4334,22 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             MouseEventKind::ScrollUp => app.discovery_move_row(-1),
             MouseEventKind::ScrollDown => app.discovery_move_row(1),
             MouseEventKind::Down(MouseButton::Left) => {
+                // Tab chip click first — flips Installed ↔ Marketplace.
+                let chip_hit = app
+                    .rects
+                    .discovery_tab_chips
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                    .map(|(_, tab)| *tab);
+                if let Some(tab) = chip_hit {
+                    if let Some(o) = app.discovery_overlay.as_mut()
+                        && o.tab != tab
+                    {
+                        o.tab = tab;
+                        o.selected_row = 0;
+                    }
+                    return;
+                }
                 let row_hit = app
                     .rects
                     .discovery_integration_rows

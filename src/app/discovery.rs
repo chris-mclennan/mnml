@@ -35,6 +35,41 @@ pub struct DiscoveryOverlayState {
     /// it in `Edit` mode; selecting the `[+ Add custom integration]`
     /// row at the top opens it in `AddCustom` mode.
     pub edit_panel: Option<IntegrationEditState>,
+    /// Which view is showing — `Installed` shows only siblings
+    /// you've installed (and the `+ Add custom` row), `Marketplace`
+    /// shows the full catalog (everything you could install). User
+    /// flips via the chips at the top of the overlay. Default is
+    /// Installed because that's what you most often want to act on
+    /// (open / configure / pin to rail).
+    pub tab: DiscoveryTab,
+}
+
+/// View modes for the integrations discovery overlay.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum DiscoveryTab {
+    /// Only siblings whose binary is on PATH. Lets users see what's
+    /// active without scrolling through the full catalog.
+    #[default]
+    Installed,
+    /// Full catalog — everything offered by the family + any
+    /// discovered uncataloged tools. The "browse what's available"
+    /// view.
+    Marketplace,
+}
+
+impl DiscoveryTab {
+    pub fn toggled(self) -> Self {
+        match self {
+            DiscoveryTab::Installed => DiscoveryTab::Marketplace,
+            DiscoveryTab::Marketplace => DiscoveryTab::Installed,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            DiscoveryTab::Installed => "Installed",
+            DiscoveryTab::Marketplace => "Marketplace",
+        }
+    }
 }
 
 impl DiscoveryOverlayState {
@@ -42,6 +77,7 @@ impl DiscoveryOverlayState {
         Self {
             selected_row: 0,
             edit_panel: None,
+            tab: DiscoveryTab::default(),
         }
     }
 }
@@ -195,6 +231,14 @@ pub fn build_items(app: &App) -> Vec<DiscoveryItem> {
         }
     }
 
+    // 2026-06-27 — when the user is on the Installed tab, filter
+    // out anything they haven't installed. Marketplace tab shows
+    // everything (the catalog browser).
+    let tab = app
+        .discovery_overlay
+        .as_ref()
+        .map(|o| o.tab)
+        .unwrap_or_default();
     let mut out = Vec::with_capacity(family_catalog::CATALOG.len() + 8);
     // `[+ Add custom integration]` lives at the very top so the
     // affordance is impossible to miss. Enter on this row opens the
@@ -207,8 +251,23 @@ pub fn build_items(app: &App) -> Vec<DiscoveryItem> {
         if rows.is_empty() {
             continue;
         }
+        // For the Installed tab, drop sections whose rows are all
+        // not-installed; otherwise we'd render empty section headers.
+        let visible_rows: Vec<&SiblingRef> = rows
+            .iter()
+            .filter(|r| match tab {
+                DiscoveryTab::Marketplace => true,
+                DiscoveryTab::Installed => {
+                    let st = status_for(app, r);
+                    matches!(st, SiblingStatus::Installed | SiblingStatus::InRail)
+                }
+            })
+            .collect();
+        if visible_rows.is_empty() {
+            continue;
+        }
         out.push(DiscoveryItem::Section(header));
-        for r in rows {
+        for r in visible_rows {
             let status = status_for(app, r);
             out.push(DiscoveryItem::Sibling {
                 sibling: r.clone(),
@@ -253,6 +312,17 @@ impl App {
         // community sibling appears immediately.
         crate::integration_detect::clear_all_caches();
         self.discovery_overlay = Some(DiscoveryOverlayState::open());
+    }
+
+    /// Flip the Integrations overlay between Installed and
+    /// Marketplace views. Triggered by the `t` key while the
+    /// overlay is open, by clicking the chips, or via
+    /// `:integrations.toggle_tab`.
+    pub fn discovery_toggle_tab(&mut self) {
+        if let Some(o) = self.discovery_overlay.as_mut() {
+            o.tab = o.tab.toggled();
+            o.selected_row = 0;
+        }
     }
 
     pub fn close_discovery_overlay(&mut self) {

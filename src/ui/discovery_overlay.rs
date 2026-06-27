@@ -64,12 +64,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         return;
     }
 
-    // Body area = inner minus 1 row at the bottom for the hint bar.
-    let body = Rect {
+    // Tab row at the top: [Installed] [Marketplace]. Body shrinks
+    // by 1 row to make room. Each chip is its own click rect.
+    let tabs_row = Rect {
         x: inner.x,
         y: inner.y,
         width: inner.width,
-        height: inner.height.saturating_sub(1),
+        height: 1,
+    };
+    let current_tab = app
+        .discovery_overlay
+        .as_ref()
+        .map(|s| s.tab)
+        .unwrap_or_default();
+    draw_tab_chips(frame, app, tabs_row, current_tab);
+
+    // Body area = inner minus the tab row at top + the hint at bottom.
+    let body = Rect {
+        x: inner.x,
+        y: inner.y + 1,
+        width: inner.width,
+        height: inner.height.saturating_sub(2),
     };
     let hint = Rect {
         x: inner.x,
@@ -230,7 +245,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         }
     }
 
-    let hint_text = " ↑↓ move · Enter add to rail · i install (cargo) · y yank cmd · Esc close ";
+    let hint_text =
+        " ↑↓ move · Enter add to rail · i install (cargo) · y yank cmd · t switch tab · Esc close ";
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             hint_text,
@@ -259,5 +275,60 @@ fn pad_or_truncate(s: &str, n: usize) -> String {
         out
     } else {
         format!("{s}{}", " ".repeat(n - count))
+    }
+}
+
+/// Paint the two-tab strip at the top of the discovery overlay:
+/// [Installed] [Marketplace]. Registers click rects on
+/// `app.rects.discovery_tab_chips` so the mouse dispatcher can
+/// flip the active tab on click. The selected tab gets a bold
+/// orange chip body; the inactive one is muted comment-grey.
+fn draw_tab_chips(frame: &mut Frame, app: &mut App, row: Rect, current: crate::app::DiscoveryTab) {
+    use crate::app::DiscoveryTab;
+    let t = theme::cur();
+    app.rects.discovery_tab_chips.clear();
+    let tabs = [DiscoveryTab::Installed, DiscoveryTab::Marketplace];
+    let mut x = row.x + 1;
+    for tab in tabs {
+        let label = tab.label();
+        let chip = format!(" {label} ");
+        let chip_w = chip.chars().count() as u16;
+        let is_active = tab == current;
+        let style = if is_active {
+            Style::default()
+                .fg(t.bg_dark)
+                .bg(t.orange)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.comment).bg(t.bg2)
+        };
+        let chip_rect = Rect {
+            x,
+            y: row.y,
+            width: chip_w,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(chip.clone(), style))),
+            chip_rect,
+        );
+        app.rects.discovery_tab_chips.push((chip_rect, tab));
+        x += chip_w + 1;
+    }
+    // Trailing pad so the row gets the overlay background.
+    let used = x - row.x;
+    if used < row.width {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ".repeat((row.width - used) as usize),
+                Style::default().bg(t.bg_dark),
+            ))),
+            Rect {
+                x,
+                y: row.y,
+                width: row.width - used,
+                height: 1,
+            },
+        );
     }
 }

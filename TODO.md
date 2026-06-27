@@ -138,6 +138,37 @@ Either path eliminates the "4 tabs" confusion. Path 2 is
 more aggressive (changes pane-open routing); path 1 is just
 UI scoping. Probably do both but path 1 first.
 
+### External tool install — htop, iftop, btop, …
+**Status:** user request 2026-06-27 — `:tools.htop` currently
+errors with "unknown command".
+
+Today the install flow only handles `mnml-*` family siblings via
+cargo. Want to extend to common terminal tools (htop, iftop, btop,
+ncdu, lazygit, …) that ship via brew / apt. Same y/n prompt + Pty
+install pane shape.
+
+Shape:
+  - New `src/external_tools.rs` with an EXTERNAL_TOOLS catalog —
+    each entry: `id, binary, description, brew_name, apt_name,
+    icon`.
+  - `:tools.<id>` palette command (or `:install <id>`) routes
+    through `install_external_tool` instead of `install_sibling`.
+  - Install Pty runs `brew install <name>` on macOS, falls back to
+    apt/dnf on Linux. Post-install auto-retry just spawns
+    `:term <binary>`.
+  - Surface in the Integrations Marketplace tab alongside family
+    siblings — same picker UX.
+
+Suggested initial catalog:
+  - htop, btop, ncdu, lazygit, fzf, ripgrep, jq, yq, gh,
+    tldr, bat, dust, watch, iftop, bandwhich
+
+Why deferred: needs decisions on (a) catalog scope (where do we
+draw the line between "useful tools" and "anything brew has"),
+(b) Linux package-manager detection, (c) how the install flow
+differs from cargo (brew is idempotent, apt needs sudo). Probably
+needs a design doc + small PR per layer.
+
 ### Git-graph: repo dropdown + tighter sidebars
 **Status:** captured 2026-06-27 — user request after looking at the
 git-graph in `tattle-claude-workspace`.
