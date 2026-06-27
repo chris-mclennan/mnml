@@ -3351,6 +3351,15 @@ pub struct App {
             std::collections::HashMap<String, crate::tattle_qwe::TattleQweMeta>,
         )>,
     >,
+
+    /// Sender for cloud-run worker threads (managed-agents
+    /// submit, sigv4 calls, etc.) to push status / error messages
+    /// back to the UI thread for toasting. Workers must NEVER
+    /// `eprintln!` from a ratatui process — stderr writes to the
+    /// TTY and corrupts the frame. Use this channel instead.
+    /// Drained in `tick()`.
+    pub cloud_run_msg_tx: std::sync::mpsc::Sender<String>,
+    pub cloud_run_msg_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// Cloud-only rows (Tattle QWE). Built by the same worker
     /// thread that builds `agents_panel_rows`; rendered by the
     /// Cloud Agents activity-bar panel.
@@ -3978,6 +3987,7 @@ impl App {
         let test_history = crate::playwright::history::TestHistory::load(&workspace);
         let keymap = crate::input::keymap::Keymap::build(&config);
         let (git_loader_tx, git_loader_rx) = git_async::spawn_git_loader();
+        let (cloud_run_msg_tx, cloud_run_msg_rx) = std::sync::mpsc::channel::<String>();
         // Discover repos in the workspace. The rail's `refresh` should run
         // against the active repo (which is `workspace` itself in the
         // single-repo case, but may be a sub-dir in the multi-repo case).
@@ -4140,6 +4150,8 @@ impl App {
             agents_panel_rows: Vec::new(),
             agents_panel_built_at: None,
             agents_panel_rx: None,
+            cloud_run_msg_tx,
+            cloud_run_msg_rx: Some(cloud_run_msg_rx),
             cloud_agents_rows: Vec::new(),
             agents_panel_group_by_workspace: false,
             agents_panel_expanded_workspaces: std::collections::HashSet::new(),
@@ -10471,15 +10483,16 @@ impl App {
                 let sandbox = cfg.5;
                 let env_id_existing = cfg.6;
                 let prompt = cfg.7;
+                let tx = self.cloud_run_msg_tx.clone();
                 std::thread::spawn(move || {
+                    macro_rules! emit { ($($t:tt)*) => { let _ = tx.send(format!($($t)*)); }; }
                     let backend = match crate::anthropic_api::detect_backend() {
                         Ok(b) => b,
                         Err(e) => {
-                            eprintln!("[cloud-run] backend: {e}");
+                            emit!("cloud-run · backend: {e}");
                             return;
                         }
                     };
-                    eprintln!("[cloud-run] using backend: {}", backend.label());
                     let agent_id = if create_new {
                         match crate::anthropic_api::create_agent(
                             &backend,
@@ -10489,7 +10502,7 @@ impl App {
                         ) {
                             Ok(a) => a.id,
                             Err(e) => {
-                                eprintln!("[cloud-run] create_agent: {e}");
+                                emit!("cloud-run · create_agent: {e}");
                                 return;
                             }
                         }
@@ -10505,32 +10518,38 @@ impl App {
                         match crate::anthropic_api::create_environment(&backend, "ide-env", kind) {
                             Ok(e) => e.id,
                             Err(e) => {
-                                eprintln!("[cloud-run] create_environment: {e}");
+                                emit!("cloud-run · create_environment: {e}");
                                 return;
                             }
                         }
                     } else {
                         env_id_existing
                     };
-                    match crate::anthropic_api::create_session(
+                    let session = match crate::anthropic_api::create_session(
                         &backend,
                         &agent_id,
                         &env_id,
-                        &prompt,
                         "mnml session",
                     ) {
-                        Ok(s) => {
-                            eprintln!(
-                                "[cloud-run] session created: {} (agent={}, env={})",
-                                s.id, s.agent_id, s.environment_id
-                            );
+                        Ok(s) => s,
+                        Err(e) => {
+                            emit!("cloud-run · create_session: {e}");
+                            return;
                         }
-                        Err(e) => eprintln!("[cloud-run] create_session: {e}"),
+                    };
+                    // Critical step: a freshly-created session is
+                    // idle until you POST a user.message to its
+                    // /events endpoint. Without this, the session
+                    // sits there forever showing "No events yet".
+                    if let Err(e) =
+                        crate::anthropic_api::send_user_message(&backend, &session.id, &prompt)
+                    {
+                        emit!("cloud-run · send_user_message: {e}");
+                        return;
                     }
+                    emit!("session running · {}", &session.id);
                 });
-                self.toast(
-                    "fired Managed Agents run — check stderr / Anthropic console for progress",
-                );
+                self.toast("submitting Managed Agents run…");
                 self.new_cloud_run_wizard_close();
             }
         }
@@ -10943,6 +10962,21 @@ impl App {
 
     /// Drain log + artifact channels on every CloudAgentRun pane.
     /// Called from `App::tick`.
+    /// Pull any queued messages from cloud-run worker threads
+    /// and route them through the toast queue. Workers send
+    /// status / error strings; we surface them as toasts so the
+    /// user sees what happened without `eprintln!` corrupting
+    /// the ratatui frame.
+    pub(crate) fn drain_cloud_run_msgs(&mut self) {
+        let Some(rx) = self.cloud_run_msg_rx.as_ref() else {
+            return;
+        };
+        let msgs: Vec<String> = rx.try_iter().collect();
+        for msg in msgs {
+            self.toast(msg);
+        }
+    }
+
     pub(crate) fn drain_cloud_agent_run_panes(&mut self) {
         for pane in self.panes.iter_mut() {
             if let Pane::CloudAgentRun(p) = pane {
@@ -12227,6 +12261,9 @@ impl App {
         // CloudAgentRun panes — pull fresh log lines + artifact rows
         // from their worker threads into the pane state.
         self.drain_cloud_agent_run_panes();
+        // Cloud-run worker messages — toast successes / errors from
+        // managed-agents submit threads.
+        self.drain_cloud_run_msgs();
         // NewCloudAgentWizard panes — drain PR-list fetcher.
         self.drain_new_cloud_agent_wizards();
         self.drain_git_results();

@@ -64,6 +64,7 @@ pub enum Backend {
 }
 
 impl Backend {
+    #[allow(dead_code)] // exposed for future "current backend" status chip
     pub fn label(&self) -> &'static str {
         match self {
             Backend::FirstParty { .. } => "first-party Claude API",
@@ -319,7 +320,9 @@ pub struct Created {
 #[derive(Debug)]
 pub struct CreatedSession {
     pub id: String,
+    #[allow(dead_code)]
     pub agent_id: String,
+    #[allow(dead_code)]
     pub environment_id: String,
 }
 
@@ -387,22 +390,22 @@ pub fn create_environment(
     })
 }
 
-/// `POST /v1/sessions` — start a session.
+/// `POST /v1/sessions` — provision a session (sandbox boots, but
+/// no work runs yet). To actually start the agent, follow up with
+/// `send_user_message`. Per the docs: "Creating a session
+/// provisions the environment's sandbox but does not start any
+/// work. To delegate a task, send events to the session using a
+/// user event."
 pub fn create_session(
     backend: &Backend,
     agent_id: &str,
     environment_id: &str,
-    initial_prompt: &str,
     title: &str,
 ) -> Result<CreatedSession, String> {
     let body = serde_json::json!({
         "agent": agent_id,
         "environment_id": environment_id,
         "title": title,
-        "initial_events": [{
-            "type": "user.message",
-            "content": [{"type": "text", "text": initial_prompt}],
-        }],
     })
     .to_string();
     let (status, body) = dispatch(backend, "POST", "/v1/sessions", Some(body))
@@ -415,6 +418,26 @@ pub fn create_session(
         agent_id: agent_id.to_string(),
         environment_id: environment_id.to_string(),
     })
+}
+
+/// `POST /v1/sessions/{id}/events` — send a user message into an
+/// existing session. This is the step that actually transitions
+/// the session from `idle` to `running` and produces output.
+pub fn send_user_message(backend: &Backend, session_id: &str, text: &str) -> Result<(), String> {
+    let body = serde_json::json!({
+        "events": [{
+            "type": "user.message",
+            "content": [{"type": "text", "text": text}],
+        }],
+    })
+    .to_string();
+    let path = format!("/v1/sessions/{session_id}/events");
+    let (status, body) = dispatch(backend, "POST", &path, Some(body))
+        .map_err(|e| format!("send_user_message: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("send_user_message HTTP {status}: {body}"));
+    }
+    Ok(())
 }
 
 /// `GET /v1/sessions` — list active sessions for the workspace.
@@ -697,7 +720,12 @@ pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
     let sessions = match list_sessions(&backend) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[managed-agents] list_sessions: {e}");
+            // Silent — list_sessions runs from the rail
+            // refresh worker every 30s; printing to stderr
+            // would corrupt the TUI. The empty-vec fallback
+            // matches the Tattle scan's behavior so the panel
+            // just stays empty if the backend isn't configured.
+            let _ = e;
             return Vec::new();
         }
     };
