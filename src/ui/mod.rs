@@ -1486,8 +1486,11 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         s
     };
 
-    // Button strings — each ` glyph ` = 3 cells.
-    let sidebar_str = format!(" {sidebar_glyph} ");
+    // Button strings — each ` glyph ` = 3 cells. Sidebar toggle
+    // trims its right-side pad so the icon sits one cell closer
+    // to the back arrow (less awkward gap there since the sidebar
+    // toggle has no NAV_GAP companion of its own).
+    let sidebar_str = format!(" {sidebar_glyph}");
     let back_str = format!(" {back_glyph} ");
     let fwd_str = format!(" {fwd_glyph} ");
     let dropdown_str = format!(" {dropdown_glyph} ");
