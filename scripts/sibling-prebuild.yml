@@ -141,6 +141,13 @@ jobs:
 
   publish:
     needs: build
+    # Run even when some matrix entries failed — publish the ones
+    # that DID succeed so users on common platforms aren't blocked
+    # by a single platform compile error. `download-artifact` is
+    # tolerant of missing entries; `release-action` uploads
+    # whatever is there. (Windows-only failures in siblings that
+    # use Unix-specific APIs are the common case here.)
+    if: ${{ always() }}
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
