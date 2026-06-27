@@ -10326,6 +10326,67 @@ impl App {
         );
     }
 
+    /// Cycle the auto-refresh interval on the active CloudAgentRun
+    /// pane: off → 10s → 30s → 60s → 5m → off. Resets
+    /// `last_auto_refresh` so the new interval starts counting now.
+    pub fn cloud_agent_run_cycle_auto(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::CloudAgentRun(p)) = self.panes.get_mut(id) else {
+            return;
+        };
+        p.auto_refresh_secs = match p.auto_refresh_secs {
+            0 => 10,
+            10 => 30,
+            30 => 60,
+            60 => 300,
+            _ => 0,
+        };
+        p.last_auto_refresh = Some(std::time::Instant::now());
+        let label = if p.auto_refresh_secs == 0 {
+            "auto-refresh off".to_string()
+        } else if p.auto_refresh_secs < 60 {
+            format!("auto-refresh every {}s", p.auto_refresh_secs)
+        } else {
+            format!("auto-refresh every {}m", p.auto_refresh_secs / 60)
+        };
+        self.toast(label);
+    }
+
+    /// For every CloudAgentRun pane with auto-refresh enabled and
+    /// an elapsed interval ≥ its cadence, re-spawn the log +
+    /// artifact workers. Called once per `tick()` — bails early
+    /// when nothing is due.
+    pub(crate) fn tick_cloud_agent_run_auto(&mut self) {
+        let now = std::time::Instant::now();
+        let due: Vec<usize> = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| {
+                if let Pane::CloudAgentRun(c) = p
+                    && c.auto_refresh_secs > 0
+                    && c.last_auto_refresh
+                        .map(|t| now.duration_since(t).as_secs() >= c.auto_refresh_secs)
+                        .unwrap_or(true)
+                {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for i in due {
+            // Save current active so we can swap, refresh, restore.
+            let saved = self.active;
+            self.active = Some(i);
+            self.cloud_agent_run_refresh();
+            if let Some(Pane::CloudAgentRun(p)) = self.panes.get_mut(i) {
+                p.last_auto_refresh = Some(now);
+            }
+            self.active = saved;
+        }
+    }
+
     /// Re-spawn the log + artifact workers on the active
     /// CloudAgentRun pane. Wired to the `[↻ Refresh]` chip on
     /// the detail pane's sub-header. Useful when the run finished
@@ -12431,6 +12492,9 @@ impl App {
         // CloudAgentRun panes — pull fresh log lines + artifact rows
         // from their worker threads into the pane state.
         self.drain_cloud_agent_run_panes();
+        // Auto-refresh cloud-run detail panes whose interval has
+        // elapsed. No-op when no pane has auto enabled.
+        self.tick_cloud_agent_run_auto();
         // Cloud-run worker messages — toast successes / errors from
         // managed-agents submit threads.
         self.drain_cloud_run_msgs();

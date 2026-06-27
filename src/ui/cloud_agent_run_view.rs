@@ -25,6 +25,8 @@ pub enum CloudAgentRunHit {
     Artifact(String),
     /// Manual refresh — re-spawn the log + artifact fetchers.
     Refresh,
+    /// Cycle the auto-refresh interval: off → 10s → 30s → 60s → 5m → off.
+    CycleAutoRefresh,
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focused: bool) {
@@ -91,15 +93,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
             })
             .unwrap_or_else(|| "—".to_string());
         let sub = format!("  runId  {} · last activity {when}", short_id(&p.run_id));
-        // [↻ Refresh] chip on the right side of the sub-header.
+        // Right side of sub-header: [auto: …] [↻ Refresh].
+        let auto_label = format!(" auto: {} ", fmt_secs(p.auto_refresh_secs));
         let refresh = " ↻ Refresh ";
+        let auto_w = auto_label.chars().count() as u16;
         let refresh_w = refresh.chars().count() as u16;
         let sub_w = sub.chars().count() as u16;
-        let pad = area.width.saturating_sub(sub_w + refresh_w + 1) as usize;
+        let pad = area
+            .width
+            .saturating_sub(sub_w + auto_w + 1 + refresh_w + 1) as usize;
+        let auto_bg = if p.auto_refresh_secs == 0 {
+            t.bg2
+        } else {
+            t.green
+        };
+        let auto_fg = if p.auto_refresh_secs == 0 {
+            t.comment
+        } else {
+            t.bg_dark
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(sub, Style::default().fg(t.comment).bg(bg)),
                 Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                Span::styled(
+                    auto_label.clone(),
+                    Style::default()
+                        .fg(auto_fg)
+                        .bg(auto_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ", Style::default().bg(bg)),
                 Span::styled(
                     refresh.to_string(),
                     Style::default()
@@ -115,12 +139,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
                 height: 1,
             },
         );
-        let refresh_rect = Rect {
+        let auto_rect = Rect {
             x: area.x + sub_w + pad as u16,
+            y,
+            width: auto_w,
+            height: 1,
+        };
+        let refresh_rect = Rect {
+            x: area.x + sub_w + pad as u16 + auto_w + 1,
             y,
             width: refresh_w,
             height: 1,
         };
+        app.rects
+            .cloud_agent_run_hits
+            .push((auto_rect, CloudAgentRunHit::CycleAutoRefresh));
         app.rects
             .cloud_agent_run_hits
             .push((refresh_rect, CloudAgentRunHit::Refresh));
@@ -395,6 +428,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Format an auto-refresh interval for the chip label.
+/// `0` → `off`, `< 60` → `Ns`, `< 3600` → `Nm`, else `Nh`.
+fn fmt_secs(s: u64) -> String {
+    if s == 0 {
+        "off".to_string()
+    } else if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m", s / 60)
+    } else {
+        format!("{}h", s / 3600)
+    }
 }
 
 fn clip(s: &str, max: usize) -> String {

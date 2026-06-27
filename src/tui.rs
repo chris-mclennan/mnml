@@ -4215,6 +4215,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             CloudAgentRunHit::Refresh => {
                 app.cloud_agent_run_refresh();
             }
+            CloudAgentRunHit::CycleAutoRefresh => {
+                app.cloud_agent_run_cycle_auto();
+            }
         }
         return;
     }

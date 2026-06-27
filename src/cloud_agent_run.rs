@@ -110,6 +110,17 @@ pub struct CloudAgentRunPane {
     /// stay pinned to the tail. Set to true on open, toggled to
     /// false when the user scrolls up.
     pub log_follow: bool,
+
+    /// Auto-refresh cadence in seconds. `0` = disabled (manual
+    /// refresh only). Cycled by clicking the `[auto: …]` chip on
+    /// the detail pane header: off → 10s → 30s → 60s → 5m → off.
+    /// Default for running runs is 30s; Done runs default to 0
+    /// since their state doesn't change.
+    pub auto_refresh_secs: u64,
+    /// When auto_refresh_secs > 0, track the last fired refresh
+    /// so tick() can decide when the next is due. None until the
+    /// first refresh runs.
+    pub last_auto_refresh: Option<std::time::Instant>,
 }
 
 impl CloudAgentRunPane {
@@ -130,6 +141,14 @@ impl CloudAgentRunPane {
         s3_artifact_prefix: Option<String>,
         s3_console_url: Option<String>,
     ) -> Self {
+        // Default 30s polling when the run is live; off when it's
+        // done since artifacts/logs don't change after.
+        let auto_refresh_secs =
+            if state.eq_ignore_ascii_case("running") || state.eq_ignore_ascii_case("queued") {
+                30
+            } else {
+                0
+            };
         Self {
             source: CloudRunSource::TattleQwe,
             run_id,
@@ -155,6 +174,8 @@ impl CloudAgentRunPane {
             session_event_rx: None,
             log_scroll: 0,
             log_follow: true,
+            auto_refresh_secs,
+            last_auto_refresh: None,
         }
     }
 
@@ -215,6 +236,11 @@ impl CloudAgentRunPane {
             session_event_rx: None,
             log_scroll: 0,
             log_follow: true,
+            // Managed agents stream live via SSE, so the polling
+            // shim doesn't apply. Auto-refresh stays off; the
+            // user can still manual-refresh to restart the SSE.
+            auto_refresh_secs: 0,
+            last_auto_refresh: None,
         }
     }
 
