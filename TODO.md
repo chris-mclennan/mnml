@@ -138,6 +138,44 @@ Either path eliminates the "4 tabs" confusion. Path 2 is
 more aggressive (changes pane-open routing); path 1 is just
 UI scoping. Probably do both but path 1 first.
 
+### + New Cloud Agent wizard — Jira source + Kepler-inspired UX
+**Status:** Phase 2a shipped 2026-06-27 (`698bff3`) — GitHub PRs +
+Bitbucket PRs + Manual prompt sources, Claude Agent SDK as the
+agent, multi-select checkboxes, action templates. This entry
+captures what's next.
+
+**Jira "assigned to me" source** (user request 2026-06-27):
+  - Auth: ATL_JIRA_TOKEN or ATL_JIRA_API_KEY env var + the
+    user's already-set TATTLE_USER_JIRA_NAME for queries.
+  - REST: `GET /rest/api/3/search?jql=assignee=currentUser() AND status not in (Done,Closed)`
+  - Same multi-select + action template flow as PRs. Submit:
+    spawn Claude with the ticket key in the prompt + git
+    branch creation hint.
+
+**Kepler-inspired enhancements (worth borrowing):**
+  - **Task-centric model.** A "task" = work spanning multiple
+    repos, originated from a PR OR a ticket. Sessions list
+    shows tasks, not raw runs. Maps onto our cloud-agent rows
+    nicely.
+  - **Kanban-by-status.** Group rail rows: Needs Attention ·
+    Active · Idle · Errored · Inactive (we already do partial:
+    Action needed / Running / Done). Extend to match Kepler's
+    five-bucket model.
+  - **Agent-agnostic step.** Add an optional "Agent" step at
+    the END of the wizard (defaulting to Claude). User can
+    pick Codex / Open Code / future agents per-session.
+    Different agents = different spawn commands but same
+    submit shape.
+  - **Bidirectional Console / redirect mid-session.** The
+    CloudAgentRun pane could grow a small "send a message to
+    the agent" textarea at the bottom (writes to the agent's
+    stdin or session via SDK).
+
+**Codex agent kind** (deferred, not urgent):
+  - Spawn shape similar to Claude: `codex --print "<prompt>"`.
+  - Auth via env (OPENAI_API_KEY or similar).
+  - Same Action templates apply.
+
 ### + New Cloud Agent wizard — expanded scope (phase 2)
 **Status:** v1 wizard scaffolding landed 2026-06-27 with Tattle
 QWE + Claude managed paths. User then expanded the scope —
