@@ -588,6 +588,13 @@ pub struct IntegrationIcon {
     pub command: String,
     pub color: String,
     pub tooltip: Option<String>,
+    /// Visibility opt-in. Default `false` — chips don't show
+    /// until the user explicitly enables them (via right-click →
+    /// "Enable" or the discovery overlay). Only the browser
+    /// integration is enabled by default. Keeps the palette bar
+    /// quiet on first run; users build up their chip strip as
+    /// they actually use each integration.
+    pub enabled: bool,
 }
 
 /// One entry in the bufferline's right-side launcher-icon strip.
@@ -632,6 +639,10 @@ pub struct LauncherIcon {
     /// Optional hover-tooltip text. When `None`, the tooltip shows
     /// the `command` string verbatim as a debug hint.
     pub tooltip: Option<String>,
+    /// Visibility opt-in. Default `false` — chips don't show
+    /// until the user explicitly enables them. Only the browser
+    /// launcher is enabled by default.
+    pub enabled: bool,
 }
 
 impl Default for Config {
@@ -702,6 +713,25 @@ impl Default for Config {
                 // Nerd Fonts; their `fallback` is just `--ascii`-mode
                 // text and stays the boring single-char form.
                 integration_icons: vec![
+                    // Browser is the ONLY integration enabled by
+                    // default. Click → browser.open (launches the
+                    // CDP Chrome-for-testing window mnml drives via
+                    // the dev-tools protocol; browser sessions can
+                    // be captured back into mnml's debugger UI).
+                    // 2026-06-27 — chips now opt-in per
+                    // `enabled: bool`; first-run is intentionally
+                    // quiet save for this single icon.
+                    IntegrationIcon {
+                        id: "browser".to_string(),
+                        glyph: "\u{F0239}".to_string(), // nf-md-google_chrome
+                        fallback: "B".to_string(),
+                        command: "browser.open".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some(
+                            "Browser (CDP Chrome-for-testing; can be captured in mnml)".to_string(),
+                        ),
+                        enabled: true,
+                    },
                     IntegrationIcon {
                         id: "claude_code".to_string(),
                         // Branded Claude Spark glyph patched into the
@@ -715,6 +745,7 @@ impl Default for Config {
                         command: "ai.claude_code".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Claude Code".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "codex".to_string(),
@@ -727,6 +758,7 @@ impl Default for Config {
                         command: "ai.codex".to_string(),
                         color: "cyan".to_string(),
                         tooltip: Some("Codex".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "bitbucket".to_string(),
@@ -739,6 +771,7 @@ impl Default for Config {
                         command: ":term mnml-forge-bitbucket".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Bitbucket pipelines + PRs".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "jira".to_string(),
@@ -752,6 +785,7 @@ impl Default for Config {
                         command: ":term mnml-tracker-jira".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Jira tracker".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "http".to_string(),
@@ -765,6 +799,7 @@ impl Default for Config {
                         command: "http.send".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("HTTP: send active request".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         // Postman-style "new request" chip. `\u{F067}`
@@ -779,6 +814,7 @@ impl Default for Config {
                         command: "http.new".to_string(),
                         color: "green".to_string(),
                         tooltip: Some("HTTP: new blank request".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "codebuild".to_string(),
@@ -791,6 +827,7 @@ impl Default for Config {
                         command: ":term mnml-aws-codebuild".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("AWS CodeBuild + logs".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "github".to_string(),
@@ -803,6 +840,7 @@ impl Default for Config {
                         command: ":term mnml-forge-github".to_string(),
                         color: "fg".to_string(),
                         tooltip: Some("GitHub Actions + PRs".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "azdevops".to_string(),
@@ -815,6 +853,7 @@ impl Default for Config {
                         command: ":term mnml-forge-azdevops".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Azure DevOps PRs + builds".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "gitlab".to_string(),
@@ -827,6 +866,7 @@ impl Default for Config {
                         command: ":term mnml-forge-gitlab".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("GitLab MRs + Pipelines".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "s3".to_string(),
@@ -839,6 +879,7 @@ impl Default for Config {
                         command: ":term mnml-fs-s3".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Amazon S3 browser".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "azure_blob".to_string(),
@@ -847,6 +888,7 @@ impl Default for Config {
                         command: ":term mnml-fs-azure-blob".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("Azure Blob Storage browser".to_string()),
+                        enabled: false,
                     },
                     // Terminal-native diagnostic tools. Open as Pty
                     // panes inside mnml's layout. The sidebar filter
@@ -859,6 +901,7 @@ impl Default for Config {
                         command: ":tools.htop".to_string(),
                         color: "green".to_string(),
                         tooltip: Some("htop — interactive process viewer".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "iftop".to_string(),
@@ -870,6 +913,7 @@ impl Default for Config {
                             "iftop — interactive bandwidth monitor (needs raw-socket privs)"
                                 .to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "datadog".to_string(),
@@ -880,6 +924,7 @@ impl Default for Config {
                         tooltip: Some(
                             "Datadog — monitors + dashboards + logs + incidents".to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "buttondown".to_string(),
@@ -888,6 +933,7 @@ impl Default for Config {
                         command: ":term mnml-msg-buttondown".to_string(),
                         color: "green".to_string(),
                         tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "slack".to_string(),
@@ -898,6 +944,7 @@ impl Default for Config {
                         tooltip: Some(
                             "Slack — channels + DMs + threads + search + post".to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "teams".to_string(),
@@ -908,6 +955,7 @@ impl Default for Config {
                         tooltip: Some(
                             "Microsoft Teams — teams + chats + threads + post".to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "mandrill".to_string(),
@@ -919,6 +967,7 @@ impl Default for Config {
                             "Mandrill — transactional email messages + templates + tags"
                                 .to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "gmail".to_string(),
@@ -929,6 +978,7 @@ impl Default for Config {
                         tooltip: Some(
                             "Gmail — inbox + sent + labels + search + compose".to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "docker".to_string(),
@@ -939,6 +989,7 @@ impl Default for Config {
                         tooltip: Some(
                             "Docker — containers + images + volumes + networks".to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "cloudflare".to_string(),
@@ -947,6 +998,7 @@ impl Default for Config {
                         command: ":term mnml-cdn-cloudflare".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "tattle_inbox".to_string(),
@@ -957,6 +1009,7 @@ impl Default for Config {
                         tooltip: Some(
                             "Tattle inbox (INTERNAL — dev/staging email/SMS sink)".to_string(),
                         ),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
@@ -965,6 +1018,7 @@ impl Default for Config {
                         command: ":term mnml-aws-cloudwatch-logs".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("CloudWatch Logs live tail".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "amplify".to_string(),
@@ -973,6 +1027,7 @@ impl Default for Config {
                         command: ":term mnml-aws-amplify".to_string(),
                         color: "purple".to_string(),
                         tooltip: Some("Amplify apps + deploys".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "dynamodb".to_string(),
@@ -981,6 +1036,7 @@ impl Default for Config {
                         command: ":term mnml-db-dynamodb".to_string(),
                         color: "teal".to_string(),
                         tooltip: Some("DynamoDB table browser".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "lambda".to_string(),
@@ -989,6 +1045,7 @@ impl Default for Config {
                         command: ":term mnml-aws-lambda".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Lambda function browser".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "eventbridge".to_string(),
@@ -997,6 +1054,7 @@ impl Default for Config {
                         command: ":term mnml-aws-eventbridge".to_string(),
                         color: "pink".to_string(),
                         tooltip: Some("EventBridge buses + rules".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "rds".to_string(),
@@ -1005,6 +1063,7 @@ impl Default for Config {
                         command: ":term mnml-aws-rds".to_string(),
                         color: "blue".to_string(),
                         tooltip: Some("RDS database browser".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "ecs".to_string(),
@@ -1013,6 +1072,7 @@ impl Default for Config {
                         command: ":term mnml-aws-ecs".to_string(),
                         color: "green".to_string(),
                         tooltip: Some("ECS clusters + services".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "ecr".to_string(),
@@ -1021,6 +1081,7 @@ impl Default for Config {
                         command: ":term mnml-aws-ecr".to_string(),
                         color: "purple".to_string(),
                         tooltip: Some("ECR container registry".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "cognito".to_string(),
@@ -1029,6 +1090,7 @@ impl Default for Config {
                         command: ":term mnml-aws-cognito".to_string(),
                         color: "cyan".to_string(),
                         tooltip: Some("Cognito User Pools + users".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "sqs".to_string(),
@@ -1037,6 +1099,7 @@ impl Default for Config {
                         command: ":term mnml-aws-sqs".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("SQS queues".to_string()),
+                        enabled: false,
                     },
                     IntegrationIcon {
                         id: "sns".to_string(),
@@ -1045,6 +1108,7 @@ impl Default for Config {
                         command: ":term mnml-aws-sns".to_string(),
                         color: "yellow".to_string(),
                         tooltip: Some("SNS topics + subscriptions".to_string()),
+                        enabled: false,
                     },
                     // mixr rail chip — opens the family DJ app via
                     // `mixr.show` as a Pty pane.
@@ -1055,6 +1119,7 @@ impl Default for Config {
                         command: "mixr.show".to_string(),
                         color: "pink".to_string(),
                         tooltip: Some("mixr DJ".to_string()),
+                        enabled: false,
                     },
                     // 2026-06-19 — removed a duplicate `id: "http"`
                     // entry that lived here. The earlier `IntegrationIcon`
@@ -1306,6 +1371,8 @@ struct RawLauncherIcon {
     command: Option<String>,
     color: Option<String>,
     tooltip: Option<String>,
+    /// Visibility opt-in. None in raw → false in resolved config.
+    enabled: Option<bool>,
 }
 
 impl Config {
@@ -1506,6 +1573,7 @@ impl Config {
                         command,
                         color: r.color.unwrap_or_else(|| "bg2".to_string()),
                         tooltip: r.tooltip,
+                        enabled: r.enabled.unwrap_or(false),
                     })
                 })
                 .collect();
@@ -1541,6 +1609,7 @@ impl Config {
                         command,
                         color: r.color.unwrap_or_else(|| "fg".to_string()),
                         tooltip: r.tooltip,
+                        enabled: r.enabled.unwrap_or(false),
                     })
                 })
                 .collect();

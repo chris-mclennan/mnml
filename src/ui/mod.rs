@@ -1232,11 +1232,28 @@ fn paint_integration_chips_in_gap(
     let plus_w: u16 = 3;
     let avail_for_chips = avail_w.saturating_sub(plus_w);
     let chip_count = (avail_for_chips / per_chip) as usize;
-    // Render launchers first, then integrations — gives Claude /
-    // Codex visual priority. Either way it's just an order; the
-    // chips are visually identical.
-    let n_launcher = app.config.ui.launcher_icons.len();
-    let n_integration = app.config.ui.integration_icons.len();
+    // Only chips with `enabled = true` show. Everything else is
+    // configured-but-hidden until the user opts in (right-click →
+    // Enable, or the discovery overlay). Browser is the only
+    // default-enabled integration; keeps first-run quiet.
+    let enabled_launchers: Vec<(usize, &crate::config::LauncherIcon)> = app
+        .config
+        .ui
+        .launcher_icons
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.enabled)
+        .collect();
+    let enabled_integrations: Vec<(usize, &crate::config::IntegrationIcon)> = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.enabled)
+        .collect();
+    let n_launcher = enabled_launchers.len();
+    let n_integration = enabled_integrations.len();
     let total_wanted = n_launcher + n_integration;
     let to_paint = total_wanted.min(chip_count);
     let launcher_paint = n_launcher.min(to_paint);
@@ -1253,14 +1270,7 @@ fn paint_integration_chips_in_gap(
         "teal" => t.teal,
         _ => t.bg2,
     };
-    for (i, icon) in app
-        .config
-        .ui
-        .launcher_icons
-        .iter()
-        .take(launcher_paint)
-        .enumerate()
-    {
+    for &(i, icon) in enabled_launchers.iter().take(launcher_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
         let chip_bg = color_of(&icon.color);
         let chip_rect = Rect {
@@ -1282,14 +1292,7 @@ fn paint_integration_chips_in_gap(
         app.rects.launcher_icon_rects.push((chip_rect, i));
         x = x.saturating_add(3);
     }
-    for (i, icon) in app
-        .config
-        .ui
-        .integration_icons
-        .iter()
-        .take(integration_paint)
-        .enumerate()
-    {
+    for &(i, icon) in enabled_integrations.iter().take(integration_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
         let chip_bg = color_of(&icon.color);
         let chip_rect = Rect {
@@ -2650,6 +2653,7 @@ mod palette_bar_tests {
             command: ":noop".to_string(),
             color: "orange".to_string(),
             tooltip: Some("test launcher".to_string()),
+            enabled: true,
         });
         let mut app = App::new(ws, cfg).unwrap();
         let mut term = Terminal::new(TestBackend::new(200, 30)).unwrap();

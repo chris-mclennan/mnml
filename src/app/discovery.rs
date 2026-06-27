@@ -660,6 +660,9 @@ impl App {
             } else {
                 Some(panel.tooltip.trim().to_string())
             },
+            // User-added chips via the discovery overlay default
+            // to enabled — the act of clicking "Add" is the opt-in.
+            enabled: true,
         };
         match panel.mode {
             IntegrationEditMode::Edit => {
@@ -926,6 +929,7 @@ impl App {
             command: launch,
             color: s.icon_color().to_string(),
             tooltip: Some(s.icon_tooltip().to_string()),
+            enabled: true,
         });
         // Best-effort TOML persistence so the chip survives a restart.
         // On failure we still report "added" but flag the persistence
@@ -1165,6 +1169,7 @@ color = \"blue\"
                 command: ":term mnml-aws-lambda".to_string(),
                 color: "orange".to_string(),
                 tooltip: Some("Lambda".to_string()),
+                enabled: false,
             },
             IntegrationIcon {
                 id: "s3".to_string(),
@@ -1173,6 +1178,7 @@ color = \"blue\"
                 command: ":term mnml-fs-s3".to_string(),
                 color: "orange".to_string(),
                 tooltip: None,
+                enabled: false,
             },
         ];
         let out = append_integration_icon_blocks("", &icons);
@@ -1194,6 +1200,7 @@ color = \"blue\"
             command: ":term mnml-aws-lambda".to_string(),
             color: "orange".to_string(),
             tooltip: None,
+            enabled: false,
         }];
         let first = append_integration_icon_blocks("", &icons);
         let stripped = strip_integration_icon_blocks(&first);
