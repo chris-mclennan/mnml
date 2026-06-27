@@ -2032,6 +2032,10 @@ pub struct PaneRects {
     /// Click target for the `▾` dropdown chevron next to the
     /// workspace name. Toggles `App::workspace_picker_open`.
     pub workspace_picker_chevron: Option<Rect>,
+    /// Click rects for URL/artifact hits inside a CloudAgentRun
+    /// pane. Cleared per-frame; populated by
+    /// `cloud_agent_run_view::draw`.
+    pub cloud_agent_run_hits: Vec<(Rect, crate::ui::cloud_agent_run_view::CloudAgentRunHit)>,
     /// Click rects for the two tabs ([Installed] [Marketplace])
     /// at the top of the integrations discovery overlay. Empty when
     /// the overlay is closed.
@@ -9430,6 +9434,7 @@ impl App {
             Pane::Websocket(p) => Some((p.tab_title(), false)),
             Pane::SpendReport(_) => Some(("AI spend (24h)".to_string(), false)),
             Pane::Mount(m) => Some((m.label.clone(), false)),
+            Pane::CloudAgentRun(p) => Some((format!("☁ {}", p.ticket), false)),
         }
     }
 
@@ -10192,6 +10197,84 @@ impl App {
     /// running `claude` PIDs via `pgrep`, and renders one row per
     /// session with live/idle/ended state, model, last user/asst
     /// message, token spend, and PID.
+    /// Open a comprehensive cloud-agent run detail pane for the
+    /// row at `idx` in `cloud_agents_rows`. Aggregates summary,
+    /// web links, S3 artifacts, and CloudWatch logs into one pane.
+    /// Spawns the log + artifact fetcher workers immediately so
+    /// data starts streaming in by the first frame. Used by the
+    /// right-click "View run details" menu entry and the
+    /// `:cloud_agents.open_run` palette command.
+    pub fn open_cloud_agent_run(&mut self, idx: usize) {
+        let Some(row) = self.cloud_agents_rows.get(idx).cloned() else {
+            self.toast("cloud agent row not found");
+            return;
+        };
+        let meta = self.cloud_agents_meta.get(&row.session_id).cloned();
+        let ticket = meta
+            .as_ref()
+            .map(|m| m.ticket.clone())
+            .unwrap_or_else(|| row.workspace.clone());
+        let flow = meta.as_ref().map(|m| m.flow.clone()).unwrap_or_default();
+        let state = meta
+            .as_ref()
+            .map(|m| m.state.clone())
+            .unwrap_or_else(|| "—".to_string());
+        let pr_url = meta.as_ref().and_then(|m| m.pr_url.clone());
+        let s3_prefix = meta.as_ref().and_then(|m| m.s3_artifact_prefix.clone());
+        let s3_console = s3_prefix
+            .as_deref()
+            .and_then(crate::cloud_agent_run::s3_console_url_for);
+        let jira_url = crate::cloud_agent_run::jira_url_for(&ticket);
+        let cloudwatch_url = meta
+            .as_ref()
+            .map(|m| m.cloudwatch_url(&row.session_id))
+            .unwrap_or_default();
+
+        let mut pane = crate::cloud_agent_run::CloudAgentRunPane::new(
+            row.session_id.clone(),
+            ticket,
+            flow,
+            state.clone(),
+            row.workspace.clone(),
+            row.last_activity,
+            jira_url,
+            pr_url,
+            cloudwatch_url,
+            s3_prefix.clone(),
+            s3_console,
+        );
+        pane.log_rx = Some(crate::cloud_agent_run::spawn_log_fetcher(
+            row.session_id.clone(),
+            state,
+            "/ecs/qwe-runner/claude-runner".to_string(),
+        ));
+        pane.artifacts_rx = Some(crate::cloud_agent_run::spawn_artifacts_fetcher(s3_prefix));
+        let pane = Pane::CloudAgentRun(pane);
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                *self.layout_mut() = Layout::leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Drain log + artifact channels on every CloudAgentRun pane.
+    /// Called from `App::tick`.
+    pub(crate) fn drain_cloud_agent_run_panes(&mut self) {
+        for pane in self.panes.iter_mut() {
+            if let Pane::CloudAgentRun(p) = pane {
+                let _ = p.drain();
+            }
+        }
+    }
+
     pub fn open_claude_agents_pane(&mut self) {
         let anchor = self.workspace.clone();
         // If the pane is already open, just focus it — don't
@@ -11456,6 +11539,9 @@ impl App {
         // action (CloudWatch tail, S3 browse, …) so the user doesn't
         // have to re-click after the install finishes.
         self.drain_install_post_actions();
+        // CloudAgentRun panes — pull fresh log lines + artifact rows
+        // from their worker threads into the pane state.
+        self.drain_cloud_agent_run_panes();
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();

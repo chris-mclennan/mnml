@@ -940,6 +940,31 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     dy: delta as i16,
                 });
             }
+            Some(Pane::CloudAgentRun(p)) => {
+                // Scroll the logs viewport. Negative delta = scroll up
+                // (older lines); positive = down. Crossing past the
+                // tail re-enables follow.
+                let n = delta.unsigned_abs() as usize;
+                if delta < 0 {
+                    if p.log_scroll == usize::MAX {
+                        // Currently following — start at the tail and
+                        // back off `n` lines.
+                        p.log_scroll = p.logs.len().saturating_sub(n);
+                    } else {
+                        p.log_scroll = p.log_scroll.saturating_sub(n);
+                    }
+                    p.log_follow = false;
+                } else {
+                    let max = p.logs.len();
+                    let new = p.log_scroll.saturating_add(n).min(max);
+                    if new >= max.saturating_sub(1) {
+                        p.log_scroll = usize::MAX;
+                        p.log_follow = true;
+                    } else {
+                        p.log_scroll = new;
+                    }
+                }
+            }
             None => {}
         }
         // Each SCM/CI pane's max_idx depends on which view-mode is

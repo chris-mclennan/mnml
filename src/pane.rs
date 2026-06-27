@@ -119,6 +119,13 @@ pub enum Pane {
     /// frame. Input flows the other way (key/mouse events forwarded
     /// when the pane has focus). See `src/mount.rs`.
     Mount(crate::mount::MountSession),
+    /// Comprehensive view of a single cloud-agent run (Tattle QWE
+    /// runner): ticket / flow / state header, web links (Jira, PR,
+    /// CloudWatch console, S3 console), S3 artifacts list,
+    /// CloudWatch logs viewport. Tail-follows when the run is
+    /// still in flight; full historical fetch when it's done. See
+    /// `src/cloud_agent_run.rs`.
+    CloudAgentRun(crate::cloud_agent_run::CloudAgentRunPane),
 }
 
 /// State for [`Pane::SpendReport`]. Re-snapshots
@@ -520,6 +527,7 @@ impl Pane {
             Pane::Websocket(p) => p.tab_title(),
             Pane::SpendReport(_) => "AI spend (24h)".to_string(),
             Pane::Mount(m) => m.label.clone(),
+            Pane::CloudAgentRun(p) => format!("☁ {}", p.ticket),
         }
     }
 
@@ -549,7 +557,8 @@ impl Pane {
             | Pane::ClaudeAgents(_)
             | Pane::Websocket(_)
             | Pane::SpendReport(_)
-            | Pane::Mount(_) => false,
+            | Pane::Mount(_)
+            | Pane::CloudAgentRun(_) => false,
         }
     }
 

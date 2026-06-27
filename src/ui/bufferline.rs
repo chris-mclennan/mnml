@@ -268,6 +268,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
             // nf-md-puzzle-outline — hosted sibling (Mount).
             Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
+            // nf-md-cloud-search-outline — cloud-agent run detail.
+            Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
         };
         // Status badge priority:
         //   dirty   → ● / *  (orange — any tab)

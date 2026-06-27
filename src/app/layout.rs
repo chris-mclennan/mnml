@@ -548,6 +548,7 @@ impl App {
             Some(Pane::Websocket(_)) => None,
             Some(Pane::SpendReport(_)) => None,
             Some(Pane::Mount(_)) => None,
+            Some(Pane::CloudAgentRun(_)) => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -872,6 +873,7 @@ impl App {
             Pane::Websocket(_) => (None, None),
             Pane::SpendReport(_) => (None, None),
             Pane::Mount(_) => (None, None),
+            Pane::CloudAgentRun(_) => (None, None),
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);

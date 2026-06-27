@@ -3996,6 +3996,42 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
     }
 
+    // 2026-06-27 — CloudAgentRun pane: click on a URL row opens
+    // it in the system browser; click on an artifact row opens
+    // the s3 sibling pointed at that key. Hit rects come from
+    // `cloud_agent_run_view::draw`.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some((_, hit)) = app
+            .rects
+            .cloud_agent_run_hits
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .cloned()
+    {
+        use crate::ui::cloud_agent_run_view::CloudAgentRunHit;
+        match hit {
+            CloudAgentRunHit::Url(u) => {
+                crate::app::open_url_external(&u);
+                let short: String = u.chars().take(72).collect();
+                app.toast(format!("opened {short}"));
+            }
+            CloudAgentRunHit::Artifact(key) => {
+                // S3 key shape: s3://bucket/path/to/file
+                // The s3 sibling browses by bucket+prefix; here we
+                // open it scoped to the parent prefix of the key so
+                // the user lands at the right folder.
+                let stripped = key.strip_prefix("s3://").unwrap_or(&key);
+                let (bucket, rest) = match stripped.split_once('/') {
+                    Some((b, r)) => (b, r),
+                    None => (stripped, ""),
+                };
+                let parent = rest.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+                app.open_s3_pane(bucket, parent, &format!("s3: {}", bucket));
+            }
+        }
+        return;
+    }
+
     // 2026-06-21 — Spend Report column header click: cycle
     // asc/desc on that column (or set it as the sort key).
     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
@@ -6308,14 +6344,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
-                if let Some(row) = app.cloud_agents_rows.get(row_idx).cloned() {
-                    app.clipboard.set(row.session_id.clone(), false);
-                    let summary = row
-                        .last_assistant_msg
-                        .clone()
-                        .unwrap_or_else(|| "(cloud run)".to_string());
-                    app.toast(format!("{} · {} · runId copied", row.workspace, summary));
-                }
+                // 2026-06-27 — single-click on a cloud-agent row now
+                // opens the full detail pane (summary, links,
+                // artifacts, logs) instead of just copying the runId.
+                // The runId is still accessible via the right-click
+                // menu / palette.
+                app.open_cloud_agent_run(row_idx);
                 return;
             }
             // Click anywhere else inside the rail while either

@@ -47,6 +47,7 @@ pub mod cmdline_popup_view;
 pub mod peek_overlay_view;
 pub mod ws_view;
 // codebuilds_view moved to mnml-aws-codebuild.
+pub mod cloud_agent_run_view;
 pub mod completion;
 pub mod context_menu;
 pub mod dap_repl_view;
@@ -857,6 +858,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Websocket(_)) => 35,
                 Some(crate::pane::Pane::SpendReport(_)) => 36,
                 Some(crate::pane::Pane::Mount(_)) => 37,
+                Some(crate::pane::Pane::CloudAgentRun(_)) => 38,
                 _ => 0,
             };
             match kind {
@@ -906,6 +908,10 @@ fn render_layout(
                     if let Some(crate::pane::Pane::Mount(m)) = app.panes.get_mut(*id) {
                         mount_view::draw(frame, m, area);
                     }
+                    None
+                }
+                38 => {
+                    cloud_agent_run_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
@@ -2180,6 +2186,7 @@ fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui
         Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
         Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
         Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
+        Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
     }
 }
 
