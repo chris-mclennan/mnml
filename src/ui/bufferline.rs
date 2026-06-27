@@ -144,17 +144,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             w
         })
         .collect();
-    // pty panes (Claude / Codex / shell) carry their own in-pane tab
-    // strip, so they don't also get a bufferline tab. `visible` is the
-    // ordered PaneIds the strip shows; `bufferline_first_visible` and
-    // the scroll math index into it, not `app.panes`.
+    // 2026-06-27 — Pty panes (Claude / Codex / shell) are now
+    // included in the bufferline alongside editors. They keep
+    // their per-pane session strip for in-leaf switching, but
+    // also show up here so the user has a single visual place
+    // to see + close any pane.
     //
     // 2026-06-21 — VS Code-style pinned tabs sort to the FRONT.
     // Within the pinned + unpinned groups, original pane order is
     // preserved (so the user can still reorder via close/reopen).
-    let mut visible: Vec<usize> = (0..app.panes.len())
-        .filter(|&i| !matches!(app.panes[i], Pane::Pty(_)))
-        .collect();
+    let mut visible: Vec<usize> = (0..app.panes.len()).collect();
     visible.sort_by_key(|&i| {
         let pinned = matches!(app.panes.get(i), Some(Pane::Editor(b)) if b.is_pinned);
         if pinned { 0 } else { 1 }
