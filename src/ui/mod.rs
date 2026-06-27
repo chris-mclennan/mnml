@@ -64,6 +64,7 @@ pub mod ghost_overlay;
 pub mod git_graph_view;
 pub mod git_status_view;
 pub mod new_cloud_agent_wizard_view;
+pub mod new_cloud_run_wizard_view;
 // GitHub views moved to mnml-forge-github.
 // GitLab views moved to mnml-forge-gitlab.
 pub mod grep_view;
@@ -861,6 +862,7 @@ fn render_layout(
                 Some(crate::pane::Pane::Mount(_)) => 37,
                 Some(crate::pane::Pane::CloudAgentRun(_)) => 38,
                 Some(crate::pane::Pane::NewCloudAgentWizard(_)) => 39,
+                Some(crate::pane::Pane::NewCloudRunWizard(_)) => 40,
                 _ => 0,
             };
             match kind {
@@ -918,6 +920,10 @@ fn render_layout(
                 }
                 39 => {
                     new_cloud_agent_wizard_view::draw(frame, app, *id, area, focused);
+                    None
+                }
+                40 => {
+                    new_cloud_run_wizard_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
@@ -2194,6 +2200,7 @@ fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui
         Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
         Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
         Pane::NewCloudAgentWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green),
+        Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
     }
 }
 

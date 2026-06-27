@@ -274,6 +274,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::NewCloudAgentWizard(_) => {
                 (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green)
             }
+            Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
         };
         // Status badge priority:
         //   dirty   → ● / *  (orange — any tab)

@@ -2065,6 +2065,12 @@ pub struct PaneRects {
     /// Click rects inside the NewCloudAgentWizard pane (radios +
     /// Back/Next buttons). Cleared per-frame.
     pub new_cloud_agent_wizard_hits: Vec<(Rect, crate::ui::new_cloud_agent_wizard_view::WizardHit)>,
+    /// Click rects inside the NewCloudRunWizard pane (Cloud
+    /// Agents version — Managed Agents / QWE).
+    pub new_cloud_run_wizard_hits: Vec<(Rect, crate::ui::new_cloud_run_wizard_view::CloudRunHit)>,
+    /// Click rect for the "+ New Cloud Run" button in the Cloud
+    /// Agents panel header.
+    pub cloud_agents_new_run_button: Option<Rect>,
     /// Click rects for the two tabs ([Installed] [Marketplace])
     /// at the top of the integrations discovery overlay. Empty when
     /// the overlay is closed.
@@ -9471,6 +9477,7 @@ impl App {
             Pane::Mount(m) => Some((m.label.clone(), false)),
             Pane::CloudAgentRun(p) => Some((format!("☁ {}", p.ticket), false)),
             Pane::NewCloudAgentWizard(_) => Some(("+ New Agent from PR".to_string(), false)),
+            Pane::NewCloudRunWizard(_) => Some(("+ New Cloud Run".to_string(), false)),
         }
     }
 
@@ -10233,6 +10240,237 @@ impl App {
     /// running `claude` PIDs via `pgrep`, and renders one row per
     /// session with live/idle/ended state, model, last user/asst
     /// message, token spend, and PID.
+    /// Open the Cloud Agents wizard (runner picker — Managed Agents
+    /// or Tattle QWE). Distinct from `open_new_cloud_agent_wizard`
+    /// which opens the local-agents PR wizard.
+    pub fn open_new_cloud_run_wizard(&mut self) {
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::NewCloudRunWizard(_)))
+        {
+            self.reveal_pane(id);
+            return;
+        }
+        let pane =
+            Pane::NewCloudRunWizard(crate::new_cloud_run_wizard::NewCloudRunWizardPane::new());
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                *self.layout_mut() = Layout::leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    pub fn new_cloud_run_wizard_move(&mut self, delta: isize) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::NewCloudRunWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        use crate::new_cloud_run_wizard::{CloudRunStep, CloudRunner, SandboxLocation};
+        let max = match w.step {
+            CloudRunStep::Runner => CloudRunner::all().len(),
+            CloudRunStep::ManagedAgent => 2,
+            CloudRunStep::ManagedSandbox => SandboxLocation::all().len(),
+            _ => 0,
+        };
+        if max == 0 {
+            return;
+        }
+        let cur = w.focus_row as isize;
+        let new = (cur + delta).rem_euclid(max as isize) as usize;
+        w.focus_row = new;
+        match w.step {
+            CloudRunStep::Runner => w.runner = CloudRunner::all()[new],
+            CloudRunStep::ManagedAgent => w.managed_agent_create_new = new == 0,
+            CloudRunStep::ManagedSandbox => w.sandbox = SandboxLocation::all()[new],
+            _ => {}
+        }
+    }
+
+    pub fn new_cloud_run_wizard_next(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::NewCloudRunWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        if !w.next_step() {
+            self.new_cloud_run_wizard_submit();
+        }
+    }
+
+    pub fn new_cloud_run_wizard_back(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::NewCloudRunWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        w.prev_step();
+    }
+
+    pub fn new_cloud_run_wizard_type(&mut self, ch: char) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::NewCloudRunWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        use crate::new_cloud_run_wizard::CloudRunStep;
+        match w.step {
+            CloudRunStep::ManagedAgent => {
+                if w.managed_agent_create_new {
+                    w.managed_agent_new_name.push(ch);
+                } else {
+                    w.managed_agent_id.push(ch);
+                }
+            }
+            CloudRunStep::QweTicket => w.qwe_ticket.push(ch),
+            CloudRunStep::Prompt => w.prompt.push(ch),
+            _ => {}
+        }
+    }
+
+    pub fn new_cloud_run_wizard_backspace(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::NewCloudRunWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        use crate::new_cloud_run_wizard::CloudRunStep;
+        match w.step {
+            CloudRunStep::ManagedAgent => {
+                if w.managed_agent_create_new {
+                    w.managed_agent_new_name.pop();
+                } else {
+                    w.managed_agent_id.pop();
+                }
+            }
+            CloudRunStep::QweTicket => {
+                w.qwe_ticket.pop();
+            }
+            CloudRunStep::Prompt => {
+                w.prompt.pop();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn new_cloud_run_wizard_close(&mut self) {
+        if let Some(id) = self.active
+            && matches!(self.panes.get(id), Some(Pane::NewCloudRunWizard(_)))
+        {
+            self.close_pane(id);
+        }
+    }
+
+    /// Submit. QWE path routes to existing fire_cloud_run.
+    /// Managed Agents path spawns a worker thread that calls the
+    /// Anthropic API (create agent if needed → create env if
+    /// needed → create session). Result toasts back.
+    pub fn new_cloud_run_wizard_submit(&mut self) {
+        let Some(id) = self.active else { return };
+        use crate::new_cloud_run_wizard::{CloudRunner, SandboxLocation};
+        let cfg = match self.panes.get(id) {
+            Some(Pane::NewCloudRunWizard(p)) => (
+                p.runner,
+                p.qwe_ticket.clone(),
+                p.managed_agent_create_new,
+                p.managed_agent_new_name.clone(),
+                p.managed_agent_id.clone(),
+                p.sandbox,
+                p.managed_env_id.clone(),
+                p.prompt.clone(),
+            ),
+            _ => return,
+        };
+        match cfg.0 {
+            CloudRunner::TattleQwe => {
+                let t = cfg.1.trim().to_string();
+                if t.is_empty() {
+                    self.toast("ticket is empty");
+                    return;
+                }
+                self.fire_cloud_run(&t);
+                self.toast(format!("fired Tattle QWE run for {t}"));
+                self.new_cloud_run_wizard_close();
+            }
+            CloudRunner::ManagedAgents => {
+                if cfg.7.trim().is_empty() {
+                    self.toast("prompt is empty");
+                    return;
+                }
+                // Mark submitting + spawn worker. Result drained
+                // by the wizard's tick handler.
+                if let Some(Pane::NewCloudRunWizard(w)) = self.panes.get_mut(id) {
+                    w.submitting = true;
+                    w.last_message = Some("Submitting to Anthropic API…".to_string());
+                }
+                let create_new = cfg.2;
+                let agent_name = cfg.3;
+                let agent_id_existing = cfg.4;
+                let sandbox = cfg.5;
+                let env_id_existing = cfg.6;
+                let prompt = cfg.7;
+                std::thread::spawn(move || {
+                    // Step 1: agent
+                    let agent_id = if create_new {
+                        match crate::anthropic_api::create_agent(
+                            &agent_name,
+                            "claude-opus-4-8",
+                            "You are a helpful coding agent.",
+                        ) {
+                            Ok(a) => a.id,
+                            Err(e) => {
+                                eprintln!("[cloud-run] create_agent: {e}");
+                                return;
+                            }
+                        }
+                    } else {
+                        agent_id_existing
+                    };
+                    // Step 2: env (skip if user pinned an existing one).
+                    let env_id = if env_id_existing.is_empty() {
+                        let kind = match sandbox {
+                            SandboxLocation::AnthropicCloud => "cloud",
+                            SandboxLocation::SelfHostedLocal
+                            | SandboxLocation::SelfHostedRemote => "self_hosted",
+                        };
+                        match crate::anthropic_api::create_environment("ide-env", kind) {
+                            Ok(e) => e.id,
+                            Err(e) => {
+                                eprintln!("[cloud-run] create_environment: {e}");
+                                return;
+                            }
+                        }
+                    } else {
+                        env_id_existing
+                    };
+                    // Step 3: session
+                    match crate::anthropic_api::create_session(
+                        &agent_id,
+                        &env_id,
+                        &prompt,
+                        "mnml session",
+                    ) {
+                        Ok(s) => {
+                            eprintln!(
+                                "[cloud-run] session created: {} (agent={}, env={})",
+                                s.id, s.agent_id, s.environment_id
+                            );
+                        }
+                        Err(e) => eprintln!("[cloud-run] create_session: {e}"),
+                    }
+                });
+                self.toast(
+                    "fired Managed Agents run — check stderr / Anthropic console for progress",
+                );
+                self.new_cloud_run_wizard_close();
+            }
+        }
+    }
+
     /// Open the multi-step wizard for creating a new cloud agent
     /// run. Routes to either Tattle QWE or Anthropic managed
     /// agents depending on the user's step-1 pick. The pane lives

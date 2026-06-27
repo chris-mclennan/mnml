@@ -2254,6 +2254,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_new_cloud_agent_wizard(),
         },
         Command {
+            id: "cloud_agents.new_run_wizard",
+            title: "Cloud agents: + New cloud run (Managed Agents · Tattle QWE)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_new_cloud_run_wizard(),
+        },
+        Command {
             id: "cloud_agents.toggle_view",
             title: "Cloud agents: toggle row density (compact ↔ standard)",
             group: "view",

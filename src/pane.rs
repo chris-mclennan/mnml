@@ -126,6 +126,12 @@ pub enum Pane {
     /// still in flight; full historical fetch when it's done. See
     /// `src/cloud_agent_run.rs`.
     CloudAgentRun(crate::cloud_agent_run::CloudAgentRunPane),
+    /// Multi-step wizard that fires a Cloud Agents run (Managed
+    /// Agents OR Tattle QWE). Lives in the Cloud Agents panel,
+    /// distinct from `NewCloudAgentWizard` which handles local
+    /// Claude Code sessions from PR lists in the Agents panel.
+    /// See `src/new_cloud_run_wizard.rs`.
+    NewCloudRunWizard(crate::new_cloud_run_wizard::NewCloudRunWizardPane),
     /// Multi-step wizard that creates a new cloud agent run.
     /// Supports the existing Tattle QWE trigger path AND
     /// Anthropic's managed-agents API with cloud or self-hosted
@@ -536,6 +542,7 @@ impl Pane {
             Pane::Mount(m) => m.label.clone(),
             Pane::CloudAgentRun(p) => format!("☁ {}", p.ticket),
             Pane::NewCloudAgentWizard(_) => "+ New Agent from PR".to_string(),
+            Pane::NewCloudRunWizard(_) => "+ New Cloud Run".to_string(),
         }
     }
 
@@ -567,7 +574,8 @@ impl Pane {
             | Pane::SpendReport(_)
             | Pane::Mount(_)
             | Pane::CloudAgentRun(_)
-            | Pane::NewCloudAgentWizard(_) => false,
+            | Pane::NewCloudAgentWizard(_)
+            | Pane::NewCloudRunWizard(_) => false,
         }
     }
 

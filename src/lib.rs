@@ -83,12 +83,14 @@ pub(crate) mod pane;
 pub(crate) mod picker;
 // `mod pipeline_log` was removed after the 2026-06 SCM split — no
 // in-tree host populates it any more.
+pub(crate) mod anthropic_api;
 pub(crate) mod cloud_agent_run;
 pub mod dock;
 pub mod menu_bar;
 pub(crate) mod mount;
 pub(crate) mod mount_manifest;
 pub(crate) mod new_cloud_agent_wizard;
+pub(crate) mod new_cloud_run_wizard;
 pub(crate) mod playwright;
 pub(crate) mod prompt;
 pub(crate) mod pty_pane;

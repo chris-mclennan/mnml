@@ -550,6 +550,7 @@ impl App {
             Some(Pane::Mount(_)) => None,
             Some(Pane::CloudAgentRun(_)) => None,
             Some(Pane::NewCloudAgentWizard(_)) => None,
+            Some(Pane::NewCloudRunWizard(_)) => None,
         };
         let new_buf = match path {
             Some(p) => {
@@ -876,6 +877,7 @@ impl App {
             Pane::Mount(_) => (None, None),
             Pane::CloudAgentRun(_) => (None, None),
             Pane::NewCloudAgentWizard(_) => (None, None),
+            Pane::NewCloudRunWizard(_) => (None, None),
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);

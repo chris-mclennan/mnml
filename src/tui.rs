@@ -695,6 +695,45 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // NewCloudRunWizard (Cloud Agents version) keys.
+    if app
+        .active
+        .and_then(|i| app.panes.get(i))
+        .map(|p| matches!(p, crate::pane::Pane::NewCloudRunWizard(_)))
+        .unwrap_or(false)
+    {
+        match key.code {
+            KeyCode::Esc => {
+                app.new_cloud_run_wizard_close();
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.new_cloud_run_wizard_move(-1);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.new_cloud_run_wizard_move(1);
+                return;
+            }
+            KeyCode::Backspace => {
+                app.new_cloud_run_wizard_backspace();
+                return;
+            }
+            KeyCode::Tab | KeyCode::Enter => {
+                app.new_cloud_run_wizard_next();
+                return;
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.new_cloud_run_wizard_type(ch);
+                return;
+            }
+            _ => {}
+        }
+    }
     // NewCloudAgentWizard pane — when active, intercept arrows,
     // Tab, Enter, Esc, and typing so the keys don't fall through
     // to the editor underneath.
@@ -4049,6 +4088,36 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
     }
 
+    // NewCloudRunWizard hits — same shape as the other wizard.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some((_, hit)) = app
+            .rects
+            .new_cloud_run_wizard_hits
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .cloned()
+    {
+        use crate::ui::new_cloud_run_wizard_view::CloudRunHit;
+        match hit {
+            CloudRunHit::Option(idx) => {
+                let cur = app
+                    .active
+                    .and_then(|i| match app.panes.get(i) {
+                        Some(crate::pane::Pane::NewCloudRunWizard(w)) => Some(w.focus_row),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let delta = idx as isize - cur as isize;
+                if delta != 0 {
+                    app.new_cloud_run_wizard_move(delta);
+                }
+            }
+            CloudRunHit::Back => app.new_cloud_run_wizard_back(),
+            CloudRunHit::Next => app.new_cloud_run_wizard_next(),
+        }
+        return;
+    }
+
     // NewCloudAgentWizard hits: radio rows + Back / Next buttons.
     // Defined before the CloudAgentRun hits below so the wizard's
     // own hit rects always win when both panes are open.
@@ -6422,6 +6491,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(r, x, y)
             {
                 app.cloud_agents_toggle_view();
+                return;
+            }
+            if let Some(r) = app.rects.cloud_agents_new_run_button
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_new_cloud_run_wizard();
                 return;
             }
             if let Some(r) = app.rects.cloud_agents_filter_input
