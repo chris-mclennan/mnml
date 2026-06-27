@@ -320,7 +320,7 @@ fn draw_step_managed_agent(frame: &mut Frame, app: &mut App, area: Rect, pane_id
             Paragraph::new(Line::from(vec![
                 Span::styled("    ", Style::default().bg(bg)),
                 Span::styled(label.to_string(), Style::default().fg(t.comment).bg(bg)),
-                Span::styled(format!(" {display} ▏"), Style::default().fg(t.fg).bg(t.bg2)),
+                Span::styled(format!(" {display}▏"), Style::default().fg(t.fg).bg(t.bg2)),
             ])),
             Rect {
                 x: area.x,
@@ -378,7 +378,7 @@ fn draw_step_qwe_ticket(frame: &mut Frame, app: &mut App, area: Rect, pane_id: P
                 Span::styled("    ", Style::default().bg(bg)),
                 Span::styled("Ticket  ", Style::default().fg(t.comment).bg(bg)),
                 Span::styled(
-                    format!(" {label} ▏"),
+                    format!(" {label}▏"),
                     Style::default()
                         .fg(t.fg)
                         .bg(t.bg2)
@@ -443,7 +443,7 @@ fn draw_step_prompt(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
             Paragraph::new(Line::from(vec![
                 Span::styled("    ", Style::default().bg(bg)),
                 Span::styled("Prompt  ", Style::default().fg(t.comment).bg(bg)),
-                Span::styled(format!(" {display} ▏"), Style::default().fg(t.fg).bg(t.bg2)),
+                Span::styled(format!(" {display}▏"), Style::default().fg(t.fg).bg(t.bg2)),
             ])),
             Rect {
                 x: area.x,
