@@ -6138,6 +6138,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Workspace NAME (not chevron) → open the repo picker
+            // when multi-repo. Single-repo: fall through to other
+            // tree-row handlers below.
+            if let Some(r) = app.rects.workspace_name_rect
+                && crate::app::dispatch::contains(r, x, y)
+                && app.repos.len() > 1
+            {
+                app.open_repo_picker();
+                return;
+            }
             // Workspace-picker row click → switch + close.
             if let Some(&(_, ws_idx)) = app
                 .rects

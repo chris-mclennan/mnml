@@ -111,13 +111,16 @@ pub fn draw(
     );
 
     // ── horizontal split: list on left, detail on right ──────────────
-    // Detail panel takes ~40% of the width (clamped).
-    // Falls back to no detail panel when the pane is very narrow.
+    // 2026-06-27 #611 — was width * 2/5 (40%) clamped to 30-70; user
+    // asked for tighter sidebars so the centre commit-message column
+    // gets more breathing room. Now width * 1/3 (~33%) clamped to
+    // 28-60. Falls back to no detail panel when the pane is very
+    // narrow. The runtime drag-to-resize handle still wins.
     let detail_w: u16 = if body_area_full.width >= 80 {
         if let Some(w) = detail_w_cfg {
             (w as u16).clamp(20, body_area_full.width.saturating_sub(40))
         } else {
-            (body_area_full.width * 2 / 5).clamp(30, 70)
+            (body_area_full.width / 3).clamp(28, 60)
         }
     } else {
         0

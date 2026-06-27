@@ -2031,6 +2031,12 @@ pub struct PaneRects {
     /// Click target for the `▾` dropdown chevron next to the
     /// workspace name. Toggles `App::workspace_picker_open`.
     pub workspace_picker_chevron: Option<Rect>,
+    /// Click rect for the workspace NAME (not the chevron) in the
+    /// file-tree header. In multi-repo workspaces, clicking the
+    /// name opens the repo picker; in single-repo workspaces, it
+    /// just toggles the tree's expanded state (same as clicking
+    /// elsewhere on the header). 2026-06-27 #611 UX wire.
+    pub workspace_name_rect: Option<Rect>,
     /// `(rect, workspace_idx)` per row in the workspace-picker
     /// dropdown. `workspace_idx` matches `App::switch_workspace`
     /// (0 = primary, 1+ = extras). Cleared + repopulated every frame.

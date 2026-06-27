@@ -176,6 +176,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         width: dropdown_glyph.chars().count() as u16,
         height: 1,
     });
+    // 2026-06-27 #611 — separate click rect on just the workspace
+    // NAME. In multi-repo workspaces, clicking the name opens the
+    // repo picker (the existing chevron stays the workspace
+    // picker). Single-repo workspaces fall through to the section
+    // toggle.
+    let name_x = area.x + chev_str.chars().count() as u16 + CURRENT_DOT_W as u16;
+    app.rects.workspace_name_rect = Some(Rect {
+        x: name_x,
+        y: area.y,
+        width: ws_name.chars().count() as u16,
+        height: 1,
+    });
     // Primary workspace = the "current" one. Mark with a
     // filled `● ` green dot before the name + bold green name
     // styling. Extra workspaces (rendered below by
