@@ -1187,6 +1187,86 @@ fn draw_tab_drop_hint(frame: &mut Frame, app: &App) {
 /// * Dropdown chevron → opens the recent-files picker.
 ///
 /// Auto-hides when the window is narrower than `MIN_WIDTH`.
+/// Paint user-configured integration icons in the gap between the
+/// workspace-chip's right edge and the right cluster's left edge.
+/// Skips any that won't fit — the cluster never gets pushed off
+/// screen by them. Rects append to `integration_icon_rects` so the
+/// existing click + right-click handlers in tui.rs fire on hit.
+fn paint_integration_chips_in_gap(
+    frame: &mut Frame,
+    app: &mut App,
+    chip_right_edge: u16,
+    cluster_left: u16,
+    y: u16,
+) {
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::Span;
+    use ratatui::widgets::Paragraph;
+    if app.config.ui.integration_icons.is_empty() {
+        return;
+    }
+    // Leave a 1-cell margin from the chip's right edge and a 1-cell
+    // margin before the cluster so the integrations group visually.
+    let avail_left = chip_right_edge.saturating_add(1);
+    let avail_right = cluster_left.saturating_sub(1);
+    if avail_right <= avail_left {
+        return;
+    }
+    let avail_w = avail_right - avail_left;
+    let per_chip: u16 = 3;
+    let max_chips = (avail_w / per_chip) as usize;
+    if max_chips == 0 {
+        return;
+    }
+    let t = theme::cur();
+    let nerd = !app.config.ui.ascii_icons;
+    // Right-align: paint from rightmost icon first toward the left.
+    let to_paint = app.config.ui.integration_icons.len().min(max_chips);
+    let total_w = (to_paint as u16) * per_chip;
+    let mut x = avail_right.saturating_sub(total_w);
+    // Iterate in original order (left-to-right) so the user sees
+    // their icons in declared order.
+    for (i, icon) in app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .take(to_paint)
+        .enumerate()
+    {
+        let glyph = if nerd { &icon.glyph } else { &icon.fallback };
+        let chip_bg = match icon.color.as_str() {
+            "orange" => t.orange,
+            "cyan" => t.cyan,
+            "blue" => t.blue,
+            "green" => t.green,
+            "yellow" => t.yellow,
+            "purple" => t.purple,
+            "red" => t.red,
+            "teal" => t.teal,
+            _ => t.bg2,
+        };
+        let chip_rect = Rect {
+            x,
+            y,
+            width: 3,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" {glyph} "),
+                Style::default()
+                    .fg(t.bg_darker)
+                    .bg(chip_bg)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            chip_rect,
+        );
+        app.rects.integration_icon_rects.push((chip_rect, i));
+        x = x.saturating_add(3);
+    }
+}
+
 fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 0 || area.width == 0 {
         app.rects.palette_search_chip = None;
@@ -1494,11 +1574,16 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         bufferline::paint_right_cluster(frame, app, cluster_area, t.bg_dark);
+        // Integration icons — paint in the gap between the
+        // workspace chip's right edge and the cluster. Skip
+        // entirely if the gap can't hold even one (3 cells each)
+        // so the cluster stays put. Right-aligned just before the
+        // cluster so the eye groups them with the chrome.
+        paint_integration_chips_in_gap(frame, app, palette_right_edge, cluster_area.x, area.y);
     } else {
         // Cluster hidden entirely — clear the chip rects so stale
         // rects from a wider frame don't steal clicks.
         app.rects.launcher_icon_rects.clear();
-        app.rects.integration_icon_rects.clear();
         app.rects.bufferline_new_tab_button = None;
         app.rects.bufferline_tab_page_chips.clear();
         app.rects.bufferline_tab_page_close.clear();
