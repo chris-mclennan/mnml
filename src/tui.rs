@@ -4725,8 +4725,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     }
 
     // The context menu is modal: a left-click on a row runs it; anywhere else
-    // (or a right-click) dismisses.
+    // (or a right-click) dismisses. Mouse-move over a row highlights it
+    // (matches macOS / VS Code menu hover).
     if app.context_menu.is_some() {
+        if matches!(m.kind, MouseEventKind::Moved)
+            && let Some(&(_, i)) = app
+                .rects
+                .context_menu_items
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.context_menu_select(i);
+            return;
+        }
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(&(_, i)) = app
