@@ -46,12 +46,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(t.grey_fg).bg(t.bg_darker))
         .style(Style::default().bg(t.bg_darker));
+    // Title is just a dim label in the border area, NOT a chip.
+    // The previous solid-blue chip styling visually merged with
+    // the (auto-selected) first row's highlight, making it look
+    // like the first row was part of the title. Match the
+    // macOS / IDE menu-bar look — quiet header, no chip.
     let block = match &menu.title {
         Some(title) => block.title(Span::styled(
             format!(" {title} "),
             Style::default()
-                .fg(t.bg_darker)
-                .bg(t.blue)
+                .fg(t.comment)
+                .bg(t.bg_darker)
                 .add_modifier(Modifier::BOLD),
         )),
         None => block,
@@ -65,7 +70,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let visible = (inner.height as usize).min(menu.items.len());
     for (row, item) in menu.items.iter().take(visible).enumerate() {
         let r = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
-        let selected = row == menu.selected;
+        // Only paint the highlight once the user has interacted
+        // (mouse hover or arrow keys). On first open with no
+        // interaction, rows render plain — matches the macOS /
+        // VS Code menu-bar look the user prefers. Enter / click
+        // still fire whatever's at `selected` (0 by default), so
+        // the no-highlight state isn't inert.
+        let selected = row == menu.selected && menu.interacted;
         let style = if selected {
             Style::default()
                 .fg(t.bg_darker)

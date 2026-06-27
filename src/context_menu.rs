@@ -124,6 +124,10 @@ pub enum MenuAction {
     /// Copy a literal string to the clipboard. Used by the git rail's
     /// `Pull` row context menu ("Copy URL").
     CopyText(String),
+    /// Split the leaf containing the tab and put the tab in the
+    /// new half. Direction is the DropZone (Left/Right/Top/Bottom).
+    /// Used by tab right-click "Split Right / Down / Left / Up".
+    SplitTabInto(PaneId, crate::app::tab_drop::DropZone),
     /// Open the CloudAgentRun detail pane for a row at `idx` in
     /// `cloud_agents_rows`. Used by the managed-agent right-click
     /// menu's "View details" entry.
@@ -206,6 +210,13 @@ pub struct ContextMenu {
     /// Where the menu's top-left should sit (the click cell) — clamped on render.
     pub anchor: (u16, u16),
     pub selected: usize,
+    /// True once the user has actively moved focus (mouse hover or
+    /// arrow keys). When false, the renderer paints no row highlight
+    /// — matches macOS/Cursor's right-click menu, where nothing is
+    /// pre-selected until you interact. Enter / click still fire the
+    /// item at `selected` (0 by default), so the "no highlight"
+    /// state isn't actually inert.
+    pub interacted: bool,
 }
 
 impl ContextMenu {
@@ -215,9 +226,11 @@ impl ContextMenu {
             items,
             anchor,
             selected: 0,
+            interacted: false,
         }
     }
     pub fn move_up(&mut self) {
+        self.interacted = true;
         if self.selected == 0 {
             self.selected = self.items.len().saturating_sub(1);
         } else {
@@ -225,6 +238,7 @@ impl ContextMenu {
         }
     }
     pub fn move_down(&mut self) {
+        self.interacted = true;
         if self.items.is_empty() {
             return;
         }
@@ -233,6 +247,7 @@ impl ContextMenu {
     pub fn set_selected(&mut self, i: usize) {
         if i < self.items.len() {
             self.selected = i;
+            self.interacted = true;
         }
     }
     /// Inner content width (the longest label + a little padding).

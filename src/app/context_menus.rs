@@ -464,6 +464,9 @@ impl App {
             OpenCloudAgentRunDetail(idx) => {
                 self.open_cloud_agent_run(idx);
             }
+            SplitTabInto(src, zone) => {
+                self.split_tab_into(src, zone);
+            }
             StopManagedSession(session_id) => {
                 let tx = self.cloud_run_msg_tx.clone();
                 let sid = session_id.clone();

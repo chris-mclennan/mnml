@@ -57,10 +57,46 @@ impl App {
                 ));
             }
             items.push(MenuItem::new(
-                "Copy path",
+                "Copy relative path",
                 MenuAction::CopyPath(rel_path(&self.workspace, p)),
             ));
+            // 2026-06-27: explicit absolute path entry (VS Code parity).
+            items.push(MenuItem::new(
+                "Copy absolute path",
+                MenuAction::CopyPath(p.display().to_string()),
+            ));
+            // OS-aware label so "Reveal in Finder" reads
+            // "Reveal in Explorer" on Windows / "Reveal in Files"
+            // on Linux. Action under the hood is the same — the
+            // RevealInFinder handler shells out to the platform
+            // file browser.
+            items.push(MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(p.clone()),
+            ));
         }
+        // Split this tab off into a new half of the current leaf.
+        // Mirrors VS Code's Split & Move submenu — drag-to-split via
+        // the keyboard. Available for any pane type that has a tab
+        // (i.e. anything in the bufferline). After the split, the
+        // dragged tab lives alone in the new half.
+        use crate::app::tab_drop::DropZone;
+        items.push(MenuItem::new(
+            "Split right",
+            MenuAction::SplitTabInto(id, DropZone::Right),
+        ));
+        items.push(MenuItem::new(
+            "Split down",
+            MenuAction::SplitTabInto(id, DropZone::Bottom),
+        ));
+        items.push(MenuItem::new(
+            "Split left",
+            MenuAction::SplitTabInto(id, DropZone::Left),
+        ));
+        items.push(MenuItem::new(
+            "Split up",
+            MenuAction::SplitTabInto(id, DropZone::Top),
+        ));
         // Claude / Codex / shell tabs can be renamed from here too.
         if matches!(self.panes.get(id), Some(Pane::Pty(_))) {
             items.push(MenuItem::new("Rename…", MenuAction::RenameSession(id)));

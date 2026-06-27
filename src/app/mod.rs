@@ -532,6 +532,20 @@ pub fn collect_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usi
 
 /// `p` made relative to `workspace` (for `git` arguments). Falls back to `p` if
 /// it isn't under `workspace`.
+/// OS-aware label for "Reveal in <file browser>". The underlying
+/// RevealInFinder MenuAction handler shells out to the right
+/// system command per OS. macOS today; Linux/Windows fall back to
+/// "Reveal in file browser" since the exact app varies.
+pub(crate) fn reveal_in_files_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Reveal in Finder"
+    } else if cfg!(target_os = "windows") {
+        "Reveal in Explorer"
+    } else {
+        "Reveal in file browser"
+    }
+}
+
 fn rel_path(workspace: &Path, p: &Path) -> String {
     p.strip_prefix(workspace)
         .unwrap_or(p)
@@ -2292,6 +2306,10 @@ pub struct PaneRects {
     /// for parity with other drag-state fields, but it's not a rect
     /// itself — it's just the pane id to re-find each frame.
     pub bufferline_drag_tab: Option<PaneId>,
+    /// Cursor position while a tab drag is in flight. Tracked so
+    /// the ghost overlay (a floating chip showing the dragged
+    /// tab's label) can follow the cursor. Cleared on mouse-up.
+    pub bufferline_drag_ghost: Option<(u16, u16)>,
     /// One rect per row in the F1 click-discovery overlay — click a row
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.

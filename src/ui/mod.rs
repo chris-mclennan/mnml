@@ -627,6 +627,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // file drag is in flight). Comes AFTER the drop-zone hint so
     // the ghost reads on top of the highlighted zone.
     draw_tree_drag_ghost(frame, app);
+    // Same idea for the bufferline tab drag — show a small chip
+    // following the cursor so the user has visual confirmation
+    // that the drag is in flight (the drop-zone overlay alone is
+    // easy to miss when the cursor is far from any pane edge).
+    draw_tab_drag_ghost(frame, app);
 
     // Scratch terminal strip — paints below the body. Resizes the pty
     // so the shell knows about the new viewport.
@@ -962,6 +967,56 @@ fn render_layout(
 /// chip showing the file's name near the cursor while the drag
 /// is armed and the mouse is past the origin row. Cleared
 /// automatically when `tree_drag` clears on mouse-up.
+/// Floating chip showing the dragged tab's label, painted near
+/// the cursor while a bufferline tab drag is in flight. Same
+/// pattern as `draw_tree_drag_ghost`. Off when no drag.
+fn draw_tab_drag_ghost(frame: &mut Frame, app: &App) {
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Paragraph;
+    let Some((cx, cy)) = app.rects.bufferline_drag_ghost else {
+        return;
+    };
+    let Some(src) = app.rects.bufferline_drag_tab else {
+        return;
+    };
+    let Some(pane) = app.panes.get(src) else {
+        return;
+    };
+    let name = pane.title();
+    let label = clip_to_cells(&name, 28);
+    let label_w = label.chars().count() as u16;
+    let chip_w = label_w + 5; // " ⤴ <name> "
+    let area = frame.area();
+    let mut chip_x = cx.saturating_add(1);
+    let mut chip_y = cy;
+    if chip_x + chip_w > area.x + area.width {
+        chip_x = (area.x + area.width).saturating_sub(chip_w);
+    }
+    if chip_y >= area.y + area.height {
+        chip_y = cy.saturating_sub(1);
+    }
+    let chip_rect = Rect {
+        x: chip_x,
+        y: chip_y,
+        width: chip_w,
+        height: 1,
+    };
+    let t = theme::cur();
+    let bg = t.purple;
+    let fg = t.bg_darker;
+    let line = Line::from(vec![
+        Span::styled(" ".to_string(), Style::default().bg(bg)),
+        Span::styled("⤴ ".to_string(), Style::default().fg(fg).bg(bg)),
+        Span::styled(
+            label,
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".to_string(), Style::default().bg(bg)),
+    ]);
+    frame.render_widget(Paragraph::new(line), chip_rect);
+}
+
 fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
     use ratatui::style::{Modifier, Style};
     use ratatui::text::{Line, Span};

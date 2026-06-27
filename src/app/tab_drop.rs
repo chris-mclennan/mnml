@@ -91,6 +91,29 @@ impl App {
         self.focus = Focus::Pane;
     }
 
+    /// Split off `src` into a new half of the leaf containing it.
+    /// Mirrors the drag-to-edge gesture but driven by the keyboard /
+    /// right-click "Split right/down/left/up" menu items. Needs a
+    /// surviving sibling tab in the current leaf — splitting a
+    /// solo tab off itself is a no-op (just leaves an empty leaf).
+    pub fn split_tab_into(&mut self, src: PaneId, zone: DropZone) {
+        // Need a sibling tab in the same leaf — splitting solo
+        // would leave an empty leaf. Bail with a toast in that case.
+        let other = self
+            .layout()
+            .leaf_containing(src)
+            .and_then(|tabs| tabs.iter().find(|&&t| t != src).copied());
+        let Some(target) = other else {
+            self.toast("can't split: tab is alone in its pane");
+            return;
+        };
+        // splice_pane_at(src, target, zone): removes src, then wraps
+        // `target`'s leaf with a Split whose other half is `src`.
+        self.splice_pane_at(src, target, zone);
+        self.active = Some(src);
+        self.focus = Focus::Pane;
+    }
+
     /// Place pane `src` next to leaf `target` per `zone`. Detaches `src` from
     /// the visible tree first (a no-op if it was a background tab; if it was a
     /// visible split half, that split collapses into its sibling). `target`'s

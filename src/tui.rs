@@ -6815,30 +6815,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // Bufferline (file-tab) drag-to-reorder. Same shape as the
-            // tab-page handler above — find the tab under the cursor,
-            // swap the underlying panes, update the drag-source to the
-            // new id of the moved pane.
-            if let Some(src) = app.rects.bufferline_drag_tab {
-                let dst = app
-                    .rects
-                    .bufferline_tabs
-                    .iter()
-                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-                    .map(|(_, pid)| *pid);
-                if let Some(dst) = dst
-                    && dst != src
-                {
-                    app.swap_bufferline_tabs(src, dst);
-                    // After the swap, the pane WE were dragging now
-                    // lives at `dst`'s old id (i.e. `dst`).
-                    app.rects.bufferline_drag_tab = Some(dst);
-                    app.rects.tab_drop_target = None;
-                } else {
-                    // Not over the tab strip — track the pane-body drop zone so
-                    // the drop-hint overlay can show where a split would land.
-                    app.update_tab_drop_target(x, y);
-                }
+            // Bufferline (file-tab) drag — update visuals only.
+            // Reorder + drop-to-pane both happen on mouse-UP. Doing
+            // them on Drag caused thrash with 2+ tabs: hovering over
+            // a sibling tab fired swap_bufferline_tabs, the cursor
+            // ended up over the now-moved source, swap fired again,
+            // and so on. Moving the swap to mouse-up makes drag-to-
+            // pane-body work cleanly regardless of how many tabs.
+            if app.rects.bufferline_drag_tab.is_some() {
+                app.rects.bufferline_drag_ghost = Some((x, y));
+                app.update_tab_drop_target(x, y);
                 return;
             }
             if let Some(mut drag) = app.rail_section_drag {
@@ -7127,11 +7113,31 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // promotes a preview tab to a regular tab (the italic
             // becomes plain). Single click just reveals.
             if let Some(src) = app.rects.bufferline_drag_tab {
+                // Clear the ghost — mouse-up ends the drag visually
+                // regardless of which branch we take.
+                app.rects.bufferline_drag_ghost = None;
                 let over_body = app
                     .rects
                     .pane_bodies
                     .iter()
                     .any(|(r, _)| crate::app::dispatch::contains(*r, x, y));
+                // Released over a different tab → swap. (Moved here
+                // from the Drag handler so 2+ tab strips stop
+                // thrashing during the drag.)
+                let dst_tab = app
+                    .rects
+                    .bufferline_tabs
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                    .map(|(_, pid)| *pid);
+                if let Some(dst) = dst_tab
+                    && dst != src
+                {
+                    app.swap_bufferline_tabs(src, dst);
+                    app.rects.bufferline_drag_tab = None;
+                    app.rects.tab_drop_target = None;
+                    return;
+                }
                 if over_body {
                     app.drop_tab_on_pane(src, x, y);
                 } else {
@@ -7152,8 +7158,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
             }
             app.rects.tab_drop_target = None;
-            // Mouse-up always clears the bufferline-tab drag arm.
+            // Mouse-up always clears the bufferline-tab drag arm + ghost.
             app.rects.bufferline_drag_tab = None;
+            app.rects.bufferline_drag_ghost = None;
         }
         // Wheel sends one event per terminal-emitted tick (macOS Terminal /
         // Ghostty / iTerm2 fire several ticks per real wheel notch under
