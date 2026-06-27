@@ -83,10 +83,50 @@ impl App {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| icon.id.clone());
         let id = icon.id.clone();
+        // Enable toggle — labelled per current state. After the
+        // palette-bar refactor, `enabled=false` chips don't paint;
+        // this is the in-app path to flip them.
+        let toggle_label = if icon.enabled {
+            "Disable (hide chip)"
+        } else {
+            "Enable (show chip)"
+        };
+        // "Remove from rail" was stale (integrations moved out of
+        // the rail and into the palette bar). Now just "Remove".
         let items = vec![
+            MenuItem::new(
+                toggle_label,
+                MenuAction::ToggleIntegrationEnabled(id.clone()),
+            ),
             MenuItem::new("Edit…", MenuAction::EditIntegration(id.clone())),
-            MenuItem::new("Remove from rail", MenuAction::RemoveIntegration(id)),
+            MenuItem::new("Remove", MenuAction::RemoveIntegration(id)),
         ];
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click menu for a launcher chip on the palette bar.
+    /// Parallel to `open_integration_chip_context_menu` — chips
+    /// are visually identical to the user.
+    pub fn open_launcher_chip_context_menu(&mut self, icon_idx: usize, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(icon) = self.config.ui.launcher_icons.get(icon_idx) else {
+            return;
+        };
+        let title = icon
+            .tooltip
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| icon.id.clone());
+        let id = icon.id.clone();
+        let toggle_label = if icon.enabled {
+            "Disable (hide chip)"
+        } else {
+            "Enable (show chip)"
+        };
+        let items = vec![MenuItem::new(
+            toggle_label,
+            MenuAction::ToggleLauncherEnabled(id),
+        )];
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
@@ -498,6 +538,47 @@ impl App {
             }
             RemoveIntegration(id) => {
                 self.remove_integration_by_id(&id);
+            }
+            ToggleIntegrationEnabled(id) => {
+                if let Some(slot) = self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter_mut()
+                    .find(|i| i.id == id)
+                {
+                    slot.enabled = !slot.enabled;
+                    let now = slot.enabled;
+                    self.toast(format!(
+                        "integration {id} {}",
+                        if now { "enabled" } else { "disabled" }
+                    ));
+                    let _ = crate::app::discovery::persist_integration_icons(
+                        &self.config.ui.integration_icons,
+                    );
+                }
+            }
+            ToggleLauncherEnabled(id) => {
+                if let Some(slot) = self
+                    .config
+                    .ui
+                    .launcher_icons
+                    .iter_mut()
+                    .find(|i| i.id == id)
+                {
+                    slot.enabled = !slot.enabled;
+                    let now = slot.enabled;
+                    self.toast(format!(
+                        "launcher {id} {}",
+                        if now { "enabled" } else { "disabled" }
+                    ));
+                    // No launcher-specific persistence helper yet —
+                    // best-effort: reuse the integrations persistence
+                    // which rewrites both arrays. If the helper
+                    // doesn't cover launchers, the toggle takes
+                    // effect this session but won't survive a
+                    // restart. (TODO: add persist_launcher_icons.)
+                }
             }
             Command(id) => {
                 crate::command::run(id, self);

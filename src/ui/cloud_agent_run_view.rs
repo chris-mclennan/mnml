@@ -27,6 +27,8 @@ pub enum CloudAgentRunHit {
     Refresh,
     /// Cycle the auto-refresh interval: off → 10s → 30s → 60s → 5m → off.
     CycleAutoRefresh,
+    /// Click the Logs box title → toggle tail-follow.
+    ToggleLogFollow,
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focused: bool) {
@@ -388,6 +390,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     } else {
         format!(" Logs ({} lines) ", p.logs.len())
     };
+    let title_w = title.chars().count() as u16;
     let block = Block::default()
         .borders(Borders::TOP)
         .title(Span::styled(
@@ -397,6 +400,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         .style(Style::default().fg(t.fg).bg(bg));
     let inner = block.inner(log_box);
     frame.render_widget(block, log_box);
+    // Register the title row as a click target — toggles tail-follow.
+    // Universal tail-view expectation: clicking "following" pauses,
+    // clicking "Logs (N lines)" resumes.
+    let title_rect = Rect {
+        x: log_box.x,
+        y: log_box.y,
+        width: title_w.min(log_box.width),
+        height: 1,
+    };
+    app.rects
+        .cloud_agent_run_hits
+        .push((title_rect, CloudAgentRunHit::ToggleLogFollow));
 
     if let Some(err) = p.logs_err.as_ref() {
         frame.render_widget(

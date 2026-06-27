@@ -262,6 +262,15 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, format!("{source}: {track}"), None))
         }
+        HoverChip::PaletteSidebarButton => {
+            let rect = app.rects.palette_sidebar_button?;
+            let state = if app.tree_visible { "open" } else { "off" };
+            Some((
+                rect,
+                format!("file tree: {state}"),
+                Some("click: toggle file tree (Ctrl+B)".into()),
+            ))
+        }
         HoverChip::PaletteBackButton => {
             let rect = app.rects.palette_back_button?;
             Some((rect, "previous buffer".to_string(), None))
@@ -270,9 +279,165 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let rect = app.rects.palette_forward_button?;
             Some((rect, "next buffer".to_string(), None))
         }
+        HoverChip::PaletteSearchChip => {
+            let rect = app.rects.palette_search_chip?;
+            Some((
+                rect,
+                "command palette".to_string(),
+                Some("click: open files, commands, recent (Cmd+P)".into()),
+            ))
+        }
         HoverChip::PaletteDropdownButton => {
             let rect = app.rects.palette_dropdown_button?;
             Some((rect, "recent files".to_string(), None))
+        }
+        HoverChip::PaletteAddIntegration => {
+            let rect = app.rects.palette_add_integration_button?;
+            Some((
+                rect,
+                "add integration".into(),
+                Some("click: discovery overlay (siblings + custom)".into()),
+            ))
+        }
+        HoverChip::SplitTabChip(pid) => {
+            let rect = app
+                .rects
+                .split_tab_chips
+                .iter()
+                .find(|(_, _, p)| *p == pid)
+                .map(|(r, _, _)| *r)?;
+            use crate::pane::Pane;
+            let title = app.panes.get(pid).map(Pane::title).unwrap_or_default();
+            let path = if let Some(Pane::Editor(b)) = app.panes.get(pid) {
+                b.path.as_ref().map(|p| p.display().to_string())
+            } else {
+                None
+            };
+            let main = path.unwrap_or(title);
+            Some((
+                rect,
+                main,
+                Some("click: switch · middle: close · right: menu".into()),
+            ))
+        }
+        HoverChip::SplitTabClose(pid) => {
+            let rect = app
+                .rects
+                .split_tab_close
+                .iter()
+                .find(|(_, _, p)| *p == pid)
+                .map(|(r, _, _)| *r)?;
+            use crate::pane::Pane;
+            let dirty = matches!(app.panes.get(pid), Some(Pane::Editor(b)) if b.dirty);
+            let label = if dirty {
+                "close (unsaved — will prompt)"
+            } else {
+                "close tab"
+            };
+            Some((rect, label.into(), None))
+        }
+        HoverChip::AgentsPanelChip(kind) => {
+            let rect = match kind {
+                crate::AgentsPanelChipKind::NewSession => app.rects.agents_panel_new_chip,
+                crate::AgentsPanelChipKind::FromPr => app.rects.agents_panel_pr_chip,
+                crate::AgentsPanelChipKind::ViewToggle => app.rects.agents_panel_view_chip,
+            }?;
+            let (main, sub) = match kind {
+                crate::AgentsPanelChipKind::NewSession => (
+                    "new agent session",
+                    Some("click: spawn fresh Claude Code session in workspace"),
+                ),
+                crate::AgentsPanelChipKind::FromPr => (
+                    "new agent from PR",
+                    Some("click: open wizard — pick PRs + action, fire one session per PR"),
+                ),
+                crate::AgentsPanelChipKind::ViewToggle => (
+                    "view mode",
+                    Some("click: cycle workspace ↔ status grouping"),
+                ),
+            };
+            Some((rect, main.into(), sub.map(Into::into)))
+        }
+        HoverChip::CloudAgentsNewRunButton => {
+            let rect = app.rects.cloud_agents_new_run_button?;
+            Some((
+                rect,
+                "new cloud run".into(),
+                Some("click: open wizard (Managed Agents · Tattle QWE)".into()),
+            ))
+        }
+        HoverChip::CloudRunAutoRefresh => {
+            // Find the rect in cloud_agent_run_hits.
+            let rect = app
+                .rects
+                .cloud_agent_run_hits
+                .iter()
+                .find(|(_, h)| {
+                    matches!(
+                        h,
+                        crate::ui::cloud_agent_run_view::CloudAgentRunHit::CycleAutoRefresh
+                    )
+                })
+                .map(|(r, _)| *r)?;
+            Some((
+                rect,
+                "auto-refresh".into(),
+                Some("click: cycle off → 10s → 30s → 60s → 5m".into()),
+            ))
+        }
+        HoverChip::CloudRunRefresh => {
+            let rect = app
+                .rects
+                .cloud_agent_run_hits
+                .iter()
+                .find(|(_, h)| {
+                    matches!(
+                        h,
+                        crate::ui::cloud_agent_run_view::CloudAgentRunHit::Refresh
+                    )
+                })
+                .map(|(r, _)| *r)?;
+            Some((
+                rect,
+                "refresh".into(),
+                Some("click: re-fetch logs + artifacts (or restart SSE stream)".into()),
+            ))
+        }
+        HoverChip::ActivityBarGear => {
+            let rect = app.rects.activity_bar_gear?;
+            Some((
+                rect,
+                "settings".into(),
+                Some("click: themes · about · prefs".into()),
+            ))
+        }
+        HoverChip::DockKebab => {
+            let rect = app.rects.dock_widget_kebabs.first().map(|(r, _)| *r)?;
+            Some((rect, "widget options".into(), None))
+        }
+        HoverChip::DockEmptyChip => {
+            let rect = app.rects.dock_empty_chip?;
+            Some((
+                rect,
+                "create first dock widget".into(),
+                Some("click: choose widget kind".into()),
+            ))
+        }
+        HoverChip::StatuslineMixrPlay => {
+            let rect = app.rects.statusline_mixr_play_chip?;
+            Some((rect, "play / pause".into(), None))
+        }
+        HoverChip::StatuslineMixrFfwd => {
+            let rect = app.rects.statusline_mixr_ffwd_chip?;
+            Some((rect, "skip track".into(), None))
+        }
+        HoverChip::StatuslineTestChip => {
+            let rect = app.rects.statusline_test_chip?;
+            Some((
+                rect,
+                "test status".into(),
+                Some("click: focus test output pane".into()),
+            ))
         }
         HoverChip::SplitStripTermButton => {
             let rect = app
@@ -332,7 +497,26 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         }
         HoverChip::BufferlineWindowClose => {
             let rect = app.rects.bufferline_window_close?;
-            Some((rect, "quit mnml".into(), Some("click: app.quit".into())))
+            // Stale "click: app.quit" surfaced an internal command
+            // id; user-facing sublabel reads better.
+            Some((rect, "quit mnml".into(), Some("click: quit".into())))
+        }
+        HoverChip::SplitStripAiButton => {
+            let rect = app
+                .rects
+                .split_strip_ai_buttons
+                .iter()
+                .map(|(r, _)| *r)
+                .next()?;
+            let which = match app.config.ui.tab_bar_ai_icon.as_str() {
+                "codex" => "Codex",
+                _ => "Claude Code",
+            };
+            Some((
+                rect,
+                format!("open {which} in split"),
+                Some("click: spawn AI assistant in this leaf".into()),
+            ))
         }
         HoverChip::BufferlineTabClose(pid) => {
             let rect = app

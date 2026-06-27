@@ -4218,6 +4218,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             CloudAgentRunHit::CycleAutoRefresh => {
                 app.cloud_agent_run_cycle_auto();
             }
+            CloudAgentRunHit::ToggleLogFollow => {
+                if let Some(crate::pane::Pane::CloudAgentRun(p)) =
+                    app.active.and_then(|i| app.panes.get_mut(i))
+                {
+                    p.log_follow = !p.log_follow;
+                }
+            }
         }
         return;
     }
@@ -4957,6 +4964,67 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
             {
                 app.open_integration_chip_context_menu(icon_idx, (x, y));
+                return;
+            }
+            // Right-click on a launcher chip → Enable/Disable.
+            // Parallel to the integration chip menu — chips look
+            // identical to the user.
+            if let Some(&(_, icon_idx)) = app
+                .rects
+                .launcher_icon_rects
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.open_launcher_chip_context_menu(icon_idx, (x, y));
+                return;
+            }
+            // Right-click on the split-strip AI button → choose
+            // between Claude / Codex without changing the configured
+            // default. Tab-strip Term + Split buttons are single-
+            // action so they don't need menus.
+            if let Some(&(_, leaf_active)) = app
+                .rects
+                .split_strip_ai_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+                app.active = Some(leaf_active);
+                let items = vec![
+                    MenuItem::new("Open Claude Code", MenuAction::Command("ai.claude_code")),
+                    MenuItem::new("Open Codex", MenuAction::Command("ai.codex")),
+                ];
+                app.context_menu = Some(ContextMenu::new(
+                    Some("AI assistant".to_string()),
+                    (x, y),
+                    items,
+                ));
+                return;
+            }
+            // Right-click on the rail INTEGRATIONS section header.
+            // Quick add-integration + collapse — other rail headers
+            // (Workspace, Git) have context menus; integrations was
+            // the lone exception.
+            if let Some(r) = app.rects.integration_section_toggle
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+                let items = vec![
+                    MenuItem::new("Add integration…", MenuAction::Command("integrations.add")),
+                    MenuItem::new(
+                        if app.integration_section_expanded {
+                            "Collapse section"
+                        } else {
+                            "Expand section"
+                        },
+                        MenuAction::Command("view.toggle_integrations_section"),
+                    ),
+                ];
+                app.context_menu = Some(ContextMenu::new(
+                    Some("integrations".to_string()),
+                    (x, y),
+                    items,
+                ));
                 return;
             }
             // Right-click on an extra-workspace header → that workspace's menu.

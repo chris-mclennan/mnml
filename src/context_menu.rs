@@ -136,6 +136,12 @@ pub enum MenuAction {
     /// session — asks the worker to wind down cleanly. Used by
     /// the managed-agent right-click menu's "Stop session" entry.
     StopManagedSession(String),
+    /// Toggle an integration chip's `enabled` field by `id`. Hidden
+    /// chips reappear in the palette bar; visible chips hide.
+    /// Persists to user config TOML.
+    ToggleIntegrationEnabled(String),
+    /// Toggle a launcher chip's `enabled` field by `id`.
+    ToggleLauncherEnabled(String),
     /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
     /// pane, pre-filtered to the given log group + filter pattern.
     /// Used by the Cloud Agents row context menu's "Tail logs in

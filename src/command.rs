@@ -1464,6 +1464,15 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "view.toggle_integrations_section",
+            title: "Toggle the integrations section in the rail (collapse/expand)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.integration_section_expanded = !app.integration_section_expanded;
+            },
+        },
+        Command {
             id: "integrations.add",
             title: "Integrations: discover + add family siblings (opens overlay)",
             group: "view",

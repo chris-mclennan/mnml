@@ -316,6 +316,57 @@ pub enum HoverChip {
     /// (immediately left of the H/V buttons). Click opens a new
     /// shell in a split.
     SplitStripTermButton,
+    /// AI launcher button at the right end of a per-leaf tab
+    /// strip — opens Claude / Codex in a split.
+    SplitStripAiButton,
+    /// Palette-bar sidebar toggle (codicon layout-sidebar-left/off)
+    /// — click fires view.toggle_tree (Ctrl+B).
+    PaletteSidebarButton,
+    /// Palette-bar search chip — the workspace name + magnifier.
+    /// Click fires the command palette.
+    PaletteSearchChip,
+    /// Palette-bar `+` chip — opens integrations.add discovery.
+    PaletteAddIntegration,
+    /// Per-leaf split tab strip tab chip (`(rect, leaf_active,
+    /// tab_pane)`). Stores the tab pane id for tooltip lookup
+    /// (file path, dirty state, etc.).
+    SplitTabChip(crate::layout::PaneId),
+    /// Per-leaf split tab strip close badge.
+    SplitTabClose(crate::layout::PaneId),
+    /// Agents-panel header chip — type encodes which one (New
+    /// session, from PR, or view toggle).
+    AgentsPanelChip(AgentsPanelChipKind),
+    /// Cloud Agents `+ New Cloud Run` button.
+    CloudAgentsNewRunButton,
+    /// Cloud Agent Run detail pane: auto-refresh interval cycler.
+    CloudRunAutoRefresh,
+    /// Cloud Agent Run detail pane: manual refresh chip.
+    CloudRunRefresh,
+    /// Activity-bar gear icon — opens settings menu.
+    ActivityBarGear,
+    /// Dock kebab (⋮) menu trigger.
+    DockKebab,
+    /// Dock empty-state `+ dock` chip.
+    DockEmptyChip,
+    /// Statusline play / pause chip (mixr controls).
+    StatuslineMixrPlay,
+    /// Statusline fast-forward chip (mixr controls).
+    StatuslineMixrFfwd,
+    /// Statusline test-runner chip — click focuses test output.
+    StatuslineTestChip,
+}
+
+/// Which Agents-panel header chip a `HoverChip::AgentsPanelChip`
+/// references. Used by `tooltip::describe` to render the right
+/// label without expanding the parent enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentsPanelChipKind {
+    /// `+ New session` — opens a single Claude Code session.
+    NewSession,
+    /// `+ from PR` — opens the multi-PR wizard.
+    FromPr,
+    /// View toggle (workspace / status grouping).
+    ViewToggle,
 }
 
 /// One row in the F1 click-discovery overlay. Each variant maps to a list

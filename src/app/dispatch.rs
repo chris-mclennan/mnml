@@ -412,6 +412,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineNowPlaying);
     }
+    if let Some(r) = app.rects.palette_sidebar_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteSidebarButton);
+    }
     if let Some(r) = app.rects.palette_back_button
         && contains(r, x, y)
     {
@@ -422,10 +427,92 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::PaletteForwardButton);
     }
+    if let Some(r) = app.rects.palette_search_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteSearchChip);
+    }
     if let Some(r) = app.rects.palette_dropdown_button
         && contains(r, x, y)
     {
         return Some(crate::HoverChip::PaletteDropdownButton);
+    }
+    if let Some(r) = app.rects.palette_add_integration_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteAddIntegration);
+    }
+    if let Some(&(_, leaf_active, tab_pane)) = app
+        .rects
+        .split_tab_close
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        let _ = leaf_active;
+        return Some(crate::HoverChip::SplitTabClose(tab_pane));
+    }
+    if let Some(&(_, leaf_active, tab_pane)) = app
+        .rects
+        .split_tab_chips
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        let _ = leaf_active;
+        return Some(crate::HoverChip::SplitTabChip(tab_pane));
+    }
+    if let Some(r) = app.rects.agents_panel_new_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::AgentsPanelChip(
+            crate::AgentsPanelChipKind::NewSession,
+        ));
+    }
+    if let Some(r) = app.rects.agents_panel_pr_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::AgentsPanelChip(
+            crate::AgentsPanelChipKind::FromPr,
+        ));
+    }
+    if let Some(r) = app.rects.agents_panel_view_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::AgentsPanelChip(
+            crate::AgentsPanelChipKind::ViewToggle,
+        ));
+    }
+    if let Some(r) = app.rects.cloud_agents_new_run_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::CloudAgentsNewRunButton);
+    }
+    if let Some(r) = app.rects.activity_bar_gear
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::ActivityBarGear);
+    }
+    if app
+        .rects
+        .split_strip_ai_buttons
+        .iter()
+        .any(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::SplitStripAiButton);
+    }
+    if let Some(r) = app.rects.statusline_mixr_play_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineMixrPlay);
+    }
+    if let Some(r) = app.rects.statusline_mixr_ffwd_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineMixrFfwd);
+    }
+    if let Some(r) = app.rects.statusline_test_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineTestChip);
     }
     if app
         .rects
