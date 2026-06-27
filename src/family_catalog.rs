@@ -948,11 +948,28 @@ mod tests {
 
     #[test]
     fn install_command_uses_tagged_install() {
-        let s = find_by_binary("mnml-aws-lambda").expect("lambda in catalog");
-        let cmd = s.install_command();
+        // Synthetic entry — every catalog pin is currently `main`
+        // (2026-06-26 audit; see TODO.md). This test exercises the
+        // tagged path explicitly so the --tag emission stays under
+        // test coverage regardless of catalog state.
+        let synth = FamilySibling {
+            id: "synth",
+            binary: "mnml-synth",
+            category: Category::Other,
+            repo_url: "https://github.com/chris-mclennan/mnml-synth",
+            pinned_version: "v9.9.9",
+            one_liner: "synthetic test entry",
+            icon: IconTemplate {
+                glyph: "X",
+                fallback: "Sy",
+                color: "white",
+                tooltip: "synth",
+            },
+        };
+        let cmd = synth.install_command();
         assert!(cmd.contains("--git"));
-        assert!(cmd.contains("--tag"));
-        assert!(cmd.contains("mnml-aws-lambda"));
+        assert!(cmd.contains("--tag v9.9.9"));
+        assert!(cmd.contains("mnml-synth"));
         assert!(cmd.starts_with("cargo install"));
     }
 

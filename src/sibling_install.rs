@@ -90,11 +90,25 @@ mod tests {
 
     #[test]
     fn cargo_install_uses_tag_for_pinned_version() {
-        let sib = crate::family_catalog::CATALOG
-            .iter()
-            .find(|s| s.id == "tattle_inbox")
-            .expect("tattle_inbox in catalog");
-        let argv = cargo_install_argv(sib);
+        // Synthetic — every catalog pin is currently `main`
+        // (2026-06-26 audit; see TODO.md). This test pins the
+        // tagged-install path independently so the --tag emission
+        // stays under coverage regardless of catalog state.
+        let sib = crate::family_catalog::FamilySibling {
+            id: "synth",
+            binary: "mnml-synth",
+            category: crate::family_catalog::Category::Other,
+            repo_url: "https://github.com/chris-mclennan/mnml-synth",
+            pinned_version: "v9.9.9",
+            one_liner: "synthetic test entry",
+            icon: crate::family_catalog::IconTemplate {
+                glyph: "X",
+                fallback: "Sy",
+                color: "white",
+                tooltip: "synth",
+            },
+        };
+        let argv = cargo_install_argv(&sib);
         assert!(argv.iter().any(|a| a == "--tag"));
         assert!(argv.iter().any(|a| a == sib.pinned_version));
     }
