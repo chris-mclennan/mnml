@@ -1,19 +1,28 @@
 //! Anthropic API client for the Managed Agents flow.
-//! Supports two backends:
+//! Supports three backends, picked by `detect_backend()`:
 //!
 //!   • **First-party Claude API** — `api.anthropic.com` +
-//!     `x-api-key: $ANTHROPIC_API_KEY` (default).
-//!   • **Claude Platform on AWS** — `aws-external-anthropic.<region>.api.aws`
-//!     + `x-api-key: $ANTHROPIC_AWS_API_KEY` + `anthropic-workspace-id`
-//!     header. Bills through AWS Marketplace.
+//!     `x-api-key: $ANTHROPIC_API_KEY`. The default. Native
+//!     transport via `http::send`.
+//!   • **Claude Platform on AWS (API key)** —
+//!     `aws-external-anthropic.<region>.api.aws` +
+//!     `x-api-key: $ANTHROPIC_AWS_API_KEY` +
+//!     `anthropic-workspace-id`. Bills via AWS Marketplace. Use
+//!     when running solo and OK managing a bearer key.
+//!   • **Claude Platform on AWS (SigV4)** — same URL, but no
+//!     `x-api-key`; auth via AWS SigV4 request signing using the
+//!     AWS credential provider chain (env, ~/.aws/config, SSO,
+//!     IMDS). Right choice for a team: CloudTrail per-user audit,
+//!     IAM-controlled access, zero long-lived secrets. Transport
+//!     shells out to `aws configure export-credentials` + `curl
+//!     --aws-sigv4` (the SSE stream already uses curl, so this is
+//!     cheaper than pulling the `aws-sigv4` crate in).
 //!
-//! Backend chosen by `detect_backend()` based on env vars set:
-//! `ANTHROPIC_AWS_API_KEY` + `AWS_REGION` + `ANTHROPIC_AWS_WORKSPACE_ID`
-//! → AWS; else `ANTHROPIC_API_KEY` → first-party.
-//!
-//! SigV4 auth (the enterprise IAM path on Claude Platform on AWS)
-//! is deferred to Phase 3b.2 — the `aws-sigv4` crate is a large
-//! transitive dep, so it's gated behind detected need.
+//! Selection precedence:
+//!   1. SigV4: `AWS_REGION` + `ANTHROPIC_AWS_WORKSPACE_ID` set,
+//!      `ANTHROPIC_AWS_API_KEY` unset
+//!   2. AWS API key: same trio + `ANTHROPIC_AWS_API_KEY` set
+//!   3. First-party: `ANTHROPIC_API_KEY`
 //!
 //! All requests carry `anthropic-beta: managed-agents-2026-04-01`
 //! and block. Use from a worker thread, never the UI thread.
@@ -28,12 +37,27 @@ const VERSION: &str = "2023-06-01";
 
 #[derive(Debug, Clone)]
 pub enum Backend {
-    /// `api.anthropic.com` + ANTHROPIC_API_KEY.
+    /// `api.anthropic.com` + ANTHROPIC_API_KEY. Native HTTP via
+    /// `http::send`.
     FirstParty { api_key: String },
     /// `aws-external-anthropic.<region>.api.aws` + ANTHROPIC_AWS_API_KEY
-    /// + ANTHROPIC_AWS_WORKSPACE_ID header.
-    ClaudePlatformAws {
+    /// + ANTHROPIC_AWS_WORKSPACE_ID header. Native HTTP via
+    /// `http::send`. Simpler than SigV4 but requires a long-lived
+    /// bearer key in env.
+    ClaudePlatformAwsKey {
         api_key: String,
+        region: String,
+        workspace_id: String,
+    },
+    /// `aws-external-anthropic.<region>.api.aws` + AWS SigV4
+    /// request signing. No long-lived secret in env — uses the
+    /// AWS credential provider chain (env, ~/.aws/config, SSO,
+    /// IMDS) via the `aws` CLI to fetch fresh credentials for
+    /// every request. Right choice for a team — CloudTrail
+    /// per-user audit, IAM-controlled access, no key sprawl.
+    /// Transport: `curl --aws-sigv4` (the SSE stream already
+    /// uses curl; the POSTs join it).
+    ClaudePlatformAwsSigV4 {
         region: String,
         workspace_id: String,
     },
@@ -43,22 +67,25 @@ impl Backend {
     pub fn label(&self) -> &'static str {
         match self {
             Backend::FirstParty { .. } => "first-party Claude API",
-            Backend::ClaudePlatformAws { .. } => "Claude Platform on AWS",
+            Backend::ClaudePlatformAwsKey { .. } => "Claude Platform on AWS (API key)",
+            Backend::ClaudePlatformAwsSigV4 { .. } => "Claude Platform on AWS (SigV4)",
         }
     }
 
     /// Where to POST. Per-backend base URL.
-    fn base(&self) -> String {
+    pub fn base(&self) -> String {
         match self {
             Backend::FirstParty { .. } => "https://api.anthropic.com".to_string(),
-            Backend::ClaudePlatformAws { region, .. } => {
+            Backend::ClaudePlatformAwsKey { region, .. }
+            | Backend::ClaudePlatformAwsSigV4 { region, .. } => {
                 format!("https://aws-external-anthropic.{region}.api.aws")
             }
         }
     }
 
-    /// Headers for every API call.
-    fn headers(&self) -> Vec<(String, String)> {
+    /// Headers for every API call. SigV4 path adds Authorization
+    /// later in curl — only the workspace + beta headers go here.
+    pub fn headers(&self) -> Vec<(String, String)> {
         let mut out = vec![
             ("anthropic-version".to_string(), VERSION.to_string()),
             ("anthropic-beta".to_string(), BETA.to_string()),
@@ -68,7 +95,7 @@ impl Backend {
             Backend::FirstParty { api_key } => {
                 out.push(("x-api-key".to_string(), api_key.clone()));
             }
-            Backend::ClaudePlatformAws {
+            Backend::ClaudePlatformAwsKey {
                 api_key,
                 workspace_id,
                 ..
@@ -76,32 +103,190 @@ impl Backend {
                 out.push(("x-api-key".to_string(), api_key.clone()));
                 out.push(("anthropic-workspace-id".to_string(), workspace_id.clone()));
             }
+            Backend::ClaudePlatformAwsSigV4 { workspace_id, .. } => {
+                // No x-api-key — curl --aws-sigv4 will add the
+                // Authorization header. anthropic-workspace-id
+                // is signed in as a header so the request still
+                // resolves to the right workspace.
+                out.push(("anthropic-workspace-id".to_string(), workspace_id.clone()));
+            }
         }
         out
     }
+
+    /// True for paths where requests must shell out to curl
+    /// (SigV4 path uses curl's native --aws-sigv4 support; the
+    /// SSE stream uses curl regardless).
+    fn is_sigv4(&self) -> bool {
+        matches!(self, Backend::ClaudePlatformAwsSigV4 { .. })
+    }
 }
 
-/// Pick the backend from env vars. Prefers AWS when its trio of
-/// vars is set (user has actively chosen the AWS path);
-/// otherwise falls back to first-party.
+/// Run `aws configure export-credentials --format env` and parse
+/// the AWS_* env vars from its stdout. This is the modern way to
+/// pull credentials regardless of source (SSO, profile, env, IMDS)
+/// — `aws` resolves the credential chain for us. Returns the
+/// HashMap of env var → value, ready to pass to a Command.
+fn aws_export_credentials() -> Result<Vec<(String, String)>, String> {
+    let out = Command::new("aws")
+        .args(["configure", "export-credentials", "--format", "env"])
+        .output()
+        .map_err(|e| format!("spawn `aws configure export-credentials`: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "`aws configure export-credentials` failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut creds = Vec::new();
+    for line in text.lines() {
+        // Format is `export AWS_FOO='bar'`; strip the `export `
+        // prefix and the surrounding quotes.
+        let line = line.trim();
+        let rest = line.strip_prefix("export ").unwrap_or(line);
+        let Some((k, v)) = rest.split_once('=') else {
+            continue;
+        };
+        let v = v.trim_matches(|c| c == '\'' || c == '"');
+        creds.push((k.to_string(), v.to_string()));
+    }
+    if !creds.iter().any(|(k, _)| k == "AWS_ACCESS_KEY_ID") {
+        return Err(
+            "no AWS_ACCESS_KEY_ID in aws export — credentials not available (run `aws sso login`?)"
+                .to_string(),
+        );
+    }
+    Ok(creds)
+}
+
+/// Run a request via `curl --aws-sigv4`. Returns body + status.
+/// `method` is POST/GET; `url` is full; `headers` are key:value
+/// pairs to forward; `body` is JSON (None for GET). Used by every
+/// API call when `Backend::is_sigv4()`.
+fn curl_sigv4(
+    region: &str,
+    method: &str,
+    url: &str,
+    headers: &[(String, String)],
+    body: Option<&str>,
+) -> Result<(u16, String), String> {
+    let creds = aws_export_credentials()?;
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-sS",
+        "-X",
+        method,
+        "-w",
+        "\n__HTTP_STATUS__%{http_code}",
+        "--aws-sigv4",
+        &format!("aws:amz:{region}:aws-external-anthropic"),
+    ]);
+    for (k, v) in headers {
+        cmd.arg("-H");
+        cmd.arg(format!("{k}: {v}"));
+    }
+    if let Some(b) = body {
+        cmd.arg("--data-binary");
+        cmd.arg(b);
+    }
+    cmd.arg(url);
+    // Pass credentials via env, not argv (so they don't leak into
+    // process listings).
+    for (k, v) in &creds {
+        cmd.env(k, v);
+    }
+    // curl --aws-sigv4 also wants the credential pair via --user.
+    // It reads the access key from `$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY`
+    // when the --user flag isn't passed AND when env is set. The
+    // env-only path works in curl 8.6+; for older versions we'd
+    // need `--user`. macOS 14+ ships curl 8.6+ so we rely on env.
+    let out = cmd.output().map_err(|e| format!("spawn curl: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "curl failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).to_string();
+    // Split off the trailing `\n__HTTP_STATUS__NNN` we asked curl
+    // to append, leaving the body.
+    let (body, status) = match raw.rsplit_once("\n__HTTP_STATUS__") {
+        Some((b, s)) => (b.to_string(), s.parse::<u16>().unwrap_or(0)),
+        None => (raw, 0),
+    };
+    Ok((status, body))
+}
+
+/// Dispatch a request to the right transport. FirstParty +
+/// AwsKey go through http::send; SigV4 goes through curl.
+fn dispatch(
+    backend: &Backend,
+    method: &str,
+    path: &str,
+    body: Option<String>,
+) -> Result<(u16, String), String> {
+    let url = format!("{}{}", backend.base(), path);
+    if backend.is_sigv4() {
+        let region = match backend {
+            Backend::ClaudePlatformAwsSigV4 { region, .. } => region.clone(),
+            _ => unreachable!(),
+        };
+        return curl_sigv4(&region, method, &url, &backend.headers(), body.as_deref());
+    }
+    let req = Request {
+        method: method.to_string(),
+        url,
+        headers: backend.headers(),
+        body,
+    };
+    let resp = send(&req).map_err(|e| format!("send: {e}"))?;
+    Ok((resp.status, resp.body))
+}
+
+/// Pick the backend from env vars. Order of preference:
+///
+///   1. **SigV4** — `AWS_REGION` + `ANTHROPIC_AWS_WORKSPACE_ID` set
+///      AND no `ANTHROPIC_AWS_API_KEY`. Best for teams: CloudTrail
+///      audit per IAM principal, no long-lived keys.
+///   2. **AWS API key** — same trio + `ANTHROPIC_AWS_API_KEY` set.
+///      Simpler than SigV4, useful for solo dev.
+///   3. **First-party** — falls back to `ANTHROPIC_API_KEY`.
+///
+/// To force SigV4 even when a bearer key is set, unset
+/// `ANTHROPIC_AWS_API_KEY`. To force AWS API key, set it.
 pub fn detect_backend() -> Result<Backend, String> {
     let aws_key = std::env::var("ANTHROPIC_AWS_API_KEY").ok();
     let aws_region = std::env::var("AWS_REGION")
         .ok()
         .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok());
     let aws_workspace = std::env::var("ANTHROPIC_AWS_WORKSPACE_ID").ok();
-    match (aws_key, aws_region, aws_workspace) {
-        (Some(k), Some(r), Some(w)) if !k.is_empty() && !r.is_empty() && !w.is_empty() => {
-            return Ok(Backend::ClaudePlatformAws {
-                api_key: k,
-                region: r,
-                workspace_id: w,
+    let region_ok = aws_region
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let workspace_ok = aws_workspace
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let key_set = aws_key.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+    if region_ok && workspace_ok {
+        let region = aws_region.unwrap();
+        let workspace_id = aws_workspace.unwrap();
+        if key_set {
+            return Ok(Backend::ClaudePlatformAwsKey {
+                api_key: aws_key.unwrap(),
+                region,
+                workspace_id,
             });
         }
-        _ => {}
+        return Ok(Backend::ClaudePlatformAwsSigV4 {
+            region,
+            workspace_id,
+        });
     }
     let first = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| "no managed-agents auth found — set either ANTHROPIC_API_KEY (first-party) OR ANTHROPIC_AWS_API_KEY + AWS_REGION + ANTHROPIC_AWS_WORKSPACE_ID (Claude Platform on AWS)".to_string())?;
+        .map_err(|_| "no managed-agents auth found — set ANTHROPIC_API_KEY (first-party), OR AWS_REGION + ANTHROPIC_AWS_WORKSPACE_ID (Claude Platform on AWS via SigV4), optionally + ANTHROPIC_AWS_API_KEY (AWS API key auth)".to_string())?;
     if first.is_empty() {
         return Err("ANTHROPIC_API_KEY is empty".to_string());
     }
@@ -146,18 +331,13 @@ pub fn create_agent(
         "tools": [{"type": "agent_toolset_20260401"}],
     })
     .to_string();
-    let req = Request {
-        method: "POST".to_string(),
-        url: format!("{}/v1/agents", backend.base()),
-        headers: backend.headers(),
-        body: Some(body),
-    };
-    let resp = send(&req).map_err(|e| format!("create_agent: {e}"))?;
-    if resp.status < 200 || resp.status >= 300 {
-        return Err(format!("create_agent HTTP {}: {}", resp.status, resp.body));
+    let (status, body) = dispatch(backend, "POST", "/v1/agents", Some(body))
+        .map_err(|e| format!("create_agent: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("create_agent HTTP {status}: {body}"));
     }
     Ok(Created {
-        id: extract_id(&resp.body)?,
+        id: extract_id(&body)?,
     })
 }
 
@@ -179,21 +359,13 @@ pub fn create_environment(
         other => return Err(format!("unknown environment kind: {other}")),
     };
     let body = serde_json::json!({"name": name, "config": config}).to_string();
-    let req = Request {
-        method: "POST".to_string(),
-        url: format!("{}/v1/environments", backend.base()),
-        headers: backend.headers(),
-        body: Some(body),
-    };
-    let resp = send(&req).map_err(|e| format!("create_environment: {e}"))?;
-    if resp.status < 200 || resp.status >= 300 {
-        return Err(format!(
-            "create_environment HTTP {}: {}",
-            resp.status, resp.body
-        ));
+    let (status, body) = dispatch(backend, "POST", "/v1/environments", Some(body))
+        .map_err(|e| format!("create_environment: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("create_environment HTTP {status}: {body}"));
     }
     Ok(Created {
-        id: extract_id(&resp.body)?,
+        id: extract_id(&body)?,
     })
 }
 
@@ -215,21 +387,13 @@ pub fn create_session(
         }],
     })
     .to_string();
-    let req = Request {
-        method: "POST".to_string(),
-        url: format!("{}/v1/sessions", backend.base()),
-        headers: backend.headers(),
-        body: Some(body),
-    };
-    let resp = send(&req).map_err(|e| format!("create_session: {e}"))?;
-    if resp.status < 200 || resp.status >= 300 {
-        return Err(format!(
-            "create_session HTTP {}: {}",
-            resp.status, resp.body
-        ));
+    let (status, body) = dispatch(backend, "POST", "/v1/sessions", Some(body))
+        .map_err(|e| format!("create_session: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("create_session HTTP {status}: {body}"));
     }
     Ok(CreatedSession {
-        id: extract_id(&resp.body)?,
+        id: extract_id(&body)?,
         agent_id: agent_id.to_string(),
         environment_id: environment_id.to_string(),
     })
@@ -257,21 +421,16 @@ pub struct SessionSummary {
 }
 
 pub fn list_sessions(backend: &Backend) -> Result<Vec<SessionSummary>, String> {
-    let req = Request {
-        method: "GET".to_string(),
-        url: format!("{}/v1/sessions?limit=50", backend.base()),
-        headers: backend.headers(),
-        body: None,
-    };
-    let resp = send(&req).map_err(|e| format!("list_sessions: {e}"))?;
-    if resp.status < 200 || resp.status >= 300 {
-        return Err(format!("list_sessions HTTP {}: {}", resp.status, resp.body));
+    let (status, body) = dispatch(backend, "GET", "/v1/sessions?limit=50", None)
+        .map_err(|e| format!("list_sessions: {e}"))?;
+    if !(200..300).contains(&status) {
+        return Err(format!("list_sessions HTTP {status}: {body}"));
     }
     let v: serde_json::Value =
-        serde_json::from_str(&resp.body).map_err(|e| format!("list_sessions JSON: {e}"))?;
+        serde_json::from_str(&body).map_err(|e| format!("list_sessions JSON: {e}"))?;
     let arr = v.get("data").and_then(|d| d.as_array());
     let Some(arr) = arr else {
-        return Err(format!("list_sessions missing `data`: {}", resp.body));
+        return Err(format!("list_sessions missing `data`: {body}"));
     };
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
@@ -344,26 +503,38 @@ pub fn spawn_session_event_stream(session_id: String) -> Receiver<SessionStreamE
             }
         };
         let url = format!("{}/v1/sessions/{}/stream", backend.base(), session_id);
-        // Build the curl argv. Headers from backend.headers()
-        // include x-api-key, anthropic-beta, anthropic-version,
-        // and (for AWS) anthropic-workspace-id. SSE requires
-        // Accept: text/event-stream.
         let mut args: Vec<String> = vec![
             "-sS".to_string(),
             "-N".to_string(),
             "-H".to_string(),
             "Accept: text/event-stream".to_string(),
         ];
+        // SigV4 path: add --aws-sigv4 + pull creds via aws CLI.
+        let mut creds: Vec<(String, String)> = Vec::new();
+        if let Backend::ClaudePlatformAwsSigV4 { region, .. } = &backend {
+            args.push("--aws-sigv4".to_string());
+            args.push(format!("aws:amz:{region}:aws-external-anthropic"));
+            match aws_export_credentials() {
+                Ok(c) => creds = c,
+                Err(e) => {
+                    let _ = tx.send(SessionStreamEvent::Error(format!(
+                        "aws export-credentials: {e}"
+                    )));
+                    return;
+                }
+            }
+        }
         for (k, v) in backend.headers() {
             args.push("-H".to_string());
             args.push(format!("{k}: {v}"));
         }
         args.push(url);
-        match Command::new("curl")
-            .args(&args)
-            .stdout(Stdio::piped())
-            .spawn()
-        {
+        let mut cmd = Command::new("curl");
+        cmd.args(&args).stdout(Stdio::piped());
+        for (k, v) in &creds {
+            cmd.env(k, v);
+        }
+        match cmd.spawn() {
             Ok(mut child) => {
                 let stdout = match child.stdout.take() {
                     Some(s) => s,

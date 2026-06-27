@@ -44,7 +44,7 @@ impl CloudRunner {
     pub fn hint(self) -> &'static str {
         match self {
             CloudRunner::ManagedAgents => {
-                "Anthropic-hosted Claude + sandbox · ANTHROPIC_API_KEY · API rates"
+                "Anthropic-hosted Claude + sandbox · API key OR AWS SigV4 (SSO)"
             }
             CloudRunner::TattleQwe => "ECS task running qwe-runner container · Tattle AWS SSO",
         }
