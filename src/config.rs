@@ -25,6 +25,12 @@ pub struct Config {
     pub editor: EditorConfig,
     pub ui: UiConfig,
     pub session: SessionConfig,
+    /// `[cloud_run.defaults]` — what the Cloud Agents panel's
+    /// quick-fire prompt input uses when you hit Enter. Populated
+    /// by the wizard on submit; edited via the wizard's
+    /// "change defaults" chip. Empty means "no defaults yet —
+    /// route Enter to the wizard."
+    pub cloud_run: CloudRunConfig,
     /// `[keys.<section>]` — key spec → command id. Sections: `global`, `vim`,
     /// `standard`. Resolved into an [`crate::input::keymap::Keymap`].
     pub keys: BTreeMap<String, BTreeMap<String, String>>,
@@ -90,6 +96,29 @@ pub struct Config {
 /// "work" + "mnml-family" in one mnml window). Each workspace gets its own
 /// `Tree` rooted at `path`, its own discovered repos, and renders as a
 /// collapsible section in the rail.
+/// `[cloud_run]` / `[cloud_run.defaults]` — saved defaults for
+/// the Cloud Agents quick-fire flow. Lets the user skip the
+/// wizard for repeat runs once they've set up an agent + env once.
+#[derive(Debug, Clone, Default)]
+pub struct CloudRunConfig {
+    pub defaults: CloudRunDefaults,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CloudRunDefaults {
+    /// `agent_…` id of an already-existing managed agent. When
+    /// empty the user hasn't set up defaults yet.
+    pub agent_id: String,
+    /// `env_…` id of the environment to use.
+    pub env_id: String,
+    /// `cloud` (Anthropic-managed sandbox) or `self_hosted`.
+    pub sandbox: String,
+    /// e.g. `claude-opus-4-8`. Not actively used (the agent
+    /// carries its model), but kept so the Cloud Agents panel
+    /// can show "Model: …" without an extra API lookup.
+    pub model: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct WorkspaceConfig {
     /// Display name. Defaults to the path's basename when the config didn't
@@ -1067,6 +1096,7 @@ impl Default for Config {
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
             workspaces: Vec::new(),
+            cloud_run: CloudRunConfig::default(),
         }
     }
 }
@@ -1107,6 +1137,8 @@ struct RawConfig {
     ci: RawCi,
     #[serde(default)]
     workspaces: Vec<RawWorkspace>,
+    #[serde(default)]
+    cloud_run: RawCloudRun,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1150,6 +1182,24 @@ struct RawStartup {
     tasks: Vec<String>,
     #[serde(default)]
     default_workspace: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawCloudRun {
+    #[serde(default)]
+    defaults: RawCloudRunDefaults,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawCloudRunDefaults {
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    env_id: Option<String>,
+    #[serde(default)]
+    sandbox: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1681,6 +1731,21 @@ impl Config {
                 group: w.group,
             });
         }
+        // Cloud Run defaults — empty strings mean "not set yet"
+        // (the UI checks .is_empty() to route Enter to the
+        // wizard instead of firing a quick send).
+        if let Some(v) = raw.cloud_run.defaults.agent_id {
+            self.cloud_run.defaults.agent_id = v;
+        }
+        if let Some(v) = raw.cloud_run.defaults.env_id {
+            self.cloud_run.defaults.env_id = v;
+        }
+        if let Some(v) = raw.cloud_run.defaults.sandbox {
+            self.cloud_run.defaults.sandbox = v;
+        }
+        if let Some(v) = raw.cloud_run.defaults.model {
+            self.cloud_run.defaults.model = v;
+        }
     }
 }
 
@@ -1731,6 +1796,74 @@ pub fn resolve_default_workspace() -> Option<PathBuf> {
 /// `$XDG_CONFIG_HOME` are unset, when the file can't be read /
 /// written, or when the existing TOML is invalid (we won't blindly
 /// overwrite a config the user might be debugging).
+/// Persist Cloud Run defaults into `~/.config/mnml/config.toml`.
+/// Writes the `[cloud_run.defaults]` table fresh each time — the
+/// section is small (4 string keys) so a clean rewrite is simpler
+/// than an in-place line-edit. Other tables pass through unchanged.
+pub fn persist_cloud_run_defaults(defaults: &CloudRunDefaults) -> Result<PathBuf, String> {
+    let cfg_path =
+        user_config_path().ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    if let Some(parent) = cfg_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
+    let updated = upsert_cloud_run_defaults(&existing, defaults);
+    std::fs::write(&cfg_path, &updated)
+        .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    Ok(cfg_path)
+}
+
+/// Drop the existing `[cloud_run.defaults]` block (if any) and
+/// append a fresh one. Other tables pass through unchanged. Pure
+/// string work — testable without the filesystem.
+fn upsert_cloud_run_defaults(src: &str, defaults: &CloudRunDefaults) -> String {
+    let mut out = String::with_capacity(src.len() + 256);
+    let mut in_section = false;
+    for line in src.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == "[cloud_run.defaults]";
+            if !in_section {
+                out.push_str(line);
+                out.push('\n');
+            }
+            continue;
+        }
+        if !in_section {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !out.ends_with("\n\n") && !out.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    out.push_str("[cloud_run.defaults]\n");
+    out.push_str(&format!("agent_id = {}\n", toml_str(&defaults.agent_id)));
+    out.push_str(&format!("env_id = {}\n", toml_str(&defaults.env_id)));
+    out.push_str(&format!("sandbox = {}\n", toml_str(&defaults.sandbox)));
+    out.push_str(&format!("model = {}\n", toml_str(&defaults.model)));
+    out
+}
+
+/// Inline TOML-escape (same shape as the one in upsert_startup_default_workspace
+/// but kept local so config.rs stays self-contained).
+fn toml_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 pub fn persist_default_workspace(path: Option<&Path>) -> Result<PathBuf, String> {
     let cfg_path =
         user_config_path().ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;

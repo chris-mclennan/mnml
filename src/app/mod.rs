@@ -2071,6 +2071,13 @@ pub struct PaneRects {
     /// Click rect for the "+ New Cloud Run" button in the Cloud
     /// Agents panel header.
     pub cloud_agents_new_run_button: Option<Rect>,
+    /// Quick-fire prompt input row in the Cloud Agents panel.
+    /// Click to focus.
+    pub cloud_agents_quick_input: Option<Rect>,
+    /// "change defaults" chip next to the quick-fire input —
+    /// opens the wizard so the user can swap agent / env /
+    /// sandbox.
+    pub cloud_agents_change_defaults_chip: Option<Rect>,
     /// Click rects for the two tabs ([Installed] [Marketplace])
     /// at the top of the integrations discovery overlay. Empty when
     /// the overlay is closed.
@@ -3360,6 +3367,13 @@ pub struct App {
     /// Drained in `tick()`.
     pub cloud_run_msg_tx: std::sync::mpsc::Sender<String>,
     pub cloud_run_msg_rx: Option<std::sync::mpsc::Receiver<String>>,
+
+    /// Quick-fire prompt buffer for the Cloud Agents panel's
+    /// daily-driver input row. When focused + Enter, fires
+    /// create_session + send_user_message against the saved
+    /// `[cloud_run.defaults]` — no wizard needed.
+    pub cloud_run_prompt_input: String,
+    pub cloud_run_prompt_focused: bool,
     /// Cloud-only rows (Tattle QWE). Built by the same worker
     /// thread that builds `agents_panel_rows`; rendered by the
     /// Cloud Agents activity-bar panel.
@@ -4152,6 +4166,8 @@ impl App {
             agents_panel_rx: None,
             cloud_run_msg_tx,
             cloud_run_msg_rx: Some(cloud_run_msg_rx),
+            cloud_run_prompt_input: String::new(),
+            cloud_run_prompt_focused: false,
             cloud_agents_rows: Vec::new(),
             agents_panel_group_by_workspace: false,
             agents_panel_expanded_workspaces: std::collections::HashSet::new(),
@@ -10310,6 +10326,58 @@ impl App {
         );
     }
 
+    /// Daily-driver path: fire a Managed Agents session against
+    /// the user's saved defaults, using whatever's in
+    /// `cloud_run_prompt_input` as the user message. No wizard.
+    /// Called on Enter from the panel's quick-fire input row.
+    pub fn cloud_run_quick_send(&mut self) {
+        let defaults = self.config.cloud_run.defaults.clone();
+        if defaults.agent_id.is_empty() || defaults.env_id.is_empty() {
+            self.toast("no defaults saved — open the wizard to set up an agent + env");
+            self.open_new_cloud_run_wizard();
+            return;
+        }
+        let prompt = self.cloud_run_prompt_input.trim().to_string();
+        if prompt.is_empty() {
+            self.toast("type a prompt first");
+            return;
+        }
+        self.cloud_run_prompt_input.clear();
+        self.cloud_run_prompt_focused = false;
+        let agent_id = defaults.agent_id;
+        let env_id = defaults.env_id;
+        let tx = self.cloud_run_msg_tx.clone();
+        std::thread::spawn(move || {
+            macro_rules! emit { ($($t:tt)*) => { let _ = tx.send(format!($($t)*)); }; }
+            let backend = match crate::anthropic_api::detect_backend() {
+                Ok(b) => b,
+                Err(e) => {
+                    emit!("cloud-run · backend: {e}");
+                    return;
+                }
+            };
+            let session = match crate::anthropic_api::create_session(
+                &backend,
+                &agent_id,
+                &env_id,
+                "mnml quick send",
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    emit!("cloud-run · create_session: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = crate::anthropic_api::send_user_message(&backend, &session.id, &prompt)
+            {
+                emit!("cloud-run · send_user_message: {e}");
+                return;
+            }
+            emit!("session running · {}", &session.id);
+        });
+        self.toast("firing Managed Agents session…");
+    }
+
     /// Open the Cloud Agents wizard (runner picker — Managed Agents
     /// or Tattle QWE). Distinct from `open_new_cloud_agent_wizard`
     /// which opens the local-agents PR wizard.
@@ -10547,6 +10615,23 @@ impl App {
                         emit!("cloud-run · send_user_message: {e}");
                         return;
                     }
+                    // Save defaults so the next run can be a
+                    // one-line quick-fire from the panel input
+                    // instead of the full wizard. The drainer
+                    // parses this sentinel format and writes to
+                    // ~/.config/mnml/config.toml.
+                    let sandbox_kind = match sandbox {
+                        SandboxLocation::AnthropicCloud => "cloud",
+                        SandboxLocation::SelfHostedLocal | SandboxLocation::SelfHostedRemote => {
+                            "self_hosted"
+                        }
+                    };
+                    emit!(
+                        "__persist_defaults__|{}|{}|{}|claude-opus-4-8",
+                        agent_id,
+                        env_id,
+                        sandbox_kind
+                    );
                     emit!("session running · {}", &session.id);
                 });
                 self.toast("submitting Managed Agents run…");
@@ -10973,6 +11058,25 @@ impl App {
         };
         let msgs: Vec<String> = rx.try_iter().collect();
         for msg in msgs {
+            // Sentinel: `__persist_defaults__|agent_id|env_id|sandbox|model`
+            // The wizard sends this after a successful submit so
+            // the Cloud Agents panel's quick-fire input gets a
+            // saved target. Don't toast it; route to config.
+            if let Some(rest) = msg.strip_prefix("__persist_defaults__|") {
+                let parts: Vec<&str> = rest.splitn(4, '|').collect();
+                if parts.len() == 4 {
+                    self.config.cloud_run.defaults.agent_id = parts[0].to_string();
+                    self.config.cloud_run.defaults.env_id = parts[1].to_string();
+                    self.config.cloud_run.defaults.sandbox = parts[2].to_string();
+                    self.config.cloud_run.defaults.model = parts[3].to_string();
+                    match crate::config::persist_cloud_run_defaults(&self.config.cloud_run.defaults)
+                    {
+                        Ok(_) => self.toast("saved cloud-run defaults"),
+                        Err(e) => self.toast(format!("save defaults: {e}")),
+                    }
+                }
+                continue;
+            }
             self.toast(msg);
         }
     }

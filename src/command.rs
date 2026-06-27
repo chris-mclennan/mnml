@@ -2261,6 +2261,16 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_new_cloud_run_wizard(),
         },
         Command {
+            id: "cloud_agents.focus_quick_input",
+            title: "Cloud agents: focus the quick-fire prompt input",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.cloud_run_prompt_focused = true;
+                app.cloud_agents_filter_focused = false;
+            },
+        },
+        Command {
             id: "cloud_agents.spawn_worker",
             title: "Cloud agents: spawn ant beta:worker poll for a self-hosted sandbox",
             group: "view",

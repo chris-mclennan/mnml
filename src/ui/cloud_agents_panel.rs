@@ -24,6 +24,18 @@ use crate::ui::theme;
 /// 6-frame partial-circle spinner — same as the local agents panel.
 const SPINNER_FRAMES: &[&str] = &["◜", "◠", "◝", "◞", "◡", "◟"];
 
+/// Short-form an `agent_…` / `env_…` id so it fits the panel
+/// header chip line (`agent_…ZyXw9` instead of the full 26 chars).
+fn short_id(id: &str) -> String {
+    let n = id.chars().count();
+    if n <= 14 {
+        return id.to_string();
+    }
+    let prefix: String = id.chars().take(4).collect();
+    let suffix: String = id.chars().skip(n.saturating_sub(6)).collect();
+    format!("{prefix}…{suffix}")
+}
+
 fn spinner_frame() -> &'static str {
     let now = std::time::Instant::now();
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
@@ -136,9 +148,104 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 1;
     }
 
-    // "+ New Cloud Run" button — opens the runner-picker wizard
-    // (Managed Agents / Tattle QWE).
-    if y < area.y + area.height {
+    // Quick-fire input row vs first-run "+ New Cloud Run" button.
+    // When `[cloud_run.defaults] agent_id` is set the user has
+    // run the wizard at least once — show the input + change-
+    // defaults chip. When unset, show the wizard CTA (and skip
+    // the input, since there's nowhere to send to).
+    app.rects.cloud_agents_quick_input = None;
+    app.rects.cloud_agents_change_defaults_chip = None;
+    app.rects.cloud_agents_new_run_button = None;
+    let has_defaults = !app.config.cloud_run.defaults.agent_id.is_empty()
+        && !app.config.cloud_run.defaults.env_id.is_empty();
+    if has_defaults && y < area.y + area.height {
+        // Tiny defaults chip line — shows which agent + env the
+        // quick-send is targeting so the user can verify before
+        // hitting Enter.
+        let agent_short = short_id(&app.config.cloud_run.defaults.agent_id);
+        let env_short = short_id(&app.config.cloud_run.defaults.env_id);
+        let info_line = format!(
+            "  ▸ {agent_short} → {env_short} ({})",
+            app.config.cloud_run.defaults.sandbox
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                info_line,
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ))),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        y += 1;
+    }
+    if has_defaults && y < area.y + area.height {
+        // Input + change-defaults chip on the same row.
+        let chip = " ⚙ defaults ";
+        let chip_w = chip.chars().count() as u16;
+        let focused = app.cloud_run_prompt_focused;
+        let bg_in = if focused { t.bg2 } else { t.bg_darker };
+        let fg_in = if app.cloud_run_prompt_input.is_empty() && !focused {
+            t.comment
+        } else {
+            t.fg
+        };
+        let placeholder = if app.cloud_run_prompt_input.is_empty() {
+            "Type a prompt + Enter to fire…".to_string()
+        } else {
+            app.cloud_run_prompt_input.clone()
+        };
+        let cursor = if focused { "▏" } else { " " };
+        let pad = (area.width as usize)
+            .saturating_sub(2 + 2 + placeholder.chars().count() + 1 + chip_w as usize + 2);
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(" \u{F0349} ", Style::default().fg(t.cyan).bg(bg_in)),
+                Span::styled(placeholder, Style::default().fg(fg_in).bg(bg_in)),
+                Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_in)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg_in)),
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(
+                    chip.to_string(),
+                    Style::default()
+                        .fg(t.bg_dark)
+                        .bg(t.purple)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])),
+            row_rect,
+        );
+        // Input rect = everything left of the chip
+        let chip_rect = Rect {
+            x: area.x + area.width.saturating_sub(chip_w + 1),
+            y,
+            width: chip_w,
+            height: 1,
+        };
+        let input_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width.saturating_sub(chip_w + 2),
+            height: 1,
+        };
+        app.rects.cloud_agents_quick_input = Some(input_rect);
+        app.rects.cloud_agents_change_defaults_chip = Some(chip_rect);
+        y += 2;
+    } else if !has_defaults && y < area.y + area.height {
+        // First-run path — wizard CTA.
         let btn = " + New Cloud Run ";
         let bw = btn.chars().count() as u16;
         let btn_rect = Rect {

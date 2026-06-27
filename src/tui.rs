@@ -668,6 +668,34 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Cloud Agents quick-fire prompt input (hybrid UX — daily-driver
+    // path that uses the saved [cloud_run.defaults]).
+    if app.cloud_run_prompt_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.cloud_run_prompt_input.clear();
+                app.cloud_run_prompt_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.cloud_run_prompt_input.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.cloud_run_quick_send();
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.cloud_run_prompt_input.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Same idiom for the Cloud Agents panel filter.
     if app.cloud_agents_filter_focused {
         match key.code {
@@ -6500,6 +6528,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(r, x, y)
             {
                 app.open_new_cloud_run_wizard();
+                return;
+            }
+            if let Some(r) = app.rects.cloud_agents_change_defaults_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_new_cloud_run_wizard();
+                return;
+            }
+            if let Some(r) = app.rects.cloud_agents_quick_input
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.cloud_run_prompt_focused = true;
+                app.cloud_agents_filter_focused = false;
                 return;
             }
             if let Some(r) = app.rects.cloud_agents_filter_input
