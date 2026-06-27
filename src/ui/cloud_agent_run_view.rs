@@ -301,27 +301,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     y += 1;
 
     // ── logs ─────────────────────────────────────────────────────
-    // Managed Agents don't have a CloudWatch-style log stream
-    // yet (the session events stream is Phase 3c). Skip the
-    // section entirely for managed rows so the pane isn't padded
-    // with "Logs (following · 0 lines)" forever.
-    if matches!(p.source, CloudRunSource::AnthropicManaged) {
-        if y < end_y {
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "  Logs · open in Anthropic Console (session-events stream not yet wired in mnml)",
-                    Style::default().fg(t.comment).bg(bg),
-                ))),
-                Rect {
-                    x: area.x,
-                    y,
-                    width: area.width,
-                    height: 1,
-                },
-            );
-        }
-        return;
-    }
+    // Both sources share the logs viewport. Tattle fills it from
+    // CloudWatch via log_rx; managed agents fill it from the SSE
+    // session-events stream via session_event_rx (drained in
+    // CloudAgentRunPane::drain).
     if y >= end_y {
         return;
     }

@@ -19,6 +19,9 @@
 //! and block. Use from a worker thread, never the UI thread.
 
 use crate::http::{Request, send};
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 const BETA: &str = "managed-agents-2026-04-01";
 const VERSION: &str = "2023-06-01";
@@ -305,6 +308,160 @@ pub fn list_sessions(backend: &Backend) -> Result<Vec<SessionSummary>, String> {
         });
     }
     Ok(out)
+}
+
+/// One event emitted by the session-stream worker. Mapped from
+/// the SSE `data:` JSON lines `/v1/sessions/{id}/stream` returns.
+/// Per docs, event `type` is one of `agent.message`,
+/// `agent.tool_use`, `agent.tool_result`, `session.status_*`,
+/// `user.message`, etc. We collapse them into a tiny shape so
+/// the existing log-viewport renderer can show them line-by-line.
+#[derive(Debug, Clone)]
+pub enum SessionStreamEvent {
+    /// One rendered text/tool line. UI shows this verbatim.
+    Line(String),
+    /// Stream closed by Anthropic — session reached idle / ended.
+    Done,
+    /// curl exited non-zero or refused to start.
+    Error(String),
+}
+
+/// Spawn a worker thread that streams `/v1/sessions/{id}/stream`
+/// via curl (mnml's http::send is sync only, so we shell out).
+/// Returns the consumer end of a channel; caller drains on tick.
+///
+/// The worker does its own backend detection so the UI thread
+/// never blocks on env-var lookup. On any auth-missing /
+/// network failure it sends a single Error event and exits.
+pub fn spawn_session_event_stream(session_id: String) -> Receiver<SessionStreamEvent> {
+    let (tx, rx) = channel::<SessionStreamEvent>();
+    std::thread::spawn(move || {
+        let backend = match detect_backend() {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = tx.send(SessionStreamEvent::Error(format!("backend: {e}")));
+                return;
+            }
+        };
+        let url = format!("{}/v1/sessions/{}/stream", backend.base(), session_id);
+        // Build the curl argv. Headers from backend.headers()
+        // include x-api-key, anthropic-beta, anthropic-version,
+        // and (for AWS) anthropic-workspace-id. SSE requires
+        // Accept: text/event-stream.
+        let mut args: Vec<String> = vec![
+            "-sS".to_string(),
+            "-N".to_string(),
+            "-H".to_string(),
+            "Accept: text/event-stream".to_string(),
+        ];
+        for (k, v) in backend.headers() {
+            args.push("-H".to_string());
+            args.push(format!("{k}: {v}"));
+        }
+        args.push(url);
+        match Command::new("curl")
+            .args(&args)
+            .stdout(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                let stdout = match child.stdout.take() {
+                    Some(s) => s,
+                    None => {
+                        let _ = tx.send(SessionStreamEvent::Error(
+                            "curl produced no stdout".to_string(),
+                        ));
+                        return;
+                    }
+                };
+                let reader = BufReader::new(stdout);
+                let _ = run_sse_reader(reader, &tx);
+                let _ = child.wait();
+                let _ = tx.send(SessionStreamEvent::Done);
+            }
+            Err(e) => {
+                let _ = tx.send(SessionStreamEvent::Error(format!("spawn curl: {e}")));
+            }
+        }
+    });
+    rx
+}
+
+/// Read the curl stdout line-by-line. SSE format is `data: <json>`
+/// blocks separated by blank lines. We pluck the JSON, extract
+/// a renderable line per event type, send to the channel.
+fn run_sse_reader<R: BufRead>(reader: R, tx: &Sender<SessionStreamEvent>) -> std::io::Result<()> {
+    for line in reader.lines() {
+        let line = line?;
+        let Some(payload) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        let v: serde_json::Value = match serde_json::from_str(payload) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let rendered = render_stream_event(&v);
+        if !rendered.is_empty() && tx.send(SessionStreamEvent::Line(rendered)).is_err() {
+            // Receiver dropped — nothing to do but stop.
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Turn one parsed SSE event into a renderable log line. Returns
+/// empty string for events we don't surface (e.g. heartbeat).
+/// Kept liberal: unknown event types still pass through as
+/// `[type]` so a docs change won't silently drop them.
+fn render_stream_event(v: &serde_json::Value) -> String {
+    let ty = v.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    match ty {
+        "agent.message" => v
+            .get("content")
+            .and_then(|c| c.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default(),
+        "agent.tool_use" => {
+            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("?");
+            format!("[tool {name}]")
+        }
+        "agent.tool_result" => {
+            let ok = v
+                .get("is_error")
+                .and_then(|x| x.as_bool())
+                .map(|b| !b)
+                .unwrap_or(true);
+            if ok {
+                "[tool ok]".to_string()
+            } else {
+                "[tool error]".to_string()
+            }
+        }
+        "user.message" => v
+            .get("content")
+            .and_then(|c| c.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("[user] {s}"))
+            .unwrap_or_default(),
+        "session.status_idle" => "[idle]".to_string(),
+        "session.status_run_started" => "[run started]".to_string(),
+        "session.status_run_completed" => "[run completed]".to_string(),
+        "session.status_run_failed" => "[run FAILED]".to_string(),
+        "" => String::new(),
+        other => format!("[{other}]"),
+    }
 }
 
 /// Strip the tagged prefix off an Anthropic id (e.g.

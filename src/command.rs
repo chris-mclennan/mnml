@@ -2268,6 +2268,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.spawn_managed_agents_worker(),
         },
         Command {
+            id: "cloud_agents.webhook_docs",
+            title: "Cloud agents: open webhook-handler docs (alternative to ant poll)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_managed_agents_webhook_docs(),
+        },
+        Command {
             id: "cloud_agents.toggle_view",
             title: "Cloud agents: toggle row density (compact ↔ standard)",
             group: "view",

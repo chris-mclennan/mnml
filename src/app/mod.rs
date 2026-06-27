@@ -10243,6 +10243,27 @@ impl App {
     /// running `claude` PIDs via `pgrep`, and renders one row per
     /// session with live/idle/ended state, model, last user/asst
     /// message, token spend, and PID.
+    /// Open the docs page for the webhook-triggered worker
+    /// pattern. Unlike the always-on poller (which mnml can
+    /// spawn for you via `spawn_managed_agents_worker`), the
+    /// webhook flow requires a public HTTPS endpoint Anthropic
+    /// can reach — typically Vercel / Cloudflare Worker /
+    /// Lambda. mnml can't host that; we surface the docs link
+    /// + the SDK snippets the user needs.
+    pub fn open_managed_agents_webhook_docs(&mut self) {
+        let url = "https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes#webhook-triggered-(sdk)";
+        let _ = std::process::Command::new(if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        })
+        .arg(url)
+        .status();
+        self.toast(
+            "opened webhook-handler docs — needs a public HTTPS endpoint (Vercel/Cloudflare/Lambda) outside mnml",
+        );
+    }
+
     /// Spawn an `ant beta:worker poll` Pty pane for a self-hosted
     /// sandbox environment. User must have already created the
     /// environment in the Console and exported
@@ -10835,13 +10856,19 @@ impl App {
             row.source,
             crate::claude_agents::AgentSource::AnthropicManaged
         ) {
-            let pane = crate::cloud_agent_run::CloudAgentRunPane::new_managed(
+            let mut pane = crate::cloud_agent_run::CloudAgentRunPane::new_managed(
                 row.session_id.clone(),
                 row.last_assistant_msg.clone().unwrap_or_default(),
                 row.state.badge().to_string(),
                 None,
                 Some(row.workspace.clone()),
             );
+            // Live event stream from /v1/sessions/{id}/stream.
+            // Worker shells out to `curl -N` (http::send is
+            // sync); drained by the existing tick loop.
+            pane.session_event_rx = Some(crate::anthropic_api::spawn_session_event_stream(
+                row.session_id.clone(),
+            ));
             let pane = Pane::CloudAgentRun(pane);
             match self.active {
                 Some(cur) => {

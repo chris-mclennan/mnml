@@ -96,6 +96,11 @@ pub struct CloudAgentRunPane {
     pub artifacts_err: Option<String>,
     pub artifacts_rx: Option<Receiver<ArtifactsEvent>>,
 
+    /// Managed-agents only — SSE stream of session events from
+    /// `/v1/sessions/{id}/stream`. Tattle path leaves this None
+    /// and uses the CloudWatch `log_rx` channel instead.
+    pub session_event_rx: Option<Receiver<crate::anthropic_api::SessionStreamEvent>>,
+
     // ─── UI state ────────────────────────────────────────────────
     /// Top-row scroll offset for the logs viewport. Keystroke
     /// scrolling sets this; `auto_follow` keeps the bottom
@@ -147,6 +152,7 @@ impl CloudAgentRunPane {
             artifacts_loading: true,
             artifacts_err: None,
             artifacts_rx: None,
+            session_event_rx: None,
             log_scroll: 0,
             log_follow: true,
         }
@@ -162,7 +168,16 @@ impl CloudAgentRunPane {
         agent_id: Option<String>,
         environment_id: Option<String>,
     ) -> Self {
-        let console_url = format!("https://platform.claude.com/sessions/{session_id}");
+        // Console sessions are workspace-scoped. When on Claude
+        // Platform on AWS, the workspace ID is in env; on first-
+        // party API there's just "default". Anthropic-side URL
+        // format: /workspaces/<id>/sessions/<id>.
+        let workspace = std::env::var("ANTHROPIC_AWS_WORKSPACE_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "default".to_string());
+        let console_url =
+            format!("https://platform.claude.com/workspaces/{workspace}/sessions/{session_id}");
         Self {
             source: CloudRunSource::AnthropicManaged,
             run_id: session_id,
@@ -188,16 +203,18 @@ impl CloudAgentRunPane {
             s3_artifact_prefix: None,
             s3_console_url: None,
             logs: Vec::new(),
-            // No log/artifact workers for managed agents in v1.
-            logs_loading: false,
+            logs_loading: true,
             logs_err: None,
             log_rx: None,
             artifacts: Vec::new(),
             artifacts_loading: false,
             artifacts_err: None,
             artifacts_rx: None,
+            // Stream from /v1/sessions/{id}/stream — set by
+            // App::open_cloud_agent_run after construction.
+            session_event_rx: None,
             log_scroll: 0,
-            log_follow: false,
+            log_follow: true,
         }
     }
 
@@ -231,6 +248,33 @@ impl CloudAgentRunPane {
             }
             if still_open {
                 self.log_rx = Some(rx);
+            }
+        }
+        if let Some(rx) = self.session_event_rx.take() {
+            use crate::anthropic_api::SessionStreamEvent;
+            let mut still_open = true;
+            while let Ok(ev) = rx.try_recv() {
+                changed = true;
+                match ev {
+                    SessionStreamEvent::Line(text) => {
+                        self.logs.push(LogLine { text });
+                        if self.log_follow {
+                            self.log_scroll = usize::MAX;
+                        }
+                    }
+                    SessionStreamEvent::Done => {
+                        self.logs_loading = false;
+                        still_open = false;
+                    }
+                    SessionStreamEvent::Error(e) => {
+                        self.logs_err = Some(e);
+                        self.logs_loading = false;
+                        still_open = false;
+                    }
+                }
+            }
+            if still_open {
+                self.session_event_rx = Some(rx);
             }
         }
         if let Some(rx) = self.artifacts_rx.take() {
