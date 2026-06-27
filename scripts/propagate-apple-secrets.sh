@@ -1,4 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/bash
+# (NOT `#!/usr/bin/env bash` — `env bash` on macOS picks /opt/homebrew/bin/bash
+# but the `${!var}` indirect expansion below works in either; what matters is
+# that /bin/sh / zsh aren't substituted. Stay explicit.)
 #
 # Propagate the Apple Developer ID signing secrets from your local
 # environment to every public mnml-* sibling repo so the prebuild CI

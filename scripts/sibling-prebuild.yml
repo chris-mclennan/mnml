@@ -92,7 +92,23 @@ jobs:
             -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN" >/dev/null
           BIN_PATH="target/${{ matrix.target }}/release/${{ steps.meta.outputs.bin }}"
-          codesign --force --options runtime --sign "Developer ID Application: $APPLE_TEAM_ID" \
+          # Identity selector — look up the SHA of the imported
+          # Developer ID Application cert by grep. The earlier
+          # `--sign "Developer ID Application: <team-id>"` form was
+          # wrong; codesign expects the cert's CN (which includes a
+          # human name) or its SHA, not the team id alone. Mirrors
+          # how the mnml DMG-signing script does it.
+          IDENTITY_SHA=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+              | grep "Developer ID Application" \
+              | head -1 \
+              | awk '{print $2}')
+          if [ -z "$IDENTITY_SHA" ]; then
+            echo "::error::No Developer ID Application identity in keychain"
+            security find-identity -v -p codesigning "$KEYCHAIN" || true
+            exit 1
+          fi
+          echo "Signing with identity SHA $IDENTITY_SHA"
+          codesign --force --options runtime --sign "$IDENTITY_SHA" \
             --timestamp "$BIN_PATH"
           codesign --verify --verbose "$BIN_PATH"
       - name: Package archive
