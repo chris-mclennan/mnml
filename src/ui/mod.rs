@@ -1498,6 +1498,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         // Cluster hidden entirely — clear the chip rects so stale
         // rects from a wider frame don't steal clicks.
         app.rects.launcher_icon_rects.clear();
+        app.rects.integration_icon_rects.clear();
         app.rects.bufferline_new_tab_button = None;
         app.rects.bufferline_tab_page_chips.clear();
         app.rects.bufferline_tab_page_close.clear();

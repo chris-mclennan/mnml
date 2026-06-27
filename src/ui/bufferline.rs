@@ -455,8 +455,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 /// (tab bar) right end, not the chrome row.
 pub fn right_cluster_width(app: &App) -> u16 {
     let n_launcher = app.config.ui.launcher_icons.len() as u16;
-    // launcher icons (` X ` × n) + ` + ` new-tab button + ` TABS `
-    let mut w: u16 = 3 * n_launcher + 3 + 6;
+    let n_integration = app.config.ui.integration_icons.len() as u16;
+    // integration icons (` X ` × n) + launcher icons (` X ` × n) + ` + ` new-tab button + ` TABS `
+    let mut w: u16 = 3 * n_integration + 3 * n_launcher + 3 + 6;
     for i in 0..app.layouts.len() {
         let dig = (i + 1).to_string().chars().count() as u16;
         let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
@@ -517,6 +518,7 @@ pub fn paint_right_cluster(
     // wider width would otherwise stay registered and steal
     // clicks at cells we're no longer painting.
     app.rects.launcher_icon_rects.clear();
+    app.rects.integration_icon_rects.clear();
     app.rects.bufferline_new_tab_button = None;
     app.rects.bufferline_tab_page_chips.clear();
     app.rects.bufferline_tab_page_close.clear();
@@ -534,6 +536,30 @@ pub fn paint_right_cluster(
     // Split buttons moved to the bufferline (tab bar) right end —
     // see `paint_split_buttons` below.
 
+    // Integration icons — sit BEFORE launchers in the right
+    // cluster. User-configured via `[[ui.integration_icon]]`,
+    // each fires a palette command on click.
+    for (i, icon) in app.config.ui.integration_icons.iter().enumerate() {
+        let glyph = if nerd { &icon.glyph } else { &icon.fallback };
+        let chip_bg = launcher_color(&t, &icon.color);
+        spans.push(Span::styled(
+            format!(" {glyph} "),
+            Style::default()
+                .fg(t.bg_darker)
+                .bg(chip_bg)
+                .add_modifier(Modifier::BOLD),
+        ));
+        app.rects.integration_icon_rects.push((
+            Rect {
+                x: cluster_x,
+                y: area.y,
+                width: 3,
+                height: 1,
+            },
+            i,
+        ));
+        cluster_x += 3;
+    }
     // Launcher icons.
     for (i, icon) in app.config.ui.launcher_icons.iter().enumerate() {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
