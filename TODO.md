@@ -126,15 +126,31 @@ crashes (sibling main pane dies, side panel becomes orphan).
 bundle siblings into mnml core ("the name is minimal — if the
 ecosystem grows, mnml shouldn't gatekeep which integrations are
 core enough to ship"). Compile time on first install (~30-60s)
-remains the main UX cost.
+remains the main UX cost; auto-retry (commit 9460403) covers the
+"forgot to re-click" half of the pain.
 
 Next step when ready: GitHub Releases with pre-built signed
 binaries per sibling, served via `cargo-binstall` (or a mnml
-built-in downloader that hits the same release artifacts). The
-existing `scripts/notarize-dmg.sh` cert plumbing can be reused
-per sibling repo's CI workflow. ~15 min per repo to set up; 32
-repos → ~8 hours mechanical work. Auto-retry (#609 in tasks)
-covers most of the perceived first-install pain in the meantime.
+built-in downloader). Reuse the same standard-tier runner set
+mnml itself uses (audit 2026-06-26 — all five are free on public
+repos):
+  - macos-14 (Apple Silicon) — `aarch64-apple-darwin`
+  - macos-15-intel — `x86_64-apple-darwin`
+  - windows-2022 — `x86_64-pc-windows-msvc`
+  - ubuntu-22.04-arm — `aarch64-unknown-linux-gnu`
+  - ubuntu-22.04 — `x86_64-unknown-linux-gnu`
+
+DON'T switch to `*-xlarge` or `*-large` runners — those are
+paid even on public repos.
+
+The existing `scripts/notarize-dmg.sh` cert plumbing
+(`APPLE_DEVELOPER_ID_CERT_BASE64` env) can be reused per sibling
+repo's CI workflow. ~15 min per repo to set up; 32 repos → ~8
+hours mechanical work; ~$0/year ongoing.
+
+Trigger: push-to-main publishes to a `main-latest` GitHub
+release. `cargo-binstall` picks up the latest binary; no manual
+tagging required, no forgotten-fix risk.
 
 ### Audit + re-tag siblings post-tmnl-protocol removal
 **Status:** caught 2026-06-26 when a user `:install`-ed
