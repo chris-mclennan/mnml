@@ -6598,6 +6598,12 @@ impl App {
             if binary_on_path(&tracker.binary) {
                 self.toast(format!("{} installed — continuing", tracker.binary));
                 self.fire_post_install_action(tracker.action);
+                // Auto-close the install Pty pane once the action
+                // has fired. The pane otherwise sits there showing
+                // "[process exited — Ctrl+W to close]" above the
+                // actual viewer, cluttering the layout. On failure
+                // we LEAVE it open so the user can read the error.
+                self.close_pane(pid);
             } else {
                 self.toast(format!(
                     "install failed for {} — see the pty pane for cargo output",
