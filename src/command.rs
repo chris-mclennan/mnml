@@ -2261,6 +2261,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_new_cloud_run_wizard(),
         },
         Command {
+            id: "cloud_agents.spawn_worker",
+            title: "Cloud agents: spawn ant beta:worker poll for a self-hosted sandbox",
+            group: "view",
+            keys: &[],
+            run: |app| app.spawn_managed_agents_worker(),
+        },
+        Command {
             id: "cloud_agents.toggle_view",
             title: "Cloud agents: toggle row density (compact ↔ standard)",
             group: "view",

@@ -10240,6 +10240,40 @@ impl App {
     /// running `claude` PIDs via `pgrep`, and renders one row per
     /// session with live/idle/ended state, model, last user/asst
     /// message, token spend, and PID.
+    /// Spawn an `ant beta:worker poll` Pty pane for a self-hosted
+    /// sandbox environment. User must have already created the
+    /// environment in the Console and exported
+    /// `ANTHROPIC_ENVIRONMENT_KEY` + `ANTHROPIC_ENVIRONMENT_ID`.
+    /// Detects missing `ant` binary and routes through the
+    /// `prompt_install_sibling` flow with a manual install hint
+    /// in the toast.
+    pub fn spawn_managed_agents_worker(&mut self) {
+        if !binary_on_path("ant") {
+            self.toast(
+                "ant CLI not installed — see https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes#install-the-ant-cli or run: brew install anthropics/tap/ant",
+            );
+            return;
+        }
+        let workspace = self.workspace.clone();
+        let profile = crate::pty_pane::BinaryProfile {
+            label: "ant worker".to_string(),
+            exe: "ant".to_string(),
+            args: vec![
+                "beta:worker".to_string(),
+                "poll".to_string(),
+                "--workdir".to_string(),
+                workspace.display().to_string(),
+            ],
+            cwd: Some(workspace),
+            env: Vec::new(),
+            session_id: None,
+        };
+        self.open_pty(profile);
+        self.toast(
+            "ant beta:worker poll spawned — needs ANTHROPIC_ENVIRONMENT_KEY + ANTHROPIC_ENVIRONMENT_ID in env",
+        );
+    }
+
     /// Open the Cloud Agents wizard (runner picker — Managed Agents
     /// or Tattle QWE). Distinct from `open_new_cloud_agent_wizard`
     /// which opens the local-agents PR wizard.
@@ -10414,9 +10448,17 @@ impl App {
                 let env_id_existing = cfg.6;
                 let prompt = cfg.7;
                 std::thread::spawn(move || {
-                    // Step 1: agent
+                    let backend = match crate::anthropic_api::detect_backend() {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!("[cloud-run] backend: {e}");
+                            return;
+                        }
+                    };
+                    eprintln!("[cloud-run] using backend: {}", backend.label());
                     let agent_id = if create_new {
                         match crate::anthropic_api::create_agent(
+                            &backend,
                             &agent_name,
                             "claude-opus-4-8",
                             "You are a helpful coding agent.",
@@ -10430,14 +10472,13 @@ impl App {
                     } else {
                         agent_id_existing
                     };
-                    // Step 2: env (skip if user pinned an existing one).
                     let env_id = if env_id_existing.is_empty() {
                         let kind = match sandbox {
                             SandboxLocation::AnthropicCloud => "cloud",
                             SandboxLocation::SelfHostedLocal
                             | SandboxLocation::SelfHostedRemote => "self_hosted",
                         };
-                        match crate::anthropic_api::create_environment("ide-env", kind) {
+                        match crate::anthropic_api::create_environment(&backend, "ide-env", kind) {
                             Ok(e) => e.id,
                             Err(e) => {
                                 eprintln!("[cloud-run] create_environment: {e}");
@@ -10447,8 +10488,8 @@ impl App {
                     } else {
                         env_id_existing
                     };
-                    // Step 3: session
                     match crate::anthropic_api::create_session(
+                        &backend,
                         &agent_id,
                         &env_id,
                         &prompt,
