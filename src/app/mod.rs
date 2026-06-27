@@ -6525,6 +6525,7 @@ impl App {
         use crate::picker::{Picker, PickerItem, PickerKind};
         let items: Vec<PickerItem> = crate::family_catalog::CATALOG
             .iter()
+            .filter(|s| !s.is_private())
             .filter(|s| crate::family_catalog::mount_stub_for(s.id).is_some())
             .map(|s| {
                 let installed = binary_on_path(s.binary);
@@ -6555,6 +6556,7 @@ impl App {
         let items: Vec<PickerItem> = crate::family_catalog::CATALOG
             .iter()
             .filter(|s| !s.is_builtin())
+            .filter(|s| !s.is_private())
             .map(|s| {
                 let installed = binary_on_path(s.binary);
                 let kind_tag = if crate::family_catalog::mount_stub_for(s.id).is_some() {

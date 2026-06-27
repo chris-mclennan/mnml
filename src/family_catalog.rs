@@ -127,6 +127,16 @@ impl FamilySibling {
         self.id == "mixr"
     }
 
+    /// `true` for entries that should be hidden from public UI
+    /// surfaces (Integrations rail discovery overlay + install
+    /// picker). The catalog still carries them so the owner can
+    /// install via direct cargo invocation, but other users don't
+    /// see them. Currently: every `Category::Tattle` entry (private
+    /// company tooling — the repos aren't public).
+    pub fn is_private(&self) -> bool {
+        matches!(self.category, Category::Tattle)
+    }
+
     /// The full `cargo install` invocation a user would run. Returns
     /// a no-op note for built-in entries (they ship with mnml core).
     ///
@@ -636,25 +646,9 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Tattle (internal) ─────────────────────────────────────
-    // INTERNAL tooling. Hidden from public docs / install scripts.
-    // Repo URL points to a placeholder until the private repo is
-    // created — the `+` overlay's install path won't work for
-    // these (private SSH clone), but the catalog entry surfaces
-    // the binary so detection + chip-filter Just Work.
-    FamilySibling {
-        id: "tattle_inbox",
-        binary: "mnml-tattle-inbox",
-        category: Category::Tattle,
-        repo_url: "https://github.com/chris-mclennan/mnml-tattle-inbox",
-        pinned_version: "main",
-        one_liner: "Tattle email + SMS test inbox (dev/staging — INTERNAL)",
-        icon: IconTemplate {
-            glyph: "\u{F01F0}", // nf-md-email_search_outline
-            fallback: "Ti",
-            color: "magenta",
-            tooltip: "Tattle inbox browser (INTERNAL — dev/staging only)",
-        },
-    },
+    // INTERNAL tooling. Repos are private; only catalog-listed
+    // when the actual repo exists. mnml-tattle-inbox was removed
+    // 2026-06-26 (placeholder repo never created).
     // First Mount-capable sibling — renders into an mnml pane via
     // the Bridge tier-4 UDS protocol (not a Pty). MountStub at the
     // top of this file describes the activity-bar icon the

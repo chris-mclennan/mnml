@@ -151,8 +151,14 @@ pub enum SiblingStatus {
 /// end of each section.
 pub fn build_items(app: &App) -> Vec<DiscoveryItem> {
     // Hardcoded catalog entries, wrapped as `SiblingRef::Catalog`.
+    // 2026-06-26 — `is_private()` entries (currently all Tattle
+    // category) are filtered out: their repos are private and the
+    // catalog is compiled into every public mnml binary. Owners
+    // install via direct `cargo install --git <ssh>` outside the
+    // overlay.
     let catalog_refs: Vec<SiblingRef> = family_catalog::CATALOG
         .iter()
+        .filter(|s| !s.is_private())
         .map(SiblingRef::Catalog)
         .collect();
     // Auto-discovered entries — already filtered to exclude anything
