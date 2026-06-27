@@ -51,6 +51,16 @@ impl App {
             return;
         };
         if src == target {
+            // Dropping a tab onto its own pane body — happens when
+            // the user drags the active tab from the bufferline
+            // onto the visible pane (the only pane in single-leaf
+            // layouts). Center is a no-op; edges mean "split this
+            // leaf and put src in the new half" — split_tab_into
+            // already does that (finds a sibling tab, splices).
+            if matches!(zone, DropZone::Center) {
+                return;
+            }
+            self.split_tab_into(src, zone);
             return;
         }
         self.splice_pane_at(src, target, zone);
