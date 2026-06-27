@@ -142,6 +142,34 @@ pub struct NavPoint {
     pub col: usize,
 }
 
+/// Row density for the Cloud Agents panel — toggled by the user.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum CloudAgentsView {
+    /// One line per row — the legacy compact look. Best when there
+    /// are many runs in flight.
+    #[default]
+    Compact,
+    /// Three lines per row, showing ticket / flow / state / last
+    /// activity / last message. Easier to tell runs apart at a
+    /// glance.
+    Standard,
+}
+
+impl CloudAgentsView {
+    pub fn toggled(self) -> Self {
+        match self {
+            CloudAgentsView::Compact => CloudAgentsView::Standard,
+            CloudAgentsView::Standard => CloudAgentsView::Compact,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            CloudAgentsView::Compact => "compact",
+            CloudAgentsView::Standard => "standard",
+        }
+    }
+}
+
 /// Stashed alongside a running install Pty. `drain_install_post_actions`
 /// fires `action` once the Pty exits if `binary` is on PATH, or toasts
 /// the failure otherwise. See `App::install_sibling_with_action`.
@@ -2065,6 +2093,9 @@ pub struct PaneRects {
     pub cloud_agents_area: Option<Rect>,
     /// Click rect for the filter input at the top of the cloud panel.
     pub cloud_agents_filter_input: Option<Rect>,
+    /// Click rect for the "compact / standard" density chip in the
+    /// Cloud Agents panel header.
+    pub cloud_agents_view_chip: Option<Rect>,
     /// Click rects for the workspaces-editor overlay. Each row is
     /// `(rect, idx_or_action_code)` — `idx_or_action_code < 0` is
     /// reserved for action rows (`-1 = Add`, `-2 = Close`).
@@ -3291,6 +3322,13 @@ pub struct App {
     pub agents_panel_expanded_workspaces: std::collections::HashSet<String>,
     /// `/`-style substring filter for the rail Cloud Agents panel.
     /// Independent of the local agents panel filter.
+    /// Cloud-agents panel row density. Compact = 1 line / row
+    /// (scannable when there are many runs). Standard = 3 lines /
+    /// row, surfacing flow / state / ticket / last activity so you
+    /// don't have to drill in to know what's what. Toggle via
+    /// `:cloud_agents.toggle_view` or click the chip in the panel
+    /// header.
+    pub cloud_agents_view: CloudAgentsView,
     pub cloud_agents_filter: String,
     /// `true` while the user's keyboard focus is in the Cloud
     /// Agents panel's filter input.
@@ -4052,6 +4090,7 @@ impl App {
             agents_panel_filter: String::new(),
             agents_panel_scroll: 0,
             agents_panel_filter_focused: false,
+            cloud_agents_view: CloudAgentsView::default(),
             cloud_agents_filter: String::new(),
             cloud_agents_filter_focused: false,
             cloud_agents_scroll: 0,
@@ -6870,6 +6909,21 @@ impl App {
     /// hundreds of ms with many sessions) on a WORKER THREAD so
     /// the UI stays responsive. The next `App::tick()` drains the
     /// channel and swaps in the fresh snapshot.
+    /// Swap the cloud-agents panel between Compact (1 line / row)
+    /// and Standard (3 lines / row). Fired by the
+    /// `cloud_agents.toggle_view` palette command and by clicking
+    /// the density chip in the panel header.
+    pub fn cloud_agents_toggle_view(&mut self) {
+        self.cloud_agents_view = self.cloud_agents_view.toggled();
+        // Reset scroll — the row heights changed so old scroll
+        // offset would land mid-row otherwise.
+        self.cloud_agents_scroll = 0;
+        self.toast(format!(
+            "cloud agents view → {}",
+            self.cloud_agents_view.label()
+        ));
+    }
+
     pub fn refresh_agents_panel_if_due(&mut self) {
         // 30s — the rail is a heads-up display, not a live tail.
         // The full Pane::ClaudeAgents has its own faster refresh

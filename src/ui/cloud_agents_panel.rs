@@ -47,6 +47,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     app.rects.cloud_agents_rows.clear();
     app.rects.cloud_agents_filter_input = None;
+    app.rects.cloud_agents_view_chip = None;
 
     let mut y = area.y;
     let header_row = Rect {
@@ -55,23 +56,48 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         width: area.width,
         height: 1,
     };
+    // Build the header line: "CLOUD AGENTS  (N)        [chip]"
+    // where [chip] is "compact ⇄" or "standard ⇄" — clickable to
+    // toggle the row-density mode.
+    let view_label = app.cloud_agents_view.label();
+    let chip_text = format!("{view_label} ⇄");
+    let chip_width = chip_text.chars().count() as u16 + 2; // " " padding
+    let header_label = "CLOUD AGENTS";
+    let header_count = format!("  ({})", app.cloud_agents_rows.len());
+    let used_left = 1 + header_label.chars().count() + header_count.chars().count();
+    let pad_width = (area.width as usize).saturating_sub(used_left + chip_width as usize + 1);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
-                "CLOUD AGENTS",
+                header_label,
                 Style::default()
                     .fg(t.comment)
                     .bg(bg)
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(header_count.clone(), Style::default().fg(t.comment).bg(bg)),
+            Span::styled(" ".repeat(pad_width), Style::default().bg(bg)),
             Span::styled(
-                format!("  ({})", app.cloud_agents_rows.len()),
-                Style::default().fg(t.comment).bg(bg),
+                chip_text.clone(),
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg2)
+                    .add_modifier(Modifier::BOLD),
             ),
         ])),
         header_row,
     );
+    // Click rect for the chip — let users tap to flip density.
+    let chip_x = area.x + (used_left + pad_width) as u16;
+    if chip_x + chip_width <= area.x + area.width {
+        app.rects.cloud_agents_view_chip = Some(Rect {
+            x: chip_x,
+            y: header_row.y,
+            width: chip_width,
+            height: 1,
+        });
+    }
     y += 1;
 
     // Filter input — same shape as the local panel for muscle memory.
@@ -197,12 +223,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         v.sort_by_key(|(_, b)| std::cmp::Reverse(b.last_activity));
     }
 
-    // Build a flat row list.
+    // Build a flat row list. Standard mode renders multi-line rows
+    // (Vec<Line>) so we widen the Session variant.
     enum Item {
         Header(String),
-        Session(usize, Line<'static>),
+        Session(usize, Vec<Line<'static>>),
         Blank,
     }
+    let view_mode = app.cloud_agents_view;
     let make_row = |r: &crate::claude_agents::AgentRow| -> Line<'static> {
         let (glyph, glyph_color) = if r.pending_tool_uses > 0 {
             ("!", t.red)
@@ -235,6 +263,109 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(msg_clip, Style::default().fg(t.comment).bg(bg)),
         ])
     };
+
+    // Standard mode: render 3 lines per row so the user can tell
+    // runs apart without drilling in. Line 1 has the same status
+    // glyph + workspace label as compact mode so muscle memory is
+    // preserved; lines 2-3 surface ticket / flow / state / time +
+    // a wider last-message excerpt.
+    let make_row_standard = |r: &crate::claude_agents::AgentRow,
+                             m: Option<&crate::tattle_qwe::TattleQweMeta>|
+     -> Vec<Line<'static>> {
+        let (glyph, glyph_color) = if r.pending_tool_uses > 0 {
+            ("!", t.red)
+        } else if matches!(r.state, AgentState::Streaming | AgentState::ToolCall) {
+            (spinner, t.cyan)
+        } else {
+            ("✓", t.green)
+        };
+        let ticket = m.map(|x| x.ticket.clone()).unwrap_or_default();
+        let flow = m.map(|x| x.flow.clone()).unwrap_or_default();
+        let state = m.map(|x| x.state.clone()).unwrap_or_default();
+        let when = r
+            .last_activity
+            .map(|s| {
+                use std::time::SystemTime;
+                let now = SystemTime::now();
+                let secs = now.duration_since(s).map(|d| d.as_secs()).unwrap_or(0);
+                if secs < 60 {
+                    format!("{secs}s ago")
+                } else if secs < 3600 {
+                    format!("{}m ago", secs / 60)
+                } else if secs < 86400 {
+                    format!("{}h ago", secs / 3600)
+                } else {
+                    format!("{}d ago", secs / 86400)
+                }
+            })
+            .unwrap_or_else(|| "—".to_string());
+        let last_msg = r
+            .last_assistant_msg
+            .clone()
+            .unwrap_or_else(|| "(no summary)".to_string());
+        let inner_w = (area.width as usize).saturating_sub(6);
+        let msg_clip: String = last_msg
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(inner_w)
+            .collect();
+        // Line 1 — status glyph + ticket prominently + workspace.
+        let line1 = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(glyph.to_string(), Style::default().fg(glyph_color).bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled("☁", Style::default().fg(t.blue).bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(
+                if ticket.is_empty() {
+                    r.workspace.clone()
+                } else {
+                    ticket.clone()
+                },
+                Style::default()
+                    .fg(t.fg)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(
+                if ticket.is_empty() {
+                    String::new()
+                } else {
+                    r.workspace.clone()
+                },
+                Style::default().fg(t.comment).bg(bg),
+            ),
+        ]);
+        // Line 2 — flow · state · last activity. Tight metadata
+        // strip in muted color.
+        let mut line2_spans = vec![Span::styled("     ", Style::default().bg(bg))];
+        if !flow.is_empty() {
+            line2_spans.push(Span::styled(
+                flow.clone(),
+                Style::default().fg(t.cyan).bg(bg),
+            ));
+            line2_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
+        }
+        if !state.is_empty() {
+            line2_spans.push(Span::styled(
+                state.clone(),
+                Style::default().fg(t.yellow).bg(bg),
+            ));
+            line2_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
+        }
+        line2_spans.push(Span::styled(when, Style::default().fg(t.comment).bg(bg)));
+        let line2 = Line::from(line2_spans);
+        // Line 3 — last-message excerpt (one line, truncated).
+        let line3 = Line::from(vec![
+            Span::styled("     ", Style::default().bg(bg)),
+            Span::styled(msg_clip, Style::default().fg(t.comment).bg(bg)),
+        ]);
+        vec![line1, line2, line3]
+    };
+
     let sections: [(&str, &[(usize, &crate::claude_agents::AgentRow)]); 3] = [
         ("Action needed", &action_needed[..]),
         ("Running", &running[..]),
@@ -247,7 +378,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         content.push(Item::Header(format!("{label}  ({})", items.len())));
         for &(i, r) in items {
-            content.push(Item::Session(i, make_row(r)));
+            let lines = match view_mode {
+                crate::app::CloudAgentsView::Compact => vec![make_row(r)],
+                crate::app::CloudAgentsView::Standard => {
+                    let m = app.cloud_agents_meta.get(&r.session_id);
+                    make_row_standard(r, m)
+                }
+            };
+            content.push(Item::Session(i, lines));
         }
         content.push(Item::Blank);
     }
@@ -255,22 +393,60 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let content_top = y;
     let content_bottom = area.y + area.height;
     let visible_h = content_bottom.saturating_sub(content_top) as usize;
-    let total = content.len();
-    let max_scroll = total.saturating_sub(visible_h);
+    // Variable item heights — sessions take their lines.len() rows;
+    // headers and blanks always take 1 row. Walk total height in
+    // rows, not item count.
+    let item_height = |it: &Item| -> usize {
+        match it {
+            Item::Session(_, lines) => lines.len(),
+            Item::Header(_) | Item::Blank => 1,
+        }
+    };
+    let total_rows: usize = content.iter().map(item_height).sum();
+    let max_scroll = total_rows.saturating_sub(visible_h);
     app.cloud_agents_scroll = app.cloud_agents_scroll.min(max_scroll);
     let scroll = app.cloud_agents_scroll;
 
     let mut click_targets: Vec<(Rect, usize)> = Vec::new();
-    for (vi, item) in content.into_iter().enumerate().skip(scroll).take(visible_h) {
-        let row_rect = Rect {
-            x: area.x,
-            y: content_top + (vi - scroll) as u16,
-            width: area.width,
-            height: 1,
-        };
+    let mut cursor_row: usize = 0;
+    for item in content.into_iter() {
+        let h = item_height(&item);
+        let item_top = cursor_row;
+        cursor_row += h;
+        // Skip items that are above the scroll window OR start past
+        // the bottom of the visible area.
+        if item_top + h <= scroll {
+            continue;
+        }
+        if item_top >= scroll + visible_h {
+            break;
+        }
+        // Offset within the visible window (might be negative if the
+        // item starts above the scroll — we clamp by skipping lines).
+        let visible_start_in_item = scroll.saturating_sub(item_top);
+        let render_y = content_top + (item_top + visible_start_in_item - scroll) as u16;
         match item {
-            Item::Session(idx, line) => {
-                frame.render_widget(Paragraph::new(line), row_rect);
+            Item::Session(idx, lines) => {
+                let lines_to_render: Vec<Line<'static>> =
+                    lines.into_iter().skip(visible_start_in_item).collect();
+                let row_rect = Rect {
+                    x: area.x,
+                    y: render_y,
+                    width: area.width,
+                    height: lines_to_render.len() as u16,
+                };
+                for (li, line) in lines_to_render.iter().enumerate() {
+                    let line_rect = Rect {
+                        x: area.x,
+                        y: render_y + li as u16,
+                        width: area.width,
+                        height: 1,
+                    };
+                    if line_rect.y >= content_bottom {
+                        break;
+                    }
+                    frame.render_widget(Paragraph::new(line.clone()), line_rect);
+                }
                 click_targets.push((row_rect, idx));
             }
             Item::Header(label) => {
@@ -285,7 +461,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ])),
-                    row_rect,
+                    Rect {
+                        x: area.x,
+                        y: render_y,
+                        width: area.width,
+                        height: 1,
+                    },
                 );
             }
             Item::Blank => {}

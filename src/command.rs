@@ -2247,6 +2247,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.prompt_cloud_run(),
         },
         Command {
+            id: "cloud_agents.toggle_view",
+            title: "Cloud agents: toggle row density (compact ↔ standard)",
+            group: "view",
+            keys: &[],
+            run: |app| app.cloud_agents_toggle_view(),
+        },
+        Command {
             id: "view.git_commit_focus",
             title: "Activity: focus the Git section's commit textarea",
             group: "view",

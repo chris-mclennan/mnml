@@ -6259,7 +6259,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
-            // Cloud Agents panel — filter input + row clicks.
+            // Cloud Agents panel — filter input + row clicks +
+            // density chip (compact ↔ standard).
+            if let Some(r) = app.rects.cloud_agents_view_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.cloud_agents_toggle_view();
+                return;
+            }
             if let Some(r) = app.rects.cloud_agents_filter_input
                 && crate::app::dispatch::contains(r, x, y)
             {
