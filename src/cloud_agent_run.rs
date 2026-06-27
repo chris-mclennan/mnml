@@ -316,6 +316,13 @@ pub fn spawn_log_fetcher(run_id: String, state: String, log_group: String) -> Re
     std::thread::spawn(move || {
         let running = state.eq_ignore_ascii_case("running") || state.eq_ignore_ascii_case("queued");
         let mut cmd = Command::new("aws");
+        // CloudWatch Filter Pattern tokenizes on `-`, so an
+        // unquoted `TE-1234-prod-mnml-…` matches lines containing
+        // any of those tokens (TE, 1234, prod, mnml). Wrap with
+        // double-quotes — that's CloudWatch's literal-substring
+        // syntax (per AWS Filter and Pattern Syntax docs). Result:
+        // only lines that contain the exact run-id substring.
+        let pattern = format!("\"{run_id}\"");
         if running {
             // Tail mode — live updates from now on, plus the last
             // hour of context so the user doesn't stare at an empty
@@ -328,7 +335,7 @@ pub fn spawn_log_fetcher(run_id: String, state: String, log_group: String) -> Re
                 "1h",
                 "--follow",
                 "--filter-pattern",
-                &run_id,
+                &pattern,
                 "--format",
                 "short",
             ]);
@@ -342,7 +349,7 @@ pub fn spawn_log_fetcher(run_id: String, state: String, log_group: String) -> Re
                 "--since",
                 "24h",
                 "--filter-pattern",
-                &run_id,
+                &pattern,
                 "--format",
                 "short",
             ]);
