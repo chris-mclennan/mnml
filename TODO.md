@@ -87,6 +87,57 @@ Pick #2 for v1 if/when this lands. Discuss before coding.
 
 ## Other (uncategorized)
 
+### Cloud agents list: compact vs standard view modes
+**Status:** user request 2026-06-27 — current row UX feels guessy.
+
+Today each cloud-agent row is one line: `▢ TE-NNNNN  state`.
+With 14+ rows in a busy workspace, you can't tell what's what
+without clicking through. User wants two view modes:
+
+1. **Compact** (current) — one line per row, scannable list
+   when there are many rows.
+2. **Standard / expanded** — multi-line per row showing:
+   ticket title (truncated), start time / duration, last log
+   excerpt, current step / heartbeat. Enough to know what the
+   run is doing without drilling in.
+3. **Hover tooltip** (bonus) — even more detail when the user
+   mouses over: full title, all metadata, retry count,
+   parameters passed to the QWE run.
+
+Persist the choice per-workspace in
+`.mnml/cloud_agents_view.toml` so each project remembers.
+
+Shape:
+  - Toggle keybind on the cloud-agents panel (default `v`?).
+  - Settings overlay row.
+  - `src/ui/cloud_agents_panel.rs` already has the per-row
+    rendering; add a `CloudAgentsView { Compact, Standard }`
+    enum to App state + branch render accordingly.
+
+### Cloud agents / Pty: tab strip should be per-split, not global
+**Status:** caught 2026-06-27 — user reported "4 tabs" when
+tailing two QWE runs.
+
+Today: opening two Tail-logs flows creates two splits AND each
+split's tab strip shows BOTH viewer buffers. Visually that's
+"4 tabs" even though there are only 2 buffers in 2 splits.
+The user's expectation is each split's tab strip shows only
+the buffers IN that split.
+
+Two paths:
+  1. **Tab strip per-split scope** — render only the buffers
+     attached to this split's tab group. Other buffers exist
+     in other splits and aren't listed here. (Cleanest.)
+  2. **Reuse existing split for similar opens** — clicking
+     Tail logs a second time, when an existing cloudwatch
+     viewer pane is open, route to that pane's split + open
+     the new viewer as a TAB (not a new split). Both viewers
+     visible in one split's tab strip; no second split.
+
+Either path eliminates the "4 tabs" confusion. Path 2 is
+more aggressive (changes pane-open routing); path 1 is just
+UI scoping. Probably do both but path 1 first.
+
 ### Git-graph: repo dropdown + tighter sidebars
 **Status:** captured 2026-06-27 — user request after looking at the
 git-graph in `tattle-claude-workspace`.
