@@ -1221,37 +1221,77 @@ fn paint_integration_chips_in_gap(
     }
     let t = theme::cur();
     let nerd = !app.config.ui.ascii_icons;
-    // LEFT-align: start right after the workspace chip / dropdown
-    // so integrations read as an extension of the palette cluster.
-    // Reserve 3 cells at the END for a `+` chip (clickable —
-    // opens integrations.add discovery overlay), so the user can
-    // add more integrations from right here.
+    // Both launcher icons and integration icons paint here, in a
+    // single strip close to the palette dropdown. They look the
+    // same to the user — the only difference is which dispatcher
+    // their click fires. We also clear launcher_icon_rects since
+    // they used to live in the far-right cluster.
+    app.rects.launcher_icon_rects.clear();
+    // Reserve 3 cells at the END for a `+` add-integration chip
+    // (opens discovery overlay).
     let plus_w: u16 = 3;
     let avail_for_chips = avail_w.saturating_sub(plus_w);
     let chip_count = (avail_for_chips / per_chip) as usize;
-    let to_paint = app.config.ui.integration_icons.len().min(chip_count);
+    // Render launchers first, then integrations — gives Claude /
+    // Codex visual priority. Either way it's just an order; the
+    // chips are visually identical.
+    let n_launcher = app.config.ui.launcher_icons.len();
+    let n_integration = app.config.ui.integration_icons.len();
+    let total_wanted = n_launcher + n_integration;
+    let to_paint = total_wanted.min(chip_count);
+    let launcher_paint = n_launcher.min(to_paint);
+    let integration_paint = to_paint - launcher_paint;
     let mut x = avail_left;
-    // Iterate in original order so icons appear in declared order.
+    let color_of = |c: &str| match c {
+        "orange" => t.orange,
+        "cyan" => t.cyan,
+        "blue" => t.blue,
+        "green" => t.green,
+        "yellow" => t.yellow,
+        "purple" => t.purple,
+        "red" => t.red,
+        "teal" => t.teal,
+        _ => t.bg2,
+    };
+    for (i, icon) in app
+        .config
+        .ui
+        .launcher_icons
+        .iter()
+        .take(launcher_paint)
+        .enumerate()
+    {
+        let glyph = if nerd { &icon.glyph } else { &icon.fallback };
+        let chip_bg = color_of(&icon.color);
+        let chip_rect = Rect {
+            x,
+            y,
+            width: 3,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" {glyph} "),
+                Style::default()
+                    .fg(t.bg_darker)
+                    .bg(chip_bg)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            chip_rect,
+        );
+        app.rects.launcher_icon_rects.push((chip_rect, i));
+        x = x.saturating_add(3);
+    }
     for (i, icon) in app
         .config
         .ui
         .integration_icons
         .iter()
-        .take(to_paint)
+        .take(integration_paint)
         .enumerate()
     {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let chip_bg = match icon.color.as_str() {
-            "orange" => t.orange,
-            "cyan" => t.cyan,
-            "blue" => t.blue,
-            "green" => t.green,
-            "yellow" => t.yellow,
-            "purple" => t.purple,
-            "red" => t.red,
-            "teal" => t.teal,
-            _ => t.bg2,
-        };
+        let chip_bg = color_of(&icon.color);
         let chip_rect = Rect {
             x,
             y,

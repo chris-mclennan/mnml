@@ -21,6 +21,7 @@ use crate::ui::{icons, theme};
 
 /// Map a `LauncherIcon.color` slot name (`"orange"`, `"cyan"`, …) to
 /// the active theme's `Color`. Unknown slot ⇒ `bg2` (neutral chip).
+#[allow(dead_code)] // moved to paint_integration_chips_in_gap's inline color_of closure; kept for any future caller
 fn launcher_color(t: &theme::Theme, name: &str) -> ratatui::style::Color {
     match name {
         "orange" => t.orange,
@@ -454,9 +455,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 /// buttons are NOT part of this — they live on the bufferline
 /// (tab bar) right end, not the chrome row.
 pub fn right_cluster_width(app: &App) -> u16 {
-    let n_launcher = app.config.ui.launcher_icons.len() as u16;
-    // launcher icons (` X ` × n) + ` + ` new-tab button + ` TABS `
-    let mut w: u16 = 3 * n_launcher + 3 + 6;
+    // 2026-06-27 — launchers + integrations now paint in the gap
+    // between the palette dropdown and this cluster (closer to
+    // where the user expects to find them). The right cluster
+    // is just: ` + ` new-tab + ` TABS ` + tab-page chips + theme
+    // + close.
+    let _ = app.config.ui.launcher_icons.len();
+    let mut w: u16 = 3 + 6;
     for i in 0..app.layouts.len() {
         let dig = (i + 1).to_string().chars().count() as u16;
         let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
@@ -534,28 +539,11 @@ pub fn paint_right_cluster(
     // Split buttons moved to the bufferline (tab bar) right end —
     // see `paint_split_buttons` below.
 
-    // Launcher icons.
-    for (i, icon) in app.config.ui.launcher_icons.iter().enumerate() {
-        let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let chip_bg = launcher_color(&t, &icon.color);
-        spans.push(Span::styled(
-            format!(" {glyph} "),
-            Style::default()
-                .fg(t.bg_darker)
-                .bg(chip_bg)
-                .add_modifier(Modifier::BOLD),
-        ));
-        app.rects.launcher_icon_rects.push((
-            Rect {
-                x: cluster_x,
-                y: area.y,
-                width: 3,
-                height: 1,
-            },
-            i,
-        ));
-        cluster_x += 3;
-    }
+    // Launcher icons moved to the gap painter — see
+    // `paint_integration_chips_in_gap` (which also handles
+    // launchers now, despite the name). The far-right cluster is
+    // chrome-only.
+    let _ = nerd;
     // `+` new-tab button.
     spans.push(Span::styled(
         " \u{F0415} ",
