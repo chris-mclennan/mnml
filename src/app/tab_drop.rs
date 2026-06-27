@@ -479,15 +479,20 @@ mod tests {
     }
 
     #[test]
-    fn drop_on_own_pane_is_a_noop() {
+    fn drop_on_own_pane_center_is_a_noop() {
+        // Center-zone drop on the own pane stays a no-op even after
+        // the 2026-06-27 edge-zone split fix — nothing to do when
+        // dragging a tab onto its own slot's center.
         let mut app = app_two_panes();
-        // Collapse to a single visible leaf (0) for the no-op check.
+        // Single visible leaf, no orphans → genuinely solo.
+        app.panes.pop(); // drop the second pane so there's nothing to recover
         *app.layout_mut() = Layout::leaf(0);
         app.active = Some(0);
         let only = 0;
         let body = Rect::new(0, 1, 40, 20);
         app.rects.pane_bodies = vec![(body, only)];
-        app.drop_tab_on_pane(only, body.x + body.width - 1, body.y + 1);
+        // Center of the pane body — landing zone for a center drop.
+        app.drop_tab_on_pane(only, body.x + body.width / 2, body.y + body.height / 2);
         assert!(matches!(app.layout(), Layout::Leaf { active: id, .. } if *id == only));
     }
 }
