@@ -10,6 +10,31 @@
 
 use crate::family_catalog::{FamilySibling, MountStub, mount_stub_for};
 
+/// What to do once a sibling install finishes successfully.
+/// Captured at prompt time so users don't have to re-trigger their
+/// original action after waiting for `cargo install` to complete.
+/// Replayed by `App::drain_install_post_actions` on each tick.
+#[derive(Debug, Clone)]
+pub enum PostInstallAction {
+    /// Open a CloudWatch Logs Pty for `log_group` (optionally
+    /// filtered by `filter`). Triggered when the user invoked
+    /// "Tail logs" on a cloud-agent row but the cloudwatch-logs
+    /// sibling wasn't installed.
+    CloudWatchLogs {
+        log_group: String,
+        filter: String,
+        label: String,
+    },
+    /// Open the S3 browser Pty pointed at `bucket`+`prefix`.
+    /// Triggered when the user invoked "Browse S3 artifacts" or
+    /// `:s3.open` but the s3 sibling wasn't installed.
+    S3Browse {
+        bucket: String,
+        prefix: String,
+        label: String,
+    },
+}
+
 /// What kind of install just happened. Surfaced to callers so they
 /// can chain "click again to use" affordances correctly.
 #[derive(Debug, Clone, Copy)]

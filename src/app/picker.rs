@@ -1071,6 +1071,7 @@ impl App {
         self.pending_worktree_remove = None;
         self.pending_branch_source = None;
         self.pending_install_family_id = None;
+        self.pending_install_after_action = None;
         self.rename_preview_state = None;
         // 2026-06-21 — power-user-ws-git SEV-1: Esc on the
         // `:git.worktree_add` path prompt left

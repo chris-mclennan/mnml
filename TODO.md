@@ -87,6 +87,55 @@ Pick #2 for v1 if/when this lands. Discuss before coding.
 
 ## Other (uncategorized)
 
+### Multi-pane siblings (Mount or Pty)
+**Status:** deferred 2026-06-26 — captured before it gets baked in.
+
+Today: each Mount manifest = one Mount pane (one UDS, one render
+loop). Each Pty profile = one Pty pane. A sibling that wants
+multiple visual surfaces (main view + detail panel, dashboard +
+log tail, …) has to either render both inside one pane (manual
+internal split) or use the `OpenPty` tier-2 IPC to spawn a second
+Pty as a side effect.
+
+That's fine for today's single-pane siblings but won't scale to
+richer integrations. Bake the multi-pane assumption into the
+protocol now so we don't have to retrofit.
+
+Shape (draft — discuss before coding):
+  - Manifest gains `[[panes]]` array — each entry has its own
+    `id`, `name`, `icon`, `color`, and an optional `mode`
+    selector that mnml passes to the sibling on spawn
+    (`--mode list`, `--mode detail`, etc.). Each entry registers
+    its own activity-bar icon.
+  - Clicking icon N spawns the sibling with `--mode <n.mode>` —
+    or, if it's already running and the sibling registered itself
+    for multiplexing, sends an "open pane" message over the
+    existing UDS.
+  - On the Pty side: a sibling can send a tier-2
+    `OpenAdditionalPty { label, cmd, args, alongside? }` IPC to
+    open companion panes that mnml tracks as related (e.g. closes
+    them together if the user closes the parent).
+
+Open questions: how does mnml know two panes are "the same
+sibling" for status / cleanup purposes? Is it parent-PID, manifest
+id, or a sibling-asserted group token? Keep cleanup safe under
+crashes (sibling main pane dies, side panel becomes orphan).
+
+### Pre-built sibling binaries (no bundling)
+**Status:** deferred 2026-06-26. User explicitly chose NOT to
+bundle siblings into mnml core ("the name is minimal — if the
+ecosystem grows, mnml shouldn't gatekeep which integrations are
+core enough to ship"). Compile time on first install (~30-60s)
+remains the main UX cost.
+
+Next step when ready: GitHub Releases with pre-built signed
+binaries per sibling, served via `cargo-binstall` (or a mnml
+built-in downloader that hits the same release artifacts). The
+existing `scripts/notarize-dmg.sh` cert plumbing can be reused
+per sibling repo's CI workflow. ~15 min per repo to set up; 32
+repos → ~8 hours mechanical work. Auto-retry (#609 in tasks)
+covers most of the perceived first-install pain in the meantime.
+
 ### Audit + re-tag siblings post-tmnl-protocol removal
 **Status:** caught 2026-06-26 when a user `:install`-ed
 `mnml-aws-cloudwatch-logs` and the build broke on a missing

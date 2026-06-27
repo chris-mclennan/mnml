@@ -142,6 +142,16 @@ pub struct NavPoint {
     pub col: usize,
 }
 
+/// Stashed alongside a running install Pty. `drain_install_post_actions`
+/// fires `action` once the Pty exits if `binary` is on PATH, or toasts
+/// the failure otherwise. See `App::install_sibling_with_action`.
+#[derive(Debug, Clone)]
+pub struct InstallTracker {
+    pub family_id: String,
+    pub binary: String,
+    pub action: crate::sibling_install::PostInstallAction,
+}
+
 /// Direction for `Ctrl+W`-style focus navigation between splits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {
@@ -2706,6 +2716,19 @@ pub struct App {
     /// "X not installed — install? y/n" prompt. Resolved by the
     /// prompt accept handler to fire the install.
     pub pending_install_family_id: Option<String>,
+    /// Action captured alongside `pending_install_family_id` — the
+    /// thing the user was originally trying to do when they hit
+    /// the "not installed" gate. Replayed automatically once the
+    /// install Pty exits and the binary is on PATH.
+    pub pending_install_after_action: Option<crate::sibling_install::PostInstallAction>,
+    /// While a sibling install is running in a Pty pane, the
+    /// (PaneId, action) for it lives here. On each tick, mnml
+    /// checks whether the install Pty has exited; on success
+    /// (binary now on PATH) it fires the action automatically so
+    /// the user doesn't have to remember to re-trigger. SEV-4 UX
+    /// patch — first-time install used to leave the user staring
+    /// at a "completed" Pty wondering what's next.
+    pub install_post_actions: std::collections::HashMap<crate::layout::PaneId, InstallTracker>,
     /// Search activity-bar section: input + results state. The input
     /// captures keystrokes when `search_input_focused == true`; results
     /// render below the input regardless of focus.
@@ -3947,6 +3970,8 @@ impl App {
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
             pending_install_family_id: None,
+            pending_install_after_action: None,
+            install_post_actions: std::collections::HashMap::new(),
             search_query: String::new(),
             search_cursor: 0,
             search_hits: Vec::new(),
@@ -6440,7 +6465,19 @@ impl App {
     /// `~/.config/mnml/mounts/<id>.toml` so the activity-bar icon
     /// shows up immediately (clicking it before install completes
     /// will toast the install hint via `binary_on_path`).
-    pub fn install_sibling(&mut self, family_id: &str) {
+    ///
+    /// When called with a `post_action` (typically by
+    /// `install_sibling_confirm_resolve` after the user accepted
+    /// the "X not installed — install? y/n" prompt), the action is
+    /// stashed in `install_post_actions` keyed by the install Pty's
+    /// PaneId. `drain_install_post_actions` on each tick checks
+    /// whether the install Pty exited; on success it fires the
+    /// action so the user doesn't have to re-click.
+    pub fn install_sibling_with_action(
+        &mut self,
+        family_id: &str,
+        post_action: Option<crate::sibling_install::PostInstallAction>,
+    ) {
         let Some(sibling) = crate::sibling_install::lookup(family_id) else {
             self.toast(format!("install: unknown sibling `{family_id}`"));
             return;
@@ -6480,6 +6517,20 @@ impl App {
             session_id: None,
         };
         self.open_pty(profile);
+        let install_pane = self.active;
+        // Stash the post-install action keyed by the new install Pty's
+        // PaneId so `drain_install_post_actions` can fire it once the
+        // install exits and the binary appears on PATH.
+        if let (Some(pid), Some(action)) = (install_pane, post_action) {
+            self.install_post_actions.insert(
+                pid,
+                InstallTracker {
+                    family_id: family_id.to_string(),
+                    binary: sibling.binary.to_string(),
+                    action,
+                },
+            );
+        }
         let mut toast = format!("installing {} — watch the pty pane", sibling.binary);
         if let Some(extra) = mount_msg {
             toast.push_str(" · ");
@@ -6488,16 +6539,87 @@ impl App {
         self.toast(toast);
     }
 
+    /// Thin wrapper — old call sites that don't have a post-action
+    /// to chain (the palette/discovery/AI paths). Equivalent to
+    /// `install_sibling_with_action(id, None)`.
+    pub fn install_sibling(&mut self, family_id: &str) {
+        self.install_sibling_with_action(family_id, None);
+    }
+
+    /// Walk `install_post_actions`. For each entry whose install
+    /// Pty has exited (reader thread set `exited = true`), check
+    /// whether the binary now resolves on PATH. If yes, fire the
+    /// captured action. If no, toast the failure so the user knows
+    /// the install didn't take. Either way, drop the entry — we
+    /// don't retry a failed install on the next tick.
+    pub(crate) fn drain_install_post_actions(&mut self) {
+        if self.install_post_actions.is_empty() {
+            return;
+        }
+        // Snapshot done-panes so we can mutate self while iterating.
+        let done: Vec<(crate::layout::PaneId, InstallTracker)> = self
+            .install_post_actions
+            .iter()
+            .filter_map(|(pid, tracker)| {
+                let exited = matches!(self.panes.get(*pid), Some(Pane::Pty(s)) if s.is_exited());
+                exited.then(|| (*pid, tracker.clone()))
+            })
+            .collect();
+        for (pid, tracker) in done {
+            self.install_post_actions.remove(&pid);
+            if binary_on_path(&tracker.binary) {
+                self.toast(format!("{} installed — continuing", tracker.binary));
+                self.fire_post_install_action(tracker.action);
+            } else {
+                self.toast(format!(
+                    "install failed for {} — see the pty pane for cargo output",
+                    tracker.binary
+                ));
+            }
+        }
+    }
+
+    fn fire_post_install_action(&mut self, action: crate::sibling_install::PostInstallAction) {
+        use crate::sibling_install::PostInstallAction::*;
+        match action {
+            CloudWatchLogs {
+                log_group,
+                filter,
+                label,
+            } => self.open_cloudwatch_pane(&log_group, &filter, &label),
+            S3Browse {
+                bucket,
+                prefix,
+                label,
+            } => self.open_s3_pane(&bucket, &prefix, &label),
+        }
+    }
+
     /// Show a yes/no confirm prompt to install the named family
     /// sibling. Accept fires `install_sibling`. Used by the
     /// "X not installed" toasts that previously just gave the
     /// install command and bailed.
     pub fn prompt_install_sibling(&mut self, family_id: &str) {
+        self.prompt_install_sibling_with_action(family_id, None);
+    }
+
+    /// Like `prompt_install_sibling` but captures a follow-on action
+    /// (CloudWatchLogs / S3Browse / etc) that gets fired
+    /// automatically after the install succeeds. Used by
+    /// `open_cloudwatch_pane` + `open_s3_pane` when the binary
+    /// isn't on PATH — the user accepts the prompt and the original
+    /// action just happens, no second click needed.
+    pub fn prompt_install_sibling_with_action(
+        &mut self,
+        family_id: &str,
+        post_action: Option<crate::sibling_install::PostInstallAction>,
+    ) {
         let Some(sibling) = crate::sibling_install::lookup(family_id) else {
             return;
         };
         let title = format!("{} not installed. Install via cargo? (y/n)", sibling.binary);
         self.pending_install_family_id = Some(family_id.to_string());
+        self.pending_install_after_action = post_action;
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::SiblingInstallConfirm,
             title,
@@ -6509,10 +6631,11 @@ impl App {
     /// just fires the install when the input starts with `y`.
     pub fn install_sibling_confirm_resolve(&mut self, input: &str) {
         let id = self.pending_install_family_id.take();
+        let action = self.pending_install_after_action.take();
         if input.trim().to_ascii_lowercase().starts_with('y')
             && let Some(family_id) = id
         {
-            self.install_sibling(&family_id);
+            self.install_sibling_with_action(&family_id, action);
         }
     }
 
@@ -7078,7 +7201,15 @@ impl App {
     /// pane. Friendly error toast when the binary isn't on PATH.
     pub fn open_cloudwatch_pane(&mut self, log_group: &str, filter: &str, label: &str) {
         if !binary_on_path("mnml-aws-cloudwatch-logs") {
-            self.prompt_install_sibling("cloudwatch_logs");
+            // Capture this exact invocation so the auto-retry path
+            // fires the user's "Tail logs" intent verbatim after
+            // the install Pty exits successfully — no second click.
+            let action = crate::sibling_install::PostInstallAction::CloudWatchLogs {
+                log_group: log_group.to_string(),
+                filter: filter.to_string(),
+                label: label.to_string(),
+            };
+            self.prompt_install_sibling_with_action("cloudwatch_logs", Some(action));
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {
@@ -7105,7 +7236,12 @@ impl App {
     /// when the binary isn't on PATH.
     pub fn open_s3_pane(&mut self, bucket: &str, prefix: &str, label: &str) {
         if !binary_on_path("mnml-fs-s3") {
-            self.prompt_install_sibling("s3");
+            let action = crate::sibling_install::PostInstallAction::S3Browse {
+                bucket: bucket.to_string(),
+                prefix: prefix.to_string(),
+                label: label.to_string(),
+            };
+            self.prompt_install_sibling_with_action("s3", Some(action));
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {
@@ -11217,6 +11353,10 @@ impl App {
         self.drain_agents_panel_refresh();
         // Cloud-run trigger result, if a `+ New cloud run` is in flight.
         self.drain_cloud_run_trigger();
+        // Sibling-install Pty exits — fire any captured post-install
+        // action (CloudWatch tail, S3 browse, …) so the user doesn't
+        // have to re-click after the install finishes.
+        self.drain_install_post_actions();
         self.drain_git_results();
         self.maybe_announce_update();
         self.drain_now_playing();
