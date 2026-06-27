@@ -417,6 +417,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::PaletteSidebarButton);
     }
+    if let Some(r) = app.rects.palette_right_panel_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteRightPanelButton);
+    }
     if let Some(r) = app.rects.palette_back_button
         && contains(r, x, y)
     {

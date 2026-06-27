@@ -5701,6 +5701,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let _ = crate::command::run("view.toggle_tree", app);
                 return;
             }
+            if let Some(r) = app.rects.palette_right_panel_button
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                let _ = crate::command::run("view.toggle_right_panel", app);
+                return;
+            }
             if let Some(r) = app.rects.palette_add_integration_button
                 && crate::app::dispatch::contains(r, x, y)
             {

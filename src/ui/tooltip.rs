@@ -271,6 +271,19 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: toggle file tree (Ctrl+B)".into()),
             ))
         }
+        HoverChip::PaletteRightPanelButton => {
+            let rect = app.rects.palette_right_panel_button?;
+            let state = if app.right_panel_visible {
+                "open"
+            } else {
+                "off"
+            };
+            Some((
+                rect,
+                format!("right panel: {state}"),
+                Some("click: toggle right side panel".into()),
+            ))
+        }
         HoverChip::PaletteBackButton => {
             let rect = app.rects.palette_back_button?;
             Some((rect, "previous buffer".to_string(), None))

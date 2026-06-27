@@ -2036,6 +2036,12 @@ pub struct PaneRects {
     /// arrows in the palette bar. Click → same as Ctrl+B
     /// (view.toggle_tree).
     pub palette_sidebar_button: Option<Rect>,
+    /// Right-panel toggle icon — sits to the right of the dropdown
+    /// chevron (mirror of `palette_sidebar_button`). Click →
+    /// view.toggle_right_panel.
+    pub palette_right_panel_button: Option<Rect>,
+    /// Drag-resize grip on the right panel's left edge.
+    pub right_panel_edge: Option<Rect>,
     /// `+` chip just after the user's integration icons in the
     /// palette bar's gap area. Click → `integrations.add`
     /// (opens the discovery overlay so the user can add a sibling).
@@ -2889,6 +2895,16 @@ pub struct App {
     /// True while the user is mid-drag on the rail's right-edge handle.
     /// Cleared on mouse-up; clamps `tree_width` to a sane range during drag.
     pub dragging_tree_edge: bool,
+    /// Right-side panel toggle (mirror of `tree_visible`). v1 just
+    /// reserves the column with an empty-state body; v2 will host
+    /// outline / chat / dock widgets per user config.
+    pub right_panel_visible: bool,
+    /// Right panel column width in cells. Defaults to ~32; resizable
+    /// via drag on its left edge (mirror of the left rail's right
+    /// edge). Persisted alongside `tree_width`.
+    pub right_panel_width: u16,
+    /// True while the user is mid-drag on the right panel's left-edge handle.
+    pub dragging_right_panel_edge: bool,
     /// User-set MAX height for the INTEGRATIONS rail section. `None`
     /// = auto-size to content needed (the default). When `Some(h)`,
     /// the layout uses `min(h, content_needed)` so a too-large cap
@@ -4140,6 +4156,9 @@ impl App {
             git_section_commit_focused: false,
             tree_width,
             dragging_tree_edge: false,
+            right_panel_visible: false,
+            right_panel_width: 32,
+            dragging_right_panel_edge: false,
             integrations_user_max_h: None,
             git_user_max_h: None,
             rail_section_drag: None,

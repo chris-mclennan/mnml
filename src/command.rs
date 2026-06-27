@@ -1472,6 +1472,15 @@ fn builtin_commands() -> Vec<Command> {
                 app.integration_section_expanded = !app.integration_section_expanded;
             },
         },
+        Command {
+            id: "view.toggle_right_panel",
+            title: "Toggle the right side panel",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.right_panel_visible = !app.right_panel_visible;
+            },
+        },
         // External-tool launchers: run if installed, else toast
         // `brew install <pkg>`. Match the integration_icon commands
         // (`:tools.htop` etc. — see config.rs default seeds).

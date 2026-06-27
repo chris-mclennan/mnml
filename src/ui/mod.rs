@@ -286,6 +286,32 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // showing" (toggled by `Ctrl+B`); a separate `tree_root_expanded` flag,
     // read by `tree_view::draw`, controls whether the file list under the
     // workspace-name header is shown (the VS-Code-style section collapse).
+    // Right-panel split: carve a fixed-width column off the right
+    // edge BEFORE we do the left rail split, so widths stay
+    // independent. `upper` shrinks to the remaining middle column.
+    let (right_panel_area, upper) = if app.right_panel_visible {
+        let w = app
+            .right_panel_width
+            .min(upper.width.saturating_sub(20))
+            .max(8);
+        let cols = RLayout::horizontal([Constraint::Min(1), Constraint::Length(w)]).split(upper);
+        let resize_x = cols[1].x;
+        let grip_visible_h: u16 = 2;
+        let grip_hit_h: u16 = (grip_visible_h + 2).min(cols[1].height);
+        let grip_y = cols[1].y + cols[1].height.saturating_sub(grip_visible_h) / 2;
+        let grip_hit_y = grip_y.saturating_sub(1).max(cols[1].y);
+        app.rects.right_panel_edge = Some(Rect {
+            x: resize_x.saturating_sub(1),
+            y: grip_hit_y,
+            width: 3,
+            height: grip_hit_h,
+        });
+        (Some(cols[1]), cols[0])
+    } else {
+        app.rects.right_panel_edge = None;
+        (None, upper)
+    };
+
     let (tree_area, right) = if app.tree_visible {
         let w = app.tree_width.min(upper.width.saturating_sub(20)).max(8);
         let cols = RLayout::horizontal([Constraint::Length(w), Constraint::Min(1)]).split(upper);
@@ -462,6 +488,78 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.tree_toggle = None;
         app.rects.git_section_toggle = None;
         app.rects.git_rail_rows.clear();
+    }
+
+    // ── right panel ──
+    // v1: scaffold only. Carved a column already; paint a header
+    // + empty-state hint here so the user can see + resize the
+    // panel. v2 will host outline / chat / dock-as-rail content
+    // pluggable via user config.
+    if let Some(rpa) = right_panel_area {
+        let t = theme::cur();
+        frame.render_widget(
+            ratatui::widgets::Block::default().style(Style::default().bg(t.bg_darker)),
+            rpa,
+        );
+        if rpa.height >= 1 && rpa.width >= 4 {
+            let header_rect = Rect {
+                x: rpa.x,
+                y: rpa.y,
+                width: rpa.width,
+                height: 1,
+            };
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(" PANEL").style(
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(t.bg_darker)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                header_rect,
+            );
+        }
+        if rpa.height >= 4 && rpa.width >= 16 {
+            let hint_rect = Rect {
+                x: rpa.x + 1,
+                y: rpa.y + 2,
+                width: rpa.width.saturating_sub(2),
+                height: 2,
+            };
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(
+                    "empty for now — outline / chat / dock widgets land here later",
+                )
+                .style(Style::default().fg(t.comment).bg(t.bg_darker))
+                .wrap(ratatui::widgets::Wrap { trim: false }),
+                hint_rect,
+            );
+        }
+        // Drag-grip indicator on the panel's left edge.
+        if let Some(edge) = app.rects.right_panel_edge
+            && edge.height >= 3
+        {
+            let glyph = if app.config.ui.ascii_icons {
+                "|"
+            } else {
+                "┃"
+            };
+            let grip_h: u16 = 2;
+            let grip_y = edge.y + edge.height.saturating_sub(grip_h) / 2;
+            let grip_rect = Rect {
+                x: edge.x + edge.width / 2,
+                y: grip_y,
+                width: 1,
+                height: grip_h,
+            };
+            let line = std::iter::repeat_n(glyph, grip_h as usize)
+                .collect::<Vec<_>>()
+                .join("\n");
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(line)
+                    .style(Style::default().fg(t.comment).bg(t.bg_darker)),
+                grip_rect,
+            );
+        }
     }
 
     // ── bufferline ──
@@ -1506,19 +1604,31 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let nav_enabled = app.panes.len() > 1;
     let nav_fg = if nav_enabled { t.fg } else { t.comment };
 
+    // Right-panel toggle — mirrors sidebar_glyph. Trims its left
+    // pad (same trick) so the icon sits one cell closer to the
+    // dropdown chevron.
+    let right_panel_glyph = if ascii { "|" } else { "\u{EC02}" };
+    let right_panel_str = format!("{right_panel_glyph} ");
     let sidebar_w = sidebar_str.chars().count() as u16;
+    let right_panel_w = right_panel_str.chars().count() as u16;
     let back_w = back_str.chars().count() as u16;
     let fwd_w = fwd_str.chars().count() as u16;
     let dropdown_w = dropdown_str.chars().count() as u16;
     let chip_w = chip_text.chars().count() as u16;
-    // Layout: `[back][fwd] [chip][dropdown]` — a single cell of
-    // strip-bg between the nav cluster and the chip body so the
-    // back/forward buttons read as separate chrome from the chip
-    // (rather than appearing fused). Anything wider felt off-balance
-    // vs the back/forward inter-button spacing; 1 cell is the
-    // narrowest meaningful separator.
+    // Layout: `[☰][←][→] [chip][▾][☰']` — single-cell strip-bg
+    // separator between the nav cluster and the chip body. The
+    // right-panel toggle sits right after the dropdown chevron
+    // (mirror of the sidebar toggle's position on the far left).
     const NAV_GAP: u16 = 1;
-    let total_w = sidebar_w + NAV_GAP + back_w + fwd_w + NAV_GAP + chip_w + dropdown_w;
+    let total_w = sidebar_w
+        + NAV_GAP
+        + back_w
+        + fwd_w
+        + NAV_GAP
+        + chip_w
+        + dropdown_w
+        + NAV_GAP
+        + right_panel_w;
     if total_w > area.width {
         // Window too narrow for the full layout — fall back to chip only,
         // centered. Skips arrows + dropdown until there's room.
@@ -1537,6 +1647,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         app.rects.palette_search_chip = Some(chip_rect);
         app.rects.palette_sidebar_button = None;
+        app.rects.palette_right_panel_button = None;
         app.rects.palette_back_button = None;
         app.rects.palette_forward_button = None;
         app.rects.palette_dropdown_button = None;
@@ -1621,6 +1732,26 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         dropdown_rect,
     );
     app.rects.palette_dropdown_button = Some(dropdown_rect);
+    x += dropdown_w + NAV_GAP;
+
+    // Right-panel toggle — mirror of sidebar_button.
+    let right_panel_rect = Rect {
+        x,
+        y,
+        width: right_panel_w,
+        height: 1,
+    };
+    let right_panel_fg = if app.right_panel_visible {
+        t.cyan
+    } else {
+        t.comment
+    };
+    frame.render_widget(
+        ratatui::widgets::Paragraph::new(right_panel_str)
+            .style(Style::default().fg(right_panel_fg).bg(t.bg_dark)),
+        right_panel_rect,
+    );
+    app.rects.palette_right_panel_button = Some(right_panel_rect);
 
     // 2026-06-21 — right-aligned chrome cluster (launcher icons /
     // `+` / TABS chips / theme toggle / close). Right-edge of the

@@ -322,6 +322,9 @@ pub enum HoverChip {
     /// Palette-bar sidebar toggle (codicon layout-sidebar-left/off)
     /// — click fires view.toggle_tree (Ctrl+B).
     PaletteSidebarButton,
+    /// Palette-bar right-panel toggle (mirror of sidebar). Click
+    /// fires view.toggle_right_panel.
+    PaletteRightPanelButton,
     /// Palette-bar search chip — the workspace name + magnifier.
     /// Click fires the command palette.
     PaletteSearchChip,
