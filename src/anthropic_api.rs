@@ -164,6 +164,16 @@ fn aws_export_credentials() -> Result<Vec<(String, String)>, String> {
 /// `method` is POST/GET; `url` is full; `headers` are key:value
 /// pairs to forward; `body` is JSON (None for GET). Used by every
 /// API call when `Backend::is_sigv4()`.
+/// Look up a credential value from the parsed env list. Returns
+/// empty string when missing — callers decide if absence is fatal.
+fn cred(creds: &[(String, String)], key: &str) -> String {
+    creds
+        .iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.clone())
+        .unwrap_or_default()
+}
+
 fn curl_sigv4(
     region: &str,
     method: &str,
@@ -172,6 +182,16 @@ fn curl_sigv4(
     body: Option<&str>,
 ) -> Result<(u16, String), String> {
     let creds = aws_export_credentials()?;
+    // curl --aws-sigv4 REQUIRES the access-key + secret-key pair
+    // via --user. It does NOT read them from env (verified
+    // against curl 8.x source: aws_sigv4.c). The session token
+    // (SSO/STS) goes on the side via x-amz-security-token.
+    let access = cred(&creds, "AWS_ACCESS_KEY_ID");
+    let secret = cred(&creds, "AWS_SECRET_ACCESS_KEY");
+    let session_token = cred(&creds, "AWS_SESSION_TOKEN");
+    if access.is_empty() || secret.is_empty() {
+        return Err("aws export-credentials returned no access key / secret".to_string());
+    }
     let mut cmd = Command::new("curl");
     cmd.args([
         "-sS",
@@ -179,9 +199,17 @@ fn curl_sigv4(
         method,
         "-w",
         "\n__HTTP_STATUS__%{http_code}",
+        "--max-time",
+        "30",
         "--aws-sigv4",
         &format!("aws:amz:{region}:aws-external-anthropic"),
+        "--user",
     ]);
+    cmd.arg(format!("{access}:{secret}"));
+    if !session_token.is_empty() {
+        cmd.arg("-H");
+        cmd.arg(format!("x-amz-security-token: {session_token}"));
+    }
     for (k, v) in headers {
         cmd.arg("-H");
         cmd.arg(format!("{k}: {v}"));
@@ -191,16 +219,6 @@ fn curl_sigv4(
         cmd.arg(b);
     }
     cmd.arg(url);
-    // Pass credentials via env, not argv (so they don't leak into
-    // process listings).
-    for (k, v) in &creds {
-        cmd.env(k, v);
-    }
-    // curl --aws-sigv4 also wants the credential pair via --user.
-    // It reads the access key from `$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY`
-    // when the --user flag isn't passed AND when env is set. The
-    // env-only path works in curl 8.6+; for older versions we'd
-    // need `--user`. macOS 14+ ships curl 8.6+ so we rely on env.
     let out = cmd.output().map_err(|e| format!("spawn curl: {e}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -509,19 +527,36 @@ pub fn spawn_session_event_stream(session_id: String) -> Receiver<SessionStreamE
             "-H".to_string(),
             "Accept: text/event-stream".to_string(),
         ];
-        // SigV4 path: add --aws-sigv4 + pull creds via aws CLI.
-        let mut creds: Vec<(String, String)> = Vec::new();
+        // SigV4 path: add --aws-sigv4 + --user (curl requires the
+        // pair via --user, not env) + x-amz-security-token header
+        // if there's an STS session token. Same shape as
+        // curl_sigv4 — only difference is `-N` for SSE.
         if let Backend::ClaudePlatformAwsSigV4 { region, .. } = &backend {
-            args.push("--aws-sigv4".to_string());
-            args.push(format!("aws:amz:{region}:aws-external-anthropic"));
-            match aws_export_credentials() {
-                Ok(c) => creds = c,
+            let creds = match aws_export_credentials() {
+                Ok(c) => c,
                 Err(e) => {
                     let _ = tx.send(SessionStreamEvent::Error(format!(
                         "aws export-credentials: {e}"
                     )));
                     return;
                 }
+            };
+            let access = cred(&creds, "AWS_ACCESS_KEY_ID");
+            let secret = cred(&creds, "AWS_SECRET_ACCESS_KEY");
+            let session_token = cred(&creds, "AWS_SESSION_TOKEN");
+            if access.is_empty() || secret.is_empty() {
+                let _ = tx.send(SessionStreamEvent::Error(
+                    "aws export-credentials: missing access key / secret".to_string(),
+                ));
+                return;
+            }
+            args.push("--aws-sigv4".to_string());
+            args.push(format!("aws:amz:{region}:aws-external-anthropic"));
+            args.push("--user".to_string());
+            args.push(format!("{access}:{secret}"));
+            if !session_token.is_empty() {
+                args.push("-H".to_string());
+                args.push(format!("x-amz-security-token: {session_token}"));
             }
         }
         for (k, v) in backend.headers() {
@@ -530,10 +565,7 @@ pub fn spawn_session_event_stream(session_id: String) -> Receiver<SessionStreamE
         }
         args.push(url);
         let mut cmd = Command::new("curl");
-        cmd.args(&args).stdout(Stdio::piped());
-        for (k, v) in &creds {
-            cmd.env(k, v);
-        }
+        cmd.args(&args).stdout(Stdio::piped()).stdin(Stdio::null());
         match cmd.spawn() {
             Ok(mut child) => {
                 let stdout = match child.stdout.take() {
