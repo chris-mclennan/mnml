@@ -248,6 +248,20 @@ impl CloudAgentRunPane {
     /// `App::tick`. Returns true when something changed (so the UI
     /// requests a redraw — currently all ticks redraw anyway, but
     /// the return value is documentation).
+    /// True when the log stream contained any "put-dir failed",
+    /// "artifact publish warnings", or "upload failed" lines.
+    /// Used by the renderer to swap the "(none)" placeholder for
+    /// a clearer hint pointing at the IAM cause. Scans the
+    /// in-memory log buffer — cheap (logs are <1k lines typically).
+    pub fn artifacts_upload_failed(&self) -> bool {
+        self.logs.iter().any(|l| {
+            let s = &l.text;
+            s.contains("put-dir failed")
+                || s.contains("artifact publish warnings")
+                || (s.contains("upload failed") && s.contains("AccessDenied"))
+        })
+    }
+
     pub fn drain(&mut self) -> bool {
         let mut changed = false;
         if let Some(rx) = self.log_rx.take() {

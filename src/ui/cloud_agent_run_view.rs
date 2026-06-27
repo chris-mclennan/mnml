@@ -266,7 +266,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         } else if p.artifacts_err.is_some() {
             "  Artifacts (error)".to_string()
         } else if count == 0 {
-            "  Artifacts (none)".to_string()
+            // Distinguish "qwe-runner tried to upload and failed
+            // (AccessDenied / put-dir failed)" from "the run
+            // genuinely produced nothing." The first case points
+            // at an IAM gap on the qwe-runner task role; the
+            // second is just an empty run.
+            if p.artifacts_upload_failed() {
+                "  Artifacts (upload failed — see log warnings · qwe-runner IAM gap)".to_string()
+            } else {
+                "  Artifacts (none)".to_string()
+            }
         } else {
             format!("  Artifacts ({count})")
         };
