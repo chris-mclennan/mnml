@@ -241,6 +241,11 @@ pub enum PickerKind {
     /// `App::install_sibling(id)`. Used by the `mounts.install` /
     /// `sibling.install` palette commands.
     SiblingInstall,
+    /// `id` = the codepoint hex string (e.g. `"F0E2D"`) of a
+    /// browsable Nerd Font glyph. Accept ⇒ copy the literal char +
+    /// the `\u{XXXX}` escape to clipboard and toast the result.
+    /// Populated by `integrations.icon_picker`.
+    IconGlyphs,
 }
 
 #[derive(Debug, Clone)]

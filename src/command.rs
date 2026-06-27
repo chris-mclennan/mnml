@@ -1506,6 +1506,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_external_tool("btop"),
         },
         Command {
+            id: "integrations.icon_picker",
+            title: "Integrations: browse Nerd Font glyphs (copies to clipboard)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_icon_picker(),
+        },
+        Command {
             id: "integrations.add",
             title: "Integrations: discover + add family siblings (opens overlay)",
             group: "view",

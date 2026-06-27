@@ -796,7 +796,51 @@ impl App {
                 let id = item.id.clone();
                 self.install_sibling(&id);
             }
+            PickerKind::IconGlyphs => {
+                // id = uppercase hex codepoint. Build the glyph + a
+                // Rust-style `\u{XXXX}` escape; copy BOTH formats so
+                // the user can paste straight into a config field
+                // (literal) or a Rust source string (escape).
+                if let Ok(cp) = u32::from_str_radix(&item.id, 16)
+                    && let Some(ch) = char::from_u32(cp)
+                {
+                    let line = format!("{ch}  \\u{{{}}}  ({})", item.id, item.label);
+                    self.clipboard.set(line, false);
+                    self.toast(format!("icon copied — paste: {ch} or \\u{{{}}}", item.id));
+                }
+            }
         }
+    }
+
+    /// Open the integrations icon picker — a searchable list of
+    /// hand-picked Nerd Font glyphs. Accept copies the literal char
+    /// + the `\u{XXXX}` escape to the clipboard. v1 of #607.
+    pub fn open_icon_picker(&mut self) {
+        let items: Vec<crate::picker::PickerItem> = crate::icon_catalog::ICON_CATALOG
+            .iter()
+            .map(|e| {
+                // Build the displayed glyph from the codepoint so the
+                // user sees the actual icon in the list. If the
+                // codepoint is malformed (shouldn't happen for our
+                // hand-typed table), fall back to a question mark.
+                let glyph = u32::from_str_radix(e.codepoint, 16)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                crate::picker::PickerItem {
+                    id: e.codepoint.to_string(),
+                    label: format!("{glyph}  {}", e.name),
+                    detail: format!("\\u{{{}}}  ·  {}", e.codepoint, e.category),
+                }
+            })
+            .collect();
+        let picker = crate::picker::Picker::new(
+            crate::picker::PickerKind::IconGlyphs,
+            "Pick Icon Glyph".to_string(),
+            items,
+        );
+        self.open_picker(picker);
     }
 
     /// Open a fuzzy picker over the repos discovered in the workspace.

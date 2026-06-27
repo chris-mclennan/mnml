@@ -60,6 +60,7 @@ pub(crate) mod focus;
 pub(crate) mod formatter;
 pub(crate) mod fuzzy;
 pub(crate) mod git;
+pub mod icon_catalog;
 pub(crate) mod peek_overlay;
 // `mod github` was split out to the standalone mnml-forge-github
 // binary in 2026-06.
