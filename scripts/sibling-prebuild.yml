@@ -1,0 +1,146 @@
+# Template for mnml-sibling repos: build + publish prebuilt binaries on
+# every push to main. mnml's install flow prefers these over compiling
+# from source — turns 30-60s `cargo install` into a ~1-2s download.
+#
+# Drop this at `.github/workflows/prebuild.yml` in any sibling repo.
+# All runners are GitHub-hosted standard tier and free on public repos.
+#
+# Secrets (optional; binaries ship unsigned if missing):
+#   APPLE_DEVELOPER_ID_CERT_BASE64
+#   APPLE_DEVELOPER_ID_CERT_PASSWORD
+#   APPLE_TEAM_ID
+#
+# Releases: this creates / updates a rolling pre-release tagged
+# `latest-build` with the most recent set of binaries. mnml's installer
+# fetches from this tag.
+name: Prebuild binaries
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/prebuild.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            archive: tar.gz
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+            archive: zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Determine package name
+        id: meta
+        shell: bash
+        run: |
+          name=$(cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['packages'][0]['name'])")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
+            echo "bin=${name}.exe" >> "$GITHUB_OUTPUT"
+          else
+            echo "bin=${name}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Sign macOS binary
+        if: contains(matrix.target, 'apple-darwin') && env.APPLE_DEVELOPER_ID_CERT_BASE64 != ''
+        env:
+          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/notary.keychain-db"
+          KEYCHAIN_PASS="$(openssl rand -base64 16)"
+          CERT_PATH="$RUNNER_TEMP/developer-id.p12"
+          security create-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          echo "$APPLE_DEVELOPER_ID_CERT_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN" -P "$APPLE_DEVELOPER_ID_CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASS" "$KEYCHAIN" >/dev/null
+          BIN_PATH="target/${{ matrix.target }}/release/${{ steps.meta.outputs.bin }}"
+          codesign --force --options runtime --sign "Developer ID Application: $APPLE_TEAM_ID" \
+            --timestamp "$BIN_PATH"
+          codesign --verify --verbose "$BIN_PATH"
+      - name: Package archive
+        id: pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ steps.meta.outputs.name }}"
+          bin="${{ steps.meta.outputs.bin }}"
+          target="${{ matrix.target }}"
+          stage="${name}-${target}"
+          mkdir -p "$stage"
+          cp "target/${target}/release/${bin}" "$stage/"
+          # Best-effort copy of README + LICENSE; ignore if absent.
+          cp README.md "$stage/" 2>/dev/null || true
+          cp LICENSE* "$stage/" 2>/dev/null || true
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            archive="${stage}.zip"
+            7z a "$archive" "$stage"
+          else
+            archive="${stage}.tar.gz"
+            tar -czf "$archive" "$stage"
+          fi
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ steps.pack.outputs.archive }}
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+      - name: Publish to rolling latest-build release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: latest-build
+          name: "Latest build (auto)"
+          body: |
+            Auto-published prebuilt binaries from the most recent push to `main`.
+            mnml's installer fetches from here when invoked via the `:install` flow.
+            This is a rolling pre-release; commit SHA may differ from any tagged version.
+          allowUpdates: true
+          removeArtifacts: true
+          prerelease: true
+          artifacts: "dist/*"

@@ -6506,7 +6506,11 @@ impl App {
             None => None,
         };
         // Spawn the install in a Pty pane so user can watch progress.
-        let argv = crate::sibling_install::cargo_install_argv(sibling);
+        // `install_pipeline_argv` prefers a fast prebuilt download
+        // (~1-2s) over the slow cargo-compile fallback (~30-60s)
+        // when a prebuilt asset exists at the sibling's
+        // `latest-build` GitHub release for our target triple.
+        let argv = crate::sibling_install::install_pipeline_argv(sibling);
         let label = format!("install: {}", sibling.binary);
         let profile = crate::pty_pane::BinaryProfile {
             label,

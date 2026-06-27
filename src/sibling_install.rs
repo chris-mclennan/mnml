@@ -70,6 +70,57 @@ pub fn cargo_install_argv(sibling: &FamilySibling) -> Vec<String> {
     argv
 }
 
+/// mnml's compile-time target triple (e.g. `aarch64-apple-darwin`).
+/// Set in build.rs from cargo's `TARGET` env var. Used to pick the
+/// matching prebuilt asset from each sibling repo's `latest-build`
+/// release.
+pub const TARGET: &str = env!("MNML_TARGET");
+
+/// Build a `sh -c` argv that tries to download + extract the
+/// sibling's prebuilt binary from its repo's rolling `latest-build`
+/// GitHub Release. If the asset is missing for the current target
+/// (Windows currently, or a sibling that hasn't been set up yet),
+/// falls back to `cargo install --git`. The Pty pane the user sees
+/// is either a fast `curl | tar` (~1-2s) or the familiar cargo
+/// compile (~30-60s) — same UX shape.
+///
+/// On Windows mnml falls through to cargo install today; the
+/// prebuilt zip extraction story for PowerShell isn't worth the
+/// shell-quoting pain when the macOS/Linux paths are the priority.
+pub fn install_pipeline_argv(sibling: &FamilySibling) -> Vec<String> {
+    if TARGET.contains("windows") {
+        return cargo_install_argv(sibling);
+    }
+    let cargo_install = cargo_install_argv(sibling).join(" ");
+    let url = format!(
+        "{}/releases/download/latest-build/{}-{}.tar.gz",
+        sibling.repo_url, sibling.binary, TARGET
+    );
+    let script = format!(
+        r#"set -e
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+URL='{url}'
+echo "→ trying prebuilt: $URL"
+if curl -sL --fail -o "$TMP/sib.tar.gz" "$URL"; then
+  tar -xzf "$TMP/sib.tar.gz" -C "$TMP"
+  mkdir -p ~/.cargo/bin
+  cp "$TMP/{binary}-{target}/{binary}" ~/.cargo/bin/{binary}
+  chmod +x ~/.cargo/bin/{binary}
+  echo "✓ installed {binary} from prebuilt"
+else
+  echo "→ no prebuilt for {target}, falling back to source compile"
+  {cargo_install}
+fi
+"#,
+        url = url,
+        binary = sibling.binary,
+        target = TARGET,
+        cargo_install = cargo_install,
+    );
+    vec!["sh".to_string(), "-c".to_string(), script]
+}
+
 /// Write the Mount manifest to `~/.config/mnml/mounts/<id>.toml`.
 /// Caller is responsible for refreshing `App::mount_manifests`.
 /// Returns the path written so the caller can surface it in a toast.

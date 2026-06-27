@@ -12,6 +12,14 @@ use std::process::Command;
 
 fn main() {
     emit_git_sha();
+    // Expose `TARGET` (e.g. `aarch64-apple-darwin`) to the binary as
+    // `MNML_TARGET` so the sibling-prebuilt installer can request the
+    // matching artifact from each sibling repo's `latest-build`
+    // release. Cargo sets `TARGET` in the build script env.
+    println!(
+        "cargo:rustc-env=MNML_TARGET={}",
+        env::var("TARGET").unwrap_or_else(|_| "unknown".to_string())
+    );
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
     println!("cargo:rerun-if-changed=themes");
 
