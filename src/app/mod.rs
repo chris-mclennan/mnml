@@ -6489,6 +6489,30 @@ impl App {
             ));
             return;
         }
+        // Dedupe: if there's already an install Pty in flight for
+        // this binary, don't spawn a second one. Just update the
+        // captured post-install action so the one in-flight install
+        // fires the most-recent intent when it completes. Prevents
+        // the "user clicks again because the install pane looked
+        // unresponsive → mnml spawns a second install → two cloudwatch
+        // panes open" footgun.
+        let already_running = self
+            .install_post_actions
+            .iter()
+            .find(|(_, t)| t.binary == sibling.binary)
+            .map(|(pid, _)| *pid);
+        if let Some(pid) = already_running {
+            if let Some(action) = post_action
+                && let Some(tracker) = self.install_post_actions.get_mut(&pid)
+            {
+                tracker.action = action;
+            }
+            self.toast(format!(
+                "{} install already in flight — will continue when it finishes",
+                sibling.binary
+            ));
+            return;
+        }
         // Mount-specific: write the manifest first so the icon
         // appears immediately. The install Pty runs in parallel; user
         // sees both progress + icon.
