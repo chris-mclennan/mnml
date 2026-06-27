@@ -23,6 +23,8 @@ pub enum CloudAgentRunHit {
     Url(String),
     /// An S3 artifact key — opened via the s3 sibling.
     Artifact(String),
+    /// Manual refresh — re-spawn the log + artifact fetchers.
+    Refresh,
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focused: bool) {
@@ -89,11 +91,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
             })
             .unwrap_or_else(|| "—".to_string());
         let sub = format!("  runId  {} · last activity {when}", short_id(&p.run_id));
+        // [↻ Refresh] chip on the right side of the sub-header.
+        let refresh = " ↻ Refresh ";
+        let refresh_w = refresh.chars().count() as u16;
+        let sub_w = sub.chars().count() as u16;
+        let pad = area.width.saturating_sub(sub_w + refresh_w + 1) as usize;
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                sub,
-                Style::default().fg(t.comment).bg(bg),
-            ))),
+            Paragraph::new(Line::from(vec![
+                Span::styled(sub, Style::default().fg(t.comment).bg(bg)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                Span::styled(
+                    refresh.to_string(),
+                    Style::default()
+                        .fg(t.bg_dark)
+                        .bg(t.cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])),
             Rect {
                 x: area.x,
                 y,
@@ -101,6 +115,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
                 height: 1,
             },
         );
+        let refresh_rect = Rect {
+            x: area.x + sub_w + pad as u16,
+            y,
+            width: refresh_w,
+            height: 1,
+        };
+        app.rects
+            .cloud_agent_run_hits
+            .push((refresh_rect, CloudAgentRunHit::Refresh));
         y += 2; // blank gap
     }
 

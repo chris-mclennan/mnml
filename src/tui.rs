@@ -4212,6 +4212,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 let parent = rest.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
                 app.open_s3_pane(bucket, parent, &format!("s3: {}", bucket));
             }
+            CloudAgentRunHit::Refresh => {
+                app.cloud_agent_run_refresh();
+            }
         }
         return;
     }

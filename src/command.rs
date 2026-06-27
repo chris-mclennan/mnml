@@ -2261,6 +2261,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_new_cloud_run_wizard(),
         },
         Command {
+            id: "cloud_agents.refresh_run_detail",
+            title: "Cloud agents: refresh the active run-detail pane (logs + artifacts)",
+            group: "view",
+            keys: &[],
+            run: |app| app.cloud_agent_run_refresh(),
+        },
+        Command {
             id: "cloud_agents.focus_quick_input",
             title: "Cloud agents: focus the quick-fire prompt input",
             group: "view",

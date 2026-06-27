@@ -10326,6 +10326,54 @@ impl App {
         );
     }
 
+    /// Re-spawn the log + artifact workers on the active
+    /// CloudAgentRun pane. Wired to the `[↻ Refresh]` chip on
+    /// the detail pane's sub-header. Useful when the run finished
+    /// after the pane was opened (artifacts uploaded in the
+    /// meantime) or when the user wants a fresh tail.
+    pub fn cloud_agent_run_refresh(&mut self) {
+        let Some(id) = self.active else { return };
+        let Some(Pane::CloudAgentRun(p)) = self.panes.get_mut(id) else {
+            return;
+        };
+        // Skip for managed-agent panes — they use the SSE event
+        // stream (session_event_rx), not log_rx / artifacts_rx.
+        // Restart the SSE stream so the user gets fresh events.
+        if matches!(
+            p.source,
+            crate::cloud_agent_run::CloudRunSource::AnthropicManaged
+        ) {
+            let session_id = p.run_id.clone();
+            p.logs.clear();
+            p.logs_loading = true;
+            p.logs_err = None;
+            p.log_follow = true;
+            p.log_scroll = 0;
+            p.session_event_rx = Some(crate::anthropic_api::spawn_session_event_stream(session_id));
+            self.toast("restarting session stream…");
+            return;
+        }
+        // Tattle QWE: rebuild log + artifact workers from scratch.
+        let run_id = p.run_id.clone();
+        let state = p.state.clone();
+        let s3_prefix = p.s3_artifact_prefix.clone();
+        p.logs.clear();
+        p.logs_loading = true;
+        p.logs_err = None;
+        p.log_follow = true;
+        p.log_scroll = 0;
+        p.artifacts.clear();
+        p.artifacts_loading = true;
+        p.artifacts_err = None;
+        p.log_rx = Some(crate::cloud_agent_run::spawn_log_fetcher(
+            run_id,
+            state,
+            "/ecs/qwe-runner/claude-runner".to_string(),
+        ));
+        p.artifacts_rx = Some(crate::cloud_agent_run::spawn_artifacts_fetcher(s3_prefix));
+        self.toast("refreshing logs + artifacts…");
+    }
+
     /// Daily-driver path: fire a Managed Agents session against
     /// the user's saved defaults, using whatever's in
     /// `cloud_run_prompt_input` as the user message. No wizard.
@@ -11000,7 +11048,25 @@ impl App {
             .map(|m| m.state.clone())
             .unwrap_or_else(|| "—".to_string());
         let pr_url = meta.as_ref().and_then(|m| m.pr_url.clone());
-        let s3_prefix = meta.as_ref().and_then(|m| m.s3_artifact_prefix.clone());
+        // Prefer DynamoDB's recorded prefix; fall back to the
+        // standard qwe-runner upload path when missing. qwe-runner's
+        // artifacts.py writes to `s3://tattle-claude-artifacts/
+        // artifacts/{flow}/{run_id}/` regardless of whether the
+        // post-upload DynamoDB write succeeded — so the derived
+        // path is correct even for runs missing the meta field.
+        let s3_prefix = meta
+            .as_ref()
+            .and_then(|m| m.s3_artifact_prefix.clone())
+            .or_else(|| {
+                if flow.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "s3://tattle-claude-artifacts/artifacts/{flow}/{}/",
+                        row.session_id
+                    ))
+                }
+            });
         let s3_console = s3_prefix
             .as_deref()
             .and_then(crate::cloud_agent_run::s3_console_url_for);
