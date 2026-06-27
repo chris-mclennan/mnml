@@ -87,6 +87,42 @@ Pick #2 for v1 if/when this lands. Discuss before coding.
 
 ## Other (uncategorized)
 
+### Git-graph: repo dropdown + tighter sidebars
+**Status:** captured 2026-06-27 — user request after looking at the
+git-graph in `tattle-claude-workspace`.
+
+Two complaints rolled into one entry:
+
+1. **Repo selection dropdown at the top of the file browser
+   panel** (left rail of the git-graph view). Currently shows the
+   workspace name as plain text ("tattle-claude-workspace") right
+   above the branch tree. In a multi-repo workspace
+   (`[[workspaces]]` config + sub-repos discovered by
+   `git::repos::discover_repos`), the user has to switch active
+   repo via `:git.switch_repo` or the picker; not discoverable.
+   Make the name itself the affordance — click → dropdown of
+   discovered repos, select → switches the entire git-graph view
+   (branches, commits, working-tree changes panel) to that repo.
+   This is what GitHub Desktop / GitKraken / Tower all do.
+
+2. **Tighten the left + right sidebars on git-graph**. The user's
+   read on the proportions: left rail (LOCAL/REMOTE/WORKTREES
+   tree) + right rail (WIP / Unstaged Files / Staged / Commit) are
+   each ~25% of the viewport, center commit-list is ~50%. Pull
+   both sidebars in by ~50-100px so the center commit message
+   column gets more breathing room. The narrow center is the bit
+   that's hardest to read — sidebars can spare the pixels.
+
+Implementation sketch:
+  - `src/ui/git_graph_view.rs` already lays out the three columns
+    via ratatui constraints. Bump the centre weight (or set
+    explicit min widths on the side columns instead of
+    percentage-based).
+  - For the dropdown: extend `App::repos` (already populated by
+    `discover_repos`) and add a click-rect on the workspace-name
+    row → opens a picker over the repos + the existing
+    `switch_active_repo` accept handler.
+
 ### Multi-pane siblings (Mount or Pty)
 **Status:** deferred 2026-06-26 — captured before it gets baked in.
 
