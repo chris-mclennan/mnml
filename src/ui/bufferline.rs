@@ -270,6 +270,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
             // nf-md-cloud-search-outline — cloud-agent run detail.
             Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
+            // nf-md-plus-box-multiple-outline — new cloud agent wizard.
+            Pane::NewCloudAgentWizard(_) => {
+                (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green)
+            }
         };
         // Status badge priority:
         //   dirty   → ● / *  (orange — any tab)

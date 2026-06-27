@@ -940,6 +940,10 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                     dy: delta as i16,
                 });
             }
+            Some(Pane::NewCloudAgentWizard(_)) => {
+                // Wizard pane content is short and fits a single
+                // page; no scroll affordance needed for v1.
+            }
             Some(Pane::CloudAgentRun(p)) => {
                 // Scroll the logs viewport. Negative delta = scroll up
                 // (older lines); positive = down. Crossing past the

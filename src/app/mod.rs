@@ -2036,6 +2036,12 @@ pub struct PaneRects {
     /// pane. Cleared per-frame; populated by
     /// `cloud_agent_run_view::draw`.
     pub cloud_agent_run_hits: Vec<(Rect, crate::ui::cloud_agent_run_view::CloudAgentRunHit)>,
+    /// Click rects inside the NewCloudAgentWizard pane (radios +
+    /// Back/Next buttons). Cleared per-frame.
+    pub new_cloud_agent_wizard_hits: Vec<(Rect, crate::ui::new_cloud_agent_wizard_view::WizardHit)>,
+    /// Click rect for the "+ New Cloud Agent" button in the Cloud
+    /// Agents panel header.
+    pub cloud_agents_new_button: Option<Rect>,
     /// Click rects for the two tabs ([Installed] [Marketplace])
     /// at the top of the integrations discovery overlay. Empty when
     /// the overlay is closed.
@@ -9435,6 +9441,7 @@ impl App {
             Pane::SpendReport(_) => Some(("AI spend (24h)".to_string(), false)),
             Pane::Mount(m) => Some((m.label.clone(), false)),
             Pane::CloudAgentRun(p) => Some((format!("☁ {}", p.ticket), false)),
+            Pane::NewCloudAgentWizard(_) => Some(("+ New Cloud Agent".to_string(), false)),
         }
     }
 
@@ -10197,6 +10204,246 @@ impl App {
     /// running `claude` PIDs via `pgrep`, and renders one row per
     /// session with live/idle/ended state, model, last user/asst
     /// message, token spend, and PID.
+    /// Open the multi-step wizard for creating a new cloud agent
+    /// run. Routes to either Tattle QWE or Anthropic managed
+    /// agents depending on the user's step-1 pick. The pane lives
+    /// at the active leaf; close with Esc.
+    pub fn open_new_cloud_agent_wizard(&mut self) {
+        // Reuse an existing wizard pane if present — no point
+        // letting the user pile multiple half-filled wizards.
+        if let Some(id) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::NewCloudAgentWizard(_)))
+        {
+            self.reveal_pane(id);
+            return;
+        }
+        let pane = Pane::NewCloudAgentWizard(
+            crate::new_cloud_agent_wizard::NewCloudAgentWizardPane::new(),
+        );
+        match self.active {
+            Some(cur) => {
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                self.active = Some(new_id);
+            }
+            None => {
+                self.panes.push(pane);
+                let id = self.panes.len() - 1;
+                *self.layout_mut() = Layout::leaf(id);
+                self.active = Some(id);
+            }
+        }
+        self.focus = Focus::Pane;
+    }
+
+    /// Move the wizard's focus row up/down. No-op when the active
+    /// pane isn't a wizard.
+    pub fn new_cloud_agent_wizard_move(&mut self, delta: isize) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        let max = match w.step {
+            crate::new_cloud_agent_wizard::WizardStep::Kind => 2,
+            crate::new_cloud_agent_wizard::WizardStep::ClaudeAgent => 2,
+            crate::new_cloud_agent_wizard::WizardStep::ClaudeSandbox => 3,
+            crate::new_cloud_agent_wizard::WizardStep::ClaudeRemoteTarget => {
+                crate::new_cloud_agent_wizard::RemoteTarget::all().len()
+            }
+            _ => 0,
+        };
+        if max == 0 {
+            return;
+        }
+        let cur = w.focus_row as isize;
+        let new = (cur + delta).rem_euclid(max as isize) as usize;
+        w.focus_row = new;
+        // Side effects: radio selections apply immediately so the
+        // user can see the chosen option highlighted.
+        match w.step {
+            crate::new_cloud_agent_wizard::WizardStep::Kind => {
+                w.kind = match new {
+                    0 => crate::new_cloud_agent_wizard::AgentKind::TattleQwe,
+                    _ => crate::new_cloud_agent_wizard::AgentKind::ClaudeManaged,
+                };
+            }
+            crate::new_cloud_agent_wizard::WizardStep::ClaudeAgent => {
+                w.claude_agent_create_new = new == 0;
+            }
+            crate::new_cloud_agent_wizard::WizardStep::ClaudeSandbox => {
+                use crate::new_cloud_agent_wizard::SandboxMode;
+                w.claude_sandbox = match new {
+                    0 => SandboxMode::CloudSandbox,
+                    1 => SandboxMode::SelfHostedLocal,
+                    _ => SandboxMode::SelfHostedRemote,
+                };
+            }
+            crate::new_cloud_agent_wizard::WizardStep::ClaudeRemoteTarget => {
+                w.claude_remote = crate::new_cloud_agent_wizard::RemoteTarget::all()[new];
+            }
+            _ => {}
+        }
+    }
+
+    /// Advance the wizard to the next step OR submit if we're on
+    /// Review. No-op when the active pane isn't a wizard.
+    pub fn new_cloud_agent_wizard_next(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        if !w.next_step() {
+            // We were on Review — submit.
+            self.new_cloud_agent_wizard_submit();
+        }
+    }
+
+    pub fn new_cloud_agent_wizard_back(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        w.prev_step();
+    }
+
+    /// Append a char to the focused text input. Step-specific.
+    pub fn new_cloud_agent_wizard_type(&mut self, ch: char) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        use crate::new_cloud_agent_wizard::WizardStep;
+        match w.step {
+            WizardStep::TattleTicket => w.tattle_ticket.push(ch),
+            WizardStep::ClaudeAgent => {
+                if w.claude_agent_create_new {
+                    w.claude_agent_new_name.push(ch);
+                } else {
+                    w.claude_agent_id.push(ch);
+                }
+            }
+            WizardStep::Prompt => w.prompt.push(ch),
+            _ => {}
+        }
+    }
+
+    pub fn new_cloud_agent_wizard_backspace(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) else {
+            return;
+        };
+        use crate::new_cloud_agent_wizard::WizardStep;
+        match w.step {
+            WizardStep::TattleTicket => {
+                w.tattle_ticket.pop();
+            }
+            WizardStep::ClaudeAgent => {
+                if w.claude_agent_create_new {
+                    w.claude_agent_new_name.pop();
+                } else {
+                    w.claude_agent_id.pop();
+                }
+            }
+            WizardStep::Prompt => {
+                w.prompt.pop();
+            }
+            _ => {}
+        }
+    }
+
+    /// Close the wizard pane (Esc).
+    pub fn new_cloud_agent_wizard_close(&mut self) {
+        if let Some(id) = self.active
+            && matches!(self.panes.get(id), Some(Pane::NewCloudAgentWizard(_)))
+        {
+            self.close_pane(id);
+        }
+    }
+
+    /// Submit the wizard. v1: Tattle QWE path routes to existing
+    /// `fire_cloud_run`; Claude managed agent path is stubbed
+    /// (saves config, toasts the API call we WOULD make — Phase 2
+    /// wires the actual HTTP).
+    pub fn new_cloud_agent_wizard_submit(&mut self) {
+        let Some(id) = self.active else {
+            return;
+        };
+        let cfg = match self.panes.get(id) {
+            Some(Pane::NewCloudAgentWizard(w)) => (
+                w.kind,
+                w.tattle_ticket.clone(),
+                w.prompt.clone(),
+                w.claude_agent_create_new,
+                w.claude_agent_new_name.clone(),
+                w.claude_agent_id.clone(),
+                w.claude_sandbox,
+                w.claude_remote,
+            ),
+            _ => return,
+        };
+        use crate::new_cloud_agent_wizard::AgentKind;
+        match cfg.0 {
+            AgentKind::TattleQwe => {
+                let ticket = cfg.1.trim().to_string();
+                if ticket.is_empty() {
+                    self.toast("ticket is empty — go back to step 2");
+                    return;
+                }
+                self.fire_cloud_run(&ticket);
+                self.toast(format!("fired Tattle QWE run for {ticket}"));
+                self.new_cloud_agent_wizard_close();
+            }
+            AgentKind::ClaudeManaged => {
+                // Phase 2 will turn this into actual API calls.
+                // For now we summarise what WOULD be sent so the
+                // user can verify their config before we go live.
+                let agent_desc = if cfg.3 {
+                    format!("create '{}' agent", cfg.4)
+                } else {
+                    cfg.5.clone()
+                };
+                let sandbox_desc = match cfg.6 {
+                    crate::new_cloud_agent_wizard::SandboxMode::CloudSandbox => {
+                        "Anthropic cloud sandbox".to_string()
+                    }
+                    crate::new_cloud_agent_wizard::SandboxMode::SelfHostedLocal => {
+                        "self-hosted LOCAL · ant beta:worker poll".to_string()
+                    }
+                    crate::new_cloud_agent_wizard::SandboxMode::SelfHostedRemote => {
+                        format!("self-hosted REMOTE → {}", cfg.7.label())
+                    }
+                };
+                let msg = format!(
+                    "[wizard preview] would call Anthropic API: agent={} · sandbox={} · prompt={}",
+                    agent_desc,
+                    sandbox_desc,
+                    crate::cloud_agent_run::s3_console_url_for("dummy")
+                        .map(|_| cfg.2.clone())
+                        .unwrap_or(cfg.2)
+                );
+                if let Some(Pane::NewCloudAgentWizard(w)) = self.panes.get_mut(id) {
+                    w.last_message = Some(
+                        "Claude managed agent path stubbed — phase 2 wires the actual API call. \
+Config logged for now."
+                            .to_string(),
+                    );
+                }
+                self.toast(msg);
+            }
+        }
+    }
+
     /// Open a comprehensive cloud-agent run detail pane for the
     /// row at `idx` in `cloud_agents_rows`. Aggregates summary,
     /// web links, S3 artifacts, and CloudWatch logs into one pane.

@@ -695,6 +695,51 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // NewCloudAgentWizard pane — when active, intercept arrows,
+    // Tab, Enter, Esc, and typing so the keys don't fall through
+    // to the editor underneath.
+    if app
+        .active
+        .and_then(|i| app.panes.get(i))
+        .map(|p| matches!(p, crate::pane::Pane::NewCloudAgentWizard(_)))
+        .unwrap_or(false)
+    {
+        match key.code {
+            KeyCode::Esc => {
+                app.new_cloud_agent_wizard_close();
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.new_cloud_agent_wizard_move(-1);
+                return;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.new_cloud_agent_wizard_move(1);
+                return;
+            }
+            KeyCode::Backspace => {
+                app.new_cloud_agent_wizard_backspace();
+                return;
+            }
+            KeyCode::Tab => {
+                app.new_cloud_agent_wizard_next();
+                return;
+            }
+            KeyCode::Enter => {
+                app.new_cloud_agent_wizard_next();
+                return;
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.new_cloud_agent_wizard_type(ch);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Git-palette filter input — when focused, intercept typing /
     // backspace / Esc here so the keys don't fall through to the
     // editor.
@@ -3996,6 +4041,38 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
     }
 
+    // NewCloudAgentWizard hits: radio rows + Back / Next buttons.
+    // Defined before the CloudAgentRun hits below so the wizard's
+    // own hit rects always win when both panes are open.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some((_, hit)) = app
+            .rects
+            .new_cloud_agent_wizard_hits
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .cloned()
+    {
+        use crate::ui::new_cloud_agent_wizard_view::WizardHit;
+        match hit {
+            WizardHit::Option(idx) => {
+                let cur = app
+                    .active
+                    .and_then(|i| match app.panes.get(i) {
+                        Some(crate::pane::Pane::NewCloudAgentWizard(w)) => Some(w.focus_row),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let delta = idx as isize - cur as isize;
+                if delta != 0 {
+                    app.new_cloud_agent_wizard_move(delta);
+                }
+            }
+            WizardHit::Back => app.new_cloud_agent_wizard_back(),
+            WizardHit::Next => app.new_cloud_agent_wizard_next(),
+        }
+        return;
+    }
+
     // 2026-06-27 — CloudAgentRun pane: click on a URL row opens
     // it in the system browser; click on an artifact row opens
     // the s3 sibling pointed at that key. Hit rects come from
@@ -6325,11 +6402,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 return;
             }
             // Cloud Agents panel — filter input + row clicks +
-            // density chip (compact ↔ standard).
+            // density chip (compact ↔ standard) + + New Cloud
+            // Agent button.
             if let Some(r) = app.rects.cloud_agents_view_chip
                 && crate::app::dispatch::contains(r, x, y)
             {
                 app.cloud_agents_toggle_view();
+                return;
+            }
+            if let Some(r) = app.rects.cloud_agents_new_button
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_new_cloud_agent_wizard();
                 return;
             }
             if let Some(r) = app.rects.cloud_agents_filter_input

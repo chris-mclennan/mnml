@@ -126,6 +126,13 @@ pub enum Pane {
     /// still in flight; full historical fetch when it's done. See
     /// `src/cloud_agent_run.rs`.
     CloudAgentRun(crate::cloud_agent_run::CloudAgentRunPane),
+    /// Multi-step wizard that creates a new cloud agent run.
+    /// Supports the existing Tattle QWE trigger path AND
+    /// Anthropic's managed-agents API with cloud or self-hosted
+    /// sandbox modes (per-machine local worker or remote
+    /// Vercel/Cloudflare/Modal/etc). See
+    /// `src/new_cloud_agent_wizard.rs`.
+    NewCloudAgentWizard(crate::new_cloud_agent_wizard::NewCloudAgentWizardPane),
 }
 
 /// State for [`Pane::SpendReport`]. Re-snapshots
@@ -528,6 +535,7 @@ impl Pane {
             Pane::SpendReport(_) => "AI spend (24h)".to_string(),
             Pane::Mount(m) => m.label.clone(),
             Pane::CloudAgentRun(p) => format!("☁ {}", p.ticket),
+            Pane::NewCloudAgentWizard(_) => "+ New Cloud Agent".to_string(),
         }
     }
 
@@ -558,7 +566,8 @@ impl Pane {
             | Pane::Websocket(_)
             | Pane::SpendReport(_)
             | Pane::Mount(_)
-            | Pane::CloudAgentRun(_) => false,
+            | Pane::CloudAgentRun(_)
+            | Pane::NewCloudAgentWizard(_) => false,
         }
     }
 
