@@ -3379,6 +3379,22 @@ impl App {
             self.set_auto_pair(false);
         } else if matches!(opt, "autopair!" | "invautopair") {
             self.toggle_auto_pair();
+        } else if matches!(
+            opt,
+            "rightpanel" | "right_panel" | "rp" | "rightpanel!" | "right_panel!" | "rp!"
+        ) {
+            self.right_panel_visible = !self.right_panel_visible;
+            self.toast(format!(
+                "right_panel: {}",
+                if self.right_panel_visible {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
+        } else if matches!(opt, "norightpanel" | "noright_panel" | "norp") {
+            self.right_panel_visible = false;
+            self.toast("right_panel: off");
         } else if matches!(opt, "relativenumber" | "rnu") {
             self.set_relative_line_numbers(true);
         } else if matches!(opt, "norelativenumber" | "nornu") {

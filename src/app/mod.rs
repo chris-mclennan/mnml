@@ -9672,14 +9672,33 @@ impl App {
             return;
         }
         let cur = self.active.unwrap_or(0);
-        self.reveal_pane((cur + 1) % self.panes.len());
+        // nvchad-user SEV-2 — :bn/:bp shouldn't land vim users in a
+        // Pty pane (one-way trap). Skip Pty entries when cycling;
+        // fall back to a plain mod if everything is Pty.
+        let n = self.panes.len();
+        let mut next = (cur + 1) % n;
+        for _ in 0..n {
+            if !matches!(self.panes.get(next), Some(Pane::Pty(_))) {
+                break;
+            }
+            next = (next + 1) % n;
+        }
+        self.reveal_pane(next);
     }
     pub fn prev_buffer(&mut self) {
         if self.panes.is_empty() {
             return;
         }
         let cur = self.active.unwrap_or(0);
-        self.reveal_pane((cur + self.panes.len() - 1) % self.panes.len());
+        let n = self.panes.len();
+        let mut prev = (cur + n - 1) % n;
+        for _ in 0..n {
+            if !matches!(self.panes.get(prev), Some(Pane::Pty(_))) {
+                break;
+            }
+            prev = (prev + n - 1) % n;
+        }
+        self.reveal_pane(prev);
     }
 
     // ── Vim tab pages ─────────────────────────────────────────────────────
