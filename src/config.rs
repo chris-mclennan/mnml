@@ -802,14 +802,12 @@ impl Default for Config {
                         enabled: false,
                     },
                     IntegrationIcon {
-                        // Postman-style "new request" chip. `\u{F067}`
-                        // (nf-fa-plus) is in every Nerd Font variant;
-                        // pairs visually with the HTTP send glyph
-                        // above (paper plane). User-requested
-                        // 2026-06-19 — the "where's the new-request
-                        // button?" gap.
+                        // Postman-style "new request" chip — matches
+                        // the palette-bar's add-integration `+`
+                        // (\u{F0415} nf-md-plus) so the two `+`-style
+                        // chips read as one family at a glance.
                         id: "http_new".to_string(),
-                        glyph: "\u{F067}".to_string(),
+                        glyph: "\u{F0415}".to_string(),
                         fallback: "+".to_string(),
                         command: "http.new".to_string(),
                         color: "green".to_string(),
