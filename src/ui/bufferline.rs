@@ -706,10 +706,7 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     // AI button (leftmost in the cluster) — only when configured.
     let ai_kind = app.config.ui.tab_bar_ai_icon.as_str();
     if ai_kind != "none" {
-        let (ai_glyph, ai_fallback, ai_fg) = match ai_kind {
-            "codex" => ("\u{F8B1}", "C", t.cyan),
-            _ => ("\u{F8B0}", "*", t.orange),
-        };
+        let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(ai_kind, &t);
         let glyph = if nerd { ai_glyph } else { ai_fallback };
         let ai_rect = Rect {
             x: bx,

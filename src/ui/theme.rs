@@ -238,6 +238,17 @@ pub fn cur() -> Theme {
     *active().read().expect("theme lock poisoned")
 }
 
+/// code-reviewer S2-3 — AI chip glyph + fallback + color in one
+/// place. The same `match kind { "codex" => ("\u{F8B1}", "C", t.cyan),
+/// _ => ("\u{F8B0}", "*", t.orange) }` was copy-pasted in bufferline.rs
+/// (single-leaf strip) and ui/mod.rs (per-leaf strip painter).
+pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, ratatui::style::Color) {
+    match kind {
+        "codex" => ("\u{F8B1}", "C", t.cyan),
+        _ => ("\u{F8B0}", "*", t.orange),
+    }
+}
+
 /// code-reviewer S2-2 — resolve a config color-slot name to a
 /// theme color. The same `match name { "orange" => t.orange, ... }`
 /// pattern was duplicated in 7+ files (paint_integration_chips_in_gap,

@@ -78,19 +78,16 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
 fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)> {
     match chip {
         HoverChip::StatuslineMode => {
-            // Mode chip color encodes the editing mode — name it in the
-            // tooltip so users learn the palette without trial and error.
-            let mode_desc = match app.editing_mode() {
-                crate::input::EditingMode::Insert => "green = INSERT",
-                crate::input::EditingMode::Replace => "orange = REPLACE",
-                crate::input::EditingMode::Visual => "purple = VISUAL",
-                crate::input::EditingMode::VisualLine => "purple = V-LINE",
-                crate::input::EditingMode::VisualBlock => "purple = V-BLOCK",
-                crate::input::EditingMode::Normal => "red = NORMAL",
-                crate::input::EditingMode::None => match app.focus {
-                    crate::focus::Focus::Tree => "blue = TREE focus",
-                    crate::focus::Focus::Pane => "green = EDIT (cyan = read-only)",
-                },
+            // code-reviewer S1-1 — variant-match moved to
+            // EditingMode::tooltip_label so the UI layer doesn't
+            // branch on input mode (spine rule). Tree-focus is a
+            // focus state, not a mode — checked via the focus side.
+            let mode_desc = if matches!(app.focus, crate::focus::Focus::Tree)
+                && app.editing_mode().label().is_none()
+            {
+                "blue = TREE focus"
+            } else {
+                app.editing_mode().tooltip_label()
             };
             Some((
                 app.rects.statusline_mode_chip?,

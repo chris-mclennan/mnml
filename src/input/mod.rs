@@ -69,6 +69,21 @@ impl EditingMode {
             EditingMode::VisualBlock => Some("V-BLOCK"),
         }
     }
+    /// code-reviewer S1-1 — tooltip text for the mode chip. Owned by
+    /// the enum so `src/ui/tooltip.rs` doesn't have to branch on
+    /// EditingMode (spine: `grep -rn EditingMode src/ui` should hit
+    /// only statusline.rs).
+    pub fn tooltip_label(self) -> &'static str {
+        match self {
+            EditingMode::Insert => "green = INSERT",
+            EditingMode::Replace => "orange = REPLACE",
+            EditingMode::Visual => "purple = VISUAL",
+            EditingMode::VisualLine => "purple = V-LINE",
+            EditingMode::VisualBlock => "purple = V-BLOCK",
+            EditingMode::Normal => "red = NORMAL",
+            EditingMode::None => "green = EDIT (cyan = read-only)",
+        }
+    }
     /// `true` if any of the three visual variants. Convenience for
     /// match arms that want "is in visual mode" semantics without
     /// triple-matching every variant.

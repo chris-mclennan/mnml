@@ -2597,10 +2597,8 @@ fn paint_leaf_tab_strip(
 
     // AI button (leftmost in cluster) — only when configured.
     if ai_enabled {
-        let (ai_glyph, ai_fallback, ai_fg) = match app.config.ui.tab_bar_ai_icon.as_str() {
-            "codex" => ("\u{F8B1}", "C", t.cyan),
-            _ => ("\u{F8B0}", "*", t.orange),
-        };
+        let (ai_glyph, ai_fallback, ai_fg) =
+            theme::ai_chip_parts(app.config.ui.tab_bar_ai_icon.as_str(), &t);
         let glyph = if nerd { ai_glyph } else { ai_fallback };
         let ai_rect = Rect {
             x: bx,
