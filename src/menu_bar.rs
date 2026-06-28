@@ -259,6 +259,10 @@ fn view_menu() -> MenuDef {
                 command_id: "view.toggle_tree",
             },
             MenuItem::Action {
+                label: "Toggle right panel",
+                command_id: "view.toggle_right_panel",
+            },
+            MenuItem::Action {
                 label: "Cycle menu bar (always / auto / hidden)",
                 command_id: "view.menu_bar_cycle",
             },

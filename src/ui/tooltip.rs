@@ -281,7 +281,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             Some((
                 rect,
                 format!("right panel: {state}"),
-                Some("click: toggle right side panel".into()),
+                Some("click: toggle right side panel (Ctrl+Shift+B)".into()),
             ))
         }
         HoverChip::PaletteBackButton => {

@@ -152,8 +152,13 @@ impl BinaryProfile {
     /// `cwd` defaults to the workspace.
     pub fn task(name: &str, cmdline: &str, cwd: PathBuf) -> Self {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        // multilang-dev-user F3 — drop the redundant 'task: ' prefix
+        // so a bufferline tab for 'npm run dev' reads 'npm run dev'
+        // not 'task: npm run dev'. The bufferline is already context
+        // enough; the prefix was noise that compounded across 3-4
+        // concurrent watchers.
         BinaryProfile {
-            label: format!("task: {name}"),
+            label: name.to_string(),
             exe: shell,
             args: vec!["-c".to_string(), cmdline.to_string()],
             cwd: Some(cwd),

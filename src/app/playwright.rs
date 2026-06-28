@@ -203,18 +203,43 @@ impl App {
             .unwrap_or_else(|| self.workspace.clone());
         let has_pyproject = root.join("pyproject.toml").exists();
         let has_setup = root.join("setup.py").exists();
-        let has_real_tests = root.join("tests").is_dir()
-            && std::fs::read_dir(root.join("tests"))
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok()).any(|e| {
-                        e.file_name().to_string_lossy().starts_with("test_")
-                            && e.file_name().to_string_lossy().ends_with(".py")
-                    })
-                })
-                .unwrap_or(false);
+        // multilang-dev-user F7 — accept tests in `tests/` or `test/`
+        // and walk one level deep (so `tests/unit/test_foo.py` counts)
+        // and also accept `*_test.py` suffix. Old version was too
+        // shallow and rejected common Python layouts.
+        let is_pytest_file = |name: &str| -> bool {
+            (name.starts_with("test_") && name.ends_with(".py")) || name.ends_with("_test.py")
+        };
+        let dir_has_pytest_file = |dir: std::path::PathBuf| -> bool {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                return false;
+            };
+            for entry in rd.filter_map(|e| e.ok()) {
+                let n = entry.file_name();
+                let s = n.to_string_lossy();
+                if is_pytest_file(&s) {
+                    return true;
+                }
+                // One-level recurse so `tests/unit/test_x.py` matches.
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && let Ok(sub_rd) = std::fs::read_dir(entry.path())
+                {
+                    for sub in sub_rd.filter_map(|e| e.ok()) {
+                        let sn = sub.file_name();
+                        if is_pytest_file(&sn.to_string_lossy()) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        };
+        let has_real_tests = ["tests", "test"]
+            .iter()
+            .any(|d| dir_has_pytest_file(root.join(d)));
         if !has_pyproject && !has_setup && !has_real_tests {
             self.toast(format!(
-                "pytest: no pyproject.toml / setup.py / tests/test_*.py at {}",
+                "pytest: no pyproject.toml / setup.py / test files at {}",
                 self.workspace.display()
             ));
             return;

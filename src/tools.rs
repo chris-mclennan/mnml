@@ -85,7 +85,7 @@ pub const KNOWN_TOOLS: &[ToolEntry] = &[
         kind: ToolKind::Lsp,
         bin: "lua-language-server",
         description: "Lua language server",
-        install: "brew install lua-language-server",
+        install: "brew install lua-language-server  (or: apt install lua-language-server / cargo install lua-language-server)",
     },
     ToolEntry {
         name: "yaml-language-server",
@@ -230,7 +230,23 @@ pub struct ExternalTool {
     pub binary: &'static str,
     /// Homebrew formula name — usually the same as `binary`.
     pub brew_pkg: &'static str,
+    /// apt package name on Debian / Ubuntu. Same as `brew_pkg` unless
+    /// the package is named differently in the apt repo.
+    pub apt_pkg: &'static str,
     pub label: &'static str,
+}
+
+/// Platform-appropriate install hint for a missing binary. Branches
+/// on the host OS so a Linux user doesn't see `brew install` and a
+/// Windows user gets a winget / scoop hint. Used by both the
+/// external-tool launcher and the LSP missing-binary path.
+pub fn install_hint(brew_pkg: &str, apt_pkg: &str) -> String {
+    match std::env::consts::OS {
+        "macos" => format!("brew install {brew_pkg}"),
+        "linux" => format!("sudo apt install {apt_pkg}  (or your distro's equivalent)"),
+        "windows" => format!("winget install {brew_pkg}  (or scoop install {brew_pkg})"),
+        _ => format!("install {brew_pkg} via your package manager"),
+    }
 }
 
 pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
@@ -238,18 +254,21 @@ pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
         id: "htop",
         binary: "htop",
         brew_pkg: "htop",
+        apt_pkg: "htop",
         label: "htop — interactive process viewer",
     },
     ExternalTool {
         id: "iftop",
         binary: "iftop",
         brew_pkg: "iftop",
+        apt_pkg: "iftop",
         label: "iftop — interactive bandwidth monitor",
     },
     ExternalTool {
         id: "btop",
         binary: "btop",
         brew_pkg: "btop",
+        apt_pkg: "btop",
         label: "btop — resource monitor (cpu / mem / disk / net)",
     },
 ];

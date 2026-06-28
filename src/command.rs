@@ -1476,10 +1476,36 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.toggle_right_panel",
             title: "Toggle the right side panel",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard S2-3 — natural mirror of Ctrl+B.
+            keys: &["Ctrl+Shift+B"],
             run: |app| {
                 app.right_panel_visible = !app.right_panel_visible;
             },
+        },
+        // vscode-user-keyboard S1-1 — chip toggle / edit / remove had
+        // no palette commands; were context-menu-only and so
+        // unreachable from the keyboard. Add a picker over the rail's
+        // integration chips for each gesture.
+        Command {
+            id: "integrations.toggle_enabled",
+            title: "Integrations: enable / disable a chip (picker)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_integration_toggle_picker(),
+        },
+        Command {
+            id: "integrations.edit",
+            title: "Integrations: edit a chip (picker)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_integration_edit_picker(),
+        },
+        Command {
+            id: "integrations.remove",
+            title: "Integrations: remove a chip (picker)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_integration_remove_picker(),
         },
         // External-tool launchers: run if installed, else toast
         // `brew install <pkg>`. Match the integration_icon commands

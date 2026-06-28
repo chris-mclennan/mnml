@@ -444,7 +444,36 @@ impl App {
                 }
             }
             PickerKind::Commands => {
-                crate::command::run(&item.id, self);
+                // vscode-user-keyboard S1-1: prefixed ids from the
+                // integration chip picker dispatch to the per-chip
+                // toggle / edit / remove handlers. Anything else is
+                // a plain command id (Cmd+Shift+P palette default).
+                if let Some(id) = item.id.strip_prefix("toggle:") {
+                    // Inline the toggle (run_menu_action is private)
+                    if let Some(slot) = self
+                        .config
+                        .ui
+                        .integration_icons
+                        .iter_mut()
+                        .find(|i| i.id == id)
+                    {
+                        slot.enabled = !slot.enabled;
+                        let now = slot.enabled;
+                        self.toast(format!(
+                            "integration {id} {}",
+                            if now { "enabled" } else { "disabled" }
+                        ));
+                        let _ = crate::app::discovery::persist_integration_icons(
+                            &self.config.ui.integration_icons,
+                        );
+                    }
+                } else if let Some(id) = item.id.strip_prefix("edit:") {
+                    self.open_integration_edit_by_id(id);
+                } else if let Some(id) = item.id.strip_prefix("remove:") {
+                    self.remove_integration_by_id(id);
+                } else {
+                    crate::command::run(&item.id, self);
+                }
             }
             PickerKind::Themes => {
                 self.theme_preview_restore = None;
@@ -810,6 +839,41 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Build a Picker of every configured integration chip — used
+    /// by the toggle / edit / remove palette commands. `accept_kind`
+    /// determines what `id` shape we return so the accept-handler
+    /// routes correctly.
+    fn open_integration_chip_picker(&mut self, title: &str, action_prefix: &str) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items: Vec<PickerItem> = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .map(|ic| {
+                let state = if ic.enabled { "on" } else { "off" };
+                let tooltip = ic.tooltip.clone().unwrap_or_default();
+                PickerItem {
+                    id: format!("{action_prefix}:{}", ic.id),
+                    label: format!("{} ({state}) — {}", ic.id, tooltip),
+                    detail: ic.command.clone(),
+                }
+            })
+            .collect();
+        let p = Picker::new(PickerKind::Commands, title.to_string(), items);
+        self.open_picker(p);
+    }
+
+    pub fn open_integration_toggle_picker(&mut self) {
+        self.open_integration_chip_picker("Integrations: toggle enabled", "toggle");
+    }
+    pub fn open_integration_edit_picker(&mut self) {
+        self.open_integration_chip_picker("Integrations: edit", "edit");
+    }
+    pub fn open_integration_remove_picker(&mut self) {
+        self.open_integration_chip_picker("Integrations: remove", "remove");
     }
 
     /// Open the integrations icon picker — a searchable list of

@@ -114,6 +114,7 @@ pub fn root() -> &'static Leader {
                         "+toggle",
                         vec![
                             ('e', cmd("view.toggle_tree", "explorer")),
+                            ('r', cmd("view.toggle_right_panel", "right panel")),
                             ('k', cmd("editor.toggle_keymap", "vim ⇄ standard")),
                             ('t', cmd("theme.pick", "theme…")),
                             ('h', cmd("view.toggle_hidden", "hidden files (focused)")),
@@ -294,6 +295,19 @@ pub fn root() -> &'static Leader {
                             (
                                 'I',
                                 cmd("tools.iftop", "iftop — interactive bandwidth monitor"),
+                            ),
+                            ('b', cmd("tools.btop", "btop — resource monitor")),
+                            (
+                                '+',
+                                cmd("integrations.add", "add integration (discovery overlay)"),
+                            ),
+                            (
+                                'p',
+                                cmd("integrations.icon_picker", "browse Nerd Font glyphs"),
+                            ),
+                            (
+                                'e',
+                                cmd("integrations.toggle_enabled", "enable/disable a chip"),
                             ),
                             ('D', cmd("forge.open_datadog", "Datadog observability")),
                             ('B', cmd("forge.open_buttondown", "Buttondown newsletter")),

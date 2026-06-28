@@ -7659,9 +7659,9 @@ impl App {
             return;
         }
         self.toast(format!(
-            "{label}: not installed. Try `brew install {pkg}`",
+            "{label}: not installed. Try `{hint}`",
             label = tool.label,
-            pkg = tool.brew_pkg
+            hint = crate::tools::install_hint(tool.brew_pkg, tool.apt_pkg)
         ));
     }
 
@@ -10418,7 +10418,15 @@ impl App {
     pub fn spawn_managed_agents_worker(&mut self) {
         if !binary_on_path("ant") {
             self.toast(
-                "ant CLI not installed — see https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes#install-the-ant-cli or run: brew install anthropics/tap/ant",
+                {
+                    let hint = match std::env::consts::OS {
+                        "macos" => "run: brew install anthropics/tap/ant".to_string(),
+                        _ => "see install docs (no brew tap on this platform)".to_string(),
+                    };
+                    format!(
+                        "ant CLI not installed — see https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes#install-the-ant-cli or {hint}"
+                    )
+                },
             );
             return;
         }

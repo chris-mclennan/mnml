@@ -100,6 +100,29 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     IconEntry { codepoint: "F1011", name: "music", category: "ui" },
     IconEntry { codepoint: "F0E58", name: "test-tube", category: "ui" },
 
+    // ── languages / runtimes ──
+    IconEntry { codepoint: "E718",  name: "rust", category: "lang" },
+    IconEntry { codepoint: "E724",  name: "go-gopher", category: "lang" },
+    IconEntry { codepoint: "E73C",  name: "python", category: "lang" },
+    IconEntry { codepoint: "E60E",  name: "typescript", category: "lang" },
+    IconEntry { codepoint: "E60C",  name: "javascript", category: "lang" },
+    IconEntry { codepoint: "E718",  name: "nodejs", category: "lang" },
+    IconEntry { codepoint: "E7A8",  name: "ruby", category: "lang" },
+    IconEntry { codepoint: "E7C5",  name: "swift", category: "lang" },
+    IconEntry { codepoint: "E70C",  name: "kotlin", category: "lang" },
+    IconEntry { codepoint: "E738",  name: "java", category: "lang" },
+    IconEntry { codepoint: "E712",  name: "elixir", category: "lang" },
+    IconEntry { codepoint: "F0B1B", name: "deno", category: "lang" },
+    IconEntry { codepoint: "F03A2", name: "lua", category: "lang" },
+
+    // ── package managers ──
+    IconEntry { codepoint: "E71E",  name: "npm", category: "pkg" },
+    IconEntry { codepoint: "F011B", name: "yarn", category: "pkg" },
+    IconEntry { codepoint: "F02E0", name: "pnpm", category: "pkg" },
+    IconEntry { codepoint: "F11B0", name: "bun", category: "pkg" },
+    IconEntry { codepoint: "F03A1", name: "pip / python pkg", category: "pkg" },
+    IconEntry { codepoint: "F092B", name: "cargo / crates", category: "pkg" },
+
     // ── general purpose ──
     IconEntry { codepoint: "F02A5", name: "lightning-bolt", category: "misc" },
     IconEntry { codepoint: "F11AB", name: "rocket", category: "misc" },

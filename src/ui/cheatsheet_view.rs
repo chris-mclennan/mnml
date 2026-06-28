@@ -27,7 +27,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let header_text = if p.filter_mode {
         format!(" Cheatsheet · /{} · esc clears · enter applies ", p.query)
     } else if p.query.is_empty() {
-        " Cheatsheet · / filter · j/k · esc closes ".to_string()
+        " Cheatsheet · / filter · j/k · Esc → tree · Ctrl+W close ".to_string()
     } else {
         format!(
             " Cheatsheet · filter: {} · / to edit · esc clears ",
