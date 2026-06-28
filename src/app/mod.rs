@@ -51,8 +51,13 @@ pub(crate) mod settings;
 mod snippets;
 mod startup_picker;
 pub(crate) mod tab_drop;
+pub(crate) mod util;
 
 pub use startup_picker::{StartupPickerAction, StartupPickerState};
+// Re-export the util helpers so existing call sites in this file
+// and in sibling modules (which `use super::*`) keep working
+// without an import-site change.
+pub(crate) use util::*;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const TOAST_STACK_MAX: usize = 5;
@@ -333,27 +338,6 @@ fn fim_worker_loop(
 
 /// True when `path`'s extension marks it as Markdown — used by the outline
 /// pane to extract headings directly instead of going through the LSP.
-fn is_markdown_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()),
-        Some("md" | "markdown" | "mdx" | "mkd")
-    )
-}
-
-/// True when `path` is the user's home directory (canonicalized). Used
-/// by [`App::add_workspace_runtime`] to detect the empty-state landing
-/// and promote the new folder to primary rather than adding as extra.
-/// Mirrors the predicate in `ui::tree_view::is_empty_workspace` —
-/// keep both in sync.
-fn is_home_workspace(path: &Path) -> bool {
-    let Some(home) = std::env::var_os("HOME") else {
-        return false;
-    };
-    let home = std::path::PathBuf::from(home);
-    let home_c = std::fs::canonicalize(&home).unwrap_or(home);
-    path == home_c
-}
-
 /// Recursively walk `dir` collecting files whose extension matches any
 /// entry in `exts` (lowercase, no leading dot). Skips dot-dirs +
 /// `node_modules` / `target` to keep big repos snappy. Used by
@@ -466,93 +450,6 @@ fn extract_md_links(line: &str) -> Vec<(usize, String)> {
 
 /// Treat anything with a scheme like `http://`, `https://`, `mailto:`,
 /// `file://`, `ftp://`, etc. as a URL — skipped by the link checker.
-fn is_url_like(target: &str) -> bool {
-    const SCHEMES: &[&str] = &[
-        "http://",
-        "https://",
-        "mailto:",
-        "ftp://",
-        "ftps://",
-        "file://",
-        "ssh://",
-        "git://",
-        "data:",
-        "javascript:",
-    ];
-    SCHEMES.iter().any(|s| target.starts_with(s))
-}
-
-fn is_image_extension(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|e| e.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
-    )
-}
-
-/// Walk `text` and return every `(row, col_chars, len_chars)` for a whole-word
-/// occurrence of `word`. Char columns (not byte) so the renderer's per-cell
-/// painter can align without re-decoding UTF-8. Caps at 5000 hits — a hard
-/// safeguard against pathological cases (every occurrence of `the` in a
-/// novel-sized file).
-pub fn collect_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize, usize)> {
-    let word_chars: Vec<char> = word.chars().collect();
-    if word_chars.is_empty() {
-        return Vec::new();
-    }
-    let wlen = word_chars.len();
-    let is_id = |c: char| c.is_alphanumeric() || c == '_';
-    let mut out = Vec::new();
-    for (row, line) in text.split('\n').enumerate() {
-        let chars: Vec<char> = line.chars().collect();
-        let n = chars.len();
-        if n < wlen {
-            continue;
-        }
-        let mut i = 0;
-        while i + wlen <= n {
-            if chars[i..i + wlen] == word_chars[..]
-                && (i == 0 || !is_id(chars[i - 1]))
-                && (i + wlen == n || !is_id(chars[i + wlen]))
-            {
-                out.push((row, i, wlen));
-                if out.len() >= 5000 {
-                    return out;
-                }
-                i += wlen;
-            } else {
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
-/// `p` made relative to `workspace` (for `git` arguments). Falls back to `p` if
-/// it isn't under `workspace`.
-/// OS-aware label for "Reveal in <file browser>". The underlying
-/// RevealInFinder MenuAction handler shells out to the right
-/// system command per OS. macOS today; Linux/Windows fall back to
-/// "Reveal in file browser" since the exact app varies.
-pub(crate) fn reveal_in_files_label() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "Reveal in Finder"
-    } else if cfg!(target_os = "windows") {
-        "Reveal in Explorer"
-    } else {
-        "Reveal in file browser"
-    }
-}
-
-fn rel_path(workspace: &Path, p: &Path) -> String {
-    p.strip_prefix(workspace)
-        .unwrap_or(p)
-        .to_string_lossy()
-        .into_owned()
-}
-
 /// Turn a file's `(range, new_text)` LSP edits into `EditOp::ReplaceRange`s with
 /// byte offsets resolved against `text`, sorted *descending* by start so applying
 /// them in order keeps the earlier offsets valid. Edits with unresolvable
@@ -1023,14 +920,6 @@ fn parse_substitute(line: &str) -> Option<Substitute> {
 /// `(line, character)` of `byte` in `text` — the inverse of [`crate::lsp::byte_at`].
 /// Both 0-based; `character` is a char count (matches how we feed positions to
 /// the LSP elsewhere). A byte past the end clamps to the last line's end.
-fn byte_to_line_col(text: &str, byte: usize) -> (usize, usize) {
-    let cap = byte.min(text.len());
-    let line = text[..cap].bytes().filter(|&b| b == b'\n').count();
-    let line_start = text[..cap].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let col = text[line_start..cap].chars().count();
-    (line, col)
-}
-
 /// Do two LSP-space ranges overlap (or touch)? Used to decide which diagnostics
 /// to send along with a `textDocument/codeAction` request. Inclusive at both
 /// ends — a diagnostic that ends exactly at the cursor should still be offered
@@ -1382,14 +1271,6 @@ impl From<SavedSplitDir> for crate::layout::SplitDir {
 
 /// `(row, col)` (0-based, col in chars) for a byte offset into `text`. Used by
 /// the in-buffer find to position the editor cursor at a match.
-fn byte_to_row_col(text: &str, byte: usize) -> (usize, usize) {
-    let byte = byte.min(text.len());
-    let row = text[..byte].bytes().filter(|&b| b == b'\n').count();
-    let line_start = text[..byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let col = text[line_start..byte].chars().count();
-    (row, col)
-}
-
 /// Place the buffer's cursor at byte offset `byte` (clamped). Used by snippet
 /// expansion to land on `$N` / `$0` markers without hand-walking the cursor
 /// glyph by glyph.
