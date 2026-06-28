@@ -112,6 +112,42 @@ impl CheatsheetPane {
                 rows,
             });
         }
+        // design-critic end-of-day 2026-06-28 #6: vim INSERT-mode
+        // Ctrl chords are wired in src/input/vim.rs::handle_insert,
+        // not as registered Commands — so they were invisible to the
+        // cheatsheet (which builds from keymap.iter() +
+        // command::registry()). A vim user who just flipped to vim
+        // mode had no in-app place to discover that Ctrl+W now
+        // deletes a word, Ctrl+J inserts a newline, etc. Hardcoded
+        // section here mirrors the 11 chords stripped by
+        // input/keymap.rs:207 and the matching arms in vim.rs's
+        // INSERT handler.
+        let vim_insert_rows = vec![
+            ("Ctrl+H", "INSERT-backspace (delete prev char)"),
+            ("Ctrl+W", "INSERT-delete previous word"),
+            ("Ctrl+U", "INSERT-delete to line start"),
+            ("Ctrl+J", "INSERT-insert newline"),
+            ("Ctrl+T", "INSERT-indent line"),
+            ("Ctrl+D", "INSERT-outdent line"),
+            ("Ctrl+N", "INSERT-keyword completion next"),
+            ("Ctrl+R \"", "INSERT-paste unnamed register"),
+            ("Ctrl+R a..z", "INSERT-paste named register"),
+            ("Ctrl+Y", "INSERT-copy char from line above"),
+            ("Ctrl+E", "INSERT-copy char from line below"),
+            ("Ctrl+G", "INSERT-prefix (future <C-G>u undo break)"),
+        ];
+        let rows: Vec<CheatsheetRow> = vim_insert_rows
+            .into_iter()
+            .map(|(chord, title)| CheatsheetRow {
+                chord: chord.to_string(),
+                command_id: "(vim insert handler)".to_string(),
+                title: title.to_string(),
+            })
+            .collect();
+        sections.push(CheatsheetSection {
+            group: "vim insert".to_string(),
+            rows,
+        });
         CheatsheetPane {
             sections,
             selected: 0,
