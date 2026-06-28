@@ -150,10 +150,25 @@ impl App {
             if let Some(Pane::Grep(g)) = self.panes.get_mut(id) {
                 *g = crate::grep_pane::GrepPane::new(q, used, hits);
             }
-            self.reveal_pane(id);
+            // Right-panel v5 — bring the existing grep tab forward.
+            if let Some(idx) = self.right_panel_panes.iter().position(|&pid| pid == id) {
+                self.right_panel_active_idx = idx;
+            } else {
+                self.reveal_pane(id);
+            }
             return;
         }
         let pane = Pane::Grep(crate::grep_pane::GrepPane::new(q, used, hits));
+        // Right-panel v5 — host grep results in the panel as a tab
+        // when visible. Each row is path:line:content; at narrow
+        // widths the path takes most of the cells, but the user can
+        // drag the column wider for the full hit text.
+        if self.right_panel_visible {
+            self.panes.push(pane);
+            let new_id = self.panes.len() - 1;
+            self.right_panel_push(new_id);
+            return;
+        }
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);

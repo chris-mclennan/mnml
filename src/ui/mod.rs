@@ -613,6 +613,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 crate::pane::Pane::Outline(o) => o.tab_title(),
                 crate::pane::Pane::Diagnostics(d) => d.tab_title(),
                 crate::pane::Pane::Ai(a) => a.tab_title(),
+                crate::pane::Pane::Tests(t) => t.tab_title(),
+                crate::pane::Pane::Grep(g) => g.tab_title(),
                 _ => "PANEL".to_string(),
             }
         };
@@ -758,6 +760,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 }
                 Some(crate::pane::Pane::Diagnostics(_)) => {
                     diagnostics_view::draw(frame, app, pid, body, focused);
+                }
+                Some(crate::pane::Pane::Tests(_)) => {
+                    tests_view::draw(frame, app, pid, body, focused);
+                }
+                Some(crate::pane::Pane::Grep(_)) => {
+                    grep_view::draw(frame, app, pid, body, focused);
                 }
                 Some(crate::pane::Pane::Ai(_)) => {
                     // Right-panel v4: AI chat hosted in the column.

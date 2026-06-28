@@ -105,7 +105,14 @@ impl App {
                 t.scroll = 0;
                 t.selected = 0;
             }
-            self.reveal_pane(id);
+            // Right-panel v5 — re-host the existing tests pane in
+            // the strip if it's already a panel tab; otherwise go
+            // through the layout-tree reveal.
+            if let Some(idx) = self.right_panel_panes.iter().position(|&pid| pid == id) {
+                self.right_panel_active_idx = idx;
+            } else {
+                self.reveal_pane(id);
+            }
             return;
         }
         let pane = Pane::Tests(crate::playwright::TestsPane::new(
@@ -113,6 +120,15 @@ impl App {
             extra_args,
             job_id,
         ));
+        // Right-panel v5: host in the panel as a new tab when it's
+        // visible. Tests rows (test name + status) read fine at the
+        // 32-cell default width.
+        if self.right_panel_visible {
+            self.panes.push(pane);
+            let new_id = self.panes.len() - 1;
+            self.right_panel_push(new_id);
+            return;
+        }
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);

@@ -82,6 +82,12 @@ impl App {
                     .filter_map(|pid| match self.panes.get(*pid) {
                         Some(Pane::Outline(_)) => Some("outline".to_string()),
                         Some(Pane::Diagnostics(_)) => Some("diagnostics".to_string()),
+                        // Tests/Grep restoration: just re-host an
+                        // empty pane on re-open. The user can re-fire
+                        // the run/query. v5 right-panel pluggable
+                        // hosts (Tests + Grep).
+                        Some(Pane::Tests(_)) => Some("tests".to_string()),
+                        Some(Pane::Grep(_)) => Some("grep".to_string()),
                         _ => None,
                     })
                     .collect(),
