@@ -226,7 +226,7 @@ mnml's "tab" can mean two things: a buffer (file open in a pane) and a tab page 
 
 | VS Code | mnml | Command id | Notes |
 |---|---|---|---|
-| `Ctrl+Shift+B` Run Build Task | (not bound under chord) | `task.run` | `<leader>o` chord |
+| `Ctrl+Shift+B` Run Build Task | `Ctrl+Shift+B` → **Toggle right side panel** | `view.toggle_right_panel` | mnml has no build-task concept yet; the chord is repurposed for the panel toggle. `task.run` still reachable via `<leader>o`. See [Right side panel](/manual/right-panel/). |
 | Run Test | (palette / `<leader>Ta` etc.) | `test.run_*` | |
 | Tasks: Configure | (palette) | — | Use `tasks` block in TOML — see Settings |
 

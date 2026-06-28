@@ -86,6 +86,7 @@ export default defineConfig({
           items: [
             { label: 'Workspaces & the file rail', slug: 'manual/workspaces' },
             { label: 'Activity bar', slug: 'manual/activity-bar' },
+            { label: 'Right side panel', slug: 'manual/right-panel' },
             { label: 'Bridge & Mount (sibling integration)', slug: 'manual/bridge-mount' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'Editing', slug: 'manual/editing' },

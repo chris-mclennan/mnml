@@ -66,6 +66,12 @@ If you start a chain that doesn't extend cleanly — say `ctrl+k` then a key tha
 
 This means a botched chain never *eats* the second key. You always either fire the canonical inner command (the fallback), get a single-key binding on the new stroke, or pass the stroke through to the editor / tree.
 
+### Two-key leader chords in standard mode
+
+Standard mode's leader is `Ctrl+K`, which is bound to `whichkey.leader` (open the leader popup) as a `PendingWithFallback`. When the leader's *next* node is a one-letter group (`<leader>t` = `+tabs`, `<leader>r` = `+request`, …), the natural muscle-memory chord is two keystrokes — `Ctrl+K t r` to reach `<leader>tr` (the rename-tab leaf in the `+tabs` group), say.
+
+Pre-2026-06-28 builds had a bug where the *second* keystroke (`t`) was being consumed by the chord-chain dispatcher when the popup opened from the fallback timeout — so `Ctrl+K t r` actually required `Ctrl+K t t r` to reach the leaf. The fix routes the opener key into the freshly-opened which-key overlay, so the popup opens **and** the `t` is consumed by the popup's trie walk in the same dispatch step. Every two-letter leader chord (`<leader>tr`, `<leader>sv`, `<leader>lo`, …) now works in exactly two keystrokes from a cold start. If you're updating from an older mnml and the chord still feels like it eats keys, that's a stale build — `./run.sh restart` after the rebuild.
+
 ## Discovering chains
 
 Three surfaces show you every bound chain:

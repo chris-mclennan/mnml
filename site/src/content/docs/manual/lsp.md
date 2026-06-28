@@ -60,6 +60,8 @@ Diagnostics arrive as `publishDiagnostics` notifications, flow over an mpsc chan
 
 The Problems pane (`Pane::Diagnostics`) is workspace-wide — every diagnostic on every open editor buffer, errors first, then sorted by file and line. `↑↓` / `jk` to move, `Enter` to jump to the source, `r` to refresh.
 
+When the [right side panel](/manual/right-panel/) is open (`Ctrl+Shift+B` or `:set rightpanel`), `lsp.diagnostics` routes the Problems pane **into the panel** instead of carving a split below the focused leaf. The panel header reads ` DIAGNOSTICS` and the same navigation keys work. Closing the panel evicts the pane; firing `lsp.diagnostics` again rehosts it. Useful for keeping the workspace error list visible without giving up editor body height.
+
 ## Completion
 
 Completion is automatic as you type. The popup opens at word starts and on the LSP trigger characters `.` and `:`; subsequent keystrokes refilter locally without re-requesting from the server. The reply runs through `completionItem/resolve` on demand, so the documentation panel populates only for the item you're hovering.
@@ -70,6 +72,8 @@ Completion is automatic as you type. The popup opens at word starts and on the L
 |---|---|
 | `<leader>lc` | `lsp.completion` — ask the server explicitly |
 | `Ctrl+N` / `Ctrl+P` (vim Insert) | `editor.keyword_complete` — buffer-keyword completion through the same popup |
+
+In vim mode, `Ctrl+N` is reserved for the vim INSERT handler — the global `file.new` binding is stripped from the keymap when `input_style = "vim"` so it doesn't intercept the chord before vim sees it. Vim users create files via `:e <path>` or `:enew` instead. `Ctrl+P` stays bound to the palette / recents picker in both modes (strong NvChad muscle memory), so vim INSERT's `Ctrl+P` (keyword-completion-previous) reaches the same handler via `Ctrl+N` plus the popup's `↑`. Under `input_style = "standard"`, `Ctrl+N` is still `file.new`.
 
 ### Accepting
 
@@ -144,6 +148,8 @@ External formatters fall back to a built-in table (`prettier` for js / ts / json
 | `<leader>lo` | `outline.show` | Open the docked Outline pane (live retargets to the active editor) |
 
 The Outline pane mirrors `textDocument/documentSymbol` for the active file as a tree; switching to a different editor pane retargets the outline automatically.
+
+When the [right side panel](/manual/right-panel/) is open, `outline.show` hosts the Outline pane in the panel instead of splitting horizontally above the editor. The header reads ` OUTLINE`. This is the recommended placement when you want the outline always-on — it doesn't eat editor body height, and resizing the panel resizes the outline.
 
 ## Configuration
 

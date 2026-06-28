@@ -278,8 +278,9 @@ The integration siblings (forge / cloud / observability viewers) launch from her
 | `<leader>iT` | Teams | `mnml-teams` |
 | `<leader>iM` | Mandrill | `mnml-mandrill` |
 | `<leader>iB` | Buttondown | `mnml-buttondown` |
-| `<leader>ih` | `htop` | system binary |
-| `<leader>iI` | `iftop` | system binary |
+| `<leader>ih` | `htop` | system binary (mnml offers `brew install` / `apt install` if missing) |
+| `<leader>iI` | `iftop` | system binary (mnml offers `brew install` / `apt install` if missing) |
+| `<leader>ir` | `btop` | system binary (mnml offers `brew install` / `apt install` if missing) |
 
 ### `<leader>a` — AI / terminal
 

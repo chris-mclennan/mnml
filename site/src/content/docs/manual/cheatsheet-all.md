@@ -94,6 +94,10 @@ Two chords always work regardless of which input handler is loaded — keep thes
 | Toggle hidden files (focused tree) | `<leader>th` | (palette) | `view.toggle_hidden` |
 | Toggle hidden files (all trees) | `<leader>tH` | (palette) | `view.toggle_hidden_all` |
 | Reveal active file | (palette) | (palette) | `view.reveal_active` |
+| Toggle right side panel | `:set rightpanel!` | `Ctrl+Shift+B` | `view.toggle_right_panel` |
+| Open right side panel | `:set rightpanel` | `:set rightpanel` | — |
+| Close right side panel | `:set norightpanel` | `:set norightpanel` | — |
+| Context menu at focus (keyboard right-click) | `Shift+F10` | `Shift+F10` | `view.context_menu_at_focus` |
 
 ## Cursor motion
 
@@ -281,6 +285,26 @@ These are operator-pending objects — type them after `d`, `c`, `y`, `v`, etc.
 | Focus existing or open new shell | `Ctrl+T` | `Ctrl+T` | `term.focus_or_open_shell` |
 | Shell as a pane | `<leader>at` / `:term` / `:terminal` | (palette) | `term.shell` |
 | Rename pty tab | (palette) | (palette) | `term.rename` |
+
+## External tools (htop / iftop / btop)
+
+Each launcher opens the named binary in a Pty pane. If the binary isn't on `$PATH`, mnml offers to install it via `brew` (macOS) or `apt` (Linux) — see [the Tools launchers section](#tools-launchers) below.
+
+| Action | vim | standard | Command id |
+|---|---|---|---|
+| Open htop | `<leader>ih` | (palette) | `tools.htop` / `term.htop` |
+| Open iftop | `<leader>iI` | (palette) | `tools.iftop` / `term.iftop` |
+| Open btop | `<leader>ir` | (palette) | `tools.btop` / `term.btop` |
+
+### Tools launchers
+
+When the underlying binary isn't on `$PATH`, the launcher (chord, palette command, or rail chip click) opens a one-line prompt:
+
+```
+htop — interactive process viewer — install via `brew install htop`? [y/N]
+```
+
+Press `y` (or accept the seeded answer) to spawn the install command in a Pty pane; `n` / `Esc` to cancel. On macOS the hint is `brew install <pkg>`; on Linux `sudo apt install -y <pkg>`. On Windows the prompt is skipped and a toast prints the hint — the spawn path assumes POSIX (`$SHELL -c …`). After install finishes, fire the launcher again — the binary check re-runs against the live `$PATH`.
 
 ## AI
 
