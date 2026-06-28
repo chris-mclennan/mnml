@@ -72,6 +72,15 @@ fn tab_labels(panes: &[Pane]) -> Vec<String> {
             titles[i] = format!("{parent}/{}", titles[i]);
         }
     }
+    // design-critic Issue 7 — Pty tabs need an at-a-glance visual
+    // marker so they don't read as just-another-tab. Append ` $`
+    // (terminal-prompt convention) so 'terminal (zsh)' becomes
+    // 'terminal (zsh) $'. Cheap, no new style logic needed.
+    for (i, p) in panes.iter().enumerate() {
+        if matches!(p, Pane::Pty(_)) {
+            titles[i] = format!("{} $", titles[i]);
+        }
+    }
     titles
 }
 
