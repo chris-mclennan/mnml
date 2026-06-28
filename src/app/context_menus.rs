@@ -12,6 +12,55 @@ use super::*;
 
 impl App {
     // ─── context menu (right-click) ─────────────────────────────────
+    /// Keyboard equivalent of right-click — opens the context menu
+    /// over whichever surface currently has focus. Mirrors VS Code +
+    /// macOS Shift+F10 convention. Routes by Focus:
+    ///   * Focus::Tree → tree-row context menu over the selected row
+    ///     (uses the rail's last-known x and the row's screen y).
+    ///   * Focus::Pane → bufferline-tab context menu for the active
+    ///     pane (anchor at the active tab's rect).
+    ///   * Other (no selection, cmdline, etc.) → toast.
+    pub fn open_context_menu_at_focus(&mut self) {
+        // Tree: use selected_row + the first tree row rect to derive
+        // a sensible anchor. Without rect data, fall back to (1, 1).
+        if matches!(self.focus, crate::focus::Focus::Tree) {
+            if let Some(row) = self.tree.selected_row() {
+                // Anchor x: rail's left edge plus a few cells; y: try
+                // to grab the y of the selected row from
+                // `tree_icon_buttons` which carries per-row rects.
+                let anchor_y = self
+                    .rects
+                    .tree_icon_buttons
+                    .get(self.tree.cursor())
+                    .map(|(r, _)| r.y)
+                    .unwrap_or(2);
+                let anchor_x = self.rects.tree.map(|r| r.x + 2).unwrap_or(1);
+                self.open_tree_context_menu(row.path, row.is_dir, (anchor_x, anchor_y));
+                return;
+            }
+            self.toast("no tree row selected");
+            return;
+        }
+        // Pane: open the bufferline-tab context menu for the active
+        // pane. Anchor at the tab's rect if we have it; else fall
+        // back to top-left of the body.
+        if matches!(self.focus, crate::focus::Focus::Pane)
+            && let Some(pid) = self.active
+        {
+            let anchor = self
+                .rects
+                .bufferline_tabs
+                .iter()
+                .find(|(_, id)| *id == pid)
+                .map(|(r, _)| (r.x + 1, r.y))
+                .or_else(|| self.rects.body.map(|r| (r.x, r.y)))
+                .unwrap_or((1, 1));
+            self.open_tab_context_menu(pid, anchor);
+            return;
+        }
+        self.toast("no context menu at this focus");
+    }
+
     /// Right-click in the file tree on `path` (at screen cell `anchor`).
     pub fn open_tree_context_menu(&mut self, path: PathBuf, is_dir: bool, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};

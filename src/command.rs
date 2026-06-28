@@ -1487,6 +1487,22 @@ fn builtin_commands() -> Vec<Command> {
                 app.right_panel_visible = !app.right_panel_visible;
             },
         },
+        Command {
+            // vscode-user-keyboard 2026-06-28 SEV-2: keyboard users
+            // had no way to open the right-click context menu over a
+            // focused chip / row / tab. VS Code + macOS convention is
+            // Shift+F10 (and the dedicated Menu key on PCs).
+            // Routes by Focus: Tree → tree-row context menu over the
+            // selected row; Pane → bufferline tab menu for the active
+            // pane. Other focuses toast.
+            id: "view.context_menu_at_focus",
+            title: "Open the context menu for the focused element (Shift+F10)",
+            group: "view",
+            keys: &["Shift+F10"],
+            run: |app| {
+                app.open_context_menu_at_focus();
+            },
+        },
         // vscode-user-keyboard S1-1 — chip toggle / edit / remove had
         // no palette commands; were context-menu-only and so
         // unreachable from the keyboard. Add a picker over the rail's

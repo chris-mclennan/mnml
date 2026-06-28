@@ -11593,6 +11593,24 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_at_focus_opens_tab_menu_when_pane_focused() {
+        // vscode-user-keyboard 2026-06-28 SEV-2: keyboard users
+        // couldn't open a context menu without a mouse. Shift+F10
+        // now fires view.context_menu_at_focus, which routes to
+        // the active pane's bufferline-tab menu when Focus::Pane.
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.focus = crate::focus::Focus::Pane;
+        assert!(app.context_menu.is_none());
+        crate::command::run("view.context_menu_at_focus", &mut app);
+        assert!(
+            app.context_menu.is_some(),
+            "Shift+F10 with Focus::Pane should open the tab context menu"
+        );
+    }
+
+    #[test]
     fn leader_chord_two_keys_fires_in_standard_mode() {
         // vscode-user-keyboard SEV-2: in standard input mode the
         // chord chain bottomed out on `Ctrl+K t` and fired the
