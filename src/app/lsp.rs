@@ -593,26 +593,41 @@ impl App {
                 o.items.clear();
                 o.clamp();
             }
-            self.reveal_pane(id);
+            // If the existing outline is the right-panel host,
+            // don't reveal_pane (which routes through the layout
+            // tree). Just leave it where it is.
+            if self.right_panel_pane_id != Some(id) {
+                self.reveal_pane(id);
+            }
         } else {
             let pane = Pane::Outline(crate::lsp::outline_pane::OutlinePane::new(
                 path.clone(),
                 Vec::new(),
             ));
-            match self.active {
-                Some(cur) => {
-                    let new_id =
-                        self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
-                    self.active = Some(new_id);
+            // Right-panel v2: when the panel is open, host the
+            // outline there instead of carving a horizontal split.
+            // The editor body keeps its full width; the panel
+            // shows the outline in its (typically 32-cell) column.
+            if self.right_panel_visible {
+                self.panes.push(pane);
+                let new_id = self.panes.len() - 1;
+                self.right_panel_pane_id = Some(new_id);
+            } else {
+                match self.active {
+                    Some(cur) => {
+                        let new_id =
+                            self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
+                        self.active = Some(new_id);
+                    }
+                    None => {
+                        self.panes.push(pane);
+                        let id = self.panes.len() - 1;
+                        *self.layout_mut() = Layout::leaf(id);
+                        self.active = Some(id);
+                    }
                 }
-                None => {
-                    self.panes.push(pane);
-                    let id = self.panes.len() - 1;
-                    *self.layout_mut() = Layout::leaf(id);
-                    self.active = Some(id);
-                }
+                self.focus = Focus::Pane;
             }
-            self.focus = Focus::Pane;
         }
         // Markdown buffers don't need a language server — extract headings
         // directly from the text and populate the pane synchronously.

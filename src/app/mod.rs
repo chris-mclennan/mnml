@@ -2476,6 +2476,13 @@ pub struct App {
     pub right_panel_width: u16,
     /// True while the user is mid-drag on the right panel's left-edge handle.
     pub dragging_right_panel_edge: bool,
+    /// When `Some(pid)`, the right panel is hosting that pane (instead
+    /// of showing the empty-state copy). `outline.show` and
+    /// `lsp.diagnostics` route here when the panel is visible — the
+    /// pane renders inside the column rather than splitting the
+    /// editor. Set to `None` when the panel closes or the hosted
+    /// pane is removed. Right-panel v2 from the design-critic plan.
+    pub right_panel_pane_id: Option<usize>,
     /// User-set MAX height for the INTEGRATIONS rail section. `None`
     /// = auto-size to content needed (the default). When `Some(h)`,
     /// the layout uses `min(h, content_needed)` so a too-large cap
@@ -3733,6 +3740,7 @@ impl App {
             right_panel_visible: right_panel_visible_default,
             right_panel_width: right_panel_width_default,
             dragging_right_panel_edge: false,
+            right_panel_pane_id: None,
             integrations_user_max_h: None,
             git_user_max_h: None,
             rail_section_drag: None,
@@ -5542,10 +5550,23 @@ impl App {
                 d.items = fresh.items;
                 d.clamp();
             }
-            self.reveal_pane(id);
+            // If already hosted in the right panel, don't reveal_pane
+            // (which routes through the layout tree).
+            if self.right_panel_pane_id != Some(id) {
+                self.reveal_pane(id);
+            }
             return;
         }
         let pane = Pane::Diagnostics(self.build_diagnostics_pane());
+        // Right-panel v2: host in the panel when it's open (swap if
+        // an Outline pane is currently hosted — last-opened wins,
+        // matches the design-critic plan since v2 has no tab strip).
+        if self.right_panel_visible {
+            self.panes.push(pane);
+            let new_id = self.panes.len() - 1;
+            self.right_panel_pane_id = Some(new_id);
+            return;
+        }
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
@@ -11590,6 +11611,40 @@ mod tests {
         assert_eq!(app.right_panel_visible, !initial, "first toggle flips");
         crate::command::run("view.toggle_right_panel", &mut app);
         assert_eq!(app.right_panel_visible, initial, "second toggle restores");
+    }
+
+    #[test]
+    fn outline_show_routes_to_right_panel_when_visible() {
+        // Right-panel v2: `outline.show` with right_panel_visible=true
+        // hosts the outline pane in the panel (no layout split) and
+        // sets right_panel_pane_id. Toggling the panel off clears it.
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.right_panel_visible = true;
+        let pane_count_before = app.panes.len();
+        app.open_outline_pane();
+        assert!(
+            app.right_panel_pane_id.is_some(),
+            "outline.show with panel visible should set right_panel_pane_id"
+        );
+        let outline_id = app.right_panel_pane_id.unwrap();
+        assert!(
+            matches!(app.panes.get(outline_id), Some(Pane::Outline(_))),
+            "right_panel_pane_id should point to the outline pane"
+        );
+        assert_eq!(
+            app.panes.len(),
+            pane_count_before + 1,
+            "outline pane added to app.panes"
+        );
+        // Toggling the panel off clears the host pointer.
+        crate::command::run("view.toggle_right_panel", &mut app);
+        assert!(!app.right_panel_visible);
+        assert!(
+            app.right_panel_pane_id.is_none(),
+            "toggling panel off clears right_panel_pane_id"
+        );
     }
 
     #[test]

@@ -1485,6 +1485,13 @@ fn builtin_commands() -> Vec<Command> {
             keys: &["Ctrl+Shift+B"],
             run: |app| {
                 app.right_panel_visible = !app.right_panel_visible;
+                // Right-panel v2: when hiding the panel, evict the
+                // hosted pane id so re-opening the panel returns to
+                // the empty-state copy. The pane itself stays in
+                // `app.panes` — re-firing `outline.show` rehosts it.
+                if !app.right_panel_visible {
+                    app.right_panel_pane_id = None;
+                }
             },
         },
         Command {

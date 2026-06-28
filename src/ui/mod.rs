@@ -568,6 +568,22 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             ratatui::widgets::Block::default().style(Style::default().bg(t.bg_darker)),
             rpa,
         );
+        // Right-panel v2 (2026-06-28): if the panel is hosting a
+        // pane (`right_panel_pane_id`), render it in the column
+        // body below the header. Otherwise show the empty-state
+        // copy that teaches the user how to populate it.
+        let hosted_pane = app
+            .right_panel_pane_id
+            .filter(|id| app.panes.get(*id).is_some());
+        let header_label: String = if let Some(pid) = hosted_pane {
+            match app.panes.get(pid) {
+                Some(crate::pane::Pane::Outline(_)) => " OUTLINE".to_string(),
+                Some(crate::pane::Pane::Diagnostics(_)) => " DIAGNOSTICS".to_string(),
+                _ => " SIDE PANEL".to_string(),
+            }
+        } else {
+            " SIDE PANEL".to_string()
+        };
         if rpa.height >= 1 && rpa.width >= 4 {
             let header_rect = Rect {
                 x: rpa.x,
@@ -576,7 +592,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 height: 1,
             };
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(" SIDE PANEL").style(
+                ratatui::widgets::Paragraph::new(header_label).style(
                     Style::default()
                         .fg(t.comment)
                         .bg(t.bg_darker)
@@ -585,19 +601,41 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 header_rect,
             );
         }
-        if rpa.height >= 4 && rpa.width >= 16 {
+        if let Some(pid) = hosted_pane {
+            // Body is the area below the header row.
+            let body = Rect {
+                x: rpa.x,
+                y: rpa.y + 1,
+                width: rpa.width,
+                height: rpa.height.saturating_sub(1),
+            };
+            // We only route Outline + Diagnostics into the right
+            // panel for v2. Both have their own pane renderers.
+            let focused = app.active == Some(pid);
+            match app.panes.get(pid) {
+                Some(crate::pane::Pane::Outline(_)) => {
+                    outline_view::draw(frame, app, pid, body, focused);
+                }
+                Some(crate::pane::Pane::Diagnostics(_)) => {
+                    diagnostics_view::draw(frame, app, pid, body, focused);
+                }
+                _ => {}
+            }
+        } else if rpa.height >= 5 && rpa.width >= 16 {
             let hint_rect = Rect {
                 x: rpa.x + 1,
                 y: rpa.y + 2,
                 width: rpa.width.saturating_sub(2),
-                height: 4,
+                height: 5,
             };
-            // design-critic Issue 4 — user-facing copy with the escape
-            // chord, not "dock widgets land here later" dev TODO.
+            // design-critic v2 — teach the user what content goes
+            // here. Two commands listed; both work today.
             frame.render_widget(
-                ratatui::widgets::Paragraph::new("Nothing here yet.\n\nHide with Ctrl+Shift+B.")
-                    .style(Style::default().fg(t.comment).bg(t.bg_darker))
-                    .wrap(ratatui::widgets::Wrap { trim: false }),
+                ratatui::widgets::Paragraph::new(
+                    "Nothing here yet.\n\n:outline.show\n:lsp.diagnostics\n\nHide with Ctrl+Shift+B.",
+                )
+                .style(Style::default().fg(t.comment).bg(t.bg_darker))
+                .wrap(ratatui::widgets::Wrap { trim: false }),
                 hint_rect,
             );
         }
