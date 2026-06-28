@@ -146,103 +146,10 @@ fn paint_corner_stack(
             width: widget_w,
             height: widget_h,
         };
-        // Solid widgets get a Clear (wipes the editor cells
-        // underneath) + a solid bg. Translucent widgets skip
-        // the Clear so the editor text shows through the body;
-        // border + title still get a bg so the chrome is
-        // visible.
-        let translucent = matches!(w.opacity, Opacity::Translucent);
-        if !translucent {
-            frame.render_widget(Clear, widget_rect);
-        }
-
-        // Block border + (maybe) bg.
-        let block = if translucent {
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default().fg(t.comment))
-        } else {
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default().fg(t.comment).bg(t.bg2))
-        };
-        let inner = block.inner(widget_rect);
-        frame.render_widget(block, widget_rect);
-
-        // Title bar (top row of inner area) + kebab `⋮` at the
-        // rightmost cell. Close lives in the kebab menu now.
-        if inner.width > 4 {
-            // Widget being dragged → highlight the title bar with
-            // an accent bg so the user knows the press registered
-            // and mouse-up will move it.
-            let is_dragging = app.dock_drag_id == Some(w.id);
-            let title_bg = if is_dragging { t.cyan } else { t.bg2 };
-            let title_fg = if is_dragging { t.bg } else { t.fg };
-            let kebab_glyph = "⋮";
-            let drag_hint = if is_dragging { " ⇲ " } else { "" };
-            let title_w = inner
-                .width
-                .saturating_sub(2 + drag_hint.chars().count() as u16);
-            let title_clipped: String = w.title.chars().take(title_w as usize).collect();
-            let pad = (title_w as usize).saturating_sub(title_clipped.chars().count());
-            let title_line = Line::from(vec![
-                Span::styled(
-                    title_clipped,
-                    Style::default()
-                        .fg(title_fg)
-                        .bg(title_bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" ".repeat(pad), Style::default().bg(title_bg)),
-                Span::styled(drag_hint, Style::default().fg(title_fg).bg(title_bg)),
-                Span::styled(kebab_glyph, Style::default().fg(title_fg).bg(title_bg)),
-                Span::styled(" ", Style::default().bg(title_bg)),
-            ]);
-            let title_rect = Rect {
-                x: inner.x,
-                y: inner.y,
-                width: inner.width,
-                height: 1,
-            };
-            frame.render_widget(Paragraph::new(title_line), title_rect);
-            // Kebab `⋮` click rect — the rightmost 1 cell.
-            let kebab_rect = Rect {
-                x: inner.x + inner.width - 2,
-                y: inner.y,
-                width: 1,
-                height: 1,
-            };
-            app.rects.dock_widget_kebabs.push((kebab_rect, w.id));
-            // Title-bar drag-anchor rect — everything EXCEPT the
-            // kebab glyph.
-            let title_drag_rect = Rect {
-                x: inner.x,
-                y: inner.y,
-                width: inner.width.saturating_sub(2),
-                height: 1,
-            };
-            app.rects.dock_widget_titles.push((title_drag_rect, w.id));
-        }
-
-        // Body content (inner minus title row).
-        if inner.height >= 2 {
-            let body_rect = Rect {
-                x: inner.x,
-                y: inner.y + 1,
-                width: inner.width,
-                height: inner.height - 1,
-            };
-            match &w.content {
-                DockContent::Text(s) => {
-                    render_text_body(frame, body_rect, s, t);
-                }
-                DockContent::LogTail { path, max_lines } => {
-                    render_log_tail_body(frame, body_rect, path, *max_lines, t, None);
-                }
-            }
-            app.rects.dock_widget_bodies.push((body_rect, w.id));
-        }
-
+        // code-reviewer S1-3 — was inlined here; delegate to
+        // paint_one_widget so Overlay widgets pick up the same
+        // tail-overflow ▼N badge as inline ones.
+        paint_one_widget(frame, app, w, widget_rect, t);
         painted_h = painted_h.saturating_add(widget_h);
     }
 }
