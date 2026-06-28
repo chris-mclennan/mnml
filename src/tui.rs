@@ -7082,11 +7082,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 // vscode-user-mouse SEV-1 — mirror of dragging_tree_edge.
                 // The grip glyph + edge rect were rendered but no drag
                 // handler existed, so the panel was decorative.
+                // mouse-verify follow-up — body.x + body.width is the
+                // body's right edge, which is the PANEL's left edge
+                // (not the screen's right edge) when the panel is
+                // open; the drag direction worked but not 1:1.
+                // Statusline spans full width so it's the reliable
+                // screen-right reference.
                 let screen_w = app
                     .rects
-                    .body
+                    .statusline
                     .map(|r| r.x + r.width)
-                    .or_else(|| app.rects.statusline.map(|r| r.x + r.width))
+                    .or_else(|| app.rects.body.map(|r| r.x + r.width))
                     .unwrap_or(120);
                 let new_w = screen_w.saturating_sub(x).clamp(8, 120);
                 app.right_panel_width = new_w;

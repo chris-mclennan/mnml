@@ -1554,9 +1554,24 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     if menu_visible {
         let menus = crate::menu_bar::bar();
         let mut mx = area.x;
+        // mouse-verify #4 follow-up — the prior bg-overpaint fix
+        // covered the cluster's exact footprint, but menu words
+        // that START left of the cluster and EXTEND INTO it had
+        // their leading cells survive (the 'Vi' leak). Conservative
+        // cluster-left estimate: cluster is dominated by the
+        // 30-cell workspace chip; safe overestimate is 50 cells.
+        // Stop painting menu words at that x so none of their
+        // tail can poke into the cluster footprint.
+        const CONSERVATIVE_CLUSTER_W: u16 = 50;
+        let cluster_left_safe = area
+            .x
+            .saturating_add(area.width.saturating_sub(CONSERVATIVE_CLUSTER_W) / 2);
         for (i, m) in menus.iter().enumerate() {
             let label_w = m.label.chars().count() as u16 + 2;
             if mx.saturating_add(label_w) > area.x + area.width {
+                break;
+            }
+            if mx.saturating_add(label_w) > cluster_left_safe {
                 break;
             }
             let word_rect = Rect {
