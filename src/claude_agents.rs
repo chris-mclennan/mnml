@@ -895,8 +895,25 @@ impl ClaudeAgentsPane {
     }
 
     pub fn cycle_sort(&mut self) {
+        // claude-agents-power-user 2026-06-28 finding 4: preserve
+        // the focused row across sort cycles. A power user watching
+        // a specific session mid-list shouldn't be sent back to the
+        // top on every `s` press. Capture the active row's sid
+        // BEFORE flipping the order, then re-locate it after.
+        let prior_sid = self
+            .visible_indices()
+            .get(self.selected)
+            .and_then(|i| self.rows.get(*i).map(|r| r.session_id.clone()));
         self.sort_by = self.sort_by.cycle();
-        self.selected = 0;
+        if let Some(sid) = prior_sid {
+            let new_vi = self
+                .visible_indices()
+                .iter()
+                .position(|i| self.rows.get(*i).map(|r| &r.session_id) == Some(&sid));
+            self.selected = new_vi.unwrap_or(0);
+        } else {
+            self.selected = 0;
+        }
     }
 
     pub fn clear_multi_selected(&mut self) {

@@ -115,17 +115,19 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('e', cmd("view.toggle_tree", "explorer")),
                             ('r', cmd("view.toggle_right_panel", "right panel")),
-                            (
-                                ']',
-                                cmd("view.right_panel_next_tab", "right panel: next tab"),
-                            ),
-                            (
-                                '[',
-                                cmd("view.right_panel_prev_tab", "right panel: prev tab"),
-                            ),
+                            (']', cmd("view.right_panel_next_tab", "right panel: next")),
+                            ('[', cmd("view.right_panel_prev_tab", "right panel: prev")),
+                            // design-critic end-of-day #10 — "close"
+                            // is destructive language under +toggle.
+                            // Phrase as "evict" (matches the × icon
+                            // semantic) so the user understands it
+                            // doesn't toggle anything visible.
                             (
                                 'x',
-                                cmd("view.right_panel_close_tab", "right panel: close tab"),
+                                cmd(
+                                    "view.right_panel_close_tab",
+                                    "right panel: evict active tab",
+                                ),
                             ),
                             ('k', cmd("editor.toggle_keymap", "vim ⇄ standard")),
                             ('t', cmd("theme.pick", "theme…")),

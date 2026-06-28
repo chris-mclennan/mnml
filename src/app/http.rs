@@ -2124,7 +2124,7 @@ impl App {
             self.toast("http.save_mock: no active pane");
             return;
         };
-        let (source_path, mock) = match self.panes.get(cur) {
+        let (source_path, source_block_name, mock) = match self.panes.get(cur) {
             Some(Pane::Request(rp)) => {
                 let Some(rp_path) = rp.source_path.as_ref() else {
                     self.toast("http.save_mock: pane has no source file path");
@@ -2136,6 +2136,7 @@ impl App {
                 };
                 (
                     rp_path.clone(),
+                    rp.source_block_name.clone(),
                     crate::http::mock::Mock {
                         status: rv.status,
                         status_text: rv.status_text.clone(),
@@ -2149,7 +2150,11 @@ impl App {
                 return;
             }
         };
-        let mock_path = crate::http::mock::sibling_path(&source_path);
+        // http-2nd SEV-2: multi-block .http files share the sibling
+        // path so block A's mock overwrote block B's. Use per-block
+        // path when a named block is the source.
+        let mock_path =
+            crate::http::mock::sibling_path_for_block(&source_path, source_block_name.as_deref());
         match crate::http::mock::save(&mock_path, &mock) {
             Ok(()) => self.toast(format!("saved mock → {}", mock_path.display())),
             Err(e) => self.toast(format!("http.save_mock: {e}")),
@@ -2172,7 +2177,10 @@ impl App {
                     self.toast("http.replay_mock: pane has no source file path");
                     return;
                 };
-                crate::http::mock::sibling_path(p)
+                // http-2nd SEV-2: prefer the per-block path when
+                // the source has a named block; fall back to the
+                // bare sibling for unnamed leading blocks.
+                crate::http::mock::sibling_path_for_block(p, rp.source_block_name.as_deref())
             }
             _ => {
                 self.toast("http.replay_mock: needs an active Request pane");

@@ -99,6 +99,40 @@ pub fn sibling_path(request: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// http-2nd 2026-06-28 SEV-2: multi-block .http files share the
+/// SAME mock sidecar across every block, so :http.save_mock from
+/// block A overwrites the mock just saved from block B. Use a
+/// per-block path when the source has a named block: e.g.
+/// `requests.http` + block `list-users` → `requests.list-users.http.mock.json`.
+/// Unnamed leading blocks fall back to the bare sibling path.
+pub fn sibling_path_for_block(request: &Path, block_name: Option<&str>) -> PathBuf {
+    let Some(name) = block_name else {
+        return sibling_path(request);
+    };
+    // Sanitize the block name to filesystem-safe — replace slashes
+    // and other path-conflict chars with `-`.
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let stem = request
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("requests");
+    let ext = request
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("http");
+    let parent = request.parent().unwrap_or_else(|| Path::new(""));
+    parent.join(format!("{stem}.{sanitized}.{ext}.mock.json"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
