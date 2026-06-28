@@ -86,6 +86,23 @@ impl App {
         use crate::picker::PickerItem;
         use std::collections::HashSet;
         let root = self.workspace.clone();
+        // vscode-user SEV-3 — VS Code's Ctrl+P excludes .git, node_modules,
+        // target by default via files.exclude. Mirror that so the picker
+        // doesn't surface .git/HEAD, build artifacts, etc.
+        let is_noise = |path: &std::path::Path| -> bool {
+            for component in path.components() {
+                if let std::path::Component::Normal(name) = component {
+                    let s = name.to_string_lossy();
+                    if matches!(
+                        s.as_ref(),
+                        ".git" | "node_modules" | "target" | ".next" | "dist" | "build"
+                    ) {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
         let make_item = |p: &Path| -> PickerItem {
             let rel = p.strip_prefix(&root).unwrap_or(p).to_path_buf();
             let label = rel.to_string_lossy().to_string();
@@ -100,13 +117,13 @@ impl App {
         let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut items: Vec<PickerItem> = Vec::new();
         for p in &self.recent_files {
-            if seen.insert(p.clone()) && p.exists() {
+            if seen.insert(p.clone()) && p.exists() && !is_noise(p) {
                 items.push(make_item(p));
             }
         }
         // Then the rest of the primary workspace, skipping anything already in.
         for p in self.tree.all_files() {
-            if seen.insert(p.clone()) {
+            if !is_noise(&p) && seen.insert(p.clone()) {
                 items.push(make_item(&p));
             }
         }
@@ -116,7 +133,7 @@ impl App {
         // of "this is the workspace I opened".
         for ws in &self.extra_workspaces {
             for p in ws.tree.all_files() {
-                if seen.insert(p.clone()) {
+                if !is_noise(&p) && seen.insert(p.clone()) {
                     items.push(make_item(&p));
                 }
             }

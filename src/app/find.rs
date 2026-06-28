@@ -512,7 +512,16 @@ impl App {
                 ));
             }
             Some(_) => self.toast("no matches to replace — refine the find query"),
-            None => self.toast("find first (Ctrl+F)"),
+            None => {
+                // vscode-user SEV-3 — Ctrl+H used to toast 'find first'
+                // and stop. VS Code opens the find bar directly with
+                // replace mode active. We don't have a separate
+                // 'replace mode' flag, but we can at least open the
+                // find prompt for the user so they don't have to hit
+                // Ctrl+F separately.
+                self.open_find_prompt();
+                self.toast("Ctrl+H: type a find pattern, then Ctrl+H again to replace");
+            }
         }
     }
 
