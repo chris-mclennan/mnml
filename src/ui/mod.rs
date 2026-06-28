@@ -156,6 +156,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // right-clicks on rail workspace headers (showing the Cloud
     // Agents "View details / Stop session" menu instead).
     app.rects.cloud_agents_rows.clear();
+    // render-reviewer 2026-06-28 — five more leaking rect vecs:
+    //   #1 split_strip_ai_buttons missed the zen-mode clear path.
+    //   #2 request_edit_tabs never cleared at frame top (per-pane
+    //      retain leaves entries from closed request panes).
+    //   #4 extra_workspace_bodies + extra_workspace_toggles +
+    //      rail_git_header_buttons only cleared inside Explorer
+    //      section paint — section switches let stale rects
+    //      survive at on-screen positions.
+    //   #5 help_section_headers only cleared inside help_overlay
+    //      body block, not on its early-return-when-closed path.
+    app.rects.split_strip_ai_buttons.clear();
+    app.rects.request_edit_tabs.clear();
+    app.rects.extra_workspace_bodies.clear();
+    app.rects.extra_workspace_toggles.clear();
+    app.rects.rail_git_header_buttons.clear();
+    app.rects.help_section_headers.clear();
+    // render-reviewer #3 — workspace chevron + name rect were not
+    // cleared when the tree was hidden; their stale positions kept
+    // catching clicks at the top-left rail corner.
+    app.rects.workspace_picker_chevron = None;
+    app.rects.workspace_name_rect = None;
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
