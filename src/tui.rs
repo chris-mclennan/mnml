@@ -4862,6 +4862,26 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
 
     match m.kind {
         MouseEventKind::Down(MouseButton::Right) => {
+            // vscode-user-mouse SEV-3 — right-click on the palette
+            // search chip mirrors the dropdown chevron and opens
+            // recents directly (browser-style "back / forward / open
+            // recents" via context menu).
+            if let Some(r) = app.rects.palette_search_chip
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                let _ = crate::command::run("picker.recent", app);
+                return;
+            }
+            // Right-click on the activity-bar gear mirrors left-click
+            // — opens the same Settings / Cmd Palette / Themes /
+            // About menu (matches macOS gear-icon UX where right-click
+            // is the canonical way to expose options).
+            if let Some(r) = app.rects.activity_bar_gear
+                && crate::app::dispatch::contains(r, x, y)
+            {
+                app.open_gear_context_menu((x, y));
+                return;
+            }
             // Right-click on a session tab → context menu.
             if let Some(&(_, pid)) = app
                 .rects
