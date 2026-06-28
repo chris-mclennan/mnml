@@ -1604,11 +1604,12 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let nav_enabled = app.panes.len() > 1;
     let nav_fg = if nav_enabled { t.fg } else { t.comment };
 
-    // Right-panel toggle — mirrors sidebar_glyph. Trims its left
-    // pad (same trick) so the icon sits one cell closer to the
-    // dropdown chevron.
+    // Right-panel toggle — mirror of sidebar icon. Full ` icon `
+    // padding (3 cells) so it sits one cell further from the
+    // dropdown chevron than the sidebar icon does from the back
+    // arrow — user wanted breathing room on this side.
     let right_panel_glyph = if ascii { "|" } else { "\u{EC02}" };
-    let right_panel_str = format!("{right_panel_glyph} ");
+    let right_panel_str = format!(" {right_panel_glyph} ");
     let sidebar_w = sidebar_str.chars().count() as u16;
     let right_panel_w = right_panel_str.chars().count() as u16;
     let back_w = back_str.chars().count() as u16;
