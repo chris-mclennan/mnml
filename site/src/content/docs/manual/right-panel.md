@@ -23,18 +23,32 @@ The panel is opt-in. It opens with `Ctrl+Shift+B` (the natural mirror of `Ctrl+B
 
 The panel's visibility, width, and currently-hosted pane id all round-trip through `<workspace>/.mnml/session.json`, so restart mnml and the panel comes back exactly as you left it.
 
-## Hosted panes (v2)
+## Hosted panes (v3 + v4 tab strip)
 
-![open lib.rs, open the panel, outline.show hosts in the column, lsp.diagnostics replaces it (last-opened wins), click × to evict the hosted pane while keeping the column open](../../../assets/tapes/right-panel-v2-hosting.gif)
+![open lib.rs, open the panel, outline.show + lsp.diagnostics both host as TABS, click between them or use Ctrl+Shift+[ / Ctrl+Shift+] to cycle, × closes the active tab, panel stays open](../../../assets/tapes/right-panel-v2-hosting.gif)
 
-Two commands route their pane into the panel when it's open:
+Three commands route their pane into the panel as a **tab** when it's open:
 
-- **`outline.show`** — the LSP Outline pane (symbols sidebar for the active file). Default chord `<leader>lo` (vim) or palette. Header reads ` OUTLINE`.
-- **`lsp.diagnostics`** — the workspace-wide Problems list. Default chord `<leader>le` (vim) or palette. Header reads ` DIAGNOSTICS`.
+- **`outline.show`** — the LSP Outline pane (symbols sidebar for the active file). Default chord `<leader>lo` (vim) or palette. Tab label shows `<filename> ⌥<symbol-count>`.
+- **`lsp.diagnostics`** — the workspace-wide Problems list. Default chord `<leader>le` (vim) or palette. Tab label shows `problems ✗<errors> ⚠<warnings>`.
+- **`ai.chat`** / `ai.ask` / `ai.explain` / … — the AI chat pane (v4, 2026-06-28). Tab label shows `<title> ●/✦/✗/…` (state-marker). When the panel column is narrower than 40 cells, a one-line hint at the top of the chat body suggests dragging the edge wider.
 
-When the panel is **closed**, these commands fall back to their pre-v2 behavior: Outline splits horizontally above the active editor; Diagnostics opens a vertical split below the focused leaf. When the panel is **open**, they push the pane into `app.panes` and store its id in `app.right_panel_pane_id` — the editor body keeps its full width, and the pane renders inside the panel's column instead.
+When the panel is **closed**, these commands fall back to their pre-panel behavior: Outline splits horizontally above the active editor; Diagnostics opens a vertical split below the focused leaf; AI opens as a horizontal split next to the editor. When the panel is **open**, the pane is pushed into `app.right_panel_panes` as a new tab — the editor body keeps its full width, and the panel renders the active tab inside its column.
 
-Last-opened wins. If the Outline is hosted and you fire `lsp.diagnostics`, the diagnostics pane replaces it. The displaced pane stays in `app.panes` (it isn't dropped); firing the displaced command again rehosts it. There's no tab strip inside the panel — that's a v3 question.
+The tab strip caps at **3** simultaneous tabs. Pushing a 4th displaces the oldest (FIFO) with a toast so you know what happened. Tabs you don't see scroll off the right edge — the label truncates with `…` so long titles still fit.
+
+### Switching, closing, opening
+
+| Gesture | What it does |
+|---|---|
+| `Ctrl+Shift+]` (or `<leader>t]`) | Switch to the next tab in the strip |
+| `Ctrl+Shift+[` (or `<leader>t[`) | Previous tab |
+| `<leader>tx` | Close the active tab |
+| Click a tab chip | Switch to that tab |
+| Click the `×` button | Close the active tab |
+| Right-click an inactive tab | Menu: Switch to this tab / Close tab / Hide side panel |
+| Right-click the active tab | Menu: Close tab / Hide side panel |
+| Click `:outline.show` / `:lsp.diagnostics` in the empty state | Fires that command directly — mouse path to populate the panel |
 
 ### Empty state
 
@@ -114,25 +128,22 @@ right_panel_width   = 32      # initial width in cells
 
 Both also round-trip through `<workspace>/.mnml/session.json` — the workspace's last-saved width and visibility override the config defaults on re-open. Delete the session file (`rm .mnml/session.json`) to fall back to the TOML defaults.
 
-The hosted-pane id (`right_panel_pane_id`) is **not** persisted across mnml restarts — re-fire `outline.show` / `lsp.diagnostics` after open to repopulate.
+The hosted-pane list (`right_panel_panes`) is **not** persisted across mnml restarts — re-fire `outline.show` / `lsp.diagnostics` / `ai.chat` after open to repopulate.
 
-## What's not in v2
+## What's still ahead
 
-The design-critic plan leaves a few items for v3 and beyond:
-
-- **No tab strip.** Hosting a second pane evicts the first. A tab strip would let both Outline and Diagnostics live in the panel and switch with `gt` / `gT`.
-- **No pluggable hosts.** Only `Pane::Outline` and `Pane::Diagnostics` route into the panel today. Other panes (chat, dock-widget-as-rail, search) are candidates for v3.
-- **No vertical resize hint.** The "too narrow" warning fires for width, but not for very short panels — a 3-row panel still tries to render its pane and just looks squashed.
-
-If you want any of these, open an issue — they're scoped, not unknowns.
+- **Pluggable hosts.** Only Outline, Diagnostics, and AI route into the panel today. Other panes (test output, grep, browser) are candidates for v5.
+- **Overflow chevrons.** The 3-tab cap displaces FIFO with a toast; lifting the cap needs left/right scroll chevrons on the tab strip (same shape as the bufferline).
+- **Persistent host list.** Saving `right_panel_panes` to `session.json` would re-host the panel exactly as you left it.
 
 ## Source
 
-- `src/app/mod.rs` — `right_panel_visible`, `right_panel_width`, `right_panel_pane_id`, `dragging_right_panel_edge`.
-- `src/ui/mod.rs` — the layout split that carves the column (`right_panel_area`), the header / `×` / too-narrow / empty-state painters, the drag-grip indicator.
+- `src/app/mod.rs` — `right_panel_visible`, `right_panel_width`, `right_panel_panes`, `right_panel_active_idx`, `right_panel_push`, `close_right_panel_hosted_panes`, `RIGHT_PANEL_MAX_TABS`.
+- `src/ui/mod.rs` — the layout split that carves the column (`right_panel_area`), the tab-strip painter, the header / `×` / too-narrow / empty-state painters, the drag-grip indicator.
 - `src/app/ex_commands.rs` — `:set rightpanel` / `:set rightpanel!` / `:set norightpanel`.
-- `src/command.rs` — `view.toggle_right_panel` (`Ctrl+Shift+B`).
-- `src/app/lsp.rs` — `open_outline_pane` (routes into the panel when `right_panel_visible`).
+- `src/command.rs` — `view.toggle_right_panel` (`Ctrl+Shift+B`), `view.right_panel_{next,prev,close}_tab`.
+- `src/app/lsp.rs` — `open_outline_pane` and `open_diagnostics_pane` (route into the panel when visible).
+- `src/app/ai.rs` — `ask_ai` (routes AI chat into the panel when visible).
 - `src/app/mod.rs::open_diagnostics_pane` — same routing for `lsp.diagnostics`.
 - `src/app/session.rs` — visibility + width round-trip.
 
