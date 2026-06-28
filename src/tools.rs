@@ -241,12 +241,21 @@ pub struct ExternalTool {
 /// Windows user gets a winget / scoop hint. Used by both the
 /// external-tool launcher and the LSP missing-binary path.
 pub fn install_hint(brew_pkg: &str, apt_pkg: &str) -> String {
+    // Returns a clean shell-executable command — no parentheticals
+    // or alternatives — so callers can both display AND run it.
     match std::env::consts::OS {
         "macos" => format!("brew install {brew_pkg}"),
-        "linux" => format!("sudo apt install {apt_pkg}  (or your distro's equivalent)"),
-        "windows" => format!("winget install {brew_pkg}  (or scoop install {brew_pkg})"),
+        "linux" => format!("sudo apt install -y {apt_pkg}"),
         _ => format!("install {brew_pkg} via your package manager"),
     }
+}
+
+/// Whether `install_hint` returns a command that's safe to actually
+/// SPAWN (vs just toast as a hint). True on macOS + Linux (brew /
+/// apt are reasonable assumptions); false elsewhere where there's
+/// no single canonical package manager.
+pub fn install_is_spawnable() -> bool {
+    matches!(std::env::consts::OS, "macos" | "linux")
 }
 
 pub const EXTERNAL_TOOLS: &[ExternalTool] = &[

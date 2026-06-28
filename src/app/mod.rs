@@ -7677,10 +7677,18 @@ impl App {
             ));
             return;
         }
-        // Not installed — offer to install. Open a confirm prompt
-        // pre-filled with `y`; on accept we spawn the install in a
-        // Pty pane so the user sees brew/apt's progress live.
+        // Not installed. On macOS + Linux we offer to install via
+        // brew / apt; elsewhere (Windows / unknown OS) we just
+        // toast a hint since there's no single canonical package
+        // manager + the `$SHELL -c` Pty spawn assumes POSIX.
         let install_cmd = crate::tools::install_hint(tool.brew_pkg, tool.apt_pkg);
+        if !crate::tools::install_is_spawnable() {
+            self.toast(format!(
+                "{label}: not installed. Try `{install_cmd}`",
+                label = tool.label
+            ));
+            return;
+        }
         self.pending_tool_install = Some((tool.id.to_string(), install_cmd.clone()));
         self.prompt = Some(crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::ToolInstallConfirm,
