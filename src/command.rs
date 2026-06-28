@@ -952,13 +952,13 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "lsp.peek_definition_overlay",
-            title: "LSP: peek definition as a floating overlay (cursor doesn't move)",
+            title: "LSP: peek definition as a floating overlay (cursor doesn't move; VS Code Alt+F12)",
             group: "lsp",
             // True VS Code Alt+F12: a bordered box pops up over the
             // editor showing ~15 lines around the def. Esc closes;
             // arrows / j/k / PgUp/PgDn scroll within the box.
             // Cursor stays exactly where it was on close.
-            keys: &[],
+            keys: &["Alt+F12"],
             run: |app| app.peek_definition_overlay(),
         },
         Command {

@@ -557,6 +557,13 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Enter if net_focus => app.open_net_entry_as_request(),
             KeyCode::Char('g') => app.browser_navigate_prompt(),
             KeyCode::Char('e') => app.browser_eval_prompt(),
+            // Browser nav polish 2026-06-28 — VS Code / mainstream
+            // browser muscle memory: Alt+Left / Alt+Right go
+            // back / forward through history. Active only when
+            // a Browser pane has focus, so they don't steal from
+            // the editor.
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => app.browser_back(),
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => app.browser_forward(),
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.open_browser_history_picker()
             }
