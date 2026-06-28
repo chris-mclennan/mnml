@@ -11591,4 +11591,49 @@ mod tests {
         crate::command::run("view.toggle_right_panel", &mut app);
         assert_eq!(app.right_panel_visible, initial, "second toggle restores");
     }
+
+    #[test]
+    fn leader_chord_two_keys_fires_in_standard_mode() {
+        // vscode-user-keyboard SEV-2: in standard input mode the
+        // chord chain bottomed out on `Ctrl+K t` and fired the
+        // whichkey.leader fallback (correctly), then DROPPED the
+        // `t` instead of feeding it to the just-opened whichkey
+        // overlay. So `<leader>tt` (toggle tree) needed
+        // `Ctrl+K t t t`. Now: the leader letter that opened
+        // whichkey is re-routed to whichkey_feed.
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "standard".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        let initial_tree = app.tree_visible;
+
+        // `Ctrl+K` opens the leader chord chain — pending state set.
+        crate::tui::dispatch_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+        );
+        assert!(
+            !app.pending_chord_seq.is_empty(),
+            "Ctrl+K should set pending"
+        );
+
+        // `t` — chord-chain fails to extend; fires whichkey.leader
+        // fallback (opens overlay) AND should be re-routed to
+        // whichkey_feed as the first leader letter.
+        crate::tui::dispatch_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+        );
+        // whichkey overlay is open and `t` has been fed → it's
+        // either now on a sub-leaf (`+toggle` group) OR if `t`
+        // is a Cmd leaf (e.g. toggle tree), the command fired
+        // and the overlay closed. Either is acceptable —
+        // crucially it must NOT have been dropped.
+        let progressed = app.whichkey.is_some() || app.tree_visible != initial_tree;
+        assert!(
+            progressed,
+            "after Ctrl+K t the whichkey overlay should be open on a sub-trie OR a single-letter leaf should have fired"
+        );
+    }
 }

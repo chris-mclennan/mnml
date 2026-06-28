@@ -1329,7 +1329,22 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // vscode-user-keyboard SEV-2: when the chord chain bottoms out
+    // and fires its fallback (typically `whichkey.leader`), the
+    // current key was being dropped instead of fed into the just-
+    // opened whichkey overlay — making `<leader>tr` need three
+    // keys (`Ctrl+K t t r`) instead of two. Now: if whichkey was
+    // NOT open before chord-dispatch but IS open after, re-route
+    // the current key to the overlay's char-feed.
+    let whichkey_was_open = app.whichkey.is_some();
     if dispatch_chord_chain(app, key) {
+        return;
+    }
+    if !whichkey_was_open
+        && app.whichkey.is_some()
+        && let KeyCode::Char(c) = key.code
+    {
+        app.whichkey_feed(c);
         return;
     }
 
