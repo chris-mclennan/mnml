@@ -477,6 +477,28 @@ pub struct ServerConfig {
     pub language_id: String,
 }
 
+/// Derive the LSP `languageId` to send on textDocument/didOpen from
+/// the file's extension. Most servers accept the registered server's
+/// language_id directly, but a few cases need per-extension mapping
+/// (TypeScript: tsx→typescriptreact / jsx→javascriptreact / js→
+/// javascript; C++: cpp→cpp / c→c; etc.). multilang 2026-06-28 SEV-2.
+fn derive_lsp_language_id(path: &Path, fallback: &str) -> String {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "tsx" => "typescriptreact".to_string(),
+        "jsx" => "javascriptreact".to_string(),
+        "js" | "mjs" | "cjs" => "javascript".to_string(),
+        "ts" | "mts" | "cts" => "typescript".to_string(),
+        "c" | "h" => "c".to_string(),
+        "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => "cpp".to_string(),
+        _ => fallback.to_string(),
+    }
+}
+
 /// Built-in defaults (used unless `[lsp.<name>]` overrides the same name).
 fn builtin_servers() -> Vec<ServerConfig> {
     let s = |name: &str, cmd: &str, args: &[&str], exts: &[&str], roots: &[&str], lang: &str| {
@@ -688,7 +710,15 @@ impl LspManager {
                 }
             }
         }
-        Some((key, sc.language_id))
+        // multilang 2026-06-28 SEV-2: typescript-language-server's
+        // builtin entry maps ts/tsx/js/jsx to a single "typescript"
+        // language_id, but the LSP protocol expects per-extension
+        // ids: ts→typescript, tsx→typescriptreact, js→javascript,
+        // jsx→javascriptreact. Wrong id silently breaks JSX parsing
+        // (every React component shows red underlines, no hover).
+        // Derive the right id from the actual file extension.
+        let language_id = derive_lsp_language_id(path, &sc.language_id);
+        Some((key, language_id))
     }
 
     pub fn did_open(&mut self, path: &Path, text: &str) {

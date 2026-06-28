@@ -1611,6 +1611,11 @@ pub struct PaneRects {
     /// Hit rects for the right-panel tab strip — one per hosted
     /// pane, paired with its index into `right_panel_panes`. v3.
     pub right_panel_tabs: Vec<(Rect, usize)>,
+    /// Click target for the empty-state `:outline.show` line. Fires
+    /// the same command on left-click. mouse-polish F-2.
+    pub right_panel_empty_outline: Option<Rect>,
+    /// Click target for the empty-state `:lsp.diagnostics` line.
+    pub right_panel_empty_diagnostics: Option<Rect>,
     /// `+` chip just after the user's integration icons in the
     /// palette bar's gap area. Click → `integrations.add`
     /// (opens the discovery overlay so the user can add a sibling).

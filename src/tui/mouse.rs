@@ -1388,6 +1388,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.right_panel_active_idx = tab_idx;
                 return;
             }
+            // mouse-polish F-2 — empty-state command lines as
+            // click targets so a mouse-first user can populate
+            // the panel without typing.
+            if let Some(rect) = app.rects.right_panel_empty_outline
+                && crate::app::dispatch::contains(rect, x, y)
+            {
+                crate::command::run("outline.show", app);
+                return;
+            }
+            if let Some(rect) = app.rects.right_panel_empty_diagnostics
+                && crate::app::dispatch::contains(rect, x, y)
+            {
+                crate::command::run("lsp.diagnostics", app);
+                return;
+            }
             // Right-panel v3 `×` on the header closes the active
             // tab (panel stays open; next tab takes its place, or
             // empty-state returns if it was the last).

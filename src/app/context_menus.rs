@@ -283,6 +283,12 @@ impl App {
             ));
         }
         items.push(MenuItem::new("Close tab", MenuAction::CloseTab(pid)));
+        // mouse-polish F-5 — give the active-tab right-click menu
+        // something the × button doesn't already cover.
+        items.push(MenuItem::new(
+            "Hide side panel",
+            MenuAction::Command("view.toggle_right_panel"),
+        ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 

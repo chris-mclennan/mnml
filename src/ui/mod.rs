@@ -186,6 +186,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.right_panel_tabs.clear();
     app.rects.right_panel_edge = None;
     app.rects.right_panel_close = None;
+    app.rects.right_panel_empty_outline = None;
+    app.rects.right_panel_empty_diagnostics = None;
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
@@ -850,6 +852,25 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .wrap(ratatui::widgets::Wrap { trim: false }),
                 hint_rect,
             );
+            // mouse-polish F-2 — register click rects for the two
+            // command lines so a mouse-first user can populate the
+            // panel without typing. ":outline.show" lands on
+            // hint_rect.y + 2, ":lsp.diagnostics" on + 3.
+            app.rects.right_panel_empty_outline = Some(Rect {
+                x: hint_rect.x,
+                y: hint_rect.y + 2,
+                width: 13.min(hint_rect.width),
+                height: 1,
+            });
+            app.rects.right_panel_empty_diagnostics = Some(Rect {
+                x: hint_rect.x,
+                y: hint_rect.y + 3,
+                width: 16.min(hint_rect.width),
+                height: 1,
+            });
+        } else {
+            app.rects.right_panel_empty_outline = None;
+            app.rects.right_panel_empty_diagnostics = None;
         }
         // Drag-grip indicator on the panel's left edge.
         if let Some(edge) = app.rects.right_panel_edge
