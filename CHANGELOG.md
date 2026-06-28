@@ -40,6 +40,45 @@ block); this file is the curated, user-facing summary.
   alone in its leaf; rect-clear architecture fixes multiple stale-rect bugs.
 - **Hover and right-click coverage** — every palette-bar chip now has a tooltip
   (hover for description) and a context menu (right-click for actions).
+- **Right panel v2** — when the panel is visible, `outline.show` and
+  `lsp.diagnostics` host inside it instead of splitting the editor body.
+  Header switches between OUTLINE / DIAGNOSTICS based on hosted-pane kind, and
+  a `×` button on the header evicts the hosted pane (panel stays open, returns
+  to the empty-state copy). Below 16 cells the body shows "too narrow — drag
+  edge wider" instead of cramped pane content. Empty-state copy now teaches
+  the two commands.
+- **Shift+F10 opens the context menu for the focused element** — keyboard
+  equivalent of right-click. Routes Focus::Tree → tree-row menu, Focus::Pane
+  → bufferline tab menu, and falls back to the cursor's most-recent
+  `hover_chip` (integration / launcher / gear menus). Palette command
+  `view.context_menu_at_focus`. VS Code + macOS convention.
+- **Chord-chain leader-letter fix** — in standard input mode the chord chain
+  was eating the first leader letter when its fallback opened whichkey, so
+  `<leader>tr` required `Ctrl+K t t r` instead of `Ctrl+K t r`. Now the
+  opener letter is fed to the just-opened whichkey overlay.
+- **`Ctrl+N` in vim INSERT** reaches the keyword-completion handler
+  (`editor.keyword_complete`) instead of being stolen by the global
+  `file.new` chord. `Ctrl+P` stays bound globally (palette / recents).
+- **`:set rightpanel` vim semantics** — `:set rightpanel` enables (idempotent),
+  `:set rightpanel!` toggles, `:set norightpanel` disables. Matches `:set
+  invrightpanel` for the bang-equivalent.
+
+### Refactored (2026-06-28 evening)
+
+- **9-step file split** — `src/app/mod.rs` shrank from 14,234 → ~11,500 lines
+  and `src/tui.rs` from 7,712 → ~1,700 lines. New siblings:
+  `src/app/{util,sibling_install_methods,workspace_methods,cloud_agents_methods,cmdline_methods}.rs`
+  and `src/tui/{chord,mouse}.rs` plus `src/tui/handlers/{overlay,pane}.rs`.
+  Pure non-destructive — every function kept its signature; some private fns
+  elevated to `pub(crate)`. 977 → 980 tests pass; verified by a post-split
+  regression sweep (0 issues).
+
+### Fixed (2026-06-28)
+
+- `run.sh` and `dev.sh` prepend `/opt/homebrew/opt/zig@0.15/bin` to PATH so
+  `libghostty-vt-sys`'s build.rs doesn't silently fail on macOS shells that
+  don't have zig in PATH. Without this, `./run.sh restart` would loop on a
+  stale binary while appearing to rebuild.
 
 ### Removed (2026-06-22)
 
