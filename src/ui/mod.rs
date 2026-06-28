@@ -652,6 +652,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 let mut x = rpa.x;
                 let strip_end = rpa.x + rpa.width.saturating_sub(reserve_close);
                 let panes_snapshot: Vec<usize> = app.right_panel_panes.clone();
+                // design-critic #1 (2026-06-28): track the active tab's
+                // right edge AND whether it was the LAST chip painted,
+                // so we can paint a bg2 connector from there to the ×
+                // close button. Visually merges the × with the chip it
+                // acts on; falls back to a detached corner × when the
+                // active tab isn't the rightmost.
+                let mut active_end_x: Option<u16> = None;
+                let mut last_painted_active = false;
                 for (i, pid) in panes_snapshot.iter().copied().enumerate() {
                     let Some(pane) = app.panes.get(pid) else {
                         continue;
@@ -698,11 +706,38 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     );
                     app.rects.right_panel_tabs.push((chip_rect, i));
                     x = x.saturating_add(chip_w);
+                    // Track if THIS chip was the active one and
+                    // whether it's still the most-recent painted.
+                    if i == active_idx {
+                        active_end_x = Some(x);
+                        last_painted_active = true;
+                    } else {
+                        last_painted_active = false;
+                    }
                     // 1-cell gap between chips so the bg_darker
                     // background reads as a separator. design-critic
                     // #1 — mirrors paint_leaf_tab_strip.
                     if x < strip_end {
                         x = x.saturating_add(1);
+                    }
+                }
+                // design-critic #1 — when the active tab is the
+                // last painted chip, fill the cells between its
+                // right edge and the close button with bg2 so the
+                // × visually merges with the chip it acts on.
+                if last_painted_active && let Some(end) = active_end_x {
+                    let close_x = rpa.x + rpa.width.saturating_sub(2);
+                    if end < close_x {
+                        let bridge_rect = Rect {
+                            x: end,
+                            y: rpa.y,
+                            width: close_x - end,
+                            height: 1,
+                        };
+                        frame.render_widget(
+                            ratatui::widgets::Block::default().style(Style::default().bg(t.bg2)),
+                            bridge_rect,
+                        );
                     }
                 }
                 // `×` close button on the rightmost cell. Paints in
