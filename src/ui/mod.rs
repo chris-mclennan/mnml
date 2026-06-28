@@ -1715,6 +1715,27 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let mut x = area.x + (area.width - total_w) / 2;
     let y = area.y;
+    // vscode-user-mouse SEV-2 — paint the chrome-row bg_dark over the
+    // span the centered cluster will occupy BEFORE we render the
+    // cluster itself, so any menu-bar word characters underneath get
+    // wiped instead of leaking ghost letters (the 'Vi' / 'u' leak at
+    // 120 cols). The menu_bar_words click rects were registered with
+    // wider extents than the visible chars; this overwrites the
+    // pixels but the click rects from the menu-bar paint earlier in
+    // the frame still survive (chord chain doesn't care about
+    // visual overpaint).
+    if total_w > 0 {
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(" ".repeat(total_w as usize))
+                .style(Style::default().bg(t.bg_dark)),
+            Rect {
+                x,
+                y,
+                width: total_w,
+                height: 1,
+            },
+        );
+    }
 
     // Sidebar toggle — far left of the nav cluster.
     let sidebar_rect = Rect {
