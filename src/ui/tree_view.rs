@@ -48,7 +48,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.extra_workspace_bodies.clear();
     app.rects.extra_workspace_toggles.clear();
     app.rects.tree_icon_buttons.clear();
-    app.rects.integration_icon_rects.clear();
+    // integration_icon_rects clear moved to ui::draw entry — see
+    // the api-workflow-user F1+F2 fix note there. Multiple painters
+    // populate this vec; centralizing the clear avoids stomping.
     app.rects.integration_section_toggle = None;
     if area.height == 0 || area.width == 0 {
         return;

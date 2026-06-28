@@ -6163,6 +6163,19 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
                 && let Some(icon) = app.config.ui.integration_icons.get(icon_idx)
             {
+                // api-workflow-user F4 — disabled chips still appear
+                // in the RAIL strip (binary-availability-filtered) but
+                // shouldn't fire on left-click. Toast a hint instead
+                // so the user knows the menu is available.
+                if !icon.enabled {
+                    let label = icon
+                        .tooltip
+                        .clone()
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| icon.id.clone());
+                    app.toast(format!("{label}: disabled (right-click → Enable)"));
+                    return;
+                }
                 let cmd = icon.command.clone();
                 if let Some(rest) = cmd.strip_prefix(':') {
                     app.run_ex_command(rest);

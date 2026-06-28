@@ -126,6 +126,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Block::default().style(Style::default().bg(theme::cur().bg_dark)),
         area,
     );
+    // 2026-06-27 (api-workflow-user F1+F2 fix) — clear shared rect
+    // vecs ONCE at the top of the frame. Both integration_icon_rects
+    // and launcher_icon_rects are populated from multiple painters
+    // (palette-bar gap painter + rail tree_view + rail integrations
+    // section + bufferline cluster). Letting each painter clear at
+    // entry caused (1) painters that ran LATER to wipe earlier
+    // painters' rects, breaking palette-bar chip clicks; and (2)
+    // when one painter doesn't run, the vec accumulates frame after
+    // frame and stale rects steal clicks. Single point of clear =
+    // every push survives the frame, no stale leftovers.
+    app.rects.integration_icon_rects.clear();
+    app.rects.launcher_icon_rects.clear();
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
@@ -1331,9 +1343,8 @@ fn paint_integration_chips_in_gap(
     // Both launcher icons and integration icons paint here, in a
     // single strip close to the palette dropdown. They look the
     // same to the user — the only difference is which dispatcher
-    // their click fires. We also clear launcher_icon_rects since
-    // they used to live in the far-right cluster.
-    app.rects.launcher_icon_rects.clear();
+    // their click fires. (launcher_icon_rects.clear moved to
+    // ui::draw entry — same reason as integration_icon_rects.)
     // Reserve 3 cells at the END for a `+` add-integration chip
     // (opens discovery overlay). The chip preceding it already
     // pads 2 cells of trailing gap, so the `+` sits flush with
@@ -1809,9 +1820,10 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         // cluster so the eye groups them with the chrome.
         paint_integration_chips_in_gap(frame, app, palette_right_edge, cluster_area.x, area.y);
     } else {
-        // Cluster hidden entirely — clear the chip rects so stale
-        // rects from a wider frame don't steal clicks.
-        app.rects.launcher_icon_rects.clear();
+        // Cluster hidden entirely — clear the cluster-only rects.
+        // launcher_icon_rects is cleared at ui::draw entry now,
+        // so we don't repeat it here (the gap painter may still
+        // have populated it before this branch ran).
         app.rects.bufferline_new_tab_button = None;
         app.rects.palette_add_integration_button = None;
         app.rects.bufferline_tab_page_chips.clear();

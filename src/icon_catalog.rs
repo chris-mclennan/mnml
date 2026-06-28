@@ -83,7 +83,7 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     // ── http ──
     IconEntry { codepoint: "F1D8",  name: "paper-plane", category: "http" },
     IconEntry { codepoint: "F1D8B", name: "send", category: "http" },
-    IconEntry { codepoint: "F067",  name: "plus", category: "http" },
+    IconEntry { codepoint: "F0415", name: "plus (new request)", category: "http" },
     IconEntry { codepoint: "F0EA0", name: "web", category: "http" },
 
     // ── observability ──

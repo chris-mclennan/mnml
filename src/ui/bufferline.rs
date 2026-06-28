@@ -519,8 +519,8 @@ pub fn paint_right_cluster(
 ) {
     // Always-clear: stale rects from a prior-frame paint at a
     // wider width would otherwise stay registered and steal
-    // clicks at cells we're no longer painting.
-    app.rects.launcher_icon_rects.clear();
+    // clicks at cells we're no longer painting. (launcher_icon_rects
+    // clear lives in ui::draw entry now — see api-workflow-user F2.)
     app.rects.bufferline_new_tab_button = None;
     app.rects.bufferline_tab_page_chips.clear();
     app.rects.bufferline_tab_page_close.clear();
@@ -539,13 +539,12 @@ pub fn paint_right_cluster(
     // see `paint_split_buttons` below.
 
     // Launcher icons moved to the gap painter — see
-    // `paint_integration_chips_in_gap` (which also handles
-    // launchers now, despite the name). The far-right cluster is
+    // `paint_integration_chips_in_gap`. The far-right cluster is
     // chrome-only.
-    let _ = nerd;
-    // `+` new-tab button.
+    // `+` new-tab button. api-workflow-user F5 — honor --ascii.
+    let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
     spans.push(Span::styled(
-        " \u{F0415} ",
+        format!(" {plus_glyph} "),
         Style::default().fg(t.fg).bg(t.bg2),
     ));
     app.rects.bufferline_new_tab_button = Some(Rect {
