@@ -959,6 +959,7 @@ pub fn rects_dump_json(app: &App) -> String {
         app.rects.palette_add_integration_button
     );
     one!("right_panel_edge", app.rects.right_panel_edge);
+    one!("right_panel_close", app.rects.right_panel_close);
     one!(
         "bufferline_new_tab_button",
         app.rects.bufferline_new_tab_button

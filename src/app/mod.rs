@@ -11649,6 +11649,13 @@ mod tests {
             app.right_panel_pane_id.is_none(),
             "toggling panel off clears right_panel_pane_id"
         );
+        // keyboard-verifier 2026-06-28 obs 2 — the hosted pane
+        // should also be closed (not just unhosted) so it doesn't
+        // leave a ghost bufferline tab.
+        assert!(
+            !matches!(app.panes.get(outline_id), Some(Pane::Outline(_))),
+            "outline pane should be closed after panel toggle-off, not just unhosted"
+        );
     }
 
     #[test]

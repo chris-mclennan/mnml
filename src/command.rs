@@ -1485,12 +1485,17 @@ fn builtin_commands() -> Vec<Command> {
             keys: &["Ctrl+Shift+B"],
             run: |app| {
                 app.right_panel_visible = !app.right_panel_visible;
-                // Right-panel v2: when hiding the panel, evict the
-                // hosted pane id so re-opening the panel returns to
-                // the empty-state copy. The pane itself stays in
-                // `app.panes` — re-firing `outline.show` rehosts it.
-                if !app.right_panel_visible {
-                    app.right_panel_pane_id = None;
+                // Right-panel v2 (keyboard-verifier 2026-06-28 obs 2):
+                // when hiding the panel, also close the hosted pane.
+                // Previous behavior left the pane in app.panes so it
+                // appeared as a ghost bufferline tab even though the
+                // user "closed" it via toggling the panel. Re-opening
+                // the panel returns to the empty-state copy; re-firing
+                // outline.show / lsp.diagnostics creates fresh.
+                if !app.right_panel_visible
+                    && let Some(pid) = app.right_panel_pane_id.take()
+                {
+                    app.close_pane(pid);
                 }
             },
         },
