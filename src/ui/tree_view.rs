@@ -159,14 +159,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         + CURRENT_DOT_W
         + ws_name.chars().count()
         + dropdown_glyph.chars().count();
-    // user-requested 2026-06-28 — leave a blank row above the
-    // first workspace header so it doesn't visually butt against
-    // the top of the rail. Subsequent rail content (tree rows,
-    // extras, GIT/INTEGRATIONS sections) uses its own precomputed
-    // y positions, which already leave room for this offset.
     let header_rect = Rect {
         x: area.x,
-        y: area.y + 1,
+        y: area.y,
         width: area.width,
         height: 1,
     };
