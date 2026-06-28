@@ -343,6 +343,7 @@ pub fn root() -> &'static Leader {
                         "+ai/term",
                         vec![
                             ('a', cmd("ai.ask", "ask claude…")),
+                            ('b', cmd("ai.toggle_backend", "toggle backend (cli ↔ api)")),
                             ('d', cmd("ai.dashboard", "agents dashboard")),
                             ('e', cmd("ai.explain", "explain selection")),
                             ('f', cmd("ai.fix", "fix bugs")),
