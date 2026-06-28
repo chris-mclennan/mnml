@@ -2332,17 +2332,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             icon.fallback.as_str()
         };
-        let fg = match icon.color.as_str() {
-            "orange" => t.orange,
-            "yellow" => t.yellow,
-            "cyan" => t.cyan,
-            "blue" => t.blue,
-            "green" => t.green,
-            "red" => t.red,
-            "purple" => t.purple,
-            "teal" => t.teal,
-            _ => t.fg,
-        };
+        let fg = theme::color_from_slot(icon.color.as_str(), &t);
         let name = icon
             .tooltip
             .as_deref()

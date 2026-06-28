@@ -119,18 +119,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
             (t.bg_darker, t.fg, t.grey_fg)
         };
         let (kind_glyph, kind_color_name) = crate::completion::kind_glyph(it.kind);
-        let kind_color = match kind_color_name {
-            "blue" => t.blue,
-            "purple" => t.purple,
-            "cyan" => t.cyan,
-            "yellow" => t.yellow,
-            "green" => t.green,
-            "orange" => t.orange,
-            "red" => t.red,
-            "teal" => t.teal,
-            "comment" => t.comment,
-            _ => t.fg,
-        };
+        let kind_color = crate::ui::theme::color_from_slot(kind_color_name, &t);
         let mut label: String = it.label.chars().take(usable).collect();
         if it.label.chars().count() > usable && usable >= 1 {
             label = it.label.chars().take(usable - 1).collect::<String>() + "…";

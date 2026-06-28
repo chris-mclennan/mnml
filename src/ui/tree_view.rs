@@ -725,17 +725,7 @@ fn draw_integration_section(
                 } else {
                     fallback.as_str()
                 };
-                let fg = match color.as_str() {
-                    "orange" => t.orange,
-                    "yellow" => t.yellow,
-                    "cyan" => t.cyan,
-                    "blue" => t.blue,
-                    "green" => t.green,
-                    "red" => t.red,
-                    "purple" => t.purple,
-                    "teal" => t.teal,
-                    _ => t.fg,
-                };
+                let fg = crate::ui::theme::color_from_slot(color.as_str(), &t);
                 // Same wide-glyph trick used in the expanded layout:
                 // Claude / Codex glyphs render 2-cell wide, so drop a
                 // trailing space to keep the visual chip width
@@ -811,17 +801,7 @@ fn draw_integration_section(
         } else {
             fallback.as_str()
         };
-        let fg = match color.as_str() {
-            "orange" => t.orange,
-            "yellow" => t.yellow,
-            "cyan" => t.cyan,
-            "blue" => t.blue,
-            "green" => t.green,
-            "red" => t.red,
-            "purple" => t.purple,
-            "teal" => t.teal,
-            _ => t.fg,
-        };
+        let fg = crate::ui::theme::color_from_slot(color.as_str(), &t);
         // 2-cell left indent so INTEGRATIONS rows visually nest under
         // the section header (matches the GIT section's `  marker `
         // indent). Single-space gap after the glyph keeps the

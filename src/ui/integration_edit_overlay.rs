@@ -203,17 +203,11 @@ fn field_value(panel: &IntegrationEditState, field: IntegrationEditField) -> (St
 
 fn color_style(name: &str) -> Style {
     let t = theme::cur();
-    let fg = match name {
-        "red" => t.red,
-        "orange" => t.orange,
-        "yellow" => t.yellow,
-        "green" => t.green,
-        "cyan" => t.cyan,
-        "blue" => t.blue,
-        "purple" => t.purple,
-        "magenta" => t.purple,
-        "dim" => t.comment,
-        _ => t.fg,
+    // S2-2 — special-case "dim" (not a slot name) before delegating.
+    let fg = if name == "dim" {
+        t.comment
+    } else {
+        theme::color_from_slot(name, &t)
     };
     Style::default().fg(fg).add_modifier(Modifier::BOLD)
 }
