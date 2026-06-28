@@ -676,12 +676,13 @@ impl App {
                         "launcher {id} {}",
                         if now { "enabled" } else { "disabled" }
                     ));
-                    // No launcher-specific persistence helper yet —
-                    // best-effort: reuse the integrations persistence
-                    // which rewrites both arrays. If the helper
-                    // doesn't cover launchers, the toggle takes
-                    // effect this session but won't survive a
-                    // restart. (TODO: add persist_launcher_icons.)
+                    // Persist via the launcher-icons writer. 2026-06-28
+                    // fix for the prior TODO — was using the integrations
+                    // path which silently dropped launcher toggles on
+                    // restart.
+                    let _ = crate::app::discovery::persist_launcher_icons(
+                        &self.config.ui.launcher_icons,
+                    );
                 }
             }
             Command(id) => {
