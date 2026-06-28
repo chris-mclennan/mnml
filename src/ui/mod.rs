@@ -1304,9 +1304,13 @@ fn paint_integration_chips_in_gap(
     // so the user has a discoverable entry point. The discovery
     // overlay starts empty until they add their first sibling.
     app.rects.palette_add_integration_button = None;
-    // Leave a 1-cell margin from the chip's right edge and a 1-cell
-    // margin before the cluster so the integrations group visually.
-    let avail_left = chip_right_edge.saturating_add(1);
+    // Start integrations flush with the workspace chip's right
+    // edge (no leading margin) per user request — keeps the
+    // icon row tucked tight to the chrome cluster instead of
+    // floating in space. Still leave a 1-cell margin before the
+    // far-right cluster so the two groups remain visually
+    // separable.
+    let avail_left = chip_right_edge;
     let avail_right = cluster_left.saturating_sub(1);
     if avail_right <= avail_left {
         return;
