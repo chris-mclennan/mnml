@@ -118,7 +118,12 @@ impl LookupPicker {
     }
 }
 
-fn scan_lookups(workspace: &Path) -> Vec<PathBuf> {
+/// Recursive `.curl` / `.http` / `.rest` scan under
+/// `<workspace>/.rqst/lookups`. http-2nd 2026-06-28 SEV-3a — the
+/// app-side `http_lookup_open` used to do a flat read_dir and
+/// accept three extensions; now both code paths agree (recursive
+/// + all three extensions).
+pub fn scan_lookups(workspace: &Path) -> Vec<PathBuf> {
     let lookup_dir = workspace.join(".rqst").join("lookups");
     if !lookup_dir.is_dir() {
         return Vec::new();
@@ -139,7 +144,11 @@ fn scan_lookups(workspace: &Path) -> Vec<PathBuf> {
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             if is_dir {
                 stack.push(path);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("curl") {
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| matches!(e, "curl" | "http" | "rest"))
+            {
                 out.push(path);
             }
         }

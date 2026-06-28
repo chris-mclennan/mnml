@@ -168,6 +168,8 @@ pub fn root() -> &'static Leader {
                             ('s', cmd("http.send", "send request")),
                             ('y', cmd("http.copy_curl", "copy as curl")),
                             ('d', cmd("http.ai_debug", "ask Claude (debug)")),
+                            (']', cmd("http.next_block", "next ### block")),
+                            ('[', cmd("http.prev_block", "previous ### block")),
                         ],
                     ),
                 ),

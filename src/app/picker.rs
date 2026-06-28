@@ -737,9 +737,33 @@ impl App {
                         .and_then(|s| s.as_str())
                         .unwrap_or("")
                         .to_string();
-                    // History only logs method + url, not headers /
-                    // body — build a minimal curl from those.
-                    let curl = format!("curl -X {method} '{url}'");
+                    // http-2nd 2026-06-28 SEV-3c — newer history
+                    // entries persist headers + body too. Use them
+                    // when present so the re-fire scratch is a
+                    // complete curl (not method+url only). Older
+                    // entries without these fields still work
+                    // (fall through to the minimal form).
+                    let mut curl = String::from("curl");
+                    curl.push_str(&format!(" -X {method}"));
+                    if let Some(headers) = v.get("headers").and_then(|h| h.as_array()) {
+                        for h in headers {
+                            if let Some(pair) = h.as_array()
+                                && pair.len() == 2
+                                && let (Some(name), Some(value)) =
+                                    (pair[0].as_str(), pair[1].as_str())
+                            {
+                                let escaped_value = value.replace('\'', r"'\''");
+                                curl.push_str(&format!(" -H '{name}: {escaped_value}'"));
+                            }
+                        }
+                    }
+                    if let Some(body) = v.get("request_body").and_then(|b| b.as_str())
+                        && !body.is_empty()
+                    {
+                        let escaped_body = body.replace('\'', r"'\''");
+                        curl.push_str(&format!(" --data-raw '{escaped_body}'"));
+                    }
+                    curl.push_str(&format!(" '{url}'"));
                     self.open_curl_scratch(&curl, &method, &url);
                 }
                 self.pending_history_rows.clear();

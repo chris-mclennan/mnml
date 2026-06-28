@@ -3352,6 +3352,21 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.send_request_from_active(),
         },
         Command {
+            // http-2nd 2026-06-28 SEV-3b
+            id: "http.next_block",
+            title: "HTTP: move cursor to the next ### block in a multi-block file",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_next_block(),
+        },
+        Command {
+            id: "http.prev_block",
+            title: "HTTP: move cursor to the previous ### block",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_prev_block(),
+        },
+        Command {
             id: "http.sync",
             title: "HTTP: sync swagger sources → .curl stub files",
             group: "http",

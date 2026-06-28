@@ -26,6 +26,14 @@ pub struct Entry<'a> {
     pub duration_ms: Option<u128>,
     pub body_bytes: Option<usize>,
     pub error: Option<&'a str>,
+    /// http-2nd 2026-06-28 SEV-3c — request headers as
+    /// `Vec<(name, value)>`. Stored alongside the response
+    /// metadata so the history picker can rebuild a usable
+    /// curl command, not just `curl -X METHOD URL`.
+    pub headers: Option<&'a [(String, String)]>,
+    /// The serialised request body (utf-8 string). None when
+    /// the request was bodyless.
+    pub request_body: Option<&'a str>,
 }
 
 pub fn append(workspace: &Path, entry: &Entry) {
@@ -46,6 +54,8 @@ pub fn append(workspace: &Path, entry: &Entry) {
         "duration_ms": entry.duration_ms,
         "body_bytes": entry.body_bytes,
         "error": entry.error,
+        "headers": entry.headers,
+        "request_body": entry.request_body,
     });
     let mut line = match serde_json::to_string(&payload) {
         Ok(s) => s,
@@ -99,6 +109,8 @@ fn append_global(workspace: &Path, entry: &Entry, ts: u128) {
         "duration_ms": entry.duration_ms,
         "body_bytes": entry.body_bytes,
         "error": entry.error,
+        "headers": entry.headers,
+        "request_body": entry.request_body,
     });
     let mut line = match serde_json::to_string(&payload) {
         Ok(s) => s,
@@ -187,6 +199,8 @@ mod tests {
                 duration_ms: Some(123),
                 body_bytes: Some(456),
                 error: None,
+                headers: None,
+                request_body: None,
             },
         );
         let path = dir.join(".rqst/history.jsonl");
@@ -213,6 +227,8 @@ mod tests {
                     duration_ms: Some(i),
                     body_bytes: Some(0),
                     error: None,
+                    headers: None,
+                    request_body: None,
                 },
             );
         }
@@ -249,6 +265,8 @@ mod tests {
                 duration_ms: Some(7),
                 body_bytes: Some(0),
                 error: None,
+                headers: None,
+                request_body: None,
             },
         );
         unsafe {
@@ -281,6 +299,8 @@ mod tests {
                     duration_ms: Some(i),
                     body_bytes: Some(0),
                     error: None,
+                    headers: None,
+                    request_body: None,
                 },
             );
         }
@@ -306,6 +326,8 @@ mod tests {
                 duration_ms: None,
                 body_bytes: None,
                 error: Some("connection refused"),
+                headers: None,
+                request_body: None,
             },
         );
         let entries = tail(&dir, 1);

@@ -1707,6 +1707,65 @@ impl App {
         }
     }
 
+    /// `http.next_block` — move the cursor to the `###` line of
+    /// the next block in a multi-block `.http` / `.rest` file. If
+    /// the cursor is at/past the last block, wrap to the first.
+    /// http-2nd 2026-06-28 SEV-3b — was no chord/command path.
+    pub fn http_next_block(&mut self) {
+        self.move_to_http_block(true);
+    }
+
+    /// `http.prev_block` — mirror of `next_block` for the
+    /// previous-block direction.
+    pub fn http_prev_block(&mut self) {
+        self.move_to_http_block(false);
+    }
+
+    fn move_to_http_block(&mut self, forward: bool) {
+        let Some(b) = self.active_editor() else {
+            self.toast("http.next/prev_block: no active editor");
+            return;
+        };
+        let ext = b
+            .path
+            .as_ref()
+            .and_then(|p| p.extension())
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !matches!(ext.as_str(), "http" | "rest") {
+            self.toast("http.next/prev_block: needs an open .http or .rest file");
+            return;
+        }
+        let text = b.editor.text().to_string();
+        let cur_row = b.editor.row_col().0;
+        let Ok(blocks) = crate::http::file::parse_all(&text) else {
+            self.toast("http.next/prev_block: parse error");
+            return;
+        };
+        if blocks.is_empty() {
+            self.toast("http.next/prev_block: no blocks in file");
+            return;
+        }
+        let target_row = if forward {
+            blocks
+                .iter()
+                .find(|bl| bl.start_line > cur_row)
+                .map(|bl| bl.start_line)
+                .unwrap_or(blocks[0].start_line)
+        } else {
+            blocks
+                .iter()
+                .rev()
+                .find(|bl| bl.start_line < cur_row)
+                .map(|bl| bl.start_line)
+                .unwrap_or_else(|| blocks.last().map(|b| b.start_line).unwrap_or(0))
+        };
+        if let Some(b) = self.active_editor_mut() {
+            b.editor.place_cursor(target_row, 0);
+        }
+    }
+
     /// `http.lookup` — open the lookup picker (stage 1: pick a
     /// `.curl` file under `<workspace>/.rqst/lookups/`). Subsequent
     /// stages — fire-request → pick-item → enter-var-name → write-
@@ -1714,27 +1773,20 @@ impl App {
     /// Phase 7 of the rqst→mnml port-back.
     pub fn http_lookup_open(&mut self) {
         use crate::picker::{Picker, PickerItem, PickerKind};
-        let dir = self.workspace.join(".rqst").join("lookups");
+        // http-2nd 2026-06-28 SEV-3a: use the recursive walker
+        // (crate::http::lookup::scan_lookups). Was a flat read_dir
+        // that silently missed `requests/auth/login.curl` nested
+        // under a subdirectory.
         let workspace = self.workspace.clone();
-        let mut items: Vec<PickerItem> = Vec::new();
-        if let Ok(read) = std::fs::read_dir(&dir) {
-            for entry in read.flatten() {
-                let path = entry.path();
-                if path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| matches!(e, "curl" | "http" | "rest"))
-                {
-                    let label = crate::http::lookup::relative_label(&path, &workspace);
-                    items.push(PickerItem::new(
-                        path.to_string_lossy().into_owned(),
-                        label,
-                        String::new(),
-                    ));
-                }
-            }
-        }
+        let mut items: Vec<PickerItem> = crate::http::lookup::scan_lookups(&workspace)
+            .into_iter()
+            .map(|path| {
+                let label = crate::http::lookup::relative_label(&path, &workspace);
+                PickerItem::new(path.to_string_lossy().into_owned(), label, String::new())
+            })
+            .collect();
         if items.is_empty() {
+            let dir = workspace.join(".rqst").join("lookups");
             self.toast(format!(
                 "no lookups in {} — add a `.curl` file under that dir",
                 dir.display()
@@ -4033,6 +4085,8 @@ impl App {
                             duration_ms: Some(rv.elapsed.as_millis()),
                             body_bytes: Some(rv.body.len()),
                             error: None,
+                            headers: Some(&rp.request.headers),
+                            request_body: rp.request.body.as_deref(),
                         },
                     );
                     // 2026-06-19 — diff support: shift the
@@ -4058,6 +4112,8 @@ impl App {
                             duration_ms: None,
                             body_bytes: None,
                             error: Some(&e),
+                            headers: Some(&rp.request.headers),
+                            request_body: rp.request.body.as_deref(),
                         },
                     );
                     rp.state = RunState::Failed(e);
