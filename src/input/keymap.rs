@@ -183,8 +183,19 @@ impl Keymap {
         // `picker.recent`. We remove here BEFORE user `[keys.*]` overlays
         // so a user can still bind them in `[keys.vim]` if desired.
         if super::is_vim_style(cfg) {
+            // nvchad-user SEV-2 (2026-06-28): also add ctrl+n.
+            // Vim INSERT uses Ctrl+N for keyword-completion-next
+            // (handled in src/input/vim.rs:840). The default
+            // mnml binding `Ctrl+N = file.new` was stealing the
+            // chord before the vim handler could see it, so
+            // completion was unreachable from INSERT. Vim users
+            // create files via `:e <path>`. Ctrl+P stays bound
+            // (it's the palette / recents picker — strong nvchad
+            // muscle memory); INSERT-mode users can use
+            // `Ctrl+X Ctrl+N` (vim's omni-completion start)
+            // which is unbound globally.
             for spec in [
-                "ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+r",
+                "ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+r", "ctrl+n",
             ] {
                 if let Some(seq) = parse_key_seq(spec) {
                     km.map.remove(&seq);
