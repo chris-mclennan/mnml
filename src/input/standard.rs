@@ -34,10 +34,14 @@ impl InputHandler for StandardInputHandler {
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
-        // A plain typed character (no Ctrl/Alt; Shift just gives an uppercase char).
+        // A plain typed character (no Ctrl/Alt/Super). vscode-user SEV-2 —
+        // SUPER guard prevents Cmd+letter from inserting on Kitty /
+        // WezTerm / any macOS terminal that forwards SUPER (the user
+        // means to hit Cmd+P, gets a literal `p` in their file).
         if let KeyCode::Char(c) = key.code
             && !ctrl
             && !alt
+            && !key.modifiers.contains(KeyModifiers::SUPER)
         {
             return InputResult::Ops(vec![InsertChar(c)]);
         }

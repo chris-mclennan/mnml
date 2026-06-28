@@ -71,6 +71,8 @@ impl App {
             tree_visible: Some(self.tree_visible),
             tree_root_expanded: Some(self.tree_root_expanded),
             tree_width: Some(self.tree_width),
+            right_panel_visible: Some(self.right_panel_visible),
+            right_panel_width: Some(self.right_panel_width),
             git_section_expanded: Some(self.git_section_expanded),
             tree_expanded_dirs: Some(
                 self.tree
@@ -351,6 +353,12 @@ impl App {
         }
         if let Some(v) = saved.tree_root_expanded {
             self.tree_root_expanded = v;
+        }
+        if let Some(v) = saved.right_panel_visible {
+            self.right_panel_visible = v;
+        }
+        if let Some(v) = saved.right_panel_width {
+            self.right_panel_width = v.clamp(8, 200);
         }
         if let Some(v) = saved.tree_width {
             self.tree_width = v.clamp(8, 200);

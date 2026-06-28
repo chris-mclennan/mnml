@@ -1081,6 +1081,13 @@ struct SavedSession {
     /// (the `[ui] tree_width` config).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tree_width: Option<u16>,
+    /// code-reviewer S2-5 / mouse SEV-2 — persist the right-panel
+    /// visible state + drag-resized width across restarts. Mirrors
+    /// `tree_visible` + `tree_width`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    right_panel_visible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    right_panel_width: Option<u16>,
     /// Was the `> GIT` section in the rail expanded?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     git_section_expanded: Option<bool>,
