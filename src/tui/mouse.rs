@@ -1365,6 +1365,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             if app.maybe_start_right_panel_edge_drag(x, y) {
                 return;
             }
+            // Right-panel v2 polish: `×` on the header evicts the
+            // hosted pane (panel stays open, returns to empty
+            // state). Checked BEFORE pane-body click handlers
+            // since the rect overlaps the column.
+            if let Some(rect) = app.rects.right_panel_close
+                && crate::app::dispatch::contains(rect, x, y)
+            {
+                if let Some(pid) = app.right_panel_pane_id.take() {
+                    app.close_pane(pid);
+                }
+                return;
+            }
             // Grab a scrollbar (editor / diff / embedded-diff / tree) before
             // any pane-level handler — the bar sits inside the pane's
             // own rect, so without this short-circuit a click on the

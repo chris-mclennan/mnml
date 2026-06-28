@@ -376,6 +376,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         (Some(cols[1]), cols[0])
     } else {
         app.rects.right_panel_edge = None;
+        app.rects.right_panel_close = None;
         (None, upper)
     };
 
@@ -600,8 +601,48 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 ),
                 header_rect,
             );
+            // Right-panel v2 polish: `×` close button on the
+            // header when a pane is hosted. Clicking it evicts
+            // the pane id (panel stays open in empty state).
+            // Only paint when a pane IS hosted — empty panel
+            // doesn't need a close.
+            if hosted_pane.is_some() && rpa.width >= 6 {
+                let close_x = rpa.x + rpa.width.saturating_sub(2);
+                let close_rect = Rect {
+                    x: close_x,
+                    y: rpa.y,
+                    width: 1,
+                    height: 1,
+                };
+                let glyph = if app.config.ui.ascii_icons { "x" } else { "×" };
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(glyph)
+                        .style(Style::default().fg(t.comment).bg(t.bg_darker)),
+                    close_rect,
+                );
+                app.rects.right_panel_close = Some(close_rect);
+            } else {
+                app.rects.right_panel_close = None;
+            }
         }
-        if let Some(pid) = hosted_pane {
+        // Width hint — if user dragged the panel too narrow, show
+        // a one-line warning instead of the cramped pane render.
+        // Threshold of 16 cells matches outline_view's min readable
+        // width (gutter + a few chars).
+        if hosted_pane.is_some() && rpa.width < 16 && rpa.height >= 3 {
+            let hint = Rect {
+                x: rpa.x + 1,
+                y: rpa.y + 2,
+                width: rpa.width.saturating_sub(2),
+                height: 2,
+            };
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new("too narrow — drag edge wider")
+                    .style(Style::default().fg(t.comment).bg(t.bg_darker))
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
+                hint,
+            );
+        } else if let Some(pid) = hosted_pane {
             // Body is the area below the header row.
             let body = Rect {
                 x: rpa.x,

@@ -1604,6 +1604,10 @@ pub struct PaneRects {
     pub palette_right_panel_button: Option<Rect>,
     /// Drag-resize grip on the right panel's left edge.
     pub right_panel_edge: Option<Rect>,
+    /// Hit rect for the `×` close button on the right-panel header.
+    /// Clicking it evicts the hosted pane (right_panel_pane_id = None)
+    /// without hiding the panel itself. Right-panel v2 polish.
+    pub right_panel_close: Option<Rect>,
     /// `+` chip just after the user's integration icons in the
     /// palette bar's gap area. Click → `integrations.add`
     /// (opens the discovery overlay so the user can add a sibling).
@@ -11645,6 +11649,37 @@ mod tests {
             app.right_panel_pane_id.is_none(),
             "toggling panel off clears right_panel_pane_id"
         );
+    }
+
+    #[test]
+    fn right_panel_close_button_evicts_hosted_pane() {
+        // Right-panel v2 polish: clicking the header × button
+        // should clear right_panel_pane_id AND close the pane
+        // (so it doesn't accumulate as a ghost). Panel stays
+        // visible — re-firing :outline.show re-hosts.
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.right_panel_visible = true;
+        app.open_outline_pane();
+        let pane_count_with_outline = app.panes.len();
+        let outline_id = app.right_panel_pane_id.expect("outline routed");
+        assert!(matches!(app.panes.get(outline_id), Some(Pane::Outline(_))));
+
+        // Simulate the close handler.
+        if let Some(pid) = app.right_panel_pane_id.take() {
+            app.close_pane(pid);
+        }
+        assert!(app.right_panel_pane_id.is_none(), "host cleared");
+        // close_pane on a non-dirty pane should actually remove
+        // the pane from the panes vec OR vacate it; either way
+        // the count shouldn't grow.
+        assert!(
+            app.panes.len() <= pane_count_with_outline,
+            "close_pane shouldn't add ghosts"
+        );
+        // Panel stays visible.
+        assert!(app.right_panel_visible);
     }
 
     #[test]
