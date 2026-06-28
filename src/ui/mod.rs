@@ -1852,21 +1852,25 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // can place integration chips on top of the toggle).
     let palette_right_edge = x + dropdown_w + NAV_GAP + right_panel_w;
     let full_w = bufferline::right_cluster_width(app);
-    let cluster_w = bufferline::pick_cluster_mode(
+    // mouse-user SEV-2 — try the full cluster first; fall back to a
+    // compact (no TABS / tab-page chips) cluster when the full one
+    // would overlap the workspace chip. Net: window-close + theme +
+    // new-tab stay reachable at narrow widths instead of vanishing.
+    let cluster_mode = bufferline::pick_cluster_mode_tiered(
         area.x,
         area.width,
         palette_right_edge,
         full_w,
         4, // gap cells between palette + cluster
     );
-    if let Some(w) = cluster_w {
+    if let Some((w, compact)) = cluster_mode {
         let cluster_area = Rect {
             x: area.x + area.width.saturating_sub(w),
             y: area.y,
             width: w,
             height: 1,
         };
-        bufferline::paint_right_cluster(frame, app, cluster_area, t.bg_dark);
+        bufferline::paint_right_cluster(frame, app, cluster_area, t.bg_dark, compact);
         // Integration icons — paint in the gap between the
         // workspace chip's right edge and the cluster. Skip
         // entirely if the gap can't hold even one (3 cells each)

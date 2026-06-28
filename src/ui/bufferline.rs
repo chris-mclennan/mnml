@@ -477,6 +477,36 @@ pub fn pick_cluster_mode(
     }
 }
 
+/// mouse-user SEV-2 — width of the compact cluster (when the full
+/// cluster doesn't fit). Keeps the most-clicked chrome
+/// (+ new-tab, theme toggle, × window-close); drops TABS label
+/// and per-tab-page chips. Returns `(width, fits)`.
+pub fn compact_cluster_width() -> u16 {
+    // ` + ` (3) + theme toggle pill (4) + ` × ` (3)
+    3 + 4 + 3
+}
+
+/// Pick the BEST cluster mode that fits — full, compact, or none.
+/// Returns `(width, is_compact)`.
+pub fn pick_cluster_mode_tiered(
+    area_x: u16,
+    area_w: u16,
+    palette_right_edge: u16,
+    full_w: u16,
+    gap: u16,
+) -> Option<(u16, bool)> {
+    if let Some(w) = pick_cluster_mode(area_x, area_w, palette_right_edge, full_w, gap) {
+        return Some((w, false));
+    }
+    let compact_w = compact_cluster_width();
+    let cluster_left = area_x + area_w.saturating_sub(compact_w);
+    if cluster_left >= palette_right_edge + gap {
+        Some((compact_w, true))
+    } else {
+        None
+    }
+}
+
 /// Paint the NvChad-style right cluster (launcher icons · `+` ·
 /// `TABS` · tab-page chips · theme toggle · close) starting at
 /// `area.x` for up to `area.width` cells. Each segment registers
@@ -496,6 +526,7 @@ pub fn paint_right_cluster(
     app: &mut App,
     area: Rect,
     bg: ratatui::style::Color,
+    compact: bool,
 ) {
     // Always-clear: stale rects from a prior-frame paint at a
     // wider width would otherwise stay registered and steal
@@ -534,7 +565,7 @@ pub fn paint_right_cluster(
         height: 1,
     });
     cluster_x += 3;
-    {
+    if !compact {
         // `TABS` label (decorative).
         spans.push(Span::styled(
             " TABS ",
