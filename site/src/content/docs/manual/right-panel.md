@@ -142,13 +142,12 @@ right_panel_width   = 32      # initial width in cells
 
 Both also round-trip through `<workspace>/.mnml/session.json` — the workspace's last-saved width and visibility override the config defaults on re-open. Delete the session file (`rm .mnml/session.json`) to fall back to the TOML defaults.
 
-The hosted-pane list (`right_panel_panes`) is **not** persisted across mnml restarts — re-fire `outline.show` / `lsp.diagnostics` / `ai.chat` after open to repopulate.
+The hosted-tab list **is** persisted across restarts. `session.json` stores each tab by KIND (`"outline"` / `"diagnostics"`), so re-opening the workspace re-fires those commands in order and the panel comes back exactly as you left it. AI chat tabs are deliberately skipped (live state + auth context can shift between sessions); re-fire `:ai.ask` etc. to restore one.
 
 ## What's still ahead
 
 - **Pluggable hosts.** Only Outline, Diagnostics, and AI route into the panel today. Other panes (test output, grep, browser) are candidates for v5.
 - **Overflow chevrons.** The 3-tab cap displaces FIFO with a toast; lifting the cap needs left/right scroll chevrons on the tab strip (same shape as the bufferline).
-- **Persistent host list.** Saving `right_panel_panes` to `session.json` would re-host the panel exactly as you left it.
 
 ## Source
 

@@ -651,6 +651,15 @@ struct SavedSession {
     right_panel_visible: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     right_panel_width: Option<u16>,
+    /// Right-panel hosted tabs identified by KIND (since PaneIds aren't
+    /// stable across restarts). One entry per tab; valid kinds today:
+    /// `"outline"`, `"diagnostics"`. AI chat tabs are intentionally
+    /// NOT persisted (live state + auth context can change).
+    /// 2026-06-28 right-panel v3+v4 session persistence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    right_panel_tabs: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    right_panel_active_idx: Option<usize>,
     /// Was the `> GIT` section in the rail expanded?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     git_section_expanded: Option<bool>,
@@ -11748,6 +11757,31 @@ mod tests {
         // Last-opened becomes active.
         let active = app.right_panel_active_pane_id().unwrap();
         assert!(matches!(app.panes.get(active), Some(Pane::Diagnostics(_))));
+    }
+
+    #[test]
+    fn right_panel_tabs_serde_round_trip() {
+        // 2026-06-28 session persistence: the new SavedSession
+        // fields round-trip through JSON. (Full save → reload
+        // covered by save_session_on_quit + load_session paths
+        // that touch the filesystem — too heavy for a unit test;
+        // the field-shape round-trip is what matters here.)
+        let json = r#"{
+            "workspace": "/tmp/ws",
+            "open": [],
+            "right_panel_visible": true,
+            "right_panel_width": 32,
+            "right_panel_tabs": ["outline", "diagnostics"],
+            "right_panel_active_idx": 1
+        }"#;
+        let parsed: SavedSession = serde_json::from_str(json).expect("parse");
+        assert_eq!(parsed.right_panel_visible, Some(true));
+        assert_eq!(parsed.right_panel_width, Some(32));
+        assert_eq!(
+            parsed.right_panel_tabs.as_deref(),
+            Some(vec!["outline".to_string(), "diagnostics".to_string()].as_slice())
+        );
+        assert_eq!(parsed.right_panel_active_idx, Some(1));
     }
 
     #[test]

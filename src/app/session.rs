@@ -73,6 +73,24 @@ impl App {
             tree_width: Some(self.tree_width),
             right_panel_visible: Some(self.right_panel_visible),
             right_panel_width: Some(self.right_panel_width),
+            // 2026-06-28: persist hosted tabs by KIND so a restart
+            // restores the right-panel state. AI is skipped — its
+            // live state isn't worth chasing across restarts.
+            right_panel_tabs: Some(
+                self.right_panel_panes
+                    .iter()
+                    .filter_map(|pid| match self.panes.get(*pid) {
+                        Some(Pane::Outline(_)) => Some("outline".to_string()),
+                        Some(Pane::Diagnostics(_)) => Some("diagnostics".to_string()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            right_panel_active_idx: if self.right_panel_panes.is_empty() {
+                None
+            } else {
+                Some(self.right_panel_active_idx)
+            },
             git_section_expanded: Some(self.git_section_expanded),
             tree_expanded_dirs: Some(
                 self.tree
@@ -359,6 +377,25 @@ impl App {
         }
         if let Some(v) = saved.right_panel_width {
             self.right_panel_width = v.clamp(8, 200);
+        }
+        // 2026-06-28 — re-host the right-panel tabs (Outline /
+        // Diagnostics) from the saved kind list. Only fires when
+        // the panel is visible; AI tabs were skipped on save.
+        if self.right_panel_visible
+            && let Some(kinds) = saved.right_panel_tabs
+        {
+            for kind in &kinds {
+                match kind.as_str() {
+                    "outline" => self.open_outline_pane(),
+                    "diagnostics" => self.open_diagnostics_pane(),
+                    _ => {}
+                }
+            }
+            if let Some(idx) = saved.right_panel_active_idx
+                && idx < self.right_panel_panes.len()
+            {
+                self.right_panel_active_idx = idx;
+            }
         }
         if let Some(v) = saved.tree_width {
             self.tree_width = v.clamp(8, 200);
