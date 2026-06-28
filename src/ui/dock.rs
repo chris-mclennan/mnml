@@ -237,7 +237,7 @@ fn paint_corner_stack(
                     render_text_body(frame, body_rect, s, t);
                 }
                 DockContent::LogTail { path, max_lines } => {
-                    render_log_tail_body(frame, body_rect, path, *max_lines, t);
+                    render_log_tail_body(frame, body_rect, path, *max_lines, t, None);
                 }
             }
             app.rects.dock_widget_bodies.push((body_rect, w.id));
@@ -335,6 +335,13 @@ fn paint_one_widget(
     };
     let inner = block.inner(widget_rect);
     frame.render_widget(block, widget_rect);
+    // code-reviewer S2-1 — read the LogTail file ONCE outside both
+    // sub-blocks so the title's tail_hint and the body render share
+    // the result.
+    let log_tail_read: Option<String> = match &w.content {
+        DockContent::LogTail { path, .. } => std::fs::read_to_string(path).ok(),
+        _ => None,
+    };
     // Title + kebab.
     if inner.width > 4 {
         let is_dragging = app.dock_drag_id == Some(w.id);
@@ -346,12 +353,10 @@ fn paint_one_widget(
         // content variants whose data CAN exceed the visible
         // body (LogTail today; future ClaudeTail / BuildStatus
         // will opt in by reporting their own "lines below").
-        let tail_hint = match &w.content {
-            DockContent::LogTail { path, .. } => {
+        let tail_hint = match (&w.content, log_tail_read.as_deref()) {
+            (DockContent::LogTail { .. }, Some(s)) => {
                 let body_h = inner.height.saturating_sub(1).max(1) as usize;
-                let total = std::fs::read_to_string(path)
-                    .map(|s| s.lines().count())
-                    .unwrap_or(0);
+                let total = s.lines().count();
                 if total > body_h {
                     let hidden = total - body_h;
                     Some(format!(" ▼{hidden} "))
@@ -359,7 +364,7 @@ fn paint_one_widget(
                     None
                 }
             }
-            DockContent::Text(_) => None,
+            _ => None,
         };
         let tail_hint_str = tail_hint.as_deref().unwrap_or("");
         let title_w = inner.width.saturating_sub(
@@ -415,9 +420,14 @@ fn paint_one_widget(
         };
         match &w.content {
             DockContent::Text(s) => render_text_body(frame, body_rect, s, t),
-            DockContent::LogTail { path, max_lines } => {
-                render_log_tail_body(frame, body_rect, path, *max_lines, t)
-            }
+            DockContent::LogTail { path, max_lines } => render_log_tail_body(
+                frame,
+                body_rect,
+                path,
+                *max_lines,
+                t,
+                log_tail_read.as_deref(),
+            ),
         }
         app.rects.dock_widget_bodies.push((body_rect, w.id));
     }
@@ -831,13 +841,30 @@ fn render_log_tail_body(
     path: &std::path::Path,
     max_lines: usize,
     t: crate::ui::theme::Theme,
+    // code-reviewer S2-1 — accept pre-read contents from
+    // paint_one_widget so we don't read the file twice per frame
+    // per LogTail widget. None = caller didn't pre-read; fall back
+    // to reading here so existing call sites still work.
+    pre_read: Option<&str>,
 ) {
     let max_w = body_rect.width as usize;
     let max_h = body_rect.height as usize;
     let take_n = max_lines.min(max_h);
 
     let mut lines_out: Vec<Line> = Vec::with_capacity(take_n);
-    match std::fs::read_to_string(path) {
+    let owned: String;
+    let s_opt: Option<&str> = if let Some(s) = pre_read {
+        Some(s)
+    } else {
+        match std::fs::read_to_string(path) {
+            Ok(s) => {
+                owned = s;
+                Some(owned.as_str())
+            }
+            Err(_) => None,
+        }
+    };
+    match s_opt.ok_or(()) {
         Ok(s) => {
             let all_lines: Vec<&str> = s.lines().collect();
             let start = all_lines.len().saturating_sub(take_n);
