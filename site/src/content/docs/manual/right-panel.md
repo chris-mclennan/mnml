@@ -82,6 +82,20 @@ This is the eviction split mnml makes for the panel:
 
 Either close path nulls `right_panel_pane_id`. Re-opening the panel returns to the empty-state hint — your hosted pane isn't auto-restored, because the design assumes you'll re-fire `outline.show` or `lsp.diagnostics` for whatever you want next.
 
+### Multiple tabs (v3)
+
+![right panel tabs: outline.show + lsp.diagnostics host as two tabs; Ctrl+Shift+next / Ctrl+Shift+prev cycle between them; × closes the active tab and the next one falls into focus, then returns to the empty state](../../../assets/tapes/right-panel-tabs.gif)
+
+A walkthrough of the v3 tab-strip: open the panel (empty state), fire `outline.show` (Outline becomes tab #1), fire `lsp.diagnostics` (Diagnostics joins as tab #2 — strip now shows both chips), cycle with `Ctrl+Shift+[` (Outline active) and `Ctrl+Shift+]` (Diagnostics active), then click the `×` button twice — first close evicts Diagnostics and the Outline takes over as the active tab; second close empties the panel back to the hint state. The panel column stays open the whole time; only the hosted panes come and go.
+
+### AI chat host (v4)
+
+![right panel AI chat: open lib.rs, open the panel, fire :ai.explain — the AI chat lands in the panel as a tab alongside Outline/Diagnostics; "AI chat reads better at 40+ cells" hint shows when narrow; pane streams from Asking → Done](../../../assets/tapes/right-panel-ai-chat.gif)
+
+`ai.chat` / `ai.ask` / `ai.explain` / `ai.fix` / `ai.refactor` / `ai.write_tests` all route into the side panel as a tab when it's open (instead of splitting the editor body). The tab label carries the prompt title (`AI: explain`, `AI: ask…`, …) and a one-glyph state marker: `●` asking, `✦` streaming, `✓` done, `✗` error. Body shows the prompt block at the top followed by the streaming answer; the standard AI-pane bindings (`a` apply, `r` re-ask, `x` cancel) work the same as in a split. When the panel column is narrower than **40 cells**, the body paints a `AI chat reads better at 40+ cells — drag edge wider` hint above the prompt — a softer nudge than the Outline / Diagnostics "too narrow" hint at 16 cells, because the chat *can* still render at narrow widths, it just reads worse.
+
+The recording uses `[ai] backend = "cli"` (mnml's default), which shells `claude -p` — no `ANTHROPIC_API_KEY` needed.
+
 ## Sizing
 
 The panel takes a fixed cell width carved off the right of the workspace area **before** the rail's left split happens, so the rail and the panel size independently. Default width comes from `[ui] right_panel_width` in TOML (auto-default if unset).
