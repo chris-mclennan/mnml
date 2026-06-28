@@ -7,3 +7,4 @@
 //! between files is a pure mechanical relocation.
 
 pub mod overlay;
+pub mod pane;
