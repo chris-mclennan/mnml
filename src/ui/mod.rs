@@ -1368,9 +1368,13 @@ fn paint_integration_chips_in_gap(
         "teal" => t.teal,
         _ => t.bg2,
     };
+    // 2026-06-27 — chips render WITHOUT a colored background.
+    // The configured color slot drives the FG (glyph color); the
+    // bg is the palette-bar background. Reads as a flat icon row
+    // matching IDE chrome style. Click + hover behavior unchanged.
     for &(i, icon) in enabled_launchers.iter().take(launcher_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let chip_bg = color_of(&icon.color);
+        let chip_fg = color_of(&icon.color);
         let chip_rect = Rect {
             x,
             y,
@@ -1381,8 +1385,8 @@ fn paint_integration_chips_in_gap(
             Paragraph::new(Span::styled(
                 format!(" {glyph} "),
                 Style::default()
-                    .fg(t.bg_darker)
-                    .bg(chip_bg)
+                    .fg(chip_fg)
+                    .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             )),
             chip_rect,
@@ -1392,7 +1396,7 @@ fn paint_integration_chips_in_gap(
     }
     for &(i, icon) in enabled_integrations.iter().take(integration_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let chip_bg = color_of(&icon.color);
+        let chip_fg = color_of(&icon.color);
         let chip_rect = Rect {
             x,
             y,
@@ -1403,8 +1407,8 @@ fn paint_integration_chips_in_gap(
             Paragraph::new(Span::styled(
                 format!(" {glyph} "),
                 Style::default()
-                    .fg(t.bg_darker)
-                    .bg(chip_bg)
+                    .fg(chip_fg)
+                    .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             )),
             chip_rect,
