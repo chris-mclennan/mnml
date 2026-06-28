@@ -155,6 +155,31 @@ compact-fallback; icon picker (~70 Nerd Font glyphs); external tool launchers
 (`tools.htop/iftop/btop`); Pty tabs in bufferline (`$` suffix, skip in `:bn`/`:bp`);
 drag-to-split stale-rect fixes; full hover + right-click coverage on all chips.
 
+**File-split refactor + keyboard polish (2026-06-28 evening).** Two waves of
+work landed:
+
+1. **9-step file split** of the two biggest source files. `src/app/mod.rs`
+   went from 14,234 → ~11,500 lines and `src/tui.rs` went from 7,712 → ~1,700
+   lines. The 9 new siblings: `src/app/{util,sibling_install_methods,workspace_methods,cloud_agents_methods,cmdline_methods}.rs`
+   and `src/tui/{chord,mouse}.rs` + `src/tui/handlers/{overlay,pane}.rs`.
+   Pure non-destructive — every function kept its signature; some private fns
+   elevated to `pub(crate)` for cross-sibling calls. 974 → 978 tests pass; no
+   behavior change. Verified by a post-split regression sweep (0 issues).
+
+2. **3 keyboard / right-panel features.** (a) Chord chain feeds the opener
+   letter to whichkey when its fallback opens the overlay — `<leader>tr`
+   needed `Ctrl+K t t r` before; now it's two keys. (b) `Shift+F10` opens the
+   context menu for the focused element (tree row or active pane tab) — VS
+   Code + macOS convention. (c) Right-panel **v2**: when the panel is visible,
+   `outline.show` and `lsp.diagnostics` route into the panel instead of
+   splitting the editor body. Header shows the hosted pane's kind (OUTLINE /
+   DIAGNOSTICS) with a `×` close button; below 16 cells the body shows a
+   "too narrow" hint.
+
+3. **Build-system fix.** `run.sh` + `dev.sh` now prepend
+   `/opt/homebrew/opt/zig@0.15/bin` to PATH so `libghostty-vt-sys`'s build.rs
+   doesn't silently fail on macOS shells without zig in PATH.
+
 **For prior history** (the 7-month arc that built tmnl + the
 blit protocol + mixr-host + chrome chips integration) see
 `git log` before the cleanup commits. Those entries used to live
