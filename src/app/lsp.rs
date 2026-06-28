@@ -593,10 +593,11 @@ impl App {
                 o.items.clear();
                 o.clamp();
             }
-            // If the existing outline is the right-panel host,
-            // don't reveal_pane (which routes through the layout
-            // tree). Just leave it where it is.
-            if self.right_panel_pane_id != Some(id) {
+            // If already in the right panel, bring its tab to the
+            // front; otherwise reveal through the layout tree.
+            if let Some(idx) = self.right_panel_panes.iter().position(|&pid| pid == id) {
+                self.right_panel_active_idx = idx;
+            } else {
                 self.reveal_pane(id);
             }
         } else {
@@ -604,14 +605,12 @@ impl App {
                 path.clone(),
                 Vec::new(),
             ));
-            // Right-panel v2: when the panel is open, host the
-            // outline there instead of carving a horizontal split.
-            // The editor body keeps its full width; the panel
-            // shows the outline in its (typically 32-cell) column.
+            // Right-panel v3: when the panel is open, push the
+            // outline into the hosted-panes list as a new tab.
             if self.right_panel_visible {
                 self.panes.push(pane);
                 let new_id = self.panes.len() - 1;
-                self.right_panel_pane_id = Some(new_id);
+                self.right_panel_push(new_id);
             } else {
                 match self.active {
                     Some(cur) => {

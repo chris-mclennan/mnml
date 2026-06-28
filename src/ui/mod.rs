@@ -569,22 +569,33 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             ratatui::widgets::Block::default().style(Style::default().bg(t.bg_darker)),
             rpa,
         );
-        // Right-panel v2 (2026-06-28): if the panel is hosting a
-        // pane (`right_panel_pane_id`), render it in the column
-        // body below the header. Otherwise show the empty-state
-        // copy that teaches the user how to populate it.
-        let hosted_pane = app
-            .right_panel_pane_id
-            .filter(|id| app.panes.get(*id).is_some());
-        let header_label: String = if let Some(pid) = hosted_pane {
-            match app.panes.get(pid) {
-                Some(crate::pane::Pane::Outline(_)) => " OUTLINE".to_string(),
-                Some(crate::pane::Pane::Diagnostics(_)) => " DIAGNOSTICS".to_string(),
-                _ => " SIDE PANEL".to_string(),
-            }
+        // Right-panel v3 (2026-06-28): the panel can host multiple
+        // panes as TABS. `right_panel_panes` is the list; the active
+        // index is what renders in the body. The header row paints
+        // a tab strip — one chip per hosted pane — with the active
+        // tab carrying a `×` close button.
+        let hosted: Vec<usize> = app
+            .right_panel_panes
+            .iter()
+            .copied()
+            .filter(|id| app.panes.get(*id).is_some())
+            .collect();
+        let active_idx = if hosted.is_empty() {
+            0
         } else {
-            " SIDE PANEL".to_string()
+            app.right_panel_active_idx.min(hosted.len() - 1)
         };
+        let active_pane: Option<usize> = hosted.get(active_idx).copied();
+
+        // Header row.
+        let tab_label = |pid: usize| -> &'static str {
+            match app.panes.get(pid) {
+                Some(crate::pane::Pane::Outline(_)) => "OUTLINE",
+                Some(crate::pane::Pane::Diagnostics(_)) => "DIAGNOSTICS",
+                _ => "PANEL",
+            }
+        };
+        app.rects.right_panel_tabs.clear();
         if rpa.height >= 1 && rpa.width >= 4 {
             let header_rect = Rect {
                 x: rpa.x,
@@ -593,43 +604,78 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 height: 1,
             };
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(header_label).style(
-                    Style::default()
-                        .fg(t.comment)
-                        .bg(t.bg_darker)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                ratatui::widgets::Block::default().style(Style::default().bg(t.bg_darker)),
                 header_rect,
             );
-            // Right-panel v2 polish: `×` close button on the
-            // header when a pane is hosted. Clicking it evicts
-            // the pane id (panel stays open in empty state).
-            // Only paint when a pane IS hosted — empty panel
-            // doesn't need a close.
-            if hosted_pane.is_some() && rpa.width >= 6 {
-                let close_x = rpa.x + rpa.width.saturating_sub(2);
-                let close_rect = Rect {
-                    x: close_x,
-                    y: rpa.y,
-                    width: 1,
-                    height: 1,
-                };
-                let glyph = if app.config.ui.ascii_icons { "x" } else { "×" };
+            if hosted.is_empty() {
+                // Empty state: still paint the section label.
                 frame.render_widget(
-                    ratatui::widgets::Paragraph::new(glyph)
-                        .style(Style::default().fg(t.comment).bg(t.bg_darker)),
-                    close_rect,
+                    ratatui::widgets::Paragraph::new(" SIDE PANEL").style(
+                        Style::default()
+                            .fg(t.comment)
+                            .bg(t.bg_darker)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    header_rect,
                 );
-                app.rects.right_panel_close = Some(close_rect);
-            } else {
                 app.rects.right_panel_close = None;
+            } else {
+                // Tab strip — one chip per hosted pane. Active
+                // tab gets bg2 background; inactive tabs stay
+                // bg_darker. Reserve 2 cells on the right for `×`.
+                let reserve_close: u16 = 2;
+                let mut x = rpa.x;
+                let strip_end = rpa.x + rpa.width.saturating_sub(reserve_close);
+                for (i, pid) in hosted.iter().copied().enumerate() {
+                    let label = tab_label(pid);
+                    let chip = format!(" {label} ");
+                    let chip_w = chip.chars().count() as u16;
+                    if x + chip_w > strip_end {
+                        break;
+                    }
+                    let chip_rect = Rect {
+                        x,
+                        y: rpa.y,
+                        width: chip_w,
+                        height: 1,
+                    };
+                    let bg = if i == active_idx { t.bg2 } else { t.bg_darker };
+                    let fg = if i == active_idx { t.fg } else { t.comment };
+                    frame.render_widget(
+                        ratatui::widgets::Paragraph::new(chip)
+                            .style(Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)),
+                        chip_rect,
+                    );
+                    app.rects.right_panel_tabs.push((chip_rect, i));
+                    x = x.saturating_add(chip_w);
+                }
+                // `×` close on the rightmost cell. Closes the
+                // ACTIVE tab — matches editor tab strips.
+                if rpa.width > reserve_close {
+                    let close_x = rpa.x + rpa.width.saturating_sub(2);
+                    let close_rect = Rect {
+                        x: close_x,
+                        y: rpa.y,
+                        width: 1,
+                        height: 1,
+                    };
+                    let glyph = if app.config.ui.ascii_icons { "x" } else { "×" };
+                    frame.render_widget(
+                        ratatui::widgets::Paragraph::new(glyph)
+                            .style(Style::default().fg(t.comment).bg(t.bg_darker)),
+                        close_rect,
+                    );
+                    app.rects.right_panel_close = Some(close_rect);
+                } else {
+                    app.rects.right_panel_close = None;
+                }
             }
         }
         // Width hint — if user dragged the panel too narrow, show
         // a one-line warning instead of the cramped pane render.
         // Threshold of 16 cells matches outline_view's min readable
         // width (gutter + a few chars).
-        if hosted_pane.is_some() && rpa.width < 16 && rpa.height >= 3 {
+        if active_pane.is_some() && rpa.width < 16 && rpa.height >= 3 {
             let hint = Rect {
                 x: rpa.x + 1,
                 y: rpa.y + 2,
@@ -642,16 +688,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .wrap(ratatui::widgets::Wrap { trim: false }),
                 hint,
             );
-        } else if let Some(pid) = hosted_pane {
-            // Body is the area below the header row.
+        } else if let Some(pid) = active_pane {
+            // Body is the area below the tab strip.
             let body = Rect {
                 x: rpa.x,
                 y: rpa.y + 1,
                 width: rpa.width,
                 height: rpa.height.saturating_sub(1),
             };
-            // We only route Outline + Diagnostics into the right
-            // panel for v2. Both have their own pane renderers.
             let focused = app.active == Some(pid);
             match app.panes.get(pid) {
                 Some(crate::pane::Pane::Outline(_)) => {

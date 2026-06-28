@@ -1365,14 +1365,35 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             if app.maybe_start_right_panel_edge_drag(x, y) {
                 return;
             }
-            // Right-panel v2 polish: `×` on the header evicts the
-            // hosted pane (panel stays open, returns to empty
-            // state). Checked BEFORE pane-body click handlers
-            // since the rect overlaps the column.
+            // Right-panel v3: tab strip click → switch active tab.
+            // Checked BEFORE the × close since the tabs occupy the
+            // left half of the same row.
+            if let Some(&(_, tab_idx)) = app
+                .rects
+                .right_panel_tabs
+                .iter()
+                .find(|(rect, _)| crate::app::dispatch::contains(*rect, x, y))
+            {
+                app.right_panel_active_idx = tab_idx;
+                return;
+            }
+            // Right-panel v3 `×` on the header closes the active
+            // tab (panel stays open; next tab takes its place, or
+            // empty-state returns if it was the last).
             if let Some(rect) = app.rects.right_panel_close
                 && crate::app::dispatch::contains(rect, x, y)
             {
-                if let Some(pid) = app.right_panel_pane_id.take() {
+                if let Some(pid) = app.right_panel_active_pane_id() {
+                    // Remove from list then close the pane.
+                    if let Some(idx) = app.right_panel_panes.iter().position(|&p| p == pid) {
+                        app.right_panel_panes.remove(idx);
+                        // Clamp active_idx to the new len-1.
+                        if app.right_panel_active_idx >= app.right_panel_panes.len()
+                            && !app.right_panel_panes.is_empty()
+                        {
+                            app.right_panel_active_idx = app.right_panel_panes.len() - 1;
+                        }
+                    }
                     app.close_pane(pid);
                 }
                 return;

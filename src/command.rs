@@ -1492,10 +1492,12 @@ fn builtin_commands() -> Vec<Command> {
                 // user "closed" it via toggling the panel. Re-opening
                 // the panel returns to the empty-state copy; re-firing
                 // outline.show / lsp.diagnostics creates fresh.
-                if !app.right_panel_visible
-                    && let Some(pid) = app.right_panel_pane_id.take()
-                {
-                    app.close_pane(pid);
+                if !app.right_panel_visible {
+                    let panes = std::mem::take(&mut app.right_panel_panes);
+                    app.right_panel_active_idx = 0;
+                    for pid in panes {
+                        app.close_pane(pid);
+                    }
                 }
             },
         },

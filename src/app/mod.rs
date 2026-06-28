@@ -1605,9 +1605,12 @@ pub struct PaneRects {
     /// Drag-resize grip on the right panel's left edge.
     pub right_panel_edge: Option<Rect>,
     /// Hit rect for the `×` close button on the right-panel header.
-    /// Clicking it evicts the hosted pane (right_panel_pane_id = None)
-    /// without hiding the panel itself. Right-panel v2 polish.
+    /// Closes the currently-active hosted pane (panel stays open;
+    /// next tab takes its place, or empty-state returns if last).
     pub right_panel_close: Option<Rect>,
+    /// Hit rects for the right-panel tab strip — one per hosted
+    /// pane, paired with its index into `right_panel_panes`. v3.
+    pub right_panel_tabs: Vec<(Rect, usize)>,
     /// `+` chip just after the user's integration icons in the
     /// palette bar's gap area. Click → `integrations.add`
     /// (opens the discovery overlay so the user can add a sibling).
@@ -2480,13 +2483,15 @@ pub struct App {
     pub right_panel_width: u16,
     /// True while the user is mid-drag on the right panel's left-edge handle.
     pub dragging_right_panel_edge: bool,
-    /// When `Some(pid)`, the right panel is hosting that pane (instead
-    /// of showing the empty-state copy). `outline.show` and
-    /// `lsp.diagnostics` route here when the panel is visible — the
-    /// pane renders inside the column rather than splitting the
-    /// editor. Set to `None` when the panel closes or the hosted
-    /// pane is removed. Right-panel v2 from the design-critic plan.
-    pub right_panel_pane_id: Option<usize>,
+    /// Panes currently hosted in the right side panel. v3 supports
+    /// multiple as a tab strip (Outline + Diagnostics simultaneously);
+    /// `right_panel_active_idx` is which one is displayed. v2's
+    /// `right_panel_pane_id: Option<usize>` is replaced by these two
+    /// fields — most call sites should use `right_panel_active_pane_id()`.
+    pub right_panel_panes: Vec<usize>,
+    /// Index into `right_panel_panes` for the currently-visible pane.
+    /// Clamped to `[0, panes.len())` defensively at access time.
+    pub right_panel_active_idx: usize,
     /// User-set MAX height for the INTEGRATIONS rail section. `None`
     /// = auto-size to content needed (the default). When `Some(h)`,
     /// the layout uses `min(h, content_needed)` so a too-large cap
@@ -3744,7 +3749,8 @@ impl App {
             right_panel_visible: right_panel_visible_default,
             right_panel_width: right_panel_width_default,
             dragging_right_panel_edge: false,
-            right_panel_pane_id: None,
+            right_panel_panes: Vec::new(),
+            right_panel_active_idx: 0,
             integrations_user_max_h: None,
             git_user_max_h: None,
             rail_section_drag: None,
@@ -4784,6 +4790,28 @@ impl App {
     }
 
     // ─── panes / buffers ────────────────────────────────────────────
+
+    /// Currently-displayed pane id in the right side panel, or `None`
+    /// if the panel is empty / closed. Clamps the active_idx into
+    /// the hosted-panes list defensively.
+    pub fn right_panel_active_pane_id(&self) -> Option<usize> {
+        if self.right_panel_panes.is_empty() {
+            return None;
+        }
+        let idx = self
+            .right_panel_active_idx
+            .min(self.right_panel_panes.len() - 1);
+        Some(self.right_panel_panes[idx])
+    }
+
+    /// Push a pane into the right panel and make it active.
+    pub fn right_panel_push(&mut self, pid: usize) -> usize {
+        self.right_panel_panes.push(pid);
+        let idx = self.right_panel_panes.len() - 1;
+        self.right_panel_active_idx = idx;
+        idx
+    }
+
     pub fn active_editor(&self) -> Option<&Buffer> {
         self.active_pane().and_then(Pane::as_editor)
     }
@@ -5554,21 +5582,20 @@ impl App {
                 d.items = fresh.items;
                 d.clamp();
             }
-            // If already hosted in the right panel, don't reveal_pane
-            // (which routes through the layout tree).
-            if self.right_panel_pane_id != Some(id) {
+            // If already in the right panel, bring its tab to the front.
+            if let Some(idx) = self.right_panel_panes.iter().position(|&pid| pid == id) {
+                self.right_panel_active_idx = idx;
+            } else {
                 self.reveal_pane(id);
             }
             return;
         }
         let pane = Pane::Diagnostics(self.build_diagnostics_pane());
-        // Right-panel v2: host in the panel when it's open (swap if
-        // an Outline pane is currently hosted — last-opened wins,
-        // matches the design-critic plan since v2 has no tab strip).
+        // Right-panel v3: host in the panel as a new tab.
         if self.right_panel_visible {
             self.panes.push(pane);
             let new_id = self.panes.len() - 1;
-            self.right_panel_pane_id = Some(new_id);
+            self.right_panel_push(new_id);
             return;
         }
         match self.active {
@@ -11619,39 +11646,22 @@ mod tests {
 
     #[test]
     fn outline_show_routes_to_right_panel_when_visible() {
-        // Right-panel v2: `outline.show` with right_panel_visible=true
-        // hosts the outline pane in the panel (no layout split) and
-        // sets right_panel_pane_id. Toggling the panel off clears it.
+        // Right-panel v3: `outline.show` with right_panel_visible=true
+        // pushes the outline into right_panel_panes. Toggling the
+        // panel off closes every hosted pane (no ghost tabs).
         let (d, mut app) = app_with_files();
         let a = d.path().join("a.txt").canonicalize().unwrap();
         app.open_path(&a);
         app.right_panel_visible = true;
         let pane_count_before = app.panes.len();
         app.open_outline_pane();
-        assert!(
-            app.right_panel_pane_id.is_some(),
-            "outline.show with panel visible should set right_panel_pane_id"
-        );
-        let outline_id = app.right_panel_pane_id.unwrap();
-        assert!(
-            matches!(app.panes.get(outline_id), Some(Pane::Outline(_))),
-            "right_panel_pane_id should point to the outline pane"
-        );
-        assert_eq!(
-            app.panes.len(),
-            pane_count_before + 1,
-            "outline pane added to app.panes"
-        );
-        // Toggling the panel off clears the host pointer.
+        assert_eq!(app.right_panel_panes.len(), 1, "1 hosted pane");
+        let outline_id = app.right_panel_active_pane_id().unwrap();
+        assert!(matches!(app.panes.get(outline_id), Some(Pane::Outline(_))));
+        assert_eq!(app.panes.len(), pane_count_before + 1);
         crate::command::run("view.toggle_right_panel", &mut app);
         assert!(!app.right_panel_visible);
-        assert!(
-            app.right_panel_pane_id.is_none(),
-            "toggling panel off clears right_panel_pane_id"
-        );
-        // keyboard-verifier 2026-06-28 obs 2 — the hosted pane
-        // should also be closed (not just unhosted) so it doesn't
-        // leave a ghost bufferline tab.
+        assert!(app.right_panel_panes.is_empty(), "host list cleared");
         assert!(
             !matches!(app.panes.get(outline_id), Some(Pane::Outline(_))),
             "outline pane should be closed after panel toggle-off, not just unhosted"
@@ -11659,34 +11669,23 @@ mod tests {
     }
 
     #[test]
-    fn right_panel_close_button_evicts_hosted_pane() {
-        // Right-panel v2 polish: clicking the header × button
-        // should clear right_panel_pane_id AND close the pane
-        // (so it doesn't accumulate as a ghost). Panel stays
-        // visible — re-firing :outline.show re-hosts.
+    fn right_panel_hosts_outline_and_diagnostics_as_tabs() {
+        // v3 — both Outline AND Diagnostics live in the panel
+        // together (no last-opened-wins eviction).
         let (d, mut app) = app_with_files();
         let a = d.path().join("a.txt").canonicalize().unwrap();
         app.open_path(&a);
         app.right_panel_visible = true;
         app.open_outline_pane();
-        let pane_count_with_outline = app.panes.len();
-        let outline_id = app.right_panel_pane_id.expect("outline routed");
-        assert!(matches!(app.panes.get(outline_id), Some(Pane::Outline(_))));
-
-        // Simulate the close handler.
-        if let Some(pid) = app.right_panel_pane_id.take() {
-            app.close_pane(pid);
-        }
-        assert!(app.right_panel_pane_id.is_none(), "host cleared");
-        // close_pane on a non-dirty pane should actually remove
-        // the pane from the panes vec OR vacate it; either way
-        // the count shouldn't grow.
-        assert!(
-            app.panes.len() <= pane_count_with_outline,
-            "close_pane shouldn't add ghosts"
+        app.open_diagnostics_pane();
+        assert_eq!(
+            app.right_panel_panes.len(),
+            2,
+            "both Outline + Diagnostics hosted"
         );
-        // Panel stays visible.
-        assert!(app.right_panel_visible);
+        // Last-opened becomes active.
+        let active = app.right_panel_active_pane_id().unwrap();
+        assert!(matches!(app.panes.get(active), Some(Pane::Diagnostics(_))));
     }
 
     #[test]
