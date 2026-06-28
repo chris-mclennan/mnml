@@ -1474,7 +1474,11 @@ fn paint_integration_chips_in_gap(
     // for it via plus_w above).
     let plus_x = x;
     if plus_x + 3 <= avail_right + 1 {
-        let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
+        // design-critic Issue 3 — different glyph than the bufferline
+        // new-tab `+` (F0415) and the http_new chip so the three
+        // `+`-style chips aren't visually identical. Codicon "add"
+        // (\u{EA7C}) has a circle outline that distinguishes it.
+        let plus_glyph = if nerd { "\u{EA7C}" } else { "+" };
         let plus_rect = Rect {
             x: plus_x,
             y,
