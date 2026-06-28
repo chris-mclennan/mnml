@@ -199,10 +199,19 @@ impl App {
     /// repos, where it'd false-positive into "this is a Python
     /// project" and spawn pytest against Rust code).
     pub fn run_pytest(&mut self, args: &str) {
-        let root = find_manifest_dir(&self.workspace, &["pyproject.toml", "setup.py"])
-            .unwrap_or_else(|| self.workspace.clone());
+        // multilang 3rd 2026-06-28 SEV-2: also detect requirements.txt
+        // (matches pyright's LSP root_markers). Was emitting a
+        // "no pyproject.toml / setup.py / test files" toast on
+        // requirements.txt-only projects while the LSP cheerfully
+        // attached — contradictory signal.
+        let root = find_manifest_dir(
+            &self.workspace,
+            &["pyproject.toml", "setup.py", "requirements.txt"],
+        )
+        .unwrap_or_else(|| self.workspace.clone());
         let has_pyproject = root.join("pyproject.toml").exists();
         let has_setup = root.join("setup.py").exists();
+        let has_requirements = root.join("requirements.txt").exists();
         // multilang-dev-user F7 — accept tests in `tests/` or `test/`
         // and walk one level deep (so `tests/unit/test_foo.py` counts)
         // and also accept `*_test.py` suffix. Old version was too
@@ -237,9 +246,9 @@ impl App {
         let has_real_tests = ["tests", "test"]
             .iter()
             .any(|d| dir_has_pytest_file(root.join(d)));
-        if !has_pyproject && !has_setup && !has_real_tests {
+        if !has_pyproject && !has_setup && !has_requirements && !has_real_tests {
             self.toast(format!(
-                "pytest: no pyproject.toml / setup.py / test files at {}",
+                "pytest: no pyproject.toml / setup.py / requirements.txt / test files at {}",
                 self.workspace.display()
             ));
             return;
@@ -335,8 +344,22 @@ impl App {
         // got "no manifest" even though Go itself would have
         // found one. Walk up until we hit a manifest or the
         // filesystem root.
-        let root = find_manifest_dir(&self.workspace, &[manifest])
+        //
+        // multilang 3rd 2026-06-28 SEV-2: in a pnpm/yarn monorepo
+        // with package.json at the root AND a per-package
+        // package.json, walking from `self.workspace` always picks
+        // the root one — running `npm test` at the monorepo root
+        // instead of in the user's currently-edited package. Walk
+        // from the ACTIVE editor's directory first when there's an
+        // open file; fall back to workspace for non-pane focus.
+        let start_dir = self
+            .active_editor()
+            .and_then(|b| b.path.as_ref())
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.workspace.clone());
+        let root =
+            find_manifest_dir(&start_dir, &[manifest]).unwrap_or_else(|| self.workspace.clone());
         if !root.join(manifest).exists() {
             self.toast(format!(
                 "{bin}.{slug}: no {manifest} found in {} or any parent",
