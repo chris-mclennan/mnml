@@ -1219,4 +1219,55 @@ color = \"blue\"
         assert_eq!(toml_str("he said \"hi\""), "\"he said \\\"hi\\\"\"");
         assert_eq!(toml_str("c:\\path"), "\"c:\\\\path\"");
     }
+
+    #[test]
+    fn append_integration_icon_blocks_preserves_enabled_true() {
+        // Regression lock for commit 10e6cfa — the `enabled` field
+        // was silently dropped during serialisation so right-click
+        // → Enable appeared to work in-session but reset to false
+        // on restart (the deserializer defaults missing key to false).
+        let icons = vec![IntegrationIcon {
+            id: "myapp".to_string(),
+            glyph: "x".to_string(),
+            fallback: "M".to_string(),
+            command: ":term myapp".to_string(),
+            color: "cyan".to_string(),
+            tooltip: Some("My App".to_string()),
+            enabled: true,
+        }];
+        let toml_out = append_integration_icon_blocks("", &icons);
+        assert!(
+            toml_out.contains("enabled = true"),
+            "enabled=true must appear in TOML output; got:\n{toml_out}"
+        );
+        // Round-trip parse must preserve true.
+        let parsed: toml::Value = toml::from_str(&toml_out).expect("valid TOML");
+        let enabled = parsed
+            .get("ui")
+            .and_then(|u| u.get("integration_icon"))
+            .and_then(|a| a.as_array())
+            .and_then(|a| a.first())
+            .and_then(|e| e.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .expect("enabled key present in parsed TOML");
+        assert!(enabled);
+    }
+
+    #[test]
+    fn append_integration_icon_blocks_enabled_false_is_explicit() {
+        let icons = vec![IntegrationIcon {
+            id: "disabled_one".to_string(),
+            glyph: "y".to_string(),
+            fallback: "D".to_string(),
+            command: ":term disabled_one".to_string(),
+            color: "red".to_string(),
+            tooltip: None,
+            enabled: false,
+        }];
+        let toml_out = append_integration_icon_blocks("", &icons);
+        assert!(
+            toml_out.contains("enabled = false"),
+            "enabled=false must appear literally; got:\n{toml_out}"
+        );
+    }
 }
