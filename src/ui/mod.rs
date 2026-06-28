@@ -291,7 +291,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if palette_bar_visible {
         draw_palette_bar(frame, app, palette_bar_area);
     } else {
+        // render-reviewer #1 — narrow-terminal stale rects bug.
+        // Previously cleared only palette_search_chip; the other
+        // chrome rects survived from the last frame and stole
+        // clicks at row 0 once the terminal shrank below 80 cols.
         app.rects.palette_search_chip = None;
+        app.rects.palette_sidebar_button = None;
+        app.rects.palette_right_panel_button = None;
+        app.rects.palette_back_button = None;
+        app.rects.palette_forward_button = None;
+        app.rects.palette_dropdown_button = None;
+        app.rects.palette_add_integration_button = None;
+        app.rects.menu_bar_words.clear();
+        app.rects.bufferline_new_tab_button = None;
+        app.rects.bufferline_tab_page_chips.clear();
+        app.rects.bufferline_tab_page_close.clear();
+        app.rects.bufferline_theme_toggle = None;
+        app.rects.bufferline_window_close = None;
     }
 
     // tree rail | right column. `tree_visible` here means "the rail itself is
@@ -1795,8 +1811,11 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // (launchers + close) stay visible the longest.
     // `x` at this point is the LEFT edge of the dropdown chevron
     // (it wasn't bumped past the chevron after painting). The real
-    // right edge of the workspace cluster is `x + dropdown_w`.
-    let palette_right_edge = x + dropdown_w;
+    // right edge of the workspace cluster also accounts for the
+    // right-panel toggle button that sits NAV_GAP cells past the
+    // dropdown (render-reviewer #9 — without this, the gap painter
+    // can place integration chips on top of the toggle).
+    let palette_right_edge = x + dropdown_w + NAV_GAP + right_panel_w;
     let full_w = bufferline::right_cluster_width(app);
     let cluster_w = bufferline::pick_cluster_mode(
         area.x,

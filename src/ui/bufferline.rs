@@ -227,6 +227,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         1
     };
     let mut x = area.x + left_chev_used as u16;
+    // render-reviewer #3 — hoist theme::cur() so the per-tab loop
+    // doesn't acquire its RwLock 27× per tab. With 30 panes that's
+    // ~810 lock acquisitions/frame just from this branch.
+    let tt = theme::cur();
     let mut last_drawn: usize = first_visible;
     let mut overflow_right = false;
     for vis_pos in first_visible..visible.len() {
@@ -240,41 +244,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 icons::for_path(&p, false, false, nerd)
             }
             Pane::MdPreview(p) => icons::for_path(&p.path, false, false, nerd),
-            Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
-            Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, theme::cur().orange),
-            Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
-            Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, theme::cur().yellow),
-            Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, theme::cur().teal),
-            Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
-            Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, theme::cur().green),
-            Pane::Browser(_) => (if nerd { "\u{f059f}" } else { "◉" }, theme::cur().blue),
-            Pane::Diagnostics(_) => (if nerd { "\u{f0026}" } else { "⚠" }, theme::cur().red),
-            Pane::Grep(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().yellow),
-            Pane::Flaky(_) => (if nerd { "\u{f0668}" } else { "≋" }, theme::cur().purple),
-            Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
-            Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
-            Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
-            Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
-            Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
-            // nf-md-console (terminal arrow) — REPL prompt vibe.
-            Pane::DapRepl(_) => (if nerd { "\u{F018D}" } else { ">" }, theme::cur().cyan),
-            // nf-md-image
-            Pane::Image(_) => (if nerd { "\u{F021F}" } else { "▤" }, theme::cur().purple),
-            // nf-md-robot — Claude agent dashboard.
-            Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, theme::cur().purple),
-            // nf-md-lan — websocket connection.
-            Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
-            // nf-md-currency-usd — AI spend report.
-            Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
-            // nf-md-puzzle-outline — hosted sibling (Mount).
-            Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
-            // nf-md-cloud-search-outline — cloud-agent run detail.
-            Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
-            // nf-md-plus-box-multiple-outline — new cloud agent wizard.
-            Pane::NewCloudAgentWizard(_) => {
-                (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green)
-            }
-            Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
+            Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, tt.orange),
+            Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, tt.orange),
+            Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, tt.green),
+            Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, tt.yellow),
+            Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, tt.teal),
+            Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, tt.purple),
+            Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, tt.green),
+            Pane::Browser(_) => (if nerd { "\u{f059f}" } else { "◉" }, tt.blue),
+            Pane::Diagnostics(_) => (if nerd { "\u{f0026}" } else { "⚠" }, tt.red),
+            Pane::Grep(_) => (if nerd { "\u{f0349}" } else { "⌕" }, tt.yellow),
+            Pane::Flaky(_) => (if nerd { "\u{f0668}" } else { "≋" }, tt.purple),
+            Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, tt.purple),
+            Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, tt.teal),
+            Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, tt.comment),
+            Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, tt.yellow),
+            Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, tt.red),
+            Pane::DapRepl(_) => (if nerd { "\u{F018D}" } else { ">" }, tt.cyan),
+            Pane::Image(_) => (if nerd { "\u{F021F}" } else { "▤" }, tt.purple),
+            Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, tt.purple),
+            Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, tt.teal),
+            Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, tt.orange),
+            Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, tt.cyan),
+            Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, tt.blue),
+            Pane::NewCloudAgentWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, tt.green),
+            Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, tt.cyan),
         };
         // Status badge priority:
         //   dirty   → ● / *  (orange — any tab)

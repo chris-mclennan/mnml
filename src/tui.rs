@@ -4223,6 +4223,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     app.active.and_then(|i| app.panes.get_mut(i))
                 {
                     p.log_follow = !p.log_follow;
+                    // render-reviewer #2 — renderer treats
+                    // log_scroll == usize::MAX as the follow-tail
+                    // sentinel. Without snapping it, re-enabling
+                    // follow on a completed run leaves the viewport
+                    // stuck at its old offset.
+                    if p.log_follow {
+                        p.log_scroll = usize::MAX;
+                    }
                 }
             }
         }
