@@ -1,15 +1,19 @@
 ---
-description: Fire every relevant user-sim + design-critic agent in parallel against the current build, aggregate findings into one report
-allowed-tools: Bash(cargo build:*), Bash(date:*), Bash(ls:*), Bash(find:*), Bash(wc:*), Bash(mkdir:*), Bash(cat:*), Bash(./run.sh restart:*), Read, Write, Glob, Agent
+description: Fire every relevant user-sim + design-critic agent in parallel against the current build, then run a serial drive-mnml visual pass on the real ghostty window, and aggregate findings into one report
+allowed-tools: Bash(cargo build:*), Bash(date:*), Bash(ls:*), Bash(find:*), Bash(wc:*), Bash(mkdir:*), Bash(cat:*), Bash(uname:*), Bash(pgrep:*), Bash(./run.sh restart:*), Bash(./run.sh shot:*), Bash(scripts/shot.sh:*), Bash(scripts/click.sh:*), Bash(osascript:*), Read, Write, Glob, Agent
 ---
 
 # /qa-sweep
 
 Fire every relevant user-sim + design-critic agent against the current
-mnml build in parallel, then aggregate their findings into one summary
-report. The goal is **comprehensive coverage on demand** — when you've
-shipped a feature and want to know what real users would hit before
-they hit it.
+mnml build in parallel, then run **one serial visual pass** over the real
+ghostty window with `drive-mnml`, and aggregate everything into one
+summary report. The goal is **comprehensive coverage on demand** — when
+you've shipped a feature and want to know what real users would hit before
+they hit it. The parallel headless agents cover behavior on the cell grid;
+the serial visual pass covers what the grid can't encode — actual glyph /
+icon / color / cursor rendering — which is where a different class of bugs
+hides.
 
 ## Arguments
 
@@ -57,7 +61,36 @@ Optional. The default is "all". To narrow:
 4. **Wait for completion.** Notifications arrive as each agent comes
    to rest. Do not poll their output files.
 
-5. **Aggregate.** Once all agents report back, glob the findings
+5. **Serial visual pass (`drive-mnml`) — the render-level layer the
+   headless agents can't see.** macOS + ghostty only; needs mnml running
+   via `./run.sh` (Screen Recording + Accessibility granted). If you're
+   not on macOS/ghostty, or no `mnml — …` window is up, **SKIP** it and
+   say so in Coverage notes — never fail the sweep over it.
+
+   Run this **serially, in the main session — NEVER as parallel agents.**
+   There is ONE real ghostty window and ONE global mouse/keyboard focus;
+   a fan-out would have agents fighting over both (the same shared-window
+   collision a shared working tree causes). One surface at a time.
+
+   Walk the canonical UI surfaces, capturing each with `./run.sh shot`
+   then `Read`-ing the PNG. Navigate **deterministically** — write to the
+   running instance's IPC `command` mailbox (or send keys via the
+   `drive-mnml` skill); don't pixel-hunt to get somewhere. Suggested
+   tour: editor on a syntax-highlighted file · file tree (Nerd Font icons
+   + git-status colors) · command palette · which-key · statusline (mode
+   chip, git, chips) · each reachable pane (Pty / Request / Diff / …) ·
+   settings overlay · any menus / dropdowns. For mouse-target checks use
+   `scripts/click.sh` and re-shot.
+
+   Look for what the cell grid **cannot** encode (so the headless agents
+   structurally miss it): tofu / wrong Nerd Font glyphs, real theme
+   colors, per-mode cursor shape, cell alignment / overflow / truncation,
+   border off-by-ones, CJK / emoji double-width, icon correctness. Stage
+   each as `findings/<DATE>/visual-<slug>.md` with the usual `severity:`
+   + `agent: drive-mnml` frontmatter so it rolls into the summary. See the
+   `drive-mnml` skill for the shot / pixel→point / keystroke mechanics.
+
+6. **Aggregate.** Once all agents report back, glob the findings
    dirs:
    ```
    findings/<DATE>/**/*.md
@@ -97,9 +130,14 @@ Optional. The default is "all". To narrow:
    ## Coverage notes
    - <which agents ran>
    - <which agents skipped + why, if any>
+   - visual pass (drive-mnml): ran (<N> surfaces shot) / skipped (<reason>)
    ```
 
-6. **Report to the user** in chat:
+   The visual-pass findings land in the same dir, so the glob picks them
+   up and they bucket into SEV-1/2/3 by their own `severity:` like any
+   other finding.
+
+7. **Report to the user** in chat:
    - Top-line counts (N findings across X agents)
    - Top 3 highest-severity items by headline
    - The path to the SUMMARY.md
@@ -118,6 +156,9 @@ firing the full fleet again. Trust the user's narrow when given.
 - Don't dispatch more than one design-critic per sweep — it does
   ONE surface deeply, not all of them. If the user wants multiple
   surfaces audited, ask which one is highest priority.
+- Don't run the visual pass as parallel agents. It's ONE serial pass
+  over the single real ghostty window in the main session — fanning it
+  out makes agents fight over the window + global mouse/keyboard focus.
 - Don't push to git or open PRs — this is a read-only sweep.
 - Don't run against a dirty working tree without saying so. If
   `git status` shows uncommitted changes, mention it in the
