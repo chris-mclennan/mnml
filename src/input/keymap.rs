@@ -183,19 +183,29 @@ impl Keymap {
         // `picker.recent`. We remove here BEFORE user `[keys.*]` overlays
         // so a user can still bind them in `[keys.vim]` if desired.
         if super::is_vim_style(cfg) {
-            // nvchad-user SEV-2 (2026-06-28): also add ctrl+n.
-            // Vim INSERT uses Ctrl+N for keyword-completion-next
-            // (handled in src/input/vim.rs:840). The default
-            // mnml binding `Ctrl+N = file.new` was stealing the
-            // chord before the vim handler could see it, so
-            // completion was unreachable from INSERT. Vim users
-            // create files via `:e <path>`. Ctrl+P stays bound
-            // (it's the palette / recents picker — strong nvchad
-            // muscle memory); INSERT-mode users can use
-            // `Ctrl+X Ctrl+N` (vim's omni-completion start)
-            // which is unbound globally.
+            // nvchad-user SEV-2 (2026-06-28): mnml strips a canonical
+            // set of Ctrl+<letter> chords when in vim mode so they
+            // fall through to the vim INSERT/NORMAL handler instead
+            // of being intercepted by the global chord chain. Each
+            // has a vim meaning that the editor MUST receive:
+            //   W: delete word (insert) · G: keyword-cmd / cmd-prefix
+            //   D: ½ page down · U: ½ page up · E: scroll down
+            //   Y: scroll up · R: redo (normal) / digraph (insert)
+            //   N: keyword-completion-next (insert) — added today
+            //   H: backspace (insert) — added today
+            //   J: newline (insert) — added today
+            //   T: indent (insert) — added today
+            // mnml users access the displaced commands via palette /
+            // ex / leader chords (`:s/foo/bar/g` for Ctrl+H replace;
+            // `<leader>tt` for Ctrl+T terminal; tab for Ctrl+J snippet).
+            // Ctrl+P stays bound globally (palette / recents — strong
+            // nvchad muscle memory); vim users want INSERT completion-
+            // prev via `Ctrl+X Ctrl+P` (omni) which is unbound globally.
+            // Ctrl+S stays bound (save) — vim users save in insert too.
+            // Ctrl+B stays bound (sidebar) — no canonical vim meaning.
             for spec in [
                 "ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+r", "ctrl+n",
+                "ctrl+h", "ctrl+j", "ctrl+t",
             ] {
                 if let Some(seq) = parse_key_seq(spec) {
                     km.map.remove(&seq);
