@@ -647,16 +647,20 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "editor.toggle_fold",
-            title: "Toggle fold at cursor (vim `za`-ish)",
+            title: "Toggle fold at cursor (vim `za`-ish; VS Code Ctrl+Shift+[)",
             group: "editor",
-            keys: &[],
+            // multilang 2026-06-28 F4: VS Code muscle memory.
+            // Was previously bound to right-panel tab cycle —
+            // moved (user choice) since the right panel has the
+            // leader chord + click as keyboard paths.
+            keys: &["Ctrl+Shift+["],
             run: |app| app.toggle_fold_at_cursor(),
         },
         Command {
             id: "editor.unfold_all",
-            title: "Unfold every fold in the active buffer (vim `zR`-ish)",
+            title: "Unfold every fold in the active buffer (vim `zR`-ish; VS Code Ctrl+Shift+])",
             group: "editor",
-            keys: &[],
+            keys: &["Ctrl+Shift+]"],
             run: |app| app.unfold_all_in_active(),
         },
         Command {
@@ -1517,13 +1521,15 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            // Right-panel v3: keyboard tab-cycle. Bufferline uses
-            // Ctrl+Shift+[/] for prev/next tab; mnml's right panel
-            // mirrors that pattern.
+            // Right-panel v3: keyboard tab-cycle. No default chord
+            // — VS Code's Ctrl+Shift+[/] is the canonical
+            // fold/unfold and was reclaimed for editor folds
+            // (multilang F4, 2026-06-28). Reach the cycle via
+            // `<leader>t]` / `<leader>t[` (whichkey) or click.
             id: "view.right_panel_next_tab",
             title: "Right panel: switch to next tab",
             group: "view",
-            keys: &["Ctrl+Shift+]"],
+            keys: &[],
             run: |app| {
                 if app.right_panel_panes.len() > 1 {
                     app.right_panel_active_idx =
@@ -1535,7 +1541,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.right_panel_prev_tab",
             title: "Right panel: switch to previous tab",
             group: "view",
-            keys: &["Ctrl+Shift+["],
+            keys: &[],
             run: |app| {
                 if app.right_panel_panes.len() > 1 {
                     let n = app.right_panel_panes.len();
