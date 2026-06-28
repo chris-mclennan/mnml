@@ -132,6 +132,12 @@ pub enum PromptKind {
     /// Accept (input == "remove") ⇒ `git worktree remove <pending_path>`.
     /// Confirm prompt for the GitWorktreeRemove picker.
     WorktreeRemoveConfirm,
+    /// Accept (input starts with 'y') ⇒ spawn `brew install <pkg>`
+    /// in a Pty pane. Used by `run_external_tool` when the binary
+    /// isn't on PATH, so chip clicks offer install instead of just
+    /// toasting a hint. The pending package name lives on
+    /// `App::pending_tool_install`.
+    ToolInstallConfirm,
     /// Accept ⇒ `npm run <input>` in a pty pane. Used by
     /// `:npm.run_script` so polyglot projects with non-`dev`
     /// scripts (next dev, vite, start:dev, etc.) can run them

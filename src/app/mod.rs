@@ -2865,6 +2865,11 @@ pub struct App {
     /// Family id captured when a `prompt_install_sibling` opens the
     /// "X not installed — install? y/n" prompt. Resolved by the
     /// prompt accept handler to fire the install.
+    /// Pending external-tool install — the package name to install
+    /// (brew formula / apt package) when the user confirms a
+    /// ToolInstallConfirm prompt. See `run_external_tool` +
+    /// `accept_tool_install`.
+    pub pending_tool_install: Option<(String, String)>, // (id, install_cmd)
     pub pending_install_family_id: Option<String>,
     /// Action captured alongside `pending_install_family_id` — the
     /// thing the user was originally trying to do when they hit
@@ -4155,6 +4160,7 @@ impl App {
             mount_manifests,
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
+            pending_tool_install: None,
             pending_install_family_id: None,
             pending_install_after_action: None,
             install_post_actions: std::collections::HashMap::new(),
@@ -7671,10 +7677,39 @@ impl App {
             ));
             return;
         }
-        self.toast(format!(
-            "{label}: not installed. Try `{hint}`",
-            label = tool.label,
-            hint = crate::tools::install_hint(tool.brew_pkg, tool.apt_pkg)
+        // Not installed — offer to install. Open a confirm prompt
+        // pre-filled with `y`; on accept we spawn the install in a
+        // Pty pane so the user sees brew/apt's progress live.
+        let install_cmd = crate::tools::install_hint(tool.brew_pkg, tool.apt_pkg);
+        self.pending_tool_install = Some((tool.id.to_string(), install_cmd.clone()));
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::ToolInstallConfirm,
+            format!("{} — install via `{install_cmd}`? [y/N]", tool.label),
+            "y",
+        ));
+    }
+
+    /// Accept handler for `PromptKind::ToolInstallConfirm` — fired
+    /// from the picker accept path. If the user accepted with `y`,
+    /// spawn the install command in a Pty pane.
+    pub fn accept_tool_install(&mut self, input: String) {
+        let Some((_id, install_cmd)) = self.pending_tool_install.take() else {
+            return;
+        };
+        let accepted = input
+            .trim()
+            .chars()
+            .next()
+            .map(|c| c.eq_ignore_ascii_case(&'y'))
+            .unwrap_or(false);
+        if !accepted {
+            return;
+        }
+        let ws = self.active_workspace_path().to_path_buf();
+        self.open_pty(crate::pty_pane::BinaryProfile::task(
+            "install",
+            &install_cmd,
+            ws,
         ));
     }
 

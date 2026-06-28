@@ -1575,6 +1575,9 @@ impl App {
                     self.toast("worktree remove cancelled");
                 }
             }
+            crate::prompt::PromptKind::ToolInstallConfirm => {
+                self.accept_tool_install(p.input);
+            }
             crate::prompt::PromptKind::GitDeleteBranchConfirm => {
                 if p.input.trim().eq_ignore_ascii_case("delete") {
                     self.git_delete_branch_apply();
