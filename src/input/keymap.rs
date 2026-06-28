@@ -197,7 +197,8 @@ impl Keymap {
             //   T: indent (insert) — added today
             // mnml users access the displaced commands via palette /
             // ex / leader chords (`:s/foo/bar/g` for Ctrl+H replace;
-            // `<leader>tt` for Ctrl+T terminal; tab for Ctrl+J snippet).
+            // `<leader>at` for Ctrl+T terminal; `<leader>Ix` /
+            // palette `snippet.expand` for Ctrl+J snippet expand).
             // Ctrl+P stays bound globally (palette / recents — strong
             // nvchad muscle memory); vim users want INSERT completion-
             // prev via `Ctrl+X Ctrl+P` (omni) which is unbound globally.

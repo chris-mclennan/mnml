@@ -3389,6 +3389,12 @@ impl App {
             "rightpanel!" | "right_panel!" | "rp!" | "invrightpanel"
         ) {
             self.right_panel_visible = !self.right_panel_visible;
+            // code-reviewer 2026-06-28 W-1: parity with
+            // view.toggle_right_panel — drain hosted panes when
+            // hiding so they don't ghost in the bufferline.
+            if !self.right_panel_visible {
+                self.close_right_panel_hosted_panes();
+            }
             self.toast(format!(
                 "right_panel: {}",
                 if self.right_panel_visible {
@@ -3399,6 +3405,7 @@ impl App {
             ));
         } else if matches!(opt, "norightpanel" | "noright_panel" | "norp") {
             self.right_panel_visible = false;
+            self.close_right_panel_hosted_panes();
             self.toast("right_panel: off");
         } else if matches!(opt, "relativenumber" | "rnu") {
             self.set_relative_line_numbers(true);

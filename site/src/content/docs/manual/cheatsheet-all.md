@@ -30,7 +30,7 @@ Two chords always work regardless of which input handler is loaded — keep thes
 
 | Action | vim | standard | Command id |
 |---|---|---|---|
-| New file (prompt) | `:enew` / `:e <path>` | `Ctrl+N` | `file.new` |
+| New file (prompt) | `:enew` / `:e <path>` | `Ctrl+N` | `file.new` (vim `Ctrl+N` is keyword-completion next) |
 | Open file picker | `<leader>ff` / `Ctrl+P` | `Ctrl+P` | `picker.files` |
 | Open recent picker | `Ctrl+R` | `Ctrl+R` | `picker.recent` |
 | Save | `<leader>w` / `:w` / `Ctrl+S` | `Ctrl+S` | `file.save` |
@@ -190,7 +190,7 @@ These are operator-pending objects — type them after `d`, `c`, `y`, `v`, etc.
 | Select next / prev match | `gn` / `gN` | (palette) | `find.select_match_{forward,backward}` |
 | Clear find highlight | `:noh` / `:nohlsearch` | (palette) | `find.clear` |
 | Toggle regex (in find prompt) | `Alt+R` | `Alt+R` | `find.toggle_regex` |
-| Replace (in current buffer) | `:%s/old/new/g` / `:%s/old/new/gc` | `Ctrl+H` | `find.replace` |
+| Replace (in current buffer) | `:%s/old/new/g` / `:%s/old/new/gc` | `Ctrl+H` | `find.replace` (vim `Ctrl+H` is INSERT-backspace) |
 | Workspace grep | `<leader>fg` / `:Rg <pat>` / `:Ag` / `:grep` / `:vimgrep` | `Ctrl+Shift+F` | `find.grep` |
 | Replace across workspace | (results pane) | (results pane) | `find.grep_replace` |
 | Quickfix next / prev | `:cn` / `:cp` | (palette) | `qf.next` / `qf.prev` |
@@ -286,7 +286,7 @@ These are operator-pending objects — type them after `d`, `c`, `y`, `v`, etc.
 | Action | vim | standard | Command id |
 |---|---|---|---|
 | Scratch terminal toggle (bottom strip) | `` Ctrl+` `` | `` Ctrl+` `` | `term.scratch_toggle` |
-| Focus existing or open new shell | `Ctrl+T` | `Ctrl+T` | `term.focus_or_open_shell` |
+| Focus existing or open new shell | `<leader>at` | `Ctrl+T` | `term.focus_or_open_shell` (vim `Ctrl+T` is INSERT-indent / NORMAL nav.back) |
 | Shell as a pane | `<leader>at` / `:term` / `:terminal` | (palette) | `term.shell` |
 | Rename pty tab | (palette) | (palette) | `term.rename` |
 
@@ -366,7 +366,7 @@ Press `y` (or accept the seeded answer) to spawn the install command in a Pty pa
 | Action | vim | standard | Command id |
 |---|---|---|---|
 | Snippet picker | `<leader>Is` | (palette) | `snippet.pick` |
-| Expand snippet at cursor | `<leader>Ix` / `Ctrl+J` | `Ctrl+J` | `snippet.expand` |
+| Expand snippet at cursor | `<leader>Ix` | `Ctrl+J` | `snippet.expand` (vim `Ctrl+J` is INSERT-newline) |
 
 ## Cross-host PRs
 

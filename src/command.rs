@@ -1493,11 +1493,7 @@ fn builtin_commands() -> Vec<Command> {
                 // the panel returns to the empty-state copy; re-firing
                 // outline.show / lsp.diagnostics creates fresh.
                 if !app.right_panel_visible {
-                    let panes = std::mem::take(&mut app.right_panel_panes);
-                    app.right_panel_active_idx = 0;
-                    for pid in panes {
-                        app.close_pane(pid);
-                    }
+                    app.close_right_panel_hosted_panes();
                 }
             },
         },
@@ -1553,15 +1549,10 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             keys: &[],
             run: |app| {
+                // crash-investigator SEV-1 #3: close_pane FIRST so
+                // remove_pane_storage handles the right_panel_panes
+                // shift atomically. Same fix as the × mouse handler.
                 if let Some(pid) = app.right_panel_active_pane_id() {
-                    if let Some(idx) = app.right_panel_panes.iter().position(|&p| p == pid) {
-                        app.right_panel_panes.remove(idx);
-                        if app.right_panel_active_idx >= app.right_panel_panes.len()
-                            && !app.right_panel_panes.is_empty()
-                        {
-                            app.right_panel_active_idx = app.right_panel_panes.len() - 1;
-                        }
-                    }
                     app.close_pane(pid);
                 }
             },

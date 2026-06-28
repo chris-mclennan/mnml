@@ -1384,16 +1384,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 && crate::app::dispatch::contains(rect, x, y)
             {
                 if let Some(pid) = app.right_panel_active_pane_id() {
-                    // Remove from list then close the pane.
-                    if let Some(idx) = app.right_panel_panes.iter().position(|&p| p == pid) {
-                        app.right_panel_panes.remove(idx);
-                        // Clamp active_idx to the new len-1.
-                        if app.right_panel_active_idx >= app.right_panel_panes.len()
-                            && !app.right_panel_panes.is_empty()
-                        {
-                            app.right_panel_active_idx = app.right_panel_panes.len() - 1;
-                        }
-                    }
+                    // crash-investigator SEV-1 #3: close_pane FIRST.
+                    // On a dirty editor this exits early with a close
+                    // prompt; the pane is still in right_panel_panes
+                    // so confirm-discard routes through
+                    // remove_pane_storage which now also drops the
+                    // right-panel record. For non-dirty panes,
+                    // remove_pane_storage takes care of the shift.
                     app.close_pane(pid);
                 }
                 return;

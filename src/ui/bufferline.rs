@@ -148,7 +148,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // 2026-06-21 — VS Code-style pinned tabs sort to the FRONT.
     // Within the pinned + unpinned groups, original pane order is
     // preserved (so the user can still reorder via close/reopen).
-    let mut visible: Vec<usize> = (0..app.panes.len()).collect();
+    // mouse-hunter v3 SEV-2 E: panes hosted in the right side panel
+    // are visible there — they shouldn't ALSO appear as bufferline
+    // tabs (ghost duplicates). Filter them out before rendering.
+    let mut visible: Vec<usize> = (0..app.panes.len())
+        .filter(|i| !app.right_panel_panes.contains(i))
+        .collect();
     visible.sort_by_key(|&i| {
         let pinned = matches!(app.panes.get(i), Some(Pane::Editor(b)) if b.is_pinned);
         if pinned { 0 } else { 1 }

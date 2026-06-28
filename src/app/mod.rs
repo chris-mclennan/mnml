@@ -4816,17 +4816,41 @@ impl App {
     /// displaced (FIFO) — close_pane'd so no ghost bufferline tab
     /// lingers.
     pub fn right_panel_push(&mut self, pid: usize) -> usize {
+        // crash-investigator SEV-1 #2: use force_close_pane (not
+        // close_pane) so a dirty editor in the slot can't refuse to
+        // be displaced and cause the loop to double-evict. In v3
+        // only Outline / Diagnostics get hosted (never editors, so
+        // never dirty), but the FIFO is defensive — keep it robust.
+        // remove_pane_storage handles the right_panel_panes shift.
+        let was_at_cap = self.right_panel_panes.len() >= Self::RIGHT_PANEL_MAX_TABS;
         while self.right_panel_panes.len() >= Self::RIGHT_PANEL_MAX_TABS {
-            let oldest = self.right_panel_panes.remove(0);
-            // Closing the displaced pane after the push would clobber
-            // the new pane's index; close now while the new pane
-            // hasn't been added yet.
-            self.close_pane(oldest);
+            let oldest = self.right_panel_panes[0];
+            self.force_close_pane(oldest);
+        }
+        if was_at_cap {
+            // mouse-hunter v3 SEV-2 J — toast on silent displace so
+            // the user knows their last open dropped a sibling.
+            self.toast("right panel full — closed oldest tab");
         }
         self.right_panel_panes.push(pid);
         let idx = self.right_panel_panes.len() - 1;
         self.right_panel_active_idx = idx;
         idx
+    }
+
+    /// Close every right-panel-hosted pane and clear the host list.
+    /// Iterates in descending pid order so close_pane's id-shift
+    /// (handled by remove_pane_storage) doesn't invalidate the
+    /// remaining iterator entries. code-reviewer 2026-06-28 W-1 + W-3
+    /// — was duplicated in view.toggle_right_panel + missing from
+    /// the `:set rightpanel!` / `:set norightpanel` paths.
+    pub fn close_right_panel_hosted_panes(&mut self) {
+        let mut panes = std::mem::take(&mut self.right_panel_panes);
+        self.right_panel_active_idx = 0;
+        panes.sort_unstable_by(|a, b| b.cmp(a));
+        for pid in panes {
+            self.force_close_pane(pid);
+        }
     }
 
     pub fn active_editor(&self) -> Option<&Buffer> {

@@ -502,6 +502,24 @@ impl App {
                 *id -= 1;
             }
         }
+        // crash-investigator 2026-06-28 SEV-1 #1: right_panel_panes
+        // also carries PaneIds and needs the same drop + shift. Without
+        // it, closing a pane with a lower index than a hosted right-
+        // panel pane left a stale id in the Vec, which the click /
+        // hover paths then dereferenced into the wrong (or out-of-
+        // bounds) app.panes slot.
+        self.right_panel_panes.retain(|&id| id != removed);
+        for id in self.right_panel_panes.iter_mut() {
+            if *id > removed {
+                *id -= 1;
+            }
+        }
+        // Clamp the active idx to the (possibly shrunk) list length.
+        if !self.right_panel_panes.is_empty()
+            && self.right_panel_active_idx >= self.right_panel_panes.len()
+        {
+            self.right_panel_active_idx = self.right_panel_panes.len() - 1;
+        }
         // Defensive: every other field that carries a PaneId across
         // events MUST get the same shift, or a follow-up event reads
         // a stale id and indexes into `panes` at a wrong (or now-

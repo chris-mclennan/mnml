@@ -1016,6 +1016,10 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, id) in &app.rects.bufferline_tabs {
         push_rect(&mut out, &mut first, &format!("bufferline_tab:{id}"), *r);
     }
+    // mouse-hunter v3 SEV-1 A — right_panel_tabs were not dumped.
+    for (r, idx) in &app.rects.right_panel_tabs {
+        push_rect(&mut out, &mut first, &format!("right_panel_tab:{idx}"), *r);
+    }
     for (r, leaf_active, dir) in &app.rects.split_strip_buttons {
         push_rect(
             &mut out,
@@ -1153,8 +1157,16 @@ pub fn status_json(app: &App) -> String {
             )
         })
         .collect();
+    // mouse-hunter v3 SEV-3 K — right-panel state for headless
+    // harness assertions.
+    let right_panel_panes_json = app
+        .right_panel_panes
+        .iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "{{\"focus\":{},\"activePane\":{},\"activeFile\":{},\"cursor\":{{\"line\":{},\"col\":{}}},\"mode\":{},\"treeCursor\":{},\"treeSelection\":{},\"treeVisible\":{},\"panes\":[{}],\"quit\":{}}}",
+        "{{\"focus\":{},\"activePane\":{},\"activeFile\":{},\"cursor\":{{\"line\":{},\"col\":{}}},\"mode\":{},\"treeCursor\":{},\"treeSelection\":{},\"treeVisible\":{},\"rightPanelVisible\":{},\"rightPanelPanes\":[{}],\"rightPanelActiveIdx\":{},\"panes\":[{}],\"quit\":{}}}",
         json_str(focus),
         app.active
             .map(|i| i.to_string())
@@ -1166,6 +1178,9 @@ pub fn status_json(app: &App) -> String {
         tree_cursor,
         json_str(&tree_sel),
         app.tree_visible,
+        app.right_panel_visible,
+        right_panel_panes_json,
+        app.right_panel_active_idx,
         panes.join(","),
         app.should_quit,
     )

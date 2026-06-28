@@ -889,12 +889,9 @@ impl VimInputHandler {
             // from the keymap got it to the editor; this handler
             // arm actually does the insert.
             KeyCode::Char('j') if ctrl => InputResult::Ops(vec![InsertNewline]),
-            // Same family: Ctrl+H in INSERT is canonical backspace
-            // (terminal control: `^H` = BS). The KeyCode::Backspace
-            // arm below handles plain Backspace; this catches the
-            // Ctrl chord specifically so the keymap-strip → editor
-            // handoff fires the right op.
-            KeyCode::Char('h') if ctrl => InputResult::Ops(vec![Backspace]),
+            // (Ctrl+H in INSERT is already handled by the arm above
+            // at line 871 — code-reviewer 2026-06-28 W-2 dead code
+            // removal.)
             KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
             KeyCode::Tab => InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))]),
             KeyCode::Backspace => InputResult::Ops(vec![Backspace]),
@@ -2087,6 +2084,13 @@ impl VimInputHandler {
             KeyCode::Char('t') if ctrl => {
                 self.reset_pending();
                 InputResult::App(AppCommand::RunCommand("nav.back".into()))
+            }
+            // vim `Ctrl+H` in NORMAL is equivalent to `h` (move left
+            // one char). nvchad-user 2026-06-28 — was a no-op
+            // because handle_normal's motion lookup gates on `!ctrl`.
+            KeyCode::Char('h') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![EditOp::MoveLeft])
             }
             // vim `K` — keyword help / docs for word under cursor (LSP hover).
             KeyCode::Char('K') => {
