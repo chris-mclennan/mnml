@@ -1316,9 +1316,14 @@ fn paint_integration_chips_in_gap(
         return;
     }
     let avail_w = avail_right - avail_left;
+    // Each chip takes 3 cells (` glyph `); add a 2-cell trailing
+    // gap so chips visually breathe and the `+` add-chip also
+    // sits 2 cells off the last icon. Net: 5-cell stride per chip,
+    // last chip's trailing gap doubles as the gap before `+`.
     let per_chip: u16 = 3;
-    let max_chips = (avail_w / per_chip) as usize;
-    if max_chips == 0 {
+    let chip_gap: u16 = 2;
+    let chip_stride: u16 = per_chip + chip_gap;
+    if avail_w < per_chip {
         return;
     }
     let t = theme::cur();
@@ -1330,10 +1335,12 @@ fn paint_integration_chips_in_gap(
     // they used to live in the far-right cluster.
     app.rects.launcher_icon_rects.clear();
     // Reserve 3 cells at the END for a `+` add-integration chip
-    // (opens discovery overlay).
-    let plus_w: u16 = 3;
+    // (opens discovery overlay). The chip preceding it already
+    // pads 2 cells of trailing gap, so the `+` sits flush with
+    // its own group.
+    let plus_w: u16 = per_chip;
     let avail_for_chips = avail_w.saturating_sub(plus_w);
-    let chip_count = (avail_for_chips / per_chip) as usize;
+    let chip_count = (avail_for_chips / chip_stride) as usize;
     // Only chips with `enabled = true` show. Everything else is
     // configured-but-hidden until the user opts in (right-click →
     // Enable, or the discovery overlay). Browser is the only
@@ -1396,7 +1403,7 @@ fn paint_integration_chips_in_gap(
             chip_rect,
         );
         app.rects.launcher_icon_rects.push((chip_rect, i));
-        x = x.saturating_add(3);
+        x = x.saturating_add(chip_stride);
     }
     for &(i, icon) in enabled_integrations.iter().take(integration_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
@@ -1418,7 +1425,7 @@ fn paint_integration_chips_in_gap(
             chip_rect,
         );
         app.rects.integration_icon_rects.push((chip_rect, i));
-        x = x.saturating_add(3);
+        x = x.saturating_add(chip_stride);
     }
     // `+` chip — opens the integrations discovery overlay so the
     // user can add another sibling without leaving the palette
