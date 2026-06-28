@@ -506,12 +506,12 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
     out.push(SettingItem::Section("Editor"));
 
     // Input style — vim vs standard.
-    let input_idx = if cfg.editor.input_style == "vim" {
+    let input_idx = if crate::input::is_vim_style(cfg) {
         0
     } else {
         1
     };
-    let input_default_idx = if d.editor.input_style == "vim" { 0 } else { 1 };
+    let input_default_idx = if crate::input::is_vim_style(&d) { 0 } else { 1 };
     out.push(SettingItem::Row(SettingRow {
         key: "editor.input_style",
         label: "Input style",

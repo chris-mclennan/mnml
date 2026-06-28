@@ -217,7 +217,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
             height: 1,
         };
         if let Some(url) = url_opt {
-            let url_text = clip(url, area.width as usize - (label.len() + 6));
+            // crash-investigator F-01 + F-03 — was `area.width as usize - (label.len() + 6)`
+            // which (a) underflowed when area.width < 16 (debug panic) and (b)
+            // counted label in BYTES via `len()` while area.width is display
+            // cells. Use saturating_sub + chars().count() for both.
+            let url_text = clip(
+                url,
+                (area.width as usize).saturating_sub(label.chars().count() + 6),
+            );
             let line = Line::from(vec![
                 Span::styled("    ", Style::default().bg(bg)),
                 Span::styled(label.to_string(), Style::default().fg(t.comment).bg(bg)),

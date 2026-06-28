@@ -269,3 +269,12 @@ pub fn make_handler_for(style: &str, cfg: &Config) -> Box<dyn InputHandler> {
 pub fn make_handler(cfg: &Config) -> Box<dyn InputHandler> {
     make_handler_for(&cfg.editor.input_style, cfg)
 }
+
+/// input-handler-reviewer S3 (2026-06-28) — single source of truth
+/// for "is the user configured to drive with vim semantics?" so the
+/// string literal `"vim"` only lives in one place. `App::is_vim_mode()`
+/// delegates here when you have an `&App`; call this directly when you
+/// only have an `&Config` (settings overlay, keymap build).
+pub fn is_vim_style(cfg: &Config) -> bool {
+    cfg.editor.input_style == "vim"
+}

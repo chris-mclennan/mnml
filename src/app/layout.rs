@@ -1171,12 +1171,15 @@ impl App {
         if self.layouts.len() <= 1 {
             return;
         }
+        // crash-investigator F-04 — defensive: clamp active_layout
+        // to a valid index in case external state corruption (bad
+        // session.json, race vs tab_close) left it past layouts.len().
+        if self.active_layout >= self.layouts.len() {
+            self.active_layout = 0;
+        }
         // Pull the keep-tab aside, push every other layout onto the
         // closed-tab stack, then put the keep-tab back as the only entry.
-        let keep_layout = std::mem::replace(
-            self.layouts.get_mut(self.active_layout).unwrap(),
-            Layout::Empty,
-        );
+        let keep_layout = std::mem::replace(&mut self.layouts[self.active_layout], Layout::Empty);
         let keep_active = self.tab_actives[self.active_layout];
         // Drain remaining layouts onto closed-stack (skipping the keep).
         for i in (0..self.layouts.len()).rev() {

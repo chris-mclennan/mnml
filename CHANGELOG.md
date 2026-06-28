@@ -10,6 +10,37 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+### Added (2026-06-28)
+
+- **Right side panel** — a collapsible panel on the right editor edge. Toggle
+  with `Ctrl+Shift+B`, the EC00 icon in the palette bar, or `:set rightpanel` /
+  `:set rp!`. Drag the left-edge grip to resize. Visible state and width persist
+  via `session.json`; config defaults: `[ui] right_panel_visible` and
+  `[ui] right_panel_width`. Palette command `view.toggle_right_panel`; which-key
+  chord `<leader>tr`. Settings overlay gains two new rows (visible + width).
+- **Integration `enabled` opt-in** — every integration chip now carries an
+  `enabled` flag. Only `browser` is enabled by default. Right-click a chip →
+  Enable / Disable; the change is persisted back to TOML. Disabled chips render
+  dim and don't fire on click. New palette commands: `integrations.toggle_enabled`,
+  `integrations.edit`, `integrations.remove`.
+- **External tool launchers** — `tools.htop` / `tools.iftop` / `tools.btop`
+  (also `term.htop` / `term.iftop` / `term.btop` aliases) probe `$PATH` and
+  open the tool in a Pty pane, or fire a platform-aware install-hint toast
+  (Homebrew / apt / winget). Which-key chord `<leader>...b` (btop).
+- **Icon picker** — `integrations.icon_picker` (`<leader>ip`) opens a ~70-glyph
+  Nerd Font browser organised by category. Accepting a glyph copies the character
+  and its `\u{XXXX}` escape to the clipboard.
+- **Pty panes in bufferline** — terminal and Claude Code sessions get bufferline
+  tabs with a `$` suffix and a close button. `:bn` / `:bp` skip Pty tabs.
+- **Palette bar redesign** — sidebar toggle + right-panel toggle + flat
+  integration chips in the workspace-to-right-cluster gap + add-integration `+`
+  (EA7C codicon). Compact-mode right cluster drops TABS instead of vanishing at
+  narrow widths.
+- **Drag-to-split improvements** — orphan-pane recovery when the source pane is
+  alone in its leaf; rect-clear architecture fixes multiple stale-rect bugs.
+- **Hover and right-click coverage** — every palette-bar chip now has a tooltip
+  (hover for description) and a context menu (right-click for actions).
+
 ### Removed (2026-06-22)
 
 - **Tmnl integration removed.** Mnml is now terminal-agnostic. Pivoted to

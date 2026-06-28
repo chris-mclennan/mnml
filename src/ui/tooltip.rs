@@ -78,8 +78,8 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
 fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)> {
     match chip {
         HoverChip::StatuslineMode => {
-            // code-reviewer S1-1 — variant-match moved to
-            // EditingMode::tooltip_label so the UI layer doesn't
+            // code-reviewer S1-1 — variant-match moved to the
+            // enum's tooltip_label() method so the UI layer doesn't
             // branch on input mode (spine rule). Tree-focus is a
             // focus state, not a mode — checked via the focus side.
             let mode_desc = if matches!(app.focus, crate::focus::Focus::Tree)

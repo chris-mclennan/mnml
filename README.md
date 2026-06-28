@@ -41,7 +41,8 @@ and render layers never branch on which one is active.
   app is mode-agnostic.
 - **Splits, panes, tab pages.** A recursive split tree; editors, terminals,
   diffs, and tool panes are all `Pane`s. Vim `Ctrl-W` window chords and mouse
-  drag-to-resize both work.
+  drag-to-resize both work. An optional **right side panel** (`Ctrl+Shift+B` or
+  `:set rightpanel`) gives a collapsible, drag-resizable column on the right edge.
 - **LSP, batteries included.** Completion with docs, hover, go-to-definition,
   references, rename with preview, code actions, inlay hints, semantic tokens,
   document/type/call hierarchy, signature help, and a Problems pane — driven by a

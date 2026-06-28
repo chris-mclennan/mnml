@@ -50,7 +50,9 @@ The complete, organised feature inventory. For the front-door overview see
   workspace, `u` UI, `h` http, `d` diff/debug. `<leader>i` opens `+integrations`
   with chords for every forge/AWS/DB sibling: `b` Bitbucket, `g` GitHub, `l`
   GitLab, `z` Azure DevOps, `c` CodeBuild, `s` S3, `w` CloudWatch Logs, `a`
-  Amplify, `d` DynamoDB, `L` Lambda, `e` EventBridge.
+  Amplify, `d` DynamoDB, `L` Lambda, `e` EventBridge, `+` add integration, `p`
+  icon picker, `e` enable/disable. `<leader>t` includes `r` (toggle right panel).
+  `<leader>...b` maps to `tools.btop`.
 - **Find & replace** — in-buffer find (literal + regex, smart-case,
   incremental), replace, find history.
 - **Workspace grep** — ripgrep-backed project search into a results pane, with
@@ -133,7 +135,14 @@ The complete, organised feature inventory. For the front-door overview see
 
 - **Pty panes** — a shell, the `claude` CLI, Codex, or any task as live terminal
   panes, with a multi-session tab strip and `:rename`.
+- **Pty tabs in bufferline** — terminal and Claude Code sessions get bufferline
+  tabs with a `$` suffix and a close button. `:bn` / `:bp` skip Pty tabs so vim
+  users don't get trapped cycling through terminal sessions.
 - **Scratch terminal** — a quick docked terminal strip.
+- **External tool launchers** — `tools.htop`, `tools.iftop`, `tools.btop` (also
+  `term.htop` / `term.iftop` / `term.btop` aliases) probe `$PATH`, open the tool
+  in a Pty pane if found, or fire a platform-aware install hint toast (Homebrew on
+  macOS, apt on Linux, winget on Windows) if not.
 - **Tasks** — `[tasks.*]` config + a task launcher; startup tasks.
 
 ## Dock widgets
@@ -274,10 +283,22 @@ The complete, organised feature inventory. For the front-door overview see
 
 - **NvChad-style chrome** — file-tree rail, bufferline, powerline statusline,
   cmdline bar, which-key, indent guides, sticky scope context.
+- **Optional right side panel** — a collapsible panel on the right edge; toggle
+  with `Ctrl+Shift+B` or click the EC00 icon in the palette bar, or `:set
+  rightpanel` / `:set rp!`. Drag the left-edge grip to resize. State (visible +
+  width) persists to `session.json`; defaults configurable via `[ui]
+  right_panel_visible` and `[ui] right_panel_width`. Palette command:
+  `view.toggle_right_panel`. Which-key chord: `<leader>tr`.
+- **Palette bar redesign** — sidebar toggle (EC02 codicon) + right-panel toggle
+  (EC00 codicon) + flat-rendered integration chips between the workspace chip and
+  the right cluster + add-integration `+` (EA7C codicon). At narrow widths the
+  right cluster drops TABS rather than vanishing entirely.
 - **94 themes** — the full NvChad base46 set (onedark, gruvbox, catppuccin,
   kanagawa, tokyonight, nord, dracula, …); switch at runtime.
-- **Discoverability** — an F1 click-discovery overlay, hover tooltips, right-click
-  context menus throughout, a first-launch welcome, About & Settings overlays.
+- **Discoverability** — an F1 click-discovery overlay, hover tooltips on every
+  chip (hover any chip for a description; right-click for a context menu with
+  actions), right-click context menus throughout, a first-launch welcome, About &
+  Settings overlays.
 - **Markdown** — a live preview pane with inline image embedding, and optional
   inline-rendered markdown in the editor.
 - **Image rendering** — inline images via the Kitty / iTerm2 graphics protocols.
@@ -319,7 +340,8 @@ The complete, organised feature inventory. For the front-door overview see
   overlay (centered, ~60 % × 70 %) for everyday config toggles. Rows are
   `▸ <label>: [active] / other  *`; section headers `── UI ──` etc. Keys:
   `←→` adjust, `↑↓` move, `r` reset row, `R` reset all, `Enter` save, `Esc`
-  cancel.
+  cancel. Includes rows for right panel visible (default on) and right panel
+  width.
 - **Config-driven launcher-icon strip** — the bufferline's right cluster is
   driven by `[[ui.launcher_icon]]` TOML entries (`id`, `glyph`, `fallback`,
   `command`, `color`, `tooltip`). The `command` field accepts a registered
@@ -343,6 +365,18 @@ The complete, organised feature inventory. For the front-door overview see
   `~/.config/mnml/config.toml` (line-based strip-and-rewrite; other sections
   and comments preserved). Auto-discovered rows render with a
   `· auto-discovered` chip; `i`/`y` are no-ops for them (repo URL unknown).
+- **Integration `enabled` opt-in** — each integration chip in the palette bar
+  carries an `enabled` flag (default `false`; `browser` is enabled by default).
+  Right-click a chip → Enable / Disable toggles the flag and persists the change
+  to TOML. Palette command: `integrations.toggle_enabled`. Which-key chord:
+  `<leader>ie`. Disabled chips are rendered visually dim and do not launch on
+  click; they can still be edited or removed via the kebab menu
+  (`integrations.edit` / `integrations.remove`). Which-key chords `<leader>i+`
+  (add) and `<leader>ip` (icon picker) round out the integrations group.
+- **Icon picker** — `integrations.icon_picker` (palette command; `<leader>ip`)
+  opens a browsable overlay of ~70 Nerd Font glyphs organized by category.
+  Accepting a glyph copies the character and its `\u{XXXX}` escape to the
+  clipboard. Used when adding or editing an integration icon.
 - **Startup workspace picker** — `--startup-picker` (or `MNML_STARTUP_PICKER=1`)
   shows a chooser overlay on launch: [1] New file, [2] Open file…, [3–9]
   configured `[[workspaces]]` rows. Keys: `↑↓`/`jk` move, `Enter` commit,

@@ -145,6 +145,16 @@ Net diff: 36 files changed, +238 / -4088 lines. 957 lib tests
 pass; clippy clean. Branch `remove-tmnl-integration` (two commits:
 c7e37fb bulk removal, ce99b56 audit pass).
 
+**Right panel scaffold + integration `enabled` opt-in + flat palette-bar chrome
+shipped 2026-06-28.** Collapsible right side panel (drag-resize, `session.json`
+persist, `[ui] right_panel_visible` / `[ui] right_panel_width` config keys,
+`:set rightpanel`, `view.toggle_right_panel`); integration chips now have an
+`enabled` flag (only `browser` on by default; right-click to toggle, persisted
+to TOML); palette bar redesigned with flat chips + sidebar/right-panel toggles +
+compact-fallback; icon picker (~70 Nerd Font glyphs); external tool launchers
+(`tools.htop/iftop/btop`); Pty tabs in bufferline (`$` suffix, skip in `:bn`/`:bp`);
+drag-to-split stale-rect fixes; full hover + right-click coverage on all chips.
+
 **For prior history** (the 7-month arc that built tmnl + the
 blit protocol + mixr-host + chrome chips integration) see
 `git log` before the cleanup commits. Those entries used to live

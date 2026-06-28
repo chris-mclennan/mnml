@@ -9703,9 +9703,11 @@ impl App {
             return;
         }
         let cur = self.active.unwrap_or(0);
-        // nvchad-user SEV-2 — :bn/:bp shouldn't land vim users in a
-        // Pty pane (one-way trap). Skip Pty entries when cycling;
-        // fall back to a plain mod if everything is Pty.
+        // nvchad-user SEV-2 — skip Pty entries when cycling so vim
+        // users don't get trapped. crash-investigator F-02 follow-on
+        // — if EVERY pane is Pty, the loop exhausts and `next` ends
+        // up back at a Pty; no-op rather than misleadingly "moving"
+        // to another Pty pane the user just came from.
         let n = self.panes.len();
         let mut next = (cur + 1) % n;
         for _ in 0..n {
@@ -9713,6 +9715,9 @@ impl App {
                 break;
             }
             next = (next + 1) % n;
+        }
+        if matches!(self.panes.get(next), Some(Pane::Pty(_))) {
+            return;
         }
         self.reveal_pane(next);
     }
@@ -9728,6 +9733,9 @@ impl App {
                 break;
             }
             prev = (prev + n - 1) % n;
+        }
+        if matches!(self.panes.get(prev), Some(Pane::Pty(_))) {
+            return;
         }
         self.reveal_pane(prev);
     }
@@ -10032,9 +10040,12 @@ impl App {
     /// `config.editor.input_style == "vim"` literal checks (spine
     /// rule: editor / buffer / render layers shouldn't reach in to
     /// the input style). Three sites in tui.rs (Ctrl+W remap, Esc
-    /// focus-tree, re-dispatch) now route through this.
+    /// focus-tree, re-dispatch) now route through this. For
+    /// `&Config`-only callers (keymap build, settings overlay) the
+    /// free fn `crate::input::is_vim_style(&Config)` delegates here
+    /// without needing an `&App`.
     pub fn is_vim_mode(&self) -> bool {
-        self.config.editor.input_style == "vim"
+        crate::input::is_vim_style(&self.config)
     }
 
     /// Whether the editor mouse wheel + scrollbar drag should drag the
@@ -10053,7 +10064,7 @@ impl App {
         match self.config.editor.wheel_moves_cursor.as_str() {
             "always" => true,
             "never" => false,
-            _ => self.config.editor.input_style == "vim",
+            _ => self.is_vim_mode(),
         }
     }
 
@@ -10102,7 +10113,7 @@ impl App {
         self.toast(format!("input: {style}"));
     }
     pub fn toggle_input_style(&mut self) {
-        let next = if self.config.editor.input_style == "vim" {
+        let next = if self.is_vim_mode() {
             "standard"
         } else {
             "vim"

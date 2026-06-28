@@ -182,7 +182,7 @@ impl Keymap {
         // `editor.add_cursor_at_next_word` / `focus.cycle` /
         // `picker.recent`. We remove here BEFORE user `[keys.*]` overlays
         // so a user can still bind them in `[keys.vim]` if desired.
-        if cfg.editor.input_style == "vim" {
+        if super::is_vim_style(cfg) {
             for spec in [
                 "ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+r",
             ] {
