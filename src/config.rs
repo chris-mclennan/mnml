@@ -723,7 +723,7 @@ impl Default for Config {
                     // quiet save for this single icon.
                     IntegrationIcon {
                         id: "browser".to_string(),
-                        glyph: "\u{F0239}".to_string(), // nf-md-google_chrome
+                        glyph: "\u{EB01}".to_string(), // codicon-browser
                         fallback: "B".to_string(),
                         command: "browser.open".to_string(),
                         color: "blue".to_string(),
