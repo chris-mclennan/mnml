@@ -602,12 +602,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .iter()
             .any(|id| app.panes.get(*id).is_some());
 
-        // Header row.
-        let tab_label = |pid: usize| -> &'static str {
-            match app.panes.get(pid) {
-                Some(crate::pane::Pane::Outline(_)) => "OUTLINE",
-                Some(crate::pane::Pane::Diagnostics(_)) => "DIAGNOSTICS",
-                _ => "PANEL",
+        // Header row. design-critic v3 #2 — use the pane's own
+        // tab_title() so the chip shows live state (e.g.
+        // "main.rs ⌥3" / "problems ✗2") instead of static labels.
+        // Falls back to a generic label for unsupported kinds.
+        let tab_label = |pane: &crate::pane::Pane| -> String {
+            match pane {
+                crate::pane::Pane::Outline(o) => o.tab_title(),
+                crate::pane::Pane::Diagnostics(d) => d.tab_title(),
+                _ => "PANEL".to_string(),
             }
         };
         app.rects.right_panel_tabs.clear();
@@ -645,15 +648,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 let strip_end = rpa.x + rpa.width.saturating_sub(reserve_close);
                 let panes_snapshot: Vec<usize> = app.right_panel_panes.clone();
                 for (i, pid) in panes_snapshot.iter().copied().enumerate() {
-                    if app.panes.get(pid).is_none() {
+                    let Some(pane) = app.panes.get(pid) else {
                         continue;
-                    }
-                    let label = tab_label(pid);
+                    };
+                    let mut label = tab_label(pane);
+                    // Truncate long labels (file paths) to fit chip
+                    // within remaining strip space. Reserve `…` cell
+                    // if we truncate. Min sensible chip = " X… " = 4.
                     let chip = format!(" {label} ");
-                    let chip_w = chip.chars().count() as u16;
+                    let mut chip_w = chip.chars().count() as u16;
                     if x + chip_w > strip_end {
-                        break;
+                        // Try to truncate the label to fit.
+                        let avail = strip_end.saturating_sub(x + 3);
+                        if avail >= 2 {
+                            let take = avail as usize - 1;
+                            label = label.chars().take(take).collect::<String>() + "…";
+                            chip_w = (label.chars().count() + 2) as u16;
+                            if x + chip_w > strip_end {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
                     }
+                    let chip = format!(" {label} ");
                     let chip_rect = Rect {
                         x,
                         y: rpa.y,
@@ -738,7 +756,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 Some(crate::pane::Pane::Diagnostics(_)) => {
                     diagnostics_view::draw(frame, app, pid, body, focused);
                 }
-                _ => {}
+                _ => {
+                    // design-critic v3 #8 — a future pane type
+                    // pushed into the panel without a renderer arm
+                    // would silently blank. Print a developer hint
+                    // so the gap is loud, not silent.
+                    if body.height >= 2 {
+                        let msg_rect = Rect {
+                            x: body.x + 1,
+                            y: body.y + 1,
+                            width: body.width.saturating_sub(2),
+                            height: body.height.saturating_sub(1),
+                        };
+                        frame.render_widget(
+                            ratatui::widgets::Paragraph::new(
+                                "(pane type not supported in right panel)",
+                            )
+                            .style(Style::default().fg(t.comment).bg(t.bg_darker))
+                            .wrap(ratatui::widgets::Wrap { trim: false }),
+                            msg_rect,
+                        );
+                    }
+                }
             }
         } else if rpa.height >= 5 && rpa.width >= 16 {
             let hint_rect = Rect {

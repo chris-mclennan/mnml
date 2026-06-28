@@ -883,6 +883,18 @@ impl VimInputHandler {
                 InputResult::Consumed
             }
             KeyCode::Char(c) if !ctrl => InputResult::Ops(vec![InsertChar(c)]),
+            // nvchad-user 2026-06-28 SEV-1: Ctrl+J in vim INSERT
+            // should insert a newline (vim's `<C-J>` is the same
+            // code-point family as `<C-M>` / Enter). Stripping it
+            // from the keymap got it to the editor; this handler
+            // arm actually does the insert.
+            KeyCode::Char('j') if ctrl => InputResult::Ops(vec![InsertNewline]),
+            // Same family: Ctrl+H in INSERT is canonical backspace
+            // (terminal control: `^H` = BS). The KeyCode::Backspace
+            // arm below handles plain Backspace; this catches the
+            // Ctrl chord specifically so the keymap-strip → editor
+            // handoff fires the right op.
+            KeyCode::Char('h') if ctrl => InputResult::Ops(vec![Backspace]),
             KeyCode::Enter => InputResult::Ops(vec![InsertNewline]),
             KeyCode::Tab => InputResult::Ops(vec![InsertStr(" ".repeat(self.tab_width))]),
             KeyCode::Backspace => InputResult::Ops(vec![Backspace]),

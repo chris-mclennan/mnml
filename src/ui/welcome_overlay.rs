@@ -37,12 +37,16 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     // Curated tips — the bare minimum a new user needs to click and chord
     // their way around.
     type Tip = (&'static str, &'static str);
-    let tips: [Tip; 9] = [
+    let tips: [Tip; 10] = [
         ("F1", "help overlay (this is similar — keymap reference)"),
         ("Ctrl+P", "fuzzy file picker"),
         ("Ctrl+Shift+P", "command palette"),
         ("Ctrl+B", "toggle the file tree (rail)"),
-        ("Ctrl+T", "open a shell pane"),
+        ("Ctrl+Shift+B", "toggle the right side panel"),
+        // Ctrl+T is bound to term.focus_or_open_shell in standard
+        // mode; in vim it's INSERT-indent. <leader>at reaches the
+        // same shell action in both modes — nvchad-user 2026-06-28.
+        ("<leader>at", "open or focus a shell pane"),
         ("<leader>g l", "commit graph (or click branch chip)"),
         ("<leader>l h", "LSP hover info"),
         ("right-click anywhere", "context menu for that surface"),

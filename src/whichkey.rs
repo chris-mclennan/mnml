@@ -115,6 +115,18 @@ pub fn root() -> &'static Leader {
                         vec![
                             ('e', cmd("view.toggle_tree", "explorer")),
                             ('r', cmd("view.toggle_right_panel", "right panel")),
+                            (
+                                ']',
+                                cmd("view.right_panel_next_tab", "right panel: next tab"),
+                            ),
+                            (
+                                '[',
+                                cmd("view.right_panel_prev_tab", "right panel: prev tab"),
+                            ),
+                            (
+                                'x',
+                                cmd("view.right_panel_close_tab", "right panel: close tab"),
+                            ),
                             ('k', cmd("editor.toggle_keymap", "vim ⇄ standard")),
                             ('t', cmd("theme.pick", "theme…")),
                             ('h', cmd("view.toggle_hidden", "hidden files (focused)")),

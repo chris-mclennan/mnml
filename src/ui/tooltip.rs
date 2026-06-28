@@ -309,6 +309,36 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: discovery overlay (siblings + custom)".into()),
             ))
         }
+        HoverChip::RightPanelTab(pid) => {
+            // Find this tab's rect by walking right_panel_tabs and
+            // matching the pane id.
+            let rect = app
+                .right_panel_panes
+                .iter()
+                .position(|&p| p == pid)
+                .and_then(|idx| {
+                    app.rects
+                        .right_panel_tabs
+                        .iter()
+                        .find(|(_, i)| *i == idx)
+                        .map(|(r, _)| *r)
+                })?;
+            use crate::pane::Pane;
+            let main = app.panes.get(pid).map(Pane::title).unwrap_or_default();
+            Some((
+                rect,
+                main,
+                Some("click: switch · ×: close active tab".into()),
+            ))
+        }
+        HoverChip::RightPanelClose => {
+            let rect = app.rects.right_panel_close?;
+            Some((
+                rect,
+                "close active tab".to_string(),
+                Some("click: close · panel stays open".into()),
+            ))
+        }
         HoverChip::SplitTabChip(pid) => {
             let rect = app
                 .rects

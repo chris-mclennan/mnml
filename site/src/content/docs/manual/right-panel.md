@@ -5,6 +5,8 @@ description: The mirror of the file rail on the right edge — a fixed-width col
 
 mnml's chrome wraps the editor on three sides: the file rail and activity bar on the left (toggled by `Ctrl+B`), the statusline + bufferline at top and bottom, and — since 2026-06-28 — a **right side panel** that mirrors the rail on the opposite edge. The right panel is the home for panes that read better as a vertical sidebar than as a horizontal split: the Outline (`outline.show`) and the project-wide Diagnostics list (`lsp.diagnostics`). When the panel is visible, those two commands route their pane *into* the panel instead of carving a split out of the editor body.
 
+![right side panel toggle: empty state → outline hosted → close evicts the pane](../../../assets/tapes/right-panel-toggle.gif)
+
 The panel is opt-in. It opens with `Ctrl+Shift+B` (the natural mirror of `Ctrl+B`), it can be sized by dragging its left edge, it persists across restarts via `session.json`, and it has a one-cell `×` close button on its header so you can evict the hosted pane without closing the column itself.
 
 ## Opening and closing
@@ -22,6 +24,8 @@ The panel is opt-in. It opens with `Ctrl+Shift+B` (the natural mirror of `Ctrl+B
 The panel's visibility, width, and currently-hosted pane id all round-trip through `<workspace>/.mnml/session.json`, so restart mnml and the panel comes back exactly as you left it.
 
 ## Hosted panes (v2)
+
+![open lib.rs, open the panel, outline.show hosts in the column, lsp.diagnostics replaces it (last-opened wins), click × to evict the hosted pane while keeping the column open](../../../assets/tapes/right-panel-v2-hosting.gif)
 
 Two commands route their pane into the panel when it's open:
 

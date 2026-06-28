@@ -99,6 +99,10 @@ Two chords always work regardless of which input handler is loaded — keep thes
 | Close right side panel | `:set norightpanel` | `:set norightpanel` | — |
 | Context menu at focus (keyboard right-click) | `Shift+F10` | `Shift+F10` | `view.context_menu_at_focus` |
 
+`Shift+F10` is mnml's keyboard equivalent of right-click — it routes by current focus. With the file tree focused, it opens the tree-row context menu over the selected row (Set as workspace / New file / New folder / Rename / Reveal in Finder / …). With an editor pane focused, it opens the bufferline tab context menu for the active tab (Pin tab / Close / Close others / Split right / …):
+
+![Shift+F10 on a tree row opens the tree context menu; with the editor focused it opens the bufferline tab menu](../../../assets/tapes/shift-f10-context-menu.gif)
+
 ## Cursor motion
 
 These are the chords most likely to differ between handlers. The vim handler interprets `hjkl`, word motion, and operators directly; the standard handler uses arrow keys, Ctrl+arrow, Home/End, PageUp/Down.

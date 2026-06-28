@@ -455,6 +455,21 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
         let _ = leaf_active;
         return Some(crate::HoverChip::SplitTabChip(tab_pane));
     }
+    // Right-panel tab strip chips. v3 polish.
+    if let Some(&(_, tab_idx)) = app
+        .rects
+        .right_panel_tabs
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+        && let Some(&pid) = app.right_panel_panes.get(tab_idx)
+    {
+        return Some(crate::HoverChip::RightPanelTab(pid));
+    }
+    if let Some(r) = app.rects.right_panel_close
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RightPanelClose);
+    }
     if let Some(r) = app.rects.agents_panel_new_chip
         && contains(r, x, y)
     {

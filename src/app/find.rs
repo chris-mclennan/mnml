@@ -520,7 +520,14 @@ impl App {
                 // find prompt for the user so they don't have to hit
                 // Ctrl+F separately.
                 self.open_find_prompt();
-                self.toast("Ctrl+H: type a find pattern, then Ctrl+H again to replace");
+                // nvchad-user 2026-06-28 SEV-3: in vim mode Ctrl+H
+                // is INSERT-backspace, not the replace chord. Show
+                // the ex-command path instead.
+                if crate::input::is_vim_style(&self.config) {
+                    self.toast(":%s/old/new/g — substitute across buffer");
+                } else {
+                    self.toast("Ctrl+H: type a find pattern, then Ctrl+H again to replace");
+                }
             }
         }
     }

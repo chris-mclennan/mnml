@@ -326,6 +326,14 @@ pub enum HoverChip {
     /// Palette-bar right-panel toggle (mirror of sidebar). Click
     /// fires view.toggle_right_panel.
     PaletteRightPanelButton,
+    /// A tab chip on the right-panel tab strip — carries the
+    /// pane id of the hosted tab so the tooltip can show the
+    /// full label and the pane's tab_title (e.g. file path /
+    /// problem counts). v3 right-panel polish.
+    RightPanelTab(crate::layout::PaneId),
+    /// The `×` close button on the right-panel tab strip. Closes
+    /// the active tab on click; tooltip explains which tab.
+    RightPanelClose,
     /// Palette-bar search chip — the workspace name + magnifier.
     /// Click fires the command palette.
     PaletteSearchChip,
