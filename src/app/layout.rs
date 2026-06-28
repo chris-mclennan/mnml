@@ -557,36 +557,19 @@ impl App {
             self.toast("nothing to split");
             return;
         };
-        // The new half re-opens the current file fresh (own cursor), else a scratch.
+        // vscode-user SEV-2 — re-reading from disk silently dropped
+        // unsaved edits in the source buffer. Warn the user before
+        // splitting a dirty buffer so they save first (or accept the
+        // divergence). v2 will support live-linked split views; for
+        // now this just prevents accidental data loss.
+        let source_dirty = matches!(self.panes.get(cur), Some(Pane::Editor(b)) if b.dirty);
+        if source_dirty {
+            self.toast("split: source has unsaved edits — the new pane reads from disk (Ctrl+S to keep them in sync)");
+        }
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
-            Some(Pane::Diff(_))
-            | Some(Pane::GitGraph(_))
-            | Some(Pane::GitStatus(_))
-            | Some(Pane::Request(_))
-            | Some(Pane::Pty(_))
-            | Some(Pane::Ai(_))
-            | Some(Pane::Tests(_))
-            | Some(Pane::Browser(_))
-            | Some(Pane::Diagnostics(_))
-            | Some(Pane::Grep(_))
-            | Some(Pane::Flaky(_))
-            | Some(Pane::Outline(_))
-            | Some(Pane::Quickfix(_))
-            | Some(Pane::CmdlineHistory(_))
-            | Some(Pane::Cheatsheet(_))
-            | Some(Pane::Debug(_))
-            | Some(Pane::DapRepl(_))
-            | Some(Pane::Image(_))
-            | None => None,
-            Some(Pane::ClaudeAgents(_)) => None,
-            Some(Pane::Websocket(_)) => None,
-            Some(Pane::SpendReport(_)) => None,
-            Some(Pane::Mount(_)) => None,
-            Some(Pane::CloudAgentRun(_)) => None,
-            Some(Pane::NewCloudAgentWizard(_)) => None,
-            Some(Pane::NewCloudRunWizard(_)) => None,
+            _ => None,
         };
         let new_buf = match path {
             Some(p) => {

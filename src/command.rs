@@ -1510,24 +1510,49 @@ fn builtin_commands() -> Vec<Command> {
         // External-tool launchers: run if installed, else toast
         // `brew install <pkg>`. Match the integration_icon commands
         // (`:tools.htop` etc. — see config.rs default seeds).
+        // design-critic Issue 2 — tools.* and term.* aliases for the
+        // same Pty-launching action. term.* aligns with term.shell /
+        // term.scratch_toggle; tools.* kept for back-compat and
+        // because Settings UI / chips still reference them.
         Command {
             id: "tools.htop",
             title: "Tools: open htop (or hint brew install)",
-            group: "tools",
+            group: "term",
+            keys: &[],
+            run: |app| app.run_external_tool("htop"),
+        },
+        Command {
+            id: "term.htop",
+            title: "Term: open htop (alias of tools.htop)",
+            group: "term",
             keys: &[],
             run: |app| app.run_external_tool("htop"),
         },
         Command {
             id: "tools.iftop",
             title: "Tools: open iftop (or hint brew install)",
-            group: "tools",
+            group: "term",
+            keys: &[],
+            run: |app| app.run_external_tool("iftop"),
+        },
+        Command {
+            id: "term.iftop",
+            title: "Term: open iftop (alias of tools.iftop)",
+            group: "term",
             keys: &[],
             run: |app| app.run_external_tool("iftop"),
         },
         Command {
             id: "tools.btop",
             title: "Tools: open btop (or hint brew install)",
-            group: "tools",
+            group: "term",
+            keys: &[],
+            run: |app| app.run_external_tool("btop"),
+        },
+        Command {
+            id: "term.btop",
+            title: "Term: open btop (alias of tools.btop)",
+            group: "term",
             keys: &[],
             run: |app| app.run_external_tool("btop"),
         },

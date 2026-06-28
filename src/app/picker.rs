@@ -892,16 +892,20 @@ impl App {
                     .and_then(char::from_u32)
                     .map(|c| c.to_string())
                     .unwrap_or_else(|| "?".to_string());
+                // design-critic Issue 6 — embed category in the label
+                // so fuzzy search matches it (was in detail-only, which
+                // the picker doesn't search). User can type "fs" or
+                // "git" to filter by domain.
                 crate::picker::PickerItem {
                     id: e.codepoint.to_string(),
-                    label: format!("{glyph}  {}", e.name),
-                    detail: format!("\\u{{{}}}  ·  {}", e.codepoint, e.category),
+                    label: format!("{glyph}  {}  [{}]", e.name, e.category),
+                    detail: format!("\\u{{{}}}", e.codepoint),
                 }
             })
             .collect();
         let picker = crate::picker::Picker::new(
             crate::picker::PickerKind::IconGlyphs,
-            "Pick Icon Glyph".to_string(),
+            "Pick glyph".to_string(),
             items,
         );
         self.open_picker(picker);

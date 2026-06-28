@@ -30,6 +30,11 @@
 #   ./run.sh status               Print marker state (workspace, IPC dir).
 #   ./run.sh headless [WORKSPACE] Same restart loop, but --headless (virtual
 #                                 screen + file-IPC; nothing on the terminal).
+#   ./run.sh shot [OUT.png]       Screenshot the *real* running mnml (its
+#                                 ghostty window) to a PNG and print the path.
+#                                 The third way to observe mnml: actual pixels
+#                                 (CoreText glyphs, icons, color) — not the
+#                                 text cell-grid that headless/screen.txt give.
 #
 # Env:
 #   MNML_RELEASE=1   Build/run target/release/mnml (the release profile has LTO
@@ -85,6 +90,7 @@ case "${1:-start}" in
   # ── mnml-specific IPC subcommands ───────────────────────────────
   restart) send_cmd '{"cmd":"restart"}'; exit $? ;;
   stop)    send_cmd '{"cmd":"quit"}'; exit $? ;;
+  shot)    shift; exec bash "$REPO/scripts/shot.sh" "$@" ;;
   status)
     if [ -f "$MARKER" ]; then
       ws=$(cat "$MARKER")

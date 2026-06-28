@@ -101,7 +101,7 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     IconEntry { codepoint: "F0E58", name: "test-tube", category: "ui" },
 
     // ── languages / runtimes ──
-    IconEntry { codepoint: "E718",  name: "rust", category: "lang" },
+    IconEntry { codepoint: "E68B",  name: "rust", category: "lang" },
     IconEntry { codepoint: "E724",  name: "go-gopher", category: "lang" },
     IconEntry { codepoint: "E73C",  name: "python", category: "lang" },
     IconEntry { codepoint: "E60E",  name: "typescript", category: "lang" },

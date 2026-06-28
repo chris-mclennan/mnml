@@ -541,7 +541,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 height: 1,
             };
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(" PANEL").style(
+                ratatui::widgets::Paragraph::new(" SIDE PANEL").style(
                     Style::default()
                         .fg(t.comment)
                         .bg(t.bg_darker)
@@ -555,14 +555,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 x: rpa.x + 1,
                 y: rpa.y + 2,
                 width: rpa.width.saturating_sub(2),
-                height: 2,
+                height: 4,
             };
+            // design-critic Issue 4 — user-facing copy with the escape
+            // chord, not "dock widgets land here later" dev TODO.
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(
-                    "empty for now — outline / chat / dock widgets land here later",
-                )
-                .style(Style::default().fg(t.comment).bg(t.bg_darker))
-                .wrap(ratatui::widgets::Wrap { trim: false }),
+                ratatui::widgets::Paragraph::new("Nothing here yet.\n\nHide with Ctrl+Shift+B.")
+                    .style(Style::default().fg(t.comment).bg(t.bg_darker))
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
                 hint_rect,
             );
         }
