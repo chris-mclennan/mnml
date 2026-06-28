@@ -14231,4 +14231,67 @@ mod tests {
         assert!(short.chars().count() <= 14, "got {short:?}");
         assert!(short.ends_with('…'), "got {short:?}");
     }
+
+    #[test]
+    fn next_buffer_cycles_editors_forward_and_wraps() {
+        // Regression lock for commit c927679 — next_buffer / prev_buffer
+        // skip Pty panes. This test covers the basic two-editor cycle.
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.open_path(&b);
+        let b_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&b)))
+            .unwrap();
+        let a_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
+            .unwrap();
+        assert_eq!(app.active, Some(b_id));
+        app.next_buffer();
+        assert_eq!(app.active, Some(a_id), "next_buffer wraps to a.txt");
+        app.next_buffer();
+        assert_eq!(app.active, Some(b_id), "next_buffer advances to b.txt");
+    }
+
+    #[test]
+    fn prev_buffer_cycles_editors_backward_and_wraps() {
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.open_path(&b);
+        let b_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&b)))
+            .unwrap();
+        let a_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
+            .unwrap();
+        assert_eq!(app.active, Some(b_id));
+        app.prev_buffer();
+        assert_eq!(app.active, Some(a_id), "prev_buffer goes to a.txt");
+        app.prev_buffer();
+        assert_eq!(app.active, Some(b_id), "prev_buffer wraps to b.txt");
+    }
+
+    #[test]
+    fn toggle_right_panel_command_flips_flag() {
+        // Regression lock for commit 6d836ca — view.toggle_right_panel
+        // must flip app.right_panel_visible. Bound to Ctrl+Shift+B.
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        let initial = app.right_panel_visible;
+        crate::command::run("view.toggle_right_panel", &mut app);
+        assert_eq!(app.right_panel_visible, !initial, "first toggle flips");
+        crate::command::run("view.toggle_right_panel", &mut app);
+        assert_eq!(app.right_panel_visible, initial, "second toggle restores");
+    }
 }
