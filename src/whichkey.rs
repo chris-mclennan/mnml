@@ -306,7 +306,7 @@ pub fn root() -> &'static Leader {
                                 cmd("integrations.icon_picker", "browse Nerd Font glyphs"),
                             ),
                             (
-                                'e',
+                                'E',
                                 cmd("integrations.toggle_enabled", "enable/disable a chip"),
                             ),
                             ('D', cmd("forge.open_datadog", "Datadog observability")),
@@ -506,6 +506,24 @@ mod tests {
             lookup("iw"),
             Some(Leader::Cmd {
                 id: "forge.open_cloudwatch_logs",
+                ..
+            })
+        ));
+        // vscode-user-keyboard 2026-06-28 SEV-1 — 'e' was double-
+        // registered (forge.open_eventbridge + integrations.toggle_enabled);
+        // BTreeMap last-wins silently broke eventbridge. Now 'e' is
+        // eventbridge; 'E' (capital) is the toggle-enabled picker.
+        assert!(matches!(
+            lookup("ie"),
+            Some(Leader::Cmd {
+                id: "forge.open_eventbridge",
+                ..
+            })
+        ));
+        assert!(matches!(
+            lookup("iE"),
+            Some(Leader::Cmd {
+                id: "integrations.toggle_enabled",
                 ..
             })
         ));

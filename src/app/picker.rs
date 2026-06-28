@@ -104,13 +104,35 @@ impl App {
             false
         };
         let make_item = |p: &Path| -> PickerItem {
-            let rel = p.strip_prefix(&root).unwrap_or(p).to_path_buf();
-            let label = rel.to_string_lossy().to_string();
-            let dir = rel
-                .parent()
-                .map(|d| d.to_string_lossy().to_string())
-                .unwrap_or_default();
-            PickerItem::new(p.to_string_lossy().to_string(), label, dir)
+            // In-workspace: label is the workspace-relative path
+            // (no leading slash), detail is the relative parent dir.
+            // Outside-workspace (recent file from another workspace):
+            // label is the file_name only, detail is the absolute
+            // parent dir so the user can still see WHERE it lives.
+            // vscode-user-keyboard SEV-3 — was showing the full
+            // absolute path as label, leading to visual doubling
+            // when the renderer also appended `detail`.
+            match p.strip_prefix(&root) {
+                Ok(rel) => {
+                    let label = rel.to_string_lossy().to_string();
+                    let dir = rel
+                        .parent()
+                        .map(|d| d.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    PickerItem::new(p.to_string_lossy().to_string(), label, dir)
+                }
+                Err(_) => {
+                    let label = p
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| p.to_string_lossy().to_string());
+                    let dir = p
+                        .parent()
+                        .map(|d| d.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    PickerItem::new(p.to_string_lossy().to_string(), label, dir)
+                }
+            }
         };
         // Recents first (newest first; absolute paths only — non-workspace
         // entries silently come along, which is fine, they still open).

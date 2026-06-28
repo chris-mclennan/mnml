@@ -3379,9 +3379,14 @@ impl App {
             self.set_auto_pair(false);
         } else if matches!(opt, "autopair!" | "invautopair") {
             self.toggle_auto_pair();
+        } else if matches!(opt, "rightpanel" | "right_panel" | "rp") {
+            // vim convention: `:set foo` enables idempotently;
+            // `:set foo!` toggles. vscode-user-keyboard SEV-3.
+            self.right_panel_visible = true;
+            self.toast("right_panel: on");
         } else if matches!(
             opt,
-            "rightpanel" | "right_panel" | "rp" | "rightpanel!" | "right_panel!" | "rp!"
+            "rightpanel!" | "right_panel!" | "rp!" | "invrightpanel"
         ) {
             self.right_panel_visible = !self.right_panel_visible;
             self.toast(format!(
