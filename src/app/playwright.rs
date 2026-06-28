@@ -190,6 +190,36 @@ impl App {
     /// `npm <subcmd>` (test / run dev / build / start / install /
     /// lint). Requires a package.json at the workspace root.
     pub fn run_npm_subcommand(&mut self, slug: &str, subcmd: &str) {
+        // multilang 3rd 2026-06-28 F6: if the subcmd is "run X",
+        // verify the script exists in the nearest package.json so
+        // we toast a friendly "missing script" message instead of
+        // letting npm fail inside the pty (which the user has to
+        // scroll to see).
+        if let Some(script_name) = subcmd.strip_prefix("run ").map(|s| s.trim()) {
+            let start_dir = self
+                .active_editor()
+                .and_then(|b| b.path.as_ref())
+                .and_then(|p| p.parent())
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| self.workspace.clone());
+            if let Some(pkg_dir) = find_manifest_dir(&start_dir, &["package.json"])
+                && let Ok(contents) = std::fs::read_to_string(pkg_dir.join("package.json"))
+                && let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents)
+                && let Some(scripts) = json.get("scripts").and_then(|s| s.as_object())
+                && !scripts.contains_key(script_name)
+            {
+                let names: Vec<&str> = scripts.keys().map(String::as_str).collect();
+                let preview = if names.is_empty() {
+                    "(none defined)".to_string()
+                } else {
+                    names.join(" / ")
+                };
+                self.toast(format!(
+                    "npm.{slug}: no `{script_name}` script in package.json — available: {preview}"
+                ));
+                return;
+            }
+        }
         self.run_manifest_command("package.json", "npm", slug, subcmd);
     }
 

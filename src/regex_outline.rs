@@ -36,10 +36,26 @@ pub fn extract_symbols(text: &str, ext: &str) -> Vec<DocumentSymbol> {
     for (line_no, line) in text.lines().enumerate() {
         for (re, kind) in patterns {
             if let Some(cap) = re.captures(line)
-                && let Some(name) = cap.get(1)
+                && let Some(name) = cap.name("name").or_else(|| cap.get(1))
             {
+                // multilang 3rd 2026-06-28 F5: Go methods carry
+                // their receiver type as an OPTIONAL named capture
+                // `recv` so the outline can disambiguate
+                // `Router.Handle` from `Handle`. Other languages
+                // ignore the second capture.
+                let display_name = if let Some(recv) = cap.name("recv") {
+                    let recv_clean = recv
+                        .as_str()
+                        .split_whitespace()
+                        .last()
+                        .unwrap_or(recv.as_str())
+                        .trim_start_matches('*');
+                    format!("{}.{}", recv_clean, name.as_str())
+                } else {
+                    name.as_str().to_string()
+                };
                 out.push(DocumentSymbol {
-                    name: name.as_str().to_string(),
+                    name: display_name,
                     kind,
                     line: line_no as u32,
                     character: line[..name.start()].chars().count() as u32,
@@ -194,6 +210,16 @@ fn ts_patterns() -> &'static [(Regex, &'static str)] {
                 r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*[:=]\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)",
                 "fn"
             ),
+            // multilang-redo 2026-06-28 F2: React.FC + typed arrow
+            // form — `const App: React.FC<Props> = ({...}) => ...`.
+            // The prior pattern's `[:=]\s*(?:function|\(` couldn't
+            // span across the type annotation. Capture the name
+            // immediately after const/let/var when ANY type-ish
+            // expression precedes the `= (` arrow.
+            (
+                r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*[^=]+=\s*(?:async\s+)?\([^)]*\)\s*=>",
+                "fn"
+            ),
         ]
     )
 }
@@ -202,7 +228,14 @@ fn go_patterns() -> &'static [(Regex, &'static str)] {
     patterns!(
         GO,
         [
-            (r"^func(?:\s+\([^)]+\))?\s+([A-Za-z_][A-Za-z0-9_]*)", "fn"),
+            // multilang 3rd 2026-06-28 F5: capture receiver as
+            // `recv` named group so methods show as `Router.Handle`
+            // instead of just `Handle`. `recv` is optional — plain
+            // functions like `func Handle(...)` still match.
+            (
+                r"^func(?:\s+\((?P<recv>[^)]+)\))?\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
+                "fn"
+            ),
             (r"^type\s+([A-Za-z_][A-Za-z0-9_]*)", "type"),
         ]
     )
@@ -352,7 +385,10 @@ type Baz struct{}
 ";
         let s = extract_symbols(src, "go");
         let names: Vec<&str> = s.iter().map(|x| x.name.as_str()).collect();
-        assert_eq!(names, vec!["Foo", "Method", "Baz"]);
+        // multilang 3rd F5: method shows as `Receiver.Name` when
+        // the func has a receiver. Plain functions and types
+        // continue to use the bare name.
+        assert_eq!(names, vec!["Foo", "Bar.Method", "Baz"]);
     }
 
     #[test]

@@ -162,6 +162,16 @@ impl Tree {
         self.rescan();
         let present: BTreeSet<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
         self.expanded.retain(|p| present.contains(p));
+        // multilang-redo 2026-06-28 F3: auto-expand newly-appeared
+        // top-level directories so a user who cloned/scaffolded
+        // into the workspace post-startup doesn't have to manually
+        // press `l` on every fresh top-level entry. Matches the
+        // expansion logic in `open()`.
+        for entry in &self.entries {
+            if entry.is_dir && entry.depth == 0 {
+                self.expanded.insert(entry.path.clone());
+            }
+        }
         let max = self.visible_rows().len().saturating_sub(1);
         self.cursor = self.cursor.min(max);
     }
@@ -184,6 +194,67 @@ impl Tree {
             }
             let path = dent.path();
             if path == self.root {
+                continue;
+            }
+            // multilang 3rd 2026-06-28 F3: hide artifact dirs even
+            // when there's no .gitignore. The file picker hardcodes
+            // the same exclusions (src/app/picker.rs:98); the tree
+            // was the lone surface showing node_modules /
+            // __pycache__ / target / .next / dist / build / vendor
+            // by default. Aligned the two surfaces. Users who want
+            // to see these can `:set hidden` (shows dot-files which
+            // is the show_hidden toggle).
+            if let Some(name) = path.file_name().and_then(|n| n.to_str())
+                && matches!(
+                    name,
+                    "node_modules"
+                        | "__pycache__"
+                        | ".next"
+                        | "dist"
+                        | "build"
+                        | "target"
+                        | "vendor"
+                        | ".venv"
+                        | "venv"
+                )
+            {
+                // Skip the directory entirely — `ignore::Walk` would
+                // descend into it without a per-file filter hook.
+                // We can't tell Walk to prune at this point so we
+                // simply omit it; its children still get yielded
+                // and would push noise. Skip both the dir and any
+                // path UNDER it.
+                continue;
+            }
+            // Also skip files whose ANY ancestor matches one of the
+            // artifact names — handles the children of dirs already
+            // emitted by Walk.
+            let mut artifact_ancestor = false;
+            let mut p = path.parent();
+            while let Some(pp) = p {
+                if pp == self.root {
+                    break;
+                }
+                if let Some(name) = pp.file_name().and_then(|n| n.to_str())
+                    && matches!(
+                        name,
+                        "node_modules"
+                            | "__pycache__"
+                            | ".next"
+                            | "dist"
+                            | "build"
+                            | "target"
+                            | "vendor"
+                            | ".venv"
+                            | "venv"
+                    )
+                {
+                    artifact_ancestor = true;
+                    break;
+                }
+                p = pp.parent();
+            }
+            if artifact_ancestor {
                 continue;
             }
             let depth = dent.depth().saturating_sub(1);
@@ -500,21 +571,44 @@ mod tests {
     }
 
     #[test]
-    fn node_modules_visible_without_gitignore() {
-        // node_modules should appear in the tree when there's no .gitignore
-        // suppressing it. The `ignore` crate has no built-in rule for it.
+    fn artifact_dirs_hidden_without_gitignore() {
+        // multilang 3rd 2026-06-28 F3 — node_modules / __pycache__ /
+        // target / .next / dist / build / vendor / .venv / venv are
+        // hidden by default regardless of .gitignore. Picker already
+        // does this; the tree was the lone surface showing them.
         let d = tempfile::tempdir().unwrap();
-        fs::create_dir_all(d.path().join("node_modules")).unwrap();
-        fs::write(d.path().join("node_modules").join("dep.js"), "module={}").unwrap();
+        for art in [
+            "node_modules",
+            "__pycache__",
+            "target",
+            ".next",
+            "dist",
+            "build",
+            "vendor",
+            ".venv",
+        ] {
+            fs::create_dir_all(d.path().join(art)).unwrap();
+            fs::write(d.path().join(art).join("foo"), "x").unwrap();
+        }
         fs::create_dir_all(d.path().join("src")).unwrap();
         fs::write(d.path().join("src").join("index.ts"), "console.log('hi')").unwrap();
-        // Deliberately no .gitignore file.
         let t = Tree::open(d.path());
         let names: Vec<String> = t.visible_rows().iter().map(|r| r.name.clone()).collect();
-        assert!(
-            names.contains(&"node_modules".to_string()),
-            "node_modules should appear in tree without .gitignore; got: {names:?}"
-        );
+        for art in [
+            "node_modules",
+            "__pycache__",
+            "target",
+            ".next",
+            "dist",
+            "build",
+            "vendor",
+            ".venv",
+        ] {
+            assert!(
+                !names.contains(&art.to_string()),
+                "{art} should be hidden by default; got: {names:?}"
+            );
+        }
         assert!(names.contains(&"src".to_string()));
     }
 
