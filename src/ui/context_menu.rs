@@ -44,8 +44,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.grey_fg).bg(t.bg_darker))
-        .style(Style::default().bg(t.bg_darker));
+        .border_style(Style::default().fg(t.grey_fg).bg(t.bg2))
+        .style(Style::default().bg(t.bg2));
     // Title is just a dim label in the border area, NOT a chip.
     // The previous solid-blue chip styling visually merged with
     // the (auto-selected) first row's highlight, making it look
@@ -56,7 +56,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             format!(" {title} "),
             Style::default()
                 .fg(t.comment)
-                .bg(t.bg_darker)
+                .bg(t.bg2)
                 .add_modifier(Modifier::BOLD),
         )),
         None => block,
@@ -78,12 +78,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // the no-highlight state isn't inert.
         let selected = row == menu.selected && menu.interacted;
         let style = if selected {
+            // Selected-row text on blue: use bg_dark (darker than bg2)
+            // for max contrast on the cyan/blue accent. Keeps the
+            // selection visually distinct now that the menu's body
+            // bg is lighter (bg2).
             Style::default()
-                .fg(t.bg_darker)
+                .fg(t.bg_dark)
                 .bg(t.blue)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(t.fg).bg(t.bg_darker)
+            Style::default().fg(t.fg).bg(t.bg2)
         };
         // Pad the label so the highlight fills the row.
         let mut label = format!(" {} ", item.label);
