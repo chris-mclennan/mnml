@@ -96,4 +96,17 @@ if ! screencapture -x -o -R "${x},${y},${w},${h}" "$OUT"; then
   exit 1
 fi
 
+# Geometry sidecar so a pixel in the PNG can be turned back into a screen
+# point for clicking: point = (origin_x + px/scale, origin_y + py/scale).
+# scale = retina backing factor (2 on most Macs, 1 on a non-retina display).
+px_w=$(sips -g pixelWidth "$OUT" 2>/dev/null | awk '/pixelWidth/{print $2}')
+px_h=$(sips -g pixelHeight "$OUT" 2>/dev/null | awk '/pixelHeight/{print $2}')
+scale=2
+if [ -n "$px_w" ] && [ "$w" -gt 0 ] 2>/dev/null; then
+  scale=$(( px_w / w ))
+  [ "$scale" -lt 1 ] 2>/dev/null && scale=1
+fi
+printf '{"origin_x":%s,"origin_y":%s,"pt_w":%s,"pt_h":%s,"px_w":%s,"px_h":%s,"scale":%s}\n' \
+  "$x" "$y" "$w" "$h" "${px_w:-0}" "${px_h:-0}" "$scale" > "${OUT%.png}.json"
+
 echo "$OUT"

@@ -1456,7 +1456,7 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "integrations.refresh",
             title: "Integrations: refresh installed-binary detection",
-            group: "view",
+            group: "integrations",
             keys: &[],
             run: |app| {
                 crate::integration_detect::clear_cache();
@@ -1489,21 +1489,21 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "integrations.toggle_enabled",
             title: "Integrations: enable / disable a chip (picker)",
-            group: "view",
+            group: "integrations",
             keys: &[],
             run: |app| app.open_integration_toggle_picker(),
         },
         Command {
             id: "integrations.edit",
             title: "Integrations: edit a chip (picker)",
-            group: "view",
+            group: "integrations",
             keys: &[],
             run: |app| app.open_integration_edit_picker(),
         },
         Command {
             id: "integrations.remove",
             title: "Integrations: remove a chip (picker)",
-            group: "view",
+            group: "integrations",
             keys: &[],
             run: |app| app.open_integration_remove_picker(),
         },
@@ -1559,21 +1559,21 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "integrations.icon_picker",
             title: "Integrations: browse Nerd Font glyphs (copies to clipboard)",
-            group: "view",
+            group: "integrations",
             keys: &[],
             run: |app| app.open_icon_picker(),
         },
         Command {
             id: "integrations.add",
             title: "Integrations: discover + add family siblings (opens overlay)",
-            group: "view",
+            group: "integrations",
             keys: &[],
             run: |app| app.open_discovery_overlay(),
         },
         Command {
             id: "integrations.patch_nerd_font_svg",
             title: "Integrations: bake an SVG into your Nerd Font as a glyph",
-            group: "view",
+            group: "integrations",
             keys: &[],
             run: |app| app.open_patch_nerd_font_svg_prompt(),
         },

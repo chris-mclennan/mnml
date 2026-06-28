@@ -142,6 +142,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // so the second CloudAgentRun pane in a split wiped the first
     // pane's chip rects.
     app.rects.cloud_agent_run_hits.clear();
+    // code-reviewer S2-4 — four more rect vecs that were only
+    // cleared on the zen-mode early-return path. Toggling zen ON
+    // then OFF in the same session left these accumulating from
+    // every non-zen frame.
+    app.rects.cheatsheet_headers.clear();
+    app.rects.ws_send_buttons.clear();
+    app.rects.claude_agents_topbar_chips.clear();
+    app.rects.spend_headers.clear();
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
