@@ -296,7 +296,7 @@ pub fn root() -> &'static Leader {
                                 'I',
                                 cmd("tools.iftop", "iftop — interactive bandwidth monitor"),
                             ),
-                            ('b', cmd("tools.btop", "btop — resource monitor")),
+                            ('r', cmd("tools.btop", "btop — resource monitor")),
                             (
                                 '+',
                                 cmd("integrations.add", "add integration (discovery overlay)"),
