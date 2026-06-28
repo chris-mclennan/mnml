@@ -1604,11 +1604,13 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let nav_enabled = app.panes.len() > 1;
     let nav_fg = if nav_enabled { t.fg } else { t.comment };
 
-    // Right-panel toggle — mirror of sidebar icon. Full ` icon `
-    // padding (3 cells) so it sits one cell further from the
-    // dropdown chevron than the sidebar icon does from the back
-    // arrow — user wanted breathing room on this side.
-    let right_panel_glyph = if ascii { "|" } else { "\u{EC02}" };
+    // Right-panel toggle — uses codicon `layout-sidebar-right-off`
+    // (\u{EC00}), the visual MIRROR of the left sidebar's
+    // `layout-sidebar-left-off` (\u{EC02}). Reads as a matched
+    // pair: panel-on-the-left toggle on the left, panel-on-the-
+    // right toggle on the right. Full ` icon ` padding (3 cells)
+    // gives the icon breathing room from the dropdown chevron.
+    let right_panel_glyph = if ascii { "|" } else { "\u{EC00}" };
     let right_panel_str = format!(" {right_panel_glyph} ");
     let sidebar_w = sidebar_str.chars().count() as u16;
     let right_panel_w = right_panel_str.chars().count() as u16;
