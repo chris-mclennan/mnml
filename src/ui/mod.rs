@@ -177,6 +177,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // catching clicks at the top-left rail corner.
     app.rects.workspace_picker_chevron = None;
     app.rects.workspace_name_rect = None;
+    // 2026-06-28 v3: right_panel_tabs only cleared inside the panel
+    // body painter — so panel-was-visible-then-toggled-off would
+    // leave stale tab rects intercepting clicks. Centralize alongside
+    // the other rect-clears.
+    app.rects.right_panel_tabs.clear();
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
@@ -639,7 +644,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         width: chip_w,
                         height: 1,
                     };
-                    let bg = if i == active_idx { t.bg2 } else { t.bg_darker };
+                    // Active tab is fully opaque (bg2 lighter than the
+                    // panel column's bg_darker), inactive uses bg_dark
+                    // (slightly lighter than bg_darker but darker than
+                    // bg2) so it READS as a tab — render-reviewer #4
+                    // flagged that inactive == panel bg made them
+                    // invisible.
+                    let bg = if i == active_idx { t.bg2 } else { t.bg_dark };
                     let fg = if i == active_idx { t.fg } else { t.comment };
                     frame.render_widget(
                         ratatui::widgets::Paragraph::new(chip)

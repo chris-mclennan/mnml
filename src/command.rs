@@ -1517,6 +1517,55 @@ fn builtin_commands() -> Vec<Command> {
                 app.open_context_menu_at_focus();
             },
         },
+        Command {
+            // Right-panel v3: keyboard tab-cycle. Bufferline uses
+            // Ctrl+Shift+[/] for prev/next tab; mnml's right panel
+            // mirrors that pattern.
+            id: "view.right_panel_next_tab",
+            title: "Right panel: switch to next tab",
+            group: "view",
+            keys: &["Ctrl+Shift+]"],
+            run: |app| {
+                if app.right_panel_panes.len() > 1 {
+                    app.right_panel_active_idx =
+                        (app.right_panel_active_idx + 1) % app.right_panel_panes.len();
+                }
+            },
+        },
+        Command {
+            id: "view.right_panel_prev_tab",
+            title: "Right panel: switch to previous tab",
+            group: "view",
+            keys: &["Ctrl+Shift+["],
+            run: |app| {
+                if app.right_panel_panes.len() > 1 {
+                    let n = app.right_panel_panes.len();
+                    app.right_panel_active_idx = (app.right_panel_active_idx + n - 1) % n;
+                }
+            },
+        },
+        Command {
+            // Right-panel v3: keyboard close-active-tab. Mirrors the
+            // × mouse button. No default chord (the × is mouse-only;
+            // adding a chord is a future polish — for now palette).
+            id: "view.right_panel_close_tab",
+            title: "Right panel: close the active tab",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                if let Some(pid) = app.right_panel_active_pane_id() {
+                    if let Some(idx) = app.right_panel_panes.iter().position(|&p| p == pid) {
+                        app.right_panel_panes.remove(idx);
+                        if app.right_panel_active_idx >= app.right_panel_panes.len()
+                            && !app.right_panel_panes.is_empty()
+                        {
+                            app.right_panel_active_idx = app.right_panel_panes.len() - 1;
+                        }
+                    }
+                    app.close_pane(pid);
+                }
+            },
+        },
         // vscode-user-keyboard S1-1 — chip toggle / edit / remove had
         // no palette commands; were context-menu-only and so
         // unreachable from the keyboard. Add a picker over the rail's
