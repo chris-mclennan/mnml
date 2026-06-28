@@ -285,10 +285,21 @@ The complete, organised feature inventory. For the front-door overview see
   cmdline bar, which-key, indent guides, sticky scope context.
 - **Optional right side panel** — a collapsible panel on the right edge; toggle
   with `Ctrl+Shift+B` or click the EC00 icon in the palette bar, or `:set
-  rightpanel` / `:set rp!`. Drag the left-edge grip to resize. State (visible +
+  rightpanel` (idempotent enable) / `:set rightpanel!` (toggle) / `:set
+  norightpanel` (disable). Drag the left-edge grip to resize. State (visible +
   width) persists to `session.json`; defaults configurable via `[ui]
   right_panel_visible` and `[ui] right_panel_width`. Palette command:
   `view.toggle_right_panel`. Which-key chord: `<leader>tr`.
+  When visible, `outline.show` and `lsp.diagnostics` host their pane inside
+  the panel instead of splitting the editor body — the editor keeps full
+  width and the panel header switches between OUTLINE / DIAGNOSTICS. A `×`
+  on the header evicts the hosted pane (panel stays open, returns to the
+  empty-state copy that teaches the two commands).
+- **Keyboard right-click** — `Shift+F10` opens the context menu for the
+  focused element. Routes Focus::Tree → tree-row menu, Focus::Pane →
+  bufferline tab menu, and falls back to the cursor's most-recent hovered
+  chip (integration / launcher / activity-bar gear). Palette command:
+  `view.context_menu_at_focus`. Mirrors VS Code + macOS convention.
 - **Palette bar redesign** — sidebar toggle (EC02 codicon) + right-panel toggle
   (EC00 codicon) + flat-rendered integration chips between the workspace chip and
   the right cluster + add-integration `+` (EA7C codicon). At narrow widths the
