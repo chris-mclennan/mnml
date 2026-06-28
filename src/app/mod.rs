@@ -2089,7 +2089,11 @@ pub struct PaneRects {
     /// Click rects for URL/artifact hits inside a CloudAgentRun
     /// pane. Cleared per-frame; populated by
     /// `cloud_agent_run_view::draw`.
-    pub cloud_agent_run_hits: Vec<(Rect, crate::ui::cloud_agent_run_view::CloudAgentRunHit)>,
+    pub cloud_agent_run_hits: Vec<(
+        Rect,
+        crate::layout::PaneId,
+        crate::ui::cloud_agent_run_view::CloudAgentRunHit,
+    )>,
     /// Click rects inside the NewCloudAgentWizard pane (radios +
     /// Back/Next buttons). Cleared per-frame.
     pub new_cloud_agent_wizard_hits: Vec<(Rect, crate::ui::new_cloud_agent_wizard_view::WizardHit)>,
@@ -9394,6 +9398,24 @@ impl App {
     }
     pub fn end_tree_edge_drag(&mut self) {
         self.dragging_tree_edge = false;
+    }
+    /// vscode-user-mouse SEV-1 — mirror of maybe-tree-edge-drag for
+    /// the right panel. Returns true if the click landed on the
+    /// panel's left-edge grip and a drag was started.
+    pub fn maybe_start_right_panel_edge_drag(&mut self, x: u16, y: u16) -> bool {
+        if let Some(r) = self.rects.right_panel_edge
+            && x >= r.x
+            && x < r.x + r.width
+            && y >= r.y
+            && y < r.y + r.height
+        {
+            self.dragging_right_panel_edge = true;
+            return true;
+        }
+        false
+    }
+    pub fn end_right_panel_edge_drag(&mut self) {
+        self.dragging_right_panel_edge = false;
     }
 
     /// If `(x, y)` lands on any rendered scrollbar, start a scrollbar

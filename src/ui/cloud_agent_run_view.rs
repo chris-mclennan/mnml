@@ -39,7 +39,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     let bg = t.bg_dark;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
     app.rects.editor_panes.push((area, pane_id));
-    app.rects.cloud_agent_run_hits.clear();
+    // cloud-power-user F1 — DON'T clear here. With two
+    // CloudAgentRun panes in a split, the second pane's draw
+    // wiped the first pane's rects. Now hits carry pane_id so
+    // multiple panes can coexist; the vec is cleared centrally
+    // at ui::draw entry.
 
     let Some(Pane::CloudAgentRun(p)) = app.panes.get(pane_id) else {
         return;
@@ -153,12 +157,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
             width: refresh_w,
             height: 1,
         };
+        app.rects.cloud_agent_run_hits.push((
+            auto_rect,
+            pane_id,
+            CloudAgentRunHit::CycleAutoRefresh,
+        ));
         app.rects
             .cloud_agent_run_hits
-            .push((auto_rect, CloudAgentRunHit::CycleAutoRefresh));
-        app.rects
-            .cloud_agent_run_hits
-            .push((refresh_rect, CloudAgentRunHit::Refresh));
+            .push((refresh_rect, pane_id, CloudAgentRunHit::Refresh));
         y += 2; // blank gap
     }
 
@@ -233,9 +239,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
                 ),
             ]);
             frame.render_widget(Paragraph::new(line), row_rect);
-            app.rects
-                .cloud_agent_run_hits
-                .push((row_rect, CloudAgentRunHit::Url((*url).clone())));
+            app.rects.cloud_agent_run_hits.push((
+                row_rect,
+                pane_id,
+                CloudAgentRunHit::Url((*url).clone()),
+            ));
         } else {
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
@@ -342,9 +350,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
             Span::styled(size_text, Style::default().fg(t.comment).bg(bg)),
         ]);
         frame.render_widget(Paragraph::new(line), row_rect);
-        app.rects
-            .cloud_agent_run_hits
-            .push((row_rect, CloudAgentRunHit::Artifact(art.key.clone())));
+        app.rects.cloud_agent_run_hits.push((
+            row_rect,
+            pane_id,
+            CloudAgentRunHit::Artifact(art.key.clone()),
+        ));
         y += 1;
     }
     if p.artifacts.len() > artifact_cap && y < end_y {
@@ -411,7 +421,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     };
     app.rects
         .cloud_agent_run_hits
-        .push((title_rect, CloudAgentRunHit::ToggleLogFollow));
+        .push((title_rect, pane_id, CloudAgentRunHit::ToggleLogFollow));
 
     if let Some(err) = p.logs_err.as_ref() {
         frame.render_widget(

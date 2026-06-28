@@ -385,13 +385,13 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .rects
                 .cloud_agent_run_hits
                 .iter()
-                .find(|(_, h)| {
+                .find(|(_, _, h)| {
                     matches!(
                         h,
                         crate::ui::cloud_agent_run_view::CloudAgentRunHit::CycleAutoRefresh
                     )
                 })
-                .map(|(r, _)| *r)?;
+                .map(|(r, _, _)| *r)?;
             Some((
                 rect,
                 "auto-refresh".into(),
@@ -403,13 +403,13 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .rects
                 .cloud_agent_run_hits
                 .iter()
-                .find(|(_, h)| {
+                .find(|(_, _, h)| {
                     matches!(
                         h,
                         crate::ui::cloud_agent_run_view::CloudAgentRunHit::Refresh
                     )
                 })
-                .map(|(r, _)| *r)?;
+                .map(|(r, _, _)| *r)?;
             Some((
                 rect,
                 "refresh".into(),

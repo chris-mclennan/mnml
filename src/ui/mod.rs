@@ -138,6 +138,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // every push survives the frame, no stale leftovers.
     app.rects.integration_icon_rects.clear();
     app.rects.launcher_icon_rects.clear();
+    // cloud-power-user F1 — same pattern. Was cleared per-pane,
+    // so the second CloudAgentRun pane in a split wiped the first
+    // pane's chip rects.
+    app.rects.cloud_agent_run_hits.clear();
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
@@ -1380,13 +1384,25 @@ fn paint_integration_chips_in_gap(
         .enumerate()
         .filter(|(_, i)| i.enabled)
         .collect();
+    // design-critic Issue 1 — apply the SAME filter as the rail:
+    // gate on enabled=true AND binary-present (or built-in). Without
+    // the binary check, a chip with enabled=true but uninstalled
+    // binary would render in the palette bar and silently fail.
     let enabled_integrations: Vec<(usize, &crate::config::IntegrationIcon)> = app
         .config
         .ui
         .integration_icons
         .iter()
         .enumerate()
-        .filter(|(_, i)| i.enabled)
+        .filter(|(_, i)| {
+            if !i.enabled {
+                return false;
+            }
+            match crate::integration_detect::sibling_binary_for_command(&i.command) {
+                None => true,
+                Some(bin) => crate::integration_detect::is_binary_installed(bin),
+            }
+        })
         .collect();
     let n_launcher = enabled_launchers.len();
     let n_integration = enabled_integrations.len();

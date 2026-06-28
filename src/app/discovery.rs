@@ -1083,6 +1083,11 @@ fn append_integration_icon_blocks(existing: &str, icons: &[IntegrationIcon]) -> 
         if let Some(t) = &ic.tooltip {
             out.push_str(&format!("tooltip = {}\n", toml_str(t)));
         }
+        // vscode-user-mouse SEV-1 #2 — the `enabled` field was
+        // dropped during serialization. Right-click → Enable
+        // appeared to work in-session but silently reset on
+        // restart (Raw deserializer defaults to false).
+        out.push_str(&format!("enabled = {}\n", ic.enabled));
         out.push('\n');
     }
     out

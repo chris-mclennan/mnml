@@ -4185,13 +4185,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // the s3 sibling pointed at that key. Hit rects come from
     // `cloud_agent_run_view::draw`.
     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
-        && let Some((_, hit)) = app
+        && let Some((_, pane_id, hit)) = app
             .rects
             .cloud_agent_run_hits
             .iter()
-            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
             .cloned()
     {
+        // cloud-power-user F1 — set active to the pane that owns the
+        // clicked rect so chip clicks mutate the visible pane's
+        // state, not whichever pane happened to be active.
+        app.active = Some(pane_id);
         use crate::ui::cloud_agent_run_view::CloudAgentRunHit;
         match hit {
             CloudAgentRunHit::Url(u) => {
@@ -4223,13 +4227,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     app.active.and_then(|i| app.panes.get_mut(i))
                 {
                     p.log_follow = !p.log_follow;
-                    // render-reviewer #2 — renderer treats
-                    // log_scroll == usize::MAX as the follow-tail
-                    // sentinel. Without snapping it, re-enabling
-                    // follow on a completed run leaves the viewport
-                    // stuck at its old offset.
+                    // render-reviewer #2 + cloud-power-user F6 —
+                    // log_scroll==usize::MAX is the follow-tail
+                    // sentinel. ENABLE: snap to MAX. DISABLE: pin
+                    // to current tail (so new arrivals don't pull
+                    // the view despite the title claiming follow
+                    // is off).
                     if p.log_follow {
                         p.log_scroll = usize::MAX;
+                    } else {
+                        p.log_scroll = p.logs.len();
                     }
                 }
             }
@@ -5262,6 +5269,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             // scrollbar, so the (specific, ~4-row) resize zone must win
             // there before the (full-height) scrollbar claims the click.
             if app.begin_tree_edge_drag(x, y) {
+                return;
+            }
+            // vscode-user-mouse SEV-1 — mirror for the right-panel
+            // grip. Without this, the field stayed false and the
+            // grip was decorative.
+            if app.maybe_start_right_panel_edge_drag(x, y) {
                 return;
             }
             // Grab a scrollbar (editor / diff / embedded-diff / tree) before
@@ -7016,6 +7029,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     .or_else(|| app.rects.statusline.map(|r| r.x + r.width))
                     .unwrap_or(120);
                 app.drag_tree_edge_to(x, screen_w);
+            } else if app.dragging_right_panel_edge {
+                // vscode-user-mouse SEV-1 — mirror of dragging_tree_edge.
+                // The grip glyph + edge rect were rendered but no drag
+                // handler existed, so the panel was decorative.
+                let screen_w = app
+                    .rects
+                    .body
+                    .map(|r| r.x + r.width)
+                    .or_else(|| app.rects.statusline.map(|r| r.x + r.width))
+                    .unwrap_or(120);
+                let new_w = screen_w.saturating_sub(x).clamp(8, 120);
+                app.right_panel_width = new_w;
             } else if app.dragging_git_graph_detail.is_some() {
                 app.drag_git_graph_detail_to(x);
             } else if let Some((pid, orow, ocol, armed)) = app.drag_select {
@@ -7069,6 +7094,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         MouseEventKind::Up(MouseButton::Left) => {
             app.end_scrollbar_drag();
             app.end_tree_edge_drag();
+            app.end_right_panel_edge_drag();
             app.end_git_graph_detail_drag();
             app.end_divider_drag();
             app.drag_select = None;

@@ -560,12 +560,19 @@ fn draw_add_repo_row(
 /// install dir. Preserving the original index matters because the
 /// hover/click rect map uses it to look the icon up again.
 fn visible_integration_indices(app: &App) -> Vec<usize> {
+    // design-critic Issue 1 — palette-bar and rail must apply the
+    // SAME filter or the user gets ghosts (chip shows in one
+    // surface but not the other). Both surfaces now gate on
+    // (a) `enabled=true` AND (b) binary present (or built-in).
     app.config
         .ui
         .integration_icons
         .iter()
         .enumerate()
         .filter_map(|(i, ic)| {
+            if !ic.enabled {
+                return None;
+            }
             match crate::integration_detect::sibling_binary_for_command(&ic.command) {
                 None => Some(i), // built-in palette command — always available
                 Some(bin) if crate::integration_detect::is_binary_installed(bin) => Some(i),
