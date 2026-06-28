@@ -4416,6 +4416,20 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             app.context_menu_select(i);
             return;
         }
+        // Same for the menu-bar dropdown — hovering an item should
+        // move the highlight to that row. Without this, the cyan
+        // row only ever follows arrow-key navigation.
+        if app.menu_open.is_some()
+            && let Some(&(_, item_idx)) = app
+                .rects
+                .menu_bar_items
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            && let Some(s) = app.menu_open.as_mut()
+        {
+            s.item_idx = item_idx;
+            return;
+        }
         let now = std::time::Instant::now();
         // 2026-06-22 — some terminals report Moved (no button)
         // even while a button is held during a drag. If
