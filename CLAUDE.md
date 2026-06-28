@@ -50,6 +50,7 @@ cargo fmt              # before committing
 ./run.sh stop          # quit the running mnml
 ./run.sh status        # show the marker (workspace, IPC dir)
 ./run.sh headless [WS]  # same loop, but --headless (virtual screen + file-IPC)
+./run.sh shot [OUT.png] # screenshot the *real* ghostty window (live pixels) → PNG you can Read
 ./dev.sh               # cargo-watch auto-rebuild-on-save loop (needs `cargo install cargo-watch`)
 
 cargo run -- [WS] [--input vim|standard] [--ascii] [--config PATH] [--headless]
