@@ -770,7 +770,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         };
                         frame.render_widget(
                             ratatui::widgets::Paragraph::new(
-                                "(pane type not supported in right panel)",
+                                "(pane type not supported in right panel — close with ×)",
                             )
                             .style(Style::default().fg(t.comment).bg(t.bg_darker))
                             .wrap(ratatui::widgets::Wrap { trim: false }),
@@ -806,7 +806,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 )),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "Hide with Ctrl+Shift+B.",
+                    "Hide: Ctrl+Shift+B or :set norp",
                     Style::default().fg(t.comment).bg(t.bg_darker),
                 )),
             ];

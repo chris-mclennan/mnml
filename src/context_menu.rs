@@ -44,6 +44,11 @@ pub enum MenuAction {
     CloseTab(PaneId),
     CloseOtherTabs(PaneId),
     CloseAllTabs,
+    /// Right-panel v3 tab right-click "Switch to this tab" — sets
+    /// `right_panel_active_idx` directly to the given index instead
+    /// of cycling via next_tab. Future-proofs the action when the
+    /// 2-tab cap lifts (render-reviewer-4th W-1).
+    SetRightPanelTab(usize),
     /// Save the specific pane (an editor) without changing focus.
     /// Surfaced from the bufferline tab right-click menu — the
     /// VS-Code-mouse hunt's SEV-2 "no Save button anywhere" finding.

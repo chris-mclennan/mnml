@@ -274,9 +274,12 @@ impl App {
             .unwrap_or_else(|| "tab".to_string());
         let mut items = Vec::new();
         if tab_idx != self.right_panel_active_idx {
+            // render-reviewer/crash-investigator W-1: jump to the
+            // clicked index directly. Was firing next_tab which
+            // worked at MAX_TABS=2 but breaks past that.
             items.push(MenuItem::new(
                 "Switch to this tab",
-                MenuAction::Command("view.right_panel_next_tab"),
+                MenuAction::SetRightPanelTab(tab_idx),
             ));
         }
         items.push(MenuItem::new("Close tab", MenuAction::CloseTab(pid)));
@@ -740,6 +743,11 @@ impl App {
             CloseTab(id) => self.close_pane(id),
             CloseOtherTabs(id) => self.close_panes_except(Some(id)),
             CloseAllTabs => self.close_panes_except(None),
+            SetRightPanelTab(idx) => {
+                if idx < self.right_panel_panes.len() {
+                    self.right_panel_active_idx = idx;
+                }
+            }
             SavePane(id) => {
                 // `save_active` reads `self.active`; reveal the pane
                 // first so the existing save path lights up. The

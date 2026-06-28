@@ -312,24 +312,24 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         HoverChip::RightPanelTab(pid) => {
             // Find this tab's rect by walking right_panel_tabs and
             // matching the pane id.
+            let idx = app.right_panel_panes.iter().position(|&p| p == pid)?;
             let rect = app
-                .right_panel_panes
+                .rects
+                .right_panel_tabs
                 .iter()
-                .position(|&p| p == pid)
-                .and_then(|idx| {
-                    app.rects
-                        .right_panel_tabs
-                        .iter()
-                        .find(|(_, i)| *i == idx)
-                        .map(|(r, _)| *r)
-                })?;
+                .find(|(_, i)| *i == idx)
+                .map(|(r, _)| *r)?;
             use crate::pane::Pane;
             let main = app.panes.get(pid).map(Pane::title).unwrap_or_default();
-            Some((
-                rect,
-                main,
-                Some("click: switch · ×: close active tab".into()),
-            ))
+            // design-critic end-of-day #3 — inactive tab's "×: close
+            // active tab" implied "click × to close THIS tab" which
+            // is wrong. Give each tab its own helper line.
+            let hint = if idx == app.right_panel_active_idx {
+                "click: switch · ×: close · right-click: menu"
+            } else {
+                "click: switch tab · right-click: switch/close"
+            };
+            Some((rect, main, Some(hint.into())))
         }
         HoverChip::RightPanelClose => {
             let rect = app.rects.right_panel_close?;

@@ -4815,17 +4815,31 @@ impl App {
     /// the `RIGHT_PANEL_MAX_TABS` cap, the OLDEST hosted pane is
     /// displaced (FIFO) — close_pane'd so no ghost bufferline tab
     /// lingers.
-    pub fn right_panel_push(&mut self, pid: usize) -> usize {
+    pub fn right_panel_push(&mut self, mut pid: usize) -> usize {
         // crash-investigator SEV-1 #2: use force_close_pane (not
         // close_pane) so a dirty editor in the slot can't refuse to
         // be displaced and cause the loop to double-evict. In v3
         // only Outline / Diagnostics get hosted (never editors, so
         // never dirty), but the FIFO is defensive — keep it robust.
         // remove_pane_storage handles the right_panel_panes shift.
+        //
+        // crash-investigator 2nd LATENT SEV-1: each force_close_pane
+        // call shifts every pane id > evicted down by 1. The caller
+        // captured `pid` BEFORE eviction, so we must shift it down
+        // alongside the shift to keep it pointing at the right pane
+        // in self.panes after the evictions. Unreachable today (cap
+        // guards make the loop a no-op for current callers) but a
+        // certain panic if MAX_TABS ever lifts or a 3rd hosted pane
+        // type is added.
         let was_at_cap = self.right_panel_panes.len() >= Self::RIGHT_PANEL_MAX_TABS;
         while self.right_panel_panes.len() >= Self::RIGHT_PANEL_MAX_TABS {
             let oldest = self.right_panel_panes[0];
             self.force_close_pane(oldest);
+            // remove_pane_storage shifted every id > oldest down by
+            // 1 — apply the same shift to the caller's pid.
+            if pid > oldest {
+                pid -= 1;
+            }
         }
         if was_at_cap {
             // mouse-hunter v3 SEV-2 J — toast on silent displace so

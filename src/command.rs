@@ -1479,7 +1479,10 @@ fn builtin_commands() -> Vec<Command> {
             // palette. VS Code's Ctrl+Shift+B is "Run Build Task".
             // mnml has no build-task concept yet; if/when that lands,
             // the chord needs revisiting (Ctrl+Alt+B is the next pick).
-            title: "Toggle the right side panel (VS Code uses this for Run Build Task)",
+            // (VS Code's Ctrl+Shift+B is "Run Build Task". mnml has
+            // no build-task concept yet; if/when that lands, revisit
+            // the chord — Ctrl+Alt+B is the next pick.)
+            title: "Toggle the right side panel",
             group: "view",
             // vscode-user-keyboard S2-3 — natural mirror of Ctrl+B.
             keys: &["Ctrl+Shift+B"],
