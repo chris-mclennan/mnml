@@ -150,6 +150,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.ws_send_buttons.clear();
     app.rects.claude_agents_topbar_chips.clear();
     app.rects.spend_headers.clear();
+    // task #633 — cloud_agents_rows was only cleared inside
+    // cloud_agents_panel::draw; when the panel was closed and the
+    // rail painted in its place, stale row rects survived and stole
+    // right-clicks on rail workspace headers (showing the Cloud
+    // Agents "View details / Stop session" menu instead).
+    app.rects.cloud_agents_rows.clear();
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
