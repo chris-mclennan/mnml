@@ -11683,6 +11683,35 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_at_focus_uses_hover_chip_fallback_for_gear() {
+        // v2 polish (2026-06-28): when no focus match applies but
+        // hover_chip is set to ActivityBarGear, Shift+F10 routes
+        // to the gear context menu. Lets a mouse-then-keyboard
+        // power-user activate chip menus by keyboard.
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        // Focus::Pane + no active pane → skips both Tree and Pane
+        // branches, falls through to the hover_chip fallback.
+        app.focus = crate::focus::Focus::Pane;
+        app.active = None;
+        app.rects.activity_bar_gear = Some(ratatui::layout::Rect {
+            x: 1,
+            y: 10,
+            width: 3,
+            height: 1,
+        });
+        app.hover_chip = Some((crate::HoverChip::ActivityBarGear, std::time::Instant::now()));
+        assert!(app.context_menu.is_none());
+        crate::command::run("view.context_menu_at_focus", &mut app);
+        assert!(
+            app.context_menu.is_some(),
+            "Shift+F10 with hover_chip=Gear should open the gear menu"
+        );
+    }
+
+    #[test]
     fn context_menu_at_focus_opens_tab_menu_when_pane_focused() {
         // vscode-user-keyboard 2026-06-28 SEV-2: keyboard users
         // couldn't open a context menu without a mouse. Shift+F10

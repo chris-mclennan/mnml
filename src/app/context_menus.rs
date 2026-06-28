@@ -19,8 +19,43 @@ impl App {
     ///     (uses the rail's last-known x and the row's screen y).
     ///   * Focus::Pane → bufferline-tab context menu for the active
     ///     pane (anchor at the active tab's rect).
+    ///   * hover_chip set (any chip the mouse most-recently hovered)
+    ///     → the corresponding chip context menu. Lets the user
+    ///     tab to a chip with the mouse, then drive everything else
+    ///     by keyboard.
     ///   * Other (no selection, cmdline, etc.) → toast.
     pub fn open_context_menu_at_focus(&mut self) {
+        // v2 polish (2026-06-28): hover_chip fallback for chip /
+        // launcher / gear right-click via keyboard. The cursor's
+        // last-hovered chip is the most-natural target — same
+        // pattern as pressing the right-mouse-button when over a
+        // chip. Only kicks in when the focus path returned None.
+        let hover_chip_anchor = self.hover_chip.as_ref().and_then(|(c, _)| match c {
+            crate::HoverChip::IntegrationIcon(idx) => {
+                let &(rect, _) = self
+                    .rects
+                    .integration_icon_rects
+                    .iter()
+                    .find(|(_, i)| i == idx)?;
+                Some((
+                    crate::HoverChip::IntegrationIcon(*idx),
+                    (rect.x, rect.y + 1),
+                ))
+            }
+            crate::HoverChip::LauncherIcon(idx) => {
+                let &(rect, _) = self
+                    .rects
+                    .launcher_icon_rects
+                    .iter()
+                    .find(|(_, i)| i == idx)?;
+                Some((crate::HoverChip::LauncherIcon(*idx), (rect.x, rect.y + 1)))
+            }
+            crate::HoverChip::ActivityBarGear => self
+                .rects
+                .activity_bar_gear
+                .map(|rect| (crate::HoverChip::ActivityBarGear, (rect.x, rect.y + 1))),
+            _ => None,
+        });
         // Tree: use selected_row + the first tree row rect to derive
         // a sensible anchor. Without rect data, fall back to (1, 1).
         if matches!(self.focus, crate::focus::Focus::Tree) {
@@ -56,6 +91,22 @@ impl App {
                 .or_else(|| self.rects.body.map(|r| (r.x, r.y)))
                 .unwrap_or((1, 1));
             self.open_tab_context_menu(pid, anchor);
+            return;
+        }
+        // hover_chip fallback — chip / launcher / gear menus.
+        if let Some((chip, anchor)) = hover_chip_anchor {
+            match chip {
+                crate::HoverChip::IntegrationIcon(idx) => {
+                    self.open_integration_chip_context_menu(idx, anchor);
+                }
+                crate::HoverChip::LauncherIcon(idx) => {
+                    self.open_launcher_chip_context_menu(idx, anchor);
+                }
+                crate::HoverChip::ActivityBarGear => {
+                    self.open_gear_context_menu(anchor);
+                }
+                _ => {}
+            }
             return;
         }
         self.toast("no context menu at this focus");
