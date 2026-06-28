@@ -796,7 +796,11 @@ impl VimInputHandler {
         if self.insert_waiting_for_register {
             self.insert_waiting_for_register = false;
             if let KeyCode::Char(c) = key.code {
-                let valid = c.is_ascii_lowercase() || c == '0' || c == '+' || c == '_';
+                // nvchad-2nd 2026-06-28 SEV-2: `"` (unnamed register)
+                // is the most-used INSERT-mode paste target and was
+                // missing from the accepted list. Vim users reflexively
+                // type `<C-R>"` to paste what they just yanked.
+                let valid = c.is_ascii_lowercase() || c == '0' || c == '+' || c == '_' || c == '"';
                 if valid {
                     return InputResult::Ops(vec![SetRegisterHint(Some(c)), Paste]);
                 }

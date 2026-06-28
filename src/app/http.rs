@@ -4097,7 +4097,15 @@ impl App {
         // home for the edit (file was edited externally and the block we
         // sent from is gone) we refuse rather than overwrite — losing the
         // other blocks would be the worst possible outcome.
-        if matches!(ext.as_str(), "http" | "rest") && source_block_name.is_some() {
+        // http-2nd 2026-06-28 SEV-1: was guarded on
+        // `source_block_name.is_some()` so unnamed LEADING blocks
+        // (no `###` separator) fell through to the whole-file
+        // overwrite — destroying every subsequent `### named` block.
+        // splice_http_block correctly handles `None` (matches the
+        // leading block by the no-separator-name predicate), so the
+        // only fix needed is to enter the splice path for all .http
+        // sources, not just named-block ones.
+        if matches!(ext.as_str(), "http" | "rest") {
             let existing = match std::fs::read_to_string(&path) {
                 Ok(t) => t,
                 Err(e) => {
