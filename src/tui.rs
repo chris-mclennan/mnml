@@ -4401,6 +4401,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // A move OFF every chip clears the hover; click + key events also clear
     // it (handled elsewhere).
     if matches!(m.kind, MouseEventKind::Moved) {
+        // 2026-06-28 — hover-highlight on context menu items.
+        // The hover-tooltip Moved handler used to return early,
+        // which meant the dedicated context-menu hover block at
+        // ~line 4762 never ran. Check the menu FIRST and update
+        // its selection before falling through to tooltip logic.
+        if app.context_menu.is_some()
+            && let Some(&(_, i)) = app
+                .rects
+                .context_menu_items
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.context_menu_select(i);
+            return;
+        }
         let now = std::time::Instant::now();
         // 2026-06-22 — some terminals report Moved (no button)
         // even while a button is held during a drag. If
