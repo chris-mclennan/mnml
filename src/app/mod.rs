@@ -4804,8 +4804,25 @@ impl App {
         Some(self.right_panel_panes[idx])
     }
 
-    /// Push a pane into the right panel and make it active.
+    /// Maximum hosted-pane slots in the right side panel. design-critic
+    /// 2026-06-28 #4: 3+ tabs in a 32-cell column silently drop —
+    /// the renderer's strip_end check bails out without rendering a
+    /// scroll indicator. Cap + FIFO-displace honestly tracks state
+    /// to UI. Future v4 with overflow chevrons can lift the cap.
+    pub const RIGHT_PANEL_MAX_TABS: usize = 2;
+
+    /// Push a pane into the right panel and make it active. If at
+    /// the `RIGHT_PANEL_MAX_TABS` cap, the OLDEST hosted pane is
+    /// displaced (FIFO) — close_pane'd so no ghost bufferline tab
+    /// lingers.
     pub fn right_panel_push(&mut self, pid: usize) -> usize {
+        while self.right_panel_panes.len() >= Self::RIGHT_PANEL_MAX_TABS {
+            let oldest = self.right_panel_panes.remove(0);
+            // Closing the displaced pane after the push would clobber
+            // the new pane's index; close now while the new pane
+            // hasn't been added yet.
+            self.close_pane(oldest);
+        }
         self.right_panel_panes.push(pid);
         let idx = self.right_panel_panes.len() - 1;
         self.right_panel_active_idx = idx;

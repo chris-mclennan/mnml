@@ -177,11 +177,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // catching clicks at the top-left rail corner.
     app.rects.workspace_picker_chevron = None;
     app.rects.workspace_name_rect = None;
-    // 2026-06-28 v3: right_panel_tabs only cleared inside the panel
-    // body painter — so panel-was-visible-then-toggled-off would
-    // leave stale tab rects intercepting clicks. Centralize alongside
-    // the other rect-clears.
+    // 2026-06-28 v3: right_panel_tabs / right_panel_edge /
+    // right_panel_close — these all live inside the panel-visible
+    // branch and aren't cleared on the zen-mode early-return path
+    // OR the panel-just-toggled-off path. Centralize at draw entry
+    // alongside the other rect-clears. SEV-1 from render-reviewer
+    // 2026-06-28.
     app.rects.right_panel_tabs.clear();
+    app.rects.right_panel_edge = None;
+    app.rects.right_panel_close = None;
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
@@ -575,22 +579,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             rpa,
         );
         // Right-panel v3 (2026-06-28): the panel can host multiple
-        // panes as TABS. `right_panel_panes` is the list; the active
-        // index is what renders in the body. The header row paints
-        // a tab strip — one chip per hosted pane — with the active
-        // tab carrying a `×` close button.
-        let hosted: Vec<usize> = app
-            .right_panel_panes
-            .iter()
-            .copied()
-            .filter(|id| app.panes.get(*id).is_some())
-            .collect();
-        let active_idx = if hosted.is_empty() {
+        // panes as TABS. `right_panel_panes` is the canonical list;
+        // the active index references that list directly so click
+        // routing and × close stay in sync with the data model.
+        // Dead panes (removed from app.panes via other paths) are
+        // skipped during paint via the per-iteration filter inside
+        // the loop — using right_panel_panes-relative indices throughout
+        // avoids the index-divergence bug render-reviewer flagged.
+        let panes_len = app.right_panel_panes.len();
+        let active_idx = if panes_len == 0 {
             0
         } else {
-            app.right_panel_active_idx.min(hosted.len() - 1)
+            app.right_panel_active_idx.min(panes_len - 1)
         };
-        let active_pane: Option<usize> = hosted.get(active_idx).copied();
+        let active_pane: Option<usize> = app
+            .right_panel_panes
+            .get(active_idx)
+            .copied()
+            .filter(|id| app.panes.get(*id).is_some());
+        let has_any_hosted = app
+            .right_panel_panes
+            .iter()
+            .any(|id| app.panes.get(*id).is_some());
 
         // Header row.
         let tab_label = |pid: usize| -> &'static str {
@@ -612,7 +622,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 ratatui::widgets::Block::default().style(Style::default().bg(t.bg_darker)),
                 header_rect,
             );
-            if hosted.is_empty() {
+            if !has_any_hosted {
                 // Empty state: still paint the section label.
                 frame.render_widget(
                     ratatui::widgets::Paragraph::new(" SIDE PANEL").style(
@@ -625,13 +635,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 );
                 app.rects.right_panel_close = None;
             } else {
-                // Tab strip — one chip per hosted pane. Active
-                // tab gets bg2 background; inactive tabs stay
-                // bg_darker. Reserve 2 cells on the right for `×`.
+                // Tab strip — one chip per LIVE hosted pane. We
+                // walk `right_panel_panes` (not a filtered copy) so
+                // the index stored in `right_panel_tabs` matches
+                // the data model's index. Dead panes are skipped
+                // in the loop body.
                 let reserve_close: u16 = 2;
                 let mut x = rpa.x;
                 let strip_end = rpa.x + rpa.width.saturating_sub(reserve_close);
-                for (i, pid) in hosted.iter().copied().enumerate() {
+                let panes_snapshot: Vec<usize> = app.right_panel_panes.clone();
+                for (i, pid) in panes_snapshot.iter().copied().enumerate() {
+                    if app.panes.get(pid).is_none() {
+                        continue;
+                    }
                     let label = tab_label(pid);
                     let chip = format!(" {label} ");
                     let chip_w = chip.chars().count() as u16;
@@ -659,9 +675,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     );
                     app.rects.right_panel_tabs.push((chip_rect, i));
                     x = x.saturating_add(chip_w);
+                    // 1-cell gap between chips so the bg_darker
+                    // background reads as a separator. design-critic
+                    // #1 — mirrors paint_leaf_tab_strip.
+                    if x < strip_end {
+                        x = x.saturating_add(1);
+                    }
                 }
-                // `×` close on the rightmost cell. Closes the
-                // ACTIVE tab — matches editor tab strips.
+                // `×` close button on the rightmost cell. Paints in
+                // `t.bg2` (same as the active tab) so it reads as
+                // part of that chip — design-critic #3.
                 if rpa.width > reserve_close {
                     let close_x = rpa.x + rpa.width.saturating_sub(2);
                     let close_rect = Rect {
@@ -673,7 +696,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     let glyph = if app.config.ui.ascii_icons { "x" } else { "×" };
                     frame.render_widget(
                         ratatui::widgets::Paragraph::new(glyph)
-                            .style(Style::default().fg(t.comment).bg(t.bg_darker)),
+                            .style(Style::default().fg(t.fg).bg(t.bg2)),
                         close_rect,
                     );
                     app.rects.right_panel_close = Some(close_rect);
@@ -724,14 +747,34 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 width: rpa.width.saturating_sub(2),
                 height: 5,
             };
-            // design-critic v2 — teach the user what content goes
-            // here. Two commands listed; both work today.
+            // design-critic v3 #5 — give the two command strings
+            // visual hierarchy. Prose lines stay dim (t.comment);
+            // the ex commands the user can copy-paste pop to t.fg.
+            use ratatui::text::{Line, Span};
+            let lines = vec![
+                Line::from(Span::styled(
+                    "Nothing here yet.",
+                    Style::default().fg(t.comment).bg(t.bg_darker),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    ":outline.show",
+                    Style::default().fg(t.fg).bg(t.bg_darker),
+                )),
+                Line::from(Span::styled(
+                    ":lsp.diagnostics",
+                    Style::default().fg(t.fg).bg(t.bg_darker),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Hide with Ctrl+Shift+B.",
+                    Style::default().fg(t.comment).bg(t.bg_darker),
+                )),
+            ];
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(
-                    "Nothing here yet.\n\n:outline.show\n:lsp.diagnostics\n\nHide with Ctrl+Shift+B.",
-                )
-                .style(Style::default().fg(t.comment).bg(t.bg_darker))
-                .wrap(ratatui::widgets::Wrap { trim: false }),
+                ratatui::widgets::Paragraph::new(lines)
+                    .style(Style::default().bg(t.bg_darker))
+                    .wrap(ratatui::widgets::Wrap { trim: false }),
                 hint_rect,
             );
         }
