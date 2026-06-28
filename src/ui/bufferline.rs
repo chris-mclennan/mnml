@@ -19,22 +19,8 @@ use crate::app::App;
 use crate::pane::Pane;
 use crate::ui::{icons, theme};
 
-/// Map a `LauncherIcon.color` slot name (`"orange"`, `"cyan"`, …) to
-/// the active theme's `Color`. Unknown slot ⇒ `bg2` (neutral chip).
-#[allow(dead_code)] // moved to paint_integration_chips_in_gap's inline color_of closure; kept for any future caller
-fn launcher_color(t: &theme::Theme, name: &str) -> ratatui::style::Color {
-    match name {
-        "orange" => t.orange,
-        "cyan" => t.cyan,
-        "blue" => t.blue,
-        "green" => t.green,
-        "yellow" => t.yellow,
-        "purple" => t.purple,
-        "red" => t.red,
-        "teal" => t.teal,
-        _ => t.bg2,
-    }
-}
+// code-reviewer S3-1 — the dead `launcher_color` fn was removed.
+// All callers go through `theme::color_from_slot(name, &t)` now.
 
 /// `✗N` (errors) / `⚠N` (warnings) / `""` for editor panes; `""` for everything
 /// else. Surfaced in the bufferline so broken buffers are visible without

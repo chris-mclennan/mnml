@@ -1419,17 +1419,7 @@ fn paint_integration_chips_in_gap(
     let launcher_paint = n_launcher.min(to_paint);
     let integration_paint = to_paint - launcher_paint;
     let mut x = avail_left;
-    let color_of = |c: &str| match c {
-        "orange" => t.orange,
-        "cyan" => t.cyan,
-        "blue" => t.blue,
-        "green" => t.green,
-        "yellow" => t.yellow,
-        "purple" => t.purple,
-        "red" => t.red,
-        "teal" => t.teal,
-        _ => t.bg2,
-    };
+    let color_of = |c: &str| theme::color_from_slot(c, &t);
     // 2026-06-27 — chips render WITHOUT a colored background.
     // The configured color slot drives the FG (glyph color); the
     // bg is the palette-bar background. Reads as a flat icon row

@@ -238,6 +238,31 @@ pub fn cur() -> Theme {
     *active().read().expect("theme lock poisoned")
 }
 
+/// code-reviewer S2-2 — resolve a config color-slot name to a
+/// theme color. The same `match name { "orange" => t.orange, ... }`
+/// pattern was duplicated in 7+ files (paint_integration_chips_in_gap,
+/// integration-detail panel, compact + expanded rail chip rows,
+/// the dead `bufferline::launcher_color`, integration_edit_overlay,
+/// sessions_panel, completion). Single source of truth here.
+pub fn color_from_slot(name: &str, t: &Theme) -> ratatui::style::Color {
+    match name {
+        "orange" => t.orange,
+        "cyan" => t.cyan,
+        "blue" => t.blue,
+        "green" => t.green,
+        "yellow" => t.yellow,
+        "purple" => t.purple,
+        "red" => t.red,
+        "teal" => t.teal,
+        "magenta" => t.purple, // magenta isn't a distinct slot
+        "fg" => t.fg,
+        "comment" => t.comment,
+        "bg" => t.bg,
+        "bg2" => t.bg2,
+        _ => t.bg2,
+    }
+}
+
 /// Switch the active theme by name. Returns the theme on success, `None` if the
 /// name is unknown (the active theme is left unchanged).
 pub fn set(name: &str) -> Option<Theme> {
