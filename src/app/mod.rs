@@ -4137,6 +4137,8 @@ impl App {
         let tree_width = config.ui.tree_width;
         let git_section_expanded_default = config.ui.git_section_default_expanded;
         let integrations_section_expanded_default = config.ui.integrations_section_default_expanded;
+        let right_panel_visible_default = config.ui.right_panel_visible;
+        let right_panel_width_default = config.ui.right_panel_width;
         let mount_manifests = crate::mount_manifest::load_all(&workspace);
         Ok(App {
             workspace,
@@ -4167,8 +4169,8 @@ impl App {
             git_section_commit_focused: false,
             tree_width,
             dragging_tree_edge: false,
-            right_panel_visible: false,
-            right_panel_width: 32,
+            right_panel_visible: right_panel_visible_default,
+            right_panel_width: right_panel_width_default,
             dragging_right_panel_edge: false,
             integrations_user_max_h: None,
             git_user_max_h: None,

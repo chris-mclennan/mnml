@@ -308,6 +308,14 @@ pub struct UiConfig {
     pub theme_toggle: Option<String>,
     pub ascii_icons: bool,
     pub tree_width: u16,
+    /// Default visibility of the right side panel on launch.
+    /// Toggled at runtime via `Ctrl+Shift+B` / `:set rightpanel`; the
+    /// session.json round-trip preserves the last state. design-critic
+    /// Issue 10.
+    pub right_panel_visible: bool,
+    /// Default width of the right side panel in cells. Drag-resize
+    /// at runtime sticks via session.json.
+    pub right_panel_width: u16,
     /// Hybrid relative line numbers — the cursor line shows its absolute number,
     /// every other line the distance from the cursor. `:set relativenumber`.
     pub relative_line_numbers: bool,
@@ -673,6 +681,8 @@ impl Default for Config {
                 theme_toggle: None,
                 ascii_icons: false,
                 tree_width: 30,
+                right_panel_visible: false,
+                right_panel_width: 32,
                 relative_line_numbers: false,
                 line_numbers: true,
                 cursor_line: false,
@@ -1304,6 +1314,8 @@ struct RawUi {
     theme_toggle: Option<String>,
     ascii_icons: Option<bool>,
     tree_width: Option<u16>,
+    right_panel_visible: Option<bool>,
+    right_panel_width: Option<u16>,
     relative_line_numbers: Option<bool>,
     line_numbers: Option<bool>,
     cursor_line: Option<bool>,
@@ -1487,6 +1499,12 @@ impl Config {
         }
         if let Some(v) = raw.ui.tree_width {
             self.ui.tree_width = v.clamp(10, 80);
+        }
+        if let Some(v) = raw.ui.right_panel_visible {
+            self.ui.right_panel_visible = v;
+        }
+        if let Some(v) = raw.ui.right_panel_width {
+            self.ui.right_panel_width = v.clamp(10, 80);
         }
         if let Some(v) = raw.ui.relative_line_numbers {
             self.ui.relative_line_numbers = v;

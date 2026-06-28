@@ -416,6 +416,26 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: cfg.ui.tree_width != d.ui.tree_width,
     }));
 
+    // design-critic Issue 10 — right-panel default visibility + width.
+    out.push(SettingItem::Row(SettingRow {
+        key: "ui.right_panel_visible",
+        label: "Right side panel (default)",
+        options: vec!["off".to_string(), "on".to_string()],
+        current_idx: if cfg.ui.right_panel_visible { 1 } else { 0 },
+        modified: cfg.ui.right_panel_visible != d.ui.right_panel_visible,
+    }));
+    out.push(SettingItem::Number(NumberRow {
+        key: "ui.right_panel_width",
+        label: "Right side panel width",
+        value: cfg.ui.right_panel_width as i32,
+        min: 16,
+        max: 60,
+        step: 2,
+        default: d.ui.right_panel_width as i32,
+        unit: " cols",
+        modified: cfg.ui.right_panel_width != d.ui.right_panel_width,
+    }));
+
     // 2026-06-20 — Editor.tab_width: 1..=12; step 1.
     out.push(SettingItem::Number(NumberRow {
         key: "editor.tab_width",
@@ -657,6 +677,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.syntax" => set_bool(&mut cfg.ui.syntax, opt_idx),
         "ui.show_whitespace" => set_bool(&mut cfg.ui.show_whitespace, opt_idx),
         "ui.bracket_rainbow" => set_bool(&mut cfg.ui.bracket_rainbow, opt_idx),
+        "ui.right_panel_visible" => set_bool(&mut cfg.ui.right_panel_visible, opt_idx),
         "ui.highlight_trailing_ws" => set_bool(&mut cfg.ui.highlight_trailing_ws, opt_idx),
         "ui.clock" => set_bool(&mut cfg.ui.clock, opt_idx),
         "ui.highlight_word_under_cursor" => {
@@ -773,6 +794,12 @@ pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
             let new = value.max(0) as u16;
             let changed = cfg.ui.tree_width != new;
             cfg.ui.tree_width = new;
+            changed
+        }
+        "ui.right_panel_width" => {
+            let new = value.max(0) as u16;
+            let changed = cfg.ui.right_panel_width != new;
+            cfg.ui.right_panel_width = new;
             changed
         }
         "editor.tab_width" => {
@@ -901,6 +928,14 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
         "ui.scrolloff" => vec![("ui", "scrolloff", cfg.ui.scrolloff.to_string())],
         "ui.sidescrolloff" => vec![("ui", "sidescrolloff", cfg.ui.sidescrolloff.to_string())],
         "ui.tree_width" => vec![("ui", "tree_width", cfg.ui.tree_width.to_string())],
+        "ui.right_panel_visible" => {
+            vec![("ui", "right_panel_visible", b(cfg.ui.right_panel_visible))]
+        }
+        "ui.right_panel_width" => vec![(
+            "ui",
+            "right_panel_width",
+            cfg.ui.right_panel_width.to_string(),
+        )],
         "ui.color_column" => vec![("ui", "color_column", cfg.ui.color_column.to_string())],
         // ── editor ──
         "editor.input_style" => vec![("editor", "input_style", q(&cfg.editor.input_style))],
