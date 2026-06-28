@@ -4808,8 +4808,10 @@ impl App {
     /// 2026-06-28 #4: 3+ tabs in a 32-cell column silently drop —
     /// the renderer's strip_end check bails out without rendering a
     /// scroll indicator. Cap + FIFO-displace honestly tracks state
-    /// to UI. Future v4 with overflow chevrons can lift the cap.
-    pub const RIGHT_PANEL_MAX_TABS: usize = 2;
+    /// to UI. Bumped 2 → 3 on 2026-06-28 v4 for AI chat as a 3rd
+    /// hosted type — the renderer's `…` truncation handles the
+    /// label squeeze at narrow widths.
+    pub const RIGHT_PANEL_MAX_TABS: usize = 3;
 
     /// Push a pane into the right panel and make it active. If at
     /// the `RIGHT_PANEL_MAX_TABS` cap, the OLDEST hosted pane is
@@ -11741,6 +11743,25 @@ mod tests {
         // Last-opened becomes active.
         let active = app.right_panel_active_pane_id().unwrap();
         assert!(matches!(app.panes.get(active), Some(Pane::Diagnostics(_))));
+    }
+
+    #[test]
+    fn ask_ai_routes_to_right_panel_when_visible() {
+        // v4 — ai.chat hosts in the right panel as a 3rd tab
+        // (alongside Outline + Diagnostics, capped at 3).
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.right_panel_visible = true;
+        let before = app.right_panel_panes.len();
+        app.ask_ai("test", "hi".to_string());
+        assert_eq!(
+            app.right_panel_panes.len(),
+            before + 1,
+            "ai pane hosted as a tab"
+        );
+        let active = app.right_panel_active_pane_id().unwrap();
+        assert!(matches!(app.panes.get(active), Some(Pane::Ai(_))));
     }
 
     #[test]

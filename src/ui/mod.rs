@@ -610,6 +610,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             match pane {
                 crate::pane::Pane::Outline(o) => o.tab_title(),
                 crate::pane::Pane::Diagnostics(d) => d.tab_title(),
+                crate::pane::Pane::Ai(a) => a.tab_title(),
                 _ => "PANEL".to_string(),
             }
         };
@@ -755,6 +756,39 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 }
                 Some(crate::pane::Pane::Diagnostics(_)) => {
                     diagnostics_view::draw(frame, app, pid, body, focused);
+                }
+                Some(crate::pane::Pane::Ai(_)) => {
+                    // Right-panel v4: AI chat hosted in the column.
+                    // Code blocks + prose need width — at <40 cells
+                    // every code line wraps to 3+ rows. Toast-style
+                    // hint at the top reminds the user to widen.
+                    if body.width < 40 && body.height >= 3 {
+                        let hint = Rect {
+                            x: body.x + 1,
+                            y: body.y,
+                            width: body.width.saturating_sub(2),
+                            height: 1,
+                        };
+                        frame.render_widget(
+                            ratatui::widgets::Paragraph::new("AI chat reads better at 40+ cells")
+                                .style(
+                                    Style::default()
+                                        .fg(t.yellow)
+                                        .bg(t.bg_darker)
+                                        .add_modifier(Modifier::DIM),
+                                ),
+                            hint,
+                        );
+                        let body_shrunk = Rect {
+                            x: body.x,
+                            y: body.y + 1,
+                            width: body.width,
+                            height: body.height.saturating_sub(1),
+                        };
+                        ai_view::draw(frame, app, pid, body_shrunk, focused);
+                    } else {
+                        ai_view::draw(frame, app, pid, body, focused);
+                    }
                 }
                 _ => {
                     // design-critic v3 #8 — a future pane type

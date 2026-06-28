@@ -1090,11 +1090,21 @@ impl App {
 
     /// Open a `Pane::Ai` showing `title` and the answer to `prompt`, and kick off
     /// `claude -p <prompt>` on a background thread (`tick` delivers the answer).
+    /// Right-panel v4 (2026-06-28): when the right panel is visible, hosts the
+    /// AI chat there as a new tab instead of splitting the editor body. AI chat
+    /// is content-rich and benefits from the dedicated column; the panel
+    /// auto-widens via the user's drag handle if 32 cells reads too tight.
     pub fn ask_ai(&mut self, title: impl Into<String>, prompt: String) {
         let (job_id, session_id, cancel) = self.spawn_ai_job(prompt.clone());
         let pane = Pane::Ai(crate::ai::AiPane::new(
             title, prompt, session_id, job_id, cancel,
         ));
+        if self.right_panel_visible {
+            self.panes.push(pane);
+            let new_id = self.panes.len() - 1;
+            self.right_panel_push(new_id);
+            return;
+        }
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
