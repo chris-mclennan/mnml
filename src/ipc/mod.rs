@@ -942,6 +942,41 @@ pub fn rects_dump_json(app: &App) -> String {
     one!("statusline_mixr_chip", app.rects.statusline_mixr_chip);
     one!("activity_bar_gear", app.rects.activity_bar_gear);
     one!("cmdline_bar", app.rects.cmdline_bar);
+    // vscode-user-mouse / vscode-user SEV-3 — the new palette-bar
+    // chrome was invisible to the headless click-rect audit. All
+    // chips have rects already; just expose them.
+    one!("palette_sidebar_button", app.rects.palette_sidebar_button);
+    one!(
+        "palette_right_panel_button",
+        app.rects.palette_right_panel_button
+    );
+    one!("palette_back_button", app.rects.palette_back_button);
+    one!("palette_forward_button", app.rects.palette_forward_button);
+    one!("palette_search_chip", app.rects.palette_search_chip);
+    one!("palette_dropdown_button", app.rects.palette_dropdown_button);
+    one!(
+        "palette_add_integration_button",
+        app.rects.palette_add_integration_button
+    );
+    one!("right_panel_edge", app.rects.right_panel_edge);
+    one!(
+        "bufferline_new_tab_button",
+        app.rects.bufferline_new_tab_button
+    );
+    one!("bufferline_theme_toggle", app.rects.bufferline_theme_toggle);
+    one!("bufferline_window_close", app.rects.bufferline_window_close);
+    for (r, _) in &app.rects.bufferline_tab_close {
+        push_rect(&mut out, &mut first, "bufferline_tab_close", *r);
+    }
+    for (r, i) in &app.rects.bufferline_tab_page_chips {
+        push_rect(&mut out, &mut first, &format!("tab_page:{i}"), *r);
+    }
+    for (r, i) in &app.rects.bufferline_tab_page_close {
+        push_rect(&mut out, &mut first, &format!("tab_page_close:{i}"), *r);
+    }
+    for (r, i) in &app.rects.menu_bar_words {
+        push_rect(&mut out, &mut first, &format!("menu_bar:{i}"), *r);
+    }
     for (r, label) in &app.rects.tree_icon_buttons {
         push_rect(&mut out, &mut first, &format!("tree_icon:{label}"), *r);
     }

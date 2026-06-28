@@ -1919,7 +1919,7 @@ fn handle_tree_key(app: &mut App, key: KeyEvent) {
             // re-dispatching it from tree focus might close the
             // active editor, which the user didn't ask for. Skip the
             // re-dispatch in standard mode.
-            if app.config.editor.input_style == "vim" {
+            if app.is_vim_mode() {
                 handle_pane_key(app, key);
             }
         }
@@ -2033,7 +2033,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
         // Standard mode treats Ctrl+W as buffer.close — skip.
         if key.code == KeyCode::Char('w')
             && key.modifiers.contains(KeyModifiers::CONTROL)
-            && app.config.editor.input_style == "vim"
+            && app.is_vim_mode()
         {
             if let Some(editor_id) = app.panes.iter().position(|p| matches!(p, Pane::Editor(_))) {
                 app.active = Some(editor_id);
@@ -4051,7 +4051,7 @@ fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 );
                 if has_extras {
                     app.run_editor_op(crate::edit_op::EditOp::ClearExtraCursors);
-                } else if app.config.editor.input_style == "vim" {
+                } else if app.is_vim_mode() {
                     app.focus_tree();
                 }
             }

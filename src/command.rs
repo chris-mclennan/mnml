@@ -1474,7 +1474,12 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.toggle_right_panel",
-            title: "Toggle the right side panel",
+            // design-critic Issue 8 — note the VS Code conflict in the
+            // title so a user porting muscle memory sees it in the
+            // palette. VS Code's Ctrl+Shift+B is "Run Build Task".
+            // mnml has no build-task concept yet; if/when that lands,
+            // the chord needs revisiting (Ctrl+Alt+B is the next pick).
+            title: "Toggle the right side panel (VS Code uses this for Run Build Task)",
             group: "view",
             // vscode-user-keyboard S2-3 — natural mirror of Ctrl+B.
             keys: &["Ctrl+Shift+B"],

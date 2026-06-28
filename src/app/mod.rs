@@ -10027,6 +10027,16 @@ impl App {
         }
     }
 
+    /// code-reviewer S1-2 — single semantic check for "is this user
+    /// driving with vim semantics?" so dispatch doesn't pepper
+    /// `config.editor.input_style == "vim"` literal checks (spine
+    /// rule: editor / buffer / render layers shouldn't reach in to
+    /// the input style). Three sites in tui.rs (Ctrl+W remap, Esc
+    /// focus-tree, re-dispatch) now route through this.
+    pub fn is_vim_mode(&self) -> bool {
+        self.config.editor.input_style == "vim"
+    }
+
     /// Whether the editor mouse wheel + scrollbar drag should drag the
     /// cursor along with the viewport. Resolves the
     /// `[editor] wheel_moves_cursor` policy:
