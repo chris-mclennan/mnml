@@ -1547,7 +1547,10 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.right_panel_close_tab",
             title: "Right panel: close the active tab",
             group: "view",
-            keys: &[],
+            // keyboard-hunter v3 SEV-3 — Ctrl+Shift+W mirrors
+            // Ctrl+W (close-buffer) with the Shift prefix matching
+            // the next/prev cycle pattern.
+            keys: &["Ctrl+Shift+W"],
             run: |app| {
                 // crash-investigator SEV-1 #3: close_pane FIRST so
                 // remove_pane_storage handles the right_panel_panes

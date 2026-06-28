@@ -29,7 +29,15 @@ impl App {
         // launcher / gear right-click via keyboard. The cursor's
         // last-hovered chip is the most-natural target — same
         // pattern as pressing the right-mouse-button when over a
-        // chip. Only kicks in when the focus path returned None.
+        // chip. keyboard-hunter v3 2026-06-28 SEV-2: was dead code
+        // because Focus::Pane with active.is_some() always matched
+        // first. Now a RECENT hover_chip (within 2s) takes priority
+        // — matches user intent when they hovered a chip and then
+        // hit Shift+F10 deliberately.
+        let hover_recent = self
+            .hover_chip
+            .as_ref()
+            .is_some_and(|(_, t)| t.elapsed() < std::time::Duration::from_secs(2));
         let hover_chip_anchor = self.hover_chip.as_ref().and_then(|(c, _)| match c {
             crate::HoverChip::IntegrationIcon(idx) => {
                 let &(rect, _) = self
@@ -58,6 +66,24 @@ impl App {
         });
         // Tree: use selected_row + the first tree row rect to derive
         // a sensible anchor. Without rect data, fall back to (1, 1).
+        // Recent hover_chip takes precedence over focus-based routing.
+        // A user who hovered a chip and pressed Shift+F10 within 2s
+        // clearly wants THAT chip's menu, not the active tab's.
+        if hover_recent && let Some((chip, anchor)) = hover_chip_anchor {
+            match chip {
+                crate::HoverChip::IntegrationIcon(idx) => {
+                    self.open_integration_chip_context_menu(idx, anchor);
+                }
+                crate::HoverChip::LauncherIcon(idx) => {
+                    self.open_launcher_chip_context_menu(idx, anchor);
+                }
+                crate::HoverChip::ActivityBarGear => {
+                    self.open_gear_context_menu(anchor);
+                }
+                _ => {}
+            }
+            return;
+        }
         if matches!(self.focus, crate::focus::Focus::Tree) {
             if let Some(row) = self.tree.selected_row() {
                 // Anchor x: rail's left edge plus a few cells; y: try
@@ -231,6 +257,29 @@ impl App {
             toggle_label,
             MenuAction::ToggleLauncherEnabled(id),
         )];
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
+    /// Right-click context menu for a right-panel tab chip. v3
+    /// polish — mouse-hunter SEV-2 F.
+    pub fn open_right_panel_tab_context_menu(&mut self, tab_idx: usize, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(&pid) = self.right_panel_panes.get(tab_idx) else {
+            return;
+        };
+        let title = self
+            .panes
+            .get(pid)
+            .map(|p| p.title())
+            .unwrap_or_else(|| "tab".to_string());
+        let mut items = Vec::new();
+        if tab_idx != self.right_panel_active_idx {
+            items.push(MenuItem::new(
+                "Switch to this tab",
+                MenuAction::Command("view.right_panel_next_tab"),
+            ));
+        }
+        items.push(MenuItem::new("Close tab", MenuAction::CloseTab(pid)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 

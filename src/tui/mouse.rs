@@ -950,6 +950,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_gear_context_menu((x, y));
                 return;
             }
+            // mouse-hunter v3 SEV-2 F — right-click on a right-panel
+            // tab chip opens a small context menu (switch to / close).
+            if let Some(&(_, tab_idx)) = app
+                .rects
+                .right_panel_tabs
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            {
+                app.open_right_panel_tab_context_menu(tab_idx, (x, y));
+                return;
+            }
             // Right-click on a session tab → context menu.
             if let Some(&(_, pid)) = app
                 .rects
