@@ -105,8 +105,12 @@ impl App {
     }
 
     /// Right-click menu for a launcher chip on the palette bar.
-    /// Parallel to `open_integration_chip_context_menu` — chips
-    /// are visually identical to the user.
+    /// Chips render identically to integration chips but have
+    /// fewer in-app management gestures — launcher_icons currently
+    /// only support enable/disable (no Edit / Remove overlay
+    /// because launchers are TOML-only). vscode-user-mouse SEV-2:
+    /// dropped the "parallel" claim from the doc since the menus
+    /// genuinely diverge here.
     pub fn open_launcher_chip_context_menu(&mut self, icon_idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let Some(icon) = self.config.ui.launcher_icons.get(icon_idx) else {

@@ -16,9 +16,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use crate::app::App;
-use crate::app::discovery::{
-    INTEGRATION_EDIT_COLORS, IntegrationEditField, IntegrationEditMode, IntegrationEditState,
-};
+use crate::app::discovery::{IntegrationEditField, IntegrationEditMode, IntegrationEditState};
 use crate::ui::theme;
 
 /// Inner sub-rect of the discovery overlay's panel that the edit
@@ -210,10 +208,4 @@ fn color_style(name: &str) -> Style {
         theme::color_from_slot(name, &t)
     };
     Style::default().fg(fg).add_modifier(Modifier::BOLD)
-}
-
-/// Exposed for tests + the click router (none yet).
-#[allow(dead_code)]
-pub fn _silence_unused() {
-    let _ = INTEGRATION_EDIT_COLORS;
 }

@@ -960,7 +960,13 @@ fn render_layout(
             // a horizontal row of tab chips (one per pane in the
             // leaf's `tabs`). The body area shrinks by 1 row.
             let is_split_leaf = !path.is_empty();
-            let has_own_tab_strip = matches!(app.panes.get(*id), Some(crate::pane::Pane::Pty(_)));
+            // vscode-user SEV-3 — only suppress the leaf strip when
+            // the leaf has a single Pty tab (the pty_view's internal
+            // strip is enough). If the leaf has SIBLING tabs the
+            // strip needs to render so the user can click back to an
+            // editor pane.
+            let has_own_tab_strip =
+                matches!(app.panes.get(*id), Some(crate::pane::Pane::Pty(_))) && tabs.len() <= 1;
             let body_area = if is_split_leaf && !has_own_tab_strip && area.height >= 2 {
                 let strip = ratatui::layout::Rect {
                     x: area.x,

@@ -230,26 +230,16 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         CmdlinePopupMove(delta) => app.cmdline_popup_move(delta as isize),
         CmdlinePopupAcceptCurrentAndCommit => app.cmdline_popup_accept_current(),
         CmdlineEnter(typed) => {
-            // 2026-06-19 — earlier impl auto-substituted the popup's
-            // highlighted match unconditionally, which broke vim
-            // abbreviations like `:reg<Enter>` (was firing the first
-            // popup match `:registers` instead). Now only substitute
-            // when `cmdline_popup_selected > 0` — i.e. the user
-            // explicitly navigated via ↓ / Tab. Index 0 (auto-first)
-            // keeps the typed text. Mirrors the no_pane_cmdline_commit
-            // path in tui.rs:1329.
-            // 2026-06-26 — second look: the vim path was bypassing
-            // this guard entirely and just running `typed`, which
-            // regressed the "type partial → ↓ → Enter fires
-            // highlighted" UX. Restored the selected>0 fast-path
-            // here.
-            // 2026-06-26 — second look. First attempt called
-            // accept_current() but that's a no-op here — vim has
-            // already cleared its cmdline by the time CmdlineEnter
-            // dispatches, so accept_current's "where to write to"
-            // lookup early-returns and the rewrite never happens.
-            // The saved completion state is still alive though;
-            // read head + matches[selected] directly.
+            // Only substitute the popup-highlighted match when the
+            // user explicitly navigated via ↓ / Tab (selected > 0).
+            // Index 0 (auto-first) keeps the typed text so vim
+            // abbreviations like `:reg<Enter>` don't get rewritten
+            // to `:registers`. Mirrors no_pane_cmdline_commit in
+            // tui.rs. (Vim path runs through this — the saved
+            // completion state stays alive on the App after vim
+            // clears its own cmdline, so we read head +
+            // matches[selected] directly rather than calling
+            // accept_current().)
             let effective = if app.cmdline_popup_selected > 0
                 && let Some(state) = app.cmdline_complete_state.as_ref()
                 && let Some(suffix) = state.matches.get(app.cmdline_popup_selected)

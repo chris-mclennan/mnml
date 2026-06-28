@@ -1077,7 +1077,11 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "rds".to_string(),
-                        glyph: "\u{F1C0}".to_string(), // nf-fa-database
+                        // code-reviewer S3-5 — was F1C0 (same as
+                        // DynamoDB). F0F12 nf-md-server reads as
+                        // "managed relational service" vs DDB's
+                        // generic database glyph.
+                        glyph: "\u{F0F12}".to_string(),
                         fallback: "RD".to_string(),
                         command: ":term mnml-aws-rds".to_string(),
                         color: "blue".to_string(),
