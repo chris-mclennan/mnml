@@ -873,7 +873,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // a one-line warning instead of the cramped pane render.
         // Threshold of 16 cells matches outline_view's min readable
         // width (gutter + a few chars).
-        if active_pane.is_some() && rpa.width < 16 && rpa.height >= 3 {
+        // render-reviewer N-5 2026-06-28: was `rpa.height >= 3`
+        // but the hint paints 2 rows starting at rpa.y + 2 → needs
+        // rpa.y + 2 + 2 = rpa.y + 4 of panel space, i.e. height
+        // >= 4 to show both rows. At height == 3 the second row
+        // clipped silently.
+        if active_pane.is_some() && rpa.width < 16 && rpa.height >= 4 {
             let hint = Rect {
                 x: rpa.x + 1,
                 y: rpa.y + 2,

@@ -175,6 +175,19 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                     } else {
                         dispatch_mouse(app, m);
                     }
+                    // code-reviewer W-2 2026-06-28: coalesce_scroll
+                    // may have read a non-scroll event from the
+                    // queue while looking for more wheel events.
+                    // Drain the stash so the click/key isn't lost.
+                    if let Some(leftover) = mouse::take_coalesce_leftover() {
+                        match leftover {
+                            Event::Key(k) if k.kind != KeyEventKind::Release => {
+                                dispatch_key(app, k)
+                            }
+                            Event::Mouse(m) => dispatch_mouse(app, m),
+                            _ => {}
+                        }
+                    }
                 }
                 Event::Resize(_, _) => {}
                 _ => {}

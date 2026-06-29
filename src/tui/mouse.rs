@@ -9,7 +9,9 @@
 //! callers (`tui::run_loop`, `headless`, `ipc::drain_commands`,
 //! `ui::draw` for synthetic mouse events) keep working unchanged.
 
-use ratatui::crossterm::event::{self, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{
+    self, Event as CtEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
 use super::{send_macos_player, send_mixr_command};
 use crate::app::App;
@@ -27,7 +29,6 @@ use crate::pane::Pane;
 /// Cap the batched count so a stuck wheel can't trigger thousands
 /// of lines of scroll in one shot.
 pub(crate) fn coalesce_scroll(first: &MouseEvent) -> std::io::Result<Option<MouseEvent>> {
-    use ratatui::crossterm::event::Event as CtEvent;
     let same_dir = |k: MouseEventKind| -> bool {
         matches!(
             (first.kind, k),
@@ -70,20 +71,17 @@ pub(crate) fn coalesce_scroll(first: &MouseEvent) -> std::io::Result<Option<Mous
                 count += 1;
                 continue;
             }
-            // Non-matching event drained from the queue — push it
-            // back into our local pipeline by dispatching it via
-            // the COALESCE_LEFTOVER thread-local. Simpler: return
-            // the coalesced batch + leftover via a different path.
-            // For now we DROP the leftover (rare in practice —
-            // wheel events arrive in tight bursts without interleaved
-            // key events). Document this trade-off here.
-            _ => {
-                // Drop the non-scroll event. Acceptable in practice
-                // because wheel events arrive in tight bursts
-                // (~3ms apart) and a key/move event rarely lands
-                // in the middle. Worst case the user retries the
-                // input.
-                let _ = ev;
+            // code-reviewer W-2 2026-06-28: was dropping the
+            // non-scroll event silently — a click that landed in
+            // the crossterm queue during a wheel burst would just
+            // disappear. Now stash it in a thread-local; the main
+            // event loop drains the stash before reading the next
+            // event so the click survives.
+            other => {
+                COALESCE_LEFTOVER.with(|s| {
+                    let mut slot = s.borrow_mut();
+                    *slot = Some(other);
+                });
                 break;
             }
         }
@@ -106,6 +104,22 @@ pub(crate) fn coalesce_scroll(first: &MouseEvent) -> std::io::Result<Option<Mous
 /// after each consumption.
 pub(crate) static SCROLL_BATCH_COUNT: std::sync::atomic::AtomicU32 =
     std::sync::atomic::AtomicU32::new(1);
+
+thread_local! {
+    /// code-reviewer W-2 2026-06-28: when coalesce_scroll reads
+    /// a non-scroll event from the crossterm queue, stash it
+    /// here so the main event loop can drain it before reading
+    /// fresh events. Previously dropped, which lost interleaved
+    /// clicks/keys during wheel bursts.
+    static COALESCE_LEFTOVER: std::cell::RefCell<Option<CtEvent>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Take any event left over from the most recent coalesce_scroll
+/// call. The main event loop polls this before `event::read()`.
+pub(crate) fn take_coalesce_leftover() -> Option<CtEvent> {
+    COALESCE_LEFTOVER.with(|s| s.borrow_mut().take())
+}
 
 /// Read + consume the pending coalesced scroll magnitude. Returns
 /// 1 when no coalescing happened.
