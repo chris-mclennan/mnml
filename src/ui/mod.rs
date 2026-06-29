@@ -188,6 +188,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.right_panel_close = None;
     app.rects.right_panel_empty_outline = None;
     app.rects.right_panel_empty_diagnostics = None;
+    app.rects.right_panel_empty_ai = None;
+    app.rects.right_panel_empty_grep = None;
+    app.rects.right_panel_empty_test = None;
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
@@ -913,10 +916,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .wrap(ratatui::widgets::Wrap { trim: false }),
                 hint_rect,
             );
-            // mouse-polish F-2 — register click rects for the two
-            // command lines so a mouse-first user can populate the
-            // panel without typing. ":outline.show" lands on
-            // hint_rect.y + 2, ":lsp.diagnostics" on + 3.
+            // mouse-polish F-2 — register click rects so a
+            // mouse-first user can populate the panel without
+            // typing. design-critic 2026-06-28 #3: extended to all
+            // 5 routable commands. Row mapping mirrors the lines
+            // vec above: 0 prose, 1 blank, 2-6 cmds, 7 blank, 8
+            // hide-hint.
             app.rects.right_panel_empty_outline = Some(Rect {
                 x: hint_rect.x,
                 y: hint_rect.y + 2,
@@ -929,9 +934,30 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 width: 16.min(hint_rect.width),
                 height: 1,
             });
+            app.rects.right_panel_empty_ai = Some(Rect {
+                x: hint_rect.x,
+                y: hint_rect.y + 4,
+                width: 8.min(hint_rect.width),
+                height: 1,
+            });
+            app.rects.right_panel_empty_grep = Some(Rect {
+                x: hint_rect.x,
+                y: hint_rect.y + 5,
+                width: 10.min(hint_rect.width),
+                height: 1,
+            });
+            app.rects.right_panel_empty_test = Some(Rect {
+                x: hint_rect.x,
+                y: hint_rect.y + 6,
+                width: 9.min(hint_rect.width),
+                height: 1,
+            });
         } else {
             app.rects.right_panel_empty_outline = None;
             app.rects.right_panel_empty_diagnostics = None;
+            app.rects.right_panel_empty_ai = None;
+            app.rects.right_panel_empty_grep = None;
+            app.rects.right_panel_empty_test = None;
         }
         // Drag-grip indicator on the panel's left edge.
         if let Some(edge) = app.rects.right_panel_edge

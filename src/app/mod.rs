@@ -1625,6 +1625,11 @@ pub struct PaneRects {
     pub right_panel_empty_outline: Option<Rect>,
     /// Click target for the empty-state `:lsp.diagnostics` line.
     pub right_panel_empty_diagnostics: Option<Rect>,
+    /// design-critic 2026-06-28 #3: empty-state lists all 5
+    /// routable commands now (was 2 of 5). Three new click rects.
+    pub right_panel_empty_ai: Option<Rect>,
+    pub right_panel_empty_grep: Option<Rect>,
+    pub right_panel_empty_test: Option<Rect>,
     /// `+` chip just after the user's integration icons in the
     /// palette bar's gap area. Click → `integrations.add`
     /// (opens the discovery overlay so the user can add a sibling).

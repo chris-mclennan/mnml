@@ -1403,6 +1403,27 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 crate::command::run("lsp.diagnostics", app);
                 return;
             }
+            // design-critic 2026-06-28 #3 — 3 more empty-state
+            // click rects so all 5 routable commands are mouse
+            // reachable from the empty state.
+            if let Some(rect) = app.rects.right_panel_empty_ai
+                && crate::app::dispatch::contains(rect, x, y)
+            {
+                crate::command::run("ai.chat", app);
+                return;
+            }
+            if let Some(rect) = app.rects.right_panel_empty_grep
+                && crate::app::dispatch::contains(rect, x, y)
+            {
+                crate::command::run("find.grep", app);
+                return;
+            }
+            if let Some(rect) = app.rects.right_panel_empty_test
+                && crate::app::dispatch::contains(rect, x, y)
+            {
+                crate::command::run("test.run", app);
+                return;
+            }
             // Right-panel v3 `×` on the header closes the active
             // tab (panel stays open; next tab takes its place, or
             // empty-state returns if it was the last).

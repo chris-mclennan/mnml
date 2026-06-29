@@ -973,6 +973,9 @@ pub fn rects_dump_json(app: &App) -> String {
         "right_panel_empty_diagnostics",
         app.rects.right_panel_empty_diagnostics
     );
+    one!("right_panel_empty_ai", app.rects.right_panel_empty_ai);
+    one!("right_panel_empty_grep", app.rects.right_panel_empty_grep);
+    one!("right_panel_empty_test", app.rects.right_panel_empty_test);
     one!(
         "bufferline_new_tab_button",
         app.rects.bufferline_new_tab_button
