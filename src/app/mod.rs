@@ -10595,6 +10595,42 @@ mod tests {
     }
 
     #[test]
+    fn switch_to_last_buffer_toggles_with_previous_active() {
+        // vscode-user 2026-06-28 SEV-3: Ctrl+Tab → buffer.last
+        // should jump to the MRU partner (previous active), not
+        // to panes[0] or a random pane. Lock the 3-file linear
+        // case.
+        let (d, mut app) = app_with_files();
+        fs::write(d.path().join("c.txt"), "gamma").unwrap();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        let c = d.path().join("c.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.open_path(&b);
+        app.open_path(&c);
+        // Active should be the c.txt pane.
+        let c_pid = app.active.unwrap();
+        assert!(matches!(
+            app.panes.get(c_pid),
+            Some(Pane::Editor(buf)) if buf.path.as_deref() == Some(&*c)
+        ));
+        app.switch_to_last_buffer();
+        // Should now be on b.txt (the MRU partner).
+        let now_active = app.active.unwrap();
+        assert!(matches!(
+            app.panes.get(now_active),
+            Some(Pane::Editor(buf)) if buf.path.as_deref() == Some(&*b)
+        ));
+        // A second Ctrl+Tab should oscillate back to c.
+        app.switch_to_last_buffer();
+        let back = app.active.unwrap();
+        assert!(matches!(
+            app.panes.get(back),
+            Some(Pane::Editor(buf)) if buf.path.as_deref() == Some(&*c)
+        ));
+    }
+
+    #[test]
     fn close_clears_when_empty() {
         let (d, mut app) = app_with_files();
         app.open_path(&d.path().join("a.txt"));
