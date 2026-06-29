@@ -52,24 +52,29 @@ The tab strip caps at **3** simultaneous tabs. Pushing a 4th displaces the oldes
 
 ### Empty state
 
-With the panel open but no pane hosted, the body paints a faint hint:
+With the panel open but no pane hosted, the body paints a faint hint listing every command that routes into the panel when visible:
 
 ```
- SIDE PANEL
+ right panel
 
   Nothing here yet.
 
   :outline.show
   :lsp.diagnostics
+  :ai.chat
+  :find.grep
+  :test.run
 
-  Hide with Ctrl+Shift+B.
+  Hide: Ctrl+Shift+B or :set norp
 ```
 
-The hint is comment-colored on the panel's slightly-darker background. The two ex commands are both real — copy-and-paste them into the cmdline and the pane lands inside the panel.
+The hint is comment-colored on the panel's slightly-darker background. All five ex commands are real and clickable — click the row and that command fires immediately. Or copy-and-paste them into the cmdline.
 
 ### Header and close button
 
-When a pane is hosted, the panel's header reads ` OUTLINE` or ` DIAGNOSTICS` (bold, dim foreground). The far-right cell of the header is a clickable `×` (or `x` under `[ui] ascii_icons = true`) — clicking it **evicts the hosted pane** (`right_panel_pane_id = None`) but **keeps the panel open** in the empty state. The pane object stays in `app.panes` — firing `outline.show` again immediately re-hosts it.
+When a pane is hosted, the panel's header shows the tab strip. The far-right cell is a clickable `×` (or `x` under `[ui] ascii_icons = true`) — left-click **evicts the active hosted tab** but **keeps the panel open**. Right-click on the × opens the same context menu the active-tab chip would (Close tab / Hide side panel).
+
+The × paints in two states: when the active tab is the rightmost chip, the cells between it and the × fill with the chip's active background so the × visually merges with the chip it acts on. When the active tab is NOT rightmost (e.g. you cycled to a tab that's not the last one), the × paints in inactive-chip styling instead — it's still the same action (close the active tab) but the visual signals "mode-dependent" instead of "local to the chip next to me".
 
 This is the eviction split mnml makes for the panel:
 
