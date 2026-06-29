@@ -1550,21 +1550,15 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            // Right-panel v3: keyboard close-active-tab. Mirrors the
-            // × mouse button. No default chord (the × is mouse-only;
-            // adding a chord is a future polish — for now palette).
+            // Right-panel v3: keyboard close-active-tab. Mirrors
+            // the × mouse button. Ctrl+Alt+W avoids the vim
+            // NORMAL `Ctrl+W` window-prefix (just `ctrl+w` would
+            // be eaten by the vim handler) and isn't a VS Code
+            // chord for anything else.
             id: "view.right_panel_close_tab",
             title: "Right panel: close the active tab",
             group: "view",
-            // nvchad-2nd 2026-06-28 SEV-2: Ctrl+Shift+W didn't
-            // deliver from the chord layer despite the registration.
-            // Suspect: vim NORMAL handler at vim.rs:2261 consumes
-            // Char('w') if ctrl as the window-prefix BEFORE the
-            // chord_chain dispatch can match the ctrl+shift+w
-            // chord. Drop the chord; users have <leader>tx (whichkey)
-            // and the × close button. Reinstating needs a chord-
-            // chain pre-filter for vim-window-prefix-vs-multi-mod.
-            keys: &[],
+            keys: &["ctrl+alt+w"],
             run: |app| {
                 // crash-investigator SEV-1 #3: close_pane FIRST so
                 // remove_pane_storage handles the right_panel_panes
