@@ -49,6 +49,11 @@ pub enum MenuAction {
     /// of cycling via next_tab. Future-proofs the action when the
     /// 2-tab cap lifts (render-reviewer-4th W-1).
     SetRightPanelTab(usize),
+    /// Right-panel v5 polish 2026-06-29: close every panel tab
+    /// EXCEPT the one at this idx.
+    CloseOtherRightPanelTabs(usize),
+    /// Right-panel v5 polish 2026-06-29: close every panel tab.
+    CloseAllRightPanelTabs,
     /// Save the specific pane (an editor) without changing focus.
     /// Surfaced from the bufferline tab right-click menu — the
     /// VS-Code-mouse hunt's SEV-2 "no Save button anywhere" finding.

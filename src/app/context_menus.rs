@@ -321,6 +321,19 @@ impl App {
             ));
         }
         items.push(MenuItem::new("Close tab", MenuAction::CloseTab(pid)));
+        // 2026-06-29 polish: parity with bufferline tab menu.
+        // Only show when there's something to close — Close
+        // others needs >=2 tabs; Close all needs >=1.
+        if self.right_panel_panes.len() > 1 {
+            items.push(MenuItem::new(
+                "Close other tabs",
+                MenuAction::CloseOtherRightPanelTabs(tab_idx),
+            ));
+            items.push(MenuItem::new(
+                "Close all tabs",
+                MenuAction::CloseAllRightPanelTabs,
+            ));
+        }
         // mouse-polish F-5 — give the active-tab right-click menu
         // something the × button doesn't already cover.
         items.push(MenuItem::new(
@@ -790,6 +803,25 @@ impl App {
             SetRightPanelTab(idx) => {
                 if idx < self.right_panel_panes.len() {
                     self.right_panel_active_idx = idx;
+                }
+            }
+            CloseOtherRightPanelTabs(keep_idx) => {
+                // Snapshot panes-to-close first; closing mutates
+                // right_panel_panes (indices shift).
+                let to_close: Vec<usize> = self
+                    .right_panel_panes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, &pid)| (i != keep_idx).then_some(pid))
+                    .collect();
+                for pid in to_close {
+                    self.close_pane(pid);
+                }
+            }
+            CloseAllRightPanelTabs => {
+                let to_close: Vec<usize> = self.right_panel_panes.clone();
+                for pid in to_close {
+                    self.close_pane(pid);
                 }
             }
             SavePane(id) => {
