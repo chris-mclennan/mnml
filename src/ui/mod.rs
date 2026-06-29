@@ -1300,6 +1300,37 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Stacked toasts: top-right vertical column when more than one toast
     // is live (rapid-fire toasts no longer clobber each other).
     toast_stack::draw(frame, app);
+    // qa-6th nvchad SEV-2: :%s/.../.../c interactive confirm
+    // overlay. The y/n/a/q key handlers were wired but no UI
+    // rendered the prompt — the user had no idea they were in
+    // confirm mode. Paint a one-line bar at the bottom showing
+    // the prompt + match progress + key hints.
+    if let Some(rc) = app.replace_confirm.as_ref() {
+        let prompt = format!(
+            " replace {:?} → {:?}? [{}/{}]  y · n · a · q ",
+            rc.find,
+            rc.replace,
+            rc.applied + 1,
+            rc.total,
+        );
+        let t = theme::cur();
+        let prompt_w = (prompt.chars().count() as u16).min(area.width);
+        let prompt_rect = ratatui::layout::Rect {
+            x: 0,
+            y: area.height.saturating_sub(2),
+            width: prompt_w,
+            height: 1,
+        };
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(prompt).style(
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg2)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            prompt_rect,
+        );
+    }
     // Flash overlay: paints label glyphs over the editor body when a
     // `s<a><b>` jump is armed.
     if app.flash_state.is_some() {

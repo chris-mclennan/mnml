@@ -314,7 +314,13 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.redraw",
             title: "Force a full redraw (clears the terminal)",
             group: "view",
-            keys: &["ctrl+l"],
+            // qa-6th keyboard SEV-2 2026-06-29: was `ctrl+l`, but that
+            // shadowed VS Code's editor.action.selectLine muscle
+            // memory. The chord layer fired view.redraw before
+            // standard.rs's SelectLine arm could execute. Dropped
+            // the global chord; vim users can fire via :redraw,
+            // standard users get the line-select they expect.
+            keys: &[],
             run: |app| {
                 app.redraw_requested = true;
             },

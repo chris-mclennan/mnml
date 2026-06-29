@@ -1772,27 +1772,44 @@ impl App {
         }
         let text = b.editor.text().to_string();
         let cur_row = b.editor.row_col().0;
-        let Ok(blocks) = crate::http::file::parse_all(&text) else {
-            self.toast("http.next/prev_block: parse error");
-            return;
-        };
+        // qa-6th nvchad SEV-2: was using parse_all, which requires
+        // every block's body to parse cleanly as an HTTP request.
+        // For .curl files the bodies are `curl -X POST ...` invocations
+        // that parse_block rejects — parse_all returned Err, the
+        // outer toast fired with "parse error" (which the agent
+        // didn't see because of run-command toast timing), and
+        // cursor didn't move. Block nav only needs the `###`
+        // separator positions; scan for them directly.
+        let blocks: Vec<usize> = text
+            .lines()
+            .enumerate()
+            .filter_map(|(i, l)| l.trim_start().starts_with("###").then_some(i))
+            .collect();
         if blocks.is_empty() {
-            self.toast("http.next/prev_block: no blocks in file");
+            self.toast("http.next/prev_block: no ### blocks in file");
             return;
         }
+        // For files where the FIRST block has no `###` separator
+        // (leading unnamed block in .http/.rest), treat line 0 as
+        // an implicit block start so prev from anywhere in the
+        // leading block can wrap to "start of leading block".
+        let mut starts: Vec<usize> = blocks.clone();
+        if starts.first().copied() != Some(0) {
+            starts.insert(0, 0);
+        }
         let target_row = if forward {
-            blocks
+            starts
                 .iter()
-                .find(|bl| bl.start_line > cur_row)
-                .map(|bl| bl.start_line)
-                .unwrap_or(blocks[0].start_line)
+                .find(|&&l| l > cur_row)
+                .copied()
+                .unwrap_or(starts[0])
         } else {
-            blocks
+            starts
                 .iter()
                 .rev()
-                .find(|bl| bl.start_line < cur_row)
-                .map(|bl| bl.start_line)
-                .unwrap_or_else(|| blocks.last().map(|b| b.start_line).unwrap_or(0))
+                .find(|&&l| l < cur_row)
+                .copied()
+                .unwrap_or_else(|| *starts.last().unwrap())
         };
         if let Some(b) = self.active_editor_mut() {
             b.editor.place_cursor(target_row, 0);

@@ -9909,6 +9909,26 @@ impl App {
     /// going through the input handler (multi-cursor chords, etc.).
     pub fn run_editor_op(&mut self, op: crate::edit_op::EditOp) {
         let Some(idx) = self.active else { return };
+        // qa-6th nvchad SEV-3: vim jumplist parity. Vim populates
+        // the jumplist before "big jumps" — `gg`, `G`, `<num>G`,
+        // search, `*`, `#`, paragraph nav, etc. Push the current
+        // position onto nav_back BEFORE the op runs so Ctrl+o
+        // (vim) / Alt+Left (standard) returns to where the user
+        // was. Cross-file jumps already get this via reveal_pane
+        // and open_path; this closes the in-buffer gap.
+        let is_big_jump = matches!(
+            op,
+            crate::edit_op::EditOp::MoveBufferStart
+                | crate::edit_op::EditOp::MoveBufferEnd
+                | crate::edit_op::EditOp::MoveToLine(_)
+                | crate::edit_op::EditOp::MoveDownFirstNonWs
+                | crate::edit_op::EditOp::MoveUpFirstNonWs
+                | crate::edit_op::EditOp::MoveParagraph { .. }
+        );
+        if is_big_jump && let Some(np) = self.current_nav_point() {
+            self.push_nav_back(np);
+            self.nav_forward.clear();
+        }
         if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
             b.editor.apply(op, 20, &mut self.clipboard);
             b.recompute_dirty();
