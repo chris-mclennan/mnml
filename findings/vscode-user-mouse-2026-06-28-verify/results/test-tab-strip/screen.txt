@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run                  󰍉  ws1                                                              󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws1 ▾                main.rs 󰅖                                                                                   main.rs ⌥   problems ✓       ×
+▌     src                     1 fn main() {                                                                                    0 errors   ·   0 warnings
+          lib.rs                2     println!("hello");                                                                         ⏎ jump   r refresh   s severi
+         main.rs               3 }
+        Cargo.toml                                                                                                               ✓ no diagnostics in open file
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃                                                                                                  ┃
+                             ┃                                                                                                  ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                        + dock
+ EDIT   main  󰐙 21  󰛕 10   main.rs  › main                                                         ♪ mixr  LSP 1  37B  Ln 1/3 Col 1  22:53   ws1   rs
+

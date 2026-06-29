@@ -1,0 +1,26 @@
+{"event":"start","mode":"headless","cols":120,"rows":40,"ipc":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/regression/ws5/.mnml/ipc"}
+{"event":"wait_ms","ms":"300"}
+{"event":"open","path":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/regression/ws5/main.rs"}
+{"event":"wait_ms","ms":"400"}
+{"event":"snapshot"}
+{"event":"key","key":"i"}
+{"event":"wait_ms","ms":"100"}
+{"event":"type","text":"// REGRESSION_MARKER_42\n"}
+{"event":"wait_ms","ms":"200"}
+{"event":"key","key":"escape"}
+{"event":"wait_ms","ms":"150"}
+{"event":"type","text":":w"}
+{"event":"key","key":"enter"}
+{"event":"wait_ms","ms":"400"}
+{"event":"snapshot"}
+{"event":"expect_screen","mode":"contains","text":"REGRESSION_MARKER_42","ok":"false"}
+{"event":"key","key":"ctrl+b"}
+{"event":"wait_ms","ms":"200"}
+{"event":"snapshot"}
+{"event":"expect_screen","mode":"lacks","text":"INTEGRATIONS","ok":"false"}
+{"event":"key","key":"ctrl+b"}
+{"event":"wait_ms","ms":"200"}
+{"event":"snapshot"}
+{"event":"snapshot"}
+{"event":"quit"}
+{"event":"exit"}

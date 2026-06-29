@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .next
+          blocked.tsx
+ 󰘬     build ╭────────────────────────────────────────────────────────────────────────────────────────╮
+          bloc│ Pick glyph    git                                                                     8│
+      dist  │▌ 󰎤  git  [git]                                                               \u{F03A4} │
+          bloc│  󰊤  github  [git]                                                            \u{F02A4} │
+ 󰐱     node_m│    gitlab  [git]                                                             \u{F296} │
+          bloc│    bitbucket  [git]                                                          \u{E703} │
+ 󰎒     src   │  󰘭  source-pull  [git]                                                       \u{F062D} │
+          lib.│  󰐘  source-branch  [git]                                                     \u{F0418} │
+ 󰚩        main│  󰚌  source-merge  [git]                                                      \u{F068C} │
+       target│  󰊥  lightning-bolt  [misc]                                                   \u{F02A5} │
+ 󰅣        bloc│                                                                                        │
+        .gitig│                                                                                        │
+       󰂺 README│                                                                                        │
+               │                                                                                        │
+     ○ tattle-│                                                                                        │
+               │                                                                                        │
+     ○ tattle-│                                                                                        │
+               │                                                                                        │
+     ○ adx    │                                                                                        │
+               │                                                                                        │
+     ○ tattle-│                                                                                        │
+               ╰────────────────────────────────────────────────────────────────────────────────────────╯
+     ○ tattle-c…                                           mnml · c92db76cf-dirty
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+    󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:20   ws   —
+

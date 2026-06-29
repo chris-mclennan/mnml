@@ -1761,8 +1761,13 @@ impl App {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !matches!(ext.as_str(), "http" | "rest") {
-            self.toast("http.next/prev_block: needs an open .http or .rest file");
+        // qa-5th 2026-06-29 SEV-2: was `"http" | "rest"` — silently
+        // rejected .curl files. The sibling guards at lines 2328
+        // and 2919 (the send-request paths) include "curl" too.
+        // For consistency, accept all three; the empty-blocks toast
+        // below handles the single-block .curl case gracefully.
+        if !matches!(ext.as_str(), "http" | "rest" | "curl") {
+            self.toast("http.next/prev_block: needs an open .http/.rest/.curl file");
             return;
         }
         let text = b.editor.text().to_string();

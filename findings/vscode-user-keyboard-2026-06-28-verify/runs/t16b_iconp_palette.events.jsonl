@@ -1,0 +1,8 @@
+{"event":"start","mode":"headless","cols":120,"rows":40,"ipc":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/ws/.mnml/ipc"}
+{"event":"wait_ms","ms":"600"}
+{"event":"key","key":"esc"}
+{"event":"wait_ms","ms":"200"}
+{"event":"snapshot"}
+{"event":"key","key":"ctrl+shift+p"}
+{"event":"wait_ms","ms":"300"}
+{"event":"snapshot"}

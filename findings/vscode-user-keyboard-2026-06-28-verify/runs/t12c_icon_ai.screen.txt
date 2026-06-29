@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .next
+          blocked.tsx
+ 󰘬     build ╭────────────────────────────────────────────────────────────────────────────────────────╮
+          bloc│ Pick glyph    ai                                                                     19│
+      dist  │▌ 󰎼  gmail  [msg]                                                             \u{F03BC} │
+          bloc│  󰡛  brain  [ai]                                                              \u{F085B} │
+ 󰐱     node_m│  󰇯  email-check  [msg]                                                       \u{F01EF} │
+          bloc│  󰇰  email-search  [msg]                                                      \u{F01F0} │
+ 󰎒     src   │  󰺱  email-newsletter  [msg]                                                  \u{F0EB1} │
+          lib.│  󰋓  robot  [ai]                                                              \u{F02D3} │
+ 󰚩        main│  󰽆  alert-circle  [obs]                                                      \u{F0F46} │
+       target│  󰙨  test-tube-alt  [misc]                                                    \u{F0668} │
+ 󰅣        bloc│  󰋜  harddisk  [fs]                                                           \u{F02DC} │
+        .gitig│  󰧈  chart-line  [obs]                                                        \u{F09C8} │
+       󰂺 README│    javascript  [lang]                                                        \u{E60C} │
+               │    gitlab  [git]                                                             \u{F296} │
+     ○ tattle-│    layout-sidebar-left  [ui]                                                 \u{EBA6} │
+               │    layout-sidebar-left-off  [ui]                                             \u{EC02} │
+     ○ tattle-│  󰒓  hammer  [misc]                                                           \u{F0493} │
+               │  󰐘  source-branch  [git]                                                     \u{F0418} │
+     ○ adx    │    codex (mnml-patched)  [ai]                                                \u{F8B1} │
+               │  󰒒  hammer-wrench (codebuild)  [cloud]                                       \u{F0492} │
+     ○ tattle-│    claude-spark (mnml-patched)  [ai]                                         \u{F8B0} │
+               ╰────────────────────────────────────────────────────────────────────────────────────────╯
+     ○ tattle-c…                                           mnml · c92db76cf-dirty
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+    󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:21   ws   —
+

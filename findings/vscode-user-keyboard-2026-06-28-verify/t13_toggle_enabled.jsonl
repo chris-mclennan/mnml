@@ -1,0 +1,9 @@
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"esc"}
+{"cmd":"wait_ms","ms":150}
+{"cmd":"run-command","id":"integrations.toggle_enabled"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"snapshot"}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":250}
+{"cmd":"snapshot"}

@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws-test2                                     󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws-te… ▾            ╭ hello.rs ──────────╮                                                              
+▌     .mnml                  │ Pin tab            │
+         ipc                  │ Close              │
+      󰌱 headless.log           │ Close others       │
+        hello.rs               │ Close all          │
+ 󰘬      lib.rs                 │ Copy relative path │
+                                │ Copy absolute path │
+    ○ tattle-c…           │ Reveal in Finder   │
+                                │ Split right        │
+ 󰐱   ○ tattle-m…           │ Split down         │
+                                │ Split left         │
+ 󰎒   ○ adx                 │ Split up           │
+                                │                    │
+ 󰚩   ○ tattle-c…           ╰────────────────────╯
+
+ 󰅣   ○ tattle-c…        
+
+     ○ tattle-c…        ┃
+                             ┃
+     ○ tattle-i…        
+
+     ○ tattle-m…        
+
+     ○ tattle-p…        
+
+     ○ tattle-s…        
+
+     ○ tattle.n…        
+
+     ○ tttl.co-…        
+
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · tattle-claude-wor
+                                                                                                                + dock
+ EDIT   hello.rs  › main                 ♪ mixr  LSP 1  34B  Ln 1/3 Col 1  11:45   tattle-claude-workspace   rs
+

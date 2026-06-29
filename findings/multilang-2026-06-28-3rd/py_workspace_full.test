@@ -1,0 +1,21 @@
+# Python workspace: pyproject.toml detection + outline via regex fallback.
+# Tests independently verified.  Combined here for integration coverage.
+
+shell echo '[build-system]' > pyproject.toml
+
+write src/myapp/service.py "class MyService:\n    def process(self, data: dict) -> bool:\n        return True\n\nasync def startup() -> None:\n    pass\n"
+
+# Open Python file first (before pytest.run so editor stays active).
+open src/myapp/service.py
+wait 50
+
+command outline.show
+wait 200
+expect screen contains "MyService"
+expect screen contains "process"
+expect screen contains "startup"
+
+# Outline is now in a split. Run pytest — should detect pyproject.toml.
+command pytest.run
+wait 200
+expect screen lacks "pytest: no pyproject.toml"

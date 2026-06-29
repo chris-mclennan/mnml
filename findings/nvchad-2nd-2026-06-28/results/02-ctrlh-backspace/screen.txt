@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run                  󰍉  mnml-nvchad2-ctrlh                                               󰐕  TABS  1 󰅖  ●━  󰅖
+     ● mnml-… ▾            󰈙 x.txt 󰅖                                                                                                                   
+▌     .mnml                   1 ab
+         ipc
+       cmds.jsonl
+       󰈙 x.txt
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃
+                             ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                                                        + dock
+  NORMAL  󰈙 x.txt                                                                              ♪ mixr  3B  Ln 2/1 Col 1  15:30   mnml-nvchad2-ctrlh   txt
+saved x.txt

@@ -1,0 +1,19 @@
+# Right panel v3: outline.show on a .ts file
+# When right panel is not visible, outline opens as a split.
+# When right panel IS visible, it routes into the panel.
+
+shell echo '{"name":"app"}' > package.json
+write src/api.ts interface User {\n  id: number;\n  name: string;\n}\n\nfunction fetchUser(id: number): User {\n  return { id, name: "Alice" };\n}\n
+open src/api.ts
+wait 100
+expect pane "api.ts"
+
+# Toggle the right panel on
+command view.toggle_right_panel
+wait 100
+
+# Open outline — should route into right panel
+command outline.show
+wait 200
+# Should not open a new split (no crash)
+expect screen contains "api.ts"

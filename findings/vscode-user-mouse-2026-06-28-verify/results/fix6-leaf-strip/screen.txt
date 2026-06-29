@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Termina         󰍉  ws1                                                              󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws1 ▾               main.rs ×                                                                                        SIDE PANEL
+▌     src                     1 fn main() {
+          lib.rs                2     println!("hello");                                                                            Nothing here yet.
+         main.rs               3 }
+        Cargo.toml                                                                                                                  Hide with Ctrl+Shift+B.
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃                                                                                                      ┃
+                             ┃─────────────────────────────────────────────────━━━━─────────────────────────────────────────────────┃
+                                terminal (zsh)      lib.rs ×                                                                  
+                                 1 pub fn add(a: i32, b: i32) -> i32 { a + b }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                            + dock
+ EDIT   main  󰐙 2   lib.rs  › add                                                                  ♪ mixr  LSP 1  44B  Ln 1/1 Col 1  02:25   ws1   rs
+

@@ -1,0 +1,19 @@
+# outline.show on a Go file (no gopls in CI) falls back to regex outline.
+# Go regex only captures func/type names, not method receivers.
+# Method `func (r *Router) Handle(...)` shows as "Handle" without receiver context.
+# This is documented as intentional (conservative regex) but is SEV-3 for Go devs
+# who rely on the outline to distinguish methods from top-level functions.
+
+write main.go "package main\n\nimport \"fmt\"\n\ntype Router struct{}\n\nfunc New() *Router { return &Router{} }\n\nfunc (r *Router) Handle(path string) {\n  fmt.Println(path)\n}\n\nfunc main() {\n  r := New()\n  r.Handle(\"/\")\n}\n"
+
+open main.go
+wait 50
+
+command outline.show
+wait 200
+
+# Regex outline captures func and type entries.
+expect screen contains "Router"
+expect screen contains "New"
+expect screen contains "Handle"
+expect screen contains "main"

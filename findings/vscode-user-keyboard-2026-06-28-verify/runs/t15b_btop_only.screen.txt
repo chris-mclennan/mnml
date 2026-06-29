@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                           󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .next
+          blocked.tsx
+ 󰘬     build
+          blocked.html
+      dist
+          blocked.css
+ 󰐱     node_modules
+          b╭ btop — resource monitor (cpu / mem / disk / net) — install via `brew install btop`? [y/N] ──╮
+ 󰎒     src│                                                                                             │
+          l│ y                                                                                           │
+ 󰚩        m│  enter to submit · esc to cancel                                                            │
+       tar╰─────────────────────────────────────────────────────────────────────────────────────────────╯
+ 󰅣        blocked.o
+        .gitignore                                                 workspace · ws
+       󰂺 README.md           ┃
+                             ┃                                         Shortcuts
+     ○ tattle-c…                                               ──────────────
+                                                                    ^P     find file
+     ○ tattle-m…                                              ^R     recent files
+                                                                  ^K     which-key menu
+     ○ adx                                                      ^N     new file
+                                                                   ^B     toggle tree
+     ○ tattle-c…                                                  ^Q     quit
+
+     ○ tattle-c…                                           mnml · c92db76cf-dirty
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:23   ws   —
+

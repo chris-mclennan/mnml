@@ -371,6 +371,31 @@ impl App {
             // Legacy single-tab session.json — load it as the only tab.
             *self.layout_mut() = restored;
         }
+        // qa-5th 2026-06-29 SEV-2 — session restore desync. If
+        // saved.open is non-empty but layout is null (e.g. user
+        // closed all panes via Ctrl+W then quit, leaving buffers
+        // in the open[] list with no leaf to host them), every
+        // buffer comes back as a pane but the bufferline strip
+        // doesn't show them. Synthesize a LeafTabs containing
+        // every editor pane so they're reachable via tab click.
+        if matches!(self.layout(), Layout::Empty) && !self.panes.is_empty() {
+            let editor_pids: Vec<PaneId> = self
+                .panes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| matches!(p, crate::pane::Pane::Editor(_)).then_some(i))
+                .collect();
+            if !editor_pids.is_empty() {
+                let active = self.active.unwrap_or(editor_pids[0]);
+                let active = if editor_pids.contains(&active) {
+                    active
+                } else {
+                    editor_pids[0]
+                };
+                *self.layout_mut() = Layout::leaf_with_tabs(active, editor_pids);
+                self.active = Some(active);
+            }
+        }
         // Restore the file-tree visibility flag too (`None` ⇒ leave the
         // launch-time default alone — an older session.json without the field).
         if let Some(v) = saved.tree_visible {

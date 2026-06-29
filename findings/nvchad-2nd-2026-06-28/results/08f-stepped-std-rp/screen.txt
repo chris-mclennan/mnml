@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run                  󰍉  mnml-nvchad2-rp5                                                 󰐕  TABS  1 󰅖  ●━  󰅖
+     ● mnml-… ▾             x.rs 󰅖                                                                                      x.rs ⌥   problems ✓          ×
+▌     .mnml                   1 fn main() { println!("hi"); }                                                                  ⌥ x.rs   0 symbols
+         ipc                                                                                                                    ⏎ jump   r refresh   / filter
+       cmds.jsonl
+        x.rs                                                                                                                     (no symbols)
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+                                                  ┌ Welcome to mnml — Esc / click outside to dismiss ───────┐
+ 󰎒                                                │ A handful of shortcuts to start with:                   │
+                                                  │ F1                       help overlay (this is similar —│
+ 󰚩                                                │ Ctrl+P                   fuzzy file picker              │
+                                                  │ Ctrl+Shift+P             command palette                │
+ 󰅣                                                │ Ctrl+B                   toggle the file tree (rail)    │
+                                                  │ Ctrl+Shift+B             toggle the right side panel    │
+                                                  │ <leader>at               open or focus a shell pane     │
+                                                  │ <leader>g l              commit graph (or click branch c│
+                                                  │ <leader>l h              LSP hover info                 │
+                                                  │ right-click anywhere     context menu for that surface  │
+                                                  │ :welcome / view.welcome  reopen this overlay any time   │
+                             ┃                    │                                                         │                   ┃
+                             ┃                    │ Tip: hover any clickable chip ~500ms for a tooltip.     │                   ┃
+                                                  └─────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+ ╭ Vim: Ctrl+W ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │h → focus left split     k → focus up split       q → close current split  v → split vertical                                                               │
+ │j → focus down split     l → focus right split    s → split horizontal     w → cycle splits                                                                 │
+ │  esc to cancel                                                                                                                                             │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+

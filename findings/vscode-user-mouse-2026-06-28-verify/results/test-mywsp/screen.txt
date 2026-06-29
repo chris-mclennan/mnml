@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run                  󰍉  ws                                                               󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 main.rs 󰅖    lib.rs 󰅖                                                                      SIDE PANEL
+▌     .mnml                   1 fn main() {
+         ipc                   2     let greeting = "hello world";                                                             Nothing here yet.
+         .welcomed             3     println!("{}", greeting);
+          session.json          4     let sum = add(2, 3);                                                                      :outline.show
+ 󰘬     docs                    5     println!("{}", sum);                                                                      :lsp.diagnostics
+       src                     6 }
+         lib.rs                7
+          main.rs               8 fn add(a: i32, b: i32) -> i32 {
+ 󰐱     󰂺 README.md               9     a + b
+                                10 }
+ 󰎒           󰐙 Add workspace    11
+                                12 struct Cat { name: String }
+ 󰚩                              13 impl Cat {
+                                14     fn meow(&self) -> String { format!("{} meow", self.name) }
+ 󰅣                              15 }
+
+
+
+
+
+
+                             ┃                                                                                                  ┃
+                             ┃                                                                                                  ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                        + dock
+ EDIT   main.rs  › main                                                                             ♪ mixr  LSP 1  278B  Ln 1/15 Col 1  22:50   ws   rs
+

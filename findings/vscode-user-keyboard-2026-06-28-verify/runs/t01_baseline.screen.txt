@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .mnml
+         ipc
+ 󰘬     .next
+          blocked.tsx
+      build                ┌ Welcome to mnml — Esc / click outside to dismiss ───────┐
+          blocked.html       │ A handful of shortcuts to start with:                   │
+ 󰐱     dist                 │ F1                       help overlay (this is similar —│
+          blocked.css        │ Ctrl+P                   fuzzy file picker              │  _
+ 󰎒     node_modules         │ Ctrl+Shift+P             command palette                │ | |
+          blocked.js         │ Ctrl+B                   toggle the file tree (rail)    │ | |
+ 󰚩     src                  │ Ctrl+T                   open a shell pane              │ | |
+          lib.rs             │ <leader>g l              commit graph (or click branch c│ |_|
+ 󰅣        main.rs            │ <leader>l h              LSP hover info                 │
+       target               │ right-click anywhere     context menu for that surface  │
+          blocked.o         ┃│ :welcome / view.welcome  reopen this overlay any time   │
+       󰂺 README.md           ┃│                                                         │
+                              │ Tip: hover any clickable chip ~500ms for a tooltip.     │
+     ○ tattle-c…         └─────────────────────────────────────────────────────────┘
+                                                                   ^R     recent files
+     ○ tattle-m…                                             ^K     which-key menu
+                                                                     ^N     new file
+     ○ adx                                                    ^B     toggle tree
+                                                                       ^Q     quit
+     ○ tattle-c…        
+                                                                mnml · c92db76cf-dirty
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     INTEGRATIONS          󰐙
+    󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:12   ws   —
+

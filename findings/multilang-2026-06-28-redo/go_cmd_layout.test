@@ -1,0 +1,18 @@
+# Go monorepo layout: cmd/, internal/, pkg/ — all appear in tree.
+
+shell printf 'module github.com/example/myapp\n\ngo 1.22\n' > go.mod
+shell mkdir -p cmd/server cmd/worker
+shell mkdir -p internal/handler internal/db
+shell mkdir -p pkg/model pkg/util
+
+shell printf 'package main\n\nfunc main() {}\n' > cmd/server/main.go
+shell printf 'package main\n\nfunc main() {}\n' > cmd/worker/main.go
+shell printf 'package handler\n\nfunc Handle() {}\n' > internal/handler/handler.go
+shell printf 'package model\n\ntype User struct {}\n' > pkg/model/user.go
+
+command tree.refresh
+open pkg/model/user.go
+wait 100
+expect screen contains "cmd"
+expect screen contains "internal"
+expect screen contains "pkg"

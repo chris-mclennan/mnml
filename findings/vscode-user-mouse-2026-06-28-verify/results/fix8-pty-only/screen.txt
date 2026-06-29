@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Termina         󰍉  ws1                                                              󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws1 ▾               lib.rs ×                                                                                         SIDE PANEL
+▌     src                     1 pub fn add(a: i32, b: i32) -> i32 { a + b }
+          lib.rs                                                                                                                    Nothing here yet.
+         main.rs
+        Cargo.toml                                                                                                                  Hide with Ctrl+Shift+B.
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃                                                                                                      ┃
+                             ┃─────────────────────────────────────────────────━━━━─────────────────────────────────────────────────┃
+                               +
+
+                              vscode-user-mouse-2026-06-28-verify/workspaces/ws1 on  main [$!?] is 📦   v0.1.0 via 🦀   v1.95.0 on ☁️
+                              us-east-1) [20m54s]
+                              ❯
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                            + dock
+ VIEW   main  󰐙 2  󰛕 1  [no file]                                                                                       ♪ mixr  LSP 1  02:27   ws1   —
+

@@ -1,0 +1,4 @@
+{"cmd":"wait_ms","ms":300}
+{"cmd":"key","key":"ctrl+shift+b"}
+{"cmd":"wait_ms","ms":200}
+{"cmd":"snapshot"}

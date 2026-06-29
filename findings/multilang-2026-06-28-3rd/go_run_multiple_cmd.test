@@ -1,0 +1,14 @@
+# go.run with 2+ cmd/<app>/ dirs opens a picker instead of spawning a pty.
+# The picker label should say "go run: pick a cmd/<app>".
+
+shell echo 'module example.com/myapp\n\ngo 1.22' > go.mod
+shell mkdir -p cmd/server cmd/worker
+shell echo 'package main\n\nfunc main() {}' > cmd/server/main.go
+shell echo 'package main\n\nfunc main() {}' > cmd/worker/main.go
+
+command go.run
+wait 200
+
+# Should show the picker, not a pty pane.
+expect screen lacks "no go.mod"
+expect screen contains "go run: pick a cmd"

@@ -1,0 +1,15 @@
+{"event":"start","mode":"headless","cols":120,"rows":40,"ipc":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/regression/ws2/.mnml/ipc"}
+{"event":"wait_ms","ms":"300"}
+{"event":"command_run","id":"ai.dashboard","ok":"true"}
+{"event":"wait_ms","ms":"1500"}
+{"event":"snapshot"}
+{"event":"expect_screen","mode":"contains","text":"Agents","ok":"false"}
+{"event":"key","key":"r"}
+{"event":"wait_ms","ms":"600"}
+{"event":"snapshot"}
+{"event":"command_run","id":"view.activity_cloud_agents","ok":"true"}
+{"event":"wait_ms","ms":"500"}
+{"event":"snapshot"}
+{"event":"snapshot"}
+{"event":"quit"}
+{"event":"exit"}

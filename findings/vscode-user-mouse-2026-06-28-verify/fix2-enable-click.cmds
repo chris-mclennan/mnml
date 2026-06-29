@@ -1,0 +1,10 @@
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"run-command","id":"integrations.toggle_enabled"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"snapshot"}
+{"cmd":"click","col":80,"row":11,"button":"left"}
+{"cmd":"wait_ms","ms":500}
+{"cmd":"snapshot"}
+{"cmd":"wait_ms","ms":500}
+{"cmd":"quit"}

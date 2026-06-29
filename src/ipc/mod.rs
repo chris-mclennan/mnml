@@ -230,6 +230,14 @@ pub struct Ipc {
     /// vanishes without leaving any breadcrumb in events.jsonl
     /// and the host hangs waiting for state changes from a
     /// corpse.
+    ///
+    /// LIMITATION (qa-5th 2026-06-29): Drop runs on stdlib
+    /// panic-unwind and happy-path exit but NOT on signal-induced
+    /// terminations (SIGTERM / SIGKILL / abort). Adding signal-
+    /// handler coverage requires either the `signal-hook` crate
+    /// or direct libc FFI; deferred to avoid adding a dep this
+    /// session. Hosts that need SIGTERM-safe detection should
+    /// also watch the process via `ps -p` or `wait()`.
     exit_event_written: std::sync::atomic::AtomicBool,
 }
 

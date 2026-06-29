@@ -1,0 +1,29 @@
+# Confirm: npm.test from a monorepo subpackage spawns pty with root package.json,
+# not the nearest package.json to the open file.
+#
+# run_manifest_command starts its walk at self.workspace (launch dir), not the
+# active editor's directory.  In a pnpm/yarn monorepo launched at the root:
+#   workspace = /tmp/xxx/ (root with root package.json)
+#   active file = packages/pkg-a/src/index.ts
+#   npm test runs at /tmp/xxx/ (root), not /tmp/xxx/packages/pkg-a/
+#
+# This shows up in the pty pane title: "npm test" without the sub-package path.
+# The label does NOT indicate which sub-package the test runs in.
+
+shell mkdir -p packages/pkg-a/src
+shell echo '{"name":"my-monorepo","workspaces":["packages/*"]}' > package.json
+shell echo '{"name":"pkg-a","scripts":{"test":"echo PKG-A"}}' > packages/pkg-a/package.json
+shell echo 'export const x: number = 1;' > packages/pkg-a/src/index.ts
+
+open packages/pkg-a/src/index.ts
+wait 50
+
+command npm.test
+wait 200
+
+# The pty opens successfully (root package.json found).
+expect screen lacks "no package.json"
+# The label is just "npm test" — no sub-package context.
+# Bug: a TypeScript dev editing packages/pkg-a/src/index.ts expects
+# npm.test to run the pkg-a test suite, not the root test suite.
+expect screen contains "npm test"

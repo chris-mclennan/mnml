@@ -1,0 +1,27 @@
+# TypeScript workspace: npm runners detect package.json.
+# Also tests that tsconfig.json detection works for LSP root marker.
+
+shell echo '{"name":"my-ts-app","scripts":{"test":"jest","build":"tsc","start":"node dist/index.js","dev":"ts-node src/index.ts","lint":"eslint src/**/*.ts"}}' > package.json
+shell echo '{"compilerOptions":{"target":"ES2022","module":"commonjs","strict":true},"include":["src/**/*"]}' > tsconfig.json
+shell mkdir -p src
+write src/index.ts interface User {\n  id: number;\n  name: string;\n}\n\nasync function fetch(id: number): Promise<User> {\n  return { id, name: "Alice" };\n}\n
+
+# npm.test should open a pty (no toast)
+command npm.test
+wait 200
+expect screen lacks "no package.json"
+
+# npm.build likewise
+command npm.build
+wait 200
+expect screen lacks "no package.json"
+
+# npm.lint likewise
+command npm.lint
+wait 200
+expect screen lacks "no package.json"
+
+# npm.start likewise
+command npm.start
+wait 200
+expect screen lacks "no package.json"

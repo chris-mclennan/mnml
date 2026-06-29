@@ -1,0 +1,10 @@
+{"event":"start","mode":"headless","cols":120,"rows":40,"ipc":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/ws/.mnml/ipc"}
+{"event":"wait_ms","ms":"400"}
+{"event":"key","key":"esc"}
+{"event":"wait_ms","ms":"150"}
+{"event":"command_run","id":"integrations.icon_picker","ok":"true"}
+{"event":"wait_ms","ms":"400"}
+{"event":"snapshot"}
+{"event":"type","text":"git"}
+{"event":"wait_ms","ms":"300"}
+{"event":"snapshot"}

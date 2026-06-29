@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws-test1                                     󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws-te… ▾             no buffers                                              SIDE PANEL
+▌     .mnml               █
+         ipc               █                                                           Nothing here yet.
+      src                 █
+         ai                █                                                           :outline.show
+ 󰘬       app ╭────────────────────────────────────────────────────────────────────────────────────────╮
+         cdp │ Theme                                                                                94│
+        dap │▌ aquarium                                                                              │
+         e2e │  ashes                                                                                 │
+ 󰐱       edit│  aylin                                                                                 │
+         git │  ayu_dark                                                                              │
+ 󰎒       http│  ayu_light                                                                             │
+         imag│  bearded-arc                                                                           │
+ 󰚩       inpu│  blossom_light                                                                         │
+         ipc │  carbonfox                                                                             │
+ 󰅣       lsp │  catppuccin                                                                            │
+         now_│  catppuccin-latte                                                                      │
+         play│  chadracula                                                                            │
+         tui │  chadracula-evondev                                                                    │
+         ui  │  chadtain                                                                              │
+          anth│  chocolate                                                                             │
+          auth│  darcula-dark                                                                          │
+          brow│  dark_horizon                                                                          │
+          buff│  decay                                                                                 │
+          chea│  default-dark                                                                          │
+          clau│  default-light                                                                         │
+          clip╰────────────────────────────────────────────────────────────────────────────────────────╯
+          cloud_agent_run.rs│                  mnml · 84c7c91a7-dirty
+          command.rs        │
+          completion.rs     │
+          config.rs         │
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · tattle-claude-wor
+                                                                                + dock
+ TREE  [no file]                                                       ♪ mixr  11:44   tattle-claude-workspace   —
+

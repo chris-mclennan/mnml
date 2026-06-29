@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws3                                          󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws3 ▾                install: mnml-aws-cloudwatch-logs ✗ $ 󰅖                                           
+▌     .git                  +
+         hooks              → trying prebuilt: https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs/releases/dow
+        info               nload/latest-build/mnml-aws-cloudwatch-logs-aarch64-apple-darwin.tar.gz
+         logs               ✓ installed mnml-aws-cloudwatch-logs from prebuilt
+ 󰘬       objects
+         refs
+         COMMIT_EDITMSG
+          config
+ 󰐱        description
+          HEAD
+ 󰎒        index
+        .gitignore         ?
+ 󰚩     󰌱 launch.log         ?
+        main.rs
+ 󰅣     󰈙 notes.txt
+       󰂺 readme.md
+                             ┃
+     ○ tattle-c…        ┃
+
+     ○ tattle-m…        
+
+     ○ adx              
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-i…        
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · ws3         
+                               [process exited — Ctrl+W to close]                                               + dock
+ VIEW   main  󰐙 2  [no file]                                                             ♪ mixr  11:06   ws3   —
+installing mnml-aws-cloudwatch-logs — watch the pty pane

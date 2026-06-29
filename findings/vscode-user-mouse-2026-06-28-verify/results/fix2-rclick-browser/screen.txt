@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Termina         󰍉  ws1                        ╭ Browser (CDP Chrome-for-testing; can be captured in mnml) ╮
+     ● ws1 ▾                main.rs 󰅖                                                        │ Disable (hide chip)                                       │
+▌     src                     1 fn main() {                                                     │ Edit…                                                     │
+          lib.rs                2     println!("hello");                                          │ Remove                                                    │
+         main.rs               3 }                                                               │                                                           │
+        Cargo.toml                                                                                ╰───────────────────────────────────────────────────────────╯
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃                                                                                                      ┃
+                             ┃                                                                                                      ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                            + dock
+ EDIT   main  󰐙 1   main.rs  › main                                                               ♪ mixr  LSP 1  37B  Ln 1/3 Col 12  02:15   ws1   rs
+

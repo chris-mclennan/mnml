@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws-test1                                     󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws-te… ▾             no buffers                                              SIDE PANEL
+▌     .mnml               █
+         ipc               █                                                           Nothing here yet.
+      src                 █
+         ai                █                                                           :outline.show
+ 󰘬       app               █                                                           :lsp.diagnostics
+         cdp               █
+        dap               █
+         e2e               █
+ 󰐱       editor            █
+         git               █                                             _
+ 󰎒       http              █             _ __ ___    _ __    _ __ ___   | |
+         image             │            | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+ 󰚩       input             │            | | | | | | | | | | | | | | | | | |
+         ipc               │            |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰅣       lsp               │
+         now_playing       │                   workspace · ws-test1
+         playwright        ┃                                                          ┃
+         tui               ┃                         Shortcuts                        ┃
+         ui                │                      ──────────────
+          anthropic_api.rs  │                      ^P     find file
+          auth.rs           │                     ^R     recent files
+          browser_pane.rs   │                    ^K     which-key menu
+          buffer.rs         │                       ^N     new file
+          cheatsheet.rs     │                     ^B     toggle tree
+          claude_agents.rs  │                         ^Q     quit
+          clipboard.rs      │
+          cloud_agent_run.rs│                  mnml · 84c7c91a7-dirty
+          command.rs        │
+          completion.rs     │
+          config.rs         │
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · tattle-claude-wor
+                                                                                + dock
+ TREE  [no file]                                                       ♪ mixr  11:43   tattle-claude-workspace   —
+

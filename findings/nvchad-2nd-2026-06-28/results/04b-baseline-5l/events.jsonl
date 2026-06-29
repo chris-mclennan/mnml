@@ -1,0 +1,7 @@
+{"event":"start","mode":"headless","cols":160,"rows":50,"ipc":"/private/tmp/mnml-nvchad2-nh2/.mnml/ipc"}
+{"event":"open","path":"/private/tmp/mnml-nvchad2-nh2/x.txt"}
+{"event":"wait_ms","ms":"150"}
+{"event":"type","text":"5l"}
+{"event":"wait_ms","ms":"100"}
+{"event":"quit"}
+{"event":"exit"}

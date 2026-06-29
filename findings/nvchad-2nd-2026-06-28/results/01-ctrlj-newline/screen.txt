@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run                  󰍉  mnml-nvchad2-ctrlj                                               󰐕  TABS  1 󰅖  ●━  󰅖
+     ● mnml-… ▾            󰈙 x.txt 󰅖                                                                                                                   
+▌     .git                    1 XY
+         hooks                 2 ZAB
+        info
+         objects
+ 󰘬       refs
+          config
+         description
+          HEAD
+ 󰐱      .gitignore         ?
+        cmds.jsonl         ?
+ 󰎒      run.sh             ?
+       󰈙 stderr.txt         ?
+ 󰚩     󰈙 x.txt              ?
+
+ 󰅣           󰐙 Add workspace
+
+
+
+
+
+
+                             ┃
+                             ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                                                        + dock
+  NORMAL   main  󰐙 5  󰈙 x.txt                                                                ♪ mixr  7B  Ln 2/2 Col 1  15:30   mnml-nvchad2-ctrlj   txt
+saved x.txt

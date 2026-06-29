@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Termina         󰍉  ws1                                                              󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws1 ▾                main.rs 󰅖                                                                                                                 
+▌     src                     1 fn main() {
+          lib.rs                2     println!("hello");
+         main.rs               3 }
+        Cargo.toml
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃
+                             ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                                                        + dock
+ EDIT   main  󰐙 2  󰛕 2   main.rs  › main                                                           ♪ mixr  LSP 1  37B  Ln 1/3 Col 1  02:27   ws1   rs
+no recent files yet

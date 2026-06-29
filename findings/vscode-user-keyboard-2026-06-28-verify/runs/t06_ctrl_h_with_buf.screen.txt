@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 main.rs 󰅖                                                                         
+▌     .git                    1 fn main() {
+          HEAD                  2     println!("hello");
+      .next                   3 }
+          blocked.tsx
+ 󰘬     build
+          blocked.html
+      dist
+          blocked.css
+ 󰐱     node_modules
+          blocked.js         ╭ Find ────────────────────────────────────────────────────╮
+ 󰎒     src                  │                                                          │
+          lib.rs             │                                                          │
+ 󰚩        main.rs            │  enter to submit · esc to cancel                         │
+       target               ╰──────────────────────────────────────────────────────────╯
+ 󰅣        blocked.o
+        .gitignore
+       󰂺 README.md           ┃
+                             ┃
+     ○ tattle-c…        
+
+     ○ tattle-m…        
+
+     ○ adx              
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+    󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ EDIT   main.rs  › main                                       ♪ mixr  LSP 1  37B  Ln 1/3 Col 1  02:18   ws   rs
+Ctrl+H: type a find pattern, then Ctrl+H again to replace

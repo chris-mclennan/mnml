@@ -1,0 +1,15 @@
+# .venv/ and __pycache__ should be gitignored — hidden from tree.
+
+shell mkdir -p .venv/lib/python3.12/site-packages
+shell echo "fake venv" > .venv/lib/python3.12/site-packages/fake.py
+shell mkdir -p __pycache__
+shell echo "fake bytecode" > __pycache__/app.cpython-312.pyc
+shell mkdir -p src
+shell echo 'def x(): pass' > src/app.py
+shell printf '.venv/\n__pycache__/\n*.pyc\n' > .gitignore
+
+command tree.refresh
+open src/app.py
+expect screen contains "src"
+expect screen lacks ".venv"
+expect screen lacks "__pycache__"

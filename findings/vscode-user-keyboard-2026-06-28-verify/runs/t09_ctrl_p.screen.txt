@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .next
+          blocked.tsx
+ 󰘬     build ╭────────────────────────────────────────────────────────────────────────────────────────╮
+          bloc│ Open file                                                                         21546│
+      dist  │▌ src/lib.rs                                                                        src │
+          bloc│  src/main.rs                                                                       src │
+ 󰐱     node_m│  .gitignore                                                                            │
+          bloc│  README.md                                                                             │
+ 󰎒     src   │  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+          lib.│  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+ 󰚩        main│  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+       target│  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+ 󰅣        bloc│  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+        .gitig│  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+       󰂺 README│  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+               │  /Users/chrismcl/Users/chrismclennan/Projects/tattle-claude-workspace/.claude/commands │
+     ○ tattle-│  /Users/chrismclennan/Pro/Users/chrismclennan/Projects/tattle-claude-workspace/.claude │
+               │  /Users/chrismclen/Users/chrismclennan/Projects/tattle-claude-workspace/.rqst/captured │
+     ○ tattle-│  /Users/chrismclennan/Project/Users/chrismclennan/Projects/tattle-claude-workspace/bin │
+               │  /Users/chrismclennan/Project/Users/chrismclennan/Projects/tattle-claude-workspace/bin │
+     ○ adx    │  /Users/chrismclennan/Project/Users/chrismclennan/Projects/tattle-claude-workspace/bin │
+               │  /Users/chrismclennan/Project/Users/chrismclennan/Projects/tattle-claude-workspace/bin │
+     ○ tattle-│  /Users/chrismclennan/Project/Users/chrismclennan/Projects/tattle-claude-workspace/bin │
+               ╰────────────────────────────────────────────────────────────────────────────────────────╯
+     ○ tattle-c…                                           mnml · c92db76cf-dirty
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+    󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:19   ws   —
+

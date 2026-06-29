@@ -50,6 +50,14 @@ impl Layout {
         }
     }
 
+    /// Convenience: leaf with multiple tabs, the given one active.
+    /// Session restore uses this to synthesize a layout when the
+    /// saved file had a stale `layout: null` but a non-empty
+    /// `open[]` (qa-5th 2026-06-29 SEV-2).
+    pub fn leaf_with_tabs(active: PaneId, tabs: Vec<PaneId>) -> Self {
+        Layout::Leaf { active, tabs }
+    }
+
     /// The active (visible) pane id for every leaf in the tree.
     /// Tab-stack siblings are NOT included — see `all_panes()`.
     pub fn leaves(&self) -> Vec<PaneId> {

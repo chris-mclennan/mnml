@@ -1,0 +1,8 @@
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"esc"}
+{"cmd":"wait_ms","ms":150}
+{"cmd":"type","text":":set rp!"}
+{"cmd":"wait_ms","ms":150}
+{"cmd":"key","key":"enter"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"snapshot"}

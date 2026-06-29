@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Terminal         󰍉  ws1                                                                 󰐕  TABS  1 󰅖  ●━  󰅖
+     ws1 ▾                 ┌───────────────────┐                                                                                                      
+▌     src                     │ Command palette   │
+          lib.rs                │───────────────────│");
+         main.rs               │ Toggle file tree  │
+        Cargo.toml              │ Toggle bufferline │
+ 󰘬                         󰐙     │ Toggle word wrap  │
+                                 │ Toggle zen mode   │
+                                │───────────────────│
+                                 │ Pick theme…       │
+ 󰐱                               │ Toggle theme      │
+                                 └───────────────────┘
+ 󰎒
+
+
+
+
+
+
+
+
+
+
+                            ┃
+                            ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+        󰐑         󰡚
+    󰒍   󰹜   󰝚
+
+    GIT            󰄬  󰘬
+                                                                                                                                                        + dock
+ EDIT   main  󰐙 1   main.rs  › main                                                                ♪ mixr  LSP 1  37B  Ln 1/3 Col 1  01:57   ws1   rs
+

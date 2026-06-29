@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws9                                          󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws9 ▾               󰂺 readme.md 󰅖   󰂺 readme.md ◳ 󰅖                                                     
+▌     .git                  hello world
+         hooks
+        info
+         logs
+ 󰘬       objects
+         refs
+         COMMIT_EDITMSG
+          config
+ 󰐱        description
+          HEAD
+ 󰎒        index
+        .gitignore         ?
+ 󰚩     󰌱 launch.log         ?
+        main.rs
+ 󰅣     󰈙 notes.txt
+       󰂺 readme.md
+                             ┃
+     ○ tattle-c…        ┃
+
+     ○ tattle-m…        
+
+     ○ adx              
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-i…        
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · ws9         
+                                                                                                                + dock
+ VIEW   main  󰐙 2  [no file]                                                             ♪ mixr  11:14   ws9   —
+

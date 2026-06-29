@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Termina         󰍉  ws1                                                              󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws1 ▾               main.rs ×                                                                                        SIDE PANEL
+▌     src                     1 fn main() {
+          lib.rs                2     println!("hello");                                                                            Nothing here yet.
+         main.rs               3 }
+        Cargo.toml                                                                                                                  Hide with Ctrl+Shift+B.
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃                                                                                                      ┃
+                             ┃─────────────────────────────────────────────────━━━━─────────────────────────────────────────────────┃
+                               +
+                              Restored session: Sat Jun 27 23:57:56 EDT 2026
+
+                              vscode-user-mouse-2026-06-28-verify/workspaces/ws1 on  main [$?] is 📦   v0.1.0 via 🦀   v1.95.0 on ☁️
+                              s-east-1) [23m39s]
+                              ❯
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                            + dock
+ VIEW   main  󰐙 1  [no file]                                                                                            ♪ mixr  LSP 1  02:24   ws1   —
+

@@ -1,0 +1,7 @@
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"snapshot"}
+{"cmd":"click","col":35,"row":0,"button":"left"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"snapshot"}
+{"cmd":"quit"}

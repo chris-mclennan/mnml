@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Termina         󰍉  ws1                                                              󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws1 ▾                terminal (zsh) $ 󰅖                                                                                                        
+▌     src                   +
+          lib.rs
+         main.rs            vscode-user-mouse-2026-06-28-verify/workspaces/ws1 on  main [$!?] is 📦   v0.1.0 via 🦀   v1.95.0 on ☁️   (us-east-1) [20m39s]
+        Cargo.toml           ❯
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+
+
+
+
+
+                             ┃
+                             ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                                                                                                                                        + dock
+ VIEW   main  󰐙 2  󰛕 2  [no file]                                                                                                ♪ mixr  02:27   ws1   —
+

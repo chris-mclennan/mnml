@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws-test2                                     󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws-te… ▾             hello.rs 󰅖               ┌───────────────────────────────────────────────────────────┐
+▌     .mnml                   1 fn main() {             │ Browser (CDP Chrome-for-testing; can be captured in mnml) │
+         ipc                   2     println!("hi");     └───────────────────────────────────────────────────────────┘
+      󰌱 headless.log            3 }
+        hello.rs
+ 󰘬      lib.rs
+
+    ○ tattle-c…        
+
+ 󰐱   ○ tattle-m…        
+
+ 󰎒   ○ adx              
+
+ 󰚩   ○ tattle-c…        
+
+ 󰅣   ○ tattle-c…        
+
+     ○ tattle-c…        ┃
+                             ┃
+     ○ tattle-i…        
+
+     ○ tattle-m…        
+
+     ○ tattle-p…        
+
+     ○ tattle-s…        
+
+     ○ tattle.n…        
+
+     ○ tttl.co-…        
+
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · tattle-claude-wor
+                                                                                                                + dock
+ EDIT   hello.rs  › main                 ♪ mixr  LSP 1  34B  Ln 1/3 Col 1  11:48   tattle-claude-workspace   rs
+

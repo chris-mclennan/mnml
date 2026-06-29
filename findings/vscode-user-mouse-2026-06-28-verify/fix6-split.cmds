@@ -1,0 +1,9 @@
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"snapshot"}
+{"cmd":"run-command","id":"term.shell"}
+{"cmd":"wait_ms","ms":700}
+{"cmd":"snapshot"}
+{"cmd":"dump-rects"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"quit"}

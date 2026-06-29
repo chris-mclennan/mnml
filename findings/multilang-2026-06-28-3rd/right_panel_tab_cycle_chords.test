@@ -1,0 +1,26 @@
+# Ctrl+Shift+[/] cycle RIGHT PANEL tabs only.
+# When the right panel has 0 or 1 panes, these chords are effectively no-ops.
+# Important: Ctrl+Shift+] is VS Code's "Unfold" chord — a VS Code user
+# pressing it to navigate editor buffers gets right-panel cycling instead.
+# (VS Code uses Ctrl+PageDown/PageUp for editor tab cycling;
+#  mnml uses the same — so that part is consistent.
+#  But Ctrl+Shift+] meaning "right-panel next tab" is non-VS Code muscle memory.)
+
+write src/a.ts "export const a = 1;\n"
+write src/b.ts "export const b = 2;\n"
+open src/a.ts
+wait 50
+
+# Right panel is hidden by default — cycle chords should be safe no-ops.
+key Ctrl+Shift+]
+wait 50
+expect screen lacks "panic"
+
+key Ctrl+Shift+[
+wait 50
+expect screen lacks "panic"
+
+# Ctrl+Shift+W (right_panel_close_tab) on an empty panel — should not crash.
+key Ctrl+Shift+W
+wait 50
+expect screen lacks "panic"

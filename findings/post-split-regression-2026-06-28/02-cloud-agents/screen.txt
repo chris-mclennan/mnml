@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws2                                          󰐕  TABS  1 󰅖  ●━  󰅖
+    CLOUD AGENTS  (0)compact ⇄  󰚩 claude agents (90) 󰅖                                                              
+   󰍉 Filter ticket / runId / ┌ Claude Agents · sort:state · group:source · j/k gg G · / · W ws · > src · s sort · ^G g┐
+      + New Cloud Run         │ ● 0 live  ○ 0 idle  · 90 ended  Σ 109.9M tokens  ≈ $91719.92  [view: Summary] [sort: st│
+                             │                                                                                        │
+     Scanning qwe-runner-runs…│    state       workspace       session   model           age     tokens  tok/min     c▎│
+ 󰘬                            │ ✦  Claude Code   90 session(s)   109.9M tokens  $91719.92                             ▎│
+                              │  ✦▸ · ended     mnml            7315bf76  opus-4-7        5s       44.9M           $59▎│
+                             │  ✦  · ended     tattle-playwr…  5c8b121d  opus-4-8        5m        4.6M           $21▎│
+                              │  ✦  · ended     tattle-claude…  1812c213  opus-4-8        5m        7.2M           $53 │
+ 󰐱                            │  ✦  · ended     tattle-claude…  83aba256  <synthetic>     5m      186.5k               │
+                              │  ✦  · ended     tattle-claude…  81c7ba3f  opus-4-8        5m        1.5M           $67 │
+ 󰎒                            │  ✦  · ended     mnml            ee27fdb3  opus-4-8        22m      36.4k             $ │
+                              │  ✦  · ended     ghostty-view-…  9fe9b914  opus-4-8        22m     378.3k            $6 │
+ 󰚩                            │  ✦  · ended     tattle-claude…  00082583  opus-4-8        39m     166.4k            $1 │
+                              │  ✦  · ended     tattle-claude…  9b93507b  opus-4-8        1d      147.4k             $ │
+▌󰅣                            │  ✦  · ended     mnml            16430cca  claude          1d           0               │
+                              │  ✦  · ended     mnml            25da5cbc  opus-4-8        1d        2.0M           $14 │
+                             ┃│  ✦  · ended     tattle-claude…  1887cb51  opus-4-8        1d      209.2k            $5 │
+                             ┃│  ✦  · ended     tattle-claude…  d7613eda  opus-4-8        1d      800.2k           $48 │
+                              │  ✦  · ended     tattle-claude…  3496dbcd  opus-4-8        1d      428.7k           $11 │
+                              │  ✦  · ended     shared          024462f2  opus-4-8        1d      828.7k           $34 │
+                              │  ✦  · ended     tattle.net      efa6ae1d  opus-4-8        1d      870.0k           $35 │
+                              │  ✦  · ended     tattle-claude…  444b9cd3  opus-4-8        1d      402.1k           $14 │
+                              │  ✦  · ended     tattle-claude…  eb8ed8fb  opus-4-8        1d      199.1k            $2 │
+                              │  ✦  · ended     tattle-claude…  c097d744  opus-4-8        1d      247.3k            $5 │
+                              │  session: 7315bf76-e114-4769-826c-eaed0af4e84c   git: main   cwd: /Users/chrismclennan/│
+                              │                                                                                        │
+                              │  asst: ⚙ Bash                                                                          │
+                              │  176 events parsed in tail  ·  pid —                                                   │
+                              │                                                                                        │
+                              │                                                                                        │
+                              │                                                                                        │
+                              │                                                                                        │
+                              │                                                                                        │
+                              │                                                                                        │
+                             │                                                                                        │
+                              └──────────────────────────────────────────────────────────────────────────────── + dock ┘
+ VIEW   main  󰐙 2  [no file]                                                             ♪ mixr  11:05   ws2   —
+

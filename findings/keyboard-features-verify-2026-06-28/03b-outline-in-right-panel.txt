@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws-test3                                     󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws-te… ▾             main.rs 󰅖   󰆽 main.rs ⌥ 󰅖                           OUTLINE                      ×
+▌     .mnml                   1 struct Point { x: f64, y: f64 }                        ⌥ main.rs   0 symbols
+         ipc                   2                                                        ⏎ jump   r refresh   / filter
+         .welcomed             3 fn distance(a: &Point, b: &Point) -> f64 {
+       󰌱 headless.log            4     let dx = a.x - b.x;                                (no symbols)
+ 󰘬      main.rs                 5     let dy = a.y - b.y;
+                                 6     (dx*dx + dy*dy).sqrt()
+    ○ tattle-c…            7 }
+                                 8
+ 󰐱   ○ tattle-m…            9 fn main() {
+                                10     let a = Point { x: 0.0, y: 0.0 };
+ 󰎒   ○ adx                 11     let b = Point { x: 3.0, y: 4.0 };
+                                12     println!("{}", distance(&a, &b));
+ 󰚩   ○ tattle-c…           13 }
+
+ 󰅣   ○ tattle-c…        
+
+     ○ tattle-c…        ┃                                                          ┃
+                             ┃                                                          ┃
+     ○ tattle-i…        
+
+     ○ tattle-m…        
+
+     ○ tattle-p…        
+
+     ○ tattle-s…        
+
+     ○ tattle.n…        
+
+     ○ tttl.co-…        
+
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · tattle-claude-wor
+                                                                                + dock
+ EDIT   main.rs  › Point               ♪ mixr  LSP 1  282B  Ln 1/13 Col 1  11:54   tattle-claude-workspace   rs
+

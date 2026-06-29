@@ -1,0 +1,8 @@
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"esc"}
+{"cmd":"wait_ms","ms":150}
+{"cmd":"run-command","id":"integrations.icon_picker"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"type","text":"ai"}
+{"cmd":"wait_ms","ms":250}
+{"cmd":"snapshot"}

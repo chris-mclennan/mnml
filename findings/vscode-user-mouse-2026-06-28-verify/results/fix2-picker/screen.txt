@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Termina         󰍉  ws1                                                               󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws1 ▾                main.rs 󰅖                                                                                       SIDE PANEL
+▌     src                     1 fn main() {
+          lib.rs                2     println!("hello");                                                                            Nothing here yet.
+         main.rs               3 }
+        Cargo.toml                                                                                                                  Hide with Ctrl+Shift+B.
+ 󰘬
+             󰐙 Add workspace
+ 
+                                   ╭────────────────────────────────────────────────────────────────────────────────────────╮
+ 󰐱                                 │ Integrations: toggle enabled                                                         37│
+                                   │▌ browser (off) — Browser (CDP Chrome-for-testing; can be captured in mnml)browser.open │
+ 󰎒                                 │  claude_code (off) — Claude Code                                        ai.claude_code │
+                                   │  codex (off) — Codex                                                          ai.codex │
+ 󰚩                                 │  bitbucket (off) — Bitbucket pipelines + PRs                :term mnml-forge-bitbucket │
+                                   │  jira (off) — Jira tracker                                     :term mnml-tracker-jira │
+ 󰅣                                 │  http (off) — HTTP: send active request                                      http.send │
+                                   │  http_new (off) — HTTP: new blank request                                     http.new │
+                                   │  codebuild (off) — AWS CodeBuild + logs                       :term mnml-aws-codebuild │
+                                   │  github (off) — GitHub Actions + PRs                           :term mnml-forge-github │
+                                   │  azdevops (off) — Azure DevOps PRs + builds                  :term mnml-forge-azdevops │
+                                   │  gitlab (off) — GitLab MRs + Pipelines                         :term mnml-forge-gitlab │
+                                   │  s3 (off) — Amazon S3 browser                                         :term mnml-fs-s3 │
+                             ┃     │  azure_blob (off) — Azure Blob Storage browser                :term mnml-fs-azure-blob │       ┃
+                             ┃     │  htop (off) — htop — interactive process viewer                             tools.htop │       ┃
+                                   │  iftop (off) — iftop — interactive bandwidth monitor (needs raw-socket privtools.iftop │
+                                   │  btop (off) — btop — resource monitor (cpu / mem / disk / net)              tools.btop │
+                                   │  datadog (off) — Datadog — monitors + dashboards + logs + incide:term mnml-obs-datadog │
+                                   │  buttondown (off) — Buttondown — drafts + sent + subscribers :term mnml-msg-buttondown │
+                                   │  slack (off) — Slack — channels + DMs + threads + search + post   :term mnml-msg-slack │
+                                   ╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+
+    GIT            󰄬  󰘬
+                                                                                                                            + dock
+ EDIT   main  󰐙 1   main.rs  › main                                                               ♪ mixr  LSP 1  37B  Ln 1/3 Col 12  02:18   ws1   rs
+

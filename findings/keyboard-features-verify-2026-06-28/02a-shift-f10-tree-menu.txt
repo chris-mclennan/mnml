@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws-test2                                     󰐕  TABS  1 󰅖  ●━  󰅖
+    ╭ headless.log ────╮      no buffers
+▌   │ Open             │
+     │ Open in split    │
+    │ New file…        │
+     │ New folder…      │
+ 󰘬   │ Open in terminal │
+     │ Rename…          │
+   │ Delete…          │  
+     │ Reveal in Finder │
+ 󰐱  │ Open externally  │  
+     │ Copy path        │                                                                  _
+ 󰎒  │                  │                                _ __ ___    _ __    _ __ ___   | |
+     ╰──────────────────╯                                 | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+ 󰚩   ○ tattle-c…                                     | | | | | | | | | | | | | | | | | |
+                                                          |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰅣   ○ tattle-c…        
+                                                                 workspace · ws-test2
+     ○ tattle-c…        ┃
+                             ┃                                         Shortcuts
+     ○ tattle-i…                                               ──────────────
+                                                                    ^P     find file
+     ○ tattle-m…                                              ^R     recent files
+                                                                  ^K     which-key menu
+     ○ tattle-p…                                                ^N     new file
+                                                                   ^B     toggle tree
+     ○ tattle-s…                                                  ^Q     quit
+
+     ○ tattle.n…                                           mnml · 84c7c91a7-dirty
+
+     ○ tttl.co-…        
+
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · tattle-claude-wor
+                                                                                                                + dock
+ TREE  [no file]                                                       ♪ mixr  11:45   tattle-claude-workspace   —
+

@@ -1,0 +1,17 @@
+{"event":"start","mode":"headless","cols":120,"rows":40,"ipc":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/regression/ws4/.mnml/ipc"}
+{"event":"wait_ms","ms":"300"}
+{"event":"command_run","id":"view.switch_workspace","ok":"true"}
+{"event":"wait_ms","ms":"400"}
+{"event":"snapshot"}
+{"event":"expect_screen","mode":"contains","text":"workspace","ok":"true"}
+{"event":"key","key":"escape"}
+{"event":"wait_ms","ms":"200"}
+{"event":"command_run","id":"view.add_workspace","ok":"true"}
+{"event":"wait_ms","ms":"300"}
+{"event":"snapshot"}
+{"event":"key","key":"escape"}
+{"event":"wait_ms","ms":"200"}
+{"event":"snapshot"}
+{"event":"snapshot"}
+{"event":"quit"}
+{"event":"exit"}

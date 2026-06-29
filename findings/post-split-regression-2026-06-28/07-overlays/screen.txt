@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws7                                          󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws7 ▾               󰂺 readme.md 󰅖                                                                       
+▌     .git                    1 hello world
+         hooks
+        info
+         logs
+ 󰘬       objects
+         refs
+         COMMIT_EDITMSG
+          config
+ 󰐱        description
+          HEAD
+ 󰎒        index
+        .gitignore         ?
+ 󰚩     󰌱 launch.log         ?
+        main.rs
+ 󰅣     󰈙 notes.txt
+       󰂺 readme.md
+                             ┃
+     ○ tattle-c…        ┃
+
+     ○ tattle-m…        
+
+     ○ adx              
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-i…        
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · ws7         
+                                                                                                                + dock
+ EDIT   main  󰐙 2  󰂺 readme.md  /hello 1/1                         ♪ mixr  12B  Ln 1/1 Col 1  11:14   ws7   md
+match 1/1

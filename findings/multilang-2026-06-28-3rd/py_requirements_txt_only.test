@@ -1,0 +1,27 @@
+# Python workspace with ONLY requirements.txt — pytest.run toasts, LSP would attach.
+#
+# Finding: py-requirements-toast — SEV-2
+# The pytest runner checks for pyproject.toml OR setup.py OR test files in tests/.
+# It does NOT check requirements.txt. The Python LSP (pyright-langserver) DOES
+# list requirements.txt as a root_marker.  So a project with:
+#   requirements.txt (present)
+#   src/app.py       (present)
+#   (no pyproject.toml, no setup.py, no tests/ dir)
+# ...would have pyright attach but pytest.run toast — inconsistent signals to the user.
+#
+# The fix would be to add requirements.txt to the pytest detection set OR to
+# document that requirements.txt-only projects need a tests/ dir with test files.
+
+shell echo 'flask==3.0.0\npytest==8.0.0' > requirements.txt
+shell mkdir -p src
+shell echo 'def main(): pass' > src/app.py
+
+command pytest.run
+wait 50
+expect screen contains "pytest: no pyproject.toml"
+
+key esc
+
+command pytest.failed
+wait 50
+expect screen contains "pytest: no pyproject.toml"

@@ -1,0 +1,11 @@
+{"event":"start","mode":"headless","cols":120,"rows":40,"ipc":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/ws-test1/.mnml/ipc"}
+{"event":"key","key":"esc"}
+{"event":"wait_ms","ms":"150"}
+{"event":"snapshot"}
+{"event":"key","key":"ctrl+k"}
+{"event":"wait_ms","ms":"80"}
+{"event":"key","key":"t"}
+{"event":"wait_ms","ms":"80"}
+{"event":"key","key":"r"}
+{"event":"wait_ms","ms":"250"}
+{"event":"snapshot"}

@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws4                                          󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws4 ▾                no buffers
+▌     .git
+         hooks
+        info
+         logs
+ 󰘬       objects
+         refs
+         COMMIT_EDITMSG
+          config
+ 󰐱        description                                                                     _
+          HEAD                                            _ __ ___    _ __    _ __ ___   | |
+ 󰎒        index                                          | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+        .gitignore         ?                             | | | | | | | | | | | | | | | | | |
+ 󰚩     󰌱 launch.log         ?                             |_| |_| |_| |_| |_| |_| |_| |_| |_|
+        main.rs
+ 󰅣     󰈙 notes.txt                                                  workspace · ws4
+       󰂺 readme.md                                                      on main
+                             ┃
+     ○ tattle-c…        ┃                                         Shortcuts
+                                                                    ──────────────
+     ○ tattle-m…                                               ^P     find file
+                                                                   ^R     recent files
+     ○ adx                                                   ^K     which-key menu
+                                                                     ^N     new file
+     ○ tattle-c…                                              ^B     toggle tree
+                                                                       ^Q     quit
+     ○ tattle-c…        
+                                                                mnml · e16abd0fe-dirty
+     ○ tattle-c…        
+
+     ○ tattle-i…        
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · ws4         
+                                                                                                                + dock
+ TREE   main  󰐙 2  [no file]                                                             ♪ mixr  11:06   ws4   —
+

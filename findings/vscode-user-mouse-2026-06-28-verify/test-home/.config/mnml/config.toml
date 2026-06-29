@@ -1,0 +1,339 @@
+mode = "standard"
+
+# ── mnml-managed integration icons ──────────────────────────────────
+# Written by the `+ Add integration` overlay. Edit by hand or via the
+# overlay — re-saves replace this section in place.
+
+[[ui.integration_icon]]
+id = "browser"
+glyph = ""
+fallback = "B"
+command = "browser.open"
+color = "blue"
+tooltip = "Browser (CDP Chrome-for-testing; can be captured in mnml)"
+enabled = true
+
+[[ui.integration_icon]]
+id = "claude_code"
+glyph = ""
+fallback = "✻"
+command = "ai.claude_code"
+color = "orange"
+tooltip = "Claude Code"
+enabled = false
+
+[[ui.integration_icon]]
+id = "codex"
+glyph = ""
+fallback = "▸_"
+command = "ai.codex"
+color = "cyan"
+tooltip = "Codex"
+enabled = false
+
+[[ui.integration_icon]]
+id = "bitbucket"
+glyph = ""
+fallback = "B"
+command = ":term mnml-forge-bitbucket"
+color = "blue"
+tooltip = "Bitbucket pipelines + PRs"
+enabled = false
+
+[[ui.integration_icon]]
+id = "jira"
+glyph = "󰐑"
+fallback = "J"
+command = ":term mnml-tracker-jira"
+color = "blue"
+tooltip = "Jira tracker"
+enabled = false
+
+[[ui.integration_icon]]
+id = "http"
+glyph = ""
+fallback = "→"
+command = "http.send"
+color = "blue"
+tooltip = "HTTP: send active request"
+enabled = false
+
+[[ui.integration_icon]]
+id = "http_new"
+glyph = "󰐕"
+fallback = "+"
+command = "http.new"
+color = "green"
+tooltip = "HTTP: new blank request"
+enabled = false
+
+[[ui.integration_icon]]
+id = "codebuild"
+glyph = "󰒒"
+fallback = "C"
+command = ":term mnml-aws-codebuild"
+color = "yellow"
+tooltip = "AWS CodeBuild + logs"
+enabled = false
+
+[[ui.integration_icon]]
+id = "github"
+glyph = "󰊤"
+fallback = "G"
+command = ":term mnml-forge-github"
+color = "fg"
+tooltip = "GitHub Actions + PRs"
+enabled = false
+
+[[ui.integration_icon]]
+id = "azdevops"
+glyph = ""
+fallback = "A"
+command = ":term mnml-forge-azdevops"
+color = "blue"
+tooltip = "Azure DevOps PRs + builds"
+enabled = false
+
+[[ui.integration_icon]]
+id = "gitlab"
+glyph = ""
+fallback = "L"
+command = ":term mnml-forge-gitlab"
+color = "orange"
+tooltip = "GitLab MRs + Pipelines"
+enabled = false
+
+[[ui.integration_icon]]
+id = "s3"
+glyph = "󰺼"
+fallback = "S3"
+command = ":term mnml-fs-s3"
+color = "orange"
+tooltip = "Amazon S3 browser"
+enabled = false
+
+[[ui.integration_icon]]
+id = "azure_blob"
+glyph = "󰠅"
+fallback = "Az"
+command = ":term mnml-fs-azure-blob"
+color = "blue"
+tooltip = "Azure Blob Storage browser"
+enabled = false
+
+[[ui.integration_icon]]
+id = "htop"
+glyph = "󰡚"
+fallback = "ht"
+command = "tools.htop"
+color = "green"
+tooltip = "htop — interactive process viewer"
+enabled = false
+
+[[ui.integration_icon]]
+id = "iftop"
+glyph = "󰒍"
+fallback = "if"
+command = "tools.iftop"
+color = "blue"
+tooltip = "iftop — interactive bandwidth monitor (needs raw-socket privs)"
+enabled = false
+
+[[ui.integration_icon]]
+id = "btop"
+glyph = "󰡟"
+fallback = "bt"
+command = "tools.btop"
+color = "purple"
+tooltip = "btop — resource monitor (cpu / mem / disk / net)"
+enabled = false
+
+[[ui.integration_icon]]
+id = "datadog"
+glyph = "󱨏"
+fallback = "Dd"
+command = ":term mnml-obs-datadog"
+color = "purple"
+tooltip = "Datadog — monitors + dashboards + logs + incidents"
+enabled = false
+
+[[ui.integration_icon]]
+id = "buttondown"
+glyph = "󰺱"
+fallback = "Bd"
+command = ":term mnml-msg-buttondown"
+color = "green"
+tooltip = "Buttondown — drafts + sent + subscribers"
+enabled = false
+
+[[ui.integration_icon]]
+id = "slack"
+glyph = "󰏯"
+fallback = "Sk"
+command = ":term mnml-msg-slack"
+color = "magenta"
+tooltip = "Slack — channels + DMs + threads + search + post"
+enabled = false
+
+[[ui.integration_icon]]
+id = "teams"
+glyph = "󰾡"
+fallback = "Tm"
+command = ":term mnml-msg-teams"
+color = "blue"
+tooltip = "Microsoft Teams — teams + chats + threads + post"
+enabled = false
+
+[[ui.integration_icon]]
+id = "mandrill"
+glyph = "󰇯"
+fallback = "Md"
+command = ":term mnml-msg-mandrill"
+color = "red"
+tooltip = "Mandrill — transactional email messages + templates + tags"
+enabled = false
+
+[[ui.integration_icon]]
+id = "gmail"
+glyph = "󰎼"
+fallback = "Gm"
+command = ":term mnml-msg-gmail"
+color = "red"
+tooltip = "Gmail — inbox + sent + labels + search + compose"
+enabled = false
+
+[[ui.integration_icon]]
+id = "docker"
+glyph = "󰡨"
+fallback = "Dk"
+command = ":term mnml-virt-docker"
+color = "blue"
+tooltip = "Docker — containers + images + volumes + networks"
+enabled = false
+
+[[ui.integration_icon]]
+id = "cloudflare"
+glyph = "󰹻"
+fallback = "Cf"
+command = ":term mnml-cdn-cloudflare"
+color = "orange"
+tooltip = "Cloudflare — zones + DNS + Workers + Pages"
+enabled = false
+
+[[ui.integration_icon]]
+id = "tattle_inbox"
+glyph = "󰇰"
+fallback = "Ti"
+command = ":term mnml-tattle-inbox"
+color = "magenta"
+tooltip = "Tattle inbox (INTERNAL — dev/staging email/SMS sink)"
+enabled = false
+
+[[ui.integration_icon]]
+id = "cloudwatch_logs"
+glyph = "󰹜"
+fallback = "CW"
+command = ":term mnml-aws-cloudwatch-logs"
+color = "yellow"
+tooltip = "CloudWatch Logs live tail"
+enabled = false
+
+[[ui.integration_icon]]
+id = "amplify"
+glyph = "󰡽"
+fallback = "Am"
+command = ":term mnml-aws-amplify"
+color = "purple"
+tooltip = "Amplify apps + deploys"
+enabled = false
+
+[[ui.integration_icon]]
+id = "dynamodb"
+glyph = ""
+fallback = "Dy"
+command = ":term mnml-db-dynamodb"
+color = "teal"
+tooltip = "DynamoDB table browser"
+enabled = false
+
+[[ui.integration_icon]]
+id = "lambda"
+glyph = "󰺿"
+fallback = "La"
+command = ":term mnml-aws-lambda"
+color = "orange"
+tooltip = "Lambda function browser"
+enabled = false
+
+[[ui.integration_icon]]
+id = "eventbridge"
+glyph = "󰳠"
+fallback = "EB"
+command = ":term mnml-aws-eventbridge"
+color = "pink"
+tooltip = "EventBridge buses + rules"
+enabled = false
+
+[[ui.integration_icon]]
+id = "rds"
+glyph = "󰼒"
+fallback = "RD"
+command = ":term mnml-aws-rds"
+color = "blue"
+tooltip = "RDS database browser"
+enabled = false
+
+[[ui.integration_icon]]
+id = "ecs"
+glyph = "󰼒"
+fallback = "EC"
+command = ":term mnml-aws-ecs"
+color = "green"
+tooltip = "ECS clusters + services"
+enabled = false
+
+[[ui.integration_icon]]
+id = "ecr"
+glyph = "󰏗"
+fallback = "ER"
+command = ":term mnml-aws-ecr"
+color = "purple"
+tooltip = "ECR container registry"
+enabled = false
+
+[[ui.integration_icon]]
+id = "cognito"
+glyph = "󰀄"
+fallback = "Co"
+command = ":term mnml-aws-cognito"
+color = "cyan"
+tooltip = "Cognito User Pools + users"
+enabled = false
+
+[[ui.integration_icon]]
+id = "sqs"
+glyph = "󰧾"
+fallback = "Sq"
+command = ":term mnml-aws-sqs"
+color = "yellow"
+tooltip = "SQS queues"
+enabled = false
+
+[[ui.integration_icon]]
+id = "sns"
+glyph = "󰨏"
+fallback = "Sn"
+command = ":term mnml-aws-sns"
+color = "yellow"
+tooltip = "SNS topics + subscriptions"
+enabled = false
+
+[[ui.integration_icon]]
+id = "mixr"
+glyph = "󰝚"
+fallback = "♪"
+command = "mixr.show"
+color = "pink"
+tooltip = "mixr DJ"
+enabled = false
+

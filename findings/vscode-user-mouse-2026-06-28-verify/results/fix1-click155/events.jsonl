@@ -1,0 +1,10 @@
+{"event":"start","mode":"headless","cols":160,"rows":50,"ipc":"/Users/chrismclennan/Projects/mnml/findings/vscode-user-mouse-2026-06-28-verify/workspaces/ws1/.mnml/ipc"}
+{"event":"open","path":"/Users/chrismclennan/Projects/mnml/findings/vscode-user-mouse-2026-06-28-verify/workspaces/ws1/src/main.rs"}
+{"event":"wait_ms","ms":"300"}
+{"event":"snapshot"}
+{"event":"click","button":"Left","col":"155","row":"0"}
+{"event":"wait_ms","ms":"300"}
+{"event":"snapshot"}
+{"event":"wait_ms","ms":"300"}
+{"event":"quit"}
+{"event":"exit"}

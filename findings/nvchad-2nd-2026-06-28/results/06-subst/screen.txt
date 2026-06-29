@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run                  󰍉  mnml-nvchad2-subst                                               󰐕  TABS  1 󰅖  ●━  󰅖
+     ● mnml-… ▾            󰈙 x.txt 󰅖                                                                                                                   
+▌     .mnml                   1 one BAR
+         ipc                   2 BAR three
+       cmds.jsonl              3 BAR four
+       󰈙 x.txt
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+                                                  ┌ Welcome to mnml — Esc / click outside to dismiss ───────┐
+ 󰎒                                                │ A handful of shortcuts to start with:                   │
+                                                  │ F1                       help overlay (this is similar —│
+ 󰚩                                                │ Ctrl+P                   fuzzy file picker              │
+                                                  │ Ctrl+Shift+P             command palette                │
+ 󰅣                                                │ Ctrl+B                   toggle the file tree (rail)    │
+                                                  │ Ctrl+Shift+B             toggle the right side panel    │
+                                                  │ <leader>at               open or focus a shell pane     │
+                                                  │ <leader>g l              commit graph (or click branch c│
+                                                  │ <leader>l h              LSP hover info                 │
+                                                  │ right-click anywhere     context menu for that surface  │
+                                                  │ :welcome / view.welcome  reopen this overlay any time   │
+                             ┃                    │                                                         │
+                             ┃                    │ Tip: hover any clickable chip ~500ms for a tooltip.     │
+                                                  └─────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                                                     ┌────────────────────────┐
+     INTEGRATIONS          󰐙                                                                                                        │ :%s — 3 replacement(s) │
+                                                                                                                                    └────────────────────────┘
+                                                                                                                                                ┌─────────────┐
+    GIT            󰄬  󰘬                                                                                                                   │ saved x.txt │
+                                                                                                                                                └─────────────┘
+  NORMAL  󰈙 x.txt                                                                             ♪ mixr  27B  Ln 1/3 Col 8  15:35   mnml-nvchad2-subst   txt
+saved x.txt

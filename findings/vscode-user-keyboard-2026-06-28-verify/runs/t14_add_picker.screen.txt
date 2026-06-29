@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                           󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .next
+          blocked.tsx
+ 󰘬     build          ┌ + Add integration ───────────────────────────────────────────────────┐
+          blocked.html │  Installed   Marketplace                                             │
+      dist           │ ▸ [+ Add custom integration]                                         │
+          blocked.css  │ ── AWS ──────────────────────────────────────────────────────────────│
+ 󰐱     node_modules   │   ✓  mnml-aws-cloudwatch-logs          installed (in rail)           │
+          blocked.js   │ ── Music ────────────────────────────────────────────────────────────│
+ 󰎒     src            │   ✓  mixr                              installed (in rail)           │
+          lib.rs       │ ── Trackers ─────────────────────────────────────────────────────────│
+ 󰚩        main.rs      │   ✓  mnml-tracker-jira                 installed (in rail)           │
+       target         │ ── Web ──────────────────────────────────────────────────────────────│
+ 󰅣        blocked.o    │   ✓  http                              installed (in rail)           │
+        .gitignore     │                                                                      │
+       󰂺 README.md      │                                                                      │
+                        │                                                                      │
+     ○ tattle-c…     │                                                                      │
+                        │                                                                      │
+     ○ tattle-m…     │                                                                      │
+                        │                                                                      │
+     ○ adx           │                                                                      │
+                        │                                                                      │
+     ○ tattle-c…     │                                                                      │
+                        │                                                                      │
+     ○ tattle-c…     │                                                                      │
+                        │                                                                      │
+     ○ tattle-c…     │                                                                      │
+                        │                                                                      │
+                        │ ↑↓ move · Enter add to rail · i install (cargo) · y yank cmd · t swit│
+     INTEGRATIONS      └──────────────────────────────────────────────────────────────────────┘
+       󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:21   ws   —
+

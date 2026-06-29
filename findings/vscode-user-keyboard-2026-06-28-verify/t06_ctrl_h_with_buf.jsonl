@@ -1,0 +1,8 @@
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"esc"}
+{"cmd":"wait_ms","ms":120}
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":250}
+{"cmd":"key","key":"ctrl+h"}
+{"cmd":"wait_ms","ms":250}
+{"cmd":"snapshot"}

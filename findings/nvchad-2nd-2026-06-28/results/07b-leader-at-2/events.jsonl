@@ -1,0 +1,14 @@
+{"event":"start","mode":"headless","cols":160,"rows":50,"ipc":"/private/tmp/mnml-nvchad2-at2/.mnml/ipc"}
+{"event":"open","path":"/private/tmp/mnml-nvchad2-at2/x.txt"}
+{"event":"wait_ms","ms":"150"}
+{"event":"key","key":"esc"}
+{"event":"key","key":"space"}
+{"event":"wait_ms","ms":"150"}
+{"event":"key","key":"a"}
+{"event":"wait_ms","ms":"150"}
+{"event":"key","key":"t"}
+{"event":"wait_ms","ms":"600"}
+{"event":"snapshot"}
+{"event":"wait_ms","ms":"200"}
+{"event":"quit"}
+{"event":"exit"}

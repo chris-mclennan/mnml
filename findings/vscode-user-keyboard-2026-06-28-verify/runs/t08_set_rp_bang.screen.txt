@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers                                              SIDE PANEL
+▌     .git
+          HEAD                                                                          Nothing here yet.
+      .next
+          blocked.tsx                                                                   Hide with Ctrl+Shift+B.
+ 󰘬     build
+          blocked.html
+      dist
+          blocked.css
+ 󰐱     node_modules
+          blocked.js                                                      _
+ 󰎒     src                               _ __ ___    _ __    _ __ ___   | |
+          lib.rs                         | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+ 󰚩        main.rs                        | | | | | | | | | | | | | | | | | |
+       target                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+ 󰅣        blocked.o
+        .gitignore                                 workspace · ws
+       󰂺 README.md           ┃                                                          ┃
+                             ┃                         Shortcuts                        ┃
+     ○ tattle-c…                               ──────────────
+                                                    ^P     find file
+     ○ tattle-m…                              ^R     recent files
+                                                  ^K     which-key menu
+     ○ adx                                      ^N     new file
+                                                   ^B     toggle tree
+     ○ tattle-c…                                  ^Q     quit
+
+     ○ tattle-c…                           mnml · c92db76cf-dirty
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+    󰡚   󰒍
+
+    GIT  · ws          
+                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:19   ws   —
+right_panel: on

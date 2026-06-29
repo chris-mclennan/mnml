@@ -1,0 +1,15 @@
+{"event":"start","mode":"headless","cols":160,"rows":50,"ipc":"/private/tmp/mnml-nvchad2-rp2/.mnml/ipc"}
+{"event":"open","path":"/private/tmp/mnml-nvchad2-rp2/x.rs"}
+{"event":"wait_ms","ms":"250"}
+{"event":"type","text":":set rightpanel\n"}
+{"event":"wait_ms","ms":"250"}
+{"event":"type","text":":outline.show\n"}
+{"event":"wait_ms","ms":"350"}
+{"event":"type","text":":lsp.diagnostics\n"}
+{"event":"wait_ms","ms":"400"}
+{"event":"key","key":"ctrl+shift+]"}
+{"event":"wait_ms","ms":"250"}
+{"event":"key","key":"ctrl+shift+w"}
+{"event":"wait_ms","ms":"350"}
+{"event":"quit"}
+{"event":"exit"}

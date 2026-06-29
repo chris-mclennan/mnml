@@ -1,0 +1,11 @@
+{"event":"start","mode":"headless","cols":120,"rows":40,"ipc":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/regression/ws9/.mnml/ipc"}
+{"event":"wait_ms","ms":"300"}
+{"event":"open","path":"/private/tmp/claude-501/-Users-chrismclennan-Projects-mnml/7315bf76-e114-4769-826c-eaed0af4e84c/scratchpad/regression/ws9/readme.md"}
+{"event":"wait_ms","ms":"300"}
+{"event":"command_run","id":"markdown.preview","ok":"true"}
+{"event":"wait_ms","ms":"500"}
+{"event":"snapshot"}
+{"event":"expect_screen","mode":"contains","text":"hello world","ok":"false"}
+{"event":"snapshot"}
+{"event":"quit"}
+{"event":"exit"}

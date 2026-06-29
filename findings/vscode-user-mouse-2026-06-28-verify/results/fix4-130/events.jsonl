@@ -1,0 +1,8 @@
+{"event":"start","mode":"headless","cols":130,"rows":40,"ipc":"/Users/chrismclennan/Projects/mnml/findings/vscode-user-mouse-2026-06-28-verify/workspaces/ws1/.mnml/ipc"}
+{"event":"open","path":"/Users/chrismclennan/Projects/mnml/findings/vscode-user-mouse-2026-06-28-verify/workspaces/ws1/src/main.rs"}
+{"event":"wait_ms","ms":"400"}
+{"event":"snapshot"}
+{"event":"dump_rects"}
+{"event":"wait_ms","ms":"200"}
+{"event":"quit"}
+{"event":"exit"}

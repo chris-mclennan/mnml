@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .next
+          blocked.tsx
+ 󰘬     build ╭────────────────────────────────────────────────────────────────────────────────────────╮
+          bloc│ Pick glyph    fs                                                                      9│
+      dist  │▌ 󰺼  aws-s3  [fs]                                                             \u{F0EBC} │
+          bloc│  󰋜  harddisk  [fs]                                                           \u{F02DC} │
+ 󰐱     node_m│  󰑪  cloud-upload  [fs]                                                       \u{F046A} │
+          bloc│  󰈦  file  [fs]                                                               \u{F0226} │
+ 󰎒     src   │  󰝰  folder  [fs]                                                             \u{F0770} │
+          lib.│  󰅛  file-tree  [fs]                                                          \u{F015B} │
+ 󰚩        main│  󰯧  folder-open  [fs]                                                        \u{F0BE7} │
+       target│  󰈇  file-document  [fs]                                                      \u{F0207} │
+ 󰅣        bloc│  󰾡  microsoft-teams  [msg]                                                   \u{F0FA1} │
+        .gitig│                                                                                        │
+       󰂺 README│                                                                                        │
+               │                                                                                        │
+     ○ tattle-│                                                                                        │
+               │                                                                                        │
+     ○ tattle-│                                                                                        │
+               │                                                                                        │
+     ○ adx    │                                                                                        │
+               │                                                                                        │
+     ○ tattle-│                                                                                        │
+               ╰────────────────────────────────────────────────────────────────────────────────────────╯
+     ○ tattle-c…                                           mnml · c92db76cf-dirty
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+    󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:20   ws   —
+

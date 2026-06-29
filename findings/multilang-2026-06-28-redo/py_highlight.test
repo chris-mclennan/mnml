@@ -1,0 +1,7 @@
+# Python syntax: f-strings, decorators, type hints
+
+write greet.py from typing import Optional\n\n\ndef greet(name: str, age: Optional[int] = None) -> str:\n    return f"Hello, {name}!"\n\n\nclass Greeter:\n    def __init__(self, prefix: str = "Hi") -> None:\n        self.prefix = prefix\n\n    def __call__(self, name: str) -> str:\n        return f"{self.prefix}, {name}!"\n
+open greet.py
+expect pane "greet.py"
+expect screen contains "def greet"
+expect highlights at_least 8

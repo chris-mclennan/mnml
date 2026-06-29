@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws5                                          󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws5 ▾                main.rs 󰅖                                                                         
+▌     .git                 ▎  1 // REGRESSION_MARKER_42                                                            ▎
+         hooks                 2 fn main() {                                                                        ▎
+        info                  3     println!("hi");                                                                ▎
+         logs                  4 }                                                                                  ▎
+ 󰘬       objects                                                                                                    ▎
+         refs                                                                                                       ▎
+         COMMIT_EDITMSG                                                                                             ▎
+          config                                                                                                     ▎
+ 󰐱        description                                                                                                ▎
+          HEAD
+ 󰎒        index
+        .gitignore         ?
+ 󰚩     󰌱 launch.log         ?
+        main.rs            M
+ 󰅣     󰈙 notes.txt
+       󰂺 readme.md
+                             ┃
+     ○ tattle-c…        ┃
+
+     ○ tattle-m…        
+
+     ○ adx              
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-c…        
+
+     ○ tattle-i…        
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · ws5         
+                                                                                                                + dock
+  NORMAL   main  󰐙 2  󰛕 1   main.rs                      ♪ mixr  LSP 1  58B  Ln 1/4 Col 24  11:06   ws5   rs
+saved main.rs

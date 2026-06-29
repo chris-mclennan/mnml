@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                  󰡚         󰐕  TABS  1 󰅖  ●━  󰅖
+   no buffers
+
+
+
+
+
+
+
+
+
+                                                                            _
+                                            _ __ ___    _ __    _ __ ___   | |
+                                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+                                           | | | | | | | | | | | | | | | | | |
+                                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+
+                                                     workspace · ws
+
+                                                        Shortcuts
+                                                     ──────────────
+                                                     ^P     find file
+                                                    ^R     recent files
+                                                   ^K     which-key menu
+                                                      ^N     new file
+                                                    ^B     toggle tree
+                                                        ^Q     quit
+
+                                                 mnml · c92db76cf-dirty
+
+
+
+
+
+
+
+
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:15   ws   —
+

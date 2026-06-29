@@ -1,0 +1,21 @@
+# TSX files are sent to the TypeScript LSP with languageId "typescript"
+# instead of "typescriptreact". This means JSX content may produce
+# spurious errors and LSP features may be impaired.
+#
+# We can't test the actual LSP languageId without a running server,
+# but we can document the regex-outline fallback behavior which uses
+# the correct ts_patterns() for .tsx (both ts and tsx share patterns).
+#
+# A .tsx file with JSX should still highlight correctly via tree-sitter.
+
+write src/App.tsx import React from 'react';\n\ninterface Props {\n  title: string;\n}\n\nconst App: React.FC<Props> = ({ title }) => {\n  return <div className="app"><h1>{title}</h1></div>;\n};\n\nexport default App;\n
+open src/App.tsx
+wait 100
+expect pane "App.tsx"
+expect screen contains "interface Props"
+expect highlights at_least 8
+
+# Regex outline works for tsx (uses ts_patterns)
+command outline.show
+wait 100
+expect screen contains "App"

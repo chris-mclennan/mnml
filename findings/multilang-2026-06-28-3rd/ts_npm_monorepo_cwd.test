@@ -1,0 +1,33 @@
+# TypeScript monorepo: npm.test spawns pty at WORKSPACE ROOT, not at the
+# package being edited. In a pnpm/yarn workspace the user expects `npm test`
+# to run in packages/<current-pkg>/, but mnml always anchors to the first
+# package.json found walking up from self.workspace — which is the root
+# package.json.
+#
+# Finding: npm.monorepo-cwd — SEV-2
+# run_manifest_command starts its walk at self.workspace (the workspace mnml
+# was launched with), not at the active editor's directory.  For a monorepo
+# launched as `mnml ~/Projects/mono-repo/`, self.workspace = ~/Projects/mono-repo/,
+# and the root package.json is found immediately.  The pty opens in that root,
+# not in packages/my-pkg/.
+#
+# Repro: stage a minimal monorepo, open a file in packages/pkg-a/, run npm.test.
+# Expect the pty label to reference pkg-a (it will not — it references root).
+
+shell mkdir -p packages/pkg-a/src
+shell echo '{"name":"root","workspaces":["packages/*"]}' > package.json
+shell echo '{"name":"pkg-a","scripts":{"test":"echo PKG-A-TEST"}}' > packages/pkg-a/package.json
+shell echo 'export const x = 1;' > packages/pkg-a/src/index.ts
+
+open packages/pkg-a/src/index.ts
+wait 50
+
+command npm.test
+wait 200
+
+# The pty label is "npm test" and CWD is the workspace root, not pkg-a.
+# We can verify by checking the pane title does NOT contain "pkg-a".
+# (The pty opens: "npm test" in /workspace-root/, not in packages/pkg-a/)
+expect screen lacks "no package.json"
+# Pane opens successfully — but it's at the wrong cwd (workspace root).
+# No way to assert cwd directly in headless; the bug is in the pty profile.

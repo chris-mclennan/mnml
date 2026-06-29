@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection  Vi         󰍉  ws                                           󰐕  TABS  1 󰅖  ●━  󰅖
+     ● ws ▾                 no buffers
+▌     .git
+          HEAD
+      .next
+          blocked.tsx
+ 󰘬     build ╭────────────────────────────────────────────────────────────────────────────────────────╮
+          bloc│ Command palette                                                                     552│
+      dist  │▌ app  ·  Quit mnml  ·  app.quit                                                 ctrl+q │
+          bloc│  app  ·  Restart mnml (rebuild + relaunch via run.sh)  ·  app.restart                  │
+ 󰐱     node_m│  view  ·  Toggle file tree (rail on/off)  ·  view.toggle_tree                   ctrl+b │
+          bloc│  view  ·  Click discovery overlay (palette: 'view: discovery')  ·  view.discovery      │
+ 󰎒     src   │  view  ·  Welcome overlay (shortcuts cheatsheet)  ·  view.welcome                      │
+          lib.│  view  ·  About mnml (version + workspace metadata)  ·  view.about                     │
+ 󰚩        main│  view  ·  Help overlay (auto-generated keymap reference)  ·  view.help              f1 │
+       target│  view  ·  Settings overlay (keyboard-driven schema editor)  ·  view.settings    ctrl+, │
+ 󰅣        bloc│  view  ·  Picker: toggle position (center ⇄ top)  ·  view.toggle_picker_position       │
+        .gitig│  view  ·  Focus the file tree (without toggling)  ·  view.focus_tree      ctrl+shift+e │
+       󰂺 README│  view  ·  Toggle workspace section (collapse/expand the file list)  ·  view.toggle_tree│
+               │  view  ·  Toggle hidden files in focused tree section  ·  view.toggle_hidden           │
+     ○ tattle-│  view  ·  Toggle hidden files across every workspace section  ·  view.toggle_hidden_all│
+               │  view  ·  Zen mode (hide tree + bufferline + statusline)  ·  view.zen                  │
+     ○ tattle-│  editor  ·  Redo (Ctrl+Shift+Z / Ctrl+Y)  ·  editor.redo                  ctrl+shift+z │
+               │  view  ·  Force a full redraw (clears the terminal)  ·  view.redraw             ctrl+l │
+     ○ adx    │  view  ·  Toggle relative line numbers  ·  view.toggle_relative_numbers                │
+               │  view  ·  Toggle visible whitespace markers (· / →)  ·  view.toggle_whitespace         │
+     ○ tattle-│  view  ·  Toggle rainbow brackets (depth-cycling color on ()[]{})  ·  view.toggle_brack│
+               ╰────────────────────────────────────────────────────────────────────────────────────────╯
+     ○ tattle-c…                                           mnml · c92db76cf-dirty
+
+     ○ tattle-c…        
+
+
+     INTEGRATIONS          󰐙
+       󰡚   󰒍
+
+    GIT  · ws          
+                                                                                                                + dock
+ TREE  [no file]                                                                            ♪ mixr  02:25   ws   —
+

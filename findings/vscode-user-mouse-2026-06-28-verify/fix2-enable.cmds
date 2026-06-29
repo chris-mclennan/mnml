@@ -1,0 +1,13 @@
+{"cmd":"open","path":"src/main.rs"}
+{"cmd":"wait_ms","ms":400}
+{"cmd":"snapshot"}
+{"cmd":"dump-rects"}
+{"cmd":"click","col":108,"row":0,"button":"right"}
+{"cmd":"wait_ms","ms":300}
+{"cmd":"snapshot"}
+{"cmd":"dump-rects"}
+{"cmd":"click","col":120,"row":1,"button":"left"}
+{"cmd":"wait_ms","ms":500}
+{"cmd":"snapshot"}
+{"cmd":"wait_ms","ms":500}
+{"cmd":"quit"}

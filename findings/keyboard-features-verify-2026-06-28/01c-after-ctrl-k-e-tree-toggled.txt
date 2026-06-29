@@ -1,0 +1,40 @@
+ >_  mnml  File  Edit  Selection             󰍉  ws-test1                                     󰐕  TABS  1 󰅖  ●━  󰅖
+   no buffers                                                                            SIDE PANEL
+
+                                                                                         Nothing here yet.
+
+                                                                                         :outline.show
+                                                                                         :lsp.diagnostics
+
+
+
+
+                                                            _
+                            _ __ ___    _ __    _ __ ___   | |
+                           | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+                           | | | | | | | | | | | | | | | | | |
+                           |_| |_| |_| |_| |_| |_| |_| |_| |_|
+
+                                  workspace · ws-test1
+                                                                                        ┃
+                                        Shortcuts                                       ┃
+                                     ──────────────
+                                     ^P     find file
+                                    ^R     recent files
+                                   ^K     which-key menu
+                                      ^N     new file
+                                    ^B     toggle tree
+                                        ^Q     quit
+
+                                 mnml · 84c7c91a7-dirty
+
+
+
+
+
+
+
+
+                                                                                + dock
+ TREE  [no file]                                                       ♪ mixr  11:44   tattle-claude-workspace   —
+

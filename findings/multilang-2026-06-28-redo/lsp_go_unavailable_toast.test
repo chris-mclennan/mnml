@@ -1,0 +1,7 @@
+# gopls not installed: should toast, not crash.
+
+write main.go package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("Hello")\n}\n
+open main.go
+wait 300
+expect screen contains "main"
+expect screen contains "Hello"

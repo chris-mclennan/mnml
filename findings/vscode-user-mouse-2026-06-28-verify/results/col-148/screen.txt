@@ -1,0 +1,50 @@
+ >_  mnml  File  Edit  Selection  View  Go  Run  Terminal         󰍉  ws1                                                                 󰐕  TABS  1 󰅖  ●━  󰅖
+     ws1 ▾                  main.rs 󰅖
+▌     src
+          lib.rs
+         main.rs
+        Cargo.toml
+ 󰘬                         󰐙
+
+ 
+
+ 󰐱
+
+ 󰎒
+                                                                                                               _
+                                                                               _ __ ___    _ __    _ __ ___   | |
+                                                                              | '_ ` _ \  | '_ \  | '_ ` _ \  | |
+                                                                              | | | | | | | | | | | | | | | | | |
+                                                                              |_| |_| |_| |_| |_| |_| |_| |_| |_|
+
+                                                                                        workspace · ws1
+                                                                                            on main
+
+                                                                                         Recent Files
+                            ┃                                                           ──────────────
+                            ┃                                                              src/main.rs
+
+                                                                                           Shortcuts
+                                                                                        ──────────────
+                                                                                        ^P     find file
+                                                                                       ^R     recent files
+                                                                                      ^K     which-key menu
+                                                                                         ^N     new file
+                                                                                       ^B     toggle tree
+                                                                                           ^Q     quit
+
+                                                                                    mnml · 012a5e3ac-dirty
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+        󰐑         󰡚
+    󰒍   󰹜   󰝚
+
+    GIT            󰄬  󰘬
+                                                                                                                                                        + dock
+ TREE   main  󰐙 1  [no file]                                                                                            ♪ mixr  LSP 1  01:57   ws1   —
+tab closed · 1 remaining

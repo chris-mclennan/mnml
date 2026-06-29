@@ -1,0 +1,6 @@
+{"cmd":"wait_ms","ms":400}
+{"cmd":"key","key":"esc"}
+{"cmd":"wait_ms","ms":120}
+{"cmd":"key","key":"t"}
+{"cmd":"wait_ms","ms":200}
+{"cmd":"snapshot"}

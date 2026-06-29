@@ -1,0 +1,40 @@
+ >_  mnml  File          󰍉  ws1                            w  Help
+     ● ws1 ▾             ‹                   SIDE PANEL
+▌     src                     1 fn main() {
+          lib.rs                2     println!("    Nothing here yet.
+         main.rs               3 }
+        Cargo.toml                                  Hide with Ctrl+Shift+B.
+ 󰘬
+             󰐙 Add workspace
+ 
+
+ 󰐱
+
+ 󰎒
+
+ 󰚩
+
+ 󰅣
+
+                             ┃                      ┃
+                             ┃                      ┃
+
+
+
+
+
+
+
+
+
+
+
+
+
+     INTEGRATIONS          󰐙
+    
+
+    GIT            󰄬  󰘬
+                                   ━━━━━━━━ + dock
+ EDIT  …  main.rs  › main  ♪ mixr  LSP 1  37B  Ln 1/3 Col 12  02:19   w
+
