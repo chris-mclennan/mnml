@@ -18,11 +18,13 @@ command snippet.expand
 # edits_consumed into an edge case where the first char of the next
 # tight type-loop misses its stop-shift. Two render ticks give the
 # snapshot a chance to stabilise before we start filling stop $1.
-wait 100
+# qa-sweep 2026-06-29: bumped 100→250ms after recurring macOS CI
+# flakes on the loaded runner.
+wait 250
 type i
 key tab
 # Same guard before filling stop $2.
-wait 100
+wait 250
 type items
 
 # Sanity: before Backtab the line is "for i in items {".
