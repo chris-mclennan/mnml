@@ -2398,7 +2398,25 @@ pub struct SpendToday {
     pub per_workspace: Vec<(String, u64, f64)>,
 }
 
+#[allow(dead_code)]
 pub fn spend_today() -> SpendToday {
+    spend_today_with_abort(None)
+}
+
+/// Same as [`spend_today`] but checks `abort` between every file
+/// read. Set the flag on pane close so an in-flight worker doesn't
+/// keep reading multi-MB JSONL files for 1-2 seconds after the
+/// user closed the spend pane.
+///
+/// code-reviewer 3rd 2026-06-29 W-3 follow-through.
+pub fn spend_today_with_abort(
+    abort: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> SpendToday {
+    let aborted = || {
+        abort
+            .as_ref()
+            .is_some_and(|a| a.load(std::sync::atomic::Ordering::Relaxed))
+    };
     let mut s = SpendToday::default();
     let mut by_workspace: std::collections::BTreeMap<String, (u64, f64)> =
         std::collections::BTreeMap::new();
@@ -2410,6 +2428,9 @@ pub fn spend_today() -> SpendToday {
         && let Ok(dirs) = std::fs::read_dir(&root)
     {
         for d in dirs.flatten() {
+            if aborted() {
+                return s;
+            }
             let p = d.path();
             let workspace = p
                 .file_name()
@@ -2420,6 +2441,9 @@ pub fn spend_today() -> SpendToday {
                 continue;
             };
             for f in rd.flatten() {
+                if aborted() {
+                    return s;
+                }
                 let fp = f.path();
                 if fp.extension().is_none_or(|e| e != "jsonl") {
                     continue;
@@ -2458,6 +2482,9 @@ pub fn spend_today() -> SpendToday {
     // Codex
     if let Some(root) = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex/sessions")) {
         for fp in walk_codex_sessions(&root) {
+            if aborted() {
+                return s;
+            }
             let Ok(meta) = std::fs::metadata(&fp) else {
                 continue;
             };

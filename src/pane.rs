@@ -164,6 +164,11 @@ pub struct SpendReportPane {
     /// True while a refresh is in flight. Renderer shows a hint
     /// in the title bar so the user knows it's not a stale view.
     pub loading: bool,
+    /// code-reviewer 3rd 2026-06-29 W-3 fix: cooperative abort
+    /// signal for the spend_today worker. Set on pane Drop /
+    /// refresh so an in-flight worker stops reading multi-MB
+    /// JSONL files for 1-2 seconds after the user closed the pane.
+    pub abort_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,15 +218,30 @@ impl Clone for SpendReportPane {
             sort_desc: self.sort_desc,
             pending: None,
             loading: false,
+            abort_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+}
+
+impl Drop for SpendReportPane {
+    fn drop(&mut self) {
+        // code-reviewer 3rd 2026-06-29 W-3: tell the worker to
+        // stop. The Arc clone the worker holds reads this flag
+        // between every file; it'll exit at the next check.
+        self.abort_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 impl SpendReportPane {
     pub fn fresh() -> Self {
+        let abort_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (tx, rx) = std::sync::mpsc::channel();
+        let abort_clone = abort_flag.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(crate::claude_agents::spend_today());
+            let _ = tx.send(crate::claude_agents::spend_today_with_abort(Some(
+                abort_clone,
+            )));
         });
         Self {
             snapshot: crate::claude_agents::SpendToday::default(),
@@ -232,13 +252,25 @@ impl SpendReportPane {
             sort_desc: true,
             pending: Some(rx),
             loading: true,
+            abort_flag,
         }
     }
     pub fn refresh(&mut self) {
+        // Signal the prior worker to abort. It'll stop at the next
+        // per-file check (within ~10MB / a few hundred ms in the
+        // worst case).
+        self.abort_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        // Fresh abort flag for the new worker.
+        let abort_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (tx, rx) = std::sync::mpsc::channel();
+        let abort_clone = abort_flag.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(crate::claude_agents::spend_today());
+            let _ = tx.send(crate::claude_agents::spend_today_with_abort(Some(
+                abort_clone,
+            )));
         });
+        self.abort_flag = abort_flag;
         self.pending = Some(rx);
         self.loading = true;
     }

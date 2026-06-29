@@ -222,6 +222,32 @@ pub struct Ipc {
     events_path: PathBuf,
     /// Bytes already consumed from `command`.
     cmd_offset: u64,
+    /// True once a final "exit" event has been written (by
+    /// headless::run on the happy path). `Drop` reads this to
+    /// decide whether to emit a shutdown death certificate —
+    /// nvchad-user 2026-06-28 SEV-1 fix for the silent-exit bug.
+    /// Without this, a panic / map_err exit in the headless loop
+    /// vanishes without leaving any breadcrumb in events.jsonl
+    /// and the host hangs waiting for state changes from a
+    /// corpse.
+    exit_event_written: std::sync::atomic::AtomicBool,
+}
+
+impl Drop for Ipc {
+    fn drop(&mut self) {
+        if !self
+            .exit_event_written
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            // Best-effort death certificate. Writes to the events
+            // log so the host has SOMETHING to grep for when an
+            // unexpected exit happens. If the panic was a
+            // poisoned mutex / OOM and writing fails, we tried.
+            self.append_event(
+                r#"{"event":"shutdown","reason":"unexpected","note":"ipc drop without happy-path exit"}"#,
+            );
+        }
+    }
 }
 
 impl Ipc {
@@ -259,6 +285,7 @@ impl Ipc {
             status_path,
             events_path,
             cmd_offset: 0,
+            exit_event_written: std::sync::atomic::AtomicBool::new(false),
         };
         if !pre_queued.is_empty() {
             let lines = pre_queued.lines().count();
@@ -328,6 +355,10 @@ impl Ipc {
         let _ = std::fs::write(self.dir.join("rects.json"), json.as_bytes());
     }
     pub fn append_event(&self, json_line: &str) {
+        if json_line.contains(r#""event":"exit""#) {
+            self.exit_event_written
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
