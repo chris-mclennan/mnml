@@ -102,7 +102,10 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
     // 2026-06-21 vscode-mouse SEV-2: right-click on a
-    // Claude Agents dashboard row → 7-item context menu.
+    // Claude Agents dashboard row → context menu. Currently 6
+    // items: Open transcript / Resume in mnml pty / Yank session
+    // id / Yank cwd / Export as markdown / Kill session.
+    // (qa-6th 2026-06-29 doc fix — was claiming 7.)
     if let Some(&(_, pid, row_idx)) = app.rects.list_rows.iter().find(|(r, pid, _)| {
         matches!(app.panes.get(*pid), Some(Pane::ClaudeAgents(_)))
             && crate::app::dispatch::contains(*r, x, y)

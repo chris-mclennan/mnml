@@ -171,7 +171,20 @@ fn builtin_commands() -> Vec<Command> {
             // F1 is the universal Help chord; doesn't collide with vim's `?`
             // (backwards search) or any editing input.
             keys: &["f1"],
-            run: |app| app.toggle_help_overlay(),
+            run: |app| {
+                // qa-6th claude-agents SEV-2 2026-06-29: dashboard
+                // has its own pane-specific help (lists >/< source
+                // filter, W workspace, K kill, etc). F1 should
+                // surface that instead of the global keymap dump
+                // when the dashboard is active.
+                if let Some(idx) = app.active
+                    && let Some(crate::pane::Pane::ClaudeAgents(p)) = app.panes.get_mut(idx)
+                {
+                    p.show_help = !p.show_help;
+                    return;
+                }
+                app.toggle_help_overlay();
+            },
         },
         Command {
             id: "view.settings",
@@ -568,7 +581,19 @@ fn builtin_commands() -> Vec<Command> {
             title: "Go to line… (1-based)",
             group: "editor",
             keys: &["ctrl+g"],
-            run: |app| app.open_goto_line_prompt(),
+            run: |app| {
+                // qa-6th claude-agents SEV-2 2026-06-29: Ctrl+G in
+                // the dashboard cycles group-by; the global chord
+                // was eating it. Defer to the pane when the active
+                // pane is ClaudeAgents.
+                if let Some(idx) = app.active
+                    && let Some(crate::pane::Pane::ClaudeAgents(p)) = app.panes.get_mut(idx)
+                {
+                    p.cycle_group_by();
+                    return;
+                }
+                app.open_goto_line_prompt();
+            },
         },
         Command {
             id: "editor.bracket_match",
