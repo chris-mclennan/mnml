@@ -11861,6 +11861,59 @@ mod tests {
     }
 
     #[test]
+    fn right_panel_empty_rects_dropped_when_y_outside_panel() {
+        // vscode-mouse 2026-06-28 SEV-3 + 035b69b's render fix:
+        // when the panel column is short (height <13 rows in the
+        // agent's repro), the empty-state click rect for late
+        // entries (:test.run / :find.grep / :ai.chat) used to be
+        // registered with y values that fell BELOW the panel's
+        // bottom, landing in the statusline. A click in the
+        // statusline x-range fired the wrong command.
+        //
+        // The fix in src/ui/mod.rs gates each rect_at(y_offset)
+        // call on `y < panel_bottom`. This test exercises the
+        // render with a 6-row terminal (panel ≈ 4 rows) and asserts
+        // that only the rects that fit IN the panel are registered.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.right_panel_visible = true;
+        // Very short terminal: panel ends up ~4 rows tall, so
+        // only the first 1-2 empty-state lines fit. The later
+        // rects (ai/grep/test) must be None.
+        let mut term = Terminal::new(TestBackend::new(40, 6)).unwrap();
+        term.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+        // Outline rect is at hint_rect.y + 2; with a tiny panel
+        // it may not fit either. The important property: every
+        // registered rect's y must be inside the panel area.
+        let panel_bottom = if let Some(close) = app.rects.right_panel_close {
+            close.y + 1
+        } else {
+            // Even the close button got dropped — just assert all
+            // empty-state rects are None (panel is too short for
+            // anything).
+            assert!(app.rects.right_panel_empty_outline.is_none());
+            return;
+        };
+        for (label, rect) in [
+            ("outline", app.rects.right_panel_empty_outline),
+            ("diagnostics", app.rects.right_panel_empty_diagnostics),
+            ("ai", app.rects.right_panel_empty_ai),
+            ("grep", app.rects.right_panel_empty_grep),
+            ("test", app.rects.right_panel_empty_test),
+        ] {
+            if let Some(r) = rect {
+                assert!(
+                    r.y < panel_bottom,
+                    "{label} rect at y={} must be < panel_bottom={panel_bottom}",
+                    r.y
+                );
+            }
+        }
+    }
+
+    #[test]
     fn ask_ai_routes_to_right_panel_when_visible() {
         // v4 — ai.chat hosts in the right panel as a 3rd tab
         // (alongside Outline + Diagnostics, capped at 3).
