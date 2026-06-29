@@ -335,4 +335,64 @@ mod tests {
         assert_eq!(entries[0]["error"], "connection refused");
         let _ = fs::remove_dir_all(&dir);
     }
+
+    /// test-writer 2026-06-28 coverage gap: the new headers +
+    /// request_body fields must persist correctly. Without this
+    /// lock-in, an accidental rename in the json! call would
+    /// silently break picker.rs's curl-rebuild path.
+    #[test]
+    fn append_writes_headers_and_body_to_jsonl() {
+        let dir = temp("headers-body");
+        let headers = vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Authorization".to_string(), "Bearer abc123".to_string()),
+        ];
+        let body = r#"{"name":"alice"}"#;
+        append(
+            &dir,
+            &Entry {
+                method: "POST",
+                url: "https://x/y",
+                status: Some(200),
+                duration_ms: Some(50),
+                body_bytes: Some(10),
+                error: None,
+                headers: Some(&headers),
+                request_body: Some(body),
+            },
+        );
+        let entries = tail(&dir, 1);
+        assert_eq!(entries.len(), 1);
+        let v = &entries[0];
+        let h = v["headers"].as_array().expect("headers is array");
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0][0], "Content-Type");
+        assert_eq!(h[0][1], "application/json");
+        assert_eq!(h[1][0], "Authorization");
+        assert_eq!(h[1][1], "Bearer abc123");
+        assert_eq!(v["request_body"].as_str(), Some(body));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn append_with_none_headers_and_body_serialises_null() {
+        let dir = temp("none-headers");
+        append(
+            &dir,
+            &Entry {
+                method: "GET",
+                url: "https://x/y",
+                status: Some(200),
+                duration_ms: Some(5),
+                body_bytes: Some(0),
+                error: None,
+                headers: None,
+                request_body: None,
+            },
+        );
+        let entries = tail(&dir, 1);
+        assert_eq!(entries[0]["headers"], serde_json::Value::Null);
+        assert_eq!(entries[0]["request_body"], serde_json::Value::Null);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

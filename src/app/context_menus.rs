@@ -38,6 +38,16 @@ impl App {
             .hover_chip
             .as_ref()
             .is_some_and(|(_, t)| t.elapsed() < std::time::Duration::from_secs(2));
+        // vscode-user 2026-06-28 SEV-3: statusline chips have
+        // right-click context menus (workspace/branch/mode/clock)
+        // but Shift+F10 couldn't reach them. Extended the hover-
+        // chip anchor closure so any statusline chip the user
+        // hovered within 2s opens its menu on Shift+F10.
+        // Statusline is at the BOTTOM of the screen — anchor y =
+        // rect.y - 1 so the menu pops UPWARD (the rect.y + 1
+        // pattern used elsewhere would render below the screen).
+        let above_anchor =
+            |rect: ratatui::layout::Rect| -> (u16, u16) { (rect.x, rect.y.saturating_sub(1)) };
         let hover_chip_anchor = self.hover_chip.as_ref().and_then(|(c, _)| match c {
             crate::HoverChip::IntegrationIcon(idx) => {
                 let &(rect, _) = self
@@ -62,6 +72,22 @@ impl App {
                 .rects
                 .activity_bar_gear
                 .map(|rect| (crate::HoverChip::ActivityBarGear, (rect.x, rect.y + 1))),
+            crate::HoverChip::StatuslineBranch => self
+                .rects
+                .statusline_branch_chip
+                .map(|rect| (crate::HoverChip::StatuslineBranch, above_anchor(rect))),
+            crate::HoverChip::StatuslineWorkspace => self
+                .rects
+                .statusline_workspace_chip
+                .map(|rect| (crate::HoverChip::StatuslineWorkspace, above_anchor(rect))),
+            crate::HoverChip::StatuslineMode => self
+                .rects
+                .statusline_mode_chip
+                .map(|rect| (crate::HoverChip::StatuslineMode, above_anchor(rect))),
+            crate::HoverChip::StatuslineClock => self
+                .rects
+                .statusline_clock_chip
+                .map(|rect| (crate::HoverChip::StatuslineClock, above_anchor(rect))),
             _ => None,
         });
         // Tree: use selected_row + the first tree row rect to derive
@@ -79,6 +105,18 @@ impl App {
                 }
                 crate::HoverChip::ActivityBarGear => {
                     self.open_gear_context_menu(anchor);
+                }
+                crate::HoverChip::StatuslineBranch => {
+                    self.open_statusline_branch_context_menu(anchor);
+                }
+                crate::HoverChip::StatuslineWorkspace => {
+                    self.open_statusline_workspace_context_menu(anchor);
+                }
+                crate::HoverChip::StatuslineMode => {
+                    self.open_statusline_mode_context_menu(anchor);
+                }
+                crate::HoverChip::StatuslineClock => {
+                    self.open_statusline_clock_context_menu(anchor);
                 }
                 _ => {}
             }

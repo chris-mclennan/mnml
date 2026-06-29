@@ -382,4 +382,53 @@ mod tests {
         assert_eq!(parse_env_line("=oops"), None);
         assert_eq!(parse_env_line(""), None);
     }
+
+    /// test-writer 2026-06-28 coverage gap: EnvSet's four-tier
+    /// precedence chain (explicit → $MNML_ENV → config_default →
+    /// .rqst/config) was untested. Serialised against other tests
+    /// that mutate $MNML_ENV.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn select_with_config_default_precedence() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let d = tempfile::tempdir().unwrap();
+        let cfg_dir = d.path().join(".rqst");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(cfg_dir.join("config"), "default_env=rqst-default\n").unwrap();
+        std::fs::create_dir_all(d.path().join(".rqst").join("env")).unwrap();
+        for name in ["explicit-env", "mnml-env", "config-default", "rqst-default"] {
+            std::fs::write(
+                d.path()
+                    .join(".rqst")
+                    .join("env")
+                    .join(format!("{name}.env")),
+                format!("MARKER={name}\n"),
+            )
+            .unwrap();
+        }
+        // SAFETY: ENV_LOCK above serialises across tests. Reset
+        // before assertions so prior `MNML_ENV` doesn't leak in.
+        unsafe {
+            std::env::remove_var("MNML_ENV");
+        }
+        let env = EnvSet::select_with_config_default(d.path(), None, None);
+        assert_eq!(env.name(), Some("rqst-default"));
+        let env = EnvSet::select_with_config_default(d.path(), None, Some("config-default"));
+        assert_eq!(env.name(), Some("config-default"));
+        unsafe {
+            std::env::set_var("MNML_ENV", "mnml-env");
+        }
+        let env = EnvSet::select_with_config_default(d.path(), None, Some("config-default"));
+        assert_eq!(env.name(), Some("mnml-env"));
+        let env = EnvSet::select_with_config_default(
+            d.path(),
+            Some("explicit-env"),
+            Some("config-default"),
+        );
+        assert_eq!(env.name(), Some("explicit-env"));
+        unsafe {
+            std::env::remove_var("MNML_ENV");
+        }
+    }
 }

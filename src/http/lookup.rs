@@ -399,4 +399,72 @@ mod tests {
             "DELIVERY_PARTNER_ID"
         );
     }
+
+    /// test-writer 2026-06-28 coverage gap: scan_lookups was
+    /// rewritten from flat read_dir to DFS but had zero tests.
+    #[test]
+    fn scan_lookups_finds_files_in_subdirectories() {
+        let d = tempfile::tempdir().unwrap();
+        let lookups = d.path().join(".rqst").join("lookups");
+        std::fs::create_dir_all(lookups.join("auth")).unwrap();
+        std::fs::create_dir_all(lookups.join("billing").join("nested")).unwrap();
+        std::fs::write(lookups.join("top.curl"), "GET /\n").unwrap();
+        std::fs::write(lookups.join("auth").join("login.curl"), "GET /\n").unwrap();
+        std::fs::write(
+            lookups.join("billing").join("nested").join("ping.curl"),
+            "GET /\n",
+        )
+        .unwrap();
+        let found = scan_lookups(d.path());
+        let suffixes: std::collections::HashSet<String> = found
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&lookups)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert!(suffixes.contains("top.curl"));
+        assert!(suffixes.contains("auth/login.curl"));
+        assert!(suffixes.contains("billing/nested/ping.curl"));
+        assert_eq!(found.len(), 3);
+    }
+
+    #[test]
+    fn scan_lookups_skips_dotfiles_and_target_dirs() {
+        let d = tempfile::tempdir().unwrap();
+        let lookups = d.path().join(".rqst").join("lookups");
+        std::fs::create_dir_all(lookups.join(".hidden")).unwrap();
+        std::fs::create_dir_all(lookups.join("target")).unwrap();
+        std::fs::create_dir_all(lookups.join("node_modules")).unwrap();
+        std::fs::create_dir_all(lookups.join("real")).unwrap();
+        std::fs::write(lookups.join(".hidden").join("x.curl"), "GET /\n").unwrap();
+        std::fs::write(lookups.join("target").join("y.curl"), "GET /\n").unwrap();
+        std::fs::write(lookups.join("node_modules").join("z.curl"), "GET /\n").unwrap();
+        std::fs::write(lookups.join("real").join("ok.curl"), "GET /\n").unwrap();
+        let found = scan_lookups(d.path());
+        assert_eq!(found.len(), 1, "only `real/ok.curl` should match");
+        assert!(found[0].ends_with("real/ok.curl"));
+    }
+
+    #[test]
+    fn scan_lookups_accepts_all_three_extensions() {
+        let d = tempfile::tempdir().unwrap();
+        let lookups = d.path().join(".rqst").join("lookups");
+        std::fs::create_dir_all(&lookups).unwrap();
+        std::fs::write(lookups.join("a.curl"), "GET /\n").unwrap();
+        std::fs::write(lookups.join("b.http"), "GET /\n").unwrap();
+        std::fs::write(lookups.join("c.rest"), "GET /\n").unwrap();
+        std::fs::write(lookups.join("d.txt"), "GET /\n").unwrap();
+        let found = scan_lookups(d.path());
+        assert_eq!(found.len(), 3, ".curl/.http/.rest match; .txt excluded");
+    }
+
+    #[test]
+    fn scan_lookups_returns_empty_when_dir_absent() {
+        let d = tempfile::tempdir().unwrap();
+        let found = scan_lookups(d.path());
+        assert!(found.is_empty());
+    }
 }
