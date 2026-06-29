@@ -1335,4 +1335,40 @@ mod tests {
         assert_eq!(d.range.start.line, 3);
         assert_eq!(d.source.as_deref(), Some("rustc"));
     }
+
+    #[test]
+    fn derive_lsp_language_id_maps_typescript_and_c_variants() {
+        // multilang-dev-user 2026-06-28 SEV-2 coverage gap.
+        // A one-line accidental revert of `"tsx" => "typescriptreact"`
+        // would silently break JSX parsing — no test failure since
+        // LSP wire messages aren't observable in headless mode.
+        // Lock the mapping.
+        let p = |s: &str| std::path::PathBuf::from(s);
+        assert_eq!(derive_lsp_language_id(&p("a.ts"), "fallback"), "typescript");
+        assert_eq!(
+            derive_lsp_language_id(&p("a.tsx"), "fallback"),
+            "typescriptreact"
+        );
+        assert_eq!(derive_lsp_language_id(&p("a.js"), "fallback"), "javascript");
+        assert_eq!(
+            derive_lsp_language_id(&p("a.jsx"), "fallback"),
+            "javascriptreact"
+        );
+        assert_eq!(
+            derive_lsp_language_id(&p("a.mts"), "fallback"),
+            "typescript"
+        );
+        assert_eq!(
+            derive_lsp_language_id(&p("a.cjs"), "fallback"),
+            "javascript"
+        );
+        assert_eq!(derive_lsp_language_id(&p("a.c"), "fallback"), "c");
+        assert_eq!(derive_lsp_language_id(&p("a.h"), "fallback"), "c");
+        assert_eq!(derive_lsp_language_id(&p("a.cpp"), "fallback"), "cpp");
+        assert_eq!(derive_lsp_language_id(&p("a.hxx"), "fallback"), "cpp");
+        // Fallback path: unknown extension → fallback string.
+        assert_eq!(derive_lsp_language_id(&p("a.rs"), "rust"), "rust");
+        // No extension → fallback.
+        assert_eq!(derive_lsp_language_id(&p("Makefile"), "make"), "make");
+    }
 }

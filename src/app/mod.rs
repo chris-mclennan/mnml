@@ -11855,6 +11855,39 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_at_focus_uses_hover_chip_fallback_for_integration_icon() {
+        // vscode-user 2nd 2026-06-28 SEV-2: integration chip
+        // hover_chip-recent fallback was reportedly not firing
+        // despite the v2 polish. Lock the case in a test:
+        // hover_chip = IntegrationIcon(0) + a registered rect at
+        // index 0 should open the integration context menu.
+        use ratatui::layout::Rect;
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.focus = crate::focus::Focus::Pane;
+        app.active = None;
+        app.rects.integration_icon_rects.push((
+            Rect {
+                x: 3,
+                y: 34,
+                width: 4,
+                height: 1,
+            },
+            0,
+        ));
+        app.hover_chip = Some((
+            crate::HoverChip::IntegrationIcon(0),
+            std::time::Instant::now(),
+        ));
+        assert!(app.context_menu.is_none());
+        crate::command::run("view.context_menu_at_focus", &mut app);
+        assert!(
+            app.context_menu.is_some(),
+            "Shift+F10 with hover_chip=IntegrationIcon(0) should open the integration menu"
+        );
+    }
+
+    #[test]
     fn context_menu_at_focus_opens_tab_menu_when_pane_focused() {
         // vscode-user-keyboard 2026-06-28 SEV-2: keyboard users
         // couldn't open a context menu without a mouse. Shift+F10

@@ -128,7 +128,12 @@ impl InputHandler for StandardInputHandler {
             KeyCode::Down => mv(MoveDown),
 
             KeyCode::Home if ctrl && !alt => mv(MoveBufferStart),
-            KeyCode::End if ctrl && !alt => mv(MoveBufferEnd),
+            // vscode-user 2026-06-28 SEV-2: Ctrl+End in VS Code
+            // lands at the END of the last line, not the start.
+            // MoveBufferEnd is vim G semantics (start of last
+            // line, intentional). Compose with MoveLineEnd for the
+            // standard-mode meaning.
+            KeyCode::End if ctrl && !alt => InputResult::Ops(vec![MoveBufferEnd, MoveLineEnd]),
             KeyCode::Home => mv(MoveLineStart),
             KeyCode::End => mv(MoveLineEnd),
             KeyCode::PageUp => mv(PageUp),

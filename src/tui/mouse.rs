@@ -3484,6 +3484,27 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     app.rects.tab_drop_target = None;
                     return;
                 }
+                // vscode-user 2026-06-28 SEV-2: drag released past
+                // the last tab on the bufferline row → drop on the
+                // rightmost tab so the user gets a "move to end"
+                // gesture. Without this, dragging slightly past
+                // the rightmost tab fell through to reveal_pane
+                // (click semantics), making drag-to-reorder feel
+                // broken.
+                if let Some(&(rect, rightmost_pid)) = app
+                    .rects
+                    .bufferline_tabs
+                    .iter()
+                    .filter(|(r, _)| r.y <= y && y < r.y + r.height)
+                    .max_by_key(|(r, _)| r.x + r.width)
+                    && x >= rect.x + rect.width
+                    && rightmost_pid != src
+                {
+                    app.swap_bufferline_tabs(src, rightmost_pid);
+                    app.rects.bufferline_drag_tab = None;
+                    app.rects.tab_drop_target = None;
+                    return;
+                }
                 if over_body {
                     app.drop_tab_on_pane(src, x, y);
                 } else {

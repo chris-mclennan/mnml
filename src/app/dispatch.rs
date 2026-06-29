@@ -1193,6 +1193,12 @@ pub(crate) fn handle_scm_row_click(
             let n = p.visible_indices().len();
             if flat_idx < n {
                 p.selected = flat_idx;
+                // claude-agents-power-user 2026-06-28 finding 2:
+                // mouse click parity with keyboard nav — reset
+                // detail_scroll so the new row's drill-down view
+                // starts at the top instead of inheriting the
+                // previous row's scroll offset.
+                p.detail_scroll = 0;
             }
         }
         if is_double_click {

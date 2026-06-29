@@ -25,7 +25,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     };
 
     let agg = p.aggregate();
-    let pause_chip = if p.paused_by_user { " · paused" } else { "" };
+    // claude-agents-power-user 2026-06-28 finding 3: filter-mode
+    // also halts live tail (p.paused = true) but the chip only
+    // checked paused_by_user. A user typing a query for several
+    // seconds had no indication tail was suspended. Check both.
+    let pause_chip = if p.paused_by_user {
+        " · paused"
+    } else if p.paused {
+        " · paused (filter)"
+    } else {
+        ""
+    };
     let state_chip = match p.state_filter {
         Some(AgentState::Streaming) => " · ●live",
         Some(AgentState::ToolCall) => " · ▸tool",

@@ -216,8 +216,17 @@ fn ts_patterns() -> &'static [(Regex, &'static str)] {
             // span across the type annotation. Capture the name
             // immediately after const/let/var when ANY type-ish
             // expression precedes the `= (` arrow.
+            //
+            // multilang 3rd 2026-06-28 SEV-3: handle callback types
+            // in generics — `React.FC<{ onClick: () => void }>`.
+            // The earlier `[^=]+` greedy match terminated on the
+            // first `=` it found (the one inside `=>`), so this
+            // pattern silently missed components with callback
+            // props. The `(?:[^=]|=>)+?` alternation matches the
+            // literal `=>` as a unit, so the type-annotation match
+            // doesn't break on it.
             (
-                r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*[^=]+=\s*(?:async\s+)?\([^)]*\)\s*=>",
+                r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?:[^=]|=>)+?\s*=\s*(?:async\s+)?\([^)]*\)\s*=>",
                 "fn"
             ),
         ]
