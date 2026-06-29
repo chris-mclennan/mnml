@@ -77,6 +77,8 @@ Exclusive motions (`w`, `W`, `h`, `l`, `0`, `^`, etc.) are unchanged — `[ancho
 
 This is the kind of behavior you only notice when it's wrong (a `cw` that left the trailing whitespace, then re-typing pushed it across) — but once it's right, the muscle memory works exactly as vim's `:help` documents it.
 
+![cw at "brown" in "The quick brown fox jumps", type BIG, Esc — line becomes "The quick BIG fox jumps" (space preserved); dd then u then :reg shows the unnamed + numbered registers](../../../assets/tapes/vim-operator-inclusive.gif)
+
 ### `Ctrl+R Ctrl+W` and `Ctrl+R Ctrl+A` in INSERT mode
 
 Two vim chords for inserting the symbol under the cursor without leaving INSERT:

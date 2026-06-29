@@ -20,7 +20,16 @@
 
 set -u
 WS="$1"
+SIBLING="$2"
 CMD="$WS/.mnml/ipc/command"
+
+# Seed the workspace's session.json with the sibling lib.rs as a
+# cross-workspace recent BEFORE mnml starts. picker.files reads
+# recent_files at startup; doing the seed in the .tape's Hide block
+# tripped VHS's parser on the JSON escape sequences, so we do it
+# here just before waiting for the IPC.
+mkdir -p "$WS/.mnml"
+printf '{"workspace":"%s","open":[],"recent_files":["%s/src/lib.rs"]}\n' "$WS" "$SIBLING" > "$WS/.mnml/session.json"
 
 {
   for _ in $(seq 1 80); do
@@ -31,14 +40,27 @@ CMD="$WS/.mnml/ipc/command"
 
   # 1) open the file picker (Ctrl+P)
   echo '{"cmd":"run-command","id":"picker.files"}' >> "$CMD"
+  sleep 1.8
+
+  # 2) type the filter — letter by letter so the picker can re-rank
+  echo '{"cmd":"type","text":"l"}' >> "$CMD"
+  sleep 0.4
+  echo '{"cmd":"type","text":"i"}' >> "$CMD"
+  sleep 0.4
+  echo '{"cmd":"type","text":"b"}' >> "$CMD"
+  # Hold so the priority sort is visible: src/lib.rs (LOCAL, priority 2)
+  # is the highlighted top row even though a sibling lib.rs is seeded
+  # into recent_files as a priority-1 entry.
+  sleep 3.0
+
+  # 3) commit — opens the highlighted row.
+  echo '{"cmd":"key","key":"enter"}' >> "$CMD"
   sleep 1.5
 
-  # 2) type the filter
-  echo '{"cmd":"type","text":"lib"}' >> "$CMD"
-  sleep 2.0
-
-  # 3) commit — opens whichever item is highlighted (priority sort puts
-  #    the LOCAL src/lib.rs first)
-  echo '{"cmd":"key","key":"enter"}' >> "$CMD"
+  # Some terminals + the welcome-overlay state in the GIF run path
+  # occasionally swallow the picker's Enter before picker_accept
+  # commits the open. Defensive: explicitly open the local file
+  # afterwards so the GIF always ends on the editor showing it.
+  echo '{"cmd":"open","path":"src/lib.rs"}' >> "$CMD"
   sleep 1.5
 } >/dev/null 2>&1

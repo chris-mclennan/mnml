@@ -43,12 +43,11 @@ Type "git config user.email demo@mnml.sh && git config user.name 'mnml demo'"
 Enter
 Type "mkdir -p .mnml && touch .mnml/.welcomed"
 Enter
-# Seed recent_files with the sibling lib.rs so it shows up as a
-# cross-workspace recent (priority 1) — the local src/lib.rs from the
-# tree walk gets priority 2, and the sort keeps the local one first.
-Type "printf '{\"workspace\":\"%s\",\"open\":[],\"recent_files\":[\"%s/src/lib.rs\"]}' $MNML_DEMO $MNML_SIBLING > .mnml/session.json"
-Enter
-Type "(bash $HOME/Projects/mnml/site/src/assets/tapes/picker-workspace-affinity-workspace/drive.sh $MNML_DEMO &) 2>/dev/null"
+# Driver also seeds .mnml/session.json with the sibling lib.rs as a
+# cross-workspace recent (priority 1). The local tree walk picks up
+# the local src/lib.rs at priority 2, so the priority sort puts the
+# local file first in the picker.
+Type "(bash $HOME/Projects/mnml/site/src/assets/tapes/picker-workspace-affinity-workspace/drive.sh $MNML_DEMO $MNML_SIBLING &) 2>/dev/null"
 Enter
 Type "clear"
 Enter
@@ -65,7 +64,7 @@ Escape
 Sleep 600ms
 
 # ── all beats fire from the IPC driver ───────────────────────────────────
-Sleep 8s
+Sleep 13s
 
 # ── settle on a final frame ──────────────────────────────────────────────
 Sleep 2s

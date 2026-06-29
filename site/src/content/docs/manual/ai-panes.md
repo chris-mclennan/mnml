@@ -204,6 +204,8 @@ Scanning every `.jsonl` under `~/.claude/projects/` can take 1-2 seconds on a ma
 
 The toast fires from `App::tick` — not at `:ai.spend_today` time. The old inline-toast at fire time was always unreachable because `loading` was `true` at that point; the post-drain path makes the totals announcement land when there's actually something to announce.
 
+![:ai.spend_today opens the SpendReport pane immediately with a "· computing…" chip; the worker drains; the snapshot fills in; a "today: N sessions · $X.XXXX" toast lands at the bottom](../../../assets/tapes/spend-report-bg-thread.gif)
+
 ## Where to go next
 
 - [Editing](/manual/editing/) — vim or standard keymap; the same edits work whether you're typing into Claude or into a `.rs` file

@@ -121,6 +121,8 @@ The fuzzy file picker (`Ctrl+P`, palette **Open file**) draws from three sources
 
 The picker also filters noise paths (`.git`, `node_modules`, `target`, `.next`, `dist`, `build`) at every source, matching VS Code's default `files.exclude`. Cross-workspace items render with their absolute parent directory as the detail line, so you can still tell **which** project a same-named file came from.
 
+![Ctrl+P then "lib" — the local src/lib.rs ranks #1 even though a sibling workspace's lib.rs sits in recent_files; Enter opens the LOCAL file](../../../assets/tapes/picker-workspace-affinity.gif)
+
 To add a workspace ad-hoc (not persisted):
 
 - **`view.add_workspace`** — opens a prompt for a path; the entry vanishes on quit.

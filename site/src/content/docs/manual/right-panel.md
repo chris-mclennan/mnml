@@ -67,6 +67,8 @@ Status glyphs across all five: `…` running / asking, `●` live, `✦` done, `
 
 `Ctrl+Alt+W` deliberately steers clear of vim NORMAL's `Ctrl+W` window prefix (which would be eaten by the vim handler before reaching the global keymap) and isn't a VS Code chord for anything else, so it's safe in both input modes. The **Close other tabs** and **Close all tabs** items show up only when there are at least two tabs — the menu prunes them when there's nothing to close.
 
+![right-click an inactive tab, pick "Close other tabs" — only the right-clicked tab survives. Re-add a second tab and Ctrl+Alt+W closes the active one](../../../assets/tapes/right-panel-close-menu.gif)
+
 ### Empty state
 
 With the panel open but no pane hosted, the body paints a faint hint listing every command that routes into the panel when visible:

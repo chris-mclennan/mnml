@@ -59,7 +59,7 @@ Escape
 Sleep 600ms
 
 # ── all beats fire from the IPC driver ───────────────────────────────────
-Sleep 22s
+Sleep 23s
 
 # ── settle on a final frame ──────────────────────────────────────────────
 Sleep 2s

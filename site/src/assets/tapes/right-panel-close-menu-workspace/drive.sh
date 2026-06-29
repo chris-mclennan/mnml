@@ -107,13 +107,12 @@ click_menu_item_with_text() {
   click_menu_item_with_text "Close other tabs" 2
   sleep 2.5
 
-  # 8) bring it back to 2 tabs to demo Ctrl+Alt+W
-  echo '{"cmd":"run-command","id":"outline.show"}' >> "$CMD"
-  sleep 1.5
+  # 8) bring it back to 2 tabs to demo Ctrl+Alt+W. The previous beat
+  #    left Outline as the only tab — add Diagnostics back as tab #2.
   echo '{"cmd":"run-command","id":"lsp.diagnostics"}' >> "$CMD"
-  sleep 2.0
+  sleep 2.5
 
   # 9) view.right_panel_close_tab — what Ctrl+Alt+W fires
   echo '{"cmd":"run-command","id":"view.right_panel_close_tab"}' >> "$CMD"
-  sleep 2.0
+  sleep 2.5
 } >/dev/null 2>&1
