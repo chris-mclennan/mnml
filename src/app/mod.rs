@@ -1948,6 +1948,11 @@ pub struct PaneRects {
     /// `row_counter_idx` is the same 0-based index `settings_move_row`
     /// uses (skips section headers). Repopulated per render.
     pub settings_rows: Vec<(Rect, usize)>,
+    /// qa-6th mouse SEV-3 2026-06-29: visible Save / Cancel chips
+    /// at the bottom-right of the settings overlay so mouse-only
+    /// users can commit without typing Enter / Esc.
+    pub settings_save_button: Option<Rect>,
+    pub settings_cancel_button: Option<Rect>,
     /// GitGraph column header rects (Author / Date / SHA) — click to
     /// cycle that column's sort (asc / desc / none).
     pub git_graph_column_headers: Vec<(Rect, crate::git::graph::SortColumn)>,

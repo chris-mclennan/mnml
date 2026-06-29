@@ -519,6 +519,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             MouseEventKind::ScrollUp => app.settings_move_row(-1),
             MouseEventKind::ScrollDown => app.settings_move_row(1),
             MouseEventKind::Down(MouseButton::Left) => {
+                // qa-6th mouse SEV-3 2026-06-29: Save / Cancel chips
+                // at the bottom. Check before row clicks so the
+                // user doesn't accidentally re-focus the bottom row.
+                if let Some(rect) = app.rects.settings_save_button
+                    && crate::app::dispatch::contains(rect, x, y)
+                {
+                    app.close_settings_overlay_save();
+                    return;
+                }
+                if let Some(rect) = app.rects.settings_cancel_button
+                    && crate::app::dispatch::contains(rect, x, y)
+                {
+                    app.close_settings_overlay_cancel();
+                    return;
+                }
                 if let Some(&(_, rc_idx)) = app
                     .rects
                     .settings_rows

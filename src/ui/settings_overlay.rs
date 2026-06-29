@@ -352,20 +352,62 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // persist). Now distinguishes the two roles.
     let hint =
         "←→ adjust · ↑↓ move · Enter edit/save · r reset · R reset all · click out / Esc done";
+    // qa-6th mouse SEV-3 2026-06-29: settings overlay had no
+    // visible Save / Cancel buttons — mouse-only users had to
+    // type Enter/Esc despite the rest of the app having clickable
+    // affordances. Paint two right-aligned chips + register click
+    // rects.
+    const SAVE_CHIP: &str = " [Save] ";
+    const CANCEL_CHIP: &str = " [Cancel] ";
+    let chips_w = (SAVE_CHIP.len() + CANCEL_CHIP.len()) as u16;
+    let hint_visible_w = inner.width.saturating_sub(chips_w + 1);
     let hint_line = truncate_line_to_width(
         &Line::from(Span::styled(
             hint.to_string(),
             Style::default().fg(t.comment).add_modifier(Modifier::DIM),
         )),
-        inner.width as usize,
+        hint_visible_w as usize,
     );
     let hint_rect = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),
-        width: inner.width,
+        width: hint_visible_w,
         height: 1,
     };
     frame.render_widget(Paragraph::new(hint_line), hint_rect);
+    // Chips paint right-aligned on the same row.
+    let cancel_rect = Rect {
+        x: inner.x + inner.width.saturating_sub(CANCEL_CHIP.len() as u16),
+        y: hint_rect.y,
+        width: CANCEL_CHIP.len() as u16,
+        height: 1,
+    };
+    let save_rect = Rect {
+        x: cancel_rect.x.saturating_sub(SAVE_CHIP.len() as u16),
+        y: hint_rect.y,
+        width: SAVE_CHIP.len() as u16,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(SAVE_CHIP).style(
+            Style::default()
+                .fg(t.bg_dark)
+                .bg(t.green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        save_rect,
+    );
+    frame.render_widget(
+        Paragraph::new(CANCEL_CHIP).style(
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg2)
+                .add_modifier(Modifier::BOLD),
+        ),
+        cancel_rect,
+    );
+    app.rects.settings_save_button = Some(save_rect);
+    app.rects.settings_cancel_button = Some(cancel_rect);
 }
 
 /// Parse a 6-char `RRGGBB` hex (no `#`) into a `ratatui::Color::Rgb`.
