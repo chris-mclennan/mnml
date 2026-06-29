@@ -210,4 +210,48 @@ mod tests {
         // The cell just before the caret holds the last typed query char.
         assert_eq!(buf[(cx - 1, cy)].symbol(), "s");
     }
+
+    /// render-reviewer N-1 + drive-mnml 2026-06-28: picker detail
+    /// column used to overflow as a mid-glyph clip (`view.toggle_brack`
+    /// instead of `view.toggle_brackets`). The fix added a budget-
+    /// aware `…` cap. Lock the cap so a future refactor can't
+    /// regress.
+    #[test]
+    fn picker_detail_truncates_with_ellipsis_when_overflow() {
+        let ws = std::env::temp_dir();
+        let mut app = App::new(ws, crate::config::Config::default()).unwrap();
+        let picker = Picker::new(
+            PickerKind::Commands,
+            "Command palette",
+            vec![PickerItem::new(
+                "view.toggle_brackets",
+                "T",
+                "view.toggle_brackets_very_long_detail_string",
+            )],
+        );
+        app.picker = Some(picker);
+
+        // 40-cell width — too narrow for the full detail.
+        let mut term = Terminal::new(TestBackend::new(40, 10)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let buf = term.backend().buffer();
+
+        // Scan all rows for "…" — if the cap fired we should see one.
+        let mut found_ellipsis = false;
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                if buf[(x, y)].symbol() == "…" {
+                    found_ellipsis = true;
+                }
+            }
+        }
+        assert!(
+            found_ellipsis,
+            "expected `…` truncation marker when detail overflows row width"
+        );
+
+        // The last few cells of any row must NOT be a non-… char
+        // that's a continuation of the detail. (Soft check — the
+        // explicit assertion above is the hard one.)
+    }
 }
