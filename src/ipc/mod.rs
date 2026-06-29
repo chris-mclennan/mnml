@@ -223,21 +223,17 @@ pub struct Ipc {
     /// Bytes already consumed from `command`.
     cmd_offset: u64,
     /// True once a final "exit" event has been written (by
-    /// headless::run on the happy path). `Drop` reads this to
-    /// decide whether to emit a shutdown death certificate —
-    /// nvchad-user 2026-06-28 SEV-1 fix for the silent-exit bug.
-    /// Without this, a panic / map_err exit in the headless loop
-    /// vanishes without leaving any breadcrumb in events.jsonl
-    /// and the host hangs waiting for state changes from a
-    /// corpse.
+    /// headless::run on the happy path OR on signal-induced
+    /// shutdown via the signal-hook handler in headless::run).
+    /// `Drop` reads this to decide whether to emit an
+    /// "unexpected" shutdown death certificate — covers panic-
+    /// unwind and Err-propagation cases where the loop exits
+    /// without emitting an event first.
     ///
-    /// LIMITATION (qa-5th 2026-06-29): Drop runs on stdlib
-    /// panic-unwind and happy-path exit but NOT on signal-induced
-    /// terminations (SIGTERM / SIGKILL / abort). Adding signal-
-    /// handler coverage requires either the `signal-hook` crate
-    /// or direct libc FFI; deferred to avoid adding a dep this
-    /// session. Hosts that need SIGTERM-safe detection should
-    /// also watch the process via `ps -p` or `wait()`.
+    /// Signal coverage: SIGTERM / SIGINT / SIGHUP write an
+    /// `"event":"exit","reason":"signal"` line. SIGKILL and
+    /// `abort()` remain uncatchable by design (no Rust-runnable
+    /// code can race the kernel).
     exit_event_written: std::sync::atomic::AtomicBool,
 }
 

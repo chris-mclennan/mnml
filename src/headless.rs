@@ -25,9 +25,42 @@ pub fn run(mut app: App) -> Result<bool, String> {
         ipc.dir().display().to_string()
     ));
 
+    // qa-5th 2026-06-29 SEV-2: install a SIGTERM/SIGINT/SIGHUP
+    // signal handler so the host gets a death certificate even
+    // when the process is killed externally (kill -TERM, Ctrl+C
+    // on the controlling terminal, parent shell exits, etc.).
+    // signal-hook only sets a flag — the AS-safe contract — and
+    // the main loop polls + emits the shutdown event before
+    // exiting cleanly. SIGKILL remains uncatchable by design.
+    let sigterm_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let signals_registered = {
+        let mut any_err = false;
+        for sig in [
+            signal_hook::consts::SIGTERM,
+            signal_hook::consts::SIGINT,
+            signal_hook::consts::SIGHUP,
+        ] {
+            if signal_hook::flag::register(sig, sigterm_flag.clone()).is_err() {
+                any_err = true;
+            }
+        }
+        !any_err
+    };
+    if !signals_registered {
+        ipc.append_event(
+            r#"{"event":"warn","note":"signal-hook register failed; SIGTERM won't emit death certificate"}"#,
+        );
+    }
+
     app.run_startup_tasks();
 
     loop {
+        if sigterm_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            ipc.append_event(
+                r#"{"event":"exit","reason":"signal","note":"SIGTERM/SIGINT/SIGHUP — early exit"}"#,
+            );
+            return Ok(false);
+        }
         app.tick();
         // Chord-chain timeout fallback — same call the terminal loop
         // makes between tick() and draw(). Without this, a `Ctrl+K`

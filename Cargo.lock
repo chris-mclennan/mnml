@@ -2166,6 +2166,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "signal-hook",
  "tempfile",
  "toml",
  "tree-sitter",
