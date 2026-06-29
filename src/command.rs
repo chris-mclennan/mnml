@@ -4714,6 +4714,68 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.close_active_pane(),
         },
+        // qa-6th keyboard SEV-2 2026-06-29: Shift+F10 chip-menu
+        // fallback required `hover_chip` to be set within 2s, but
+        // hover_chip only fires on mouse movement — keyboard
+        // purists could never reach these menus. These palette
+        // commands fire each statusline chip's menu directly,
+        // anchored at the chip's screen position.
+        Command {
+            id: "statusline.mode_menu",
+            title: "Statusline: open mode chip menu (vim / standard)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let anchor = app
+                    .rects
+                    .statusline_mode_chip
+                    .map(|r| (r.x, r.y.saturating_sub(1)))
+                    .unwrap_or((0, 0));
+                app.open_statusline_mode_context_menu(anchor);
+            },
+        },
+        Command {
+            id: "statusline.workspace_menu",
+            title: "Statusline: open workspace chip menu",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let anchor = app
+                    .rects
+                    .statusline_workspace_chip
+                    .map(|r| (r.x, r.y.saturating_sub(1)))
+                    .unwrap_or((0, 0));
+                app.open_statusline_workspace_context_menu(anchor);
+            },
+        },
+        Command {
+            id: "statusline.branch_menu",
+            title: "Statusline: open branch chip menu",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let anchor = app
+                    .rects
+                    .statusline_branch_chip
+                    .map(|r| (r.x, r.y.saturating_sub(1)))
+                    .unwrap_or((0, 0));
+                app.open_statusline_branch_context_menu(anchor);
+            },
+        },
+        Command {
+            id: "statusline.clock_menu",
+            title: "Statusline: open clock chip menu (local ⇄ UTC)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let anchor = app
+                    .rects
+                    .statusline_clock_chip
+                    .map(|r| (r.x, r.y.saturating_sub(1)))
+                    .unwrap_or((0, 0));
+                app.open_statusline_clock_context_menu(anchor);
+            },
+        },
     ];
     // Bitbucket panes moved to mnml-forge-bitbucket — the entire
     // bitbucket.* command surface was removed alongside the panes.
