@@ -131,7 +131,11 @@ pub fn collect_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usi
 fn snap_to_char_boundary(text: &str, byte: usize) -> usize {
     let byte = byte.min(text.len());
     // text.is_char_boundary(text.len()) is always true; this loop
-    // terminates by byte == 0 at the latest.
+    // terminates by byte == 0 at the latest. UTF-8 chars are at
+    // most 4 bytes wide, so this scans at most 3 steps backward
+    // — O(1) in practice despite the unbounded-looking range.
+    // code-reviewer 3rd 2026-06-29 N-2: comment-clarifies the
+    // false-alarm O(n) read.
     (0..=byte)
         .rev()
         .find(|&b| text.is_char_boundary(b))

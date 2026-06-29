@@ -194,6 +194,14 @@ impl SpendSortKey {
 // Clone so the unrelated callers (test helpers) that clone panes
 // can still do so — the cloned report just won't have an active
 // background worker (treated as not-loading).
+//
+// code-reviewer 3rd 2026-06-29 W-2: WARNING — Pane itself does
+// not currently derive Clone, so this impl is unreachable today.
+// Kept defensively in case someone adds #[derive(Clone)] to Pane
+// later. CLONING DROPS THE PENDING RECEIVER: the cloned pane
+// silently shows stale data forever with no spinner. If you do
+// add Pane: Clone, ALSO call `.refresh()` on the cloned
+// SpendReportPane to start a fresh worker.
 impl Clone for SpendReportPane {
     fn clone(&self) -> Self {
         Self {

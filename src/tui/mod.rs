@@ -268,7 +268,16 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
     // `File`, `f`; etc. Matching the first alpha char (instead of
     // strictly the first char) lets the brand menu have an Alt
     // shortcut too, despite leading with a non-alpha prompt mark.
+    //
+    // input-handler-reviewer 2026-06-29 SEV-2: must NOT match
+    // Ctrl+Alt+<letter> — those are global chords (Ctrl+Alt+W
+    // closes right-panel tab, etc.) that the chord layer claims.
+    // `modifiers.contains(ALT)` is a subset check, so without the
+    // explicit `!contains(CONTROL)` exclusion, Ctrl+Alt+W was
+    // being consumed by the menu-bar accelerator (matching 'W' →
+    // Window menu) before reaching dispatch_chord_chain.
     if key.modifiers.contains(KeyModifiers::ALT)
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
         && let KeyCode::Char(ch) = key.code
     {
         let ch_lower = ch.to_ascii_lowercase();

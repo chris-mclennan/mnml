@@ -806,20 +806,27 @@ impl App {
                 }
             }
             CloseOtherRightPanelTabs(keep_idx) => {
-                // Snapshot panes-to-close first; closing mutates
-                // right_panel_panes (indices shift).
-                let to_close: Vec<usize> = self
+                // code-reviewer W-1 2026-06-29 SEV-2: close_pane
+                // calls remove_pane_storage which SHIFTS every PaneId
+                // above the removed slot down by 1 across the whole
+                // arena. Iterating ascending closes the wrong pane on
+                // the second iteration. Sort DESCENDING so each
+                // close removes a slot above all remaining targets.
+                let mut to_close: Vec<usize> = self
                     .right_panel_panes
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &pid)| (i != keep_idx).then_some(pid))
                     .collect();
+                to_close.sort_unstable_by(|a, b| b.cmp(a));
                 for pid in to_close {
                     self.close_pane(pid);
                 }
             }
             CloseAllRightPanelTabs => {
-                let to_close: Vec<usize> = self.right_panel_panes.clone();
+                // Same arena-shift fix as CloseOtherRightPanelTabs.
+                let mut to_close: Vec<usize> = self.right_panel_panes.clone();
+                to_close.sort_unstable_by(|a, b| b.cmp(a));
                 for pid in to_close {
                     self.close_pane(pid);
                 }

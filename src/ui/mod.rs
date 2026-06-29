@@ -1023,48 +1023,48 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     Style::default().fg(t.comment).bg(t.bg_darker),
                 )),
             ];
+            // render-reviewer 3rd 2026-06-29 SEV-2 W-2: disable
+            // wrapping. At rpa.width 16–18 the "Nothing here yet."
+            // prose line word-wraps to 2 rows, shifting every
+            // command's row out of sync with its click rect. With
+            // wrap off, lines overflow to a horizontal-clip but the
+            // y mapping stays stable.
             frame.render_widget(
                 ratatui::widgets::Paragraph::new(lines)
-                    .style(Style::default().bg(t.bg_darker))
-                    .wrap(ratatui::widgets::Wrap { trim: false }),
+                    .style(Style::default().bg(t.bg_darker)),
                 hint_rect,
             );
-            // mouse-polish F-2 — register click rects so a
-            // mouse-first user can populate the panel without
-            // typing. design-critic 2026-06-28 #3: extended to all
-            // 5 routable commands. Row mapping mirrors the lines
-            // vec above: 0 prose, 1 blank, 2-6 cmds, 7 blank, 8
-            // hide-hint.
-            app.rects.right_panel_empty_outline = Some(Rect {
-                x: hint_rect.x,
-                y: hint_rect.y + 2,
-                width: 13.min(hint_rect.width),
-                height: 1,
-            });
-            app.rects.right_panel_empty_diagnostics = Some(Rect {
-                x: hint_rect.x,
-                y: hint_rect.y + 3,
-                width: 16.min(hint_rect.width),
-                height: 1,
-            });
-            app.rects.right_panel_empty_ai = Some(Rect {
-                x: hint_rect.x,
-                y: hint_rect.y + 4,
-                width: 8.min(hint_rect.width),
-                height: 1,
-            });
-            app.rects.right_panel_empty_grep = Some(Rect {
-                x: hint_rect.x,
-                y: hint_rect.y + 5,
-                width: 10.min(hint_rect.width),
-                height: 1,
-            });
-            app.rects.right_panel_empty_test = Some(Rect {
-                x: hint_rect.x,
-                y: hint_rect.y + 6,
-                width: 9.min(hint_rect.width),
-                height: 1,
-            });
+            // mouse-polish F-2 — register click rects so a mouse-
+            // first user can populate the panel without typing.
+            // design-critic 2026-06-28 #3: extended to all 5
+            // routable commands.
+            //
+            // render-reviewer 3rd 2026-06-29 SEV-2 W-1: gate each
+            // rect on the rendered y being INSIDE rpa, otherwise
+            // a click in the statusline column (same x-range, but
+            // below the panel) fires the empty-state command.
+            // panel_bottom = rpa.y + rpa.height; row y is OK iff
+            // y < panel_bottom.
+            let panel_bottom = rpa.y.saturating_add(rpa.height);
+            let row_in_panel = |y: u16| y < panel_bottom;
+            let rect_at = |y_offset: u16, width: u16| -> Option<Rect> {
+                let y = hint_rect.y.saturating_add(y_offset);
+                if row_in_panel(y) {
+                    Some(Rect {
+                        x: hint_rect.x,
+                        y,
+                        width: width.min(hint_rect.width),
+                        height: 1,
+                    })
+                } else {
+                    None
+                }
+            };
+            app.rects.right_panel_empty_outline = rect_at(2, 13);
+            app.rects.right_panel_empty_diagnostics = rect_at(3, 16);
+            app.rects.right_panel_empty_ai = rect_at(4, 8);
+            app.rects.right_panel_empty_grep = rect_at(5, 10);
+            app.rects.right_panel_empty_test = rect_at(6, 9);
         } else {
             app.rects.right_panel_empty_outline = None;
             app.rects.right_panel_empty_diagnostics = None;

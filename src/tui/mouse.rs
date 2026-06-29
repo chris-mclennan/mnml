@@ -80,6 +80,17 @@ pub(crate) fn coalesce_scroll(first: &MouseEvent) -> std::io::Result<Option<Mous
             other => {
                 COALESCE_LEFTOVER.with(|s| {
                     let mut slot = s.borrow_mut();
+                    // code-reviewer 3rd 2026-06-29 N-1: the main
+                    // event loop drains the slot via
+                    // take_coalesce_leftover before any next call
+                    // back into coalesce_scroll. Assert in debug
+                    // builds so a future refactor that calls
+                    // coalesce_scroll twice without draining doesn't
+                    // silently drop the first leftover.
+                    debug_assert!(
+                        slot.is_none(),
+                        "COALESCE_LEFTOVER was not drained before re-stashing"
+                    );
                     *slot = Some(other);
                 });
                 break;
