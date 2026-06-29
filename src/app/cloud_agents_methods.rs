@@ -1244,19 +1244,45 @@ impl App {
             ClaudeAgentsAction::KillPrompt => {
                 // Batch mode: if any rows are multi-selected, kill
                 // them all (after one confirm prompt).
-                let batch: Vec<(String, u32)> =
+                // claude-agents 2026-06-28 findings 2+3: count the
+                // multi-selected set's TOTAL size (live + ended)
+                // even though we only kill the live ones. The
+                // confirm prompt now reads "kill N of M selected"
+                // so the user understands ended sessions are
+                // skipped, instead of seeing the chip say ☑5 then
+                // the prompt say "SIGTERM 2 sessions" (silent loss
+                // of 3 from the count).
+                let (batch, total_selected): (Vec<(String, u32)>, usize) =
                     if let Some(Pane::ClaudeAgents(pane)) = self.panes.get(i) {
-                        pane.multi_selected_pids()
+                        (pane.multi_selected_pids(), pane.multi_selected.len())
                     } else {
-                        Vec::new()
+                        (Vec::new(), 0)
                     };
+                // Finding #2: when the user multi-selected sessions
+                // but they're ALL ended (batch empty, total > 0),
+                // tell them — don't silently fall through to the
+                // single-row "no PID" toast.
+                if batch.is_empty() && total_selected > 0 {
+                    self.toast(format!(
+                        "all {total_selected} selected sessions already ended — nothing to kill"
+                    ));
+                    return;
+                }
                 if !batch.is_empty() {
                     self.pending_kill_batch = batch.clone();
                     self.pending_kill_pid = None;
                     let n = batch.len();
+                    let prompt_text = if n == total_selected {
+                        format!("type 'kill' to SIGTERM {n} selected session(s)")
+                    } else {
+                        let skipped = total_selected - n;
+                        format!(
+                            "type 'kill' to SIGTERM {n} of {total_selected} selected ({skipped} ended, skipped)"
+                        )
+                    };
                     self.prompt = Some(crate::prompt::Prompt::new(
                         crate::prompt::PromptKind::ClaudeKillConfirm,
-                        format!("type 'kill' to SIGTERM {n} selected session(s)"),
+                        prompt_text,
                     ));
                     return;
                 }

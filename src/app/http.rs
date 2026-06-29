@@ -1514,10 +1514,14 @@ impl App {
     /// Phase 3 polish of the rqst→mnml port-back.
     pub fn http_edit_env_open(&mut self) {
         use crate::picker::{Picker, PickerItem, PickerKind};
-        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
-            .name()
-            .map(str::to_string)
-            .unwrap_or_else(|| "dev".to_string());
+        let env_name = crate::http::template::EnvSet::select_with_config_default(
+            &self.workspace,
+            None,
+            self.config.http.default_env.as_deref(),
+        )
+        .name()
+        .map(str::to_string)
+        .unwrap_or_else(|| "dev".to_string());
         // 2026-06-19 — api-workflow-user SEV-3: read BOTH .rqst/
         // and .mnml/ env files so keys exclusive to .mnml/ surface
         // in the picker. `.mnml/` wins same-key (matches EnvSet::
@@ -1574,10 +1578,14 @@ impl App {
             ));
             return;
         }
-        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
-            .name()
-            .map(str::to_string)
-            .unwrap_or_else(|| "dev".to_string());
+        let env_name = crate::http::template::EnvSet::select_with_config_default(
+            &self.workspace,
+            None,
+            self.config.http.default_env.as_deref(),
+        )
+        .name()
+        .map(str::to_string)
+        .unwrap_or_else(|| "dev".to_string());
         // 2026-06-19 — api-workflow third hunt SEV-2: previously
         // seeded the prompt from a hardcoded `.rqst/env/` path, so
         // a key whose `.mnml/` value was shown in the picker would
@@ -1662,10 +1670,14 @@ impl App {
     /// contains the key; new keys go to `.mnml/` (the preferred
     /// mnml-native location).
     fn write_env_var(&mut self, key: &str, value: &str) {
-        let env_name = crate::http::template::EnvSet::select(&self.workspace, None)
-            .name()
-            .map(str::to_string)
-            .unwrap_or_else(|| "dev".to_string());
+        let env_name = crate::http::template::EnvSet::select_with_config_default(
+            &self.workspace,
+            None,
+            self.config.http.default_env.as_deref(),
+        )
+        .name()
+        .map(str::to_string)
+        .unwrap_or_else(|| "dev".to_string());
         let mnml_path = self
             .workspace
             .join(".mnml")
@@ -1818,7 +1830,11 @@ impl App {
             }
         };
         let script = http::script::parse(&text);
-        let mut env = EnvSet::select(&self.workspace, None);
+        let mut env = EnvSet::select_with_config_default(
+            &self.workspace,
+            None,
+            self.config.http.default_env.as_deref(),
+        );
         http::script::apply_pre(&script, &mut request, &mut env);
         request.url = http::template::expand(&request.url, &env);
         for (_, v) in request.headers.iter_mut() {
@@ -2307,7 +2323,11 @@ impl App {
             }
         };
         let script = http::script::parse(&script_src);
-        let mut env = EnvSet::select(&self.workspace, None);
+        let mut env = EnvSet::select_with_config_default(
+            &self.workspace,
+            None,
+            self.config.http.default_env.as_deref(),
+        );
         http::script::apply_pre(&script, &mut request, &mut env);
         request.url = http::template::expand(&request.url, &env);
         for (_, v) in request.headers.iter_mut() {
@@ -2922,7 +2942,11 @@ impl App {
                 }
             };
         let script = http::script::parse(&script_src);
-        let mut env = EnvSet::select(&self.workspace, None);
+        let mut env = EnvSet::select_with_config_default(
+            &self.workspace,
+            None,
+            self.config.http.default_env.as_deref(),
+        );
         http::script::apply_pre(&script, &mut request, &mut env);
         request.url = http::template::expand(&request.url, &env);
         for (_, v) in &mut request.headers {

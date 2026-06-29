@@ -64,9 +64,31 @@ impl EnvSet {
     ///      gets `dev` selected without re-configuring)
     /// `None`/empty ⇒ empty set.
     pub fn select(workspace: &Path, explicit: Option<&str>) -> Self {
+        Self::select_with_config_default(workspace, explicit, None)
+    }
+
+    /// Same as [`Self::select`] but takes a `config_default` (the
+    /// mnml-native `[http] default_env = "..."` key). Selection
+    /// precedence:
+    ///   1. explicit (`--env NAME`)
+    ///   2. `$MNML_ENV`
+    ///   3. `config_default` (workspace `.mnml/config.toml` or
+    ///      `~/.config/mnml/config.toml`'s `[http] default_env`)
+    ///   4. legacy `<workspace>/.rqst/config` `default_env=…`
+    ///
+    /// api 2nd 2026-06-28 SEV-3d — added the per-workspace TOML
+    /// config path so `$MNML_ENV` (process-wide, shared across
+    /// every shell tab) isn't the only way to set an env outside
+    /// the legacy `.rqst/config`.
+    pub fn select_with_config_default(
+        workspace: &Path,
+        explicit: Option<&str>,
+        config_default: Option<&str>,
+    ) -> Self {
         let name = explicit
             .map(str::to_string)
             .or_else(|| std::env::var("MNML_ENV").ok())
+            .or_else(|| config_default.map(str::to_string))
             .or_else(|| read_rqst_config_default_env(workspace))
             .filter(|s| !s.trim().is_empty());
         match name {

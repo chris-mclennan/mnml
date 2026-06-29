@@ -1664,8 +1664,24 @@ pub struct LifetimeTotals {
 /// Tail-parse the .jsonl file. Reads up to the last 256KB and walks
 /// every fully-terminated line backward.
 fn parse_tail(path: &std::path::Path) -> TailStats {
+    parse_stats(path, Some(256 * 1024))
+}
+
+/// claude-agents 2026-06-28 finding 1: spend_today undercounts on
+/// long sessions because parse_tail truncates to 256KB. For the
+/// spend-today path we read the whole file so the token totals
+/// match the sum of every assistant event.
+fn parse_full(path: &std::path::Path) -> TailStats {
+    parse_stats(path, None)
+}
+
+fn parse_stats(path: &std::path::Path, cap: Option<usize>) -> TailStats {
     let mut stats = TailStats::default();
-    let Ok(text) = read_tail(path, 256 * 1024) else {
+    let read_result = match cap {
+        Some(c) => read_tail(path, c),
+        None => std::fs::read_to_string(path),
+    };
+    let Ok(text) = read_result else {
         return stats;
     };
     let lines: Vec<&str> = text.lines().collect();
@@ -2399,7 +2415,10 @@ pub fn spend_today() -> SpendToday {
                 if mt < cutoff {
                     continue;
                 }
-                let stats = parse_tail(&fp);
+                // claude-agents finding 1: read the WHOLE file so a
+                // 4-hour Opus session's token total isn't truncated
+                // at the 256KB tail boundary.
+                let stats = parse_full(&fp);
                 let cost = stats
                     .model
                     .as_deref()

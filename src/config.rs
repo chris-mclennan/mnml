@@ -39,6 +39,10 @@ pub struct Config {
     /// `[ai]` / `[tools]` — raw tables, validated by the AI track later.
     pub ai: toml::Value,
     pub tools: toml::Value,
+    /// `[http]` config table. api 2nd 2026-06-28 SEV-3d added
+    /// `default_env` (mnml-native equivalent of `.rqst/config`'s
+    /// `default_env=…`). Other HTTP-track keys grow here later.
+    pub http: HttpConfig,
     /// `[tasks.<name>]` — named shell commands openable in a pty pane (`task.run`).
     pub tasks: BTreeMap<String, TaskDef>,
     /// `[startup] tasks = [...]` — task names auto-run in pty panes on workspace open.
@@ -204,6 +208,15 @@ pub struct TaskDef {
     pub cmd: String,
     /// Working directory — relative paths are resolved against the workspace; `None` ⇒ workspace.
     pub cwd: Option<String>,
+}
+
+/// `[http]` config table. api 2nd 2026-06-28 SEV-3d.
+#[derive(Debug, Clone, Default)]
+pub struct HttpConfig {
+    /// `[http] default_env = "staging"` — when unset, EnvSet::select
+    /// falls through to `$MNML_ENV` and then `.rqst/config`. Empty
+    /// strings ignored.
+    pub default_env: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1168,6 +1181,7 @@ impl Default for Config {
             lsp: BTreeMap::new(),
             ai: toml::Value::Table(Default::default()),
             tools: toml::Value::Table(Default::default()),
+            http: HttpConfig::default(),
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
             default_workspace: None,
@@ -1203,6 +1217,8 @@ struct RawConfig {
     ai: Option<toml::Value>,
     #[serde(default)]
     tools: Option<toml::Value>,
+    #[serde(default)]
+    http: RawHttp,
     #[serde(default)]
     tasks: BTreeMap<String, RawTask>,
     #[serde(default)]
@@ -1244,6 +1260,12 @@ struct RawCi {
     provider: Option<String>,
     project: Option<String>,
     region: Option<String>,
+}
+
+/// `[http]` raw table (api 2nd 2026-06-28 SEV-3d).
+#[derive(Debug, Default, Deserialize)]
+struct RawHttp {
+    default_env: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1747,6 +1769,12 @@ impl Config {
         }
         if let Some(v) = raw.tools {
             self.tools = v;
+        }
+        if let Some(name) = raw.http.default_env {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                self.http.default_env = Some(trimmed.to_string());
+            }
         }
         for (k, v) in raw.tasks {
             self.tasks.insert(
