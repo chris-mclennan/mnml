@@ -82,12 +82,13 @@ impl App {
                     .filter_map(|pid| match self.panes.get(*pid) {
                         Some(Pane::Outline(_)) => Some("outline".to_string()),
                         Some(Pane::Diagnostics(_)) => Some("diagnostics".to_string()),
-                        // Tests/Grep restoration: just re-host an
-                        // empty pane on re-open. The user can re-fire
-                        // the run/query. v5 right-panel pluggable
-                        // hosts (Tests + Grep).
-                        Some(Pane::Tests(_)) => Some("tests".to_string()),
-                        Some(Pane::Grep(_)) => Some("grep".to_string()),
+                        // code-reviewer W-1 2026-06-28: Tests + Grep
+                        // are NOT serialised. Restoring them would
+                        // mean either an idle placeholder (confusing)
+                        // or auto-re-running on every startup
+                        // (intrusive). User re-fires explicitly. AI
+                        // already skipped (live state + auth). Was
+                        // previously saved-but-dropped — bad UX.
                         _ => None,
                     })
                     .collect(),

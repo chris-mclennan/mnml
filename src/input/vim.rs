@@ -2318,11 +2318,16 @@ impl VimInputHandler {
             }
             // `[` / `]` — bracket prefix for jump-to-prev / jump-to-next
             // chords (`[c` / `]c` git hunks; `[d` / `]d` diagnostics).
-            KeyCode::Char('[') => {
+            // nvchad-user SEV-2 2026-06-28: only consume the bare
+            // bracket, not Ctrl+Shift+[ / Ctrl+Shift+] — those are
+            // editor.toggle_fold / editor.unfold_all chords that
+            // need to reach the chord-chain layer or fall through
+            // to the global keymap.
+            KeyCode::Char('[') if !ctrl => {
                 self.prefix = Prefix::BracketOpen;
                 InputResult::Consumed
             }
-            KeyCode::Char(']') => {
+            KeyCode::Char(']') if !ctrl => {
                 self.prefix = Prefix::BracketClose;
                 InputResult::Consumed
             }

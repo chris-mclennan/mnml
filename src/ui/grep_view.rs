@@ -31,7 +31,11 @@ pub fn draw(
         Paragraph::new("").style(Style::default().bg(t.bg_dark)),
         area,
     );
-    app.rects.editor_panes.push((area, pane_id));
+    // render-reviewer 2026-06-28 SEV-2: same as diagnostics_view —
+    // skip editor_panes when hosted in right panel.
+    if !app.right_panel_panes.contains(&pane_id) {
+        app.rects.editor_panes.push((area, pane_id));
+    }
 
     // Reserve scrollbar column. Distinguish Grep vs Quickfix BEFORE
     // taking the mutable borrow on the pane (the dispatcher kind tag

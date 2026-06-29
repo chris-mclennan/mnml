@@ -32,7 +32,15 @@ pub fn draw(
         Paragraph::new("").style(Style::default().bg(t.bg_dark)),
         area,
     );
-    app.rects.editor_panes.push((area, pane_id));
+    // render-reviewer 2026-06-28 SEV-2: skip the editor_panes
+    // push when this pane is hosted in the right panel — the
+    // mouse layer uses editor_panes for LSP hover / ctrl-click
+    // goto / middle-click paste, none of which make sense for a
+    // diagnostics list. List-row hits go through `list_rows`
+    // which is checked first.
+    if !app.right_panel_panes.contains(&pane_id) {
+        app.rects.editor_panes.push((area, pane_id));
+    }
 
     // Reserve a 1-cell scrollbar on the right edge when the pane is
     // wide enough. Track + thumb only — no change markers.

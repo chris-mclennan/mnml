@@ -4890,6 +4890,23 @@ impl App {
         self.active_pane_mut().and_then(Pane::as_editor_mut)
     }
 
+    /// multilang 3rd 2026-06-28 SEV-2: in a monorepo, runner
+    /// commands need to find the editor's parent dir even when
+    /// the active pane is a pty (a prior `npm.test` run took
+    /// focus). Walk `self.panes` for the most recent Editor pane;
+    /// active editor wins if there is one.
+    pub fn most_recent_editor_path(&self) -> Option<&std::path::Path> {
+        if let Some(b) = self.active_editor()
+            && let Some(p) = b.path.as_deref()
+        {
+            return Some(p);
+        }
+        self.panes
+            .iter()
+            .rev()
+            .find_map(|p| p.as_editor().and_then(|b| b.path.as_deref()))
+    }
+
     /// Open a scratch buffer pre-seeded with `text` in a horizontal split
     /// below the active leaf. `_title` is decorative — scratch buffers
     /// have no path. Used by `:Capture <cmd>` to surface command output.

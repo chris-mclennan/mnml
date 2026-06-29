@@ -1776,6 +1776,13 @@ impl App {
         if let Some(b) = self.active_editor_mut() {
             b.editor.place_cursor(target_row, 0);
         }
+        // input-handler-reviewer W-2 2026-06-28: programmatic
+        // cursor jumps need to scroll the viewport — without
+        // reveal_pane, jumping to a block above/below the
+        // current viewport leaves the cursor offscreen.
+        if let Some(id) = self.active {
+            self.reveal_pane(id);
+        }
     }
 
     /// `http.lookup` — open the lookup picker (stage 1: pick a
@@ -4201,23 +4208,30 @@ impl App {
                     return;
                 }
             };
-            let Some(new_text) =
+            // http-2nd 2026-06-28 SEV-2: splice_http_block returns
+            // None when blocks.len() < 2 (single-block file). The
+            // old gate `source_block_name.is_some()` skipped the
+            // splice for single-block sources; removing it (5020def)
+            // for leading-block correctness made single-block .http
+            // saves error-toast instead of falling through. If the
+            // file is multi-block, splice returns Some; if it's
+            // single-block, splice returns None and we fall through
+            // to the whole-file overwrite below.
+            if let Some(new_text) =
                 splice_http_block(&existing, source_block_name.as_deref(), &http_block)
-            else {
-                self.toast(
-                    "can't locate the source block (file changed?) — re-fire from the editor to refresh",
-                );
-                return;
-            };
-            match std::fs::write(&path, &new_text) {
-                Ok(()) => {
-                    let rel = rel_path(&self.workspace, &path);
-                    self.toast(format!("saved block → {rel}"));
-                    self.git.refresh();
+            {
+                match std::fs::write(&path, &new_text) {
+                    Ok(()) => {
+                        let rel = rel_path(&self.workspace, &path);
+                        self.toast(format!("saved block → {rel}"));
+                        self.git.refresh();
+                    }
+                    Err(e) => self.toast(format!("save failed: {e}")),
                 }
-                Err(e) => self.toast(format!("save failed: {e}")),
+                return;
             }
-            return;
+            // Single-block .http/.rest — splice returned None
+            // because blocks.len() < 2. Fall through to overwrite.
         }
         // Single-block source (`.curl`, or `.http` whose only block is the
         // one we're saving): overwrite with the curl one-liner. Same as the

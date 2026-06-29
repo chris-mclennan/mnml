@@ -274,7 +274,12 @@ pub fn draw(
         Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
         area,
     );
-    app.rects.editor_panes.push((area, pane_id));
+    // render-reviewer 2026-06-28 SEV-2: skip editor_panes when
+    // hosted in right panel (same fix as diagnostics_view +
+    // grep_view).
+    if !app.right_panel_panes.contains(&pane_id) {
+        app.rects.editor_panes.push((area, pane_id));
+    }
     if sb_w > 0 {
         crate::ui::scrollbar::paint_simple_scrollbar(frame, sb_area, &t, total_rows, h, scroll);
         app.rects.scrollbars.push(crate::app::ScrollbarHit {

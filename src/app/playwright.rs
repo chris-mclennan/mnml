@@ -398,9 +398,14 @@ impl App {
         // instead of in the user's currently-edited package. Walk
         // from the ACTIVE editor's directory first when there's an
         // open file; fall back to workspace for non-pane focus.
+        // multilang 3rd 2026-06-28 SEV-2: use most_recent_editor_path,
+        // not just active_editor. After the first runner command opens
+        // a pty pane (npm.test → pty pane → app.active = pty), the
+        // active_editor returns None and a follow-up runner command
+        // would fall back to self.workspace, losing the monorepo
+        // sub-package context.
         let start_dir = self
-            .active_editor()
-            .and_then(|b| b.path.as_ref())
+            .most_recent_editor_path()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.workspace.clone());

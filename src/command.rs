@@ -1741,17 +1741,40 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "nav.back",
-            title: "Go back (previous cursor / file)",
+            title: "Go back (previous cursor / file; in Browser pane: history.back)",
             group: "go",
             keys: &["alt+left"],
-            run: |app| app.nav_back_jump(),
+            // input-handler-reviewer 2026-06-28 SEV-1: Alt+Left
+            // had two homes — global nav.back here and a browser
+            // arm in pane.rs:565 — the chord layer fired this one
+            // first, so the browser arm was dead code. Route by
+            // active-pane type from a single home.
+            run: |app| {
+                if matches!(
+                    app.active.and_then(|i| app.panes.get(i)),
+                    Some(crate::pane::Pane::Browser(_))
+                ) {
+                    app.browser_back();
+                } else {
+                    app.nav_back_jump();
+                }
+            },
         },
         Command {
             id: "nav.forward",
-            title: "Go forward (undo an Alt+Left)",
+            title: "Go forward (undo an Alt+Left; in Browser pane: history.forward)",
             group: "go",
             keys: &["alt+right"],
-            run: |app| app.nav_forward_jump(),
+            run: |app| {
+                if matches!(
+                    app.active.and_then(|i| app.panes.get(i)),
+                    Some(crate::pane::Pane::Browser(_))
+                ) {
+                    app.browser_forward();
+                } else {
+                    app.nav_forward_jump();
+                }
+            },
         },
         Command {
             id: "focus.cycle",

@@ -960,6 +960,19 @@ pub fn rects_dump_json(app: &App) -> String {
     );
     one!("right_panel_edge", app.rects.right_panel_edge);
     one!("right_panel_close", app.rects.right_panel_close);
+    // vscode-user 2nd 2026-06-28 SEV-2: the empty-state click
+    // targets were registered in app.rects + handled in mouse.rs
+    // but never dumped to rects.json, so a headless / IPC-driven
+    // user couldn't actually click them deterministically. (The
+    // real mouse path always worked.)
+    one!(
+        "right_panel_empty_outline",
+        app.rects.right_panel_empty_outline
+    );
+    one!(
+        "right_panel_empty_diagnostics",
+        app.rects.right_panel_empty_diagnostics
+    );
     one!(
         "bufferline_new_tab_button",
         app.rects.bufferline_new_tab_button

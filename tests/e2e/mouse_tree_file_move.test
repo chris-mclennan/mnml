@@ -6,9 +6,11 @@ write aa.txt aa-content
 open aa.txt
 command tree.refresh
 
-# Rail: row 1 = workspace header, row 2 = sub/ (folder), row 3 = aa.txt.
-# Drag aa.txt (row 3) up onto the sub/ folder row (row 2) → move prompt.
-drag 7 3 7 2
+# After tree.refresh, ac96648 auto-expands top-level dirs, so the rail is
+# now: row 1 = workspace header, row 2 = sub/ (open), row 3 = cc.txt
+# (inside sub/), row 4 = aa.txt. Drag aa.txt (row 4) up onto sub/ (row 2)
+# → move prompt. multilang 2026-06-28 SEV-2 fix.
+drag 7 4 7 2
 expect screen contains "Move to"
 key enter
 expect file sub/aa.txt contains "aa-content"
