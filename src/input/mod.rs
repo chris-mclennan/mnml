@@ -161,6 +161,12 @@ pub enum AppCommand {
     /// Carries the typed line because the input handler has
     /// already closed its cmdline state by the time this fires.
     CmdlineEnter(String),
+    /// qa-6th keyboard SEV-2 2026-06-29 — vim cmdline canonical
+    /// `Ctrl+R Ctrl+W` (insert word under cursor) /
+    /// `Ctrl+R Ctrl+A` (insert WORD). `true` = WORD (whitespace-
+    /// delimited), `false` = word. App resolves from the active
+    /// editor and writes back via `InputHandler::cmdline_set`.
+    CmdlineInsertCursorWord(bool),
     /// flash/leap-style 2-char jump motion. Handler accumulates the two
     /// chars (`s<a><b>`) and hands them up; App computes every visible
     /// occurrence in the active editor, assigns each a label, paints them,

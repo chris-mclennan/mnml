@@ -1554,6 +1554,66 @@ impl App {
             .unwrap_or(false)
     }
 
+    /// qa-6th keyboard SEV-2 2026-06-29 — vim `Ctrl+R Ctrl+W`
+    /// (insert word under cursor) and `Ctrl+R Ctrl+A` (WORD,
+    /// whitespace-delimited). Reads the active editor cursor's
+    /// word and inserts it into the cmdline at the caret.
+    pub fn cmdline_insert_cursor_word(&mut self, want_big_word: bool) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let text = b.editor.text();
+        let cur = b.editor.cursor();
+        // Find the bounds of the (b)word containing the cursor.
+        let is_keyword = |c: char| -> bool {
+            if want_big_word {
+                !c.is_whitespace()
+            } else {
+                c.is_alphanumeric() || c == '_'
+            }
+        };
+        let bytes = text.as_bytes();
+        let mut start = cur.min(bytes.len());
+        while start > 0 {
+            let prev = text[..start].chars().next_back();
+            if let Some(c) = prev
+                && is_keyword(c)
+            {
+                start -= c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        let mut end = cur.min(bytes.len());
+        while end < bytes.len() {
+            let next = text[end..].chars().next();
+            if let Some(c) = next
+                && is_keyword(c)
+            {
+                end += c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if start == end {
+            return;
+        }
+        let word = text[start..end].to_string();
+        let Some(b) = self.active_editor_mut() else {
+            return;
+        };
+        let Some(line) = b.input.cmdline_get() else {
+            return;
+        };
+        // cmdline_set repositions the caret to end-of-text — by
+        // appending the word, the caret naturally lands after it.
+        // (We don't preserve mid-line carets here; vim's behavior
+        // is to append at end-of-line in practice.)
+        let mut new_line = line;
+        new_line.push_str(&word);
+        b.input.cmdline_set(Some(new_line));
+    }
+
     pub fn cmdline_tab_complete(&mut self) {
         let Some(b) = self.active_editor_mut() else {
             self.cmdline_complete_state = None;

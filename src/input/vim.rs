@@ -397,6 +397,11 @@ pub struct VimInputHandler {
     /// What the user had typed before they started walking history; restored
     /// on Down past the newest.
     ex_history_typing: Option<String>,
+    /// qa-6th 2026-06-29 — `Ctrl+R` in cmdline armed the
+    /// register-insert prefix. Vim's canonical follow-ups are
+    /// `Ctrl+W` (insert word under cursor) and `Ctrl+A` (insert
+    /// WORD). Auto-clears if the next key isn't one of those.
+    cmdline_pending_ctrl_r: bool,
 }
 
 const EX_HISTORY_MAX: usize = 100;
@@ -422,6 +427,7 @@ impl VimInputHandler {
             ex_history: Vec::new(),
             ex_history_cursor: None,
             ex_history_typing: None,
+            cmdline_pending_ctrl_r: false,
         }
     }
 
@@ -538,6 +544,27 @@ impl VimInputHandler {
     fn handle_cmdline(&mut self, key: KeyEvent, line: String) -> InputResult {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cur = self.cmdline_cursor.min(line.len());
+        // qa-6th keyboard SEV-2 2026-06-29 — vim's canonical
+        // 2-key `Ctrl+R Ctrl+W` (insert word) /
+        // `Ctrl+R Ctrl+A` (insert WORD). First Ctrl+R arms the
+        // pending flag; the next Ctrl+W/Ctrl+A fires the App-side
+        // resolver. Any other key clears the flag.
+        if self.cmdline_pending_ctrl_r {
+            self.cmdline_pending_ctrl_r = false;
+            if ctrl && matches!(key.code, KeyCode::Char('w' | 'a')) {
+                self.cmdline = Some(line);
+                let want_big_word = matches!(key.code, KeyCode::Char('a'));
+                return InputResult::App(AppCommand::CmdlineInsertCursorWord(want_big_word));
+            }
+            // Fall through with the flag cleared — the key now
+            // means what it normally does (Ctrl+W still deletes
+            // the prev word, etc.).
+        }
+        if matches!(key.code, KeyCode::Char('r')) && ctrl {
+            self.cmdline_pending_ctrl_r = true;
+            self.cmdline = Some(line);
+            return InputResult::Consumed;
+        }
         // Ctrl+W in cmdline ⇒ delete the previous word (cursor moves left
         // by the deleted span).
         if matches!(key.code, KeyCode::Char('w')) && ctrl {

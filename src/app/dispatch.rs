@@ -228,6 +228,7 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         BlockChangeStart => app.block_change_start(),
         CmdlineTabComplete => app.cmdline_tab_complete(),
         CmdlinePopupMove(delta) => app.cmdline_popup_move(delta as isize),
+        CmdlineInsertCursorWord(big) => app.cmdline_insert_cursor_word(big),
         CmdlinePopupAcceptCurrentAndCommit => app.cmdline_popup_accept_current(),
         CmdlineEnter(typed) => {
             // Only substitute the popup-highlighted match when the
