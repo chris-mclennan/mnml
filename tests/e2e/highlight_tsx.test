@@ -1,0 +1,11 @@
+# Open a .tsx file with JSX syntax; confirm tree-sitter-tsx grammar fires.
+# The tsx grammar is distinct from typescript (LANGUAGE_TSX vs
+# LANGUAGE_TYPESCRIPT in highlight.rs). This test catches regressions
+# where the tsx grammar fails to load or the JSX tokens aren't highlighted.
+
+write src/App.tsx "import React from 'react';\n\ninterface Props {\n  title: string;\n}\n\nconst App: React.FC<Props> = ({ title }) => (\n  <div className=\"app\">\n    <h1>{title}</h1>\n  </div>\n);\n\nexport default App;\n"
+open src/App.tsx
+expect pane "App.tsx"
+expect screen contains "interface Props"
+expect screen contains "React.FC"
+expect highlights at_least 6

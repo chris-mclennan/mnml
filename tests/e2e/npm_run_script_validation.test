@@ -1,0 +1,28 @@
+# npm.build / npm.run / npm.lint run validation: when the script name
+# (derived from the subcmd "run <X>") is absent from package.json, toast
+# "npm.<slug>: no `<X>` script in package.json — available: <list>".
+# Guards the ac96648 feature. npm.test and npm.start/install use plain
+# subcmds ("test", "start") so they skip validation (no "run " prefix).
+
+shell echo '{"name":"app","scripts":{"test":"jest","build":"tsc"}}' > package.json
+
+# npm.build → subcmd "run build" → script "build" exists → no toast
+command npm.build
+wait 200
+expect screen lacks "no `build` script"
+
+# npm.run → subcmd "run dev" → script "dev" NOT in package.json → toast
+command npm.run
+wait 200
+expect screen contains "npm.run"
+expect screen contains "dev"
+expect screen contains "available"
+
+key esc
+
+# npm.lint → subcmd "run lint" → script "lint" NOT in package.json → toast
+command npm.lint
+wait 200
+expect screen contains "npm.lint"
+expect screen contains "lint"
+expect screen contains "available"

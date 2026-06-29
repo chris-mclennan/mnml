@@ -1,0 +1,24 @@
+# :tree.refresh auto-expands newly-appeared top-level directories.
+# Guards the ac96648 F3 fix: before the fix, a directory added to the
+# workspace after startup remained collapsed even after tree.refresh,
+# requiring the user to manually press `l` to expand it.
+#
+# Procedure: start with only a file at root, then shell-create a new
+# top-level dir with children, refresh — the new dir should be expanded.
+
+write index.txt "hello"
+open index.txt
+
+# Workspace has only index.txt initially. The tree won't auto-expand a
+# dir that doesn't exist yet.
+expect screen contains "index.txt"
+
+# Shell-create a new top-level directory with a child file.
+shell mkdir -p lib
+shell echo "export function add(a, b) { return a + b; }" > lib/math.js
+
+# Refresh: the new `lib/` dir should appear AND be auto-expanded (showing math.js).
+command tree.refresh
+wait 100
+expect screen contains "lib"
+expect screen contains "math.js"

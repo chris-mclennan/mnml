@@ -1,0 +1,15 @@
+# pytest runner with ONLY requirements.txt (no pyproject.toml, no setup.py,
+# no tests/ dir) — should open pty pane, NOT toast.
+# Guards the 5d4c4f0 fix: `requirements.txt` added as a project marker.
+# Before the fix, a requirements.txt-only project toasted "no pyproject.toml"
+# while the LSP silently attached (contradictory signal).
+
+shell echo "flask==3.0\npytest==8.1" > requirements.txt
+
+command pytest.run
+wait 200
+expect screen lacks "pytest: no pyproject.toml"
+
+command pytest.failed
+wait 200
+expect screen lacks "pytest: no pyproject.toml"

@@ -1,0 +1,21 @@
+# Ctrl+Shift+[ fires editor.toggle_fold (VS Code convention).
+# Ctrl+Shift+] fires editor.unfold_all.
+# Guards the 53c95a4 chord rebinding: fold reclaimed Ctrl+Shift+[/]
+# from the right-panel tab cycle.
+
+write code.rs "fn main() {\n    one();\n    two();\n    three();\n}\nlet end = 1;"
+open code.rs
+
+# Move cursor inside the braced block
+key down
+key down
+
+# Fold via the keyboard chord (not the command)
+key Ctrl+Shift+[
+expect screen contains "folded"
+expect screen contains "hidden"
+expect screen lacks "two();"
+
+# Unfold via Ctrl+Shift+]
+key Ctrl+Shift+]
+expect screen contains "two();"

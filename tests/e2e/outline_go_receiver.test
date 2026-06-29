@@ -1,0 +1,16 @@
+# Go outline: methods show as `Receiver.Name`, plain funcs as bare name.
+# Guards ac96648 F5: `func (r *Router) Handle(...)` → "Router.Handle" in outline.
+
+write router.go "package http\n\ntype Router struct {\n    routes []string\n}\n\nfunc NewRouter() *Router {\n    return &Router{}\n}\n\nfunc (r *Router) Handle(path string) {\n    r.routes = append(r.routes, path)\n}\n\nfunc (r *Router) Listen(port int) error {\n    return nil\n}\n"
+open router.go
+
+command outline.show
+wait 100
+
+# Plain func shows bare name
+expect screen contains "NewRouter"
+# Type shows bare name
+expect screen contains "Router"
+# Methods show as Receiver.Name
+expect screen contains "Router.Handle"
+expect screen contains "Router.Listen"

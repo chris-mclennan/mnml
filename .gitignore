@@ -17,3 +17,9 @@
 /vendor/libghostty-vt/**/*.so
 /vendor/libghostty-vt/**/*.so.*
 /vendor/libghostty-vt/out/
+
+# Working files from hunter / verification agents — the .md reports stay
+# (useful audit trail), but the throwaway test workspaces under each hunt
+# directory shouldn't bloat git. They're regenerated fresh each session.
+findings/**/workspaces/
+findings/**/ws*/

@@ -1,0 +1,18 @@
+# TypeScript outline: React.FC components and typed arrow functions
+# should appear as "fn" symbols. Guards ac96648 F2.
+#
+# Patterns tested:
+#   const App: React.FC<Props> = (...) => JSX   ← new pattern (F2)
+#   const fn: () => T = () => expr              ← plain arrow (existing)
+#   export function Component() {}              ← function declaration (existing)
+
+write src/components.tsx "import React from 'react';\n\ninterface Props {\n  title: string;\n}\n\nexport const App: React.FC<Props> = ({ title }) => (\n  <h1>{title}</h1>\n);\n\nexport const Button: React.FC = (props) => <button>{props.children}</button>;\n\nexport function Logo() {\n  return <img src=\"/logo.svg\" />;\n}\n\nconst helper = ({ x }: { x: number }) => x * 2;\n"
+open src/components.tsx
+
+command outline.show
+wait 100
+
+expect screen contains "App"
+expect screen contains "Button"
+expect screen contains "Logo"
+expect screen contains "helper"
