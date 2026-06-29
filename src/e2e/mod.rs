@@ -525,7 +525,24 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             Ok(())
         }
         Step::Wait(ms) => {
-            std::thread::sleep(Duration::from_millis(*ms));
+            // qa-sweep 2026-06-29: Wait used to be a bare sleep, so
+            // async work (highlights-idle 120ms gate, LSP, snippet
+            // edits_consumed counter, git loader thread) didn't
+            // advance DURING the wait. Tests that needed a real
+            // settle-time had to bump the literal `wait <ms>`
+            // value, and the macOS CI flake recurred. Now tick the
+            // app every ~25ms throughout the sleep so async ops
+            // make progress while time passes — same wall-clock,
+            // useful work.
+            let deadline = std::time::Instant::now() + Duration::from_millis(*ms);
+            while std::time::Instant::now() < deadline {
+                app.tick();
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                std::thread::sleep(remaining.min(Duration::from_millis(25)));
+            }
+            // Final tick after the deadline so any work queued by
+            // the last sleep gets drained before the next step.
+            app.tick();
             Ok(())
         }
         Step::Snippet {

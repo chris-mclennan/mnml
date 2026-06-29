@@ -16,15 +16,14 @@ command snippet.expand
 # macOS CI runner the harness's 50ms render sleep can extend past the
 # 120ms highlights-idle gate, draining pending_tree_edits and putting
 # edits_consumed into an edge case where the first char of the next
-# tight type-loop misses its stop-shift. Two render ticks give the
-# snapshot a chance to stabilise before we start filling stop $1.
-# qa-sweep 2026-06-29: bumped 100→250ms after recurring macOS CI
-# flakes on the loaded runner.
-wait 250
+# tight type-loop misses its stop-shift. The wait below also drains
+# the async work (qa-sweep 2026-06-29 wait-step fix: ticks the app
+# every 25ms during the sleep instead of being a bare sleep).
+wait 150
 type i
 key tab
 # Same guard before filling stop $2.
-wait 250
+wait 150
 type items
 
 # Sanity: before Backtab the line is "for i in items {".
