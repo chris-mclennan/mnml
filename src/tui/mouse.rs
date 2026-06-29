@@ -975,6 +975,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 app.open_right_panel_tab_context_menu(tab_idx, (x, y));
                 return;
             }
+            // vscode-user-mouse 2026-06-28 SEV-3 — right-click on the
+            // panel × close button (was a 1-cell dead zone). Open
+            // the same active-tab menu the right-click on a tab
+            // chip would for parity. If no tab is hosted, toast.
+            if let Some(rect) = app.rects.right_panel_close
+                && crate::app::dispatch::contains(rect, x, y)
+            {
+                let idx = app.right_panel_active_idx;
+                if !app.right_panel_panes.is_empty() && idx < app.right_panel_panes.len() {
+                    app.open_right_panel_tab_context_menu(idx, (x, y));
+                } else {
+                    app.toast("right panel empty — Ctrl+Shift+B to hide");
+                }
+                return;
+            }
             // Right-click on a session tab → context menu.
             if let Some(&(_, pid)) = app
                 .rects

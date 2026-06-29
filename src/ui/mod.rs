@@ -675,11 +675,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         format!("({n})")
                     }
                 }
-                crate::pane::Pane::Ai(_) => {
-                    // "AI: explain — done" → "AI" (the marker after
-                    // is the state; the noun is what's lost when
-                    // truncating the longer form).
-                    "AI".to_string()
+                crate::pane::Pane::Ai(a) => {
+                    // "AI: explain — done" → "AI ✦" (preserve the
+                    // status marker — it's the live info; the
+                    // noun is what's lost when budget tightens).
+                    let marker = match a.state {
+                        crate::ai::AiState::Asking | crate::ai::AiState::Streaming(_) => "…",
+                        crate::ai::AiState::Failed(_) => "✗",
+                        crate::ai::AiState::Done(_) => "✦",
+                        crate::ai::AiState::Live { .. } => "●",
+                    };
+                    if budget >= 4 {
+                        format!("AI {marker}")
+                    } else {
+                        marker.to_string()
+                    }
                 }
                 _ => {
                     let mut s: String = full.chars().take(budget.saturating_sub(1)).collect();
