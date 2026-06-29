@@ -444,8 +444,36 @@ pub fn run_test(path: &Path) -> TestOutcome {
                 render!();
             }
             Stmt::Check(check) => {
-                let screen = screen_text(term.backend().buffer());
-                if let Err(e) = run_check(&app, &screen, check) {
+                // qa-sweep 2026-06-29: expect-poll with bounded
+                // retry. The Step::Wait fix earlier (ticks app
+                // every 25ms during sleep) addressed the root
+                // cause — async work didn't progress during a
+                // bare wait. But macOS CI under load can STILL
+                // lag a frame or two between the last `type` and
+                // the screen reflecting the result (highlights
+                // idle gate is 120ms; if the harness's 50ms
+                // render sleep doesn't catch it, the expect runs
+                // before the screen settles). Polling for up to
+                // 750ms on FAILURE absorbs that residual jitter.
+                // Successful checks pass immediately — no slowdown.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+                let last_err: Option<String> = loop {
+                    let screen = screen_text(term.backend().buffer());
+                    match run_check(&app, &screen, check) {
+                        Ok(()) => break None,
+                        Err(e) => {
+                            if std::time::Instant::now() >= deadline {
+                                break Some(e);
+                            }
+                            app.tick();
+                            std::thread::sleep(std::time::Duration::from_millis(40));
+                            if let Err(re) = term.draw(|f| crate::ui::draw(f, &mut app)) {
+                                return fail(format!("render: {re}"));
+                            }
+                        }
+                    }
+                };
+                if let Some(e) = last_err {
                     return fail(format!("line {ln}: {e}"));
                 }
             }
