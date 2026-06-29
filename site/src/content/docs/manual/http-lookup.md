@@ -22,7 +22,7 @@ Drop a `.curl` (or `.http` / `.rest`) file under `<workspace>/.rqst/lookups/`:
     └── recent.curl
 ```
 
-The directory is scanned recursively (skipping `target` and `node_modules` and dotfiles); subdirectories are fine. The file's name matters for the var-name suggestion (more on that below) but doesn't have to match anything else.
+The directory is scanned **recursively** by `crate::http::lookup::scan_lookups` (skipping `target`, `node_modules`, and any dotfile-prefixed entries); subdirectories are fine and show up in the picker with their relative path as the label (`orders/recent.curl`). All three extensions (`.curl` / `.http` / `.rest`) are picked up by the same walker. The file's name matters for the var-name suggestion (more on that below) but doesn't have to match anything else.
 
 Each lookup file is a normal request:
 

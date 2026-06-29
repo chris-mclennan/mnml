@@ -10,6 +10,79 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+### Added (2026-06-29)
+
+- **Right panel v5 polish** — `Ctrl+Alt+W` closes the active tab from the
+  keyboard (`view.right_panel_close_tab`); tab right-click menus gain
+  **Close other tabs** and **Close all tabs** (when ≥2 tabs); right-clicking
+  the `×` button opens the same context menu as the active tab; the `×`
+  paints two visually distinct states — `bg2` bridge when the active tab is
+  rightmost (so the `×` reads as its close button), `bg_dark` + `comment`
+  styling when not (so it reads as "acts on the active tab, not this
+  chip"); empty-state hint lists all five routable commands clickably
+  (`:outline.show`, `:lsp.diagnostics`, `:ai.chat`, `:find.grep`,
+  `:test.run`); header now reads lowercase `right panel`.
+- **Right panel chip short forms** — when the per-chip budget would
+  truncate past the live count / status glyph, the tab label falls back
+  to a short form that keeps the information that matters:
+  Diagnostics → `✗N⚠M`, Tests → `✓N` / `✗N` / `…`, Grep → `q… N` (or
+  `(N)` at the tightest), AI → `AI ✦` (or just the marker), Outline →
+  file stem.
+- **HTTP `###` block navigation** — `<leader>h]` / `:http.next_block`
+  and `<leader>h[` / `:http.prev_block` jump the cursor between blocks
+  in multi-block `.http` / `.rest` files. Wraps at EOF/BOF; viewport
+  reveals the cursor if it lands offscreen.
+- **HTTP `[http] default_env` config key** — set a sticky default env
+  per-workspace (`<workspace>/.mnml/config.toml`) or user-global
+  (`~/.config/mnml/config.toml`). Resolution chain is now
+  `--env` → `$MNML_ENV` → `[http] default_env` → `.rqst/config`.
+- **HTTP history headers + body preserved** — every `http.send` entry
+  now persists the request headers and body in addition to method / URL
+  / status / duration. Re-firing from `:http.history` reconstructs a
+  complete curl (`-X`, every `-H`, `--data-raw`) instead of the
+  method+URL-only minimal form. Older entries still re-fire as the
+  minimal form.
+- **Lookup scan is recursive** — `:http.lookup`'s file picker now walks
+  subdirectories under `.rqst/lookups/` (the prior flat read_dir
+  silently missed nested files). Skips `target`, `node_modules`, and
+  dotfile entries. All three extensions (`.curl` / `.http` / `.rest`)
+  picked up by the same walker.
+- **Per-block mock sidecars** — multi-block `.http` files now save one
+  `.mock.json` per `### named` block:
+  `requests.<block-name>.http.mock.json`. Unnamed leading blocks fall
+  back to the bare sibling path (`requests.http.mock.json`); single-
+  block `.http` save still falls through to whole-file overwrite. The
+  prior shared-sidecar shape silently overwrote block A's mock when
+  block B was saved.
+- **Vim operator inclusivity** — `de` / `ye` / `ce` now include the
+  destination character (vim's `:help inclusive`). `d$` / `y$` / `c$`
+  include the last char of the line. `cw` / `cW` are remapped to `ce`
+  / `cE` (vim canon: change-word excludes trailing whitespace).
+- **Vim `Ctrl+R Ctrl+W` / `Ctrl+R Ctrl+A` in INSERT** — insert the
+  identifier (or full WORD) under the cursor at the caret. Both chords
+  are checked before the lowercase-letter register-paste arm, so
+  `Ctrl+R W` no longer disappears into a `"w` register read.
+- **Vim `Ctrl+Shift+[` / `Ctrl+Shift+]` in NORMAL** — fold / unfold
+  chords reach the editor instead of being eaten by the vim bracket
+  prefix. The bracket prefix now guards on `!ctrl` so only the bare
+  brackets feed `[c` / `]c` (git hunks) and `[d` / `]d` (diagnostics).
+- **Spend report runs on a background thread** — `:ai.spend_today`
+  opens the pane immediately with `loading = true`; the JSONL scan
+  runs in a worker; `App::tick` polls the mpsc channel and swaps the
+  snapshot in when the worker drains. Title bar shows
+  `· computing…` while pending. Totals toast fires from the drain
+  path (was unreachable inline). `r` (refresh) and pane `Drop` set a
+  cooperative `Arc<AtomicBool>` abort flag — the worker stops at the
+  next per-file check, within a few hundred ms.
+- **`Ctrl+P` workspace affinity** — file-picker items carry a
+  `PickerItem.priority` field; `refilter` sorts
+  `(priority desc, score desc, index asc)`. Current-workspace files
+  (priority 2) outrank cross-workspace recents (priority 1) and
+  extra-workspace tree entries (priority 0) regardless of fuzzy
+  score. Fixes a regression where a shorter cross-workspace label
+  (`lib.rs`) beat a longer current-workspace path (`src/lib.rs`)
+  even when the user typed the longer pattern.
+
 ### Added (2026-06-28)
 
 - **Right side panel** — a collapsible panel on the right editor edge. Toggle

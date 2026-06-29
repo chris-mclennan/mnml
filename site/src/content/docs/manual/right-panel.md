@@ -37,18 +37,35 @@ When the panel is **closed**, these commands fall back to their pre-panel behavi
 
 The tab strip caps at **3** simultaneous tabs. Pushing a 4th displaces the oldest (FIFO) with a toast so you know what happened. Tabs you don't see scroll off the right edge — the label truncates with `…` so long titles still fit.
 
+### Short-form chip labels at narrow widths
+
+Each chip gets a per-chip budget (roughly `column_width / n_tabs - gap`). When the full title fits, the chip paints it verbatim. When it would truncate past the count or status glyph — the part that actually changes over time — the chip falls back to a short form that keeps the live information instead:
+
+| Pane | Full label | Short form when tight |
+|---|---|---|
+| Outline | `main.rs ⌥42` | `main.rs` (file stem only — truncated to budget if even that doesn't fit) |
+| Diagnostics | `problems ✗2 ⚠1` | `✗2⚠1` (or `✗2` / `⚠1` / `✓` depending on counts) |
+| Tests | `tests Done ✓15 ✗0` | `✓15` (passes), `✗1` (any failures), `…` (running) |
+| Grep | `grep:query (24)` | `que… 24` at budget ≥ 5, `(24)` at the tightest |
+| AI | `AI: explain — done` | `AI ✦` at budget ≥ 4, `✦` / `●` / `…` / `✗` alone otherwise |
+
+Status glyphs across all five: `…` running / asking, `●` live, `✦` done, `✗` failed, `✓` passed. The point is that when you can't see the noun, you can still see the **state** — three Diagnostics tabs read `✗2 / ✗1 / ✓` at a glance even when each chip is only 4 cells wide.
+
 ### Switching, closing, opening
 
 | Gesture | What it does |
 |---|---|
 | `<leader>t]` | Switch to the next tab in the strip |
 | `<leader>t[` | Previous tab |
-| `<leader>tx` | Close the active tab |
+| `<leader>tx` / `Ctrl+Alt+W` | Close the active tab (`view.right_panel_close_tab`) |
 | Click a tab chip | Switch to that tab |
 | Click the `×` button | Close the active tab |
-| Right-click an inactive tab | Menu: Switch to this tab / Close tab / Hide side panel |
-| Right-click the active tab | Menu: Close tab / Hide side panel |
-| Click `:outline.show` / `:lsp.diagnostics` in the empty state | Fires that command directly — mouse path to populate the panel |
+| Right-click the `×` button | Same context menu as right-clicking the active tab |
+| Right-click an inactive tab | Menu: Switch to this tab / Close tab / Close other tabs / Close all tabs / Hide side panel |
+| Right-click the active tab | Menu: Close tab / Close other tabs / Close all tabs / Hide side panel |
+| Click `:outline.show` / `:lsp.diagnostics` / `:ai.chat` / `:find.grep` / `:test.run` in the empty state | Fires that command directly — mouse path to populate the panel |
+
+`Ctrl+Alt+W` deliberately steers clear of vim NORMAL's `Ctrl+W` window prefix (which would be eaten by the vim handler before reaching the global keymap) and isn't a VS Code chord for anything else, so it's safe in both input modes. The **Close other tabs** and **Close all tabs** items show up only when there are at least two tabs — the menu prunes them when there's nothing to close.
 
 ### Empty state
 
@@ -68,13 +85,16 @@ With the panel open but no pane hosted, the body paints a faint hint listing eve
   Hide: Ctrl+Shift+B or :set norp
 ```
 
-The hint is comment-colored on the panel's slightly-darker background. All five ex commands are real and clickable — click the row and that command fires immediately. Or copy-and-paste them into the cmdline.
+The header reads `right panel` in lowercase — same vocabulary the palette title, the tooltips, whichkey, the context menu, and the toast all use, so a bold modifier alone is enough hierarchy. The body hint is comment-colored on the panel's slightly-darker background. All five ex commands are real and clickable — click the row and that command fires immediately. Or copy-and-paste them into the cmdline.
 
 ### Header and close button
 
-When a pane is hosted, the panel's header shows the tab strip. The far-right cell is a clickable `×` (or `x` under `[ui] ascii_icons = true`) — left-click **evicts the active hosted tab** but **keeps the panel open**. Right-click on the × opens the same context menu the active-tab chip would (Close tab / Hide side panel).
+When a pane is hosted, the panel's header shows the tab strip. The far-right cell is a clickable `×` (or `x` under `[ui] ascii_icons = true`) — left-click **evicts the active hosted tab** but **keeps the panel open**. Right-click on the `×` opens the same context menu the active tab would (Close tab / Close other tabs / Close all tabs / Hide side panel).
 
-The × paints in two states: when the active tab is the rightmost chip, the cells between it and the × fill with the chip's active background so the × visually merges with the chip it acts on. When the active tab is NOT rightmost (e.g. you cycled to a tab that's not the last one), the × paints in inactive-chip styling instead — it's still the same action (close the active tab) but the visual signals "mode-dependent" instead of "local to the chip next to me".
+The `×` paints in two visually distinct states so you can tell at a glance which tab it acts on:
+
+- **Active tab is the rightmost chip** — the cells between the chip's right edge and the `×` fill with the chip's active background (`bg2`) and the `×` itself paints in `fg` on `bg2`. The bridge makes the `×` read as the chip's close button.
+- **Active tab is NOT rightmost** (e.g. you cycled to a tab that's followed by another) — no bridge paints, and the `×` switches to `comment` on `bg_dark` (the inactive-chip styling). It's still the same action — close the **active** tab — but the visual signals "mode-dependent" instead of "local to the chip next to me", so you don't read it as a close-this-inactive-chip button.
 
 This is the eviction split mnml makes for the panel:
 

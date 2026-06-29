@@ -16,9 +16,9 @@ The point: when you fired something interesting an hour ago and now you can't re
 One line per request, JSON-encoded, appended by `drain_http_jobs` after every `http.send` completes (success or failure). The file is created on first append; missing directory is created automatically.
 
 ```json
-{"ts":1734652803123,"method":"POST","url":"https://api.example.com/users/42","status":401,"duration_ms":142,"body_bytes":98,"error":null}
-{"ts":1734652811876,"method":"GET","url":"https://api.example.com/users","status":200,"duration_ms":56,"body_bytes":2148,"error":null}
-{"ts":1734652815001,"method":"GET","url":"https://broken-host.example.com/","status":null,"duration_ms":null,"body_bytes":null,"error":"connection failed: dns error"}
+{"ts":1734652803123,"method":"POST","url":"https://api.example.com/users/42","status":401,"duration_ms":142,"body_bytes":98,"error":null,"headers":[["Authorization","Bearer eyJ..."],["Content-Type","application/json"]],"request_body":"{\"name\":\"Alice\"}"}
+{"ts":1734652811876,"method":"GET","url":"https://api.example.com/users","status":200,"duration_ms":56,"body_bytes":2148,"error":null,"headers":[["Authorization","Bearer eyJ..."]],"request_body":null}
+{"ts":1734652815001,"method":"GET","url":"https://broken-host.example.com/","status":null,"duration_ms":null,"body_bytes":null,"error":"connection failed: dns error","headers":null,"request_body":null}
 ```
 
 Schema:
@@ -32,6 +32,8 @@ Schema:
 | `duration_ms` | u128 / null | null when the request errored before timing was meaningful |
 | `body_bytes` | usize / null | null on error; size of the response body otherwise |
 | `error` | string / null | one-line transport error message when present; null on success |
+| `headers` | `[[name, value], …]` / null | the **request** headers that fired (after env expansion). Added 2026-06-28 so re-fires from history reconstruct a complete curl |
+| `request_body` | string / null | the **request** body that fired (utf-8). Null on bodyless requests |
 
 `status: null` with `error: "…"` is the transport-failure shape. `status: 401` with `error: null` is "the request completed, the server said 401" — a successful send to the HTTP layer, regardless of what the status means semantically.
 
@@ -98,7 +100,9 @@ Type to filter — the fuzzy match runs over `method` + short URL + the status d
 
 Pressing Enter on a row opens a fresh **scratch `.curl` buffer** with the chosen request rendered as a curl command. The buffer is unsaved and unnamed — perfect for tweaking the URL or headers before `:http.send`-ing it again. You can also `Ctrl+S` to save it under a new path if it's worth keeping.
 
-The re-fire happens at the source-buffer level, not as a direct `http.send` — that's deliberate. The history log records the URL that was actually fired, with `{{VAR}}` already substituted; the scratch buffer holds the resolved form. If the original used `{{TOKEN}}`, re-firing from history doesn't re-resolve against the current env — it uses the same baked-in token the original send did. To restore env-driven behavior, edit the buffer to re-introduce the `{{TOKEN}}` placeholder before sending.
+For entries logged 2026-06-28 or later, the scratch is a **complete** curl: `-X <method>`, every persisted `-H 'Name: Value'`, the `--data-raw '<body>'` (when the request had one), and the URL. Quoting follows curl's single-quoted form with `'\''` for embedded apostrophes. Older entries (no `headers` / `request_body` fields) still re-fire — they just render as a minimal `curl -X GET '<url>'` and you fill in headers by hand.
+
+The re-fire happens at the source-buffer level, not as a direct `http.send` — that's deliberate. The history log records the URL and headers that were actually fired, with `{{VAR}}` already substituted; the scratch buffer holds the resolved form. If the original used `{{TOKEN}}`, re-firing from history doesn't re-resolve against the current env — it uses the same baked-in token the original send did. To restore env-driven behavior, edit the buffer to re-introduce the `{{TOKEN}}` placeholder before sending.
 
 The 100-entry cap on the picker is a UI choice, not a data limit — the file still holds every entry. For older entries, grep / jq directly.
 

@@ -175,6 +175,35 @@ A few patterns the tab strip enables:
 - **Resume a session.** Claude Code sessions started by mnml have a known `--session-id`. The wider AI track exposes `ai.session_view` to mirror the transcript, and `BinaryProfile::claude_code_resume(workspace, session_id)` to re-attach interactively — useful after a `Ctrl-C` on a long-running task.
 - **Headless verification.** AI panes work under `mnml --headless` — the file-IPC channel can drive a Claude session for E2E scripts. See the headless docs (or `tests/e2e/`) for examples.
 
+## The spend report — `:ai.spend_today`
+
+A side-pane that totals every Claude / Codex session touched in the last 24 hours, grouped by workspace, with sortable columns (workspace / tokens / cost).
+
+```vim
+:ai.spend_today          " palette: AI: open today's spend report
+```
+
+Opens a `Pane::SpendReport` as a horizontal split off the active leaf (or re-uses an existing one if you've called it before — only one spend pane per session). Within the pane:
+
+| Key | Action |
+|---|---|
+| `s` | Cycle the sort key: workspace → tokens → cost → workspace |
+| Click any column header | Cycle to that sort key, or flip asc/desc on the current one |
+| `r` | Re-scan from disk |
+| `Esc` | Return focus to the previous pane |
+
+### Background scan + the `· computing…` chip
+
+Scanning every `.jsonl` under `~/.claude/projects/` can take 1-2 seconds on a machine with many active workspaces (per-file cap is 10 MB, but they add up). The scan runs on a **background std thread** so the UI stays responsive:
+
+- The pane opens immediately with an empty snapshot and `loading = true`.
+- The title bar shows `AI spend (24h) · sort: cost ↓ · computing…` while the worker is in flight.
+- `App::tick` calls `poll_pending()` on every loop iteration; when the channel drains, the snapshot swaps in and a totals toast fires (`"AI spend (24h): N sessions · $X.XXXX"`).
+- `r` (refresh) signals the prior worker to abort via an `Arc<AtomicBool>` flag and spawns a fresh one. The worker checks the flag between every JSONL file, so closing the pane or hitting `r` stops it within a few hundred ms — no orphaned 2-second background scan after you've moved on.
+- Closing the pane (`Drop`) also flips the abort flag, so the worker bails on the next file boundary.
+
+The toast fires from `App::tick` — not at `:ai.spend_today` time. The old inline-toast at fire time was always unreachable because `loading` was `true` at that point; the post-drain path makes the totals announcement land when there's actually something to announce.
+
 ## Where to go next
 
 - [Editing](/manual/editing/) — vim or standard keymap; the same edits work whether you're typing into Claude or into a `.rs` file

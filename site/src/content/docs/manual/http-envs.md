@@ -9,11 +9,18 @@ This page is the precise rules — which file gets loaded, in what order, and wh
 
 ## The resolution chain
 
-`EnvSet::select(workspace, explicit)` picks the env name in this order:
+`EnvSet::select_with_config_default(workspace, explicit, config_default)` picks the env name in this order:
 
 1. **Explicit** — `--env NAME` on the CLI, or the `LookupVarName` argument when a flow passes one through. The TUI doesn't take an `explicit` argument today — it's CLI-only.
 2. **`$MNML_ENV`** — the process env var. Useful as a sticky default for the editor session (`export MNML_ENV=staging` in your shell before launching mnml).
-3. **`<workspace>/.rqst/config`'s `default_env=…`** — the legacy rqst-format config file. If you've imported a workspace from rqst, this lets mnml pick up its `dev` / `staging` default without any extra setup.
+3. **`[http] default_env`** — the mnml-native TOML key. Lives in `<workspace>/.mnml/config.toml` (per-workspace) or `~/.config/mnml/config.toml` (user-global). Per-workspace wins, same as every other config key. Added 2026-06-28 so `$MNML_ENV` (process-wide, shared across every shell tab) isn't the only knob outside the legacy `.rqst/config`.
+4. **`<workspace>/.rqst/config`'s `default_env=…`** — the legacy rqst-format config file. If you've imported a workspace from rqst, this lets mnml pick up its `dev` / `staging` default without any extra setup.
+
+```toml
+# <workspace>/.mnml/config.toml — sticky workspace env
+[http]
+default_env = "staging"
+```
 
 When none of those resolve, the env name is `None` and the env set is empty — `{{TOKEN}}` falls through to process env vars only, and `{{$timestamp}}` still works (dynamics are independent of the active env).
 
@@ -139,7 +146,7 @@ mnml chain run .mnml/chains/smoke.chain.json --env prod
 mnml http sync --workspace ~/code/api
 ```
 
-`--env` wins over `$MNML_ENV` wins over `.rqst/config`'s `default_env`. To deliberately ignore all three, leave them unset — mnml runs with the empty env set, and any `{{VAR}}` references show up unresolved in the fired request.
+`--env` wins over `$MNML_ENV` wins over `[http] default_env` (TOML) wins over `.rqst/config`'s `default_env`. To deliberately ignore all four, leave them unset — mnml runs with the empty env set, and any `{{VAR}}` references show up unresolved in the fired request.
 
 ## What lives where
 

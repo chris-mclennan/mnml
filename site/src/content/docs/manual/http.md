@@ -53,6 +53,17 @@ The `###` separator splits a file into independent request blocks. Optional text
 
 `http.send` (`<leader>hs` in vim, palette **HTTP: send request**) fires the block under your cursor; if there's only one block, it fires that one. The status chip flashes "sending..." and a Request pane splits below the editor with the response when it lands.
 
+### Walking between `###` blocks
+
+In a multi-block file, two ex-commands move the cursor from one `###` header to the next without scrolling by hand:
+
+| Key / command | Action |
+|---|---|
+| `<leader>h]` (vim) or `:http.next_block` | Move the cursor to the next `###` line (wraps at EOF to the first block) |
+| `<leader>h[` (vim) or `:http.prev_block` | Move to the previous `###` line (wraps at BOF to the last block) |
+
+Both commands toast `http.next/prev_block: needs an open .http or .rest file` when called from a non-HTTP buffer, and `… no blocks in file` when the parse returns zero blocks. The cursor lands at column 0 of the header row and the viewport scrolls to reveal it (`reveal_pane`), so jumping to a block that was offscreen brings it into view.
+
 ### `.curl`
 
 ```sh

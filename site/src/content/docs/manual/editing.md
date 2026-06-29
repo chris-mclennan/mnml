@@ -63,6 +63,35 @@ A handful of motions and visual-entry chords match vim's behavior precisely — 
 - **`*` advances past the current match.** The star chord now genuinely jumps to the *next* occurrence of the word under the cursor (rather than the first match at-or-after, which was the cursor's current word). `#` is the same in the reverse direction.
 - **`<N>@<r>` honors the count.** `5@a` replays macro `a` five times. Past versions silently dropped the count and ran the macro once; the count threads through to the App dispatcher's replay loop.
 
+### Operator-pending motions are inclusive on `e` / `E` / `$`
+
+Vim's `:help inclusive` says that when an operator (`d` / `y` / `c`) is paired with `e` / `E` / `$`, the destination character is **included** in the operated range. mnml's vim handler now follows that rule end-to-end:
+
+- **`de`** deletes from the cursor up to and including the last char of the current word (e.g. `foo bar` with the cursor on `f` → `de` leaves `bar`). The trailing whitespace stays.
+- **`ye`** yanks the same span — registers see the whole word.
+- **`ce`** changes it: deletes through the last char and drops into INSERT mode.
+- **`d$`** / **`y$`** / **`c$`** include the final character of the line (vs. stopping one cell short).
+- **`cw`** is now an alias for **`ce`** (vim canon: change-word excludes the trailing whitespace, so `cw` → `ce` is a substitution at the motion layer). Same for `cW` → `cE`. `dw` and `yw` keep their exclusive semantics (whitespace eats the word boundary).
+
+Exclusive motions (`w`, `W`, `h`, `l`, `0`, `^`, etc.) are unchanged — `[anchor, cursor)` is still the deleted/yanked span. Inclusive motions push an extra `MoveRight` op before `DeleteSelection` so the destination char is part of the range.
+
+This is the kind of behavior you only notice when it's wrong (a `cw` that left the trailing whitespace, then re-typing pushed it across) — but once it's right, the muscle memory works exactly as vim's `:help` documents it.
+
+### `Ctrl+R Ctrl+W` and `Ctrl+R Ctrl+A` in INSERT mode
+
+Two vim chords for inserting the symbol under the cursor without leaving INSERT:
+
+| Chord | Action | Command |
+|---|---|---|
+| `Ctrl+R Ctrl+W` | Insert the identifier under the cursor at the caret | `editor.insert_word_under_cursor` |
+| `Ctrl+R Ctrl+A` | Same, but for the full WORD (whitespace-separated; includes punctuation) | `editor.insert_bigword_under_cursor` |
+
+Useful when extracting a name into a new declaration — type `let `, then `Ctrl+R Ctrl+W` to pull the symbol you were just looking at, then `= …`. The vim INSERT handler checks for the `Ctrl+W` / `Ctrl+A` follow-up **before** the lowercase-letter register-paste arm (the prior implementation routed the chord into `"a` register paste and the `Ctrl+R` prefix was eaten with no insertion).
+
+### Folding chords in NORMAL mode
+
+`Ctrl+Shift+[` and `Ctrl+Shift+]` toggle and unfold respectively, mirroring VS Code's canonical fold/unfold chords. The vim handler's bracket prefix (for `[c` / `]c` git hunks, `[d` / `]d` diagnostics) only consumes the bare bracket when `!ctrl` — the modifier-bearing chord falls through to the chord-chain / global keymap so the editor's fold commands can pick it up. Lowercase `z` (`za` / `zR` / `zM`) still works the same.
+
 ### `:%s/.../.../g` is one undo step
 
 A global substitute that replaces twelve matches is a single undo entry — one `u` reverts the whole substitute. This matches vim's behavior and removes a real footgun (the prior implementation pushed one undo per replaced line, so reverting felt like progress until you noticed nothing had actually finished). The `:s` family rolls every internal `apply` into one checkpoint via `Editor::atomic_undo`.

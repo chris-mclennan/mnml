@@ -106,6 +106,21 @@ path = "~/Projects/fim-engine"     # name defaults to "fim-engine" (basename)
 
 Each entry renders as its own collapsible section in the rail below the launched workspace, with its own file tree, gitignore scan, expand state, and right-edge chip cluster. Click any file in any section to open it — the editor pane doesn't care which workspace the file came from.
 
+### `Ctrl+P` workspace affinity
+
+The fuzzy file picker (`Ctrl+P`, palette **Open file**) draws from three sources: the **current workspace's tree**, recently-opened files in the **current workspace**, and recently-opened files in **other workspaces** (so you can jump cross-project). Each item carries a `priority` field so the ranker doesn't accidentally promote a short cross-workspace label above a longer current-workspace path:
+
+| Source | `PickerItem.priority` |
+|---|---|
+| Current-workspace recent file | `2` |
+| Current-workspace tree entry | `2` |
+| Cross-workspace recent file (from a sibling `[[workspaces]]` entry, or a file you opened before switching) | `1` |
+| Extra-workspace tree entry (the file isn't in the current workspace's tree, but is in one of its siblings') | `0` |
+
+`Picker::refilter` sorts by `(priority desc, fuzzy_score desc, index asc)` — priority wins **regardless of score**, score wins ties, original index breaks remaining ties. So typing `lib` in a workspace that contains `src/lib.rs` always surfaces `src/lib.rs` first even if a cross-workspace recent has the shorter (higher-scoring) bare-`lib.rs` label.
+
+The picker also filters noise paths (`.git`, `node_modules`, `target`, `.next`, `dist`, `build`) at every source, matching VS Code's default `files.exclude`. Cross-workspace items render with their absolute parent directory as the detail line, so you can still tell **which** project a same-named file came from.
+
 To add a workspace ad-hoc (not persisted):
 
 - **`view.add_workspace`** — opens a prompt for a path; the entry vanishes on quit.

@@ -16,6 +16,21 @@ requests/auth/login.curl.mock.json    ← the frozen response
 
 A mock is a sibling file with `.mock.json` appended to the source's full filename — extension included, so `login.curl` becomes `login.curl.mock.json` (not `login.mock.json`). This keeps `.http` and `.curl` versions of the same endpoint distinguishable on disk.
 
+### Per-block sidecars in multi-block `.http` files
+
+A `.http` file with multiple `### name` blocks gets **one mock per named block**, not one shared mock. The block name is interpolated into the sidecar path:
+
+```text
+requests/users.http              ← three blocks: list-users / get-user / delete-user
+requests/users.list-users.http.mock.json
+requests/users.get-user.http.mock.json
+requests/users.delete-user.http.mock.json
+```
+
+Block-name characters that aren't ASCII alphanumerics or `-` / `_` / `.` are replaced with `-` in the filename, so a block named `users/by id` becomes `users-by-id`. Unnamed leading blocks (a `.http` file with no `###` separator, or the chunk before the first one) fall back to the bare sibling path (`users.http.mock.json`) — that's the single-block compatibility case.
+
+Before 2026-06-28, all blocks shared one sidecar, so saving the second block's response silently overwrote the first. The per-block path is now used by both `http.save_mock` and `http.replay_mock`, so the round-trip is symmetrical.
+
 ```json
 {
   "status": 401,
