@@ -1017,6 +1017,18 @@ pub fn rects_dump_json(app: &App) -> String {
     );
     one!("bufferline_theme_toggle", app.rects.bufferline_theme_toggle);
     one!("bufferline_window_close", app.rects.bufferline_window_close);
+    // qa-6th mouse SEV-2 2026-06-29 — the ‹/› overflow chevrons
+    // had click handlers in mouse/down_left.rs but the rects
+    // never made it to rects.json, so IPC-driven users couldn't
+    // see them and the agent reported them as missing.
+    one!(
+        "bufferline_overflow_left",
+        app.rects.bufferline_overflow_left
+    );
+    one!(
+        "bufferline_overflow_right",
+        app.rects.bufferline_overflow_right
+    );
     for (r, _) in &app.rects.bufferline_tab_close {
         push_rect(&mut out, &mut first, "bufferline_tab_close", *r);
     }

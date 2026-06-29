@@ -246,18 +246,31 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         }
         HoverChip::StatuslineNowPlaying => {
             let rect = app.rects.statusline_mixr_chip?;
-            let np = app.now_playing.as_ref()?;
-            let track = if np.track.is_empty() {
-                "(no track)".to_string()
-            } else {
-                np.track.clone()
+            // qa-6th mouse SEV-3 2026-06-29: was returning None
+            // when nothing is playing, so the chip had no tooltip
+            // and felt undiscoverable. Fall back to a generic
+            // affordance string.
+            let main = match app.now_playing.as_ref() {
+                Some(np) => {
+                    let track = if np.track.is_empty() {
+                        "(no track)".to_string()
+                    } else {
+                        np.track.clone()
+                    };
+                    let source = if np.source.is_empty() {
+                        "now playing".to_string()
+                    } else {
+                        np.source.clone()
+                    };
+                    format!("{source}: {track}")
+                }
+                None => "mixr".to_string(),
             };
-            let source = if np.source.is_empty() {
-                "now playing".to_string()
-            } else {
-                np.source.clone()
-            };
-            Some((rect, format!("{source}: {track}"), None))
+            Some((
+                rect,
+                main,
+                Some("click: open mixr · right-click: menu".into()),
+            ))
         }
         HoverChip::PaletteSidebarButton => {
             let rect = app.rects.palette_sidebar_button?;

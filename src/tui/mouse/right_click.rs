@@ -160,6 +160,18 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_clock_context_menu((x, y));
         return;
     }
+    // qa-6th mouse SEV-3 2026-06-29: mixr chip on the statusline
+    // had a left-click action (mixr.show) but no right-click menu
+    // and no hover tooltip — felt like a black box. Added a small
+    // menu: open mixr in a pane, or copy the now-playing track.
+    if let Some(r) = app.rects.statusline_mixr_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![MenuItem::new("Open mixr", MenuAction::Command("mixr.show"))];
+        app.context_menu = Some(ContextMenu::new(Some("mixr".to_string()), (x, y), items));
+        return;
+    }
     // Right-click on the `> WORKSPACE` header → workspace menu.
     if let Some(tr) = app.rects.tree_toggle
         && crate::app::dispatch::contains(tr, x, y)
