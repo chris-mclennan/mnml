@@ -10128,6 +10128,7 @@ impl App {
         // into each (!Send) libghostty terminal — done here (not just on draw)
         // so hidden panes keep processing output. `tick_activity` then bumps
         // the activity Instant the sessions panel's running/idle chip reads.
+        let mut pending_spend_toast: Option<(usize, f64)> = None;
         for p in self.panes.iter_mut() {
             if let crate::pane::Pane::Pty(s) = p {
                 s.pump();
@@ -10142,8 +10143,20 @@ impl App {
             if let crate::pane::Pane::SpendReport(sr) = p {
                 // 2026-06-29 claude-agents-power-user SEV-2: pull
                 // the spend_today worker's snapshot if ready.
-                sr.poll_pending();
+                // claude-agents 3rd SEV-3: when it arrives, queue a
+                // totals toast. The inline toast from ai_spend_today
+                // always sees loading=true (the worker hasn't run
+                // yet), so the totals-ready toast must fire from here.
+                if sr.poll_pending() {
+                    pending_spend_toast = Some((
+                        sr.snapshot.claude_sessions + sr.snapshot.codex_sessions,
+                        sr.snapshot.total_cost_usd,
+                    ));
+                }
             }
+        }
+        if let Some((sessions, cost)) = pending_spend_toast {
+            self.toast(format!("today: {sessions} sessions · ${cost:.4}"));
         }
         if let Some(scratch) = self.scratch_term.as_mut() {
             scratch.session.pump();

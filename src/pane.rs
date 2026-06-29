@@ -245,7 +245,11 @@ impl SpendReportPane {
     /// 2026-06-29: drain the background channel if a worker has
     /// finished. Called from `App::tick` so the pane swaps to
     /// the real snapshot without the user needing to do anything.
-    pub fn poll_pending(&mut self) {
+    /// Returns `true` when a snapshot just arrived — caller uses
+    /// this to fire a totals toast (claude-agents 3rd 2026-06-29
+    /// SEV-3: the totals toast was unreachable because the inline
+    /// toast at fire-time always saw loading=true).
+    pub fn poll_pending(&mut self) -> bool {
         if let Some(rx) = self.pending.as_ref()
             && let Ok(snap) = rx.try_recv()
         {
@@ -256,7 +260,9 @@ impl SpendReportPane {
             if self.selected >= self.snapshot.per_workspace.len() {
                 self.selected = self.snapshot.per_workspace.len().saturating_sub(1);
             }
+            return true;
         }
+        false
     }
     /// Return the rows sorted by current sort_by/sort_desc. Stable.
     pub fn sorted_rows(&self) -> Vec<(String, u64, f64)> {

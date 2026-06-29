@@ -1035,23 +1035,13 @@ impl App {
             }
             self.focus_pane();
         }
-        // 2026-06-29: snapshot is computed on a background thread
-        // now (claude-agents-power-user SEV-2 follow-up); when the
-        // pane is loading we don't have totals yet. Toast a
-        // placeholder so the user knows the action registered.
-        if let Some(pid) = self.active
-            && let Some(Pane::SpendReport(p)) = self.panes.get(pid)
-        {
-            if p.loading {
-                self.toast("computing spend… (background)".to_string());
-            } else {
-                self.toast(format!(
-                    "today: {} sessions · ${:.4}",
-                    p.snapshot.claude_sessions + p.snapshot.codex_sessions,
-                    p.snapshot.total_cost_usd
-                ));
-            }
-        }
+        // claude-agents 3rd 2026-06-29 SEV-3: the else branch
+        // here was always dead — the worker was just spawned and
+        // loading=true. The totals toast now fires from
+        // App::tick when poll_pending() drains the channel.
+        // We still toast the loading placeholder so the user
+        // knows the action registered.
+        self.toast("computing spend… (background)".to_string());
     }
 
     /// `:ai.session_search` — open a prompt for a search term.

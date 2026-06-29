@@ -63,8 +63,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     };
     let group_label = p.group_by.label();
     let header_text = if p.filter_mode {
+        // claude-agents-power-user 3rd 2026-06-29 SEV-3: filter-mode
+        // sets p.paused=true, but the format here didn't show the
+        // `· paused (filter)` chip — so the live-tail-suspended
+        // signal was invisible exactly when it was relevant.
         format!(
-            " Claude Agents · /{} · enter applies · esc clears ",
+            " Claude Agents · /{}{pause_chip} · enter applies · esc clears ",
             p.query
         )
     } else if !p.query.is_empty() {

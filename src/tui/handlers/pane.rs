@@ -909,12 +909,18 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Home => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     p.selected = 0;
+                    // claude-agents 3rd 2026-06-29 SEV-3: parity
+                    // with move_up/down/mouse-click — reset
+                    // detail_scroll so the new row's drill-down
+                    // doesn't inherit a stale offset.
+                    p.detail_scroll = 0;
                 }
             }
             KeyCode::End => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     let n = p.visible_indices().len();
                     p.selected = n.saturating_sub(1);
+                    p.detail_scroll = 0;
                 }
             }
             KeyCode::F(1) => {

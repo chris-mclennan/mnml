@@ -134,39 +134,33 @@ impl App {
                 }
             }
         };
-        // vscode-user 2026-06-28 SEV-3: Ctrl+P workspace affinity.
-        // VS Code ranks current-workspace files higher than global
-        // recents. Order is now:
-        //   1. recents under the current workspace (newest first)
-        //   2. all other current-workspace tree files
-        //   3. recents from OTHER workspaces
-        //   4. extra-workspace tree files
-        // This way `Ctrl+P lib<Enter>` lands on the local lib.rs
-        // even when a dozen other projects' lib.rs are in the
-        // global recent list.
+        // vscode-user 2026-06-28 SEV-3 / 3rd 2026-06-29 SEV-2:
+        // Ctrl+P workspace affinity. The original fix only ordered
+        // the source list — the fuzzy scorer then re-ranked items
+        // by score, and shorter cross-workspace labels (`lib.rs`)
+        // beat longer local labels (`src/lib.rs`). Now we tag
+        // items with `priority`: 2 = current-workspace, 1 = cross-
+        // workspace recent, 0 = extra-workspace tree. `refilter`
+        // sorts (priority desc, score desc, index asc) so the
+        // higher priority always wins.
         let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut items: Vec<PickerItem> = Vec::new();
         let workspace = self.workspace.clone();
-        // 1. Local recents.
         for p in &self.recent_files {
             if p.starts_with(&workspace) && seen.insert(p.clone()) && p.exists() && !is_noise(p) {
-                items.push(make_item(p));
+                items.push(make_item(p).with_priority(2));
             }
         }
-        // 2. Primary workspace tree files.
         for p in self.tree.all_files() {
             if !is_noise(&p) && seen.insert(p.clone()) {
-                items.push(make_item(&p));
+                items.push(make_item(&p).with_priority(2));
             }
         }
-        // 3. Cross-workspace recents (kept reachable but ranked
-        // below current-workspace files).
         for p in &self.recent_files {
             if seen.insert(p.clone()) && p.exists() && !is_noise(p) {
-                items.push(make_item(p));
+                items.push(make_item(p).with_priority(1));
             }
         }
-        // 4. Extra-workspace tree files.
         for ws in &self.extra_workspaces {
             for p in ws.tree.all_files() {
                 if !is_noise(&p) && seen.insert(p.clone()) {
@@ -936,6 +930,7 @@ impl App {
                     id: format!("{action_prefix}:{}", ic.id),
                     label: format!("{} ({state}) — {}", ic.id, tooltip),
                     detail: ic.command.clone(),
+                    priority: 0,
                 }
             })
             .collect();
@@ -977,6 +972,7 @@ impl App {
                     id: e.codepoint.to_string(),
                     label: format!("{glyph}  {}  [{}]", e.name, e.category),
                     detail: format!("\\u{{{}}}", e.codepoint),
+                    priority: 0,
                 }
             })
             .collect();

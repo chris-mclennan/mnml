@@ -1864,6 +1864,7 @@ impl App {
                     id: format!("{i}\t{dir_tag}"),
                     label: it.name.clone(),
                     detail,
+                    priority: 0,
                 }
             })
             .collect();

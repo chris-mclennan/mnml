@@ -255,6 +255,14 @@ pub struct PickerItem {
     pub label: String,
     /// A right-aligned, dimmed hint (a keybinding, a directory, …).
     pub detail: String,
+    /// vscode-user 3rd 2026-06-29 SEV-2: tie-breaker that beats
+    /// fuzzy-score asymmetries. The file picker uses this to
+    /// pin current-workspace files above cross-workspace recents
+    /// even when the latter have shorter (and thus higher-scoring)
+    /// labels like `lib.rs` vs `src/lib.rs`. Sort order in
+    /// `refilter` is (priority desc, score desc, index asc).
+    /// Default 0; higher = more preferred.
+    pub priority: u8,
 }
 
 impl PickerItem {
@@ -263,7 +271,12 @@ impl PickerItem {
             id: id.into(),
             label: label.into(),
             detail: detail.into(),
+            priority: 0,
         }
+    }
+    pub fn with_priority(mut self, priority: u8) -> Self {
+        self.priority = priority;
+        self
     }
 }
 
@@ -297,15 +310,26 @@ impl Picker {
     }
 
     fn refilter(&mut self) {
-        let mut scored: Vec<(i64, usize)> = self
+        // vscode-user 3rd 2026-06-29 SEV-2: sort tuple is
+        // (priority desc, score desc, index asc). Items with a
+        // higher `priority` win regardless of score — used by the
+        // file picker to pin local-workspace files above
+        // cross-workspace recents whose shorter labels would
+        // otherwise out-score the local entries.
+        let mut scored: Vec<(u8, i64, usize)> = self
             .items
             .iter()
             .enumerate()
-            .filter_map(|(i, it)| fuzzy_match(&self.query, &it.label).map(|(s, _)| (s, i)))
+            .filter_map(|(i, it)| {
+                fuzzy_match(&self.query, &it.label).map(|(s, _)| (it.priority, s, i))
+            })
             .collect();
-        // Best score first; ties keep the original order.
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        self.filtered = scored.into_iter().map(|(_, i)| i).collect();
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0) // priority desc
+                .then(b.1.cmp(&a.1)) // score desc
+                .then(a.2.cmp(&b.2)) // index asc
+        });
+        self.filtered = scored.into_iter().map(|(_, _, i)| i).collect();
         self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
         self.scroll = 0;
     }
@@ -390,5 +414,31 @@ mod tests {
         assert_eq!(pk.selected, 2);
         pk.move_up();
         assert_eq!(pk.selected, 1);
+    }
+
+    /// vscode-user 3rd 2026-06-29 SEV-2 regression test: priority
+    /// beats fuzzy score in `refilter`. A cross-workspace `lib.rs`
+    /// (priority 1, shorter label, higher score) must rank BELOW
+    /// a local `src/lib.rs` (priority 2, longer label, lower
+    /// score).
+    #[test]
+    fn priority_beats_score_in_refilter() {
+        let items = vec![
+            // Cross-workspace recent — short label, high fuzzy score
+            // for "lib", priority 1.
+            PickerItem::new("/other/lib.rs", "lib.rs", "/other").with_priority(1),
+            // Local file — longer label, lower fuzzy score for "lib",
+            // priority 2.
+            PickerItem::new("/here/src/lib.rs", "src/lib.rs", "src").with_priority(2),
+        ];
+        let mut pk = Picker::new(PickerKind::Files, "Open file", items);
+        pk.type_char('l');
+        pk.type_char('i');
+        pk.type_char('b');
+        let top = pk.selected_item().unwrap();
+        assert_eq!(
+            top.id, "/here/src/lib.rs",
+            "priority 2 must beat the higher-scoring priority 1 cross-workspace item"
+        );
     }
 }

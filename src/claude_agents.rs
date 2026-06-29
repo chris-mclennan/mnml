@@ -2977,6 +2977,61 @@ mod tests {
         assert_eq!(AgentSource::Codex.exe_name(), "codex");
     }
 
+    /// claude-agents 3rd 2026-06-29 SEV-3 (test gap): cycle_sort
+    /// must keep the focused row's sid stable across sort key
+    /// changes (the user shouldn't be reset to row 0 every press).
+    /// e2e can't drive this because empty_with_rows is a private
+    /// constructor; this unit test fills that hole.
+    #[test]
+    fn cycle_sort_preserves_focused_session_id() {
+        let make = |sid: &str, ws: &str, tokens: u64| AgentRow {
+            source: AgentSource::Claude,
+            transcript_path: PathBuf::from(format!("/tmp/{sid}.jsonl")),
+            session_id: sid.to_string(),
+            workspace: ws.to_string(),
+            cwd: None,
+            git_branch: None,
+            model: None,
+            last_activity: None,
+            tokens,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_create_tokens: 0,
+            cache_read_tokens: 0,
+            cost_usd: 0.0,
+            event_count: 0,
+            last_user_msg: None,
+            last_assistant_msg: None,
+            pid: None,
+            state: AgentState::Idle,
+            current_tool: None,
+            todos: Vec::new(),
+            recent_bash: Vec::new(),
+            recent_files: Vec::new(),
+            recent_subagents: Vec::new(),
+            pending_tool_uses: 0,
+            tokens_per_min: None,
+        };
+        let rows = vec![
+            make("aaa", "ws1", 100),
+            make("bbb", "ws2", 50),
+            make("ccc", "ws3", 200),
+        ];
+        let mut p = ClaudeAgentsPane::empty_with_rows(rows);
+        // Focus row 1 (bbb).
+        p.selected = 1;
+        let before = p.visible_indices()[p.selected];
+        let before_sid = p.rows[before].session_id.clone();
+        assert_eq!(before_sid, "bbb");
+        // Cycle sort — order changes, but cursor should track bbb.
+        p.cycle_sort();
+        let after = p.visible_indices()[p.selected];
+        assert_eq!(
+            p.rows[after].session_id, "bbb",
+            "cycle_sort should re-locate the focused session_id in the new order"
+        );
+    }
+
     #[test]
     fn tail_filters_system_reminder_user_messages() {
         let d = tempfile::tempdir().unwrap();

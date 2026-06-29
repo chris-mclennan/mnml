@@ -180,6 +180,22 @@ fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Opt
     for line in replacement.split('\n') {
         out.push(line.to_string());
     }
+    // api-workflow-user 3rd 2026-06-29 SEV-3: preserve the blank
+    // separator between the unnamed leading block and the first
+    // `###` block. The leading block's `end_line` absorbs the
+    // trailing blank line; `as_http_block(None)` doesn't emit a
+    // replacement, so the splice removed the blank silently.
+    // Restore it by checking whether the line we're about to
+    // splice over (lines[end]) was blank AND there's a following
+    // `###` block in the suffix — that's the leading-block
+    // signature.
+    let removed_blank = lines.get(end).is_some_and(|l| l.trim().is_empty());
+    let next_starts_with_separator = lines
+        .get(end + 1)
+        .is_some_and(|l| l.trim_start().starts_with("###"));
+    if removed_blank && next_starts_with_separator {
+        out.push(String::new());
+    }
     if end < last_idx {
         out.extend(lines[end + 1..].iter().map(|s| s.to_string()));
     }
@@ -4343,15 +4359,33 @@ GET https://example.com/leading
 ### second
 GET https://example.com/second
 ";
-        // The unnamed leading block: matched with `Some(\"\")`? No — by the
-        // capture rule it gets `None` (no `###` separator at all). The save
-        // path won't reach `splice_http_block` for None, so this test
-        // documents what `splice_http_block` does in case it's called: it
-        // matches the block whose start_line has no `###` prefix.
         let new_text = "PUT https://example.com/leading-EDITED\n";
         let out = splice_http_block(src, None, new_text).unwrap();
         assert!(out.contains("PUT https://example.com/leading-EDITED"));
         assert!(out.contains("### second\nGET https://example.com/second"));
         assert!(!out.contains("GET https://example.com/leading\n"));
+    }
+
+    #[test]
+    fn splice_http_block_preserves_blank_separator_before_first_named_block() {
+        // api-workflow-user 3rd 2026-06-29 SEV-3: editing the unnamed
+        // leading block used to strip the blank line between it and
+        // the first `### name` block (the leading block's end_line
+        // absorbs the trailing blank, and as_http_block(None)
+        // doesn't emit a replacement blank). Lock the fix.
+        let src = "\
+GET https://example.com/leading
+
+### second
+GET https://example.com/second
+";
+        let new_text = "PUT https://example.com/leading-EDITED\n";
+        let out = splice_http_block(src, None, new_text).unwrap();
+        // Blank line must survive between the replaced leading block
+        // and the `### second` separator.
+        assert!(
+            out.contains("EDITED\n\n### second"),
+            "expected blank line between leading-block replacement and `### second`, got:\n{out}"
+        );
     }
 }

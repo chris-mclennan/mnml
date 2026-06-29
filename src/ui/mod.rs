@@ -1030,8 +1030,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             // wrap off, lines overflow to a horizontal-clip but the
             // y mapping stays stable.
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(lines)
-                    .style(Style::default().bg(t.bg_darker)),
+                ratatui::widgets::Paragraph::new(lines).style(Style::default().bg(t.bg_darker)),
                 hint_rect,
             );
             // mouse-polish F-2 — register click rects so a mouse-
