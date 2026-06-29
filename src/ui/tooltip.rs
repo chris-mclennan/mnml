@@ -336,7 +336,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             Some((
                 rect,
                 "close active tab".to_string(),
-                Some("click: close · panel stays open".into()),
+                Some("left-click: close · right-click: menu · Ctrl+Alt+W".into()),
             ))
         }
         HoverChip::SplitTabChip(pid) => {
