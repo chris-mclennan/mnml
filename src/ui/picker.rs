@@ -114,7 +114,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             theme::cur().bg_darker
         };
         let marker = if is_sel { "▌ " } else { "  " };
-        let detail = item.detail.clone();
+        // render-reviewer N-1 + drive-mnml 2026-06-28: cap detail
+        // too — was uncapped, so a long command id like
+        // `view.toggle_brackets` got ratatui-clipped mid-word
+        // (palette truncation finding). Reserve at least 12 cells
+        // for label; let detail use up to half the remaining row.
+        let min_label: usize = 12;
+        let detail_orig = item.detail.clone();
+        let detail_orig_w = detail_orig.chars().count();
+        let detail_budget = lw.saturating_sub(2 + min_label + 1);
+        let detail: String = if detail_orig_w > detail_budget && detail_budget >= 2 {
+            let take = detail_budget.saturating_sub(1);
+            detail_orig.chars().take(take).collect::<String>() + "…"
+        } else if detail_orig_w > detail_budget {
+            String::new()
+        } else {
+            detail_orig
+        };
         let dw = detail.chars().count();
         // label gets whatever's left after the marker (2) and the detail + a space.
         let label_avail = lw.saturating_sub(2 + if dw > 0 { dw + 1 } else { 0 });

@@ -125,13 +125,25 @@ pub fn draw(
                 tally.push(Span::styled("(no tests)", dim));
             }
             rows.push(Line::from(tally));
-            rows.push(Line::from(Span::styled(
+            // render-reviewer N-3 2026-06-28: width-aware help.
+            // Long form is ~110 chars; in a 24-cell right panel
+            // none of it was visible. Degrades gracefully.
+            let help_text = if area.width >= 110 {
                 format!(
                     "  ↵ open · t trace · h heal (Claude) · r re-run · a all · f file · R last-failed · s sort [{}] · esc → tree",
                     tp.sort.label(),
-                ),
-                dim,
-            )));
+                )
+            } else if area.width >= 60 {
+                format!(
+                    "  ↵ open · t trace · r re-run · a all · R last-failed · s [{}]",
+                    tp.sort.label(),
+                )
+            } else if area.width >= 32 {
+                "  ↵ open · r re-run · esc".to_string()
+            } else {
+                "  ↵ open · r run".to_string()
+            };
+            rows.push(Line::from(Span::styled(help_text, dim)));
             rows.push(Line::from(Span::styled(
                 "─".repeat(area.width as usize),
                 Style::default().fg(t.line).bg(t.bg_dark),

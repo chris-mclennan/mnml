@@ -632,8 +632,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             );
             if !has_any_hosted {
                 // Empty state: still paint the section label.
+                // design-critic 2026-06-28 #5: lowercase "right panel"
+                // matches the vocabulary used by palette title,
+                // tooltips, whichkey, context menu, toast. Bold
+                // modifier alone preserves visual hierarchy without
+                // shouting.
                 frame.render_widget(
-                    ratatui::widgets::Paragraph::new(" SIDE PANEL").style(
+                    ratatui::widgets::Paragraph::new(" right panel").style(
                         Style::default()
                             .fg(t.comment)
                             .bg(t.bg_darker)
@@ -859,15 +864,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 }
             }
         } else if rpa.height >= 5 && rpa.width >= 16 {
+            // design-critic 2026-06-28 #3: list ALL routable
+            // commands, not just 2 of 5. v5 routes ai.chat,
+            // find.grep, test.run into the panel too.
+            let hint_height: u16 = 9;
             let hint_rect = Rect {
                 x: rpa.x + 1,
                 y: rpa.y + 2,
                 width: rpa.width.saturating_sub(2),
-                height: 5,
+                height: hint_height.min(rpa.height.saturating_sub(2)),
             };
-            // design-critic v3 #5 — give the two command strings
-            // visual hierarchy. Prose lines stay dim (t.comment);
-            // the ex commands the user can copy-paste pop to t.fg.
             use ratatui::text::{Line, Span};
             let lines = vec![
                 Line::from(Span::styled(
@@ -881,6 +887,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 )),
                 Line::from(Span::styled(
                     ":lsp.diagnostics",
+                    Style::default().fg(t.fg).bg(t.bg_darker),
+                )),
+                Line::from(Span::styled(
+                    ":ai.chat",
+                    Style::default().fg(t.fg).bg(t.bg_darker),
+                )),
+                Line::from(Span::styled(
+                    ":find.grep",
+                    Style::default().fg(t.fg).bg(t.bg_darker),
+                )),
+                Line::from(Span::styled(
+                    ":test.run",
                     Style::default().fg(t.fg).bg(t.bg_darker),
                 )),
                 Line::from(""),

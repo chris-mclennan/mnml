@@ -796,6 +796,22 @@ impl VimInputHandler {
         if self.insert_waiting_for_register {
             self.insert_waiting_for_register = false;
             if let KeyCode::Char(c) = key.code {
+                // nvchad-user 2026-06-28 SEV-2: check Ctrl-modifier
+                // chord FIRST so `Ctrl+R Ctrl+W` and `Ctrl+R Ctrl+A`
+                // don't get eaten by the lowercase register-paste
+                // arm below (was: lowercase matched 'w'/'a' and
+                // pasted register 'w'/'a' instead of firing the
+                // word-under-cursor command).
+                if c == 'w' && ctrl {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_word_under_cursor".into(),
+                    ));
+                }
+                if c == 'a' && ctrl {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_bigword_under_cursor".into(),
+                    ));
+                }
                 // nvchad-2nd 2026-06-28 SEV-2: `"` (unnamed register)
                 // is the most-used INSERT-mode paste target and was
                 // missing from the accepted list. Vim users reflexively
@@ -804,21 +820,8 @@ impl VimInputHandler {
                 if valid {
                     return InputResult::Ops(vec![SetRegisterHint(Some(c)), Paste]);
                 }
-                // `Ctrl+R Ctrl+W` — paste the word under the cursor inline
-                // (vim canonical). Routed through an App command since
-                // word-under-cursor isn't an EditOp primitive.
-                if c == 'w' && ctrl {
-                    return InputResult::App(AppCommand::RunCommand(
-                        "editor.insert_word_under_cursor".into(),
-                    ));
-                }
-                // `Ctrl+R Ctrl+A` — paste WORD (whitespace-delimited) under
-                // the cursor.
-                if c == 'a' && ctrl {
-                    return InputResult::App(AppCommand::RunCommand(
-                        "editor.insert_bigword_under_cursor".into(),
-                    ));
-                }
+                // (Ctrl+R Ctrl+W and Ctrl+R Ctrl+A handled above
+                // before the lowercase register-paste arm.)
             }
             return InputResult::Consumed;
         }
@@ -1970,12 +1973,39 @@ impl VimInputHandler {
                 return InputResult::Consumed;
             }
             // operator + word for delete/change has a tighter form (`dw`, `cw`).
-            if let Some(m) = Self::motion(key.code) {
+            // nvchad-user 2026-06-28 SEV-2: vim's `:help cw` says
+            // `cw` is identical to `ce` (and `cW` to `cE`) — change
+            // word EXCLUDES the trailing whitespace. Swap the motion
+            // before building the op chain.
+            let effective_code = if matches!(op, PendingOp::Change) {
+                match key.code {
+                    KeyCode::Char('w') => KeyCode::Char('e'),
+                    KeyCode::Char('W') => KeyCode::Char('E'),
+                    other => other,
+                }
+            } else {
+                key.code
+            };
+            if let Some(m) = Self::motion(effective_code) {
                 let mut ops = vec![SelectStart];
                 if n > 1 {
                     ops.push(Repeat(n, Box::new(m)));
                 } else {
                     ops.push(m);
+                }
+                // nvchad-user SEV-2 (continued): `:help inclusive` —
+                // `e` / `E` / `$` are INCLUSIVE motions. Operators
+                // include the destination character. mnml's
+                // SelectStart+motion+DeleteSelection deletes
+                // [anchor, cursor) — exclusive at the cursor end.
+                // For inclusive motions, push an extra MoveRight so
+                // the destination char IS included.
+                let inclusive = matches!(
+                    effective_code,
+                    KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Char('$') | KeyCode::End
+                );
+                if inclusive {
+                    ops.push(MoveRight);
                 }
                 match op {
                     PendingOp::Delete => ops.push(DeleteSelection),

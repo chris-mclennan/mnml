@@ -77,8 +77,19 @@ pub fn draw(
                 .add_modifier(Modifier::BOLD),
         ),
     ]));
+    // render-reviewer N-2 + drive-mnml 2026-06-28: width-aware
+    // help line. Long form fits ~52 cells; in a narrow right
+    // panel (~32) the tail clipped mid-word. Shorter forms
+    // degrade gracefully.
+    let help_text: &str = if area.width >= 52 {
+        "  ⏎ jump   r refresh   s severity-filter   esc back"
+    } else if area.width >= 30 {
+        "  ⏎ jump · r refresh · s filter"
+    } else {
+        "  ⏎/r/s"
+    };
     lines.push(Line::from(Span::styled(
-        "  ⏎ jump   r refresh   s severity-filter   esc back",
+        help_text,
         Style::default().fg(t.comment).bg(t.bg_dark),
     )));
 

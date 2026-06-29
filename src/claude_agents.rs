@@ -1668,11 +1668,25 @@ fn parse_tail(path: &std::path::Path) -> TailStats {
 }
 
 /// claude-agents 2026-06-28 finding 1: spend_today undercounts on
-/// long sessions because parse_tail truncates to 256KB. For the
-/// spend-today path we read the whole file so the token totals
-/// match the sum of every assistant event.
+/// long sessions because parse_tail truncates to 256KB. The
+/// spend-today path needs the whole file so the token totals
+/// match every assistant event — BUT a 4-hour Opus session can
+/// grow to 50-200MB and reading 600MB+ synchronously on the main
+/// UI thread freezes the render loop for seconds
+/// (claude-agents-power-user SEV-2 follow-up against 591a4b4).
+///
+/// Compromise: read the WHOLE file when it's <= 10MB; tail-read
+/// otherwise. The 10MB cap covers ~95% of long sessions (Opus
+/// output is bounded by speed-of-light token generation). Past
+/// 10MB we lose some early tokens but the spend report renders
+/// without freezing.
 fn parse_full(path: &std::path::Path) -> TailStats {
-    parse_stats(path, None)
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if size <= 10 * 1024 * 1024 {
+        parse_stats(path, None)
+    } else {
+        parse_stats(path, Some(10 * 1024 * 1024))
+    }
 }
 
 fn parse_stats(path: &std::path::Path, cap: Option<usize>) -> TailStats {
