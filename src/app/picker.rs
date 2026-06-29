@@ -134,25 +134,39 @@ impl App {
                 }
             }
         };
-        // Recents first (newest first; absolute paths only — non-workspace
-        // entries silently come along, which is fine, they still open).
+        // vscode-user 2026-06-28 SEV-3: Ctrl+P workspace affinity.
+        // VS Code ranks current-workspace files higher than global
+        // recents. Order is now:
+        //   1. recents under the current workspace (newest first)
+        //   2. all other current-workspace tree files
+        //   3. recents from OTHER workspaces
+        //   4. extra-workspace tree files
+        // This way `Ctrl+P lib<Enter>` lands on the local lib.rs
+        // even when a dozen other projects' lib.rs are in the
+        // global recent list.
         let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut items: Vec<PickerItem> = Vec::new();
+        let workspace = self.workspace.clone();
+        // 1. Local recents.
         for p in &self.recent_files {
-            if seen.insert(p.clone()) && p.exists() && !is_noise(p) {
+            if p.starts_with(&workspace) && seen.insert(p.clone()) && p.exists() && !is_noise(p) {
                 items.push(make_item(p));
             }
         }
-        // Then the rest of the primary workspace, skipping anything already in.
+        // 2. Primary workspace tree files.
         for p in self.tree.all_files() {
             if !is_noise(&p) && seen.insert(p.clone()) {
                 items.push(make_item(&p));
             }
         }
-        // Multi-root: extra workspaces' files too, after the primary's. They
-        // keep their natural tree order but appear below the launched
-        // workspace so the picker doesn't shuffle the user's mental model
-        // of "this is the workspace I opened".
+        // 3. Cross-workspace recents (kept reachable but ranked
+        // below current-workspace files).
+        for p in &self.recent_files {
+            if seen.insert(p.clone()) && p.exists() && !is_noise(p) {
+                items.push(make_item(p));
+            }
+        }
+        // 4. Extra-workspace tree files.
         for ws in &self.extra_workspaces {
             for p in ws.tree.all_files() {
                 if !is_noise(&p) && seen.insert(p.clone()) {

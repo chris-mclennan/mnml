@@ -10139,6 +10139,11 @@ impl App {
                 // `latest_frame` set here.
                 m.pump();
             }
+            if let crate::pane::Pane::SpendReport(sr) = p {
+                // 2026-06-29 claude-agents-power-user SEV-2: pull
+                // the spend_today worker's snapshot if ready.
+                sr.poll_pending();
+            }
         }
         if let Some(scratch) = self.scratch_term.as_mut() {
             scratch.session.pump();

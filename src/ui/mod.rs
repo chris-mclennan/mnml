@@ -611,14 +611,81 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // tab_title() so the chip shows live state (e.g.
         // "main.rs ⌥3" / "problems ✗2") instead of static labels.
         // Falls back to a generic label for unsupported kinds.
-        let tab_label = |pane: &crate::pane::Pane| -> String {
-            match pane {
+        // design-critic 2026-06-28 #1: when budget tightens (3
+        // tabs in 32-cell column ≈ 7 chars/chip), prefer info-dense
+        // short forms (counts + status glyphs) over truncated
+        // nouns. `max_chars: None` → full title; Some(n) → short.
+        let tab_label = |pane: &crate::pane::Pane, max_chars: Option<usize>| -> String {
+            let full: String = match pane {
                 crate::pane::Pane::Outline(o) => o.tab_title(),
                 crate::pane::Pane::Diagnostics(d) => d.tab_title(),
                 crate::pane::Pane::Ai(a) => a.tab_title(),
                 crate::pane::Pane::Tests(t) => t.tab_title(),
                 crate::pane::Pane::Grep(g) => g.tab_title(),
                 _ => "PANEL".to_string(),
+            };
+            let Some(budget) = max_chars else { return full };
+            if full.chars().count() <= budget {
+                return full;
+            }
+            // Short form picks per pane kind: keep the count glyphs,
+            // drop the noun.
+            match pane {
+                crate::pane::Pane::Outline(o) => {
+                    // "main.rs ⌥42" → "main.rs" or "main.r…" — file name only.
+                    o.target
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.chars().take(budget).collect::<String>())
+                        .unwrap_or_else(|| "outline".to_string())
+                }
+                crate::pane::Pane::Diagnostics(d) => {
+                    // "problems ✗2 ⚠1" → "✗2⚠1" (4-6 chars).
+                    let (e, w) = d.counts();
+                    match (e, w) {
+                        (0, 0) => "✓".to_string(),
+                        (e, 0) => format!("✗{e}"),
+                        (0, w) => format!("⚠{w}"),
+                        (e, w) => format!("✗{e}⚠{w}"),
+                    }
+                }
+                crate::pane::Pane::Tests(t) => {
+                    // "tests Done ✓15 ✗0" → "✓15" / "✗1" / "…" / "✗".
+                    match &t.state {
+                        crate::playwright::TestsState::Running => "…".to_string(),
+                        crate::playwright::TestsState::Failed(_) => "✗".to_string(),
+                        crate::playwright::TestsState::Done(r) => {
+                            let f = r.failed();
+                            if f > 0 {
+                                format!("✗{f}")
+                            } else {
+                                format!("✓{}", r.passed())
+                            }
+                        }
+                    }
+                }
+                crate::pane::Pane::Grep(g) => {
+                    // "grep:query (24)" → "(24)" or "g:q…" — count only at tightest.
+                    let n = g.hits.len();
+                    if budget >= 5 {
+                        // Try a leading "q…" with count: "ab… 24"
+                        let q: String = g.query.chars().take(budget.saturating_sub(3)).collect();
+                        format!("{q}… {n}")
+                    } else {
+                        format!("({n})")
+                    }
+                }
+                crate::pane::Pane::Ai(_) => {
+                    // "AI: explain — done" → "AI" (the marker after
+                    // is the state; the noun is what's lost when
+                    // truncating the longer form).
+                    "AI".to_string()
+                }
+                _ => {
+                    let mut s: String = full.chars().take(budget.saturating_sub(1)).collect();
+                    s.push('…');
+                    s
+                }
             }
         };
         app.rects.right_panel_tabs.clear();
@@ -668,11 +735,29 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 // active tab isn't the rightmost.
                 let mut active_end_x: Option<u16> = None;
                 let mut last_painted_active = false;
+                // design-critic 2026-06-28 #1: budget per chip so
+                // tab_label can pick a short form when truncation
+                // would otherwise nuke the count glyphs that are
+                // the whole point of a live tab title.
+                let n_chips = panes_snapshot.len().max(1) as u16;
+                let avail_per_chip = strip_end
+                    .saturating_sub(rpa.x)
+                    .saturating_sub(n_chips.saturating_sub(1)) // gaps
+                    / n_chips;
+                let per_chip_label_budget = avail_per_chip.saturating_sub(2) as usize;
                 for (i, pid) in panes_snapshot.iter().copied().enumerate() {
                     let Some(pane) = app.panes.get(pid) else {
                         continue;
                     };
-                    let mut label = tab_label(pane);
+                    // Pass the per-chip budget so the label fn
+                    // chooses short-form when it would otherwise be
+                    // truncated past the count.
+                    let full_label = tab_label(pane, None);
+                    let mut label = if full_label.chars().count() <= per_chip_label_budget {
+                        full_label
+                    } else {
+                        tab_label(pane, Some(per_chip_label_budget))
+                    };
                     // Truncate long labels (file paths) to fit chip
                     // within remaining strip space. Reserve `…` cell
                     // if we truncate. Min sensible chip = " X… " = 4.
@@ -748,9 +833,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         );
                     }
                 }
-                // `×` close button on the rightmost cell. Paints in
-                // `t.bg2` (same as the active tab) so it reads as
-                // part of that chip — design-critic #3.
+                // `×` close button on the rightmost cell.
+                // design-critic 2026-06-28 #2: when the active tab
+                // is the rightmost chip, the bg2 bridge ties × to
+                // it visually (good). When the active is NOT
+                // rightmost, the bridge doesn't paint and the ×
+                // sits next to an inactive chip — risk of reading
+                // as a close-this-inactive-chip target. Paint × in
+                // bg_dark (matches inactive chip bg) + comment fg
+                // in that case, so it visually signals "modal —
+                // acts on the active tab" rather than "local close
+                // for this chip".
                 if rpa.width > reserve_close {
                     let close_x = rpa.x + rpa.width.saturating_sub(2);
                     let close_rect = Rect {
@@ -760,9 +853,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         height: 1,
                     };
                     let glyph = if app.config.ui.ascii_icons { "x" } else { "×" };
+                    let (close_fg, close_bg) = if last_painted_active {
+                        (t.fg, t.bg2)
+                    } else {
+                        (t.comment, t.bg_dark)
+                    };
                     frame.render_widget(
                         ratatui::widgets::Paragraph::new(glyph)
-                            .style(Style::default().fg(t.fg).bg(t.bg2)),
+                            .style(Style::default().fg(close_fg).bg(close_bg)),
                         close_rect,
                     );
                     app.rects.right_panel_close = Some(close_rect);

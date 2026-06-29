@@ -145,7 +145,7 @@ pub enum Pane {
 /// `claude_agents::spend_today()` every refresh; sort/scroll are
 /// pane-local. Click on a header rect toggles asc/desc on that
 /// column (mouse parity with `s` chord).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SpendReportPane {
     pub snapshot: crate::claude_agents::SpendToday,
     pub built_at: std::time::SystemTime,
@@ -153,6 +153,17 @@ pub struct SpendReportPane {
     pub scroll: usize,
     pub sort_by: SpendSortKey,
     pub sort_desc: bool,
+    /// 2026-06-29 claude-agents-power-user SEV-2 follow-up: even
+    /// with the 10MB-per-file cap, spend_today() can still take
+    /// 1-2s on a machine with many active workspaces. Compute on
+    /// a background thread and stream the result via mpsc — the
+    /// pane shows "computing…" while pending is live, then
+    /// swaps to the real snapshot when the worker finishes.
+    /// `mnml::tick()` drains this on every loop iteration.
+    pub pending: Option<std::sync::mpsc::Receiver<crate::claude_agents::SpendToday>>,
+    /// True while a refresh is in flight. Renderer shows a hint
+    /// in the title bar so the user knows it's not a stale view.
+    pub loading: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,23 +190,64 @@ impl SpendSortKey {
     }
 }
 
+// mpsc::Receiver isn't Clone; the snapshot view is. Hand-impl
+// Clone so the unrelated callers (test helpers) that clone panes
+// can still do so — the cloned report just won't have an active
+// background worker (treated as not-loading).
+impl Clone for SpendReportPane {
+    fn clone(&self) -> Self {
+        Self {
+            snapshot: self.snapshot.clone(),
+            built_at: self.built_at,
+            selected: self.selected,
+            scroll: self.scroll,
+            sort_by: self.sort_by,
+            sort_desc: self.sort_desc,
+            pending: None,
+            loading: false,
+        }
+    }
+}
+
 impl SpendReportPane {
     pub fn fresh() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::claude_agents::spend_today());
+        });
         Self {
-            snapshot: crate::claude_agents::spend_today(),
+            snapshot: crate::claude_agents::SpendToday::default(),
             built_at: std::time::SystemTime::now(),
             selected: 0,
             scroll: 0,
-            // Default: largest spend first (cost desc).
             sort_by: SpendSortKey::Cost,
             sort_desc: true,
+            pending: Some(rx),
+            loading: true,
         }
     }
     pub fn refresh(&mut self) {
-        self.snapshot = crate::claude_agents::spend_today();
-        self.built_at = std::time::SystemTime::now();
-        if self.selected >= self.snapshot.per_workspace.len() {
-            self.selected = self.snapshot.per_workspace.len().saturating_sub(1);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::claude_agents::spend_today());
+        });
+        self.pending = Some(rx);
+        self.loading = true;
+    }
+    /// 2026-06-29: drain the background channel if a worker has
+    /// finished. Called from `App::tick` so the pane swaps to
+    /// the real snapshot without the user needing to do anything.
+    pub fn poll_pending(&mut self) {
+        if let Some(rx) = self.pending.as_ref()
+            && let Ok(snap) = rx.try_recv()
+        {
+            self.snapshot = snap;
+            self.built_at = std::time::SystemTime::now();
+            self.pending = None;
+            self.loading = false;
+            if self.selected >= self.snapshot.per_workspace.len() {
+                self.selected = self.snapshot.per_workspace.len().saturating_sub(1);
+            }
         }
     }
     /// Return the rows sorted by current sort_by/sort_desc. Stable.

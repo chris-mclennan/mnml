@@ -25,8 +25,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         Style::default().fg(t.bg3)
     };
     let arrow = if p.sort_desc { "↓" } else { "↑" };
+    // 2026-06-29: spend_today runs on a background thread now.
+    // Show a "computing…" badge in the title while it's pending
+    // so the user sees the pane isn't stale.
+    let loading_chip = if p.loading { " · computing…" } else { "" };
     let header_text = format!(
-        " AI spend (24h) · sort: {} {arrow} · {} sessions · ${:.4} total · r refresh · s sort · esc back ",
+        " AI spend (24h) · sort: {} {arrow}{loading_chip} · {} sessions · ${:.4} total · r refresh · s sort · esc back ",
         p.sort_by.label(),
         p.snapshot.claude_sessions + p.snapshot.codex_sessions,
         p.snapshot.total_cost_usd,

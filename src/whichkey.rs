@@ -117,17 +117,14 @@ pub fn root() -> &'static Leader {
                             ('r', cmd("view.toggle_right_panel", "right panel")),
                             (']', cmd("view.right_panel_next_tab", "right panel: next")),
                             ('[', cmd("view.right_panel_prev_tab", "right panel: prev")),
-                            // design-critic end-of-day #10 — "close"
-                            // is destructive language under +toggle.
-                            // Phrase as "evict" (matches the × icon
-                            // semantic) so the user understands it
-                            // doesn't toggle anything visible.
+                            // design-critic + claude-agents-power-user
+                            // 2026-06-28: "evict" was unique vocabulary
+                            // — every other surface (palette title,
+                            // context menu, × tooltip) said "close".
+                            // Aligned for whichkey/palette searchability.
                             (
                                 'x',
-                                cmd(
-                                    "view.right_panel_close_tab",
-                                    "right panel: evict active tab",
-                                ),
+                                cmd("view.right_panel_close_tab", "right panel: close tab"),
                             ),
                             ('k', cmd("editor.toggle_keymap", "vim ⇄ standard")),
                             ('t', cmd("theme.pick", "theme…")),

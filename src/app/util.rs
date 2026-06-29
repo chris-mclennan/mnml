@@ -122,10 +122,26 @@ pub fn collect_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usi
     out
 }
 
+/// Snap a byte offset to the nearest char boundary at or before
+/// `byte`. crash-investigator 2026-06-28 SEV-3 fix: session restore
+/// reads cursor_byte from disk; if the file was externally edited
+/// to put astral-plane (4-byte) UTF-8 characters at the prior
+/// position, slicing `text[..byte]` mid-char would panic. Always
+/// snap before slicing.
+fn snap_to_char_boundary(text: &str, byte: usize) -> usize {
+    let byte = byte.min(text.len());
+    // text.is_char_boundary(text.len()) is always true; this loop
+    // terminates by byte == 0 at the latest.
+    (0..=byte)
+        .rev()
+        .find(|&b| text.is_char_boundary(b))
+        .unwrap_or(0)
+}
+
 /// Byte offset → `(line, col_chars)`. Used by find / search / mark
 /// flows to convert match positions into editor-cursor coords.
 pub(crate) fn byte_to_line_col(text: &str, byte: usize) -> (usize, usize) {
-    let cap = byte.min(text.len());
+    let cap = snap_to_char_boundary(text, byte);
     let line = text[..cap].bytes().filter(|&b| b == b'\n').count();
     let line_start = text[..cap].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let col = text[line_start..cap].chars().count();
@@ -135,9 +151,45 @@ pub(crate) fn byte_to_line_col(text: &str, byte: usize) -> (usize, usize) {
 /// Synonym of `byte_to_line_col` — kept for the snippet / LSP edit
 /// sites that named the line as "row".
 pub(crate) fn byte_to_row_col(text: &str, byte: usize) -> (usize, usize) {
-    let byte = byte.min(text.len());
+    let byte = snap_to_char_boundary(text, byte);
     let row = text[..byte].bytes().filter(|&b| b == b'\n').count();
     let line_start = text[..byte].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let col = text[line_start..byte].chars().count();
     (row, col)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_to_row_col_snaps_mid_emoji_to_boundary() {
+        // crash-investigator 2026-06-28 SEV-3: a session-restored
+        // cursor_byte landing inside a multi-byte char must NOT
+        // panic. The snap-to-boundary helper keeps the slice safe.
+        let text = "a\u{1F600}b"; // a + 😀 (4 bytes) + b — 6 bytes total
+        // Boundaries: 0 (a), 1 (start of 😀), 5 (start of b), 6 (end).
+        // byte=3 lands inside 😀 — should snap back to 1.
+        let (row, col) = byte_to_row_col(text, 3);
+        assert_eq!(row, 0);
+        assert_eq!(col, 1, "cursor lands between 'a' and the emoji");
+        // byte=4 (still inside 😀) snaps to 1.
+        let (row, col) = byte_to_row_col(text, 4);
+        assert_eq!((row, col), (0, 1));
+        // byte=6 (end) stays at end → col 3 (a + emoji + b = 3 chars).
+        let (row, col) = byte_to_row_col(text, 6);
+        assert_eq!((row, col), (0, 3));
+        // Past-end clamps.
+        let (row, col) = byte_to_row_col(text, 999);
+        assert_eq!((row, col), (0, 3));
+    }
+
+    #[test]
+    fn byte_to_line_col_snaps_too() {
+        let text = "x\u{1F600}\nfoo";
+        let (line, col) = byte_to_line_col(text, 3);
+        assert_eq!((line, col), (0, 1));
+        let (line, col) = byte_to_line_col(text, 8);
+        assert_eq!((line, col), (1, 2));
+    }
 }

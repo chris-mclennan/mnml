@@ -1035,16 +1035,22 @@ impl App {
             }
             self.focus_pane();
         }
-        // Toast the totals so the user gets the punchline even if
-        // they pop the pane closed quickly.
+        // 2026-06-29: snapshot is computed on a background thread
+        // now (claude-agents-power-user SEV-2 follow-up); when the
+        // pane is loading we don't have totals yet. Toast a
+        // placeholder so the user knows the action registered.
         if let Some(pid) = self.active
             && let Some(Pane::SpendReport(p)) = self.panes.get(pid)
         {
-            self.toast(format!(
-                "today: {} sessions · ${:.4}",
-                p.snapshot.claude_sessions + p.snapshot.codex_sessions,
-                p.snapshot.total_cost_usd
-            ));
+            if p.loading {
+                self.toast("computing spend… (background)".to_string());
+            } else {
+                self.toast(format!(
+                    "today: {} sessions · ${:.4}",
+                    p.snapshot.claude_sessions + p.snapshot.codex_sessions,
+                    p.snapshot.total_cost_usd
+                ));
+            }
         }
     }
 
