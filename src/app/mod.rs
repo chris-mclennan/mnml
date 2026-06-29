@@ -11861,6 +11861,66 @@ mod tests {
     }
 
     #[test]
+    fn empty_state_click_via_command_path_routes_correctly_after_runtime_toggle() {
+        // vscode-mouse 2026-06-28 SEV-3 — the agent reported the
+        // empty-state ':outline.show' click silently failed after
+        // a RUNTIME toggle of the panel (Ctrl+Shift+B from closed
+        // → open). The agent's actual repro likely had no active
+        // editor — outline.show requires one (toasts otherwise).
+        // This test opens a file first then exercises the click
+        // path end-to-end through dispatch_mouse → mouse.rs →
+        // command::run → open_outline_pane → right_panel_push.
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        app.open_path(&a);
+
+        // Start panel CLOSED, then toggle open at runtime (the
+        // scenario the agent's repro used).
+        assert!(!app.right_panel_visible);
+        crate::command::run("view.toggle_right_panel", &mut app);
+        assert!(app.right_panel_visible);
+        assert!(app.right_panel_panes.is_empty());
+
+        // Render once so the empty-state rects get registered at
+        // the right coordinates for this terminal.
+        let mut term = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        term.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+
+        // The outline rect must now exist (panel is tall enough)
+        // and a click inside it must fire outline.show.
+        let rect = app
+            .rects
+            .right_panel_empty_outline
+            .expect("outline rect should be registered after runtime toggle");
+        // Dispatch a synthetic left-click at the rect center.
+        let click_x = rect.x + rect.width / 2;
+        let click_y = rect.y;
+        let event = ratatui::crossterm::event::MouseEvent {
+            kind: ratatui::crossterm::event::MouseEventKind::Down(
+                ratatui::crossterm::event::MouseButton::Left,
+            ),
+            column: click_x,
+            row: click_y,
+            modifiers: ratatui::crossterm::event::KeyModifiers::empty(),
+        };
+        crate::tui::dispatch_mouse(&mut app, event);
+
+        // outline.show routes into the panel — should now host an
+        // Outline pane.
+        assert!(
+            !app.right_panel_panes.is_empty(),
+            "click on :outline.show empty-state row should route outline.show into the panel"
+        );
+        let active_pane_id = app.right_panel_active_pane_id().unwrap();
+        assert!(
+            matches!(app.panes.get(active_pane_id), Some(Pane::Outline(_))),
+            "active right-panel pane should be Outline"
+        );
+    }
+
+    #[test]
     fn right_panel_empty_rects_dropped_when_y_outside_panel() {
         // vscode-mouse 2026-06-28 SEV-3 + 035b69b's render fix:
         // when the panel column is short (height <13 rows in the
