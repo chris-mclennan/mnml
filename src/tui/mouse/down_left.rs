@@ -1116,17 +1116,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.run_git_rail_header_action(action);
         return;
     }
-    // qa-feature 2026-06-30 — GitGraph repo-switch pill. Opens
-    // the workspace picker when extras are configured; falls
-    // back to the workspaces editor overlay when there are none
-    // (so the click leads SOMEWHERE useful instead of a toast).
+    // qa-feature 2026-06-30 — GitGraph repo-switch pill. The
+    // sidebar's pill is anchored to the GIT pane's repo, so the
+    // most useful click action is `switch_active_repo` (changes
+    // what the git pane is looking at, which is what the user
+    // expects from a dropdown next to the repo name). Fallback
+    // cascade: 2+ repos → open_repo_picker; extras configured →
+    // open_workspace_picker; else open_workspaces_editor so the
+    // click leads somewhere even on a single-repo single-WS setup.
     if let Some(rect) = app.rects.git_graph_repo_switch
         && crate::app::dispatch::contains(rect, x, y)
     {
-        if app.extra_workspaces.is_empty() {
-            app.open_workspaces_editor();
-        } else {
+        if app.repos.len() > 1 {
+            app.open_repo_picker();
+        } else if !app.extra_workspaces.is_empty() {
             app.open_workspace_picker();
+        } else {
+            app.open_workspaces_editor();
         }
         return;
     }
