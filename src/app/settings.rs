@@ -539,26 +539,11 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: wmc_idx != wmc_default_idx,
     }));
 
-    // Tab width — 2 / 4 / 8.
-    let tab_idx = match cfg.editor.tab_width {
-        2 => 0,
-        4 => 1,
-        8 => 2,
-        _ => 1, // out-of-range live value falls back to the 4-tab default in the UI
-    };
-    let tab_default_idx = match d.editor.tab_width {
-        2 => 0,
-        4 => 1,
-        8 => 2,
-        _ => 1,
-    };
-    out.push(SettingItem::Row(SettingRow {
-        key: "editor.tab_width",
-        label: "Tab width",
-        options: vec!["2".into(), "4".into(), "8".into()],
-        current_idx: tab_idx,
-        modified: tab_idx != tab_default_idx,
-    }));
+    // qa-8th crash SEV-2 2026-06-30 — was a duplicate `editor.tab_width`
+    // SettingRow here alongside the NumberRow above. With a NumberRow
+    // value out of the {2,4,8} set (e.g. 3), the Row's _ => 1 fallback
+    // displayed wrong + adjusting it would clobber back to 4. NumberRow
+    // (1-12 step 1) is strictly more expressive — removed the Row.
 
     out.push(bool_row(
         "editor.trim_trailing_ws_on_save",

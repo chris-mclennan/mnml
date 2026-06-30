@@ -812,22 +812,66 @@ impl App {
                 // arena. Iterating ascending closes the wrong pane on
                 // the second iteration. Sort DESCENDING so each
                 // close removes a slot above all remaining targets.
-                let mut to_close: Vec<usize> = self
+                let to_close: Vec<usize> = self
                     .right_panel_panes
                     .iter()
                     .enumerate()
                     .filter_map(|(i, &pid)| (i != keep_idx).then_some(pid))
                     .collect();
-                to_close.sort_unstable_by(|a, b| b.cmp(a));
-                for pid in to_close {
+                // qa-8th crash SEV-2 2026-06-30 — same dirty-prompt
+                // clobber bug as CloseAllRightPanelTabs. Partition
+                // clean vs dirty: close clean immediately, prompt
+                // for ONE dirty at a time.
+                let (dirty, clean): (Vec<usize>, Vec<usize>) =
+                    to_close.into_iter().partition(|&id| {
+                        matches!(
+                            self.panes.get(id),
+                            Some(p) if p.is_dirty()
+                        )
+                    });
+                let mut clean = clean;
+                clean.sort_unstable_by(|a, b| b.cmp(a));
+                for pid in clean {
+                    self.force_close_pane(pid);
+                }
+                if let Some(&pid) = dirty.first() {
                     self.close_pane(pid);
                 }
             }
             CloseAllRightPanelTabs => {
-                // Same arena-shift fix as CloseOtherRightPanelTabs.
-                let mut to_close: Vec<usize> = self.right_panel_panes.clone();
-                to_close.sort_unstable_by(|a, b| b.cmp(a));
-                for pid in to_close {
+                // qa-8th crash SEV-2 2026-06-30 — was looping
+                // close_pane on every pane, but close_pane stashes
+                // dirty panes in the single close_prompt Option,
+                // so the second dirty pane clobbered the first
+                // before its dialog resolved. With N dirty panes,
+                // N-1 were silently kept alive. Now: clean panes
+                // close immediately via force_close_pane; dirty
+                // panes pop ONE save/discard prompt first — the
+                // user resolves it, and the close_prompt resolve
+                // path can re-fire CloseAllRightPanelTabs if more
+                // dirty panes remain. (Simpler than a queue: the
+                // user clicks 'Close all' again or it cascades.)
+                let to_close: Vec<usize> = self.right_panel_panes.clone();
+                // Partition into clean + dirty (preserve original
+                // order so the user sees prompts in panel order).
+                let (dirty, clean): (Vec<usize>, Vec<usize>) =
+                    to_close.into_iter().partition(|&id| {
+                        matches!(
+                            self.panes.get(id),
+                            Some(p) if p.is_dirty()
+                        )
+                    });
+                // Close clean panes first, descending so arena
+                // shifts don't invalidate IDs.
+                let mut clean = clean;
+                clean.sort_unstable_by(|a, b| b.cmp(a));
+                for pid in clean {
+                    self.force_close_pane(pid);
+                }
+                // One dirty prompt at a time. The resolve handler
+                // (close_prompt_resolve) leaves the user free to
+                // re-fire 'Close all tabs' for the remaining ones.
+                if let Some(&pid) = dirty.first() {
                     self.close_pane(pid);
                 }
             }

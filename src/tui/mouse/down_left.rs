@@ -474,7 +474,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.bufferline_overflow_right
         && crate::app::dispatch::contains(r, x, y)
     {
-        if app.bufferline_first_visible + 1 < app.panes.len() {
+        // qa-8th crash SEV-3 2026-06-30 — was app.panes.len(),
+        // which includes right_panel_panes (not in the bufferline
+        // visible list). The render-side clamp swallowed the
+        // extra clicks silently. Use the actual visible count.
+        let visible_count = app.panes.len().saturating_sub(app.right_panel_panes.len());
+        if app.bufferline_first_visible + 1 < visible_count {
             app.bufferline_first_visible += 1;
             app.bufferline_active_at_scroll = app.active;
         }
