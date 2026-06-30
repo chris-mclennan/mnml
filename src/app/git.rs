@@ -2504,8 +2504,18 @@ impl App {
         if let Some(crate::pane::Pane::GitGraph(g)) = self.panes.get_mut(pane_idx) {
             g.jump_to_commit(idx_in_graph);
         }
+        // qa-feature 2026-06-30 — clicking a branch in the sidebar
+        // used to steal focus to the graph pane (so the user's
+        // next ↑/↓ scrolled commits, not branches). Universal git-
+        // tool convention (VS Code/GitLens, GitKraken, JetBrains,
+        // Sublime Merge, Lazygit, GitHub Desktop) is: click in a
+        // sidebar selects WITHIN that sidebar; focus doesn't move
+        // unless the user explicitly clicks on the target pane.
+        // Keep self.active pointing at the graph (so the rect
+        // it's painted in still highlights as the active pane) but
+        // leave self.focus alone — if focus was on the rail, it
+        // stays there.
         self.active = Some(pane_idx);
-        self.focus = crate::focus::Focus::Pane;
     }
 
     pub fn checkout_branch(&mut self, id: &str) {
