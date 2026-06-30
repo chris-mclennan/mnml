@@ -51,6 +51,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // steal clicks at cells we're no longer painting.
     app.rects.git_palette_rows.clear();
     app.rects.git_palette_filter_input = None;
+    // qa-feature 2026-06-30 — clear BEFORE rendering so the
+    // (possibly stale) rect from a previous frame doesn't survive
+    // when the palette stops rendering (e.g. user switched to a
+    // different activity section). The previous clear-in-ui::mod
+    // ran AFTER this draw() — silently wiping my own rect.
+    app.rects.git_graph_repo_switch = None;
 
     let mut y = area.y;
     let snap = app.git.snapshot().clone();

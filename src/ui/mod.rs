@@ -475,6 +475,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             height: ta.height,
         };
         crate::ui::activity_bar::draw(frame, app, bar_area);
+        // qa-feature 2026-06-30 — clear the repo-switch rect when
+        // the Git palette isn't the active section so a stale rect
+        // from a previous frame doesn't catch clicks elsewhere.
+        if !matches!(app.active_section, crate::app::ActivitySection::Git) {
+            app.rects.git_graph_repo_switch = None;
+        }
         match app.active_section {
             crate::app::ActivitySection::Explorer => {
                 tree_view::draw(frame, app, content_area);
@@ -1230,7 +1236,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.scrollbars.clear();
     app.rects.git_graph_detail_dividers.clear();
     app.rects.git_graph_column_headers.clear();
-    app.rects.git_graph_repo_switch = None;
+    // git_graph_repo_switch is cleared at the top of
+    // git_palette::draw (which runs BEFORE this point in ui flow).
     app.rects.request_tabs.clear();
     app.rects.request_fields.clear();
     app.rects.completion_rows.clear();
