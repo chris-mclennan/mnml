@@ -1956,6 +1956,10 @@ pub struct PaneRects {
     /// GitGraph column header rects (Author / Date / SHA) — click to
     /// cycle that column's sort (asc / desc / none).
     pub git_graph_column_headers: Vec<(Rect, crate::git::graph::SortColumn)>,
+    /// qa-feature 2026-06-30 — `⇄` switch button next to the repo
+    /// name on the GitGraph sidebar header. Click opens the
+    /// workspace picker.
+    pub git_graph_repo_switch: Option<Rect>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// 2026-06-22 — per-split multi-tab chip click rects. Each entry

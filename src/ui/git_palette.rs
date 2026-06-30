@@ -67,25 +67,47 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .and_then(|n| n.to_str())
         .unwrap_or("repo")
         .to_string();
+    // qa-feature 2026-06-30 — `⇄` switch button to the right of
+    // the repo name. Opens the workspace picker on click (same
+    // surface as `:view.switch_workspace`).
+    let header_rect = Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: 1,
+    };
     let header_line = Line::from(vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            repo_name,
+            repo_name.clone(),
             Style::default()
                 .fg(t.fg)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled("  ", Style::default().bg(bg)),
+        Span::styled(
+            "⇄",
+            Style::default()
+                .fg(t.blue)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
-    frame.render_widget(
-        Paragraph::new(header_line),
-        Rect {
-            x: area.x,
+    frame.render_widget(Paragraph::new(header_line), header_rect);
+    // Register the click rect — switch button is at the cell just
+    // after `" {repo_name}  "` (1 leading space + name + 2-cell gap).
+    let switch_x = area
+        .x
+        .saturating_add(1 + repo_name.chars().count() as u16 + 2);
+    if switch_x < area.x + area.width {
+        app.rects.git_graph_repo_switch = Some(Rect {
+            x: switch_x,
             y,
-            width: area.width,
+            width: 1,
             height: 1,
-        },
-    );
+        });
+    }
     y += 1;
 
     // Branch + ahead/behind row.
