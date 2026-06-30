@@ -1960,6 +1960,14 @@ pub struct PaneRects {
     /// name on the GitGraph sidebar header. Click opens the
     /// workspace picker.
     pub git_graph_repo_switch: Option<Rect>,
+    /// qa-feature 2026-06-30 — section headers in the git palette
+    /// (LOCAL / REMOTE / WORKTREES / PRS / STASHES / TAGS). Click
+    /// toggles `git_palette_collapsed_sections`.
+    pub git_palette_section_headers: Vec<(Rect, String)>,
+    /// qa-feature 2026-06-30 — folder headers inside the palette
+    /// (`▾ chore (4)` etc.). Click toggles
+    /// `git_palette_collapsed_folders`. Key is `section:folder`.
+    pub git_palette_folder_headers: Vec<(Rect, String)>,
     /// `(rect, pane_id)` for each tab's close badge (the trailing `×`/`●` → close).
     pub bufferline_tab_close: Vec<(Rect, PaneId)>,
     /// 2026-06-22 — per-split multi-tab chip click rects. Each entry
@@ -2999,6 +3007,18 @@ pub struct App {
     /// are skipped. Bounded by render to [0, max] where max keeps
     /// at least one row visible.
     pub git_palette_scroll: usize,
+    /// qa-feature 2026-06-30 — set of git-palette SECTION names
+    /// the user has collapsed (LOCAL / REMOTE / WORKTREES / PRS /
+    /// STASHES / TAGS). Click the section header to toggle. When
+    /// collapsed, the chevron flips to `▸` and the section's
+    /// rows aren't rendered.
+    pub git_palette_collapsed_sections: std::collections::HashSet<String>,
+    /// qa-feature 2026-06-30 — set of folder names (`chore`,
+    /// `fix`, …) inside the LOCAL / REMOTE sections that the
+    /// user has collapsed. Click a folder header toggles. Stored
+    /// as `section:folder` to disambiguate `chore` under LOCAL
+    /// vs REMOTE.
+    pub git_palette_collapsed_folders: std::collections::HashSet<String>,
     /// qa-feature 2026-06-30 — keyboard cursor inside the git
     /// palette (when Focus::Tree + active_section == Git). ↑/↓
     /// move it; Enter fires the same action as clicking the row.
@@ -3860,6 +3880,8 @@ impl App {
             git_palette_selected: None,
             git_palette_scroll: 0,
             git_palette_cursor: 0,
+            git_palette_collapsed_sections: std::collections::HashSet::new(),
+            git_palette_collapsed_folders: std::collections::HashSet::new(),
             workspace_picker_open: false,
             workspace_picker_filter: String::new(),
             workspaces_editor_open: false,

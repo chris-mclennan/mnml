@@ -1426,6 +1426,40 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.workspace_picker_filter.clear();
         // Fall through — let the click hit whatever's under.
     }
+    // qa-feature 2026-06-30 — click a section header in the git
+    // palette toggles collapse. Wins over the filter / row hit-tests
+    // since headers are exclusive rows.
+    if let Some((_, label)) = app
+        .rects
+        .git_palette_section_headers
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        if app.git_palette_collapsed_sections.contains(&label) {
+            app.git_palette_collapsed_sections.remove(&label);
+        } else {
+            app.git_palette_collapsed_sections.insert(label);
+        }
+        return;
+    }
+    // qa-feature 2026-06-30 — click a folder header (`▾ chore (4)`)
+    // toggles its collapse. Key is `SECTION:folder` so the same
+    // folder name under LOCAL vs REMOTE doesn't clash.
+    if let Some((_, key)) = app
+        .rects
+        .git_palette_folder_headers
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        if app.git_palette_collapsed_folders.contains(&key) {
+            app.git_palette_collapsed_folders.remove(&key);
+        } else {
+            app.git_palette_collapsed_folders.insert(key);
+        }
+        return;
+    }
     // Git-palette filter input — click to focus + start typing.
     if let Some(r) = app.rects.git_palette_filter_input
         && crate::app::dispatch::contains(r, x, y)

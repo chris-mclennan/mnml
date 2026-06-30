@@ -51,6 +51,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // steal clicks at cells we're no longer painting.
     app.rects.git_palette_rows.clear();
     app.rects.git_palette_filter_input = None;
+    app.rects.git_palette_section_headers.clear();
+    app.rects.git_palette_folder_headers.clear();
     // qa-feature 2026-06-30 — clear BEFORE rendering so the
     // (possibly stale) rect from a previous frame doesn't survive
     // when the palette stops rendering (e.g. user switched to a
@@ -232,6 +234,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if y < area.y + area.height && !local_filtered.is_empty() {
         y = draw_section_header(frame, app, area, y, "LOCAL", local_filtered.len(), bg);
     }
+    // qa-feature 2026-06-30 — skip body when LOCAL collapsed.
+    let local_collapsed = app.git_palette_collapsed_sections.contains("LOCAL");
+    if local_collapsed {
+        // Add the gap between sections so the next header doesn't
+        // butt up against this one.
+        if y < area.y + area.height {
+            y += 1;
+        }
+    }
     // Folder-group local branches by their `/` prefix so a repo
     // with `bugfix/*`, `chore/*`, `feature/*` collapses into a
     // few folder rows instead of dumping 50+ branches flat.
@@ -251,96 +262,108 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             )
         })
         .collect();
-    for (folder, idxs) in &local_groups {
-        if y >= area.y + area.height {
-            break;
-        }
-        let indent_branch = if folder.is_empty() {
-            "   "
-        } else {
-            // Folder header row, e.g. `▾ bugfix (2)`.
-            let folder_line = Line::from(vec![
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled("▾ ", Style::default().fg(t.comment).bg(bg)),
-                Span::styled(folder.clone(), Style::default().fg(t.fg).bg(bg)),
-                Span::styled(
-                    format!("  ({})", idxs.len()),
-                    Style::default().fg(t.comment).bg(bg),
-                ),
-            ]);
-            frame.render_widget(
-                Paragraph::new(folder_line),
-                Rect {
+    if !local_collapsed {
+        for (folder, idxs) in &local_groups {
+            if y >= area.y + area.height {
+                break;
+            }
+            let folder_collapsed = !folder.is_empty()
+                && app
+                    .git_palette_collapsed_folders
+                    .contains(&format!("LOCAL:{folder}"));
+            let indent_branch = if folder.is_empty() {
+                "   "
+            } else {
+                // Folder header row, e.g. `▾ bugfix (2)`.
+                let chev = if folder_collapsed { "▸ " } else { "▾ " };
+                let folder_line = Line::from(vec![
+                    Span::styled("  ", Style::default().bg(bg)),
+                    Span::styled(chev, Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(folder.clone(), Style::default().fg(t.fg).bg(bg)),
+                    Span::styled(
+                        format!("  ({})", idxs.len()),
+                        Style::default().fg(t.comment).bg(bg),
+                    ),
+                ]);
+                let folder_rect = Rect {
                     x: area.x,
                     y,
                     width: area.width,
                     height: 1,
-                },
-            );
-            y += 1;
-            "     " // 5-cell indent under folder
-        };
-        for &i in idxs {
-            if y >= area.y + area.height {
-                break;
-            }
-            let br = &app.git_rail.branches[i];
-            let marker = if br.is_current { "●" } else { "○" };
-            let marker_color = if br.is_current { t.green } else { t.fg };
-            // Strip the folder/ prefix when inside a folder.
-            let display_name = if folder.is_empty() {
-                br.name.clone()
-            } else {
-                br.name
-                    .strip_prefix(&format!("{folder}/"))
-                    .unwrap_or(&br.name)
-                    .to_string()
+                };
+                frame.render_widget(Paragraph::new(folder_line), folder_rect);
+                app.rects
+                    .git_palette_folder_headers
+                    .push((folder_rect, format!("LOCAL:{folder}")));
+                y += 1;
+                if folder_collapsed {
+                    continue;
+                }
+                "     " // 5-cell indent under folder
             };
-            // qa-feature 2026-06-30 — highlight the row when its
-            // name matches `git_palette_selected` (the last
-            // clicked ref). Provides visual feedback for what's
-            // currently selected in the palette.
-            let is_selected = app
-                .git_palette_selected
-                .as_ref()
-                .is_some_and(|s| s == &br.name);
-            let row_bg = if is_selected { t.bg2 } else { bg };
-            let name_style = Style::default()
-                .fg(t.fg)
-                .bg(row_bg)
-                .add_modifier(if br.is_current {
-                    Modifier::BOLD
+            for &i in idxs {
+                if y >= area.y + area.height {
+                    break;
+                }
+                let br = &app.git_rail.branches[i];
+                let marker = if br.is_current { "●" } else { "○" };
+                let marker_color = if br.is_current { t.green } else { t.fg };
+                // Strip the folder/ prefix when inside a folder.
+                let display_name = if folder.is_empty() {
+                    br.name.clone()
                 } else {
-                    Modifier::empty()
-                });
-            let row_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            // Paint the whole row bg first when selected so the
-            // highlight extends past the rendered text to the
-            // right edge.
-            if is_selected {
-                frame.render_widget(
-                    Block::default().style(Style::default().bg(row_bg)),
-                    row_rect,
-                );
+                    br.name
+                        .strip_prefix(&format!("{folder}/"))
+                        .unwrap_or(&br.name)
+                        .to_string()
+                };
+                // qa-feature 2026-06-30 — highlight the row when its
+                // name matches `git_palette_selected` (the last
+                // clicked ref). Provides visual feedback for what's
+                // currently selected in the palette.
+                let is_selected = app
+                    .git_palette_selected
+                    .as_ref()
+                    .is_some_and(|s| s == &br.name);
+                let row_bg = if is_selected { t.bg2 } else { bg };
+                let name_style =
+                    Style::default()
+                        .fg(t.fg)
+                        .bg(row_bg)
+                        .add_modifier(if br.is_current {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        });
+                let row_rect = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                };
+                // Paint the whole row bg first when selected so the
+                // highlight extends past the rendered text to the
+                // right edge.
+                if is_selected {
+                    frame.render_widget(
+                        Block::default().style(Style::default().bg(row_bg)),
+                        row_rect,
+                    );
+                }
+                let line = Line::from(vec![
+                    Span::styled(indent_branch, Style::default().bg(row_bg)),
+                    Span::styled(marker, Style::default().fg(marker_color).bg(row_bg)),
+                    Span::styled(" ", Style::default().bg(row_bg)),
+                    Span::styled(display_name, name_style),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_rect);
+                app.rects
+                    .git_palette_rows
+                    .push((row_rect, GitPaletteHit::Branch(i)));
+                y += 1;
             }
-            let line = Line::from(vec![
-                Span::styled(indent_branch, Style::default().bg(row_bg)),
-                Span::styled(marker, Style::default().fg(marker_color).bg(row_bg)),
-                Span::styled(" ", Style::default().bg(row_bg)),
-                Span::styled(display_name, name_style),
-            ]);
-            frame.render_widget(Paragraph::new(line), row_rect);
-            app.rects
-                .git_palette_rows
-                .push((row_rect, GitPaletteHit::Branch(i)));
-            y += 1;
         }
-    }
+    } // end if !local_collapsed
 
     // 1-row gap between sections.
     if y < area.y + area.height {
@@ -371,103 +394,109 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             remote_filtered_idxs_and_names.len(),
             bg,
         );
-        // Same folder grouping shape as LOCAL — remotes like
-        // `origin/bugfix/foo` collapse under `bugfix/` after the
-        // `origin/` prefix is stripped.
-        let remote_stripped: Vec<String> = remote_filtered_idxs_and_names
-            .iter()
-            .map(|(_, r)| {
-                if let Some(slash) = r.find('/') {
-                    r[slash + 1..].to_string()
-                } else {
-                    r.clone()
-                }
-            })
-            .collect();
-        let stripped_refs: Vec<&str> = remote_stripped.iter().map(|s| s.as_str()).collect();
-        let remote_groups_indirect = group_by_folder(&stripped_refs);
-        let remote_groups: Vec<(String, Vec<usize>)> = remote_groups_indirect
-            .into_iter()
-            .map(|(folder, inner_idxs)| {
-                (
-                    folder,
-                    inner_idxs
-                        .into_iter()
-                        .map(|inner| remote_filtered_idxs_and_names[inner].0)
-                        .collect(),
-                )
-            })
-            .collect();
-        for (folder, idxs) in &remote_groups {
-            if y >= area.y + area.height {
-                break;
+        if app.git_palette_collapsed_sections.contains("REMOTE") {
+            if y < area.y + area.height {
+                y += 1;
             }
-            let indent = if folder.is_empty() {
-                "   "
-            } else {
-                let folder_line = Line::from(vec![
-                    Span::styled("  ", Style::default().bg(bg)),
-                    Span::styled("▾ ", Style::default().fg(t.comment).bg(bg)),
-                    Span::styled(folder.clone(), Style::default().fg(t.fg).bg(bg)),
-                    Span::styled(
-                        format!("  ({})", idxs.len()),
-                        Style::default().fg(t.comment).bg(bg),
-                    ),
-                ]);
-                frame.render_widget(
-                    Paragraph::new(folder_line),
-                    Rect {
+        } else {
+            // Same folder grouping shape as LOCAL — remotes like
+            // `origin/bugfix/foo` collapse under `bugfix/` after the
+            // `origin/` prefix is stripped.
+            let remote_stripped: Vec<String> = remote_filtered_idxs_and_names
+                .iter()
+                .map(|(_, r)| {
+                    if let Some(slash) = r.find('/') {
+                        r[slash + 1..].to_string()
+                    } else {
+                        r.clone()
+                    }
+                })
+                .collect();
+            let stripped_refs: Vec<&str> = remote_stripped.iter().map(|s| s.as_str()).collect();
+            let remote_groups_indirect = group_by_folder(&stripped_refs);
+            let remote_groups: Vec<(String, Vec<usize>)> = remote_groups_indirect
+                .into_iter()
+                .map(|(folder, inner_idxs)| {
+                    (
+                        folder,
+                        inner_idxs
+                            .into_iter()
+                            .map(|inner| remote_filtered_idxs_and_names[inner].0)
+                            .collect(),
+                    )
+                })
+                .collect();
+            for (folder, idxs) in &remote_groups {
+                if y >= area.y + area.height {
+                    break;
+                }
+                let indent = if folder.is_empty() {
+                    "   "
+                } else {
+                    let folder_line = Line::from(vec![
+                        Span::styled("  ", Style::default().bg(bg)),
+                        Span::styled("▾ ", Style::default().fg(t.comment).bg(bg)),
+                        Span::styled(folder.clone(), Style::default().fg(t.fg).bg(bg)),
+                        Span::styled(
+                            format!("  ({})", idxs.len()),
+                            Style::default().fg(t.comment).bg(bg),
+                        ),
+                    ]);
+                    frame.render_widget(
+                        Paragraph::new(folder_line),
+                        Rect {
+                            x: area.x,
+                            y,
+                            width: area.width,
+                            height: 1,
+                        },
+                    );
+                    y += 1;
+                    "     "
+                };
+                for &i in idxs {
+                    if y >= area.y + area.height {
+                        break;
+                    }
+                    let full = &app.git_rail.remote_branches[i];
+                    // Strip the host prefix (`origin/`, `upstream/`)
+                    // for display, then optionally strip the folder
+                    // prefix too.
+                    let stripped = full
+                        .find('/')
+                        .map(|s| &full[s + 1..])
+                        .unwrap_or(full.as_str());
+                    let display = if folder.is_empty() {
+                        stripped.to_string()
+                    } else {
+                        stripped
+                            .strip_prefix(&format!("{folder}/"))
+                            .unwrap_or(stripped)
+                            .to_string()
+                    };
+                    let row_rect = Rect {
                         x: area.x,
                         y,
                         width: area.width,
                         height: 1,
-                    },
-                );
-                y += 1;
-                "     "
-            };
-            for &i in idxs {
-                if y >= area.y + area.height {
-                    break;
+                    };
+                    let line = Line::from(vec![
+                        Span::styled(indent, Style::default().bg(bg)),
+                        Span::styled("⎈ ", Style::default().fg(t.blue).bg(bg)),
+                        Span::styled(display, Style::default().fg(t.fg).bg(bg)),
+                    ]);
+                    let _ = full;
+                    frame.render_widget(Paragraph::new(line), row_rect);
+                    app.rects
+                        .git_palette_rows
+                        .push((row_rect, GitPaletteHit::RemoteBranch(i)));
+                    y += 1;
                 }
-                let full = &app.git_rail.remote_branches[i];
-                // Strip the host prefix (`origin/`, `upstream/`)
-                // for display, then optionally strip the folder
-                // prefix too.
-                let stripped = full
-                    .find('/')
-                    .map(|s| &full[s + 1..])
-                    .unwrap_or(full.as_str());
-                let display = if folder.is_empty() {
-                    stripped.to_string()
-                } else {
-                    stripped
-                        .strip_prefix(&format!("{folder}/"))
-                        .unwrap_or(stripped)
-                        .to_string()
-                };
-                let row_rect = Rect {
-                    x: area.x,
-                    y,
-                    width: area.width,
-                    height: 1,
-                };
-                let line = Line::from(vec![
-                    Span::styled(indent, Style::default().bg(bg)),
-                    Span::styled("⎈ ", Style::default().fg(t.blue).bg(bg)),
-                    Span::styled(display, Style::default().fg(t.fg).bg(bg)),
-                ]);
-                let _ = full;
-                frame.render_widget(Paragraph::new(line), row_rect);
-                app.rects
-                    .git_palette_rows
-                    .push((row_rect, GitPaletteHit::RemoteBranch(i)));
+            }
+            if y < area.y + area.height {
                 y += 1;
             }
-        }
-        if y < area.y + area.height {
-            y += 1;
-        }
+        } // end !collapsed REMOTE
     }
 
     // ── WORKTREES section ─────────────────────────────────────
@@ -481,68 +510,74 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.git_rail.worktrees.len(),
             bg,
         );
-        for (i, wt) in app.git_rail.worktrees.iter().enumerate() {
-            if y >= area.y + area.height {
-                break;
+        if app.git_palette_collapsed_sections.contains("WORKTREES") {
+            if y < area.y + area.height {
+                y += 1;
             }
-            let dir_match = wt
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(&matches_filter)
-                .unwrap_or(false);
-            if !matches_filter(&wt.label) && !dir_match {
-                continue;
+        } else {
+            for (i, wt) in app.git_rail.worktrees.iter().enumerate() {
+                if y >= area.y + area.height {
+                    break;
+                }
+                let dir_match = wt
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(&matches_filter)
+                    .unwrap_or(false);
+                if !matches_filter(&wt.label) && !dir_match {
+                    continue;
+                }
+                let marker = if wt.is_current { "⤿" } else { "·" };
+                let marker_color = if wt.is_current { t.yellow } else { t.fg };
+                let label = if wt.label.is_empty() {
+                    "(detached)".to_string()
+                } else {
+                    wt.label.clone()
+                };
+                let dir = wt
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let shown = if label == dir || label.starts_with('(') {
+                    label.clone()
+                } else {
+                    format!("{label} ({dir})")
+                };
+                let row_rect = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                };
+                let line = Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled(marker, Style::default().fg(marker_color).bg(bg)),
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        shown,
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(bg)
+                            .add_modifier(if wt.is_current {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    ),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_rect);
+                app.rects
+                    .git_palette_rows
+                    .push((row_rect, GitPaletteHit::Worktree(i)));
+                y += 1;
             }
-            let marker = if wt.is_current { "⤿" } else { "·" };
-            let marker_color = if wt.is_current { t.yellow } else { t.fg };
-            let label = if wt.label.is_empty() {
-                "(detached)".to_string()
-            } else {
-                wt.label.clone()
-            };
-            let dir = wt
-                .path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("?")
-                .to_string();
-            let shown = if label == dir || label.starts_with('(') {
-                label.clone()
-            } else {
-                format!("{label} ({dir})")
-            };
-            let row_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            let line = Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled(marker, Style::default().fg(marker_color).bg(bg)),
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    shown,
-                    Style::default()
-                        .fg(t.fg)
-                        .bg(bg)
-                        .add_modifier(if wt.is_current {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
-            ]);
-            frame.render_widget(Paragraph::new(line), row_rect);
-            app.rects
-                .git_palette_rows
-                .push((row_rect, GitPaletteHit::Worktree(i)));
-            y += 1;
-        }
-        if y < area.y + area.height {
-            y += 1;
-        }
+            if y < area.y + area.height {
+                y += 1;
+            }
+        } // end !collapsed WORKTREES
     }
 
     // ── PRS section ───────────────────────────────────────────
@@ -556,68 +591,75 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.git_rail.pulls.len(),
             bg,
         );
-        for (i, pr) in app.git_rail.pulls.iter().enumerate() {
-            if y >= area.y + area.height {
-                break;
+        if app.git_palette_collapsed_sections.contains("PULL REQUESTS") {
+            if y < area.y + area.height {
+                y += 1;
             }
-            if !matches_filter(&pr.title) && !matches_filter(&pr.number_label) {
-                continue;
+        } else {
+            for (i, pr) in app.git_rail.pulls.iter().enumerate() {
+                if y >= area.y + area.height {
+                    break;
+                }
+                if !matches_filter(&pr.title) && !matches_filter(&pr.number_label) {
+                    continue;
+                }
+                let host_color = match pr.host_tag {
+                    "BB" => t.blue,
+                    "GH" => t.fg,
+                    "GL" => t.orange,
+                    "AZ" => t.cyan,
+                    _ => t.fg,
+                };
+                let marker = if pr.is_current_branch { "●" } else { "○" };
+                // Title fits the remaining width after `   ● #1234 `.
+                let width = area.width as usize;
+                let pre_w = 3 + 1 + 1 + pr.number_label.chars().count() + 1;
+                let title_max = width.saturating_sub(pre_w);
+                let title_disp = if pr.title.chars().count() > title_max {
+                    let mut s: String =
+                        pr.title.chars().take(title_max.saturating_sub(1)).collect();
+                    s.push('…');
+                    s
+                } else {
+                    pr.title.clone()
+                };
+                let row_rect = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                };
+                let line = Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled(marker, Style::default().fg(host_color).bg(bg)),
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        pr.number_label.clone(),
+                        Style::default().fg(host_color).bg(bg),
+                    ),
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        title_disp,
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(bg)
+                            .add_modifier(if pr.is_current_branch {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    ),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_rect);
+                app.rects
+                    .git_palette_rows
+                    .push((row_rect, GitPaletteHit::Pull(i)));
+                y += 1;
             }
-            let host_color = match pr.host_tag {
-                "BB" => t.blue,
-                "GH" => t.fg,
-                "GL" => t.orange,
-                "AZ" => t.cyan,
-                _ => t.fg,
-            };
-            let marker = if pr.is_current_branch { "●" } else { "○" };
-            // Title fits the remaining width after `   ● #1234 `.
-            let width = area.width as usize;
-            let pre_w = 3 + 1 + 1 + pr.number_label.chars().count() + 1;
-            let title_max = width.saturating_sub(pre_w);
-            let title_disp = if pr.title.chars().count() > title_max {
-                let mut s: String = pr.title.chars().take(title_max.saturating_sub(1)).collect();
-                s.push('…');
-                s
-            } else {
-                pr.title.clone()
-            };
-            let row_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            let line = Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled(marker, Style::default().fg(host_color).bg(bg)),
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    pr.number_label.clone(),
-                    Style::default().fg(host_color).bg(bg),
-                ),
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(
-                    title_disp,
-                    Style::default()
-                        .fg(t.fg)
-                        .bg(bg)
-                        .add_modifier(if pr.is_current_branch {
-                            Modifier::BOLD
-                        } else {
-                            Modifier::empty()
-                        }),
-                ),
-            ]);
-            frame.render_widget(Paragraph::new(line), row_rect);
-            app.rects
-                .git_palette_rows
-                .push((row_rect, GitPaletteHit::Pull(i)));
-            y += 1;
-        }
-        if y < area.y + area.height {
-            y += 1;
-        }
+            if y < area.y + area.height {
+                y += 1;
+            }
+        } // end !collapsed PULL REQUESTS
     }
 
     // ── STASHES section ───────────────────────────────────────
@@ -631,90 +673,104 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             app.git_rail.stashes.len(),
             bg,
         );
-        for (i, st) in app.git_rail.stashes.iter().enumerate() {
-            if y >= area.y + area.height {
-                break;
+        if app.git_palette_collapsed_sections.contains("STASHES") {
+            if y < area.y + area.height {
+                y += 1;
             }
-            if !matches_filter(&st.summary) {
-                continue;
+        } else {
+            for (i, st) in app.git_rail.stashes.iter().enumerate() {
+                if y >= area.y + area.height {
+                    break;
+                }
+                if !matches_filter(&st.summary) {
+                    continue;
+                }
+                // The summary is `WIP on branch: <hash> <message>`.
+                // We display just the trailing message for compactness;
+                // the full summary is in the row's hover tooltip target.
+                let summary_short = st
+                    .summary
+                    .split_once(':')
+                    .map(|(_, rest)| rest.trim().to_string())
+                    .unwrap_or_else(|| st.summary.clone());
+                let width = area.width as usize;
+                let avail = width.saturating_sub(5);
+                let display = if summary_short.chars().count() > avail {
+                    let mut s: String = summary_short
+                        .chars()
+                        .take(avail.saturating_sub(1))
+                        .collect();
+                    s.push('…');
+                    s
+                } else {
+                    summary_short
+                };
+                let row_rect = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                };
+                let line = Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled("◆ ", Style::default().fg(t.purple).bg(bg)),
+                    Span::styled(display, Style::default().fg(t.fg).bg(bg)),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_rect);
+                app.rects
+                    .git_palette_rows
+                    .push((row_rect, GitPaletteHit::Stash(i)));
+                y += 1;
             }
-            // The summary is `WIP on branch: <hash> <message>`.
-            // We display just the trailing message for compactness;
-            // the full summary is in the row's hover tooltip target.
-            let summary_short = st
-                .summary
-                .split_once(':')
-                .map(|(_, rest)| rest.trim().to_string())
-                .unwrap_or_else(|| st.summary.clone());
-            let width = area.width as usize;
-            let avail = width.saturating_sub(5);
-            let display = if summary_short.chars().count() > avail {
-                let mut s: String = summary_short
-                    .chars()
-                    .take(avail.saturating_sub(1))
-                    .collect();
-                s.push('…');
-                s
-            } else {
-                summary_short
-            };
-            let row_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            let line = Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled("◆ ", Style::default().fg(t.purple).bg(bg)),
-                Span::styled(display, Style::default().fg(t.fg).bg(bg)),
-            ]);
-            frame.render_widget(Paragraph::new(line), row_rect);
-            app.rects
-                .git_palette_rows
-                .push((row_rect, GitPaletteHit::Stash(i)));
-            y += 1;
-        }
-        if y < area.y + area.height {
-            y += 1;
-        }
+            if y < area.y + area.height {
+                y += 1;
+            }
+        } // end !collapsed STASHES
     }
 
     // ── TAGS section ──────────────────────────────────────────
     if !app.git_rail.tags.is_empty() && y < area.y + area.height {
         y = draw_section_header(frame, app, area, y, "TAGS", app.git_rail.tags.len(), bg);
-        for (i, tag) in app.git_rail.tags.iter().enumerate() {
-            if y >= area.y + area.height {
-                break;
+        // TAGS is the last section; if collapsed, no body and no
+        // further y bookkeeping is needed (the trailing gap would
+        // be off the bottom of the rail anyway).
+        if !app.git_palette_collapsed_sections.contains("TAGS") {
+            for (i, tag) in app.git_rail.tags.iter().enumerate() {
+                if y >= area.y + area.height {
+                    break;
+                }
+                if !matches_filter(tag) {
+                    continue;
+                }
+                let row_rect = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                };
+                let line = Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled("⊙ ", Style::default().fg(t.orange).bg(bg)),
+                    Span::styled(tag.clone(), Style::default().fg(t.fg).bg(bg)),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_rect);
+                app.rects
+                    .git_palette_rows
+                    .push((row_rect, GitPaletteHit::Tag(i)));
+                y += 1;
             }
-            if !matches_filter(tag) {
-                continue;
-            }
-            let row_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: 1,
-            };
-            let line = Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled("⊙ ", Style::default().fg(t.orange).bg(bg)),
-                Span::styled(tag.clone(), Style::default().fg(t.fg).bg(bg)),
-            ]);
-            frame.render_widget(Paragraph::new(line), row_rect);
-            app.rects
-                .git_palette_rows
-                .push((row_rect, GitPaletteHit::Tag(i)));
-            y += 1;
         }
     }
 }
 
 /// Paint a section header (`LOCAL`, `WORKTREES`, …) with a count
-/// chip on the right. Returns the next-y to draw at.
+/// chip on the right and a `▾`/`▸` chevron at the left signalling
+/// collapse state. Click on the row toggles collapse — header rect
+/// is pushed onto `app.rects.git_palette_section_headers`.
+/// Returns the next-y to draw at.
 fn draw_section_header(
     frame: &mut Frame,
-    _app: &mut App,
+    app: &mut App,
     area: Rect,
     y: u16,
     label: &str,
@@ -722,12 +778,16 @@ fn draw_section_header(
     bg: ratatui::style::Color,
 ) -> u16 {
     let t = theme::cur();
+    let collapsed = app.git_palette_collapsed_sections.contains(label);
+    let chev = if collapsed { "▸ " } else { "▾ " };
     let count_str = format!("{count}");
     let label_w = label.chars().count();
+    let chev_w = chev.chars().count();
     let count_w = count_str.chars().count();
-    let pad = (area.width as usize).saturating_sub(1 + label_w + 1 + count_w + 1);
+    let pad = (area.width as usize).saturating_sub(1 + chev_w + label_w + 1 + count_w + 1);
     let line = Line::from(vec![
         Span::styled(" ", Style::default().bg(bg)),
+        Span::styled(chev, Style::default().fg(t.comment).bg(bg)),
         Span::styled(
             label.to_string(),
             Style::default()
@@ -739,15 +799,16 @@ fn draw_section_header(
         Span::styled(count_str, Style::default().fg(t.cyan).bg(bg)),
         Span::styled(" ", Style::default().bg(bg)),
     ]);
-    frame.render_widget(
-        Paragraph::new(line),
-        Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: 1,
-        },
-    );
+    let header_rect = Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(Paragraph::new(line), header_rect);
+    app.rects
+        .git_palette_section_headers
+        .push((header_rect, label.to_string()));
     y + 1
 }
 
