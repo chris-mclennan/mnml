@@ -80,7 +80,13 @@ impl InputHandler for StandardInputHandler {
                 's' => InputResult::App(AppCommand::Save),
                 'd' if shift => InputResult::Ops(vec![DuplicateLine]),
                 'd' => InputResult::Ops(vec![SelectWord]), // closest we have to "select occurrence" for now
-                'l' => InputResult::Ops(vec![SelectLine]),
+                // qa-7th vscode SEV-2 2026-06-30 — was SelectLine
+                // (vim V semantics — cursor stays put, only
+                // line_start..cursor highlights). Standard mode
+                // matches VS Code: cursor jumps to line end so
+                // the WHOLE line shows selected regardless of
+                // cursor column.
+                'l' => InputResult::Ops(vec![SelectLineToEnd]),
                 'g' => InputResult::Ignored, // "go to line" → palette/prompt later
                 _ => InputResult::Ignored,
             },

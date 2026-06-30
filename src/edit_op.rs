@@ -96,7 +96,16 @@ pub enum EditOp {
     /// Forget the selection.
     SelectClear,
     /// Select the current line (including its trailing newline if present).
+    /// Vim `V` semantics: anchor at line_start, cursor stays put — the
+    /// selection MODEL is line-wise so visual rendering shows the full
+    /// line regardless of cursor column.
     SelectLine,
+    /// VS Code `Ctrl+L` semantics: anchor at line_start, cursor jumps
+    /// to line_end+1 so the visual selection literally covers the
+    /// whole line. Repeated calls extend down one line at a time.
+    /// qa-7th vscode SEV-2 2026-06-30 — was using SelectLine, which
+    /// only highlights line_start..cursor (mid-line cursor → partial).
+    SelectLineToEnd,
     SelectAll,
     /// Select the word under the cursor.
     SelectWord,
@@ -433,6 +442,7 @@ impl EditOp {
             | SelectStart
             | SelectClear
             | SelectLine
+            | SelectLineToEnd
             | SelectAll
             | SelectWord
             | SelectInnerWord

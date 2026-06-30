@@ -2557,6 +2557,13 @@ pub struct App {
     /// adjusts on every render to keep the active tab visible (the user never
     /// has to scroll it manually). Reset when the pane count drops past it.
     pub bufferline_first_visible: usize,
+    /// qa-7th vscode SEV-2 2026-06-30 — when the user clicks ‹/›
+    /// the chevron handler stamps the current active pane here.
+    /// While the stamp matches `app.active`, the auto-scroll
+    /// keep-active-visible logic in `ui::bufferline::draw` is
+    /// suppressed (the chevron actually scrolls). On active-pane
+    /// change the stamp clears and auto-scroll resumes.
+    pub bufferline_active_at_scroll: Option<crate::layout::PaneId>,
     /// "Zen" focus mode (`view.zen`): hide the tree rail, bufferline, and
     /// statusline; the editor takes the full window. Independent of the other
     /// visibility flags, which are remembered separately. Not persisted —
@@ -3784,6 +3791,7 @@ impl App {
             diff_view_mode_pref: crate::pane::DiffViewMode::Inline,
             diff_wrap_pref: false,
             bufferline_first_visible: 0,
+            bufferline_active_at_scroll: None,
             zen_mode: false,
             bufferline_visible: true,
             recent_files: Vec::new(),

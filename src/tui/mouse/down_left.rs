@@ -463,6 +463,11 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         if app.bufferline_first_visible > 0 {
             app.bufferline_first_visible -= 1;
+            // qa-7th vscode SEV-2 — stamp the active pane so the
+            // auto-scroll-to-keep-active-visible logic in
+            // ui::bufferline::draw doesn't immediately clobber
+            // this manual scroll. Cleared when active changes.
+            app.bufferline_active_at_scroll = app.active;
         }
         return;
     }
@@ -471,6 +476,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         if app.bufferline_first_visible + 1 < app.panes.len() {
             app.bufferline_first_visible += 1;
+            app.bufferline_active_at_scroll = app.active;
         }
         return;
     }

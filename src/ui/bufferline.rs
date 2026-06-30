@@ -173,13 +173,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.bufferline_first_visible >= visible.len() {
         app.bufferline_first_visible = visible.len().saturating_sub(1);
     }
+    // qa-7th vscode SEV-2 2026-06-30 — when the user clicks ‹/›
+    // chevrons, the auto-scroll-to-keep-active-tab-visible
+    // clobbered the manual scroll. The chevron handler now stamps
+    // app.bufferline_active_at_scroll = app.active; while that
+    // stamp matches the current active pane, the auto-scroll
+    // back-snap is suppressed. As soon as the user switches tabs,
+    // the stamp clears and auto-scroll resumes.
+    let user_scroll_pinned = app
+        .bufferline_active_at_scroll
+        .is_some_and(|p| Some(p) == app.active);
     if let Some(active_pos) = app
         .active
         .and_then(|a| visible.iter().position(|&p| p == a))
     {
         if active_pos < app.bufferline_first_visible {
+            // Active tab is OFF the left edge — always honor this;
+            // even with user_scroll_pinned, scrolling so far left
+            // that the active tab is invisible is non-sense.
             app.bufferline_first_visible = active_pos;
-        } else {
+            app.bufferline_active_at_scroll = None;
+        } else if !user_scroll_pinned {
             // Walk back from the active tab while the cumulative width fits.
             let mut used = 0u16;
             let mut first = active_pos;

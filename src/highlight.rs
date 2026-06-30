@@ -1007,6 +1007,29 @@ fn config_for_lang(name: &str) -> Option<&'static LangConfig> {
 }
 
 fn build_config(ext: &str) -> Option<LangConfig> {
+    // qa-7th multilang SEV-2 2026-06-30 — TypeScript / TSX / JSX
+    // need their highlight queries CONCATENATED with the
+    // JavaScript base layer (ts/tsx HIGHLIGHTS_QUERY is only ~35
+    // lines of TS-specific captures; JS has the bulk of keyword /
+    // literal / comment captures) and with JSX_HIGHLIGHT_QUERY
+    // (tag + attribute names for JSX markup). Without these, .ts /
+    // .tsx / .jsx files render most tokens as plain text.
+    let ts_combined: String = format!(
+        "{}\n{}",
+        tree_sitter_javascript::HIGHLIGHT_QUERY,
+        tree_sitter_typescript::HIGHLIGHTS_QUERY
+    );
+    let tsx_combined: String = format!(
+        "{}\n{}\n{}",
+        tree_sitter_javascript::HIGHLIGHT_QUERY,
+        tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
+        tree_sitter_typescript::HIGHLIGHTS_QUERY,
+    );
+    let jsx_combined: String = format!(
+        "{}\n{}",
+        tree_sitter_javascript::HIGHLIGHT_QUERY,
+        tree_sitter_javascript::JSX_HIGHLIGHT_QUERY,
+    );
     // (language, highlights, injections). Empty injection-source string ⇒ none.
     let (lang, hl_q, inj_q): (Language, &str, &str) = match ext {
         "rs" => (
@@ -1014,9 +1037,14 @@ fn build_config(ext: &str) -> Option<LangConfig> {
             tree_sitter_rust::HIGHLIGHTS_QUERY,
             tree_sitter_rust::INJECTIONS_QUERY,
         ),
-        "js" | "cjs" | "mjs" | "jsx" => (
+        "js" | "cjs" | "mjs" => (
             tree_sitter_javascript::LANGUAGE.into(),
             tree_sitter_javascript::HIGHLIGHT_QUERY,
+            tree_sitter_javascript::INJECTIONS_QUERY,
+        ),
+        "jsx" => (
+            tree_sitter_javascript::LANGUAGE.into(),
+            jsx_combined.as_str(),
             tree_sitter_javascript::INJECTIONS_QUERY,
         ),
         "py" => (
@@ -1041,12 +1069,12 @@ fn build_config(ext: &str) -> Option<LangConfig> {
         ),
         "ts" | "cts" | "mts" => (
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            ts_combined.as_str(),
             "",
         ),
         "tsx" => (
             tree_sitter_typescript::LANGUAGE_TSX.into(),
-            tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            tsx_combined.as_str(),
             "",
         ),
         "css" | "scss" | "sass" => (

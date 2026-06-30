@@ -156,7 +156,18 @@ impl App {
     /// `npm run <script>` in a pty pane. 2026-06-21 multilang SEV-3
     /// fix for `:npm.run` being hardcoded to `npm run dev`.
     pub fn open_npm_run_script_prompt(&mut self) {
-        let pkg = find_manifest_dir(&self.workspace, &["package.json"]);
+        // qa-7th multilang SEV-2 2026-06-30 — was walking from
+        // self.workspace, which fails in a monorepo where
+        // package.json lives only under packages/<app>/. Match
+        // the sibling runners (run_package_manager_command at
+        // playwright.rs:407) and walk from the active editor's
+        // directory first.
+        let start_dir = self
+            .most_recent_editor_path()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.workspace.clone());
+        let pkg = find_manifest_dir(&start_dir, &["package.json"]);
         if pkg.is_none() {
             self.toast("npm.run_script: no package.json found");
             return;

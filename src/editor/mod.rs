@@ -2195,6 +2195,24 @@ impl Editor {
                 // case the user hadn't moved horizontally so cursor ==
                 // start; either way it stays on the entered line.
             }
+            SelectLineToEnd => {
+                // VS Code Ctrl+L — anchor at line_start, cursor at
+                // line_end+1 so the whole line is literally selected
+                // regardless of where the cursor was when fired.
+                // Repeated calls extend by one line (anchor stays,
+                // cursor advances to next line's end).
+                let line = self.current_line();
+                let cur_was_in_selection =
+                    matches!(self.anchor, Some(a) if a <= self.line_start(line));
+                if !cur_was_in_selection || self.anchor.is_none() {
+                    self.anchor = Some(self.line_start(line));
+                }
+                let end = self.line_end(line);
+                // line_end is the index of the `\n` (or text.len() at EOF).
+                // Cursor lands at end+1 so the selection covers the newline,
+                // unless we're at the last line with no trailing newline.
+                self.cursor = if end < self.text.len() { end + 1 } else { end };
+            }
             SelectWord => {
                 let (lo, hi) = self.word_bounds_at(self.cursor);
                 self.anchor = Some(lo);
