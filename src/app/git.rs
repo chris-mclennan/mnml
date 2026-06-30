@@ -3056,6 +3056,19 @@ impl App {
         let from = crate::git::branch::current(self.active_repo_path());
         match crate::git::branch::checkout(self.active_repo_path(), name) {
             Ok(()) => {
+                // qa-bug 2026-06-30 — post-verify the switch actually
+                // landed. Previously a `git checkout -- main` (with
+                // pathspec `--`) silently no-op'd and the UI showed
+                // success. Even with the `git switch` fix, this
+                // sanity-checks the *result* not the *exit code*.
+                let now = crate::git::branch::current(self.active_repo_path());
+                if now.as_deref() != Some(name) {
+                    self.toast(format!(
+                        "checkout: git claimed success but HEAD is {} (wanted {name})",
+                        now.as_deref().unwrap_or("<detached>")
+                    ));
+                    return;
+                }
                 if let Some(from) = from {
                     self.note_checkout_for_undo(&from, name);
                 }
