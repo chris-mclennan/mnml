@@ -317,27 +317,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             break;
         }
         last_drawn = vis_pos;
+        // qa-8th render W-1 2026-06-30 — was calling theme::cur()
+        // 5-7 times per tab here (and 2 more times below for diag
+        // chip + separator). With 30 tabs that's ~200 RwLock
+        // acquisitions per frame. `tt` was already hoisted at
+        // line 244 for the icon-color path; reuse it everywhere
+        // the per-tab colors are read.
         let (bg, name_fg, badge_fg) = if active {
             (
-                theme::cur().bg,
-                theme::cur().fg,
+                tt.bg,
+                tt.fg,
                 if pane.is_dirty() {
-                    theme::cur().orange
+                    tt.orange
                 } else if pinned_here {
-                    theme::cur().yellow
+                    tt.yellow
                 } else {
-                    theme::cur().grey_fg
+                    tt.grey_fg
                 },
             )
         } else {
             (
-                theme::cur().bg_darker,
-                theme::cur().grey_fg,
-                if pinned_here {
-                    theme::cur().yellow
-                } else {
-                    theme::cur().grey
-                },
+                tt.bg_darker,
+                tt.grey_fg,
+                if pinned_here { tt.yellow } else { tt.grey },
             )
         };
         let mut name_style = Style::default().fg(name_fg).bg(bg);
@@ -365,10 +367,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if !diag.is_empty() {
             let diag_fg = if diag.starts_with('\u{2717}') {
                 // `✗` chip — errors → red regardless of active state.
-                theme::cur().red
+                tt.red
             } else {
                 // `⚠` chip — warnings → yellow.
-                theme::cur().yellow
+                tt.yellow
             };
             spans.push(Span::styled(
                 format!("{diag} "),
@@ -403,10 +405,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         x += cells;
         // thin separator into the strip background
         if vis_pos + 1 < visible.len() {
-            spans.push(Span::styled(
-                " ",
-                Style::default().bg(theme::cur().bg_darker),
-            ));
+            spans.push(Span::styled(" ", Style::default().bg(tt.bg_darker)));
             x += 1;
         }
     }

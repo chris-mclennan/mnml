@@ -379,6 +379,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         height: 1,
     };
     frame.render_widget(Paragraph::new(hint_line), hint_rect);
+    // qa-8th render N-1 2026-06-30 — skip the chips entirely when
+    // the overlay is too narrow to fit both. Was: chips painted
+    // with overlapping rects (Save would land at x=0, off the
+    // overlay's left border) on terminals < ~64 columns.
+    if inner.width < chips_w + 2 {
+        return;
+    }
     // Chips paint right-aligned on the same row.
     let cancel_rect = Rect {
         x: inner.x + inner.width.saturating_sub(CANCEL_CHIP.len() as u16),

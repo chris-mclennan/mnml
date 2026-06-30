@@ -196,6 +196,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // the full window. Returning early keeps the toggle a flat opt-out from
     // the rest of the layout pipeline.
     if app.zen_mode {
+        // qa-8th render C-1 2026-06-30 — settings overlay rects
+        // (overlay_rect, rows, save/cancel buttons) need clearing
+        // here too. If the user opens Settings then toggles zen
+        // without closing, the overlay vanishes but the rects
+        // stay live and clicks where the chips were fire the
+        // save / cancel handler invisibly.
+        app.rects.settings_overlay_rect = None;
+        app.rects.settings_rows.clear();
+        app.rects.settings_save_button = None;
+        app.rects.settings_cancel_button = None;
         app.rects.tree = None;
         app.rects.tree_toggle = None;
         app.rects.bufferline = None;
@@ -1305,7 +1315,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // rendered the prompt — the user had no idea they were in
     // confirm mode. Paint a one-line bar at the bottom showing
     // the prompt + match progress + key hints.
-    if let Some(rc) = app.replace_confirm.as_ref() {
+    if let Some(rc) = app.replace_confirm.as_ref()
+        && area.height >= 2
+    {
+        // qa-8th render W-2 2026-06-30 — was hardcoded x=0 +
+        // area.height.saturating_sub(2) (absolute), which was
+        // safe today because draw is always called with
+        // frame.area() rooted at (0,0) but unguarded against
+        // narrow terminals. Now uses area.x / area.y and guards
+        // on area.height >= 2.
         let prompt = format!(
             " replace {:?} → {:?}? [{}/{}]  y · n · a · q ",
             rc.find,
@@ -1316,8 +1334,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let t = theme::cur();
         let prompt_w = (prompt.chars().count() as u16).min(area.width);
         let prompt_rect = ratatui::layout::Rect {
-            x: 0,
-            y: area.height.saturating_sub(2),
+            x: area.x,
+            y: area.y + area.height - 2,
             width: prompt_w,
             height: 1,
         };

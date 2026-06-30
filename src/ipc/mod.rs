@@ -1029,6 +1029,15 @@ pub fn rects_dump_json(app: &App) -> String {
         "bufferline_overflow_right",
         app.rects.bufferline_overflow_right
     );
+    // qa-8th render W-3 2026-06-30 — Settings Save / Cancel chips
+    // had click handlers in mouse/mod.rs but the rects never
+    // reached rects.json so headless scripts couldn't drive them.
+    // Same pattern as bufferline_overflow_* above.
+    one!("settings_save_button", app.rects.settings_save_button);
+    one!("settings_cancel_button", app.rects.settings_cancel_button);
+    for (r, idx) in &app.rects.settings_rows {
+        push_rect(&mut out, &mut first, &format!("settings_row:{idx}"), *r);
+    }
     for (r, _) in &app.rects.bufferline_tab_close {
         push_rect(&mut out, &mut first, "bufferline_tab_close", *r);
     }
