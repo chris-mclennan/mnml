@@ -2987,6 +2987,12 @@ pub struct App {
     /// filter input. Typing in this state extends the filter; Esc
     /// clears it.
     pub git_palette_filter_focused: bool,
+    /// qa-feature 2026-06-30 — the palette row the user last
+    /// activated (branch / worktree / stash / PR / tag name). The
+    /// row renders with a highlight bg so the user has visual
+    /// feedback after clicking. Set by the down-left handler;
+    /// cleared on activity-section change or repo switch.
+    pub git_palette_selected: Option<String>,
     /// `true` while the workspace-picker dropdown is open (anchored
     /// under the workspace header in the rail). Click the `▾` chip
     /// to toggle; click a row to switch + close; Esc / click-out
@@ -3838,6 +3844,7 @@ impl App {
             scroll_bucket_last_refill: None,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
+            git_palette_selected: None,
             workspace_picker_open: false,
             workspace_picker_filter: String::new(),
             workspaces_editor_open: false,

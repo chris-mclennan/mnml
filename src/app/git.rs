@@ -473,6 +473,10 @@ impl App {
             return;
         }
         let name = self.repos[idx].name.clone();
+        // qa-feature 2026-06-30 — clear the palette row selection
+        // so the previous repo's highlighted branch doesn't bleed
+        // through (it wouldn't even exist in the new repo).
+        self.git_palette_selected = None;
         self.active_repo = idx;
         let root = self.active_repo_path().to_path_buf();
         self.git.retarget(&root);

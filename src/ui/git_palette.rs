@@ -296,9 +296,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or(&br.name)
                     .to_string()
             };
+            // qa-feature 2026-06-30 — highlight the row when its
+            // name matches `git_palette_selected` (the last
+            // clicked ref). Provides visual feedback for what's
+            // currently selected in the palette.
+            let is_selected = app
+                .git_palette_selected
+                .as_ref()
+                .is_some_and(|s| s == &br.name);
+            let row_bg = if is_selected { t.bg2 } else { bg };
             let name_style = Style::default()
                 .fg(t.fg)
-                .bg(bg)
+                .bg(row_bg)
                 .add_modifier(if br.is_current {
                     Modifier::BOLD
                 } else {
@@ -310,10 +319,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 width: area.width,
                 height: 1,
             };
+            // Paint the whole row bg first when selected so the
+            // highlight extends past the rendered text to the
+            // right edge.
+            if is_selected {
+                frame.render_widget(
+                    Block::default().style(Style::default().bg(row_bg)),
+                    row_rect,
+                );
+            }
             let line = Line::from(vec![
-                Span::styled(indent_branch, Style::default().bg(bg)),
-                Span::styled(marker, Style::default().fg(marker_color).bg(bg)),
-                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(indent_branch, Style::default().bg(row_bg)),
+                Span::styled(marker, Style::default().fg(marker_color).bg(row_bg)),
+                Span::styled(" ", Style::default().bg(row_bg)),
                 Span::styled(display_name, name_style),
             ]);
             frame.render_widget(Paragraph::new(line), row_rect);

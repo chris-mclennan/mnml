@@ -1608,6 +1608,42 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         // action (checkout / cd / pop / etc.) lives on
         // the right-click context menu. PRs still open in
         // the browser since they're not graph commits.
+        // qa-feature 2026-06-30 — stamp the clicked row's
+        // identifier so git_palette::draw can paint the
+        // highlight bg on its render call. Click feedback was
+        // missing — clicking a branch jumped the graph but the
+        // sidebar row looked unselected.
+        match &hit {
+            crate::ui::git_palette::GitPaletteHit::Branch(i) => {
+                if let Some(b) = app.git_rail.branches.get(*i) {
+                    app.git_palette_selected = Some(b.name.clone());
+                }
+            }
+            crate::ui::git_palette::GitPaletteHit::Worktree(i) => {
+                if let Some(wt) = app.git_rail.worktrees.get(*i) {
+                    app.git_palette_selected = Some(wt.label.clone());
+                }
+            }
+            crate::ui::git_palette::GitPaletteHit::RemoteBranch(i) => {
+                if let Some(name) = app.git_rail.remote_branches.get(*i).cloned() {
+                    app.git_palette_selected = Some(name);
+                }
+            }
+            crate::ui::git_palette::GitPaletteHit::Stash(i) => {
+                if let Some(st) = app.git_rail.stashes.get(*i) {
+                    app.git_palette_selected = Some(st.id.clone());
+                }
+            }
+            crate::ui::git_palette::GitPaletteHit::Tag(i) => {
+                if let Some(name) = app.git_rail.tags.get(*i).cloned() {
+                    app.git_palette_selected = Some(name);
+                }
+            }
+            crate::ui::git_palette::GitPaletteHit::Pull(_) => {
+                // PRs open in browser; no in-sidebar selection
+                // semantics.
+            }
+        }
         match hit {
             crate::ui::git_palette::GitPaletteHit::Branch(i) => {
                 if let Some(b) = app.git_rail.branches.get(i) {
