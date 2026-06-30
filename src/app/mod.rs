@@ -10222,7 +10222,19 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        // qa-bug 2026-06-30 — external git operations (user runs
+        // `git checkout` in a terminal outside mnml) weren't
+        // picked up by the rail's LOCAL branch list — only by the
+        // statusline branch chip (whose snapshot self.git.tick
+        // refreshes on a 3s TTL). Capture the branch snapshot
+        // before+after the tick; if it changed, refresh git_rail
+        // so the LOCAL `●` current-branch dot follows.
+        let before_branch = self.git.snapshot().branch.clone();
         self.git.tick();
+        if self.git.snapshot().branch != before_branch {
+            let root = self.active_repo_path().to_path_buf();
+            self.git_rail.refresh(&root);
+        }
         // Per-frame pty maintenance: `pump` drains the reader thread's bytes
         // into each (!Send) libghostty terminal — done here (not just on draw)
         // so hidden panes keep processing output. `tick_activity` then bumps
