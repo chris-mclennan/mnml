@@ -699,6 +699,44 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
+    // qa-feature 2026-06-30 — wheel over the GIT palette area
+    // (any row registered by git_palette::draw). Best-practice
+    // sidebar scrolling would page the palette itself; until that
+    // lands, route the wheel to the active GitGraph pane's
+    // commits so the wheel does the obvious thing after clicking
+    // a branch (scroll the commit list it just jumped to).
+    if app.active_section == crate::app::ActivitySection::Git
+        && let Some((row_rect, _)) = app.rects.git_palette_rows.first()
+    {
+        // Build the palette bounding box from row rects. If any
+        // row contains the click point, treat as a palette hit.
+        let bbox_x = row_rect.x;
+        let bbox_w = row_rect.width;
+        let bbox_y0 = app
+            .rects
+            .git_palette_rows
+            .iter()
+            .map(|(r, _)| r.y)
+            .min()
+            .unwrap_or(row_rect.y);
+        let bbox_y1 = app
+            .rects
+            .git_palette_rows
+            .iter()
+            .map(|(r, _)| r.y)
+            .max()
+            .unwrap_or(row_rect.y);
+        if x >= bbox_x && x < bbox_x + bbox_w && y >= bbox_y0 && y <= bbox_y1 {
+            // Find the first open GitGraph pane and scroll it.
+            for pane in app.panes.iter_mut() {
+                if let crate::pane::Pane::GitGraph(g) = pane {
+                    let d = list_scroll_clamp(delta);
+                    g.move_selection(d as isize);
+                    return;
+                }
+            }
+        }
+    }
     // Wheel over an extra workspace's tree body (the file list under
     // `> name`) → scroll that extra's tree cursor.
     if let Some(&(_, ws_idx, _)) = app

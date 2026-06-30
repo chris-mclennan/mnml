@@ -2993,6 +2993,19 @@ pub struct App {
     /// feedback after clicking. Set by the down-left handler;
     /// cleared on activity-section change or repo switch.
     pub git_palette_selected: Option<String>,
+    /// qa-feature 2026-06-30 — first visible row offset for
+    /// wheel-scroll on the git palette. When the palette content
+    /// is taller than the rail, rows above `git_palette_scroll`
+    /// are skipped. Bounded by render to [0, max] where max keeps
+    /// at least one row visible.
+    pub git_palette_scroll: usize,
+    /// qa-feature 2026-06-30 — keyboard cursor inside the git
+    /// palette (when Focus::Tree + active_section == Git). ↑/↓
+    /// move it; Enter fires the same action as clicking the row.
+    /// Counts logical rows (branches / remote branches / worktrees
+    /// / pulls / stashes / tags) — not section headers / blank
+    /// separators.
+    pub git_palette_cursor: usize,
     /// `true` while the workspace-picker dropdown is open (anchored
     /// under the workspace header in the rail). Click the `▾` chip
     /// to toggle; click a row to switch + close; Esc / click-out
@@ -3845,6 +3858,8 @@ impl App {
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             git_palette_selected: None,
+            git_palette_scroll: 0,
+            git_palette_cursor: 0,
             workspace_picker_open: false,
             workspace_picker_filter: String::new(),
             workspaces_editor_open: false,

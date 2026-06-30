@@ -2724,11 +2724,33 @@ impl App {
             self.rail_section = RailSection::Workspace;
         } else {
             self.git_rail.move_up();
+            self.sync_git_palette_selected_from_cursor();
         }
     }
 
     pub fn git_rail_move_down(&mut self) {
         self.git_rail.move_down();
+        self.sync_git_palette_selected_from_cursor();
+    }
+
+    /// qa-feature 2026-06-30 — mirror the rail cursor into
+    /// `git_palette_selected` so the sidebar's highlight follows
+    /// arrow-key nav (not just mouse clicks). The PaletteHit
+    /// enum's variants map 1:1 to the rail entries.
+    fn sync_git_palette_selected_from_cursor(&mut self) {
+        let name = match self.git_rail.selected() {
+            Some(crate::git::rail::GitRailHit::Branch(i)) => {
+                self.git_rail.branches.get(i).map(|b| b.name.clone())
+            }
+            Some(crate::git::rail::GitRailHit::Worktree(i)) => {
+                self.git_rail.worktrees.get(i).map(|w| w.label.clone())
+            }
+            Some(crate::git::rail::GitRailHit::Pull(_)) => None, // PRs don't have ref highlight
+            _ => None,
+        };
+        if let Some(n) = name {
+            self.git_palette_selected = Some(n);
+        }
     }
 
     /// Enter on the cursor row: checkout the branch, or open a shell in the
