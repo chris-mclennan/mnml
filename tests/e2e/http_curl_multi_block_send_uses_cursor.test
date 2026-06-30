@@ -1,0 +1,22 @@
+# qa-7th api-workflow SEV-2 regression — http.send on a multi-block .curl
+# must dispatch the BLOCK under the cursor, not always block 1. d60f36c
+# only fixed nav; the send path's `"http" | "rest"` guard left .curl on
+# whole-file parse and dispatched block 1 always.
+#
+# After fix: parse_active_as_request scans ### directly for .curl,
+# slices out the cursor's block, parses just that.
+
+write api.curl "curl 'http://127.0.0.1:1/a' -H 'accept: */*'\n\n### GetB\ncurl 'http://127.0.0.1:1/b' -H 'accept: */*'\n"
+open api.curl
+
+# Jump cursor to block 2 (the GetB line).
+command http.next_block
+expect screen contains "GetB"
+
+# Fire send — the request-pane should reflect block 2's URL.
+# Even though the request will fail (port 1 nothing listening), the
+# REQUEST URL the pane shows is what we assert against.
+command http.send
+wait 200
+expect screen contains "/b"
+expect screen lacks "/a HTTP/"

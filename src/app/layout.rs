@@ -1854,6 +1854,41 @@ mod layout_tests {
     /// previews a.txt from the tree, then `:edit b.txt`. We want both
     /// open, not b replacing a.)
     #[test]
+    fn cmdline_insert_cursor_word_splices_at_caret_not_end() {
+        // qa-7th code-review W-2 regression — vim's Ctrl+R Ctrl+W
+        // inserts the word under cursor AT THE CMDLINE CARET, not
+        // appended to the end. Pre-fix the code did push_str (the
+        // comment claimed 'vim appends at end-of-line' which is
+        // wrong); the fix splices at caret + updates the caret.
+        let (d, mut app) = app_with_files();
+        let path = d.path().join("a.txt").canonicalize().unwrap();
+        std::fs::write(&path, "alpha beta gamma").unwrap();
+        // Force vim mode and open the file.
+        app.config.editor.input_style = "vim".to_string();
+        app.open_path(&path);
+        // Move cursor onto "beta" (col 6).
+        let idx = app.active.unwrap();
+        if let Some(crate::pane::Pane::Editor(b)) = app.panes.get_mut(idx) {
+            b.editor.place_cursor(0, 6);
+        }
+        // Open the cmdline, type "%s/" + then 'x' + Left ×2 to put
+        // the cmdline caret BEFORE the 'x' (caret at byte 3).
+        if let Some(crate::pane::Pane::Editor(b)) = app.panes.get_mut(idx) {
+            b.input.cmdline_set(Some("%s/x".to_string()));
+            b.input.set_cmdline_caret(3);
+        }
+        // Fire the insert-word command.
+        app.cmdline_insert_cursor_word(false);
+        let idx = app.active.unwrap();
+        if let Some(crate::pane::Pane::Editor(b)) = app.panes.get_mut(idx) {
+            let line = b.input.cmdline_get().unwrap();
+            assert_eq!(line, "%s/betax", "word spliced at caret, not appended");
+            let caret = b.input.cmdline_caret().unwrap();
+            assert_eq!(caret, 7, "caret advanced past inserted word");
+        }
+    }
+
+    #[test]
     fn explicit_open_after_preview_keeps_both() {
         let (d, mut app) = app_with_files_standard();
         app.open_path_preview(&d.path().join("a.txt"));

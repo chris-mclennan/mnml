@@ -1,0 +1,51 @@
+# qa-7th vscode SEV-2 regression — bufferline overflow chevron clicks
+# should actually scroll the strip. Before the fix, the
+# auto-scroll-to-keep-active-tab-visible logic in ui::bufferline::draw
+# immediately reset bufferline_first_visible after the chevron click.
+#
+# Fix: app.bufferline_active_at_scroll = app.active stamp; while it
+# matches active, auto-scroll is suppressed. Verifies a single ‹ click
+# actually shifts what's shown.
+
+# Seed enough files to force overflow at the default 120-cell width.
+write a.txt "1"
+write b.txt "2"
+write c.txt "3"
+write d.txt "4"
+write e.txt "5"
+write f.txt "6"
+write g.txt "7"
+write h.txt "8"
+open a.txt
+open b.txt
+open c.txt
+open d.txt
+open e.txt
+open f.txt
+open g.txt
+open h.txt
+
+# Close the file tree so the bufferline + its chevrons start at col 0.
+command view.toggle_tree
+
+# After 8 opens, the active tab is h.txt — bufferline is showing
+# h.txt at the right edge with first_visible > 0. The ‹ chevron
+# exists at col 0 of the bufferline row (row 1 in screen, 0-based).
+expect screen contains "‹"
+
+# Click the chevron repeatedly — each click decrements
+# bufferline_first_visible by 1. With user_scroll_pinned stamped,
+# the auto-scroll-to-keep-active-visible does NOT clobber the
+# manual scroll. Walking all the way left should reveal a.txt
+# even though h.txt is still active.
+click 0 1
+click 0 1
+click 0 1
+click 0 1
+click 0 1
+click 0 1
+click 0 1
+
+# a.txt should now be at the left edge of the strip — proves the
+# chevron clicks weren't reverted by the auto-scroll.
+expect screen contains "a.txt"
