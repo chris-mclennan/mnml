@@ -51,6 +51,7 @@ cargo fmt              # before committing
 ./run.sh status        # show the marker (workspace, IPC dir)
 ./run.sh headless [WS]  # same loop, but --headless (virtual screen + file-IPC)
 ./run.sh shot [OUT.png] # screenshot the *real* ghostty window (live pixels) → PNG you can Read
+./run.sh clean [mode]   # reclaim target/ space — incremental (default, safe) | deps | all
 ./dev.sh               # cargo-watch auto-rebuild-on-save loop (needs `cargo install cargo-watch`)
 
 cargo run -- [WS] [--input vim|standard] [--ascii] [--config PATH] [--headless]
@@ -59,6 +60,13 @@ cargo run -- chain run FILE           # HTTP: run a .chain.json
 cargo run -- discover SPEC [--out DIR]  # HTTP: OpenAPI/Swagger → .curl stubs
 cargo run -- test [PATH…]             # run .test E2E scripts (default tests/e2e/); also under `cargo test`
 ```
+
+**When builds get slow** (`./run.sh restart` takes >2min, or cargo build sits at
+"Compiling mnml" forever): check `du -sh target/`. mnml's `target/` can balloon
+past 100GB because cargo never GCs its incremental cache or dep rlibs. On
+2026-06-30 it hit **238GB** and rebuilds took 22 minutes. Recovery:
+`./run.sh clean` (safe default — just incremental, no recompile) or
+`./run.sh clean deps` (aggressive, forces full dep rebuild).
 
 **The user keeps a `mnml` instance running via `./run.sh`.** After a `cargo build`
 that **succeeds**, run `./run.sh restart` so it picks up the new code. (A

@@ -21,6 +21,11 @@
 #   ./run.sh watch                cargo watch -x build  (needs cargo-watch)
 #   ./run.sh app [debug|release]  Build mnml.app into target/ (scripts/build-app.sh).
 #   ./run.sh dmg [debug|release]  Build mnml-<version>.dmg into target/.
+#   ./run.sh clean [mode]         Reclaim target/ space (it bloats past 100GB
+#                                 because cargo never GCs the incremental cache
+#                                 + dep rlibs). Default mode = `incremental`
+#                                 (safe, no recompile). `deps` is aggressive,
+#                                 `all` is full cargo clean. Asks before deleting.
 #   ./run.sh help                 show this
 #
 # mnml-specific modes:
@@ -95,6 +100,58 @@ case "${1:-start}" in
   newsletter) shift; exec ./scripts/send-release-newsletter.sh "$@" ;;
   app)     shift; exec ./scripts/build-app.sh "$@" ;;
   dmg)     shift; exec ./scripts/build-dmg.sh "$@" ;;
+  # ── target/ cleanup (cargo cache can balloon past 100GB) ────────
+  # 2026-06-30 — discovered target/ at 238GB causing 22-minute
+  # rebuilds. The incremental cache + dep rlibs accumulate stale
+  # entries cargo never garbage-collects. Default `clean` removes
+  # incremental only (safe, fast); explicit args remove more.
+  clean)
+    shift
+    mode="${1:-incremental}"
+    if [ ! -d "$REPO/target" ]; then
+      echo "[run.sh clean] no target/ dir — nothing to do"
+      exit 0
+    fi
+    echo "[run.sh clean] current sizes:"
+    du -sh "$REPO/target" "$REPO/target/debug" "$REPO/target/debug/incremental" \
+           "$REPO/target/debug/deps" "$REPO/target/debug/examples" \
+           "$REPO/target/release" 2>/dev/null | sed 's|'"$REPO"'/||'
+    echo
+    case "$mode" in
+      incremental)
+        target_dir="$REPO/target/debug/incremental"
+        rationale="safest — keeps compiled artifacts, only drops the bloat-prone fingerprint cache. Next build is normal-incremental fast."
+        ;;
+      deps)
+        target_dir="$REPO/target/debug/deps $REPO/target/debug/incremental"
+        rationale="aggressive — wipes compiled deps too. Next build is a full cold rebuild (~5-10min), but reclaims the most space."
+        ;;
+      all)
+        target_dir="$REPO/target"
+        rationale="nuclear — full cargo clean equivalent. Forces a complete rebuild including release/ and examples/."
+        ;;
+      *)
+        echo "[run.sh clean] unknown mode: $mode" >&2
+        echo "  usage: ./run.sh clean [incremental|deps|all]" >&2
+        echo "         incremental  ~10-60GB, no recompile (default)" >&2
+        echo "         deps         ~150-200GB, full dep recompile" >&2
+        echo "         all          everything, full clean rebuild" >&2
+        exit 2
+        ;;
+    esac
+    echo "[run.sh clean] about to remove ($mode):"
+    for d in $target_dir; do echo "  $d"; done
+    echo "[run.sh clean] $rationale"
+    printf "[run.sh clean] proceed? [y/N] "
+    read -r ans
+    case "$ans" in
+      y|Y|yes|YES) ;;
+      *) echo "[run.sh clean] aborted"; exit 0 ;;
+    esac
+    for d in $target_dir; do rm -rf "$d"; done
+    echo "[run.sh clean] done. new size:"
+    du -sh "$REPO/target" 2>/dev/null | sed 's|'"$REPO"'/||'
+    exit 0 ;;
   watch)
     if ! command -v cargo-watch >/dev/null 2>&1; then
       echo "[run.sh] cargo-watch not installed — \`cargo install cargo-watch\`" >&2
