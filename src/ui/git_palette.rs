@@ -67,12 +67,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         |s: &str| -> bool { filter_lc.is_empty() || s.to_ascii_lowercase().contains(&filter_lc) };
 
     // ── repo header ───────────────────────────────────────────
+    // qa-feature 2026-06-30 — when the workspace contains multiple
+    // repos, the active one (which the git pane is showing) is the
+    // truthful label; falling back to the workspace name only when
+    // there is no active repo.
     let repo_name = app
-        .workspace
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo")
-        .to_string();
+        .repos
+        .get(app.active_repo)
+        .map(|r| r.name.clone())
+        .unwrap_or_else(|| {
+            app.workspace
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("repo")
+                .to_string()
+        });
     // qa-feature 2026-06-30 — render the repo name as a clickable
     // pill `[ name ▾ ]` that opens the workspace picker. The whole
     // pill is the click target so a mis-click on the chevron still
