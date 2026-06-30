@@ -2991,6 +2991,16 @@ impl InputHandler for VimInputHandler {
         self.cmdline_cursor = text.as_ref().map(String::len).unwrap_or(0);
         self.cmdline = text;
     }
+    fn cmdline_caret(&self) -> Option<usize> {
+        self.cmdline
+            .as_ref()
+            .map(|l| self.cmdline_cursor.min(l.len()))
+    }
+    fn set_cmdline_caret(&mut self, byte_offset: usize) {
+        if let Some(l) = self.cmdline.as_ref() {
+            self.cmdline_cursor = byte_offset.min(l.len());
+        }
+    }
 
     fn pending_display(&self) -> Option<String> {
         if let Some(line) = &self.cmdline {

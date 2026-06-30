@@ -261,6 +261,16 @@ pub trait InputHandler: Send {
     /// Replace the `:` cmdline text (e.g. after Tab completion picks a match).
     /// Default no-op. Used by `App::cmdline_tab_complete`.
     fn cmdline_set(&mut self, _text: Option<String>) {}
+    /// Current caret position (byte offset) within the cmdline text.
+    /// Default None (Standard mode has no cmdline). Used by
+    /// `App::cmdline_insert_cursor_word` to splice at the caret
+    /// rather than the end.
+    fn cmdline_caret(&self) -> Option<usize> {
+        None
+    }
+    /// Move the caret. Default no-op. Used by cursor-word insert so
+    /// the caret lands after the freshly-inserted text.
+    fn set_cmdline_caret(&mut self, _byte_offset: usize) {}
 }
 
 /// Build a handler for the given style name. Unknown names fall back to `"standard"`.

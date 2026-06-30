@@ -566,7 +566,14 @@ impl App {
             .0
             .clone();
         let workspace = self.workspace.clone();
-        let env_name = std::env::var("MNML_ENV").ok();
+        // qa-7th api SEV-2 2026-06-30 — chain runner ignored the
+        // `[http] default_env` TOML config. Other call sites use
+        // EnvSet::select_with_config_default; chain went straight
+        // through `std::env::var`. Fall back to the config default
+        // when MNML_ENV isn't set.
+        let env_name = std::env::var("MNML_ENV")
+            .ok()
+            .or_else(|| self.config.http.default_env.clone());
         // 2026-06-21 — pass the cookie jar to the chain runner so
         // multi-step authenticated flows (login → use session
         // cookie) actually work.
@@ -2350,22 +2357,56 @@ impl App {
         if !matches!(ext.as_str(), "http" | "rest" | "curl") {
             return None;
         }
-        let (mut request, script_src) = if matches!(ext.as_str(), "http" | "rest")
+        // qa-7th api SEV-2 2026-06-30 — was matches!("http" | "rest"),
+        // so .curl files always fell to the whole-file parse and
+        // ignored cursor position on multi-block .curl. Extended
+        // to .curl via the same line-scan strategy as
+        // move_to_http_block: find ### separators directly, slice
+        // out the cursor's block, parse JUST that block.
+        let lines: Vec<&str> = text.split('\n').collect();
+        let block_src = if matches!(ext.as_str(), "http" | "rest")
             && let Ok(blocks) = http::file::parse_all(&text)
         {
-            let lines: Vec<&str> = text.split('\n').collect();
+            // .http/.rest still use parse_all (rich block metadata).
             let b = blocks
                 .iter()
                 .find(|b| cursor_row >= b.start_line && cursor_row <= b.end_line)
                 .unwrap_or(&blocks[0]);
-            let src =
-                lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n");
-            (b.request.clone(), src)
+            Some(lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n"))
         } else {
-            match http::parse(&text) {
+            // .curl (and the catch-all): scan ### markers directly
+            // since parse_all rejects curl-syntax block bodies.
+            let starts: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .filter_map(|(i, l)| l.trim_start().starts_with("###").then_some(i))
+                .collect();
+            if starts.is_empty() {
+                None
+            } else {
+                let block_start = starts
+                    .iter()
+                    .rev()
+                    .find(|&&s| s <= cursor_row)
+                    .copied()
+                    .unwrap_or(starts[0]);
+                let block_end = starts
+                    .iter()
+                    .find(|&&s| s > block_start)
+                    .map(|&n| n - 1)
+                    .unwrap_or(lines.len().saturating_sub(1));
+                Some(lines[block_start..=block_end].join("\n"))
+            }
+        };
+        let (mut request, script_src) = match block_src {
+            Some(src) => match http::parse(&src) {
+                Ok(r) => (r, src),
+                Err(_) => return None,
+            },
+            None => match http::parse(&text) {
                 Ok(r) => (r, text.clone()),
                 Err(_) => return None,
-            }
+            },
         };
         let script = http::script::parse(&script_src);
         let mut env = EnvSet::select_with_config_default(
@@ -2948,11 +2989,15 @@ impl App {
         // `source_block_name` is captured iff the file is genuinely multi-block
         // (>1 parsed block) — single-block files round-trip through the simple
         // overwrite path on save.
-        let (mut request, script_src, source_block_name): (http::Request, String, Option<String>) =
+        // qa-7th api SEV-2 2026-06-30 — extended to .curl via
+        // direct ### scan; parse_all rejects curl-syntax bodies
+        // so it can't dispatch .curl on its own.
+        let lines: Vec<&str> = text.split('\n').collect();
+        let (mut request, script_src, source_block_name): (http::Request, String, Option<String>) = {
+            // .http/.rest still use parse_all for rich metadata.
             if matches!(ext.as_str(), "http" | "rest")
                 && let Ok(blocks) = http::file::parse_all(&text)
             {
-                let lines: Vec<&str> = text.split('\n').collect();
                 let b = blocks
                     .iter()
                     .find(|b| cursor_row >= b.start_line && cursor_row <= b.end_line)
@@ -2960,11 +3005,6 @@ impl App {
                 let src =
                     lines[b.start_line..=b.end_line.min(lines.len().saturating_sub(1))].join("\n");
                 let block_name = if blocks.len() > 1 {
-                    // Multi-block. `b.name` is `Some(s)` when the block had a
-                    // `###` separator with text, `None` for the leading
-                    // headerless block. Distinguish the two on save by
-                    // remembering "no separator at all" vs "bare ###" — if the
-                    // block's first line *is* `###`, store `Some("")`.
                     if lines
                         .get(b.start_line)
                         .is_some_and(|l| l.trim_start().starts_with("###"))
@@ -2978,14 +3018,50 @@ impl App {
                 };
                 (b.request.clone(), src, block_name)
             } else {
-                match http::parse(&text) {
-                    Ok(r) => (r, text.clone(), None),
+                // .curl (and other): scan ### directly.
+                let starts: Vec<usize> = lines
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, l)| l.trim_start().starts_with("###").then_some(i))
+                    .collect();
+                let (slice, block_name) = if starts.is_empty() {
+                    (text.clone(), None)
+                } else {
+                    let block_start = starts
+                        .iter()
+                        .rev()
+                        .find(|&&s| s <= cursor_row)
+                        .copied()
+                        .unwrap_or(starts[0]);
+                    let block_end = starts
+                        .iter()
+                        .find(|&&s| s > block_start)
+                        .map(|&n| n - 1)
+                        .unwrap_or(lines.len().saturating_sub(1));
+                    let name = if lines
+                        .get(block_start)
+                        .is_some_and(|l| l.trim_start().starts_with("###"))
+                    {
+                        let after_hashes = lines[block_start]
+                            .trim_start()
+                            .trim_start_matches('#')
+                            .trim()
+                            .to_string();
+                        Some(after_hashes)
+                    } else {
+                        None
+                    };
+                    (lines[block_start..=block_end].join("\n"), name)
+                };
+                match http::parse(&slice) {
+                    Ok(r) => (r, slice, block_name),
                     Err(e) => {
                         self.toast(format!("can't parse request: {e}"));
                         return;
                     }
                 }
-            };
+            }
+        };
         let script = http::script::parse(&script_src);
         let mut env = EnvSet::select_with_config_default(
             &self.workspace,

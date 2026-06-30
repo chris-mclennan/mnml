@@ -753,16 +753,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // (or a right-click) dismisses. Mouse-move over a row highlights it
     // (matches macOS / VS Code menu hover).
     if app.context_menu.is_some() {
-        if matches!(m.kind, MouseEventKind::Moved)
-            && let Some(&(_, i)) = app
-                .rects
-                .context_menu_items
-                .iter()
-                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        {
-            app.context_menu_select(i);
-            return;
-        }
+        // qa-7th code-review N-1 2026-06-30 — was a `Moved` guard
+        // here that was unreachable (all Moved events returned
+        // earlier in dispatch_mouse at the top-level Moved block).
+        // Removed; Moved-over-menu hover lives in that earlier
+        // block now.
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(&(_, i)) = app

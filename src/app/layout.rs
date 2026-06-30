@@ -1605,13 +1605,19 @@ impl App {
         let Some(line) = b.input.cmdline_get() else {
             return;
         };
-        // cmdline_set repositions the caret to end-of-text — by
-        // appending the word, the caret naturally lands after it.
-        // (We don't preserve mid-line carets here; vim's behavior
-        // is to append at end-of-line in practice.)
-        let mut new_line = line;
+        // qa-7th code-review W-2 — vim inserts at the caret, not
+        // end-of-line. Splice the word at the cmdline caret.
+        let caret = b
+            .input
+            .cmdline_caret()
+            .unwrap_or(line.len())
+            .min(line.len());
+        let mut new_line = String::with_capacity(line.len() + word.len());
+        new_line.push_str(&line[..caret]);
         new_line.push_str(&word);
+        new_line.push_str(&line[caret..]);
         b.input.cmdline_set(Some(new_line));
+        b.input.set_cmdline_caret(caret + word.len());
     }
 
     pub fn cmdline_tab_complete(&mut self) {

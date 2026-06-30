@@ -39,6 +39,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // overlay is open — they'd otherwise survive between opens.
     app.rects.settings_overlay_rect = None;
     app.rects.settings_rows.clear();
+    // qa-7th code-review W-4 2026-06-30 — clear Save/Cancel chip
+    // rects too so the mouse handler can't pick up stale coords.
+    app.rects.settings_save_button = None;
+    app.rects.settings_cancel_button = None;
     if app.settings_overlay.is_none() {
         return;
     }

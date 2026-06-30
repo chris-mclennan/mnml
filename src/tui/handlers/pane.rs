@@ -61,12 +61,11 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
         if app.active.is_some() {
             app.focus = crate::focus::Focus::Pane;
             // Forward the same Ctrl+W to the now-focused pane so its
-            // vim handler enters Prefix::Window mode for the next
-            // key. Standard mode treats Ctrl+W as buffer.close —
-            // re-dispatching it from tree focus might close the
-            // active editor, which the user didn't ask for. Skip the
-            // re-dispatch in standard mode.
-            if app.is_vim_mode() {
+            // handler enters window-nav mode. Standard / VS Code
+            // treats Ctrl+W as buffer.close — re-dispatching it from
+            // tree focus might close the active editor, which the
+            // user didn't ask for.
+            if app.ctrl_w_is_window_nav() {
                 handle_pane_key(app, key);
             }
         }
@@ -175,12 +174,13 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             app.open_ex_command_prompt();
             return;
         }
-        // Ctrl+W → in vim mode, jump to the first editor pane and
-        // re-dispatch so its vim handler enters Prefix::Window.
-        // Standard mode treats Ctrl+W as buffer.close — skip.
+        // Ctrl+W → if the current style treats it as window-nav,
+        // jump to the first editor pane and re-dispatch so its
+        // handler enters Prefix::Window. Standard / VS Code
+        // treats Ctrl+W as buffer.close — skip.
         if key.code == KeyCode::Char('w')
             && key.modifiers.contains(KeyModifiers::CONTROL)
-            && app.is_vim_mode()
+            && app.ctrl_w_is_window_nav()
         {
             if let Some(editor_id) = app.panes.iter().position(|p| matches!(p, Pane::Editor(_))) {
                 app.active = Some(editor_id);
@@ -2209,7 +2209,7 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 );
                 if has_extras {
                     app.run_editor_op(crate::edit_op::EditOp::ClearExtraCursors);
-                } else if app.is_vim_mode() {
+                } else if app.esc_blurs_pane_to_tree() {
                     app.focus_tree();
                 }
             }

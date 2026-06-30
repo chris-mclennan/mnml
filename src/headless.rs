@@ -56,6 +56,10 @@ pub fn run(mut app: App) -> Result<bool, String> {
 
     loop {
         if sigterm_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            // qa-7th code-review W-3 2026-06-30 — preserve session
+            // state on signal-induced shutdown so the host can
+            // restore open files / layout / scroll on next launch.
+            app.save_session_on_quit();
             ipc.append_event(
                 r#"{"event":"exit","reason":"signal","note":"SIGTERM/SIGINT/SIGHUP — early exit"}"#,
             );

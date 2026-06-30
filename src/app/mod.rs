@@ -8993,6 +8993,24 @@ impl App {
         crate::input::is_vim_style(&self.config)
     }
 
+    /// qa-7th code-review C-1 2026-06-30 — semantic accessor for
+    /// "does the current input style treat Ctrl+W as a window-nav
+    /// prefix (vim) rather than a buffer-close (standard / VS
+    /// Code)?". Replaces three `is_vim_mode()` checks in
+    /// tui/handlers/pane.rs with a behavior-named question, so a
+    /// future input style (Helix, Emacs evil-mode) decides for
+    /// itself rather than the dispatch layer asking "are you vim?".
+    pub fn ctrl_w_is_window_nav(&self) -> bool {
+        crate::input::is_vim_style(&self.config)
+    }
+
+    /// qa-7th code-review C-1 2026-06-30 — semantic accessor for
+    /// "does Esc on a pane with no selection move focus back to
+    /// the tree?". Same reasoning as `ctrl_w_is_window_nav`.
+    pub fn esc_blurs_pane_to_tree(&self) -> bool {
+        crate::input::is_vim_style(&self.config)
+    }
+
     /// Whether the editor mouse wheel + scrollbar drag should drag the
     /// cursor along with the viewport. Resolves the
     /// `[editor] wheel_moves_cursor` policy:
