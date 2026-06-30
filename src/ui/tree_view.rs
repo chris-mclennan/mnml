@@ -62,41 +62,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // The rail's bottom slice hosts (top to bottom): INTEGRATIONS
-    // section + GIT section. Both are pinned to the bottom and grow
-    // upward to fit their content; the workspace tree gets whatever's
-    // left above. Compute each section's needed height, then carve
-    // them out of `area` from the bottom up.
-    let git_needed = compute_git_section_height(app);
-    let integration_needed = compute_integration_section_height(app, area.width as usize);
-    // Keep at least `MIN_TREE_ROWS` for the workspace; anything beyond
-    // that the two bottom sections can claim.
-    const MIN_TREE_ROWS: u16 = 6;
-    let bottom_budget = area.height.saturating_sub(MIN_TREE_ROWS).max(1);
-    // Section heights honor the user-set max (set via drag-to-resize
-    // on the section header). Final size is the smaller of the
-    // user-set cap, the content-needed value, and the available
-    // budget. So:
-    //   - User drags header down (max_h < needed): section shrinks
-    //     to user_h; content scrolls if applicable.
-    //   - User drags header up (max_h >= needed): section caps at
-    //     content_needed (no wasted empty space).
-    //   - No user override: section auto-sizes to needed (old behaviour).
-    // INTEGRATIONS gets first dibs — a long GIT branch list would
-    // otherwise eat the whole bottom budget and squeeze it out.
-    let integration_cap = app
-        .integrations_user_max_h
-        .unwrap_or(integration_needed)
-        .min(integration_needed)
-        .min(bottom_budget);
-    let integration_height = integration_cap;
-    let remaining_for_git = bottom_budget.saturating_sub(integration_height);
-    let git_cap = app
-        .git_user_max_h
-        .unwrap_or(git_needed)
-        .min(git_needed)
-        .min(remaining_for_git);
-    let git_height = git_cap.max(1);
+    // qa-feature 2026-06-30 — INTEGRATIONS + GIT sections were
+    // previously rendered at the bottom of the file browser as a
+    // shortcut, but both have dedicated activity-bar icons (the
+    // GitKraken-style git palette + the integrations panel) that
+    // give them a full panel of vertical space. Showing them
+    // duplicated here ate rows from the workspace tree without
+    // adding value. Zeroed; the workspace tree now gets the full
+    // rail height.
+    let git_needed = 0u16;
+    let _integration_needed = 0u16;
+    let integration_height = 0u16;
+    let git_height = 0u16;
     // How many rows of GIT content didn't fit. When > 0,
     // `draw_git_section` appends a `… N more` indicator on its
     // last row so the user knows the list is clipped (instead of
@@ -589,6 +566,8 @@ fn visible_integration_indices(app: &App) -> Vec<usize> {
 /// header stays visible so the user can still see the section + the
 /// future `+` button (the misleading "Jira is configured" state when
 /// it's just a default is gone).
+#[allow(dead_code)] // qa-feature 2026-06-30 — INTEGRATIONS section removed
+// from file browser, retained for the integrations activity-bar panel.
 fn compute_integration_section_height(app: &App, rail_width: usize) -> u16 {
     let n = visible_integration_indices(app).len();
     if n == 0 {
@@ -836,6 +815,8 @@ fn draw_integration_section(
 /// sub-label + the branch rows + a sub-label + the worktree rows.
 /// Caller clamps against a per-rail maximum so a long branch list
 /// can't push the workspace tree out entirely.
+#[allow(dead_code)] // qa-feature 2026-06-30 — GIT section removed from
+// file browser, retained for potential reuse.
 fn compute_git_section_height(app: &App) -> u16 {
     if !app.git_section_expanded {
         return 1;
