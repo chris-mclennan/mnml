@@ -179,15 +179,23 @@ fn run(workspace: &Path, args: &[&str]) -> Result<(), String> {
 // anyway), but the explicit separator is a one-token defense and
 // matches every git-ref-handling helper's recommended idiom.
 
-/// `git checkout -- <branch>` — switch to an existing local branch.
+/// `git switch <branch>` — switch to an existing local branch.
+///
+/// qa-bug 2026-06-30: was `git checkout -- <branch>` which is WRONG —
+/// `--` tells git that everything after it is a FILE PATH, so git
+/// silently treated the branch name as a file to restore (no-op when
+/// no such file exists) instead of switching branches. The user
+/// reported clicking "Checkout main" while on develop and seeing no
+/// change. Switched to the modern `git switch` form which is
+/// unambiguous about ref-vs-path and ships in git ≥ 2.23.
 pub fn checkout(workspace: &Path, branch: &str) -> Result<(), String> {
-    run(workspace, &["checkout", "--", branch])
+    run(workspace, &["switch", branch])
 }
 /// `git checkout --track <remote>` — create + switch to a local branch tracking
-/// a remote one (git derives the local name). `--track` is positional after
-/// `--`, so we keep it before.
+/// a remote one (git derives the local name). qa-bug 2026-06-30: same `--`-as-
+/// pathspec-separator bug as `checkout` above; removed.
 pub fn checkout_track(workspace: &Path, remote: &str) -> Result<(), String> {
-    run(workspace, &["checkout", "--track", "--", remote])
+    run(workspace, &["checkout", "--track", remote])
 }
 /// `git checkout -b <name>` — create + switch to a new branch off the current HEAD.
 pub fn create(workspace: &Path, name: &str) -> Result<(), String> {
