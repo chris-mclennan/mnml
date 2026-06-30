@@ -1116,13 +1116,18 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.run_git_rail_header_action(action);
         return;
     }
-    // qa-feature 2026-06-30 — GitGraph repo-switch `⇄` button.
-    // Wins over header / row clicks since it's a single-cell
-    // chip and contains() would otherwise route to the chrome.
+    // qa-feature 2026-06-30 — GitGraph repo-switch pill. Opens
+    // the workspace picker when extras are configured; falls
+    // back to the workspaces editor overlay when there are none
+    // (so the click leads SOMEWHERE useful instead of a toast).
     if let Some(rect) = app.rects.git_graph_repo_switch
         && crate::app::dispatch::contains(rect, x, y)
     {
-        app.open_workspace_picker();
+        if app.extra_workspaces.is_empty() {
+            app.open_workspaces_editor();
+        } else {
+            app.open_workspace_picker();
+        }
         return;
     }
     // GitGraph column header click → cycle sort. Falls through to

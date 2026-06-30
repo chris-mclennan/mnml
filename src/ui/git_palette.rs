@@ -67,44 +67,39 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .and_then(|n| n.to_str())
         .unwrap_or("repo")
         .to_string();
-    // qa-feature 2026-06-30 — `⇄` switch button to the right of
-    // the repo name. Opens the workspace picker on click (same
-    // surface as `:view.switch_workspace`).
+    // qa-feature 2026-06-30 — render the repo name as a clickable
+    // pill `[ name ▾ ]` that opens the workspace picker. The whole
+    // pill is the click target so a mis-click on the chevron still
+    // triggers the action.
     let header_rect = Rect {
         x: area.x,
         y,
         width: area.width,
         height: 1,
     };
+    let pill_text = format!(" {repo_name} ▾ ");
+    let pill_w = pill_text.chars().count() as u16;
     let header_line = Line::from(vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
-            repo_name.clone(),
+            pill_text,
             Style::default()
                 .fg(t.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ", Style::default().bg(bg)),
-        Span::styled(
-            "⇄",
-            Style::default()
-                .fg(t.blue)
-                .bg(bg)
+                .bg(t.bg2)
                 .add_modifier(Modifier::BOLD),
         ),
     ]);
     frame.render_widget(Paragraph::new(header_line), header_rect);
-    // Register the click rect — switch button is at the cell just
-    // after `" {repo_name}  "` (1 leading space + name + 2-cell gap).
-    let switch_x = area
-        .x
-        .saturating_add(1 + repo_name.chars().count() as u16 + 2);
-    if switch_x < area.x + area.width {
+    // Click rect covers the whole pill (after the 1-cell leading
+    // space). Capped at the header width so resizing the pane
+    // narrower doesn't register a rect that runs off-screen.
+    let pill_x = area.x.saturating_add(1);
+    let pill_end = pill_x.saturating_add(pill_w).min(area.x + area.width);
+    if pill_end > pill_x {
         app.rects.git_graph_repo_switch = Some(Rect {
-            x: switch_x,
+            x: pill_x,
             y,
-            width: 1,
+            width: pill_end - pill_x,
             height: 1,
         });
     }
