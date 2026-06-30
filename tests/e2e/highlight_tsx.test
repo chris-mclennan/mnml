@@ -8,4 +8,7 @@ open src/App.tsx
 expect pane "App.tsx"
 expect screen contains "interface Props"
 expect screen contains "React.FC"
-expect highlights at_least 6
+# qa-7th multilang SEV-3 — was at_least 6 (achievable with TS-only captures
+# even when the JS base layer and JSX tag captures were both missing). After
+# the highlight.rs fix that concats both layers, real coverage is 20+.
+expect highlights at_least 20

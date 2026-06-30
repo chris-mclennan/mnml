@@ -1,5 +1,6 @@
-# pytest runners from a workspace with no pyproject.toml, setup.py, or tests/ dir.
-# Should toast "pytest: no pyproject.toml / setup.py / tests/ at ..."
+# pytest runners from a workspace with no pyproject.toml, setup.py,
+# requirements.txt, or test files.
+# Should toast "pytest: no pyproject.toml / setup.py / requirements.txt / test files at ..."
 
 command pytest.run
 wait 50
