@@ -355,14 +355,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // Text row entered edit mode (then Enter again to commit +
     // persist). Now distinguishes the two roles.
     let hint =
-        "←→ adjust · ↑↓ move · Enter edit/save · r reset · R reset all · click out / Esc done";
+        // qa-8th design MED-2 2026-06-30 — was "click out / Esc done"
+        // which falsely framed those as equivalent (click-out saves,
+        // Esc cancels). Explicit Save vs Cancel disambiguation now.
+        "←→ adjust · ↑↓ move · Enter/click out: save · r reset · R reset all · Esc: cancel";
     // qa-6th mouse SEV-3 2026-06-29: settings overlay had no
     // visible Save / Cancel buttons — mouse-only users had to
     // type Enter/Esc despite the rest of the app having clickable
     // affordances. Paint two right-aligned chips + register click
     // rects.
-    const SAVE_CHIP: &str = " [Save] ";
-    const CANCEL_CHIP: &str = " [Cancel] ";
+    // qa-8th design LOW-5 2026-06-30 — was " [Save] " / " [Cancel] "
+    // but the settings overlay also uses [bracketed] notation for
+    // the currently-selected option value, so chip brackets read
+    // as another option marker. close_prompt.rs intentionally
+    // dropped brackets for the same reason. Use plain text with
+    // solid-color bg styling instead.
+    const SAVE_CHIP: &str = "  Save  ";
+    const CANCEL_CHIP: &str = "  Cancel  ";
     let chips_w = (SAVE_CHIP.len() + CANCEL_CHIP.len()) as u16;
     let hint_visible_w = inner.width.saturating_sub(chips_w + 1);
     let hint_line = truncate_line_to_width(

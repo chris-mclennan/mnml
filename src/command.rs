@@ -4167,6 +4167,23 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_mixr(),
         },
         Command {
+            id: "mixr.copy_track",
+            title: "Mixr: copy the now-playing track title to clipboard",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                if let Some(np) = app.now_playing.as_ref()
+                    && !np.track.is_empty()
+                {
+                    let track = np.track.clone();
+                    app.clipboard.set(track.clone(), false);
+                    app.toast(format!("copied: {track}"));
+                } else {
+                    app.toast("mixr: nothing playing");
+                }
+            },
+        },
+        Command {
             id: "browser.open",
             title: "Browser: open Chrome (CDP) — console / nav / eval",
             group: "browser",
@@ -4720,10 +4737,16 @@ fn builtin_commands() -> Vec<Command> {
         // purists could never reach these menus. These palette
         // commands fire each statusline chip's menu directly,
         // anchored at the chip's screen position.
+        // qa-8th design MED-3 2026-06-30 — was `statusline.*` IDs,
+        // which leaked widget vocabulary into command names. mnml's
+        // convention is function-first: `git.*` for git operations,
+        // `clock.*` for clock, etc. Renamed to match topic; users
+        // searching `:git.` now find branch_menu, `:clock.` finds
+        // clock_menu.
         Command {
-            id: "statusline.mode_menu",
-            title: "Statusline: open mode chip menu (vim / standard)",
-            group: "view",
+            id: "editor.input_mode_menu",
+            title: "Open mode menu (vim / standard)",
+            group: "editor",
             keys: &[],
             run: |app| {
                 let anchor = app
@@ -4735,8 +4758,8 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            id: "statusline.workspace_menu",
-            title: "Statusline: open workspace chip menu",
+            id: "view.workspace_menu",
+            title: "Open workspace menu",
             group: "view",
             keys: &[],
             run: |app| {
@@ -4749,9 +4772,9 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            id: "statusline.branch_menu",
-            title: "Statusline: open branch chip menu",
-            group: "view",
+            id: "git.branch_menu",
+            title: "Open branch menu",
+            group: "git",
             keys: &[],
             run: |app| {
                 let anchor = app
@@ -4763,9 +4786,9 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
-            id: "statusline.clock_menu",
-            title: "Statusline: open clock chip menu (local ⇄ UTC)",
-            group: "view",
+            id: "clock.menu",
+            title: "Open clock menu (local ⇄ UTC)",
+            group: "clock",
             keys: &[],
             run: |app| {
                 let anchor = app

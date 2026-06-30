@@ -1310,45 +1310,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Stacked toasts: top-right vertical column when more than one toast
     // is live (rapid-fire toasts no longer clobber each other).
     toast_stack::draw(frame, app);
-    // qa-6th nvchad SEV-2: :%s/.../.../c interactive confirm
-    // overlay. The y/n/a/q key handlers were wired but no UI
-    // rendered the prompt — the user had no idea they were in
-    // confirm mode. Paint a one-line bar at the bottom showing
-    // the prompt + match progress + key hints.
-    if let Some(rc) = app.replace_confirm.as_ref()
-        && area.height >= 2
-    {
-        // qa-8th render W-2 2026-06-30 — was hardcoded x=0 +
-        // area.height.saturating_sub(2) (absolute), which was
-        // safe today because draw is always called with
-        // frame.area() rooted at (0,0) but unguarded against
-        // narrow terminals. Now uses area.x / area.y and guards
-        // on area.height >= 2.
-        let prompt = format!(
-            " replace {:?} → {:?}? [{}/{}]  y · n · a · q ",
-            rc.find,
-            rc.replace,
-            rc.applied + 1,
-            rc.total,
-        );
-        let t = theme::cur();
-        let prompt_w = (prompt.chars().count() as u16).min(area.width);
-        let prompt_rect = ratatui::layout::Rect {
-            x: area.x,
-            y: area.y + area.height - 2,
-            width: prompt_w,
-            height: 1,
-        };
-        frame.render_widget(
-            ratatui::widgets::Paragraph::new(prompt).style(
-                Style::default()
-                    .fg(t.fg)
-                    .bg(t.bg2)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            prompt_rect,
-        );
-    }
+    // qa-6th nvchad SEV-2 (originally) + qa-8th design HIGH-1
+    // (2026-06-30 fix) — the :%s/.../.../c confirm bar. Moved
+    // BELOW the statusline + cmdline_bar draws (further down)
+    // so neither overwrites it; rendered on the cmdline row
+    // (area.height - 1) which is vim's canonical position.
     // Flash overlay: paints label glyphs over the editor body when a
     // `s<a><b>` jump is armed.
     if app.flash_state.is_some() {
@@ -1366,6 +1332,41 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // ── cmdline bar (below statusline) ──
     cmdline_bar::draw(frame, app, cmdline_bar_area);
+
+    // qa-8th design HIGH-1: :%s/.../.../c confirm bar paints on
+    // the cmdline row AFTER cmdline_bar::draw so nothing
+    // overwrites it. The `{}` Display formatting (qa-8th LOW-6)
+    // avoids Rust debug-string quoting.
+    if let Some(rc) = app.replace_confirm.as_ref()
+        && area.height >= 1
+        && cmdline_bar_area.height >= 1
+    {
+        let prompt = format!(
+            " replace {} → {}? [{}/{}]  y · n · a · q ",
+            rc.find,
+            rc.replace,
+            rc.applied + 1,
+            rc.total,
+        );
+        let t = theme::cur();
+        let prompt_w = (prompt.chars().count() as u16).min(cmdline_bar_area.width);
+        let prompt_rect = ratatui::layout::Rect {
+            x: cmdline_bar_area.x,
+            y: cmdline_bar_area.y,
+            width: prompt_w,
+            height: 1,
+        };
+        frame.render_widget(ratatui::widgets::Clear, prompt_rect);
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(prompt).style(
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg2)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            prompt_rect,
+        );
+    }
 
     // ── cmdline completion popup (floats UP from the cmdline bar
     //     over the editor pane content while a `:` cmdline is open

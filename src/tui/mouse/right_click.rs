@@ -171,7 +171,18 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         && crate::app::dispatch::contains(r, x, y)
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![MenuItem::new("Open mixr", MenuAction::Command("mixr.show"))];
+        let mut items = vec![MenuItem::new("Open mixr", MenuAction::Command("mixr.show"))];
+        // qa-8th design MED-4 2026-06-30 — was 1-item menu that
+        // just duplicated the left-click action. Add Copy-track
+        // when something's playing so right-click feels useful.
+        if let Some(np) = app.now_playing.as_ref()
+            && !np.track.is_empty()
+        {
+            items.push(MenuItem::new(
+                "Copy track title",
+                MenuAction::Command("mixr.copy_track"),
+            ));
+        }
         app.context_menu = Some(ContextMenu::new(Some("mixr".to_string()), (x, y), items));
         return;
     }
