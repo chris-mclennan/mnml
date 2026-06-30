@@ -8709,15 +8709,21 @@ impl App {
         // — if EVERY pane is Pty, the loop exhausts and `next` ends
         // up back at a Pty; no-op rather than misleadingly "moving"
         // to another Pty pane the user just came from.
+        // qa-feature 2026-06-30 — also skip GitGraph (viewer, no
+        // file semantics) alongside Pty so cycling stays among
+        // editable buffers.
+        let skip = |p: Option<&Pane>| -> bool {
+            matches!(p, Some(Pane::Pty(_)) | Some(Pane::GitGraph(_)))
+        };
         let n = self.panes.len();
         let mut next = (cur + 1) % n;
         for _ in 0..n {
-            if !matches!(self.panes.get(next), Some(Pane::Pty(_))) {
+            if !skip(self.panes.get(next)) {
                 break;
             }
             next = (next + 1) % n;
         }
-        if matches!(self.panes.get(next), Some(Pane::Pty(_))) {
+        if skip(self.panes.get(next)) {
             return;
         }
         self.reveal_pane(next);
@@ -8727,15 +8733,18 @@ impl App {
             return;
         }
         let cur = self.active.unwrap_or(0);
+        let skip = |p: Option<&Pane>| -> bool {
+            matches!(p, Some(Pane::Pty(_)) | Some(Pane::GitGraph(_)))
+        };
         let n = self.panes.len();
         let mut prev = (cur + n - 1) % n;
         for _ in 0..n {
-            if !matches!(self.panes.get(prev), Some(Pane::Pty(_))) {
+            if !skip(self.panes.get(prev)) {
                 break;
             }
             prev = (prev + n - 1) % n;
         }
-        if matches!(self.panes.get(prev), Some(Pane::Pty(_))) {
+        if skip(self.panes.get(prev)) {
             return;
         }
         self.reveal_pane(prev);

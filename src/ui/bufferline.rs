@@ -151,8 +151,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // mouse-hunter v3 SEV-2 E: panes hosted in the right side panel
     // are visible there — they shouldn't ALSO appear as bufferline
     // tabs (ghost duplicates). Filter them out before rendering.
+    // qa-feature 2026-06-30 — GitGraph panes are viewers, not files.
+    // Showing them in the bufferline alongside .ts / .rs / etc. felt
+    // wrong (no "Untitled Document" semantics, can't save, etc.).
+    // They stay reachable via the Git activity-bar icon and the
+    // `:git.graph` command. Same skip applies to BrowserView /
+    // Diagnostics / Outline / Tests viewer panes that have their own
+    // surfaces (the right panel + activity-bar sections).
     let mut visible: Vec<usize> = (0..app.panes.len())
         .filter(|i| !app.right_panel_panes.contains(i))
+        .filter(|i| !matches!(app.panes.get(*i), Some(Pane::GitGraph(_))))
         .collect();
     visible.sort_by_key(|&i| {
         let pinned = matches!(app.panes.get(i), Some(Pane::Editor(b)) if b.is_pinned);
