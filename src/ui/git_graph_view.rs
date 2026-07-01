@@ -2156,11 +2156,24 @@ pub fn draw_git_toolbar(
         ),
     ];
 
-    // Each button: ` <icon> <label_padded_to_6> ` = 1 + 1 + 1 + 6 + 1 = 10 chars content.
-    // Divider " │ " between buttons. Drop buttons from the right when the pane
-    // is too narrow to fit them all.
-    let btn_w: u16 = 10;
-    let div_w: u16 = 3;
+    // qa-feature 2026-06-30 — 2-tier compact layout. Tier 1 fits
+    // if all buttons + normal dividers fit; tier 2 drops the
+    // divider padding (` │ ` → `│`) and shrinks button padding
+    // (` icon label ` → `icon label`) to squeeze more buttons in
+    // before we start dropping any from the right.
+    //   Tier 1: btn=10 (` icon label:6 `), div=3 (` │ `) → 13/pair
+    //   Tier 2: btn= 8 (`icon label:6 `),  div=1 (`│`)  →  9/pair
+    let tier1_btn: u16 = 10;
+    let tier1_div: u16 = 3;
+    let tier1_total =
+        buttons.len() as u16 * tier1_btn + (buttons.len() as u16).saturating_sub(1) * tier1_div;
+    let tier1_fits = tier1_total <= area.width;
+
+    let (btn_w, div_w, use_compact) = if tier1_fits {
+        (tier1_btn, tier1_div, false)
+    } else {
+        (8u16, 1u16, true)
+    };
     // Solve for n: n*btn_w + (n-1)*div_w <= area.width
     // → n <= (area.width + div_w) / (btn_w + div_w)
     let max_buttons = ((area.width + div_w) / (btn_w + div_w)) as usize;
@@ -2169,29 +2182,40 @@ pub fn draw_git_toolbar(
     let mut x = area.x;
     for (i, (label, nerd_icon, ascii_icon, action, color)) in buttons.iter().take(n).enumerate() {
         let icon = if nerd { *nerd_icon } else { *ascii_icon };
-        // ` <icon> ` — icon column in the accent color.
+        // Icon column in the accent color. Compact drops the
+        // surrounding spaces.
+        let icon_str = if use_compact {
+            format!("{icon} ")
+        } else {
+            format!(" {icon} ")
+        };
         spans.push(Span::styled(
-            format!(" {icon} "),
+            icon_str,
             Style::default()
                 .fg(*color)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
-        // `<label> ` left-padded to 7 chars (6 label + 1 trailing space) —
-        // bold foreground.
+        // Label — left-padded to 6 chars, followed by a trailing
+        // space in normal mode / nothing in compact.
+        let label_str = if use_compact {
+            format!("{label:<6}")
+        } else {
+            format!("{label:<6} ")
+        };
         spans.push(Span::styled(
-            format!("{label:<6} "),
+            label_str,
             Style::default()
                 .fg(t.fg)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
-        // Button hit area covers the full 10-char content (icon + label).
         buttons_out.push((Rect::new(x, area.y, btn_w, 1), pane_id, *action));
         x += btn_w;
-        // Divider " │ " between buttons (omit after the last).
+        // Divider between buttons (omit after the last).
         if i + 1 < n {
-            spans.push(Span::styled(" │ ", Style::default().fg(t.grey).bg(bg)));
+            let div_str = if use_compact { "│" } else { " │ " };
+            spans.push(Span::styled(div_str, Style::default().fg(t.grey).bg(bg)));
             x += div_w;
         }
     }
