@@ -1714,57 +1714,81 @@ impl Config {
         // (preserving the default rail order), then any user-only
         // entries appended at the end.
         if let Some(raws) = raw.ui.integration_icons {
-            let user_entries: Vec<IntegrationIcon> = raws
-                .into_iter()
-                .filter_map(|r| {
-                    let glyph = r.glyph?;
-                    let command = r.command?;
-                    let id = r.id.unwrap_or_else(|| {
-                        command
-                            .trim_start_matches(':')
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("integration")
-                            .to_string()
-                    });
-                    Some(IntegrationIcon {
-                        id,
-                        glyph,
-                        fallback: r.fallback.unwrap_or_else(|| "*".to_string()),
-                        command,
-                        color: r.color.unwrap_or_else(|| "fg".to_string()),
-                        tooltip: r.tooltip,
-                        enabled: r.enabled.unwrap_or(false),
-                        in_palette_bar: r.in_palette_bar.unwrap_or(false),
-                    })
+            // qa-feature 2026-07-01 — merge each user raw over the
+            // matching built-in FIELD-BY-FIELD so unspecified fields
+            // inherit from the built-in. Prior version rebuilt each
+            // user entry from scratch with hard-coded fallbacks
+            // (`in_palette_bar.unwrap_or(false)`), which meant users
+            // who saved their config before a new field was added
+            // silently lost the built-in's default (e.g. browser's
+            // `in_palette_bar = true` vanished on config reload).
+            let user_raws: Vec<RawLauncherIcon> = raws;
+            let id_of_raw = |r: &RawLauncherIcon| -> Option<String> {
+                if let Some(id) = &r.id {
+                    return Some(id.clone());
+                }
+                r.command.as_ref().map(|c| {
+                    c.trim_start_matches(':')
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("integration")
+                        .to_string()
                 })
-                .collect();
-            // 1. Built-ins (in order), with same-id user entries
-            //    substituted in place.
+            };
+            // 1. Built-ins (in order), with matching user raws
+            //    layered on top field-by-field.
             let mut merged: Vec<IntegrationIcon> = self
                 .ui
                 .integration_icons
                 .iter()
                 .map(|builtin| {
-                    user_entries
+                    let user = user_raws
                         .iter()
-                        .find(|u| u.id == builtin.id)
-                        .cloned()
-                        .unwrap_or_else(|| builtin.clone())
+                        .find(|r| id_of_raw(r).as_deref() == Some(builtin.id.as_str()));
+                    match user {
+                        None => builtin.clone(),
+                        Some(r) => IntegrationIcon {
+                            id: builtin.id.clone(),
+                            glyph: r.glyph.clone().unwrap_or_else(|| builtin.glyph.clone()),
+                            fallback: r
+                                .fallback
+                                .clone()
+                                .unwrap_or_else(|| builtin.fallback.clone()),
+                            command: r.command.clone().unwrap_or_else(|| builtin.command.clone()),
+                            color: r.color.clone().unwrap_or_else(|| builtin.color.clone()),
+                            tooltip: r.tooltip.clone().or_else(|| builtin.tooltip.clone()),
+                            enabled: r.enabled.unwrap_or(builtin.enabled),
+                            in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),
+                        },
+                    }
                 })
                 .collect();
-            // 2. User-only entries (no matching built-in id),
-            //    appended in their config order.
+            // 2. User-only entries (no matching built-in id) —
+            //    still need glyph+command to be a valid chip.
             let builtin_ids: std::collections::HashSet<String> = self
                 .ui
                 .integration_icons
                 .iter()
                 .map(|e| e.id.clone())
                 .collect();
-            for user in user_entries {
-                if !builtin_ids.contains(&user.id) {
-                    merged.push(user);
+            for r in &user_raws {
+                let Some(id) = id_of_raw(r) else { continue };
+                if builtin_ids.contains(&id) {
+                    continue;
                 }
+                let (Some(glyph), Some(command)) = (r.glyph.clone(), r.command.clone()) else {
+                    continue;
+                };
+                merged.push(IntegrationIcon {
+                    id,
+                    glyph,
+                    fallback: r.fallback.clone().unwrap_or_else(|| "*".to_string()),
+                    command,
+                    color: r.color.clone().unwrap_or_else(|| "fg".to_string()),
+                    tooltip: r.tooltip.clone(),
+                    enabled: r.enabled.unwrap_or(false),
+                    in_palette_bar: r.in_palette_bar.unwrap_or(false),
+                });
             }
             self.ui.integration_icons = merged;
         }

@@ -33,14 +33,26 @@ pub fn draw(
     // Reserve the top row for a session tab strip only when the
     // strip would render 2+ tabs. qa-feature 2026-07-01 — was
     // always reserved even when the strip was empty (single pty
-    // showed just a lone `+`); the row wasted space.
+    // showed just a lone `+`); the row wasted space. Also
+    // suppress when the leaf-tab strip (rendered by render_layout
+    // for split leaves) already carries the same pty tabs — the
+    // check is `ptys in this leaf >= 2`, not the global count.
     let mut grid_area = area;
-    let n_ptys = app
-        .panes
-        .iter()
-        .filter(|p| matches!(p, Pane::Pty(_)))
-        .count();
-    if area.height >= 3 && n_ptys >= 2 {
+    let leaf_pty_count: usize = app
+        .layout()
+        .leaf_containing(pane_id)
+        .map(|leaf| {
+            leaf.iter()
+                .filter(|&&pid| matches!(app.panes.get(pid), Some(Pane::Pty(_))))
+                .count()
+        })
+        .unwrap_or_else(|| {
+            app.panes
+                .iter()
+                .filter(|p| matches!(p, Pane::Pty(_)))
+                .count()
+        });
+    if area.height >= 3 && leaf_pty_count >= 2 {
         let strip = Rect {
             x: area.x,
             y: area.y,
