@@ -1220,8 +1220,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
         let row_idx = (y - tr.y) as usize + scroll;
-        let shift = m.modifiers.contains(KeyModifiers::SHIFT);
-        app.click_extra_workspace_row_ex(ws_idx, row_idx, shift);
+        let alt = m.modifiers.contains(KeyModifiers::ALT);
+        app.click_extra_workspace_row_ex(ws_idx, row_idx, alt);
         return;
     }
     // Tree? (no header now — row 0 of the rail is the first entry)
@@ -1278,11 +1278,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                             app.switch_active_repo(idx);
                         }
                     }
-                    // qa-feature 2026-07-01 — Shift+click on a
-                    // dir row recursively expands/collapses that
-                    // subtree (VS Code convention). Plain click
-                    // only toggles this one dir.
-                    if m.modifiers.contains(KeyModifiers::SHIFT) {
+                    // qa-feature 2026-07-01 — Alt+click on a dir
+                    // row recursively expands/collapses that
+                    // subtree. Was originally Shift+click but
+                    // Ghostty (and most terminals) reserve
+                    // Shift+click for text-selection, so the
+                    // modifier never reaches mnml. Alt+click
+                    // (⌥+click on macOS) passes through cleanly
+                    // and is what VS Code uses for the same
+                    // gesture anyway.
+                    if m.modifiers.contains(KeyModifiers::ALT) {
                         app.tree.toggle_current_recursive();
                     } else {
                         app.tree.toggle_current();

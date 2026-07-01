@@ -25,10 +25,10 @@ impl App {
 
     /// Handle a click on a row inside an extra-workspace's body. Updates that
     /// tree's cursor, then opens the file or toggles the dir under it.
-    /// `shift = true` triggers recursive expand/collapse on the dir (VS Code
-    /// convention). Repo-dir clicks also switch the active repo (sibling of
-    /// the primary-tree behavior in `tui::dispatch_mouse`).
-    pub fn click_extra_workspace_row_ex(&mut self, ws_idx: usize, row_idx: usize, shift: bool) {
+    /// `recursive = true` triggers recursive expand/collapse on the dir
+    /// (Alt+click gesture). Repo-dir clicks also switch the active repo
+    /// (sibling of the primary-tree behavior in `tui::dispatch_mouse`).
+    pub fn click_extra_workspace_row_ex(&mut self, ws_idx: usize, row_idx: usize, recursive: bool) {
         let Some(ws) = self.extra_workspaces.get_mut(ws_idx) else {
             return;
         };
@@ -58,7 +58,7 @@ impl App {
             // Refetch the tree (may have been mutated by switch_active_repo)
             // and toggle. We only need the path's dir state to decide.
             if let Some(ws) = self.extra_workspaces.get_mut(ws_idx) {
-                if shift {
+                if recursive {
                     ws.tree.toggle_current_recursive();
                 } else {
                     ws.tree.toggle_current();
