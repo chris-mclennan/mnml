@@ -20,12 +20,12 @@ use crate::git::rail::GitRailHit;
 use crate::git::status::FileState;
 use crate::ui::{icons, theme};
 
-// qa-feature 2026-07-01 — user wanted the tree's disclosure
-// triangles to match the little `▾ / ▸` used across the git
-// palette + panel (git_palette.rs), instead of the wider Nerd
-// Font angle glyphs which read as ">" in most fonts.
-const CHEVRON_OPEN: &str = "▾";
-const CHEVRON_CLOSED: &str = "▸";
+// qa-feature 2026-07-01 — bigger triangles (`▼` U+25BC / `▶`
+// U+25B6) — the black-solid variants render at font-cap height
+// (vs the smaller `▾ / ▸` U+25BE/U+25B8) so they read more
+// clearly next to the folder icons at typical rail widths.
+const CHEVRON_OPEN: &str = "▼";
+const CHEVRON_CLOSED: &str = "▶";
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks

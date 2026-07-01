@@ -495,6 +495,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         if !matches!(app.active_section, crate::app::ActivitySection::Git) {
             app.rects.git_graph_repo_switch = None;
         }
+        // qa-feature 2026-07-01 — clear `scrollbars` BEFORE the
+        // tree renders. The main clear at ~L1251 runs later in
+        // this fn, AFTER `tree_view::draw` has already pushed
+        // its scrollbar hit rects — so the tree registrations
+        // got wiped every frame and the mouse dispatcher saw
+        // an empty list. Clearing here + skipping the later
+        // clear preserves tree + editor + everyone's
+        // registrations for one full frame.
+        app.rects.scrollbars.clear();
         match app.active_section {
             crate::app::ActivitySection::Explorer => {
                 tree_view::draw(frame, app, content_area);
@@ -1248,7 +1257,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.commit_file_rows.clear();
     app.rects.diff_toolbar_buttons.clear();
     app.rects.diff_hunk_buttons.clear();
-    app.rects.scrollbars.clear();
+    // qa-feature 2026-07-01 — scrollbars are cleared BEFORE
+    // `tree_view::draw` (~L500) so the tree's registrations
+    // survive the frame. See note there.
     app.rects.git_graph_detail_dividers.clear();
     app.rects.git_graph_column_headers.clear();
     app.rects.git_graph_lane_cells.clear();
