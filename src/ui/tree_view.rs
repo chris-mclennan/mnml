@@ -411,8 +411,10 @@ fn workspace_action_chip_specs(
         ("\u{EB37}", "↺", "tree.refresh", t.cyan),
         // 2026-06-30 — pull (↓) chip. Was in the removed GIT
         // section; moved here so per-repo pull is one click from
-        // the file browser without a whole panel.
-        ("\u{EB40}", "↓", "git.pull", t.green),
+        // the file browser without a whole panel. Codicon
+        // `arrow-down` (EAA1) renders as a clean ↓ instead of
+        // the earlier cloud-download which looked snowflake-y.
+        ("\u{EAA1}", "↓", "git.pull", t.green),
         (
             collapse_glyph,
             collapse_ascii,
