@@ -251,6 +251,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ── GIT section: pinned to bottom. Render at git_top_y regardless of
     //    where the workspace section ended; the separator row above it is
     //    left blank by the row-0 bg fill at the top of `draw`.
+    // qa-fix 2026-06-30 — GIT section was still rendering here
+    // even though git_height was zeroed in the layout math. The
+    // earlier "remove GIT from file browser" commit only prevented
+    // *body* rendering; the header + chip cluster kept painting.
+    // Skip the whole section when git_height == 0.
+    if git_height == 0 {
+        return;
+    }
     let git_header_y = git_top_y;
     if git_header_y >= area.y + area.height {
         return;
