@@ -30,12 +30,17 @@ pub fn draw(
     if !matches!(app.panes.get(pane_id), Some(Pane::Pty(_))) {
         return None;
     }
-    // Reserve the top row for a session tab strip — lists every pty
-    // session (Claude / Codex / shell), highlights this leaf's, ends
-    // with a `+` chip that spawns a new Claude. Always shown for pty
-    // panes: it carries the `+` and the per-session names.
+    // Reserve the top row for a session tab strip only when the
+    // strip would render 2+ tabs. qa-feature 2026-07-01 — was
+    // always reserved even when the strip was empty (single pty
+    // showed just a lone `+`); the row wasted space.
     let mut grid_area = area;
-    if area.height >= 3 {
+    let n_ptys = app
+        .panes
+        .iter()
+        .filter(|p| matches!(p, Pane::Pty(_)))
+        .count();
+    if area.height >= 3 && n_ptys >= 2 {
         let strip = Rect {
             x: area.x,
             y: area.y,
@@ -239,8 +244,12 @@ fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Re
         ));
         x += total_w + 1;
     }
-    // `+` chip — spawn a new Claude session as a TAB of this leaf.
-    if x + 3 <= right_limit {
+    // qa-feature 2026-07-01 — only paint the `+ new session` chip
+    // when the strip already has other tabs. The lone `+` above a
+    // solo pty was misleading (nothing to switch to) and the user
+    // asked for it removed. Spawning a new pty session is still
+    // reachable via `:ai.claude_code` or the palette bar.
+    if !labels.is_empty() && x + 3 <= right_limit {
         spans.push(Span::styled(
             " + ",
             Style::default()
