@@ -448,12 +448,24 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .get(app.active_layout)
         .map(|l| l.has_splits())
         .unwrap_or(false);
-    let (bufferline_area, body_area) = if app.bufferline_visible && !has_splits {
-        let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
-        (Some(r[0]), r[1])
-    } else {
-        (None, right)
-    };
+    // qa-feature 2026-06-30 — hide the bufferline when the active
+    // pane is GitGraph. The bufferline's tab slot for git graph is
+    // already skipped (viewer, not a file); showing the empty tab
+    // strip + palette-bar chips just cluttered the view. Sacrifice
+    // the 3 right-side icons (terminal / split-vert / split-horz)
+    // — user OK'd this since those interact awkwardly with the
+    // graph pane anyway.
+    let hide_for_git_graph = app
+        .active
+        .and_then(|i| app.panes.get(i))
+        .is_some_and(|p| matches!(p, crate::pane::Pane::GitGraph(_)));
+    let (bufferline_area, body_area) =
+        if app.bufferline_visible && !has_splits && !hide_for_git_graph {
+            let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
+            (Some(r[0]), r[1])
+        } else {
+            (None, right)
+        };
 
     // ── tree rail (full height of `upper`) ──
     // The rail is split into two columns: a 4-cell activity-bar
