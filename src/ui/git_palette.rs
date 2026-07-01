@@ -250,7 +250,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 if !matches_filter(&wt.label) && !dir_match {
                     continue;
                 }
-                let marker = if wt.is_current { "⤿" } else { "·" };
+                // qa-feature 2026-06-30 — `⌂` (house) reads as
+                // "you are here" for the current worktree; less
+                // ambiguous than the arrow-in-circle `⤿` glyph
+                // it replaced.
+                let marker = if wt.is_current { "⌂" } else { "·" };
                 let marker_color = if wt.is_current { t.yellow } else { t.fg };
                 let label = if wt.label.is_empty() {
                     "(detached)".to_string()
@@ -566,7 +570,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     };
                     let line = Line::from(vec![
                         Span::styled(indent, Style::default().bg(bg)),
-                        Span::styled("⎈ ", Style::default().fg(t.blue).bg(bg)),
+                        // qa-feature 2026-06-30 — `☁` (cloud) is
+                        // the universal glyph for a remote; the
+                        // previous `⎈` (helm) read as a snowflake
+                        // in this font.
+                        Span::styled("☁ ", Style::default().fg(t.blue).bg(bg)),
                         Span::styled(display, Style::default().fg(t.fg).bg(bg)),
                     ]);
                     let _ = full;
