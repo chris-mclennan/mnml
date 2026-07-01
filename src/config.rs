@@ -223,16 +223,16 @@ pub struct HttpConfig {
 
 #[derive(Debug, Clone)]
 pub struct GitGraphConfig {
-    /// `[git_graph] row_spacing = <0-4>` — blank rows inserted between
+    /// `[git_graph] lane_spacing = <0-4>` — blank rows inserted between
     /// each commit line in the graph view. 0 = tight (old default,
     /// lanes packed), 1 = one blank row (current default, more
     /// readable), 2-4 = extra breathing room. Clamped to 4.
-    pub row_spacing: u16,
+    pub lane_spacing: u16,
 }
 
 impl Default for GitGraphConfig {
     fn default() -> Self {
-        Self { row_spacing: 1 }
+        Self { lane_spacing: 1 }
     }
 }
 
@@ -1291,7 +1291,7 @@ struct RawHttp {
 /// `[git_graph]` raw table (qa-feature 2026-06-30).
 #[derive(Debug, Default, Deserialize)]
 struct RawGitGraph {
-    row_spacing: Option<u16>,
+    lane_spacing: Option<u16>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1802,8 +1802,8 @@ impl Config {
                 self.http.default_env = Some(trimmed.to_string());
             }
         }
-        if let Some(rs) = raw.git_graph.row_spacing {
-            self.git_graph.row_spacing = rs.min(4);
+        if let Some(rs) = raw.git_graph.lane_spacing {
+            self.git_graph.lane_spacing = rs.min(4);
         }
         for (k, v) in raw.tasks {
             self.tasks.insert(

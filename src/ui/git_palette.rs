@@ -218,6 +218,90 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 1;
     }
 
+    // ── WORKTREES section ─────────────────────────────────────
+    // qa-feature 2026-06-30 — moved above LOCAL. Worktrees are
+    // navigational (current work context) so they deserve top
+    // billing over the branch list.
+    if !app.git_rail.worktrees.is_empty() && y < area.y + area.height {
+        y = draw_section_header(
+            frame,
+            app,
+            area,
+            y,
+            "WORKTREES",
+            app.git_rail.worktrees.len(),
+            bg,
+        );
+        if app.git_palette_collapsed_sections.contains("WORKTREES") {
+            if y < area.y + area.height {
+                y += 1;
+            }
+        } else {
+            for (i, wt) in app.git_rail.worktrees.iter().enumerate() {
+                if y >= area.y + area.height {
+                    break;
+                }
+                let dir_match = wt
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(&matches_filter)
+                    .unwrap_or(false);
+                if !matches_filter(&wt.label) && !dir_match {
+                    continue;
+                }
+                let marker = if wt.is_current { "⤿" } else { "·" };
+                let marker_color = if wt.is_current { t.yellow } else { t.fg };
+                let label = if wt.label.is_empty() {
+                    "(detached)".to_string()
+                } else {
+                    wt.label.clone()
+                };
+                let dir = wt
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?")
+                    .to_string();
+                let shown = if label == dir || label.starts_with('(') {
+                    label.clone()
+                } else {
+                    format!("{label} ({dir})")
+                };
+                let row_rect = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                };
+                let line = Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled(marker, Style::default().fg(marker_color).bg(bg)),
+                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(
+                        shown,
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(bg)
+                            .add_modifier(if wt.is_current {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    ),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_rect);
+                app.rects
+                    .git_palette_rows
+                    .push((row_rect, GitPaletteHit::Worktree(i)));
+                y += 1;
+            }
+            if y < area.y + area.height {
+                y += 1;
+            }
+        }
+    }
+
     // ── LOCAL section ─────────────────────────────────────────
     // Pre-filter local branches before grouping so empty folder
     // rows don't appear when the filter excludes all their items.
@@ -497,87 +581,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 y += 1;
             }
         } // end !collapsed REMOTE
-    }
-
-    // ── WORKTREES section ─────────────────────────────────────
-    if !app.git_rail.worktrees.is_empty() && y < area.y + area.height {
-        y = draw_section_header(
-            frame,
-            app,
-            area,
-            y,
-            "WORKTREES",
-            app.git_rail.worktrees.len(),
-            bg,
-        );
-        if app.git_palette_collapsed_sections.contains("WORKTREES") {
-            if y < area.y + area.height {
-                y += 1;
-            }
-        } else {
-            for (i, wt) in app.git_rail.worktrees.iter().enumerate() {
-                if y >= area.y + area.height {
-                    break;
-                }
-                let dir_match = wt
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(&matches_filter)
-                    .unwrap_or(false);
-                if !matches_filter(&wt.label) && !dir_match {
-                    continue;
-                }
-                let marker = if wt.is_current { "⤿" } else { "·" };
-                let marker_color = if wt.is_current { t.yellow } else { t.fg };
-                let label = if wt.label.is_empty() {
-                    "(detached)".to_string()
-                } else {
-                    wt.label.clone()
-                };
-                let dir = wt
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("?")
-                    .to_string();
-                let shown = if label == dir || label.starts_with('(') {
-                    label.clone()
-                } else {
-                    format!("{label} ({dir})")
-                };
-                let row_rect = Rect {
-                    x: area.x,
-                    y,
-                    width: area.width,
-                    height: 1,
-                };
-                let line = Line::from(vec![
-                    Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled(marker, Style::default().fg(marker_color).bg(bg)),
-                    Span::styled(" ", Style::default().bg(bg)),
-                    Span::styled(
-                        shown,
-                        Style::default()
-                            .fg(t.fg)
-                            .bg(bg)
-                            .add_modifier(if wt.is_current {
-                                Modifier::BOLD
-                            } else {
-                                Modifier::empty()
-                            }),
-                    ),
-                ]);
-                frame.render_widget(Paragraph::new(line), row_rect);
-                app.rects
-                    .git_palette_rows
-                    .push((row_rect, GitPaletteHit::Worktree(i)));
-                y += 1;
-            }
-            if y < area.y + area.height {
-                y += 1;
-            }
-        } // end !collapsed WORKTREES
     }
 
     // ── PRS section ───────────────────────────────────────────

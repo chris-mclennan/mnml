@@ -3880,7 +3880,14 @@ impl App {
             git_palette_selected: None,
             git_palette_scroll: 0,
             git_palette_cursor: 0,
-            git_palette_collapsed_sections: std::collections::HashSet::new(),
+            git_palette_collapsed_sections: {
+                // qa-feature 2026-06-30 — REMOTE starts collapsed
+                // by default; it's often 100+ entries and dominates
+                // the rail otherwise.
+                let mut s = std::collections::HashSet::new();
+                s.insert("REMOTE".to_string());
+                s
+            },
             git_palette_collapsed_folders: std::collections::HashSet::new(),
             workspace_picker_open: false,
             workspace_picker_filter: String::new(),

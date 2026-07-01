@@ -191,19 +191,17 @@ pub fn draw(
         list_area.height.saturating_sub(1),
     );
 
-    // qa-feature 2026-06-30 — blank rows between commits so the
-    // graph rails have breathing room. Configurable via
-    // `[git_graph] row_spacing = 0..4` in config.toml. Default = 1.
-    let row_gap: usize = app.config.git_graph.row_spacing as usize;
-    let row_stride: usize = 1 + row_gap;
+    // qa-feature 2026-06-30 — pad each graph lane with N trailing
+    // spaces so lanes are visually separated horizontally. The
+    // config knob (`[git_graph] row_spacing`) was originally
+    // interpreted as blank rows BETWEEN commits; user actually
+    // wanted horizontal breathing room BETWEEN lanes. Repurposed
+    // the same knob without renaming — the semantics is now
+    // "horizontal cells of padding after each lane cell".
+    let lane_pad: usize = app.config.git_graph.lane_spacing as usize;
 
     // ── scrolling math (operates on the virtual list = WIP + commits) ─
-    // `h` = visible commit slots. With row_stride=2 we fit
-    // (body_area.height + row_gap) / row_stride commits — the
-    // +row_gap absorbs the trailing gap that doesn't need to
-    // render.
-    let h_cells = body_area.height as usize;
-    let h = (h_cells + row_gap) / row_stride;
+    let h = body_area.height as usize;
     if g.selected < g.scroll {
         g.scroll = g.selected;
     } else if g.selected >= g.scroll + h {
@@ -298,14 +296,11 @@ pub fn draw(
     );
     app.rects.git_graph_column_headers = header_clickables;
 
-    let mut rows: Vec<Line> = Vec::with_capacity(h * row_stride);
+    let mut rows: Vec<Line> = Vec::with_capacity(h);
     let mut row_recordings: Vec<(u16, usize)> = Vec::with_capacity(h);
     let wip_lane_clr = t.yellow;
-    for (list_idx, (v_idx, c_idx)) in visible.iter().enumerate() {
-        // qa-feature 2026-06-30 — each commit lives at row
-        // (list_idx * row_stride) in body_area; the row after is
-        // a blank gap for visual breathing room.
-        row_recordings.push(((list_idx * row_stride) as u16, *v_idx));
+    for (v_idx, c_idx) in &visible {
+        row_recordings.push(((v_idx - g.scroll) as u16, *v_idx));
         let selected = *v_idx == g.selected;
         let row_bg = if selected { t.bg2 } else { t.bg_dark };
 
@@ -338,9 +333,11 @@ pub fn draw(
             } else {
                 spans.push(Span::styled("  ", Style::default().bg(row_bg)));
             }
-            // Graph column: blank.
+            // Graph column: blank (widened for lane padding to
+            // keep the WIP row aligned with commit rows below).
+            let wip_graph_col_w = graph_w + lane_pad * graph_w.saturating_sub(1);
             spans.push(Span::styled(
-                " ".repeat(graph_w),
+                " ".repeat(wip_graph_col_w),
                 Style::default().bg(row_bg),
             ));
             body_sep(&mut spans);
@@ -349,7 +346,7 @@ pub fn draw(
             let fixed_used = 1
                 + 2
                 + branch_section
-                + graph_w
+                + wip_graph_col_w
                 + 3
                 + (if cols.author > 0 { cols.author + 3 } else { 0 })
                 + (if cols.age > 0 { cols.age + 3 } else { 0 })
@@ -423,7 +420,11 @@ pub fn draw(
         } else {
             spans.push(Span::styled("  ", Style::default().bg(row_bg)));
         }
-        // 4) Graph cells (padded to graph_w so right columns line up)
+        // 4) Graph cells (padded to graph_w so right columns line up).
+        // qa-feature 2026-06-30 — each lane cell followed by
+        // `lane_pad` trailing spaces so lanes are horizontally
+        // separated.
+        let pad_str: String = " ".repeat(lane_pad);
         for k in 0..graph_w {
             if let Some(cell) = c.graph.get(k) {
                 spans.push(Span::styled(
@@ -433,16 +434,22 @@ pub fn draw(
             } else {
                 spans.push(Span::styled(" ", Style::default().bg(row_bg)));
             }
+            if lane_pad > 0 && k + 1 < graph_w {
+                spans.push(Span::styled(pad_str.clone(), Style::default().bg(row_bg)));
+            }
         }
         body_sep(&mut spans);
         // 5) Subject (flex — pad / truncate to fit the remaining width).
         // The SHA right-pad cells eat into available width so they
         // actually render (Paragraph clips past `body_area.width`).
         let branch_section = if cols.branch > 0 { cols.branch + 3 } else { 2 };
+        // Graph column takes graph_w cells + lane_pad cells between
+        // each pair of adjacent lanes (no pad after the last lane).
+        let graph_col_w = graph_w + lane_pad * graph_w.saturating_sub(1);
         let fixed_used = 1
             + 2
             + branch_section
-            + graph_w
+            + graph_col_w
             + 3
             + (if cols.author > 0 { cols.author + 3 } else { 0 })
             + (if cols.age > 0 { cols.age + 3 } else { 0 })
@@ -480,14 +487,6 @@ pub fn draw(
             ));
         }
         rows.push(Line::from(spans));
-        // qa-feature 2026-06-30 — blank spacer row after each commit
-        // so the graph lanes get one row of vertical breathing room.
-        // Skip after the last visible commit to avoid a trailing gap.
-        if row_gap > 0 {
-            for _ in 0..row_gap {
-                rows.push(Line::from(""));
-            }
-        }
     }
     frame.render_widget(
         Paragraph::new(rows).style(Style::default().bg(t.bg_dark)),
@@ -507,18 +506,12 @@ pub fn draw(
         }
         let screen_y = body_area.y.saturating_add(visible_y);
         if screen_y < body_area.y.saturating_add(body_area.height) {
-            // qa-feature 2026-06-30 — click rect covers the whole
-            // strided band (commit line + trailing gap) so clicks
-            // in the visual space between commit content lines
-            // still select the commit above.
-            let band_end = body_area.y.saturating_add(body_area.height);
-            let band_h = row_stride.min((band_end - screen_y) as usize) as u16;
             app.rects.list_rows.push((
                 ratatui::layout::Rect {
                     x: body_area.x,
                     y: screen_y,
                     width: body_area.width,
-                    height: band_h,
+                    height: 1,
                 },
                 pane_id,
                 v_idx,
