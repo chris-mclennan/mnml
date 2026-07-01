@@ -422,11 +422,16 @@ pub fn draw(
         }
         // 4) Graph cells (padded to graph_w so right columns line up).
         // qa-feature 2026-06-30 — each lane cell followed by
-        // `lane_pad` trailing spaces so lanes are horizontally
-        // separated.
-        let pad_str: String = " ".repeat(lane_pad);
+        // `lane_pad` trailing cells. When the current cell OR the
+        // next cell has a horizontally-extending char (╭/╮/╰/╯/─/┼)
+        // fill the padding with `─` so branch/merge corners actually
+        // connect across the widened lanes; otherwise the pad is
+        // blank.
+        let opens_right = |ch: char| matches!(ch, '╭' | '╰' | '─' | '┼');
+        let opens_left = |ch: char| matches!(ch, '╮' | '╯' | '─' | '┼');
         for k in 0..graph_w {
-            if let Some(cell) = c.graph.get(k) {
+            let cell = c.graph.get(k);
+            if let Some(cell) = cell {
                 spans.push(Span::styled(
                     cell.ch.to_string(),
                     Style::default().fg(lane_color(&t, cell.color)).bg(row_bg),
@@ -435,7 +440,27 @@ pub fn draw(
                 spans.push(Span::styled(" ", Style::default().bg(row_bg)));
             }
             if lane_pad > 0 && k + 1 < graph_w {
-                spans.push(Span::styled(pad_str.clone(), Style::default().bg(row_bg)));
+                let cur_opens_r = cell.is_some_and(|c| opens_right(c.ch));
+                let next = c.graph.get(k + 1);
+                let next_opens_l = next.is_some_and(|c| opens_left(c.ch));
+                let (pad_ch, pad_color) = if cur_opens_r || next_opens_l {
+                    // Prefer the current cell's color when both are
+                    // horizontally connected; otherwise borrow the
+                    // partner's color.
+                    let color = if cur_opens_r {
+                        cell.map(|c| c.color).unwrap_or(0)
+                    } else {
+                        next.map(|c| c.color).unwrap_or(0)
+                    };
+                    ('─', Some(color))
+                } else {
+                    (' ', None)
+                };
+                let mut style = Style::default().bg(row_bg);
+                if let Some(cl) = pad_color {
+                    style = style.fg(lane_color(&t, cl));
+                }
+                spans.push(Span::styled(pad_ch.to_string().repeat(lane_pad), style));
             }
         }
         body_sep(&mut spans);
