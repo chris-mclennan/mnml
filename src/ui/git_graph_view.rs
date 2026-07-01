@@ -2156,24 +2156,44 @@ pub fn draw_git_toolbar(
         ),
     ];
 
-    // qa-feature 2026-07-01 — keep button padding uniform (icons
-    // vary in cell width, shrinking button padding misaligns
-    // spans). Only the divider tightens: ` │ ` → `│` when needed.
-    // Saves 2 cells per divider × 12 dividers = 24 cells across
-    // the row, keeping spacing perfectly balanced button-to-button.
-    let btn_w: u16 = 10;
+    // qa-feature 2026-07-01 — render each button at its natural
+    // width so the trailing whitespace before the next divider is
+    // uniform regardless of label length. Was padding labels to 6
+    // chars which made 'Pop' (3) → 3 trailing spaces vs 'Fetch'
+    // (5) → 1 trailing space, making the row look uneven.
+    //
+    // Button = ` icon label ` (icon(1) + 2 spaces + label chars + 1 trailing).
+    // Divider = ` │ ` normal / `│` compact.
+    let button_widths: Vec<u16> = buttons
+        .iter()
+        .map(|(label, _, _, _, _)| 3u16 + label.chars().count() as u16 + 1)
+        .collect();
     let normal_div_w: u16 = 3;
     let compact_div_w: u16 = 1;
-    let all_normal =
-        buttons.len() as u16 * btn_w + (buttons.len() as u16).saturating_sub(1) * normal_div_w;
-    let use_compact = all_normal > area.width;
+    let total_at = |div: u16| -> u16 {
+        let btns: u16 = button_widths.iter().sum();
+        btns + (button_widths.len() as u16).saturating_sub(1) * div
+    };
+    let use_compact = total_at(normal_div_w) > area.width;
     let div_w = if use_compact {
         compact_div_w
     } else {
         normal_div_w
     };
-    let max_buttons = ((area.width + div_w) / (btn_w + div_w)) as usize;
-    let n = buttons.len().min(max_buttons.max(1));
+    // Fit as many buttons as we can from the left; drop from the right.
+    let n = {
+        let mut used = 0u16;
+        let mut n = 0usize;
+        for (i, w) in button_widths.iter().enumerate() {
+            let extra = if i > 0 { div_w } else { 0 };
+            if used + extra + w > area.width {
+                break;
+            }
+            used += extra + w;
+            n += 1;
+        }
+        n.max(1)
+    };
     let mut spans: Vec<Span> = Vec::new();
     let mut x = area.x;
     for (i, (label, nerd_icon, ascii_icon, action, color)) in buttons.iter().take(n).enumerate() {
@@ -2186,16 +2206,17 @@ pub fn draw_git_toolbar(
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
-        // `<label> ` left-padded to 7 chars (6 label + 1 trailing space).
+        // `<label> ` — natural width + 1 trailing space so the
+        // divider isn't flush against the last letter.
         spans.push(Span::styled(
-            format!("{label:<6} "),
+            format!("{label} "),
             Style::default()
                 .fg(t.fg)
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ));
-        buttons_out.push((Rect::new(x, area.y, btn_w, 1), pane_id, *action));
-        x += btn_w;
+        buttons_out.push((Rect::new(x, area.y, button_widths[i], 1), pane_id, *action));
+        x += button_widths[i];
         if i + 1 < n {
             let div_str = if use_compact { "│" } else { " │ " };
             spans.push(Span::styled(div_str, Style::default().fg(t.grey).bg(bg)));
