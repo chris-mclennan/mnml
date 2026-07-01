@@ -159,12 +159,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // ── `+ Add workspace` row — sits below the last workspace
-    //    section with a 1-row blank gap above it so the affordance
-    //    visibly belongs to the workspaces group, not the last
-    //    row's chrome.
-    if next_y + 1 < ws_end_y {
-        draw_add_repo_row(frame, app, area, next_y + 1, nerd, rail_bg);
+    // ── `+ Add workspace` row — qa-feature 2026-07-01 pinned
+    //    to the BOTTOM of the workspace area rather than trailing
+    //    the last workspace by one row. Prior placement wasted
+    //    N-M rows below the affordance whenever the expanded
+    //    workspace's tree was shorter than the rail's remaining
+    //    height. Pinning fixes visual alignment across states
+    //    (nothing expanded, one expanded, multi expanded).
+    if next_y < ws_end_y {
+        draw_add_repo_row(frame, app, area, ws_end_y.saturating_sub(1), nerd, rail_bg);
     }
 
     // ── INTEGRATIONS section: pinned just above GIT (with a blank
@@ -1280,13 +1283,11 @@ fn draw_tree_image_preview(frame: &mut Frame, app: &mut App, inner: Rect) {
     }
 }
 
-/// Draw one extra-workspace section starting at `start_y`. Renders a 1-row
-/// blank separator + a collapsible `> name` header; if the section is
-/// expanded, renders a bounded file-list slot beneath it (capped at
-/// `EXTRA_TREE_MAX_ROWS` so a deep tree can't crowd out siblings + the GIT
-/// section). Returns the row past the last drawn.
-const EXTRA_TREE_MAX_ROWS: usize = 32;
-
+/// Draw one extra-workspace section starting at `start_y`. Renders a
+/// collapsible `> name` header; if the section is expanded, renders a
+/// file-list slot beneath it (bounded by available rail height minus
+/// the pinned `Add workspace` chip + separator). Returns the row past
+/// the last drawn.
 fn draw_extra_workspace_section(
     frame: &mut Frame,
     app: &mut App,
@@ -1356,14 +1357,13 @@ fn draw_extra_workspace_section(
         return header_y + 1;
     }
     let avail = (area_end - body_y) as usize;
-    // qa-feature 2026-07-01 — removed the `-4` reserve for a
-    // trailing GIT section. `area_end` (= `ws_end_y` from the
-    // caller) already excludes GIT + INTEGRATIONS heights, so
-    // the subtraction was pure double-counting — 4 rows of
-    // wasted rail at the bottom whenever an extra was expanded.
-    // Still cap at `EXTRA_TREE_MAX_ROWS` so a deep tree can't
-    // crowd out siblings when several extras expand at once.
-    let h = avail.min(EXTRA_TREE_MAX_ROWS);
+    // qa-feature 2026-07-01 — reserve 2 rows at the bottom for
+    // the pinned `Add workspace` chip + its separator (the chip
+    // sits at `ws_end_y - 1`). Extras take the rest of the rail
+    // instead of a fixed 32-row cap (which left the tail of a
+    // tall terminal empty).
+    let reserved_for_add: usize = 2;
+    let h = avail.saturating_sub(reserved_for_add);
     if h == 0 {
         return body_y;
     }
