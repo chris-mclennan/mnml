@@ -485,6 +485,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // qa-feature 2026-07-01 — click the [×] on an exited pty's banner
+    // to close the pane (alternative to Ctrl+W).
+    if let Some(&(_, id)) = app
+        .rects
+        .pty_exit_close_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.close_pane(id);
+        return;
+    }
     // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
     if let Some(&(_, id)) = app
         .rects

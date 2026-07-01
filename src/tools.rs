@@ -234,6 +234,12 @@ pub struct ExternalTool {
     /// the package is named differently in the apt repo.
     pub apt_pkg: &'static str,
     pub label: &'static str,
+    /// qa-feature 2026-07-01 — some tools require raw packet /
+    /// device access and only work under `sudo` (iftop needs
+    /// `/dev/bpf*`). When true, mnml wraps the invocation in
+    /// `sudo` so the pty prompts for a password rather than
+    /// silently failing with a permission-denied dump.
+    pub needs_sudo: bool,
 }
 
 /// Platform-appropriate install hint for a missing binary. Branches
@@ -265,6 +271,7 @@ pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
         brew_pkg: "htop",
         apt_pkg: "htop",
         label: "htop — interactive process viewer",
+        needs_sudo: false,
     },
     ExternalTool {
         id: "iftop",
@@ -272,6 +279,10 @@ pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
         brew_pkg: "iftop",
         apt_pkg: "iftop",
         label: "iftop — interactive bandwidth monitor",
+        // iftop opens /dev/bpf* on macOS + raw sockets on Linux —
+        // both root-only. Without sudo it silently prints
+        // Permission denied and dies.
+        needs_sudo: true,
     },
     ExternalTool {
         id: "btop",
@@ -279,6 +290,7 @@ pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
         brew_pkg: "btop",
         apt_pkg: "btop",
         label: "btop — resource monitor (cpu / mem / disk / net)",
+        needs_sudo: false,
     },
 ];
 

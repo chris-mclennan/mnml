@@ -89,16 +89,36 @@ pub fn draw(
     if exited && area.height >= 1 {
         // A thin banner on the bottom row so the user knows the child is gone.
         let banner = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
+        let t = theme::cur();
+        // qa-feature 2026-07-01 — clickable `[×]` on the banner's
+        // right edge as an alternative to Ctrl+W. Reserves 5 cells
+        // for the button; label truncates if the pane is very narrow.
+        let close_w: u16 = 5;
+        let label_w = area.width.saturating_sub(close_w);
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 " [process exited — Ctrl+W to close] ",
                 Style::default()
-                    .fg(theme::cur().bg_darker)
-                    .bg(theme::cur().red)
+                    .fg(t.bg_darker)
+                    .bg(t.red)
                     .add_modifier(Modifier::BOLD),
             ))),
-            banner,
+            Rect::new(area.x, banner.y, label_w, 1),
         );
+        if area.width >= close_w {
+            let close_rect = Rect::new(area.x + area.width - close_w, banner.y, close_w, 1);
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " [×] ",
+                    Style::default()
+                        .fg(t.bg_darker)
+                        .bg(t.orange)
+                        .add_modifier(Modifier::BOLD),
+                ))),
+                close_rect,
+            );
+            app.rects.pty_exit_close_buttons.push((close_rect, pane_id));
+        }
     }
 
     app.rects.editor_panes.push((area, pane_id));

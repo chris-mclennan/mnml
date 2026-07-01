@@ -1755,6 +1755,9 @@ pub struct PaneRects {
     pub agents_panel_area: Option<Rect>,
     /// qa-feature 2026-07-01 — Integrations panel area (for wheel scroll routing).
     pub integrations_panel_area: Option<Rect>,
+    /// qa-feature 2026-07-01 — clickable close button on a pty pane's
+    /// exit banner (`[× close]`). `(rect, pane_id)`.
+    pub pty_exit_close_buttons: Vec<(Rect, PaneId)>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
@@ -6651,11 +6654,17 @@ impl App {
         };
         if crate::tools::is_on_path(tool.binary) {
             let ws = self.active_workspace_path().to_path_buf();
-            self.open_pty(crate::pty_pane::BinaryProfile::task(
-                "tools",
-                tool.binary,
-                ws,
-            ));
+            // qa-feature 2026-07-01 — tools that require root
+            // (e.g. iftop needs /dev/bpf*) are launched under
+            // `sudo` so the user gets a password prompt instead
+            // of a permission-denied dump. The `-p` flag preserves
+            // the prompt behavior; -A would try askpass first.
+            let cmdline = if tool.needs_sudo {
+                format!("sudo {}", tool.binary)
+            } else {
+                tool.binary.to_string()
+            };
+            self.open_pty(crate::pty_pane::BinaryProfile::task("tools", &cmdline, ws));
             return;
         }
         // Not installed. On macOS + Linux we offer to install via
