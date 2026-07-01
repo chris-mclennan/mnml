@@ -414,6 +414,38 @@ impl Tree {
         }
     }
 
+    /// Recursively toggle expand/collapse on the row under the cursor.
+    /// If the dir is currently collapsed, expand it AND every descendant
+    /// dir. If expanded, collapse it AND every descendant dir. No-op on
+    /// files. Bound to Shift+click on the tree row (VS Code convention).
+    pub fn toggle_current_recursive(&mut self) {
+        let Some(row) = self.selected_row() else {
+            return;
+        };
+        if !row.is_dir {
+            return;
+        }
+        let target = row.path.clone();
+        let expanding = !self.expanded.contains(&target);
+        let descendants: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir && (e.path == target || e.path.starts_with(&target)))
+            .map(|e| e.path.clone())
+            .collect();
+        if expanding {
+            for p in descendants {
+                self.expanded.insert(p);
+            }
+        } else {
+            for p in descendants {
+                self.expanded.remove(&p);
+            }
+        }
+        let max = self.visible_rows().len().saturating_sub(1);
+        self.cursor = self.cursor.min(max);
+    }
+
     /// `→`-style: expand a collapsed dir, or move into the first child of an open one.
     pub fn expand_or_descend(&mut self) {
         if let Some(row) = self.selected_row()

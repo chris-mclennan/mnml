@@ -1220,7 +1220,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
         let row_idx = (y - tr.y) as usize + scroll;
-        app.click_extra_workspace_row(ws_idx, row_idx);
+        let shift = m.modifiers.contains(KeyModifiers::SHIFT);
+        app.click_extra_workspace_row_ex(ws_idx, row_idx, shift);
         return;
     }
     // Tree? (no header now — row 0 of the rail is the first entry)
@@ -1277,7 +1278,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                             app.switch_active_repo(idx);
                         }
                     }
-                    app.tree.toggle_current();
+                    // qa-feature 2026-07-01 — Shift+click on a
+                    // dir row recursively expands/collapses that
+                    // subtree (VS Code convention). Plain click
+                    // only toggles this one dir.
+                    if m.modifiers.contains(KeyModifiers::SHIFT) {
+                        app.tree.toggle_current_recursive();
+                    } else {
+                        app.tree.toggle_current();
+                    }
                 }
                 // Files: the open is DEFERRED to mouse-up. On a
                 // plain click the Up handler opens it (preview, or
