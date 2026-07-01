@@ -416,6 +416,18 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
             lane_idx,
         });
     }
+    // qa-feature 2026-07-01 — GitGraph commit subject hover.
+    if let Some(&(_, pane_id, commit_idx)) = app
+        .rects
+        .git_graph_subject_cells
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::GitGraphCommitMsg {
+            pane_id,
+            commit_idx,
+        });
+    }
     if let Some(r) = app.rects.palette_sidebar_button
         && contains(r, x, y)
     {

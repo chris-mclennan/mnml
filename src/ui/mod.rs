@@ -236,6 +236,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.git_graph_detail_dividers.clear();
         app.rects.git_graph_column_headers.clear();
         app.rects.git_graph_lane_cells.clear();
+        app.rects.git_graph_subject_cells.clear();
         app.rects.git_graph_repo_switch = None;
         app.rects.request_tabs.clear();
         app.rects.request_fields.clear();

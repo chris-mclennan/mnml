@@ -507,6 +507,24 @@ pub fn draw(
             + SHA_RIGHT_PAD;
         let subject_w = (body_area.width as usize).saturating_sub(fixed_used);
         let subject = pad_or_truncate(&c.subject, subject_w);
+        // qa-feature 2026-07-01 — register a hover rect on the
+        // subject cell so the full commit message shows in a
+        // tooltip when the pane is narrow. `commit_idx` locates
+        // the source commit inside the pane's commits vec.
+        if let Some(commit_idx) = c_idx {
+            let subject_x = body_area.x + (fixed_used - subject_w) as u16;
+            let screen_y = body_area.y + (v_idx - g.scroll) as u16;
+            app.rects.git_graph_subject_cells.push((
+                ratatui::layout::Rect {
+                    x: subject_x,
+                    y: screen_y,
+                    width: subject_w as u16,
+                    height: 1,
+                },
+                pane_id,
+                *commit_idx,
+            ));
+        }
         spans.push(Span::styled(subject, Style::default().fg(t.fg).bg(row_bg)));
         // 6) Author (right-aligned in its column)
         if cols.author > 0 {
@@ -955,7 +973,12 @@ fn compute_column_widths(total: usize, graph_w: usize, auto: ColAutoSize) -> Col
             if auto.branch_chars == 0 {
                 0
             } else {
-                auto.branch_chars.clamp(10, 35)
+                // qa-feature 2026-07-01 — clamp tightened from
+                // 10..35 to 8..24 so on narrow panes the commit
+                // subject gets more room. Long chip labels
+                // truncate with `…`; user can widen via
+                // `[ui] git_graph_branch_col` if they want more.
+                auto.branch_chars.clamp(8, 24)
             }
         }
     };
@@ -2432,7 +2455,7 @@ mod tests {
             },
         );
         assert_eq!(c.author, 8, "author auto-size clamps to 8 min");
-        assert_eq!(c.branch, 10, "branch auto-size clamps to 10 min");
+        assert_eq!(c.branch, 8, "branch auto-size clamps to 8 min (was 10)");
     }
 
     #[test]

@@ -2111,6 +2111,10 @@ pub struct PaneRects {
     /// Populated by `ui::git_graph_view::draw`; consumed by
     /// `dispatch::hover_chip_at` for lane-branch tooltips.
     pub git_graph_lane_cells: Vec<(Rect, PaneId, usize, usize)>,
+    /// qa-feature 2026-07-01 — per-row subject-cell hover rects
+    /// so a truncated commit subject shows its full text in a
+    /// tooltip on hover. `(rect, pane_id, commit_idx)`.
+    pub git_graph_subject_cells: Vec<(Rect, PaneId, usize)>,
     /// `(rect, file_path)` for clickable file rows in the Claude
     /// Agents dashboard's Files drill-down. Click opens the file
     /// in an editor pane. Cleared + rebuilt per render.

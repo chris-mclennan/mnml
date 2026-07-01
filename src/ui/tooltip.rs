@@ -244,6 +244,31 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let (_, _, label, _) = section.meta();
             Some((rect, label.to_string(), None))
         }
+        HoverChip::GitGraphCommitMsg {
+            pane_id,
+            commit_idx,
+        } => {
+            let rect = app
+                .rects
+                .git_graph_subject_cells
+                .iter()
+                .find(|(_, pid, ci)| *pid == pane_id && *ci == commit_idx)
+                .map(|(r, _, _)| *r)?;
+            let g = match app.panes.get(pane_id) {
+                Some(crate::pane::Pane::GitGraph(g)) => g,
+                _ => return None,
+            };
+            let c = g.commits.get(commit_idx)?;
+            let subj = c.subject.clone();
+            // Wrap long subjects at ~80 chars for readability.
+            let display = if subj.chars().count() > 80 {
+                subj.chars().take(80).collect::<String>() + "…"
+            } else {
+                subj
+            };
+            let hint = format!("{} · {}", c.author, c.short);
+            Some((rect, display, Some(hint)))
+        }
         HoverChip::GitGraphLane {
             pane_id,
             commit_idx,

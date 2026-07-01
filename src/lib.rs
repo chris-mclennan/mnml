@@ -377,6 +377,14 @@ pub enum HoverChip {
         commit_idx: usize,
         lane_idx: usize,
     },
+    /// qa-feature 2026-07-01 — hover on a commit's subject cell
+    /// in the GitGraph pane. Tooltip shows the full commit
+    /// subject (unclipped) + author name. Useful when the pane
+    /// is narrow enough that the subject truncates with `…`.
+    GitGraphCommitMsg {
+        pane_id: usize,
+        commit_idx: usize,
+    },
 }
 
 /// Which Agents-panel header chip a `HoverChip::AgentsPanelChip`
