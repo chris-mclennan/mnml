@@ -323,14 +323,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y = draw_section_header(frame, app, area, y, "LOCAL", local_filtered.len(), bg);
     }
     // qa-feature 2026-06-30 — skip body when LOCAL collapsed.
+    // The trailing "1-row gap between sections" below handles the
+    // spacer; no extra add here (was doubling the gap on collapsed
+    // LOCAL — visible as a bigger gap than WORKTREES/REMOTE/etc.).
     let local_collapsed = app.git_palette_collapsed_sections.contains("LOCAL");
-    if local_collapsed {
-        // Add the gap between sections so the next header doesn't
-        // butt up against this one.
-        if y < area.y + area.height {
-            y += 1;
-        }
-    }
     // Folder-group local branches by their `/` prefix so a repo
     // with `bugfix/*`, `chore/*`, `feature/*` collapses into a
     // few folder rows instead of dumping 50+ branches flat.
