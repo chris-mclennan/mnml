@@ -2049,30 +2049,11 @@ fn paint_integration_chips_in_gap(
     // user can add another sibling without leaving the palette
     // bar. Always painted (as long as the gap had room reserved
     // for it via plus_w above).
-    let plus_x = x;
-    if plus_x + 3 <= avail_right + 1 {
-        // design-critic Issue 3 — different glyph than the bufferline
-        // new-tab `+` (F0415) and the http_new chip so the three
-        // `+`-style chips aren't visually identical. Codicon "add"
-        // (\u{EA7C}) has a circle outline that distinguishes it.
-        let plus_glyph = if nerd { "\u{EA7C}" } else { "+" };
-        let plus_rect = Rect {
-            x: plus_x,
-            y,
-            width: 3,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                format!(" {plus_glyph} "),
-                Style::default().fg(t.fg).bg(t.bg2),
-            )),
-            plus_rect,
-        );
-        app.rects.palette_add_integration_button = Some(plus_rect);
-    } else {
-        app.rects.palette_add_integration_button = None;
-    }
+    // qa-feature 2026-07-01 — user asked to remove the top `+`
+    // integration-add chip. Discovery / add flows are reachable
+    // via the Integrations activity-bar section instead.
+    let _ = x;
+    app.rects.palette_add_integration_button = None;
 }
 
 fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -2942,9 +2923,30 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    // qa-feature 2026-07-01 — register the panel body area so
+    // the wheel dispatcher can scroll `integrations_panel_scroll`
+    // when the cursor is over this panel.
+    let body_area = Rect {
+        x: area.x,
+        y: area.y + 2,
+        width: area.width,
+        height: area.height.saturating_sub(2),
+    };
+    app.rects.integrations_panel_area = Some(body_area);
+
     // Each entry takes 3 rows: glyph+name, command dim, blank.
+    // Clamp the scroll so at least one entry stays visible.
+    let rows_per = 3usize;
+    let max_scroll = icons.len().saturating_sub(1).saturating_mul(rows_per);
+    if app.integrations_panel_scroll > max_scroll {
+        app.integrations_panel_scroll = max_scroll;
+    }
     let mut y = area.y + 2;
-    for (idx, icon) in icons.iter().enumerate() {
+    let skip_rows = app.integrations_panel_scroll;
+    // Convert scroll to a "start icon index" that begins on a
+    // 3-row boundary so we don't render half of an icon at the top.
+    let start_idx = skip_rows / rows_per;
+    for (idx, icon) in icons.iter().enumerate().skip(start_idx) {
         if y + 1 >= area.y + area.height {
             break;
         }

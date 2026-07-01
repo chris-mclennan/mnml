@@ -711,6 +711,26 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
+    // qa-feature 2026-07-01 — wheel over the Integrations panel
+    // scrolls its icon list. Bumps by 3 rows per notch (one icon
+    // row) since each entry is 3 cells tall.
+    if app.active_section == crate::app::ActivitySection::Integrations
+        && let Some(ar) = app.rects.integrations_panel_area
+        && contains(ar, x, y)
+    {
+        let d = list_scroll_clamp(delta);
+        let step = 3usize;
+        if d < 0 {
+            app.integrations_panel_scroll = app
+                .integrations_panel_scroll
+                .saturating_sub(step * d.unsigned_abs() as usize);
+        } else {
+            app.integrations_panel_scroll = app
+                .integrations_panel_scroll
+                .saturating_add(step * d as usize);
+        }
+        return;
+    }
     if let Some(tr) = app.rects.tree
         && contains(tr, x, y)
     {

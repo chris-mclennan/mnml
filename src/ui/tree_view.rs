@@ -417,12 +417,10 @@ fn workspace_action_chip_specs(
         ("\u{EA80}", "d+", "file.new_folder", t.blue),
         ("\u{EA7F}", "f+", "file.new", t.yellow),
         ("\u{EB37}", "↺", "tree.refresh", t.cyan),
-        // 2026-06-30 — pull (↓) chip. Was in the removed GIT
-        // section; moved here so per-repo pull is one click from
-        // the file browser without a whole panel. Codicon
-        // `arrow-down` (EAA1) renders as a clean ↓ instead of
-        // the earlier cloud-download which looked snowflake-y.
-        ("\u{EAA1}", "↓", "git.pull", t.green),
+        // 2026-06-30 — pull (↓) chip. Codicon EAA1 was arrow-UP
+        // (my mistake). Codicon EA9A is actual arrow-down —
+        // matches git's universal pull=down convention.
+        ("\u{EA9A}", "↓", "git.pull", t.green),
         (
             collapse_glyph,
             collapse_ascii,

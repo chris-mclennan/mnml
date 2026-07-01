@@ -1753,6 +1753,8 @@ pub struct PaneRects {
     /// The scrollable content area of the agents panel (below the fixed
     /// header rows) — used to route wheel events to `agents_panel_scroll`.
     pub agents_panel_area: Option<Rect>,
+    /// qa-feature 2026-07-01 — Integrations panel area (for wheel scroll routing).
+    pub integrations_panel_area: Option<Rect>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
@@ -3110,6 +3112,10 @@ pub struct App {
     /// session rows scroll; the filter + `+ New session` header stays put).
     /// Clamped to the content height each render.
     pub agents_panel_scroll: usize,
+    /// qa-feature 2026-07-01 — vertical scroll offset for the
+    /// Integrations activity panel. Each icon takes 3 rows;
+    /// mouse-wheel + PageUp/Down bump this by 3.
+    pub integrations_panel_scroll: usize,
     /// `true` while the user's keyboard focus is in the rail
     /// agents panel's filter input.
     pub agents_panel_filter_focused: bool,
@@ -3919,6 +3925,7 @@ impl App {
             agents_panel_expanded_workspaces: std::collections::HashSet::new(),
             agents_panel_filter: String::new(),
             agents_panel_scroll: 0,
+            integrations_panel_scroll: 0,
             agents_panel_filter_focused: false,
             cloud_agents_view: CloudAgentsView::default(),
             cloud_agents_filter: String::new(),
