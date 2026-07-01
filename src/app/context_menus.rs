@@ -402,15 +402,24 @@ impl App {
             .map(|w| w.name.clone())
             .unwrap_or_else(|| format!("workspace {ws_idx}"));
         let path = self.extra_workspaces.get(ws_idx).map(|w| w.root.clone());
-        // Set as current — direct switch to this workspace without
-        // going through the picker (mirrors the workspace picker
-        // dropdown's row click). `ws_idx` in extra_workspaces is
-        // 0-based; `switch_workspace` uses 1-based since 0 is the
-        // primary, so we pass `ws_idx + 1`.
-        let mut items = vec![MenuItem::new(
-            "Set as current workspace",
+        // qa-feature 2026-07-01 — "Set as workspace" now actually
+        // promotes this row to primary (green dot moves, old
+        // primary demotes into the freed slot). Previously fired
+        // `SwitchToExtraWorkspace` which only EXPANDED the
+        // section — the label lied. The picker-style expand-only
+        // behavior stays reachable via "Expand this section"
+        // below.
+        let mut items = vec![];
+        if let Some(p) = path.clone() {
+            items.push(MenuItem::new(
+                "Set as workspace",
+                MenuAction::SetAsWorkspace(p),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Expand this section",
             MenuAction::SwitchToExtraWorkspace(ws_idx + 1),
-        )];
+        ));
         items.push(MenuItem::new(
             "Switch workspace…",
             MenuAction::Command("view.switch_workspace"),
