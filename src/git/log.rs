@@ -187,23 +187,19 @@ fn layout(commits: &mut [Commit]) {
             .collect();
 
         // Reserve lanes for extra parents (the first parent stays in `my_lane`).
+        // qa-bug 2026-06-30 — previously reused the first free
+        // mid-graph slot, which produced visually disconnected
+        // `●`s stacked in the same column across unrelated
+        // branches. Always append at the end instead; the trim-
+        // trailing-Nones step keeps the graph from growing
+        // unbounded when lanes free up at the tail.
         let mut branch_to: Vec<usize> = Vec::new();
         for p in c.parents.iter().skip(1) {
             if lanes.iter().any(|l| l.as_deref() == Some(p.as_str())) {
                 continue; // a lane already heads there — it'll merge later
             }
-            let free = lanes
-                .iter()
-                .enumerate()
-                .find(|(i, l)| *i != my_lane && l.is_none())
-                .map(|(i, _)| i);
-            let slot = match free {
-                Some(free) => free,
-                None => {
-                    lanes.push(None);
-                    lanes.len() - 1
-                }
-            };
+            lanes.push(None);
+            let slot = lanes.len() - 1;
             lanes[slot] = Some(p.clone());
             branch_to.push(slot);
         }
