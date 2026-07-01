@@ -366,6 +366,17 @@ pub enum HoverChip {
     StatuslineMixrFfwd,
     /// Statusline test-runner chip — click focuses test output.
     StatuslineTestChip,
+    /// qa-feature 2026-06-30 — a specific cell in the GitGraph
+    /// pane's lane column. `pane_id` locates the pane;
+    /// `commit_idx` is the index into the pane's `commits` vec
+    /// (excluding the WIP virtual row); `lane_idx` is the column
+    /// within the graph. Tooltip walks newer commits in the same
+    /// lane to find the closest branch ref and displays it.
+    GitGraphLane {
+        pane_id: usize,
+        commit_idx: usize,
+        lane_idx: usize,
+    },
 }
 
 /// Which Agents-panel header chip a `HoverChip::AgentsPanelChip`

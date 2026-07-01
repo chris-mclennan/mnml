@@ -403,6 +403,19 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineNowPlaying);
     }
+    // qa-feature 2026-06-30 — GitGraph lane cell hover.
+    if let Some(&(_, pane_id, commit_idx, lane_idx)) = app
+        .rects
+        .git_graph_lane_cells
+        .iter()
+        .find(|(r, _, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::GitGraphLane {
+            pane_id,
+            commit_idx,
+            lane_idx,
+        });
+    }
     if let Some(r) = app.rects.palette_sidebar_button
         && contains(r, x, y)
     {

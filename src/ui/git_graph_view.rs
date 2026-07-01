@@ -429,6 +429,13 @@ pub fn draw(
         // blank.
         let opens_right = |ch: char| matches!(ch, '╭' | '╰' | '─' | '┼');
         let opens_left = |ch: char| matches!(ch, '╮' | '╯' | '─' | '┼');
+        // Track the pane-relative column where the next graph cell
+        // will paint so lane hover rects are accurate.
+        let mut graph_col_x = body_area.x
+            + spans
+                .iter()
+                .map(|s| s.content.chars().count() as u16)
+                .sum::<u16>();
         for k in 0..graph_w {
             let cell = c.graph.get(k);
             if let Some(cell) = cell {
@@ -439,14 +446,31 @@ pub fn draw(
             } else {
                 spans.push(Span::styled(" ", Style::default().bg(row_bg)));
             }
+            // qa-feature 2026-06-30 — register a hover rect on each
+            // occupied lane cell so the tooltip can name the lane's
+            // branch. Only real commit rows (c_idx is Some).
+            if let Some(commit_idx) = c_idx
+                && cell.is_some_and(|c| c.ch != ' ')
+            {
+                let screen_y = body_area.y + (v_idx - g.scroll) as u16;
+                app.rects.git_graph_lane_cells.push((
+                    ratatui::layout::Rect {
+                        x: graph_col_x,
+                        y: screen_y,
+                        width: 1,
+                        height: 1,
+                    },
+                    pane_id,
+                    *commit_idx,
+                    k,
+                ));
+            }
+            graph_col_x = graph_col_x.saturating_add(1);
             if lane_pad > 0 && k + 1 < graph_w {
                 let cur_opens_r = cell.is_some_and(|c| opens_right(c.ch));
                 let next = c.graph.get(k + 1);
                 let next_opens_l = next.is_some_and(|c| opens_left(c.ch));
                 let (pad_ch, pad_color) = if cur_opens_r || next_opens_l {
-                    // Prefer the current cell's color when both are
-                    // horizontally connected; otherwise borrow the
-                    // partner's color.
                     let color = if cur_opens_r {
                         cell.map(|c| c.color).unwrap_or(0)
                     } else {
@@ -461,6 +485,7 @@ pub fn draw(
                     style = style.fg(lane_color(&t, cl));
                 }
                 spans.push(Span::styled(pad_ch.to_string().repeat(lane_pad), style));
+                graph_col_x = graph_col_x.saturating_add(lane_pad as u16);
             }
         }
         body_sep(&mut spans);

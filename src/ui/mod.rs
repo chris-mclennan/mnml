@@ -235,6 +235,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.scrollbars.clear();
         app.rects.git_graph_detail_dividers.clear();
         app.rects.git_graph_column_headers.clear();
+        app.rects.git_graph_lane_cells.clear();
         app.rects.git_graph_repo_switch = None;
         app.rects.request_tabs.clear();
         app.rects.request_fields.clear();
@@ -1248,6 +1249,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.scrollbars.clear();
     app.rects.git_graph_detail_dividers.clear();
     app.rects.git_graph_column_headers.clear();
+    app.rects.git_graph_lane_cells.clear();
     // git_graph_repo_switch is cleared at the top of
     // git_palette::draw (which runs BEFORE this point in ui flow).
     app.rects.request_tabs.clear();

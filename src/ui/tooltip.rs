@@ -244,6 +244,68 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let (_, _, label, _) = section.meta();
             Some((rect, label.to_string(), None))
         }
+        HoverChip::GitGraphLane {
+            pane_id,
+            commit_idx,
+            lane_idx,
+        } => {
+            // qa-feature 2026-06-30 — walk newer commits (lower
+            // commit_idx) in the same lane until we find one with
+            // a branch ref, then use that ref name as the lane
+            // label. Falls back to a subject preview if nothing
+            // named is found. `rect` is the specific lane cell.
+            let rect = app
+                .rects
+                .git_graph_lane_cells
+                .iter()
+                .find(|(_, pid, ci, li)| *pid == pane_id && *ci == commit_idx && *li == lane_idx)
+                .map(|(r, _, _, _)| *r)?;
+            let g = match app.panes.get(pane_id) {
+                Some(crate::pane::Pane::GitGraph(g)) => g,
+                _ => return None,
+            };
+            // Walk from `commit_idx` upward (i.e. toward index 0
+            // = newest) inside the same lane. Include the anchor
+            // commit itself first.
+            let mut label = None;
+            let mut idx = commit_idx;
+            while idx < g.commits.len() {
+                let c = &g.commits[idx];
+                let in_lane = c.graph.get(lane_idx).is_some_and(|cell| cell.ch != ' ');
+                if !in_lane {
+                    break;
+                }
+                if let Some(r) = c.refs.iter().find(|r| {
+                    matches!(
+                        r.kind,
+                        crate::git::log::RefKind::LocalBranch
+                            | crate::git::log::RefKind::RemoteBranch
+                            | crate::git::log::RefKind::Head
+                    )
+                }) {
+                    label = Some(r.name.clone());
+                    break;
+                }
+                if idx == 0 {
+                    break;
+                }
+                idx -= 1;
+            }
+            let main = label.unwrap_or_else(|| {
+                g.commits
+                    .get(commit_idx)
+                    .map(|c| {
+                        let subj = c.subject.chars().take(60).collect::<String>();
+                        format!("no branch name · {subj}")
+                    })
+                    .unwrap_or_else(|| "lane".to_string())
+            });
+            let hint = g
+                .commits
+                .get(commit_idx)
+                .map(|c| format!("commit: {} · {}", c.short, c.author));
+            Some((rect, main, hint))
+        }
         HoverChip::StatuslineNowPlaying => {
             let rect = app.rects.statusline_mixr_chip?;
             // qa-6th mouse SEV-3 2026-06-29: was returning None

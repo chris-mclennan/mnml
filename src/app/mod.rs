@@ -2106,6 +2106,11 @@ pub struct PaneRects {
     /// per render. Click on a row ⇒ select; click on a header row ⇒
     /// toggle collapse (sibling to keyboard Enter).
     pub list_rows: Vec<(Rect, PaneId, usize)>,
+    /// qa-feature 2026-06-30 — per-lane-cell hover rects in the
+    /// GitGraph pane. `(rect, pane_id, commit_idx, lane_idx)`.
+    /// Populated by `ui::git_graph_view::draw`; consumed by
+    /// `dispatch::hover_chip_at` for lane-branch tooltips.
+    pub git_graph_lane_cells: Vec<(Rect, PaneId, usize, usize)>,
     /// `(rect, file_path)` for clickable file rows in the Claude
     /// Agents dashboard's Files drill-down. Click opens the file
     /// in an editor pane. Cleared + rebuilt per render.
