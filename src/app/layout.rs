@@ -1727,11 +1727,33 @@ impl App {
         let entering_search = section == crate::app::ActivitySection::Search;
         let leaving_search =
             self.active_section == crate::app::ActivitySection::Search && !entering_search;
+        let leaving_git = self.active_section == crate::app::ActivitySection::Git
+            && section != crate::app::ActivitySection::Git;
         self.active_section = section;
         if entering_search {
             self.search_input_focused = true;
         } else if leaving_search {
             self.search_input_focused = false;
+        }
+        // qa-feature 2026-06-30 — leaving the Git activity section
+        // auto-closes any open GitGraph panes so the editor area
+        // returns to the file the user was working on. The graph
+        // is a viewer, tied to the Git section; keeping it open
+        // when the user has moved to Explorer/Debug/etc. feels
+        // stale. Reopen via the Git icon or :git.graph.
+        if leaving_git {
+            let to_close: Vec<usize> = self
+                .panes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| matches!(p, crate::pane::Pane::GitGraph(_)).then_some(i))
+                .collect();
+            // Close descending so arena shifts don't invalidate ids.
+            let mut to_close = to_close;
+            to_close.sort_unstable_by(|a, b| b.cmp(a));
+            for pid in to_close {
+                self.force_close_pane(pid);
+            }
         }
     }
 

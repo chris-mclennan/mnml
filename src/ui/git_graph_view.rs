@@ -191,20 +191,19 @@ pub fn draw(
         list_area.height.saturating_sub(1),
     );
 
-    // qa-feature 2026-06-30 — one blank row between commits so the
-    // graph rails aren't packed tight against each other. Each
-    // commit now occupies (1 + ROW_GAP) cells; only ROW_GAP=1 for
-    // now (config toggle later if wanted).
-    const ROW_GAP: usize = 1;
-    const ROW_STRIDE: usize = 1 + ROW_GAP;
+    // qa-feature 2026-06-30 — blank rows between commits so the
+    // graph rails have breathing room. Configurable via
+    // `[git_graph] row_spacing = 0..4` in config.toml. Default = 1.
+    let row_gap: usize = app.config.git_graph.row_spacing as usize;
+    let row_stride: usize = 1 + row_gap;
 
     // ── scrolling math (operates on the virtual list = WIP + commits) ─
-    // `h` = visible commit slots. With ROW_STRIDE=2 we fit
-    // (body_area.height + ROW_GAP) / ROW_STRIDE commits — the
-    // +ROW_GAP absorbs the trailing gap that doesn't need to
+    // `h` = visible commit slots. With row_stride=2 we fit
+    // (body_area.height + row_gap) / row_stride commits — the
+    // +row_gap absorbs the trailing gap that doesn't need to
     // render.
     let h_cells = body_area.height as usize;
-    let h = (h_cells + ROW_GAP) / ROW_STRIDE;
+    let h = (h_cells + row_gap) / row_stride;
     if g.selected < g.scroll {
         g.scroll = g.selected;
     } else if g.selected >= g.scroll + h {
@@ -299,14 +298,14 @@ pub fn draw(
     );
     app.rects.git_graph_column_headers = header_clickables;
 
-    let mut rows: Vec<Line> = Vec::with_capacity(h * ROW_STRIDE);
+    let mut rows: Vec<Line> = Vec::with_capacity(h * row_stride);
     let mut row_recordings: Vec<(u16, usize)> = Vec::with_capacity(h);
     let wip_lane_clr = t.yellow;
     for (list_idx, (v_idx, c_idx)) in visible.iter().enumerate() {
         // qa-feature 2026-06-30 — each commit lives at row
-        // (list_idx * ROW_STRIDE) in body_area; the row after is
+        // (list_idx * row_stride) in body_area; the row after is
         // a blank gap for visual breathing room.
-        row_recordings.push(((list_idx * ROW_STRIDE) as u16, *v_idx));
+        row_recordings.push(((list_idx * row_stride) as u16, *v_idx));
         let selected = *v_idx == g.selected;
         let row_bg = if selected { t.bg2 } else { t.bg_dark };
 
@@ -484,8 +483,8 @@ pub fn draw(
         // qa-feature 2026-06-30 — blank spacer row after each commit
         // so the graph lanes get one row of vertical breathing room.
         // Skip after the last visible commit to avoid a trailing gap.
-        if ROW_GAP > 0 {
-            for _ in 0..ROW_GAP {
+        if row_gap > 0 {
+            for _ in 0..row_gap {
                 rows.push(Line::from(""));
             }
         }
@@ -513,7 +512,7 @@ pub fn draw(
             // in the visual space between commit content lines
             // still select the commit above.
             let band_end = body_area.y.saturating_add(body_area.height);
-            let band_h = ROW_STRIDE.min((band_end - screen_y) as usize) as u16;
+            let band_h = row_stride.min((band_end - screen_y) as usize) as u16;
             app.rects.list_rows.push((
                 ratatui::layout::Rect {
                     x: body_area.x,

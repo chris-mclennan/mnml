@@ -43,6 +43,8 @@ pub struct Config {
     /// `default_env` (mnml-native equivalent of `.rqst/config`'s
     /// `default_env=…`). Other HTTP-track keys grow here later.
     pub http: HttpConfig,
+    /// `[git_graph]` — visual tuning of the git graph pane.
+    pub git_graph: GitGraphConfig,
     /// `[tasks.<name>]` — named shell commands openable in a pty pane (`task.run`).
     pub tasks: BTreeMap<String, TaskDef>,
     /// `[startup] tasks = [...]` — task names auto-run in pty panes on workspace open.
@@ -217,6 +219,21 @@ pub struct HttpConfig {
     /// falls through to `$MNML_ENV` and then `.rqst/config`. Empty
     /// strings ignored.
     pub default_env: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GitGraphConfig {
+    /// `[git_graph] row_spacing = <0-4>` — blank rows inserted between
+    /// each commit line in the graph view. 0 = tight (old default,
+    /// lanes packed), 1 = one blank row (current default, more
+    /// readable), 2-4 = extra breathing room. Clamped to 4.
+    pub row_spacing: u16,
+}
+
+impl Default for GitGraphConfig {
+    fn default() -> Self {
+        Self { row_spacing: 1 }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1182,6 +1199,7 @@ impl Default for Config {
             ai: toml::Value::Table(Default::default()),
             tools: toml::Value::Table(Default::default()),
             http: HttpConfig::default(),
+            git_graph: GitGraphConfig::default(),
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
             default_workspace: None,
@@ -1219,6 +1237,8 @@ struct RawConfig {
     tools: Option<toml::Value>,
     #[serde(default)]
     http: RawHttp,
+    #[serde(default)]
+    git_graph: RawGitGraph,
     #[serde(default)]
     tasks: BTreeMap<String, RawTask>,
     #[serde(default)]
@@ -1266,6 +1286,12 @@ struct RawCi {
 #[derive(Debug, Default, Deserialize)]
 struct RawHttp {
     default_env: Option<String>,
+}
+
+/// `[git_graph]` raw table (qa-feature 2026-06-30).
+#[derive(Debug, Default, Deserialize)]
+struct RawGitGraph {
+    row_spacing: Option<u16>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1775,6 +1801,9 @@ impl Config {
             if !trimmed.is_empty() {
                 self.http.default_env = Some(trimmed.to_string());
             }
+        }
+        if let Some(rs) = raw.git_graph.row_spacing {
+            self.git_graph.row_spacing = rs.min(4);
         }
         for (k, v) in raw.tasks {
             self.tasks.insert(
