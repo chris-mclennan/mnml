@@ -504,6 +504,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_discovery_overlay();
         return;
     }
+    // qa-feature 2026-07-01 — Installed / Marketplace tab chips in the
+    // Integrations panel. Click switches the active sub-view; also
+    // resets the panel scroll so the new list starts at the top.
+    if let Some(rect) = app.rects.integrations_tab_installed
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
+        app.integrations_panel_scroll = 0;
+        return;
+    }
+    if let Some(rect) = app.rects.integrations_tab_marketplace
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+        app.integrations_panel_scroll = 0;
+        return;
+    }
     // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
     if let Some(&(_, id)) = app
         .rects

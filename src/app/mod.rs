@@ -1367,6 +1367,16 @@ pub struct RailSectionDrag {
 /// the right of the activity-bar strip. v1 only fully wires
 /// `Explorer` — the others render a "Coming soon" placeholder; their
 /// content is staged as follow-ups so the activity-bar shape can
+/// qa-feature 2026-07-01 — Installed / Marketplace tabs in the
+/// Integrations panel. `Installed` lists enabled integrations
+/// (daily driver rail); `Marketplace` lists everything else so
+/// the user can enable more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntegrationsPanelTab {
+    Installed,
+    Marketplace,
+}
+
 /// land independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySection {
@@ -1767,6 +1777,10 @@ pub struct PaneRects {
     /// Integrations section has rail focus, so this rect exists
     /// only to make the row a visible + hoverable target.
     pub integrations_filter_chip: Option<Rect>,
+    /// qa-feature 2026-07-01 — the `Installed` / `Marketplace` tab
+    /// chips below the header. Click switches the active tab.
+    pub integrations_tab_installed: Option<Rect>,
+    pub integrations_tab_marketplace: Option<Rect>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
@@ -3132,6 +3146,11 @@ pub struct App {
     /// Case-insensitive substring match against each icon's
     /// tooltip / id / command. Empty ⇒ no filter.
     pub integrations_panel_filter: String,
+    /// Integrations activity panel — which sub-view is active.
+    /// `Installed` (default) lists the user's enabled integrations
+    /// — the daily-driver rail. `Marketplace` lists everything
+    /// else so the user can enable more.
+    pub integrations_panel_tab: IntegrationsPanelTab,
     /// `true` while the user's keyboard focus is in the rail
     /// agents panel's filter input.
     pub agents_panel_filter_focused: bool,
@@ -3943,6 +3962,7 @@ impl App {
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
             integrations_panel_filter: String::new(),
+            integrations_panel_tab: IntegrationsPanelTab::Installed,
             agents_panel_filter_focused: false,
             cloud_agents_view: CloudAgentsView::default(),
             cloud_agents_filter: String::new(),
