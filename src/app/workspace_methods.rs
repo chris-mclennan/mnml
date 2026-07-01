@@ -139,17 +139,51 @@ impl App {
         // per-tree pre-expand of the first repo (each repo
         // beneath sits collapsed, matching the "collapsed at
         // the top level of each" convention).
-        self.workspace = root;
+
+        // qa-feature 2026-07-01 — when promoting an existing extra
+        // to primary, swap the two so the OLD primary becomes an
+        // extra (instead of vanishing) and the target no longer
+        // appears twice. This is what "green dot moved" means to
+        // the user — before the swap, the primary row was `A ●`
+        // with `B ○` beneath; after, `B ●` with `A ○` beneath.
+        let old_primary_root = std::mem::replace(&mut self.workspace, root.clone());
+        let old_primary_name = old_primary_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace")
+            .to_string();
+        if let Some(pos) = self.extra_workspaces.iter().position(|w| w.root == root) {
+            // Target was an extra — replace its slot with the
+            // demoted old primary so the row count stays stable.
+            self.extra_workspaces[pos] = ExtraWorkspace {
+                name: old_primary_name.clone(),
+                root: old_primary_root.clone(),
+                tree: Tree::open(&old_primary_root),
+                expanded: false,
+            };
+        } else if old_primary_root != root {
+            // Target came from outside the current extras (e.g. a
+            // freshly-picked folder). Preserve the old primary as
+            // an extra so nothing goes missing.
+            self.extra_workspaces.push(ExtraWorkspace {
+                name: old_primary_name.clone(),
+                root: old_primary_root.clone(),
+                tree: Tree::open(&old_primary_root),
+                expanded: false,
+            });
+        }
+
+        // Rebuild the flat repo list from the NEW primary + all
+        // extras (order: primary first, then each extra in its
+        // configured order). Keeps `self.repos` in sync with what
+        // the tree renders — a stale index was the reason the
+        // green dot stayed on the old repo before.
         self.tree = tree;
         self.repos = found;
-        // qa-feature 2026-07-01 — fix "Set as workspace doesn't
-        // stick". Previously the swap left `active_repo` pointing
-        // wherever it was (into a stale-index that no longer
-        // matched the new `repos`), so the green-dot indicator in
-        // the tree + the workspace chip in the statusline both
-        // stayed on the OLD repo. Reset to 0 unconditionally and
-        // retarget the git subsystem so the visual state matches
-        // the new workspace on the next frame.
+        for extra in &self.extra_workspaces {
+            let mut extra_repos = crate::git::repos::discover_repos(&extra.root);
+            self.repos.append(&mut extra_repos);
+        }
         self.active_repo = 0;
         let new_root = self.active_repo_path().to_path_buf();
         self.git.retarget(&new_root);

@@ -118,9 +118,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .to_string();
     let chev = section_chev(app.tree_root_expanded, nerd);
     let chev_str = format!(" {chev} ");
-    // Workspace-picker dropdown chevron — sits immediately after
-    // the workspace name. Click to toggle the picker dropdown.
-    let dropdown_glyph = " ▾ ";
+    // qa-feature 2026-07-01 — the `▾` workspace-picker chevron was
+    // removed at user request. The picker stays reachable via the
+    // statusline workspace chip and the `workspaces.pick` palette
+    // command.
     // Account for the leading `● ` dot we now paint for the
     // current workspace.
     const CURRENT_DOT_W: usize = 2;
@@ -128,14 +129,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // 1 cell of separation so a long workspace name truncates
     // with `…` instead of pushing the chips off the right edge.
     const CHIP_RESERVE: usize = 5 * 3 + 1;
-    let chrome_used =
-        chev_str.chars().count() + CURRENT_DOT_W + dropdown_glyph.chars().count() + CHIP_RESERVE;
+    let chrome_used = chev_str.chars().count() + CURRENT_DOT_W + CHIP_RESERVE;
     let max_name_w = (area.width as usize).saturating_sub(chrome_used);
     let ws_name = crate::ui::clip_to_cells(&ws_name, max_name_w.max(4));
-    let header_used = chev_str.chars().count()
-        + CURRENT_DOT_W
-        + ws_name.chars().count()
-        + dropdown_glyph.chars().count();
+    let header_used = chev_str.chars().count() + CURRENT_DOT_W + ws_name.chars().count();
     let header_rect = Rect {
         x: area.x,
         y: area.y,
@@ -143,18 +140,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     let chip_spans = workspace_header_chips(app, header_rect, header_used, nerd, rail_bg);
-    // Compute the dropdown chevron's rect so the mouse handler can
-    // toggle the picker on click.
-    let dropdown_x = area.x
-        + chev_str.chars().count() as u16
-        + CURRENT_DOT_W as u16
-        + ws_name.chars().count() as u16;
-    app.rects.workspace_picker_chevron = Some(Rect {
-        x: dropdown_x,
-        y: area.y,
-        width: dropdown_glyph.chars().count() as u16,
-        height: 1,
-    });
+    app.rects.workspace_picker_chevron = None;
     // 2026-06-27 #611 — separate click rect on just the workspace
     // NAME. In multi-repo workspaces, clicking the name opens the
     // repo picker (the existing chevron stays the workspace
@@ -185,10 +171,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .fg(theme::cur().green)
                 .bg(rail_bg)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            dropdown_glyph,
-            Style::default().fg(theme::cur().comment).bg(rail_bg),
         ),
     ];
     spans.extend(chip_spans);
