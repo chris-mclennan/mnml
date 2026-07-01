@@ -1698,12 +1698,29 @@ impl App {
     /// bufferline. If a graph pane is already open in this tab, just
     /// focus it instead of opening a duplicate.
     pub fn open_git_graph(&mut self) {
+        // qa-feature 2026-06-30 — snap layout to 20% sidebar / 60%
+        // middle / 20% right when opening the graph. Uses the
+        // last-known screen width from statusline / body rects.
+        let screen_w = self
+            .rects
+            .statusline
+            .map(|r| r.x + r.width)
+            .or_else(|| self.rects.body.map(|r| r.x + r.width))
+            .unwrap_or(120);
+        let target_tree = (screen_w as u32 * 20 / 100) as u16;
+        if target_tree >= 8 {
+            self.tree_width = target_tree;
+            self.tree_visible = true;
+        }
+        // Detail panel = 20% of screen ≈ 25% of the graph pane.
+        let target_detail = (screen_w as u32 * 20 / 100) as u16;
+        if target_detail >= 20 {
+            self.git_graph_detail_col_override = Some(target_detail);
+        }
         if let Some(id) = (0..self.panes.len()).find(|&i| {
             matches!(self.panes.get(i), Some(Pane::GitGraph(_))) && self.layout().contains(i)
         }) {
             self.reveal_pane(id);
-            // Reveal can leave the leaf as a split member — force a
-            // single-leaf layout so the graph fills the editor area.
             *self.layout_mut() = Layout::leaf(id);
             self.active = Some(id);
             self.focus = Focus::Pane;
