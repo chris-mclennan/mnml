@@ -1312,25 +1312,23 @@ fn draw_extra_workspace_section(
     };
     let chev = section_chev(expanded, nerd);
     let chev_str = format!(" {chev} ");
-    // Hollow `○ ` indicator pairs with the primary workspace's
-    // filled `● ` so the user can see at a glance which is the
-    // current one and which are extras.
-    //
-    // Truncate the name with `…` so the action chips stay visible
-    // on narrow rails. Same chip-reserve as the primary header.
-    const EXTRA_CHIP_RESERVE: usize = 5 * 3 + 1;
-    let extra_chrome = chev_str.chars().count() + 2 + EXTRA_CHIP_RESERVE;
-    let max_extra_name_w = (area.width as usize).saturating_sub(extra_chrome);
-    let name = crate::ui::clip_to_cells(&name, max_extra_name_w.max(4));
-    let used = chev_str.chars().count() + 2 + name.chars().count();
+    // qa-feature 2026-07-01 — extras no longer render the
+    // right-side action chip cluster. The `workspace_header_chips`
+    // helper pushes rects into `app.rects.tree_icon_buttons`
+    // keyed only by command id — not by workspace — so a click
+    // on an extra's chip would fire the command against the
+    // PRIMARY tree (and the `collapse` glyph on each extra row
+    // even read `app.tree.is_fully_collapsed()`, the primary's
+    // state, so all rows flipped together). Extras keep the
+    // left-side ○ + name + section chevron.
+    let name = crate::ui::clip_to_cells(&name, (area.width as usize).saturating_sub(4).max(4));
     let header_rect = Rect {
         x: area.x,
         y: header_y,
         width: area.width,
         height: 1,
     };
-    let chip_spans = workspace_header_chips(app, header_rect, used, nerd, rail_bg);
-    let mut spans = vec![
+    let spans = vec![
         Span::styled(
             chev_str,
             Style::default().fg(theme::cur().comment).bg(rail_bg),
@@ -1344,12 +1342,11 @@ fn draw_extra_workspace_section(
                 .add_modifier(Modifier::BOLD),
         ),
     ];
-    spans.extend(chip_spans);
     frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
     app.rects
         .extra_workspace_toggles
         .push((header_rect, ws_idx));
-    let _ = width; // width is now used inside `workspace_header_chips`.
+    let _ = width;
 
     if !expanded {
         return header_y + 1;

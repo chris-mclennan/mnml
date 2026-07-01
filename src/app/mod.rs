@@ -8593,13 +8593,20 @@ impl App {
     pub fn set_pane_scroll(&mut self, pane_id: PaneId, kind: ScrollbarKind, scroll: usize) {
         // The file tree + agents panel aren't panes — their scroll lives on
         // dedicated App fields.
+        // qa-feature 2026-07-01 — tree scrollbars also snap the
+        // CURSOR to the new scroll top. Without this the per-frame
+        // "keep cursor in view" logic in tree_view immediately
+        // reverted scroll back to whatever row cursor pointed at,
+        // so drag felt like it did nothing.
         if matches!(kind, ScrollbarKind::Tree) {
             self.tree.scroll = scroll;
+            self.tree.set_cursor(scroll);
             return;
         }
         if let ScrollbarKind::ExtraTree(ws_idx) = kind {
             if let Some(w) = self.extra_workspaces.get_mut(ws_idx) {
                 w.tree.scroll = scroll;
+                w.tree.set_cursor(scroll);
             }
             return;
         }
