@@ -2004,11 +2004,19 @@ fn paint_integration_chips_in_gap(
     let launcher_paint = n_launcher.min(to_paint);
     let integration_paint = to_paint - launcher_paint;
     // qa-feature 2026-07-01 — exactly 2 empty cells between the
-    // right-panel toggle's rightmost cell and the first chip's
-    // glyph cell. Chips paint as ` glyph ` (3 cells with 1 cell
-    // of leading space), so start x = toggle_right + 1 to place
-    // that leading space at toggle_right+1, glyph at toggle_right+2.
-    let mut x = avail_left.saturating_add(1);
+    // right-panel toggle's visible glyph and the first chip's
+    // visible glyph.
+    //   toggle rect: `[ ][glyph][ ]` — glyph at rect.x + 1,
+    //                 trailing space at rect.x + 2.
+    //   avail_left = toggle right edge = rect.x + 3.
+    //   chip rect starts at avail_left, paints `[ ][glyph][ ]` —
+    //   leading space at avail_left, glyph at avail_left + 1.
+    // Visible-glyph gap = (avail_left + 1) - (rect.x + 1) - 1
+    //                   = right_panel_w - 1 = 2 cells (the toggle's
+    // own trailing space + the chip's own leading space). Any
+    // extra pad here (e.g. the old `+ 1`) shifts the globe further
+    // right than the user asked for.
+    let mut x = avail_left;
     // 2026-06-27 — chips render WITHOUT a colored background.
     // 2026-07-01 — chips now use `t.comment` FG (matching the
     // split-horiz / split-vert / terminal buttons in the right
@@ -2427,13 +2435,16 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // icons + tab-page chips overlapped (rendered on top of each
     // other). Stage the fallback so the most-clicked chips
     // (launchers + close) stay visible the longest.
-    // `x` at this point is the LEFT edge of the dropdown chevron
-    // (it wasn't bumped past the chevron after painting). The real
-    // right edge of the workspace cluster also accounts for the
-    // right-panel toggle button that sits NAV_GAP cells past the
-    // dropdown (render-reviewer #9 — without this, the gap painter
-    // can place integration chips on top of the toggle).
-    let palette_right_edge = x + dropdown_w + NAV_GAP + right_panel_w;
+    // qa-feature 2026-07-01 — `x` at this point is the LEFT edge
+    // of the right-panel toggle (line ~2398 already bumped x past
+    // dropdown_w + NAV_GAP), so the toggle's right edge is simply
+    // `x + right_panel_w`. The prior formula
+    // `x + dropdown_w + NAV_GAP + right_panel_w` double-counted
+    // dropdown_w + NAV_GAP and pushed palette_right_edge 2 cells
+    // past the toggle, which is why the browser globe kept landing
+    // way further right than the "2 cells from the toggle" the
+    // user asked for.
+    let palette_right_edge = x + right_panel_w;
     let full_w = bufferline::right_cluster_width(app);
     // mouse-user SEV-2 — try the full cluster first; fall back to a
     // compact (no TABS / tab-page chips) cluster when the full one
