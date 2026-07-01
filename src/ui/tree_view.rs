@@ -1151,8 +1151,25 @@ fn draw_workspace_files(
             h,
             app.tree.scroll,
         );
+        // qa-feature 2026-07-01 — the visible scrollbar is 1
+        // cell wide, which is nearly impossible to grab with a
+        // mouse (user reported "can't drag"). Widen the click
+        // hit rect to include 1 cell to the left of the visible
+        // bar so the drag catches even when the click lands
+        // slightly off the exact column. The row padding always
+        // fills the cell right before the bar, so this doesn't
+        // steal clicks from filename text.
+        let hit_extra_left: u16 = 1;
+        let hit_x = sb_area.x.saturating_sub(hit_extra_left);
+        let hit_width = sb_area.x + sb_area.width - hit_x;
+        let hit_area = Rect {
+            x: hit_x,
+            y: sb_area.y,
+            width: hit_width,
+            height: sb_area.height,
+        };
         app.rects.scrollbars.push(crate::app::ScrollbarHit {
-            area: sb_area,
+            area: hit_area,
             pane_id: 0,
             total: rows.len(),
             viewport: h,

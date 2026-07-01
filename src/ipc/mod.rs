@@ -1088,6 +1088,14 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, id) in &app.rects.bufferline_tabs {
         push_rect(&mut out, &mut first, &format!("bufferline_tab:{id}"), *r);
     }
+    for hit in &app.rects.scrollbars {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("scrollbar:{:?}", hit.kind),
+            hit.area,
+        );
+    }
     // mouse-hunter v3 SEV-1 A — right_panel_tabs were not dumped.
     for (r, idx) in &app.rects.right_panel_tabs {
         push_rect(&mut out, &mut first, &format!("right_panel_tab:{idx}"), *r);
