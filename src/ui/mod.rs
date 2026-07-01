@@ -1917,7 +1917,7 @@ fn paint_integration_chips_in_gap(
     cluster_left: u16,
     y: u16,
 ) {
-    use ratatui::style::{Modifier, Style};
+    use ratatui::style::Style;
     use ratatui::text::Span;
     use ratatui::widgets::Paragraph;
     // Even with no integrations configured, paint the `+` chip
@@ -2003,18 +2003,20 @@ fn paint_integration_chips_in_gap(
     let to_paint = total_wanted.min(chip_count);
     let launcher_paint = n_launcher.min(to_paint);
     let integration_paint = to_paint - launcher_paint;
-    // qa-feature 2026-07-01 — 2 cells of padding between the
-    // right-panel toggle and the first palette-bar chip so the
-    // browser globe doesn't butt against the toggle.
-    let mut x = avail_left.saturating_add(2);
-    let color_of = |c: &str| theme::color_from_slot(c, &t);
+    // qa-feature 2026-07-01 — exactly 2 empty cells between the
+    // right-panel toggle's rightmost cell and the first chip's
+    // glyph cell. Chips paint as ` glyph ` (3 cells with 1 cell
+    // of leading space), so start x = toggle_right + 1 to place
+    // that leading space at toggle_right+1, glyph at toggle_right+2.
+    let mut x = avail_left.saturating_add(1);
     // 2026-06-27 — chips render WITHOUT a colored background.
-    // The configured color slot drives the FG (glyph color); the
-    // bg is the palette-bar background. Reads as a flat icon row
-    // matching IDE chrome style. Click + hover behavior unchanged.
+    // 2026-07-01 — chips now use `t.comment` FG (matching the
+    // split-horiz / split-vert / terminal buttons in the right
+    // cluster) instead of the per-icon color slot. The user asked
+    // for these top-row icons to read as flat chrome, not
+    // decorated app links. Bold is dropped for the same reason.
     for &(i, icon) in enabled_launchers.iter().take(launcher_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let chip_fg = color_of(&icon.color);
         let chip_rect = Rect {
             x,
             y,
@@ -2024,10 +2026,7 @@ fn paint_integration_chips_in_gap(
         frame.render_widget(
             Paragraph::new(Span::styled(
                 format!(" {glyph} "),
-                Style::default()
-                    .fg(chip_fg)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.comment).bg(t.bg_dark),
             )),
             chip_rect,
         );
@@ -2036,7 +2035,6 @@ fn paint_integration_chips_in_gap(
     }
     for &(i, icon) in enabled_integrations.iter().take(integration_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let chip_fg = color_of(&icon.color);
         let chip_rect = Rect {
             x,
             y,
@@ -2046,10 +2044,7 @@ fn paint_integration_chips_in_gap(
         frame.render_widget(
             Paragraph::new(Span::styled(
                 format!(" {glyph} "),
-                Style::default()
-                    .fg(chip_fg)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(t.comment).bg(t.bg_dark),
             )),
             chip_rect,
         );
@@ -2896,9 +2891,11 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let nerd = !app.config.ui.ascii_icons;
 
-    // Header. qa-feature 2026-07-01 — right-side "configure" chip
-    // opens the discovery / install overlay (same as right-click
-    // an integration → Add / Manage).
+    // Header. qa-feature 2026-07-01 — right-side gear glyph opens
+    // the discovery / install overlay (same as right-click an
+    // integration → Add / Manage). Was a "configure" text link;
+    // the gear is denser and matches the visual weight of other
+    // rail chrome.
     let header_rect = Rect {
         x: area.x,
         y: area.y,
@@ -2914,37 +2911,117 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         header_rect,
     );
-    let configure_label = " configure ";
-    let configure_w = configure_label.chars().count() as u16;
-    if area.width > 14 + configure_w {
-        let configure_x = area.x + area.width - configure_w;
-        let configure_rect = Rect {
-            x: configure_x,
+    let gear_glyph = if nerd { "\u{f013}" } else { "*" };
+    let gear_label = format!(" {gear_glyph} ");
+    let gear_w = gear_label.chars().count() as u16;
+    if area.width > 14 + gear_w {
+        let gear_x = area.x + area.width - gear_w;
+        let gear_rect = Rect {
+            x: gear_x,
             y: area.y,
-            width: configure_w,
+            width: gear_w,
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(configure_label).style(
-                Style::default()
-                    .fg(t.cyan)
-                    .bg(bg)
-                    .add_modifier(Modifier::UNDERLINED),
-            ),
-            configure_rect,
+            Paragraph::new(gear_label).style(Style::default().fg(t.comment).bg(bg)),
+            gear_rect,
         );
-        app.rects.integrations_configure_button = Some(configure_rect);
+        app.rects.integrations_configure_button = Some(gear_rect);
     } else {
         app.rects.integrations_configure_button = None;
     }
 
+    // qa-feature 2026-07-01 — filter row directly below the header.
+    // Shows the current query (or a placeholder) with a search
+    // glyph on the left. Focused when `active_section == Integrations`
+    // and `focus == Tree` (see tui/mod.rs); typing appends, Backspace
+    // pops, Esc clears.
+    let filter_row = Rect {
+        x: area.x,
+        y: area.y + 1,
+        width: area.width,
+        height: 1,
+    };
+    let search_glyph = if nerd { "\u{f002}" } else { "/" };
+    let filter_focused = app.active_section == crate::app::ActivitySection::Integrations
+        && app.focus == crate::focus::Focus::Tree;
+    let filter_display = if app.integrations_panel_filter.is_empty() {
+        if filter_focused {
+            "type to filter…".to_string()
+        } else {
+            "filter".to_string()
+        }
+    } else {
+        app.integrations_panel_filter.clone()
+    };
+    let filter_fg = if !app.integrations_panel_filter.is_empty() {
+        t.fg
+    } else if filter_focused {
+        t.cyan
+    } else {
+        t.comment
+    };
+    frame.render_widget(
+        Paragraph::new(ratatui::text::Line::from(vec![
+            Span::styled(
+                format!(" {search_glyph} "),
+                Style::default().fg(t.comment).bg(bg),
+            ),
+            Span::styled(filter_display, Style::default().fg(filter_fg).bg(bg)),
+        ])),
+        filter_row,
+    );
+    app.rects.integrations_filter_chip = Some(filter_row);
+
     // Empty-state hint when no icons are configured.
-    let icons = app.config.ui.integration_icons.clone();
-    if icons.is_empty() {
+    let all_icons = app.config.ui.integration_icons.clone();
+    if all_icons.is_empty() {
         let msg = " No integrations — add [[ui.integration_icon]] in your config";
         let body = Rect {
             x: area.x,
-            y: area.y + 2,
+            y: area.y + 3,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(msg).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+            body,
+        );
+        return;
+    }
+
+    // Apply the filter — case-insensitive substring match against
+    // tooltip, id, and command. Preserves original indices so
+    // clicks still fire the correct icon's command.
+    let filter_lc = app.integrations_panel_filter.to_ascii_lowercase();
+    let icons: Vec<(usize, crate::config::IntegrationIcon)> = all_icons
+        .iter()
+        .enumerate()
+        .filter(|(_, icon)| {
+            if filter_lc.is_empty() {
+                return true;
+            }
+            let hay = format!(
+                "{} {} {}",
+                icon.tooltip.as_deref().unwrap_or(""),
+                icon.id,
+                icon.command,
+            )
+            .to_ascii_lowercase();
+            hay.contains(&filter_lc)
+        })
+        .map(|(i, icon)| (i, icon.clone()))
+        .collect();
+    if icons.is_empty() {
+        let msg = format!(" No matches for “{}”", app.integrations_panel_filter);
+        let body = Rect {
+            x: area.x,
+            y: area.y + 3,
             width: area.width,
             height: 1,
         };
@@ -2962,12 +3039,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // qa-feature 2026-07-01 — register the panel body area so
     // the wheel dispatcher can scroll `integrations_panel_scroll`
-    // when the cursor is over this panel.
+    // when the cursor is over this panel. Body starts below the
+    // filter row (header + filter + gap = 3 rows).
     let body_area = Rect {
         x: area.x,
-        y: area.y + 2,
+        y: area.y + 3,
         width: area.width,
-        height: area.height.saturating_sub(2),
+        height: area.height.saturating_sub(3),
     };
     app.rects.integrations_panel_area = Some(body_area);
 
@@ -2978,12 +3056,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     if app.integrations_panel_scroll > max_scroll {
         app.integrations_panel_scroll = max_scroll;
     }
-    let mut y = area.y + 2;
+    let mut y = area.y + 3;
     let skip_rows = app.integrations_panel_scroll;
     // Convert scroll to a "start icon index" that begins on a
     // 3-row boundary so we don't render half of an icon at the top.
     let start_idx = skip_rows / rows_per;
-    for (idx, icon) in icons.iter().enumerate().skip(start_idx) {
+    for (idx, icon) in icons.iter().skip(start_idx) {
+        let idx = *idx;
         if y + 1 >= area.y + area.height {
             break;
         }

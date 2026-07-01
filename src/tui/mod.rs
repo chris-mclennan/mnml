@@ -576,6 +576,34 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // qa-feature 2026-07-01 — Integrations rail filter. Auto-focused
+    // whenever the section owns the rail (no explicit toggle needed —
+    // `active_section` already gates it). Chars append, Backspace
+    // pops, Esc clears the query. Uses focus == Tree to avoid
+    // stealing keys while the user is in a pane.
+    if app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Integrations
+    {
+        match key.code {
+            KeyCode::Esc if !app.integrations_panel_filter.is_empty() => {
+                app.integrations_panel_filter.clear();
+                return;
+            }
+            KeyCode::Backspace => {
+                app.integrations_panel_filter.pop();
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.integrations_panel_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Agents rail filter — when focused, intercept typing /
     // backspace / Esc.
     if app.agents_panel_filter_focused {

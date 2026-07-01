@@ -90,18 +90,19 @@ impl App {
             self.promote_to_primary_workspace(root, resolved_name);
             return;
         }
-        let mut tree = Tree::open(&root);
+        // qa-feature 2026-07-01 — new workspaces open COLLAPSED at
+        // the top level. Was: `expanded: true` + auto-expand of the
+        // first sub-repo, which slammed the rail with a full tree the
+        // moment you opened a second workspace. User asked for each
+        // workspace to sit as a collapsed root; the user drills in
+        // manually.
+        let tree = Tree::open(&root);
         let mut found = crate::git::repos::discover_repos(&root);
-        if found.len() > 1
-            && let Some(first) = found.first()
-        {
-            tree.expand_only([first.path.clone()]);
-        }
         self.extra_workspaces.push(ExtraWorkspace {
             name: resolved_name.clone(),
             root,
             tree,
-            expanded: true,
+            expanded: false,
         });
         self.repos.append(&mut found);
         self.toast(format!(
@@ -131,16 +132,37 @@ impl App {
     /// workspace I wanted" — the rest of the side effects can be
     /// addressed in v0.2 once we see what breaks.
     pub(crate) fn promote_to_primary_workspace(&mut self, root: PathBuf, name: String) {
-        let mut tree = Tree::open(&root);
+        let tree = Tree::open(&root);
         let found = crate::git::repos::discover_repos(&root);
-        if found.len() > 1
-            && let Some(first) = found.first()
-        {
-            tree.expand_only([first.path.clone()]);
-        }
+        // qa-feature 2026-07-01 — the primary workspace tree is
+        // always the top row so it renders expanded; no
+        // per-tree pre-expand of the first repo (each repo
+        // beneath sits collapsed, matching the "collapsed at
+        // the top level of each" convention).
         self.workspace = root;
         self.tree = tree;
         self.repos = found;
+        // qa-feature 2026-07-01 — fix "Set as workspace doesn't
+        // stick". Previously the swap left `active_repo` pointing
+        // wherever it was (into a stale-index that no longer
+        // matched the new `repos`), so the green-dot indicator in
+        // the tree + the workspace chip in the statusline both
+        // stayed on the OLD repo. Reset to 0 unconditionally and
+        // retarget the git subsystem so the visual state matches
+        // the new workspace on the next frame.
+        self.active_repo = 0;
+        let new_root = self.active_repo_path().to_path_buf();
+        self.git.retarget(&new_root);
+        self.git_rail.refresh(&new_root);
+        self.git_palette_selected = None;
+        self.refresh_rail_pulls();
+        for pane in &mut self.panes {
+            match pane {
+                Pane::GitStatus(g) => g.retarget(&new_root),
+                Pane::GitGraph(g) => g.retarget(&new_root),
+                _ => {}
+            }
+        }
         self.toast(format!("workspace opened: {name}"));
     }
 

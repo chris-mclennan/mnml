@@ -1761,6 +1761,12 @@ pub struct PaneRects {
     /// qa-feature 2026-07-01 — "configure" link in the Integrations
     /// panel header. Click opens the discovery / install overlay.
     pub integrations_configure_button: Option<Rect>,
+    /// qa-feature 2026-07-01 — filter input row below the header.
+    /// Click focuses the filter (typing appends; Backspace pops;
+    /// Esc clears). The filter is auto-focused whenever the
+    /// Integrations section has rail focus, so this rect exists
+    /// only to make the row a visible + hoverable target.
+    pub integrations_filter_chip: Option<Rect>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
@@ -3122,6 +3128,10 @@ pub struct App {
     /// Integrations activity panel. Each icon takes 3 rows;
     /// mouse-wheel + PageUp/Down bump this by 3.
     pub integrations_panel_scroll: usize,
+    /// Integrations activity panel — filter query.
+    /// Case-insensitive substring match against each icon's
+    /// tooltip / id / command. Empty ⇒ no filter.
+    pub integrations_panel_filter: String,
     /// `true` while the user's keyboard focus is in the rail
     /// agents panel's filter input.
     pub agents_panel_filter_focused: bool,
@@ -3932,6 +3942,7 @@ impl App {
             agents_panel_filter: String::new(),
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
+            integrations_panel_filter: String::new(),
             agents_panel_filter_focused: false,
             cloud_agents_view: CloudAgentsView::default(),
             cloud_agents_filter: String::new(),
