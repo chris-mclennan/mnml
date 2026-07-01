@@ -418,13 +418,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     if visible.is_empty() {
+        // qa-feature 2026-06-30 — "no buffers" is misleading when
+        // a non-bufferline pane (GitGraph / Pty) is the only thing
+        // open. Show a hint describing the pane instead.
+        let hint = match app.active.and_then(|i| app.panes.get(i)) {
+            Some(Pane::GitGraph(_)) => "  git graph ",
+            Some(Pane::Pty(_)) => "  terminal ",
+            _ => "  no buffers ",
+        };
         spans.push(Span::styled(
-            "  no buffers ",
+            hint,
             Style::default()
                 .fg(theme::cur().grey_fg)
                 .bg(theme::cur().bg_darker),
         ));
-        x += "  no buffers ".chars().count() as u16;
+        x += hint.chars().count() as u16;
     }
     // Are there tabs past the right edge? (Either we broke out of the render
     // loop, or there are tabs after the last one we drew that we never reached.)
