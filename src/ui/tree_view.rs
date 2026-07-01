@@ -124,10 +124,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Account for the leading `● ` dot we now paint for the
     // current workspace.
     const CURRENT_DOT_W: usize = 2;
-    // Reserve room for the action chips (4 × 3 cells = 12) plus
+    // Reserve room for the action chips (5 × 3 cells = 15) plus
     // 1 cell of separation so a long workspace name truncates
     // with `…` instead of pushing the chips off the right edge.
-    const CHIP_RESERVE: usize = 4 * 3 + 1;
+    const CHIP_RESERVE: usize = 5 * 3 + 1;
     let chrome_used =
         chev_str.chars().count() + CURRENT_DOT_W + dropdown_glyph.chars().count() + CHIP_RESERVE;
     let max_name_w = (area.width as usize).saturating_sub(chrome_used);
@@ -393,7 +393,7 @@ fn workspace_action_chip_specs(
     &'static str,
     &'static str,
     ratatui::style::Color,
-); 4] {
+); 5] {
     let t = theme::cur();
     let (collapse_glyph, collapse_ascii) = if app.tree.is_fully_collapsed() {
         ("\u{F0AB4}", "↧") // expand-all
@@ -409,6 +409,10 @@ fn workspace_action_chip_specs(
         ("\u{EA80}", "d+", "file.new_folder", t.blue),
         ("\u{EA7F}", "f+", "file.new", t.yellow),
         ("\u{EB37}", "↺", "tree.refresh", t.cyan),
+        // 2026-06-30 — pull (↓) chip. Was in the removed GIT
+        // section; moved here so per-repo pull is one click from
+        // the file browser without a whole panel.
+        ("\u{EB40}", "↓", "git.pull", t.green),
         (
             collapse_glyph,
             collapse_ascii,
@@ -1277,7 +1281,7 @@ fn draw_extra_workspace_section(
     //
     // Truncate the name with `…` so the action chips stay visible
     // on narrow rails. Same chip-reserve as the primary header.
-    const EXTRA_CHIP_RESERVE: usize = 4 * 3 + 1;
+    const EXTRA_CHIP_RESERVE: usize = 5 * 3 + 1;
     let extra_chrome = chev_str.chars().count() + 2 + EXTRA_CHIP_RESERVE;
     let max_extra_name_w = (area.width as usize).saturating_sub(extra_chrome);
     let name = crate::ui::clip_to_cells(&name, max_extra_name_w.max(4));
