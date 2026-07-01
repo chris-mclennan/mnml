@@ -2376,6 +2376,13 @@ pub struct ExtraWorkspace {
     /// Section expand state — collapsed by default so a fresh window of N
     /// extra workspaces doesn't show every repo's contents at once.
     pub expanded: bool,
+    /// qa-feature 2026-07-01 — stable visual slot in the unified
+    /// workspace list. Primary + extras share a single position
+    /// space: primary starts at `App.primary_position`; extras
+    /// start at 1..N. Promoting an extra to primary only swaps
+    /// the `●` marker — every workspace keeps its position,
+    /// so the visual order never reshuffles.
+    pub position: usize,
 }
 
 /// Persistent quick-scratch terminal — a small pty that lives at the
@@ -2474,6 +2481,13 @@ pub struct App {
     /// active-repo machinery (git rail, switcher, status pane, etc.) works
     /// unchanged.
     pub extra_workspaces: Vec<ExtraWorkspace>,
+    /// qa-feature 2026-07-01 — stable position for the primary
+    /// in the unified workspace visual list (primary + extras
+    /// share one position space). Starts at 0. Promoting an
+    /// extra to primary swaps positions (and only positions) —
+    /// so the visual order of the workspace list never changes,
+    /// only the `●` marker moves.
+    pub primary_position: usize,
     pub tree_visible: bool,
     /// Which activity-bar section currently fills the rail. Default
     /// `Explorer` reproduces mnml's pre-activity-bar behavior (file
@@ -3817,11 +3831,13 @@ impl App {
             {
                 t.expand_only([first.path.clone()]);
             }
+            let position = extra_workspaces.len() + 1;
             extra_workspaces.push(ExtraWorkspace {
                 name: w.name.clone(),
                 root,
                 tree: t,
                 expanded: false,
+                position,
             });
             repos.append(&mut found);
         }
@@ -3985,6 +4001,7 @@ impl App {
             // in `try_restore_session`.
             tree_root_expanded: true,
             extra_workspaces,
+            primary_position: 0,
             git_rail,
             image_protocol: crate::image::detect_protocol(),
             image_paint_requests: Vec::new(),

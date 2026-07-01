@@ -98,11 +98,13 @@ impl App {
         // manually.
         let tree = Tree::open(&root);
         let mut found = crate::git::repos::discover_repos(&root);
+        let position = self.next_free_workspace_position();
         self.extra_workspaces.push(ExtraWorkspace {
             name: resolved_name.clone(),
             root,
             tree,
             expanded: false,
+            position,
         });
         self.repos.append(&mut found);
         self.toast(format!(
@@ -132,56 +134,65 @@ impl App {
     /// workspace I wanted" — the rest of the side effects can be
     /// addressed in v0.2 once we see what breaks.
     pub(crate) fn promote_to_primary_workspace(&mut self, root: PathBuf, name: String) {
+        // qa-feature 2026-07-01 — SWAP POSITIONS ONLY. The
+        // primary + extras share a single stable ordering (each
+        // has a `.position`); promoting an extra swaps its
+        // `position` with `self.primary_position` and moves the
+        // OLD primary into that extra slot, so the visible list
+        // never reshuffles. Only the `●` marker moves. See the
+        // `preserve original order` design decision — the earlier
+        // "swap slots" version reads as weird because the
+        // demoted workspace lands in the promoted one's OLD
+        // slot instead of staying where it lives in the list.
         let tree = Tree::open(&root);
         let found = crate::git::repos::discover_repos(&root);
-        // qa-feature 2026-07-01 — the primary workspace tree is
-        // always the top row so it renders expanded; no
-        // per-tree pre-expand of the first repo (each repo
-        // beneath sits collapsed, matching the "collapsed at
-        // the top level of each" convention).
-
-        // qa-feature 2026-07-01 — when promoting an existing extra
-        // to primary, swap the two so the OLD primary becomes an
-        // extra (instead of vanishing) and the target no longer
-        // appears twice. This is what "green dot moved" means to
-        // the user — before the swap, the primary row was `A ●`
-        // with `B ○` beneath; after, `B ●` with `A ○` beneath.
         let old_primary_root = std::mem::replace(&mut self.workspace, root.clone());
         let old_primary_name = old_primary_root
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("workspace")
             .to_string();
+        let old_primary_position = self.primary_position;
         if let Some(pos) = self.extra_workspaces.iter().position(|w| w.root == root) {
-            // Target was an extra — replace its slot with the
-            // demoted old primary so the row count stays stable.
+            // Target was an extra. Promote its `.position` to
+            // primary_position; replace its slot with the demoted
+            // old primary carrying the new primary's OLD
+            // position. Net: both positions swap.
+            let target_position = self.extra_workspaces[pos].position;
+            self.primary_position = target_position;
             self.extra_workspaces[pos] = ExtraWorkspace {
                 name: old_primary_name.clone(),
                 root: old_primary_root.clone(),
                 tree: Tree::open(&old_primary_root),
                 expanded: false,
+                position: old_primary_position,
             };
         } else if old_primary_root != root {
             // Target came from outside the current extras (e.g. a
-            // freshly-picked folder). Preserve the old primary as
-            // an extra so nothing goes missing.
+            // freshly-picked folder). Give the new primary a
+            // fresh slot at the bottom; the OLD primary keeps its
+            // original position but now sits in extras.
+            let new_primary_position = self.next_free_workspace_position();
+            self.primary_position = new_primary_position;
             self.extra_workspaces.push(ExtraWorkspace {
                 name: old_primary_name.clone(),
                 root: old_primary_root.clone(),
                 tree: Tree::open(&old_primary_root),
                 expanded: false,
+                position: old_primary_position,
             });
         }
 
         // Rebuild the flat repo list from the NEW primary + all
-        // extras (order: primary first, then each extra in its
-        // configured order). Keeps `self.repos` in sync with what
-        // the tree renders — a stale index was the reason the
-        // green dot stayed on the old repo before.
+        // extras in position order so tree-side lookups (green
+        // dot, active repo) map to the right rows.
         self.tree = tree;
         self.repos = found;
-        for extra in &self.extra_workspaces {
-            let mut extra_repos = crate::git::repos::discover_repos(&extra.root);
+        let mut extras_by_pos: Vec<&ExtraWorkspace> = self.extra_workspaces.iter().collect();
+        extras_by_pos.sort_by_key(|w| w.position);
+        let extra_roots: Vec<PathBuf> = extras_by_pos.iter().map(|w| w.root.clone()).collect();
+        for extra_root in &extra_roots {
+            let mut extra_repos = crate::git::repos::discover_repos(extra_root);
             self.repos.append(&mut extra_repos);
         }
         self.active_repo = 0;
@@ -198,6 +209,15 @@ impl App {
             }
         }
         self.toast(format!("workspace opened: {name}"));
+    }
+
+    /// Smallest positive integer not already in use by
+    /// `primary_position` or any extra's `.position`.
+    fn next_free_workspace_position(&self) -> usize {
+        let mut used: std::collections::HashSet<usize> =
+            self.extra_workspaces.iter().map(|w| w.position).collect();
+        used.insert(self.primary_position);
+        (0..).find(|p| !used.contains(p)).unwrap_or(0)
     }
 
     /// Right-click → "Set as workspace" from the tree context menu.

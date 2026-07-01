@@ -109,74 +109,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         git_top_y.saturating_sub(1)
     };
 
-    // ── row 0: WORKSPACE header (with right-aligned action chips).
-    let ws_name = app
-        .workspace
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("workspace")
-        .to_string();
-    let chev = section_chev(app.tree_root_expanded, nerd);
-    let chev_str = format!(" {chev} ");
-    // qa-feature 2026-07-01 — the `▾` workspace-picker chevron was
-    // removed at user request. The picker stays reachable via the
-    // statusline workspace chip and the `workspaces.pick` palette
-    // command.
-    // Account for the leading `● ` dot we now paint for the
-    // current workspace.
-    const CURRENT_DOT_W: usize = 2;
-    // Reserve room for the action chips (5 × 3 cells = 15) plus
-    // 1 cell of separation so a long workspace name truncates
-    // with `…` instead of pushing the chips off the right edge.
-    const CHIP_RESERVE: usize = 5 * 3 + 1;
-    let chrome_used = chev_str.chars().count() + CURRENT_DOT_W + CHIP_RESERVE;
-    let max_name_w = (area.width as usize).saturating_sub(chrome_used);
-    let ws_name = crate::ui::clip_to_cells(&ws_name, max_name_w.max(4));
-    let header_used = chev_str.chars().count() + CURRENT_DOT_W + ws_name.chars().count();
-    let header_rect = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
-    let chip_spans = workspace_header_chips(app, header_rect, header_used, nerd, rail_bg);
     app.rects.workspace_picker_chevron = None;
-    // 2026-06-27 #611 — separate click rect on just the workspace
-    // NAME. In multi-repo workspaces, clicking the name opens the
-    // repo picker (the existing chevron stays the workspace
-    // picker). Single-repo workspaces fall through to the section
-    // toggle.
-    let name_x = area.x + chev_str.chars().count() as u16 + CURRENT_DOT_W as u16;
-    app.rects.workspace_name_rect = Some(Rect {
-        x: name_x,
-        y: area.y,
-        width: ws_name.chars().count() as u16,
-        height: 1,
-    });
-    // Primary workspace = the "current" one. Mark with a
-    // filled `● ` green dot before the name + bold green name
-    // styling. Extra workspaces (rendered below by
-    // `draw_extra_workspace_section`) get a hollow indicator
-    // so the user can see at a glance which workspace they're
-    // operating in.
-    let mut spans = vec![
-        Span::styled(
-            chev_str,
-            Style::default().fg(theme::cur().comment).bg(rail_bg),
-        ),
-        Span::styled("● ", Style::default().fg(theme::cur().green).bg(rail_bg)),
-        Span::styled(
-            ws_name.clone(),
-            Style::default()
-                .fg(theme::cur().green)
-                .bg(rail_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
-    spans.extend(chip_spans);
-    frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
-    app.rects.tree_toggle = Some(header_rect);
-
     // The clipped rect bounds the workspace-tree / extras / `+ repo`
     // rows so they never spill into the GIT panel pinned below.
     let ws_area = Rect {
@@ -186,24 +119,43 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         height: ws_end_y.saturating_sub(area.y),
     };
 
-    // ── workspace file list (only when expanded). Returns the row past the
-    //    last one it drew, so the next workspace section / `+ repo` row
-    //    can render below.
-    let mut next_y = area.y + 1;
-    if app.tree_root_expanded && ws_area.height >= 2 {
-        next_y = draw_workspace_files(frame, app, ws_area, next_y, nerd);
+    // qa-feature 2026-07-01 — render primary + extras in a
+    // single stable POSITION ORDER (each carries a `.position`).
+    // Promoting an extra to primary now only swaps positions, so
+    // the visible list order never reshuffles. The primary is
+    // just an entry with `PrimaryOrExtra::Primary`; extras are
+    // referenced by their `extra_workspaces` index.
+    enum Slot {
+        Primary,
+        Extra(usize),
     }
+    let mut slots: Vec<(usize, Slot)> = Vec::with_capacity(app.extra_workspaces.len() + 1);
+    slots.push((app.primary_position, Slot::Primary));
+    for (i, w) in app.extra_workspaces.iter().enumerate() {
+        slots.push((w.position, Slot::Extra(i)));
+    }
+    slots.sort_by_key(|(p, _)| *p);
 
-    // ── extra workspace sections (from `[[workspaces]]` config). Each gets
-    //    a blank separator + collapsible header (with action chips); expanded
-    //    sections show a bounded file-list slot below the header.
-    for ws_idx in 0..app.extra_workspaces.len() {
-        if next_y + 1 >= ws_end_y {
-            break;
-        }
-        next_y = draw_extra_workspace_section(frame, app, ws_area, next_y, ws_idx, nerd);
+    let mut next_y = area.y;
+    for (slot_idx, (_pos, slot)) in slots.iter().enumerate() {
         if next_y >= ws_end_y {
             break;
+        }
+        // Insert a blank separator row between workspaces (same
+        // convention the old primary+extras loop used).
+        if slot_idx > 0 {
+            if next_y + 1 >= ws_end_y {
+                break;
+            }
+            next_y += 1;
+        }
+        match slot {
+            Slot::Primary => {
+                next_y = draw_primary_workspace_section(frame, app, ws_area, next_y, nerd, rail_bg);
+            }
+            Slot::Extra(i) => {
+                next_y = draw_extra_workspace_section(frame, app, ws_area, next_y, *i, nerd);
+            }
         }
     }
 
@@ -856,6 +808,83 @@ fn section_chev(expanded: bool, nerd: bool) -> &'static str {
     }
 }
 
+/// qa-feature 2026-07-01 — Draw the PRIMARY workspace section at
+/// `start_y` (header + optional expanded file list). Returns the
+/// row past the last one drawn. Split out from the old top-of-tree
+/// path so the caller can position the primary at any slot in the
+/// unified `primary + extras` position list, not just row 0.
+fn draw_primary_workspace_section(
+    frame: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    start_y: u16,
+    nerd: bool,
+    rail_bg: ratatui::style::Color,
+) -> u16 {
+    let area_end = area.y + area.height;
+    if start_y >= area_end {
+        return start_y;
+    }
+    let ws_name = app
+        .workspace
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("workspace")
+        .to_string();
+    let chev = section_chev(app.tree_root_expanded, nerd);
+    let chev_str = format!(" {chev} ");
+    const CURRENT_DOT_W: usize = 2;
+    const CHIP_RESERVE: usize = 5 * 3 + 1;
+    let chrome_used = chev_str.chars().count() + CURRENT_DOT_W + CHIP_RESERVE;
+    let max_name_w = (area.width as usize).saturating_sub(chrome_used);
+    let ws_name = crate::ui::clip_to_cells(&ws_name, max_name_w.max(4));
+    let header_used = chev_str.chars().count() + CURRENT_DOT_W + ws_name.chars().count();
+    let header_rect = Rect {
+        x: area.x,
+        y: start_y,
+        width: area.width,
+        height: 1,
+    };
+    let chip_spans = workspace_header_chips(app, header_rect, header_used, nerd, rail_bg);
+    let name_x = area.x + chev_str.chars().count() as u16 + CURRENT_DOT_W as u16;
+    app.rects.workspace_name_rect = Some(Rect {
+        x: name_x,
+        y: start_y,
+        width: ws_name.chars().count() as u16,
+        height: 1,
+    });
+    let mut spans = vec![
+        Span::styled(
+            chev_str,
+            Style::default().fg(theme::cur().comment).bg(rail_bg),
+        ),
+        Span::styled("● ", Style::default().fg(theme::cur().green).bg(rail_bg)),
+        Span::styled(
+            ws_name.clone(),
+            Style::default()
+                .fg(theme::cur().green)
+                .bg(rail_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    spans.extend(chip_spans);
+    frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
+    app.rects.tree_toggle = Some(header_rect);
+
+    // File list — only when the primary is expanded and there's room.
+    let mut next_y = start_y + 1;
+    if app.tree_root_expanded && next_y < area_end {
+        let body_area = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: area_end.saturating_sub(area.y),
+        };
+        next_y = draw_workspace_files(frame, app, body_area, next_y, nerd);
+    }
+    next_y
+}
+
 /// Draw the WORKSPACE section's file list starting at `start_y`; returns the
 /// row immediately past the last one drawn (so the GIT section follows on).
 fn draw_workspace_files(
@@ -1252,13 +1281,14 @@ fn draw_extra_workspace_section(
     let rail_bg = theme::cur().bg_darker;
     let width = area.width as usize;
     let area_end = area.y + area.height;
-    if start_y + 1 >= area_end {
+    if start_y >= area_end {
         return start_y;
     }
-    let header_y = start_y + 1; // blank separator row above
-    if header_y >= area_end {
-        return start_y;
-    }
+    // qa-feature 2026-07-01 — separator between workspaces is now
+    // added by the caller (draw_tree_section's slot loop) so the
+    // primary + extras share a single stable ordering. This
+    // function now paints its header at `start_y` directly.
+    let header_y = start_y;
     let (name, expanded) = {
         let ws = &app.extra_workspaces[ws_idx];
         (ws.name.clone(), ws.expanded)
