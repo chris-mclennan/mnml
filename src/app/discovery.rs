@@ -663,6 +663,9 @@ impl App {
             // User-added chips via the discovery overlay default
             // to enabled — the act of clicking "Add" is the opt-in.
             enabled: true,
+            // Palette-bar visibility is a separate opt-in — user
+            // enables via right-click → Show in palette bar.
+            in_palette_bar: false,
         };
         match panel.mode {
             IntegrationEditMode::Edit => {
@@ -930,6 +933,7 @@ impl App {
             color: s.icon_color().to_string(),
             tooltip: Some(s.icon_tooltip().to_string()),
             enabled: true,
+            in_palette_bar: false,
         });
         // Best-effort TOML persistence so the chip survives a restart.
         // On failure we still report "added" but flag the persistence
@@ -1260,6 +1264,7 @@ color = \"blue\"
                 color: "orange".to_string(),
                 tooltip: Some("Lambda".to_string()),
                 enabled: false,
+                in_palette_bar: false,
             },
             IntegrationIcon {
                 id: "s3".to_string(),
@@ -1269,6 +1274,7 @@ color = \"blue\"
                 color: "orange".to_string(),
                 tooltip: None,
                 enabled: false,
+                in_palette_bar: false,
             },
         ];
         let out = append_integration_icon_blocks("", &icons);
@@ -1291,6 +1297,7 @@ color = \"blue\"
             color: "orange".to_string(),
             tooltip: None,
             enabled: false,
+            in_palette_bar: false,
         }];
         let first = append_integration_icon_blocks("", &icons);
         let stripped = strip_integration_icon_blocks(&first);
@@ -1319,6 +1326,7 @@ color = \"blue\"
             color: "cyan".to_string(),
             tooltip: Some("My App".to_string()),
             enabled: true,
+            in_palette_bar: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);
         assert!(
@@ -1348,6 +1356,7 @@ color = \"blue\"
             color: "red".to_string(),
             tooltip: None,
             enabled: false,
+            in_palette_bar: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);
         assert!(

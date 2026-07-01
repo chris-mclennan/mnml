@@ -1758,6 +1758,9 @@ pub struct PaneRects {
     /// qa-feature 2026-07-01 — clickable close button on a pty pane's
     /// exit banner (`[× close]`). `(rect, pane_id)`.
     pub pty_exit_close_buttons: Vec<(Rect, PaneId)>,
+    /// qa-feature 2026-07-01 — "configure" link in the Integrations
+    /// panel header. Click opens the discovery / install overlay.
+    pub integrations_configure_button: Option<Rect>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.

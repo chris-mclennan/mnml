@@ -1974,6 +1974,11 @@ fn paint_integration_chips_in_gap(
     // gate on enabled=true AND binary-present (or built-in). Without
     // the binary check, a chip with enabled=true but uninstalled
     // binary would render in the palette bar and silently fail.
+    // qa-feature 2026-07-01 — only render integrations that are
+    // both `enabled` AND `in_palette_bar`. `enabled` alone lets
+    // an integration surface in the sidebar panel + right-click
+    // menus but not on the top bar. Users opt each into palette-bar
+    // visibility so the top row stays quiet on first run.
     let enabled_integrations: Vec<(usize, &crate::config::IntegrationIcon)> = app
         .config
         .ui
@@ -1981,7 +1986,7 @@ fn paint_integration_chips_in_gap(
         .iter()
         .enumerate()
         .filter(|(_, i)| {
-            if !i.enabled {
+            if !i.enabled || !i.in_palette_bar {
                 return false;
             }
             match crate::integration_detect::sibling_binary_for_command(&i.command) {
@@ -1996,7 +2001,10 @@ fn paint_integration_chips_in_gap(
     let to_paint = total_wanted.min(chip_count);
     let launcher_paint = n_launcher.min(to_paint);
     let integration_paint = to_paint - launcher_paint;
-    let mut x = avail_left;
+    // qa-feature 2026-07-01 — 2 cells of padding between the
+    // right-panel toggle and the first palette-bar chip so the
+    // browser globe doesn't butt against the toggle.
+    let mut x = avail_left.saturating_add(2);
     let color_of = |c: &str| theme::color_from_slot(c, &t);
     // 2026-06-27 — chips render WITHOUT a colored background.
     // The configured color slot drives the FG (glyph color); the
@@ -2886,7 +2894,15 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     let nerd = !app.config.ui.ascii_icons;
 
-    // Header.
+    // Header. qa-feature 2026-07-01 — right-side "configure" chip
+    // opens the discovery / install overlay (same as right-click
+    // an integration → Add / Manage).
+    let header_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
     frame.render_widget(
         Paragraph::new(ratatui::text::Line::from(" INTEGRATIONS")).style(
             Style::default()
@@ -2894,13 +2910,31 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ),
-        Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 1,
-        },
+        header_rect,
     );
+    let configure_label = " configure ";
+    let configure_w = configure_label.chars().count() as u16;
+    if area.width > 14 + configure_w {
+        let configure_x = area.x + area.width - configure_w;
+        let configure_rect = Rect {
+            x: configure_x,
+            y: area.y,
+            width: configure_w,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(configure_label).style(
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(bg)
+                    .add_modifier(Modifier::UNDERLINED),
+            ),
+            configure_rect,
+        );
+        app.rects.integrations_configure_button = Some(configure_rect);
+    } else {
+        app.rects.integrations_configure_button = None;
+    }
 
     // Empty-state hint when no icons are configured.
     let icons = app.config.ui.integration_icons.clone();

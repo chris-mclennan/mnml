@@ -496,6 +496,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.close_pane(id);
         return;
     }
+    // qa-feature 2026-07-01 — "configure" link in Integrations panel
+    // header opens the discovery / install overlay.
+    if let Some(rect) = app.rects.integrations_configure_button
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.open_discovery_overlay();
+        return;
+    }
     // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
     if let Some(&(_, id)) = app
         .rects

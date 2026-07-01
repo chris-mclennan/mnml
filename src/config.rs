@@ -633,6 +633,13 @@ pub struct IntegrationIcon {
     /// quiet on first run; users build up their chip strip as
     /// they actually use each integration.
     pub enabled: bool,
+    /// qa-feature 2026-07-01 — opt-in to painting this
+    /// integration's chip in the palette bar (next to the
+    /// command palette). Default `false`. Users can right-click
+    /// an integration and toggle "Show in palette bar" to enable.
+    /// Browser is the only default-on integration (its `browser.open`
+    /// is a common enough action to warrant top-bar real estate).
+    pub in_palette_bar: bool,
 }
 
 /// One entry in the bufferline's right-side launcher-icon strip.
@@ -771,6 +778,7 @@ impl Default for Config {
                             "Browser (CDP Chrome-for-testing; can be captured in mnml)".to_string(),
                         ),
                         enabled: true,
+                        in_palette_bar: true,
                     },
                     IntegrationIcon {
                         id: "claude_code".to_string(),
@@ -786,6 +794,7 @@ impl Default for Config {
                         color: "orange".to_string(),
                         tooltip: Some("Claude Code".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "codex".to_string(),
@@ -799,6 +808,7 @@ impl Default for Config {
                         color: "cyan".to_string(),
                         tooltip: Some("Codex".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "bitbucket".to_string(),
@@ -812,6 +822,7 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("Bitbucket pipelines + PRs".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "jira".to_string(),
@@ -826,6 +837,7 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("Jira tracker".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "http".to_string(),
@@ -840,6 +852,7 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("HTTP: send active request".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         // Postman-style "new request" chip — matches
@@ -853,6 +866,7 @@ impl Default for Config {
                         color: "green".to_string(),
                         tooltip: Some("HTTP: new blank request".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "codebuild".to_string(),
@@ -866,6 +880,7 @@ impl Default for Config {
                         color: "yellow".to_string(),
                         tooltip: Some("AWS CodeBuild + logs".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "github".to_string(),
@@ -879,6 +894,7 @@ impl Default for Config {
                         color: "fg".to_string(),
                         tooltip: Some("GitHub Actions + PRs".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "azdevops".to_string(),
@@ -892,6 +908,7 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("Azure DevOps PRs + builds".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "gitlab".to_string(),
@@ -905,6 +922,7 @@ impl Default for Config {
                         color: "orange".to_string(),
                         tooltip: Some("GitLab MRs + Pipelines".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "s3".to_string(),
@@ -918,6 +936,7 @@ impl Default for Config {
                         color: "orange".to_string(),
                         tooltip: Some("Amazon S3 browser".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "azure_blob".to_string(),
@@ -927,6 +946,7 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("Azure Blob Storage browser".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     // Terminal-native diagnostic tools. Open as Pty
                     // panes inside mnml's layout. The sidebar filter
@@ -940,6 +960,7 @@ impl Default for Config {
                         color: "green".to_string(),
                         tooltip: Some("htop — interactive process viewer".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "iftop".to_string(),
@@ -952,6 +973,7 @@ impl Default for Config {
                                 .to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "btop".to_string(),
@@ -963,6 +985,7 @@ impl Default for Config {
                             "btop — resource monitor (cpu / mem / disk / net)".to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "datadog".to_string(),
@@ -974,6 +997,7 @@ impl Default for Config {
                             "Datadog — monitors + dashboards + logs + incidents".to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "buttondown".to_string(),
@@ -983,6 +1007,7 @@ impl Default for Config {
                         color: "green".to_string(),
                         tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "slack".to_string(),
@@ -994,6 +1019,7 @@ impl Default for Config {
                             "Slack — channels + DMs + threads + search + post".to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "teams".to_string(),
@@ -1005,6 +1031,7 @@ impl Default for Config {
                             "Microsoft Teams — teams + chats + threads + post".to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "mandrill".to_string(),
@@ -1017,6 +1044,7 @@ impl Default for Config {
                                 .to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "gmail".to_string(),
@@ -1028,6 +1056,7 @@ impl Default for Config {
                             "Gmail — inbox + sent + labels + search + compose".to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "docker".to_string(),
@@ -1039,6 +1068,7 @@ impl Default for Config {
                             "Docker — containers + images + volumes + networks".to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "cloudflare".to_string(),
@@ -1048,6 +1078,7 @@ impl Default for Config {
                         color: "orange".to_string(),
                         tooltip: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "tattle_inbox".to_string(),
@@ -1059,6 +1090,7 @@ impl Default for Config {
                             "Tattle inbox (INTERNAL — dev/staging email/SMS sink)".to_string(),
                         ),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
@@ -1068,6 +1100,7 @@ impl Default for Config {
                         color: "yellow".to_string(),
                         tooltip: Some("CloudWatch Logs live tail".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "amplify".to_string(),
@@ -1077,6 +1110,7 @@ impl Default for Config {
                         color: "purple".to_string(),
                         tooltip: Some("Amplify apps + deploys".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "dynamodb".to_string(),
@@ -1086,6 +1120,7 @@ impl Default for Config {
                         color: "teal".to_string(),
                         tooltip: Some("DynamoDB table browser".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "lambda".to_string(),
@@ -1095,6 +1130,7 @@ impl Default for Config {
                         color: "orange".to_string(),
                         tooltip: Some("Lambda function browser".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "eventbridge".to_string(),
@@ -1104,6 +1140,7 @@ impl Default for Config {
                         color: "pink".to_string(),
                         tooltip: Some("EventBridge buses + rules".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "rds".to_string(),
@@ -1117,6 +1154,7 @@ impl Default for Config {
                         color: "blue".to_string(),
                         tooltip: Some("RDS database browser".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "ecs".to_string(),
@@ -1126,6 +1164,7 @@ impl Default for Config {
                         color: "green".to_string(),
                         tooltip: Some("ECS clusters + services".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "ecr".to_string(),
@@ -1135,6 +1174,7 @@ impl Default for Config {
                         color: "purple".to_string(),
                         tooltip: Some("ECR container registry".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "cognito".to_string(),
@@ -1144,6 +1184,7 @@ impl Default for Config {
                         color: "cyan".to_string(),
                         tooltip: Some("Cognito User Pools + users".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "sqs".to_string(),
@@ -1153,6 +1194,7 @@ impl Default for Config {
                         color: "yellow".to_string(),
                         tooltip: Some("SQS queues".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     IntegrationIcon {
                         id: "sns".to_string(),
@@ -1162,6 +1204,7 @@ impl Default for Config {
                         color: "yellow".to_string(),
                         tooltip: Some("SNS topics + subscriptions".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     // mixr rail chip — opens the family DJ app via
                     // `mixr.show` as a Pty pane.
@@ -1173,6 +1216,7 @@ impl Default for Config {
                         color: "pink".to_string(),
                         tooltip: Some("mixr DJ".to_string()),
                         enabled: false,
+                        in_palette_bar: false,
                     },
                     // 2026-06-19 — removed a duplicate `id: "http"`
                     // entry that lived here. The earlier `IntegrationIcon`
@@ -1446,6 +1490,8 @@ struct RawLauncherIcon {
     tooltip: Option<String>,
     /// Visibility opt-in. None in raw → false in resolved config.
     enabled: Option<bool>,
+    /// qa-feature 2026-07-01 — palette-bar visibility. None → false.
+    in_palette_bar: Option<bool>,
 }
 
 impl Config {
@@ -1689,6 +1735,7 @@ impl Config {
                         color: r.color.unwrap_or_else(|| "fg".to_string()),
                         tooltip: r.tooltip,
                         enabled: r.enabled.unwrap_or(false),
+                        in_palette_bar: r.in_palette_bar.unwrap_or(false),
                     })
                 })
                 .collect();
