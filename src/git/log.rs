@@ -165,8 +165,21 @@ fn layout(commits: &mut [Commit]) {
     // `lanes[i]` = the hash that lane `i` is "waiting for" (its next commit going
     // older), or `None` if free. A stable colour is `lane_index` cycled.
     let mut lanes: Vec<Option<String>> = Vec::new();
+    // qa-fix 2026-06-30 — cooldown per lane. When a lane is freed
+    // (merged in), it becomes eligible for reuse only after
+    // COOLDOWN rows so the graph stays compact but freshly-emptied
+    // slots aren't repurposed for unrelated branches (which would
+    // stack unrelated ● dots in the same visual column with no
+    // vertical connection).
+    let mut lane_cooldown: Vec<u16> = Vec::new();
+    const COOLDOWN: u16 = 5;
 
     for c in commits.iter_mut() {
+        // Decrement cooldowns each row so freed slots become
+        // reusable after COOLDOWN rows.
+        for cd in lane_cooldown.iter_mut() {
+            *cd = cd.saturating_sub(1);
+        }
         // Which lane is this commit's? (the first lane already waiting for it).
         let my_lane = match lanes
             .iter()
@@ -175,6 +188,7 @@ fn layout(commits: &mut [Commit]) {
             Some(i) => i,
             None => {
                 lanes.push(None);
+                lane_cooldown.push(0);
                 lanes.len() - 1
             }
         };
@@ -187,19 +201,30 @@ fn layout(commits: &mut [Commit]) {
             .collect();
 
         // Reserve lanes for extra parents (the first parent stays in `my_lane`).
-        // qa-bug 2026-06-30 — previously reused the first free
-        // mid-graph slot, which produced visually disconnected
-        // `●`s stacked in the same column across unrelated
-        // branches. Always append at the end instead; the trim-
-        // trailing-Nones step keeps the graph from growing
-        // unbounded when lanes free up at the tail.
+        // qa-fix 2026-06-30 — allow reuse of mid-graph free slots
+        // ONLY when they've cooled down (>= COOLDOWN rows since
+        // last freed). Prevents "3 unrelated ● in one column"
+        // while keeping the graph narrow in typical histories.
         let mut branch_to: Vec<usize> = Vec::new();
         for p in c.parents.iter().skip(1) {
             if lanes.iter().any(|l| l.as_deref() == Some(p.as_str())) {
                 continue; // a lane already heads there — it'll merge later
             }
-            lanes.push(None);
-            let slot = lanes.len() - 1;
+            let free = lanes
+                .iter()
+                .enumerate()
+                .find(|(i, l)| {
+                    *i != my_lane && l.is_none() && lane_cooldown.get(*i).copied().unwrap_or(0) == 0
+                })
+                .map(|(i, _)| i);
+            let slot = match free {
+                Some(free) => free,
+                None => {
+                    lanes.push(None);
+                    lane_cooldown.push(0);
+                    lanes.len() - 1
+                }
+            };
             lanes[slot] = Some(p.clone());
             branch_to.push(slot);
         }
@@ -255,11 +280,20 @@ fn layout(commits: &mut [Commit]) {
         // first parent (or frees up); merged-in lanes are absorbed (freed).
         for i in &merging {
             lanes[*i] = None;
+            if let Some(cd) = lane_cooldown.get_mut(*i) {
+                *cd = COOLDOWN;
+            }
         }
         lanes[my_lane] = c.parents.first().cloned();
+        if lanes[my_lane].is_none()
+            && let Some(cd) = lane_cooldown.get_mut(my_lane)
+        {
+            *cd = COOLDOWN;
+        }
         // Trim trailing free lanes so the graph doesn't drift wide forever.
         while matches!(lanes.last(), Some(None)) {
             lanes.pop();
+            lane_cooldown.pop();
         }
     }
 }
