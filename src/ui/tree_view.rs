@@ -1359,17 +1359,28 @@ fn draw_extra_workspace_section(
         return header_y + 1;
     }
     let avail = (area_end - body_y) as usize;
-    // Reserve a bit for the GIT section that follows (4 rows = blank + header
-    // + at least 2 body rows) when applicable. Cap at EXTRA_TREE_MAX_ROWS so
-    // a 200-line tree can't swallow the rail.
-    let h = avail.saturating_sub(4).min(EXTRA_TREE_MAX_ROWS);
+    // qa-feature 2026-07-01 — removed the `-4` reserve for a
+    // trailing GIT section. `area_end` (= `ws_end_y` from the
+    // caller) already excludes GIT + INTEGRATIONS heights, so
+    // the subtraction was pure double-counting — 4 rows of
+    // wasted rail at the bottom whenever an extra was expanded.
+    // Still cap at `EXTRA_TREE_MAX_ROWS` so a deep tree can't
+    // crowd out siblings when several extras expand at once.
+    let h = avail.min(EXTRA_TREE_MAX_ROWS);
     if h == 0 {
         return body_y;
     }
+    // qa-feature 2026-07-01 — extras render a scrollbar when
+    // their tree overflows. Prior to this the tree would just
+    // clip below the visible window and the user had no way to
+    // see there was more (nor to grab a scroll thumb).
+    let rows_precount = app.extra_workspaces[ws_idx].tree.visible_rows().len();
+    let needs_sb = rows_precount > h;
+    let sb_w: u16 = if needs_sb { 1 } else { 0 };
     let body_rect = Rect {
         x: area.x,
         y: body_y,
-        width: area.width,
+        width: area.width.saturating_sub(sb_w),
         height: h as u16,
     };
     app.rects.extra_workspace_bodies.push((
@@ -1482,7 +1493,7 @@ fn draw_extra_workspace_section(
             ("", theme::cur().fg)
         };
         let used = prefix_width + repo_marker.chars().count() + row.name.chars().count();
-        let pad_n = width.saturating_sub(used);
+        let pad_n = (width.saturating_sub(sb_w as usize)).saturating_sub(used);
         let mut spans = vec![
             Span::styled(
                 chev_part,
@@ -1505,6 +1516,41 @@ fn draw_extra_workspace_section(
     }
     let drew = lines.len() as u16;
     frame.render_widget(Paragraph::new(lines), body_rect);
+    if needs_sb {
+        let sb_area = Rect {
+            x: body_rect.x + body_rect.width,
+            y: body_y,
+            width: sb_w,
+            height: h as u16,
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            sb_area,
+            &theme::cur(),
+            rows_precount,
+            h,
+            scroll,
+        );
+        // Widen the click hit rect 1 cell to the left (padding
+        // fills that cell, so no text overlap) so the drag
+        // grabs even when the click lands slightly off-column.
+        let hit_extra_left: u16 = 1;
+        let hit_x = sb_area.x.saturating_sub(hit_extra_left);
+        let hit_width = sb_area.x + sb_area.width - hit_x;
+        let hit_area = Rect {
+            x: hit_x,
+            y: sb_area.y,
+            width: hit_width,
+            height: sb_area.height,
+        };
+        app.rects.scrollbars.push(crate::app::ScrollbarHit {
+            area: hit_area,
+            pane_id: 0,
+            total: rows_precount,
+            viewport: h,
+            kind: crate::app::ScrollbarKind::ExtraTree(ws_idx),
+        });
+    }
     body_y + drew
 }
 

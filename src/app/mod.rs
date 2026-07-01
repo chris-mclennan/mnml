@@ -1527,6 +1527,10 @@ pub enum ScrollbarKind {
     /// dispatcher ignores `pane_id`. `total` = visible-row count;
     /// `viewport` = tree body height.
     Tree,
+    /// An extra workspace's expanded tree (`app.extra_workspaces[i].tree.scroll`).
+    /// The `usize` is the workspace index. `total` = visible-row count;
+    /// `viewport` = expanded body height.
+    ExtraTree(usize),
     /// The agents rail panel (`app.agents_panel_scroll`) — not a pane.
     /// `total` = content-row count; `viewport` = panel body height.
     AgentsPanel,
@@ -8591,6 +8595,12 @@ impl App {
         // dedicated App fields.
         if matches!(kind, ScrollbarKind::Tree) {
             self.tree.scroll = scroll;
+            return;
+        }
+        if let ScrollbarKind::ExtraTree(ws_idx) = kind {
+            if let Some(w) = self.extra_workspaces.get_mut(ws_idx) {
+                w.tree.scroll = scroll;
+            }
             return;
         }
         if matches!(kind, ScrollbarKind::AgentsPanel) {
