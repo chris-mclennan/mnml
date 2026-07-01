@@ -2003,17 +2003,15 @@ fn paint_integration_chips_in_gap(
     let to_paint = total_wanted.min(chip_count);
     let launcher_paint = n_launcher.min(to_paint);
     let integration_paint = to_paint - launcher_paint;
-    // qa-feature 2026-07-01 — exactly 2 empty cells between the
+    // qa-feature 2026-07-01 — exactly 1 empty cell between the
     // right-panel toggle's visible glyph and the first chip's
-    // visible glyph. Nerd Font codicons like `layout-sidebar-*`
-    // and `browser` render as DOUBLE-wide, which consumes the
-    // rect's trailing / leading space cells. In nerd mode the
-    // wide toggle glyph spills into what would be its trailing
-    // space, so counting on that space to be visible leaves only
-    // 1 blank cell before the wide chip glyph. Compensate by
-    // starting the chip strip 1 cell further right in nerd mode.
-    let wide_glyph_pad = if nerd { 1u16 } else { 0u16 };
-    let mut x = avail_left.saturating_add(wide_glyph_pad);
+    // visible glyph. Chip starts at avail_left (= toggle rect's
+    // right edge); its leading space lands at avail_left and the
+    // wide glyph starts at avail_left + 1. The toggle's own wide
+    // glyph occupies its rect's cells 1-2, so the visible gap is
+    // the single cell at avail_left. Tighter than the earlier
+    // 2-cell spacing per user follow-up.
+    let mut x = avail_left;
     // 2026-06-27 — chips render WITHOUT a colored background.
     // 2026-07-01 — chips now use `t.comment` FG (matching the
     // split-horiz / split-vert / terminal buttons in the right
