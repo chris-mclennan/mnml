@@ -449,6 +449,19 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: cfg.editor.tab_width != d.editor.tab_width,
     }));
 
+    // 2026-06-30 — git_graph.lane_spacing: 0..=4; step 1.
+    out.push(SettingItem::Number(NumberRow {
+        key: "git_graph.lane_spacing",
+        label: "Git graph lane spacing",
+        value: cfg.git_graph.lane_spacing as i32,
+        min: 0,
+        max: 4,
+        step: 1,
+        default: d.git_graph.lane_spacing as i32,
+        unit: " cells",
+        modified: cfg.git_graph.lane_spacing != d.git_graph.lane_spacing,
+    }));
+
     // UI.color_column: 0..=200; step 4. 0 = off.
     out.push(SettingItem::Number(NumberRow {
         key: "ui.color_column",
@@ -799,6 +812,12 @@ pub fn apply_number_setting(cfg: &mut Config, key: &str, value: i32) -> bool {
             cfg.ui.color_column = new;
             changed
         }
+        "git_graph.lane_spacing" => {
+            let new = value.clamp(0, 4) as u16;
+            let changed = cfg.git_graph.lane_spacing != new;
+            cfg.git_graph.lane_spacing = new;
+            changed
+        }
         _ => false,
     }
 }
@@ -922,6 +941,11 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             cfg.ui.right_panel_width.to_string(),
         )],
         "ui.color_column" => vec![("ui", "color_column", cfg.ui.color_column.to_string())],
+        "git_graph.lane_spacing" => vec![(
+            "git_graph",
+            "lane_spacing",
+            cfg.git_graph.lane_spacing.to_string(),
+        )],
         // ── editor ──
         "editor.input_style" => vec![("editor", "input_style", q(&cfg.editor.input_style))],
         "editor.wheel_moves_cursor" => vec![(

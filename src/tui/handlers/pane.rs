@@ -19,6 +19,24 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
     // the keyboard is parked on; the cursor crosses the boundary on ↓ off the
     // bottom of workspace or ↑ off the top of git.
     if app.rail_section == crate::app::RailSection::Git {
+        // qa-feature 2026-06-30 — PageUp/PageDown on the rail
+        // forward to the active GitGraph pane's selection so the
+        // user doesn't have to click into the graph to scroll it
+        // with the keyboard.
+        if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            let is_pgup = matches!(key.code, KeyCode::PageUp);
+            if let Some(idx) = app.active
+                && let Some(crate::pane::Pane::GitGraph(g)) = app.panes.get_mut(idx)
+            {
+                // Approximate viewport = 20 rows; the actual height
+                // depends on pane layout but 20 matches the
+                // pane-key handler's semantics for uninstrumented
+                // cases.
+                let step = 20isize;
+                g.move_selection(if is_pgup { -step } else { step });
+                return;
+            }
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.git_rail_move_up(),
             KeyCode::Down | KeyCode::Char('j') => app.git_rail_move_down(),
