@@ -145,12 +145,24 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
                 app.toast("git rail not visible — toggle with the `git` chip");
             }
         }
-        KeyCode::Right | KeyCode::Char('l') => app.tree.expand_or_descend(),
-        KeyCode::Left | KeyCode::Char('h') => app.tree.collapse_or_ascend(),
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.tree.expand_or_descend();
+            preview_selected_tree_file(app);
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.tree.collapse_or_ascend();
+            preview_selected_tree_file(app);
+        }
         KeyCode::Enter | KeyCode::Char(' ') => app.tree_activate(),
         KeyCode::Char('R') => app.tree.refresh(),
-        KeyCode::Home | KeyCode::Char('g') => app.tree.set_cursor(0),
-        KeyCode::End | KeyCode::Char('G') => app.tree.set_cursor(usize::MAX),
+        KeyCode::Home | KeyCode::Char('g') => {
+            app.tree.set_cursor(0);
+            preview_selected_tree_file(app);
+        }
+        KeyCode::End | KeyCode::Char('G') => {
+            app.tree.set_cursor(usize::MAX);
+            preview_selected_tree_file(app);
+        }
         // When there's a sticky filter, Esc clears it before yielding focus.
         KeyCode::Esc if !app.tree.filter.is_empty() => app.tree.filter_clear_and_exit(),
         _ => {}
