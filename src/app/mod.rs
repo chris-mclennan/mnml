@@ -2493,7 +2493,7 @@ pub struct App {
     /// on a worker thread. Drained in `tick`; result surfaces as
     /// a toast.
     pub cloud_run_pending:
-        Option<std::sync::mpsc::Receiver<crate::tattle_qwe_trigger::TriggerResult>>,
+        Option<std::sync::mpsc::Receiver<crate::ecs_runner_trigger::TriggerResult>>,
     /// Family id captured when a `prompt_install_sibling` opens the
     /// "X not installed — install? y/n" prompt. Resolved by the
     /// prompt accept handler to fire the install.
@@ -3118,7 +3118,7 @@ pub struct App {
         std::sync::mpsc::Receiver<(
             Vec<crate::claude_agents::AgentRow>, // local Claude/Codex rows
             Vec<crate::claude_agents::AgentRow>, // cloud rows
-            std::collections::HashMap<String, crate::tattle_qwe::TattleQweMeta>,
+            std::collections::HashMap<String, crate::ecs_runner::EcsRunMeta>,
         )>,
     >,
 
@@ -3191,10 +3191,10 @@ pub struct App {
     /// Top-row scroll offset for the Cloud Agents content list.
     pub cloud_agents_scroll: usize,
     /// Per-runId cloud-row metadata (prUrl, s3 prefix, …) populated
-    /// by the qwe-runner scan. Keyed by runId (== `AgentRow.session_id`
+    /// by the ECS runner scan. Keyed by runId (== `AgentRow.session_id`
     /// for cloud rows). Lets the right-click menu build URLs without
     /// bloating `AgentRow`.
-    pub cloud_agents_meta: std::collections::HashMap<String, crate::tattle_qwe::TattleQweMeta>,
+    pub cloud_agents_meta: std::collections::HashMap<String, crate::ecs_runner::EcsRunMeta>,
     /// Monotonically-increasing id for new dock widgets. Each
     /// `dock.new_*` invocation bumps it; ids are stable for the
     /// session.
@@ -6212,9 +6212,9 @@ impl App {
         self.activity_badges.get(section_id).copied().unwrap_or(0)
     }
 
-    /// Prompt for a Jira ticket then fire a qwe-runner cloud
-    /// run via `aws ecs run-task`. Used by the
-    /// `cloud_agents.new_run` palette command.
+    /// Prompt for a Jira ticket then fire an ECS cloud run via
+    /// `aws ecs run-task`. Used by the `cloud_agents.new_run`
+    /// palette command.
     pub fn prompt_cloud_run(&mut self) {
         use crate::prompt::{Prompt, PromptKind};
         self.prompt = Some(Prompt::new(
@@ -6231,9 +6231,15 @@ impl App {
         if ticket.is_empty() {
             return;
         }
+        let cloud_agents_config = self.config.cloud_agents.clone();
+        let jira_config = self.config.jira.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(crate::tattle_qwe_trigger::trigger_run(&ticket));
+            let _ = tx.send(crate::ecs_runner_trigger::trigger_run(
+                cloud_agents_config,
+                jira_config,
+                &ticket,
+            ));
         });
         self.cloud_run_pending = Some(rx);
         self.toast("firing cloud run…");
@@ -6246,7 +6252,7 @@ impl App {
             return;
         };
         match rx.try_recv() {
-            Ok(crate::tattle_qwe_trigger::TriggerResult::Ok {
+            Ok(crate::ecs_runner_trigger::TriggerResult::Ok {
                 run_id,
                 task_arn: _,
             }) => {
@@ -6256,7 +6262,7 @@ impl App {
                 // 30s drift.
                 self.agents_panel_built_at = None;
             }
-            Ok(crate::tattle_qwe_trigger::TriggerResult::Err(e)) => {
+            Ok(crate::ecs_runner_trigger::TriggerResult::Err(e)) => {
                 self.toast(format!("cloud run failed: {e}"));
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -6373,15 +6379,17 @@ impl App {
             return;
         }
         let anchor = self.workspace.clone();
+        let cloud_agents_config = self.config.cloud_agents.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let pane = crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor);
             let local_rows = pane.rows;
             // Cloud rows live in a SEPARATE list now (the Cloud
             // Agents activity-bar section renders them). Merge
-            // Tattle QWE (DynamoDB) + Anthropic Managed Agents
+            // ECS runner (DynamoDB) + Anthropic Managed Agents
             // (API) into one list — both are "cloud agents."
-            let (mut cloud_rows, meta) = crate::tattle_qwe::collect_cloud_rows_with_meta();
+            let (mut cloud_rows, meta) =
+                crate::ecs_runner::collect_cloud_rows_with_meta(&cloud_agents_config);
             let managed = crate::anthropic_api::collect_managed_agent_rows();
             cloud_rows.extend(managed);
             let _ = tx.send((local_rows, cloud_rows, meta));
@@ -6520,7 +6528,7 @@ impl App {
             .as_ref()
             .map(|m| m.cloudwatch_url(&row.session_id))
             .unwrap_or_else(|| {
-                crate::tattle_qwe::TattleQweMeta::default().cloudwatch_url(&row.session_id)
+                crate::ecs_runner::EcsRunMeta::default().cloudwatch_url(&row.session_id)
             });
         let mut items = vec![
             MenuItem::new("Copy runId", MenuAction::CopyText(row.session_id.clone())),
@@ -6530,9 +6538,9 @@ impl App {
             MenuItem::new(
                 "Tail logs in mnml",
                 MenuAction::OpenCloudWatchPane {
-                    log_group: crate::tattle_qwe::LOG_GROUP.to_string(),
+                    log_group: self.config.cloud_agents.log_group.clone(),
                     filter: row.session_id.clone(),
-                    label: format!("qwe: {}", row.workspace),
+                    label: format!("ecs: {}", row.workspace),
                 },
             ),
             MenuItem::new(

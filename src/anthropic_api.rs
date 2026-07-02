@@ -456,7 +456,7 @@ pub fn send_user_message(backend: &Backend, session_id: &str, text: &str) -> Res
 
 /// `GET /v1/sessions` — list active sessions for the workspace.
 /// Used by the Cloud Agents panel to surface managed-agent rows
-/// alongside Tattle QWE rows. Returns minimal fields — id, agent,
+/// alongside ECS runner rows. Returns minimal fields — id, agent,
 /// status, created_at — enough to render rows; detail pane fetches
 /// per-session events separately.
 #[derive(Debug, Clone)]
@@ -719,10 +719,10 @@ fn short_id(id: &str) -> String {
 }
 
 /// Collect Managed Agents sessions for the Cloud Agents panel.
-/// Returns rows in the same `AgentRow` shape as the Tattle QWE
-/// scan, so the panel renderer can mix them. On any failure
-/// (missing creds, network, API error) returns an empty vec —
-/// matches the Tattle scan's silent-fallback shape so a missing
+/// Returns rows in the same `AgentRow` shape as the ECS
+/// runner scan, so the panel renderer can mix them. On any
+/// failure (missing creds, network, API error) returns an empty
+/// vec — matches the ECS scan's silent-fallback shape so a missing
 /// backend doesn't blow up the panel.
 pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
     use crate::claude_agents::{AgentRow, AgentSource, AgentState};
@@ -737,7 +737,7 @@ pub fn collect_managed_agent_rows() -> Vec<crate::claude_agents::AgentRow> {
             // Silent — list_sessions runs from the rail
             // refresh worker every 30s; printing to stderr
             // would corrupt the TUI. The empty-vec fallback
-            // matches the Tattle scan's behavior so the panel
+            // matches the ECS scan's behavior so the panel
             // just stays empty if the backend isn't configured.
             let _ = e;
             return Vec::new();

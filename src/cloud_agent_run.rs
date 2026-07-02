@@ -60,7 +60,7 @@ pub enum ArtifactsEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CloudRunSource {
     #[default]
-    TattleQwe,
+    Ecs,
     AnthropicManaged,
 }
 
@@ -97,7 +97,7 @@ pub struct CloudAgentRunPane {
     pub artifacts_rx: Option<Receiver<ArtifactsEvent>>,
 
     /// Managed-agents only — SSE stream of session events from
-    /// `/v1/sessions/{id}/stream`. Tattle path leaves this None
+    /// `/v1/sessions/{id}/stream`. ECS path leaves this None
     /// and uses the CloudWatch `log_rx` channel instead.
     pub session_event_rx: Option<Receiver<crate::anthropic_api::SessionStreamEvent>>,
 
@@ -150,7 +150,7 @@ impl CloudAgentRunPane {
                 0
             };
         Self {
-            source: CloudRunSource::TattleQwe,
+            source: CloudRunSource::Ecs,
             run_id,
             ticket,
             flow,
@@ -202,7 +202,7 @@ impl CloudAgentRunPane {
         Self {
             source: CloudRunSource::AnthropicManaged,
             run_id: session_id,
-            // Repurpose the Tattle field names so the existing
+            // Repurpose the ECS field names so the existing
             // renderer's labels still make sense after we tweak
             // them: ticket → agent id, flow → environment id.
             ticket: agent_id.unwrap_or_else(|| "—".to_string()),
@@ -509,14 +509,21 @@ pub fn spawn_artifacts_fetcher(s3_prefix: Option<String>) -> Receiver<ArtifactsE
     rx
 }
 
-/// Build a Jira ticket URL from a TE-NNNNN ticket id.
-/// Returns None for empty / non-conforming inputs.
-pub fn jira_url_for(ticket: &str) -> Option<String> {
+/// Build a Jira ticket URL. `domain` is the org's Jira instance
+/// (e.g. `"acme.atlassian.net"`); `None` or empty domain → `None`
+/// (feature off — no chip renders). Callers should pass
+/// `config.jira.effective_domain()` so `MNML_JIRA_DOMAIN` wins
+/// over the file.
+pub fn jira_url_for(ticket: &str, domain: Option<&str>) -> Option<String> {
     let t = ticket.trim();
     if t.is_empty() || !t.contains('-') {
         return None;
     }
-    Some(format!("https://tattle.atlassian.net/browse/{t}"))
+    let d = domain?;
+    if d.is_empty() {
+        return None;
+    }
+    Some(format!("https://{d}/browse/{t}"))
 }
 
 /// Build an S3 console URL from a `s3://bucket/prefix` path.
@@ -528,4 +535,29 @@ pub fn s3_console_url_for(s3_path: &str) -> Option<String> {
     Some(format!(
         "https://s3.console.aws.amazon.com/s3/buckets/{bucket}?prefix={prefix}"
     ))
+}
+
+#[cfg(test)]
+mod jira_url_tests {
+    use super::*;
+
+    #[test]
+    fn builds_url_when_domain_set() {
+        assert_eq!(
+            jira_url_for("TE-1234", Some("acme.atlassian.net")),
+            Some("https://acme.atlassian.net/browse/TE-1234".to_string()),
+        );
+    }
+
+    #[test]
+    fn none_without_domain() {
+        assert_eq!(jira_url_for("TE-1234", None), None);
+        assert_eq!(jira_url_for("TE-1234", Some("")), None);
+    }
+
+    #[test]
+    fn none_for_malformed_ticket() {
+        assert_eq!(jira_url_for("", Some("acme.atlassian.net")), None);
+        assert_eq!(jira_url_for("nodashhere", Some("acme.atlassian.net")), None);
+    }
 }

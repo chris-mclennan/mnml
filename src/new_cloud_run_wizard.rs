@@ -6,20 +6,21 @@
 //!     Sandbox runs either in Anthropic's cloud (default) or on a
 //!     self-hosted worker the user runs locally / remotely.
 //!     API key billing.
-//!   • **Tattle QWE** — ECS task fire path (existing
-//!     `fire_cloud_run`). Tattle-specific infra; only useful if
-//!     the user is on Tattle's AWS account.
+//!   • **ECS runner** — user's own ECS task fire path (existing
+//!     `fire_cloud_run`). Requires `[cloud_agents]` to be
+//!     configured; the wizard hides this entry when the config
+//!     is empty.
 //!
 //! Steps:
-//!   1. Pick runner (Managed | QWE)
+//!   1. Pick runner (Managed | ECS)
 //!   2a. (Managed) Configure agent + sandbox mode
-//!   2b. (QWE) Ticket + flow
+//!   2b. (ECS) Ticket + flow
 //!   3. Initial prompt
 //!   4. Review + submit
 //!
 //! Submit:
 //!   - Managed → POST /v1/sessions (with agent_id + environment_id)
-//!   - QWE → `App::fire_cloud_run`
+//!   - ECS → `App::fire_cloud_run`
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub enum CloudRunner {
@@ -28,17 +29,18 @@ pub enum CloudRunner {
     /// API rates billing.
     #[default]
     ManagedAgents,
-    /// Tattle qwe-runner ECS task (existing path). Requires
-    /// Tattle AWS SSO. Subscription billing irrelevant — runs on
-    /// Tattle's own infra.
-    TattleQwe,
+    /// ECS runner fire path — the trigger reads
+    /// `[cloud_agents]` config for the region / cluster / task
+    /// definition / DynamoDB table. Wizard hides this entry
+    /// when the config is empty.
+    Ecs,
 }
 
 impl CloudRunner {
     pub fn label(self) -> &'static str {
         match self {
             CloudRunner::ManagedAgents => "Managed Agents (Anthropic)",
-            CloudRunner::TattleQwe => "Tattle QWE (ECS)",
+            CloudRunner::Ecs => "ECS runner",
         }
     }
     pub fn hint(self) -> &'static str {
@@ -46,11 +48,11 @@ impl CloudRunner {
             CloudRunner::ManagedAgents => {
                 "Anthropic-hosted Claude + sandbox · API key OR AWS SigV4 (SSO)"
             }
-            CloudRunner::TattleQwe => "ECS task running qwe-runner container · Tattle AWS SSO",
+            CloudRunner::Ecs => "ECS task on your AWS account · configured via [cloud_agents]",
         }
     }
     pub fn all() -> &'static [CloudRunner] {
-        &[CloudRunner::ManagedAgents, CloudRunner::TattleQwe]
+        &[CloudRunner::ManagedAgents, CloudRunner::Ecs]
     }
 }
 
@@ -154,7 +156,7 @@ impl NewCloudRunWizardPane {
         let next = match self.step {
             CloudRunStep::Runner => match self.runner {
                 CloudRunner::ManagedAgents => CloudRunStep::ManagedAgent,
-                CloudRunner::TattleQwe => CloudRunStep::QweTicket,
+                CloudRunner::Ecs => CloudRunStep::QweTicket,
             },
             CloudRunStep::ManagedAgent => CloudRunStep::ManagedSandbox,
             CloudRunStep::ManagedSandbox => CloudRunStep::Prompt,
@@ -175,7 +177,7 @@ impl NewCloudRunWizardPane {
             CloudRunStep::QweTicket => CloudRunStep::Runner,
             CloudRunStep::Prompt => match self.runner {
                 CloudRunner::ManagedAgents => CloudRunStep::ManagedSandbox,
-                CloudRunner::TattleQwe => CloudRunStep::QweTicket,
+                CloudRunner::Ecs => CloudRunStep::QweTicket,
             },
             CloudRunStep::Review => CloudRunStep::Prompt,
         };

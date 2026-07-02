@@ -1654,7 +1654,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         if let Some(row) = app.agents_panel_rows.get(row_idx).cloned() {
             match row.source {
-                crate::claude_agents::AgentSource::TattleQwe => {
+                crate::claude_agents::AgentSource::Ecs => {
                     // Cloud rows can't be resumed locally —
                     // copy the runId so the user can paste
                     // it into Slack / a browser, and toast

@@ -1,27 +1,22 @@
-//! Trigger a Tattle qwe-runner cloud run from inside mnml. Mirrors
-//! the shell shape `qwe-runner/scripts/smoke.sh` uses: discover
-//! network config from CFN exports + EC2 tags, fire `aws ecs
-//! run-task`, then seed the DynamoDB `qwe-runner-runs` row so the
-//! cloud-agents panel picks it up on the next refresh.
+//! Trigger a cloud-agent run against the configured ECS cluster.
+//! Shape: discover network config (private subnets + a CFN-exported
+//! security group), fire `aws ecs run-task`, then seed the DynamoDB
+//! run-records row so the Cloud Agents panel picks it up on the
+//! next refresh.
 //!
-//! Shelling out to the AWS CLI matches the rest of `tattle_qwe.rs`
-//! and dodges ~50 transitive deps from `aws-sdk-*` crates. The
-//! discovery calls are cacheable but for v1 we re-resolve each
-//! trigger (cheap; both calls are <100ms).
+//! Shelling out to the AWS CLI matches the rest of `ecs_runner.rs`
+//! and dodges ~50 transitive deps from `aws-sdk-*` crates.
 //!
-//! Auth: caller is expected to have an SSO profile (typically
-//! `default` mapped to the Developer SSO role) with
+//! Auth: caller is expected to have an SSO profile with
 //! `ecs:RunTask` + `iam:PassRole` + `dynamodb:PutItem` granted.
 //! Errors surface via the toast channel.
+//!
+//! The feature is a no-op when `[cloud_agents]` isn't configured —
+//! callers check `config.cloud_agents.is_enabled()` first.
 
+use crate::config::{CloudAgentsConfig, JiraConfig};
 use std::process::Command;
 use std::time::SystemTime;
-
-const REGION: &str = "us-east-1";
-const CLUSTER: &str = "qwe-runner";
-const TASK_DEFINITION: &str = "qwe-runner-claude-runner";
-const RUNS_TABLE: &str = "qwe-runner-runs";
-const SG_EXPORT_NAME: &str = "QweRunnerEcsSecurityGroupId";
 
 /// Outcome of `trigger_run` reported back to App via the worker
 /// channel.
@@ -31,14 +26,35 @@ pub enum TriggerResult {
     Err(String),
 }
 
-/// Fire a qwe-runner cloud run for `ticket`. Default flow is
-/// `triage`, env `prod` — the most common case. The full
-/// `command` line passed to the container is `/triage-auto
-/// <ticket> --env=prod`, mirroring smoke.sh's default.
-pub fn trigger_run(ticket: &str) -> TriggerResult {
+/// Fire a cloud-agent run for `ticket`. Default flow is `triage`,
+/// env `prod` — the container command line is `/triage-auto
+/// <ticket> --env=prod`, matching the runner's smoke-test shape.
+///
+/// Config passed by value (cheap clone) so the caller can spawn
+/// this on a background thread without keeping `&App` alive.
+pub fn trigger_run(config: CloudAgentsConfig, jira: JiraConfig, ticket: &str) -> TriggerResult {
+    if !config.is_enabled() {
+        return TriggerResult::Err("cloud_agents config not set — nothing to trigger".to_string());
+    }
     let ticket = ticket.trim().to_string();
-    if !is_valid_ticket(&ticket) {
-        return TriggerResult::Err(format!("invalid ticket `{ticket}` — expected TE-NNNN"));
+    let prefix = jira.effective_ticket_prefix();
+    if !is_valid_ticket(&ticket, prefix.as_deref()) {
+        let expected = prefix
+            .as_deref()
+            .map(|p| format!("{p}NNNN"))
+            .unwrap_or_else(|| "PROJ-NNNN".to_string());
+        return TriggerResult::Err(format!("invalid ticket `{ticket}` — expected {expected}"));
+    }
+    let region = config.effective_region();
+    let cluster = &config.cluster;
+    let task_definition = &config.task_definition;
+    let runs_table = &config.runs_table;
+    let sg_export_name = &config.sg_export_name;
+    if cluster.is_empty() || task_definition.is_empty() || sg_export_name.is_empty() {
+        return TriggerResult::Err(
+            "cloud_agents config incomplete — need cluster, task_definition, sg_export_name"
+                .to_string(),
+        );
     }
     let env = "prod";
     let flow = "triage";
@@ -54,7 +70,7 @@ pub fn trigger_run(ticket: &str) -> TriggerResult {
         "ec2",
         "describe-subnets",
         "--region",
-        REGION,
+        &region,
         "--filters",
         "Name=tag:Tier,Values=Private",
         "--query",
@@ -72,9 +88,9 @@ pub fn trigger_run(ticket: &str) -> TriggerResult {
         "cloudformation",
         "list-exports",
         "--region",
-        REGION,
+        &region,
         "--query",
-        &format!("Exports[?Name=='{SG_EXPORT_NAME}'].Value"),
+        &format!("Exports[?Name=='{sg_export_name}'].Value"),
         "--output",
         "text",
     ]) {
@@ -82,12 +98,12 @@ pub fn trigger_run(ticket: &str) -> TriggerResult {
         Err(e) => return TriggerResult::Err(format!("list-exports: {e}")),
     };
     if security_group.is_empty() {
-        return TriggerResult::Err(format!("couldn't resolve CFN export `{SG_EXPORT_NAME}`"));
+        return TriggerResult::Err(format!("couldn't resolve CFN export `{sg_export_name}`"));
     }
 
     // 2. Fire ecs:RunTask. The overrides JSON pushes the bash env
-    // variables qwe-runner's entrypoint reads (`RUN_ID`, `TICKET`,
-    // `FLOW`, `CLAUDE_COMMAND`).
+    // variables the runner container's entrypoint reads
+    // (`RUN_ID`, `TICKET`, `FLOW`, `CLAUDE_COMMAND`).
     let overrides = format!(
         r#"{{"containerOverrides":[{{"name":"claude-runner","environment":[{{"name":"CLAUDE_COMMAND","value":"{command_line}"}},{{"name":"RUN_ID","value":"{run_id}"}},{{"name":"TICKET","value":"{ticket}"}},{{"name":"FLOW","value":"{flow}"}}]}}]}}"#
     );
@@ -98,11 +114,11 @@ pub fn trigger_run(ticket: &str) -> TriggerResult {
         "ecs",
         "run-task",
         "--region",
-        REGION,
+        &region,
         "--cluster",
-        CLUSTER,
+        cluster,
         "--task-definition",
-        TASK_DEFINITION,
+        task_definition,
         "--launch-type",
         "FARGATE",
         "--network-configuration",
@@ -122,11 +138,11 @@ pub fn trigger_run(ticket: &str) -> TriggerResult {
     }
 
     // 3. Seed the DynamoDB row so the Cloud Agents panel picks up
-    // the new run on its next refresh (~30s). qwe-runner's
-    // container would write its own row on startup, but seeding
-    // here means the user gets immediate feedback in mnml.
+    // the new run on its next refresh (~30s). The container writes
+    // its own row on startup, but seeding here means immediate
+    // feedback in mnml.
     let created_at = iso_now();
-    let ttl = now_unix as i64 + 30 * 24 * 3600; // matches qwe-runner's 30d TTL
+    let ttl = now_unix as i64 + 30 * 24 * 3600;
     let item = format!(
         r#"{{"runId":{{"S":"{run_id}"}},"ticket":{{"S":"{ticket}"}},"flow":{{"S":"{flow}"}},"source":{{"S":"manual"}},"state":{{"S":"started"}},"createdAt":{{"S":"{created_at}"}},"ttl":{{"N":"{ttl}"}}}}"#
     );
@@ -134,14 +150,12 @@ pub fn trigger_run(ticket: &str) -> TriggerResult {
         "dynamodb",
         "put-item",
         "--region",
-        REGION,
+        &region,
         "--table-name",
-        RUNS_TABLE,
+        runs_table,
         "--item",
         &item,
     ]) {
-        // Soft failure: the container will create the row on its
-        // own. Surface the warning but the run did fire.
         return TriggerResult::Ok {
             run_id: format!("{run_id} (seed failed: {e})"),
             task_arn,
@@ -163,9 +177,31 @@ fn run_capture(args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-fn is_valid_ticket(t: &str) -> bool {
-    // qwe-runner expects `TE-` + digits.
-    t.len() > 3 && t.starts_with("TE-") && t[3..].chars().all(|c| c.is_ascii_digit())
+/// Validate a ticket id. Shape: `[A-Z]+-\d+`. If `prefix` is
+/// supplied, additionally require the ticket start with that
+/// exact prefix.
+pub(crate) fn is_valid_ticket(t: &str, prefix: Option<&str>) -> bool {
+    let dash_idx = match t.find('-') {
+        Some(i) if i > 0 => i,
+        _ => return false,
+    };
+    let (head, tail_incl_dash) = t.split_at(dash_idx);
+    let tail = &tail_incl_dash[1..];
+    if tail.is_empty() {
+        return false;
+    }
+    if !head.chars().all(|c| c.is_ascii_uppercase()) {
+        return false;
+    }
+    if !tail.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if let Some(p) = prefix
+        && !t.starts_with(p)
+    {
+        return false;
+    }
+    true
 }
 
 fn iso_now() -> String {
@@ -177,8 +213,6 @@ fn iso_now() -> String {
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.000Z")
 }
 
-/// Lifted from `tattle_qwe.rs` to avoid cross-module exports for
-/// a 5-line helper. Stays a self-contained module.
 fn epoch_to_ymdhms(epoch: i64) -> (i32, u32, u32, u32, u32, u32) {
     let z = epoch.div_euclid(86_400) + 719_468;
     let secs_of_day = epoch.rem_euclid(86_400);
@@ -202,19 +236,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_bad_ticket() {
-        let r = trigger_run("BAD");
-        match r {
-            TriggerResult::Err(e) => assert!(e.contains("invalid ticket")),
-            _ => panic!("expected Err"),
-        }
+    fn accepts_valid_ticket_shape_without_prefix() {
+        assert!(is_valid_ticket("TE-1234", None));
+        assert!(is_valid_ticket("PROJ-42", None));
+        assert!(!is_valid_ticket("TE-12X4", None));
+        assert!(!is_valid_ticket("TE-", None));
+        assert!(!is_valid_ticket("te-1234", None));
+        assert!(!is_valid_ticket("1234-TE", None));
     }
 
     #[test]
-    fn accepts_valid_ticket_shape() {
-        assert!(is_valid_ticket("TE-1234"));
-        assert!(!is_valid_ticket("TE-12X4"));
-        assert!(!is_valid_ticket("TE-"));
-        assert!(!is_valid_ticket("FE-1234"));
+    fn enforces_prefix_when_supplied() {
+        assert!(is_valid_ticket("TE-1234", Some("TE-")));
+        assert!(!is_valid_ticket("FE-1234", Some("TE-")));
+        assert!(!is_valid_ticket("PROJ-1234", Some("TE-")));
+    }
+
+    #[test]
+    fn rejects_when_config_disabled() {
+        let r = trigger_run(
+            CloudAgentsConfig::default(),
+            JiraConfig::default(),
+            "TE-1234",
+        );
+        match r {
+            TriggerResult::Err(e) => assert!(e.contains("not set")),
+            _ => panic!("expected Err"),
+        }
     }
 }

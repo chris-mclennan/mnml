@@ -55,7 +55,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     // ── header ───────────────────────────────────────────────────
     use crate::cloud_agent_run::CloudRunSource;
     let header_label = match p.source {
-        CloudRunSource::TattleQwe => format!("☁ {} · {} · {}", p.ticket, p.flow, p.state),
+        CloudRunSource::Ecs => format!("☁ {} · {} · {}", p.ticket, p.flow, p.state),
         CloudRunSource::AnthropicManaged => {
             format!("☁ Managed Agents · {} · {}", p.workspace_name, p.state)
         }
@@ -170,7 +170,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
 
     // ── links ────────────────────────────────────────────────────
     let links: Vec<(&str, Option<&String>, &str)> = match p.source {
-        CloudRunSource::TattleQwe => vec![
+        CloudRunSource::Ecs => vec![
             ("Jira     ", p.jira_url.as_ref(), "open ticket in browser"),
             ("PR       ", p.pr_url.as_ref(), "open pull request"),
             (
@@ -283,13 +283,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
         } else if p.artifacts_err.is_some() {
             "  Artifacts (error)".to_string()
         } else if count == 0 {
-            // Distinguish "qwe-runner tried to upload and failed
+            // Distinguish "ECS runner tried to upload and failed
             // (AccessDenied / put-dir failed)" from "the run
             // genuinely produced nothing." The first case points
-            // at an IAM gap on the qwe-runner task role; the
+            // at an IAM gap on the ECS runner task role; the
             // second is just an empty run.
             if p.artifacts_upload_failed() {
-                "  Artifacts (upload failed — see log warnings · qwe-runner IAM gap)".to_string()
+                "  Artifacts (upload failed — see log warnings · ECS runner IAM gap)".to_string()
             } else {
                 "  Artifacts (none)".to_string()
             }

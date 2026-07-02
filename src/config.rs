@@ -31,6 +31,12 @@ pub struct Config {
     /// "change defaults" chip. Empty means "no defaults yet —
     /// route Enter to the wizard."
     pub cloud_run: CloudRunConfig,
+    /// `[jira]` — org-specific Jira config. See [`JiraConfig`].
+    pub jira: JiraConfig,
+    /// `[cloud_agents]` — org-specific cloud-agent runner
+    /// (ECS-backed). See [`CloudAgentsConfig`]. Empty by default;
+    /// the cloud-agents feature is a no-op until configured.
+    pub cloud_agents: CloudAgentsConfig,
     /// `[keys.<section>]` — key spec → command id. Sections: `global`, `vim`,
     /// `standard`. Resolved into an [`crate::input::keymap::Keymap`].
     pub keys: BTreeMap<String, BTreeMap<String, String>>,
@@ -108,6 +114,147 @@ pub struct Config {
 #[derive(Debug, Clone, Default)]
 pub struct CloudRunConfig {
     pub defaults: CloudRunDefaults,
+}
+
+/// `[jira]` — org-specific Jira wiring. `domain` builds ticket
+/// URLs; `ticket_prefix` validates ticket ids in cloud-agent
+/// runners. Both empty by default (feature no-op). Env
+/// overrides — `MNML_JIRA_DOMAIN` / `MNML_JIRA_TICKET_PREFIX`
+/// — win over the file.
+#[derive(Debug, Clone, Default)]
+pub struct JiraConfig {
+    pub domain: String,
+    pub ticket_prefix: String,
+}
+
+/// `[cloud_agents]` — pointer at an org's cloud agent runner
+/// (ECS-backed). All fields empty by default → the cloud agents
+/// feature is a no-op (no rail rows, no wizard entry).
+///
+/// Everything mirrors the pieces of AWS infra the runner shells
+/// out to via the `aws` CLI. Env overrides are supported for the
+/// pieces most likely to differ per-machine (`MNML_AWS_PROFILE`,
+/// `MNML_CLOUD_AGENTS_REGION`).
+#[derive(Debug, Clone, Default)]
+pub struct CloudAgentsConfig {
+    /// Human label surfaced in the wizard / UI (e.g.
+    /// `"Acme runner (ECS)"`). Falls back to `"ECS runner"`.
+    pub label: String,
+    /// Short id used in agent-row source-tag chips
+    /// (e.g. `"acme-ecs"` renders as `"☁acme-ecs"`). Falls
+    /// back to `"ecs"`.
+    pub short_id: String,
+    /// AWS region the runner stack lives in (e.g. `"us-east-1"`).
+    pub region: String,
+    /// AWS account id — used to build CloudWatch console URLs.
+    pub account_id: String,
+    /// DynamoDB table storing run records.
+    pub runs_table: String,
+    /// ECS cluster name.
+    pub cluster: String,
+    /// ECS task definition family the trigger fires.
+    pub task_definition: String,
+    /// CloudFormation export naming the ECS task's security group id.
+    pub sg_export_name: String,
+    /// CloudWatch log group for the runner container.
+    pub log_group: String,
+    /// AWS profile fallback tried when the caller's default
+    /// profile isn't authenticated (e.g. `"acme-dev"`).
+    pub aws_profile_fallback: String,
+    /// S3 bucket where the runner writes per-run artifacts. Empty
+    /// → no S3-console chip rendered.
+    pub s3_artifacts_bucket: String,
+    /// Display fallback used when a run row has no ticket id
+    /// (e.g. `"acme"`). Cosmetic. Empty → `"cloud"`.
+    pub default_workspace_label: String,
+}
+
+impl CloudAgentsConfig {
+    /// True when the required minimum for scanning is set —
+    /// region + runs_table. When false, cloud-agents features
+    /// (rail rows, wizard entry, trigger) are all no-ops.
+    pub fn is_enabled(&self) -> bool {
+        !self.effective_region().is_empty() && !self.runs_table.is_empty()
+    }
+
+    /// Env-then-config lookup for region. Env: `MNML_CLOUD_AGENTS_REGION`.
+    pub fn effective_region(&self) -> String {
+        if let Ok(v) = std::env::var("MNML_CLOUD_AGENTS_REGION")
+            && !v.is_empty()
+        {
+            return v;
+        }
+        self.region.clone()
+    }
+
+    /// Env-then-config lookup for the AWS profile fallback.
+    /// Env: `MNML_AWS_PROFILE`.
+    pub fn effective_aws_profile_fallback(&self) -> Option<String> {
+        if let Ok(v) = std::env::var("MNML_AWS_PROFILE")
+            && !v.is_empty()
+        {
+            return Some(v);
+        }
+        if self.aws_profile_fallback.is_empty() {
+            None
+        } else {
+            Some(self.aws_profile_fallback.clone())
+        }
+    }
+
+    pub fn effective_label(&self) -> &str {
+        if self.label.is_empty() {
+            "ECS runner"
+        } else {
+            &self.label
+        }
+    }
+
+    pub fn effective_short_id(&self) -> &str {
+        if self.short_id.is_empty() {
+            "ecs"
+        } else {
+            &self.short_id
+        }
+    }
+
+    pub fn effective_default_workspace_label(&self) -> &str {
+        if self.default_workspace_label.is_empty() {
+            "cloud"
+        } else {
+            &self.default_workspace_label
+        }
+    }
+}
+
+impl JiraConfig {
+    /// Env-then-config lookup. `None` when neither is set.
+    pub fn effective_domain(&self) -> Option<String> {
+        if let Ok(v) = std::env::var("MNML_JIRA_DOMAIN")
+            && !v.is_empty()
+        {
+            return Some(v);
+        }
+        if self.domain.is_empty() {
+            None
+        } else {
+            Some(self.domain.clone())
+        }
+    }
+
+    /// Env-then-config lookup. `None` when neither is set.
+    pub fn effective_ticket_prefix(&self) -> Option<String> {
+        if let Ok(v) = std::env::var("MNML_JIRA_TICKET_PREFIX")
+            && !v.is_empty()
+        {
+            return Some(v);
+        }
+        if self.ticket_prefix.is_empty() {
+            None
+        } else {
+            Some(self.ticket_prefix.clone())
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1264,6 +1411,8 @@ impl Default for Config {
             ci: CiConfig::default(),
             workspaces: Vec::new(),
             cloud_run: CloudRunConfig::default(),
+            jira: JiraConfig::default(),
+            cloud_agents: CloudAgentsConfig::default(),
         }
     }
 }
@@ -1310,6 +1459,10 @@ struct RawConfig {
     workspaces: Vec<RawWorkspace>,
     #[serde(default)]
     cloud_run: RawCloudRun,
+    #[serde(default)]
+    jira: RawJira,
+    #[serde(default)]
+    cloud_agents: RawCloudAgents,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1371,6 +1524,42 @@ struct RawStartup {
 struct RawCloudRun {
     #[serde(default)]
     defaults: RawCloudRunDefaults,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawJira {
+    #[serde(default)]
+    domain: Option<String>,
+    #[serde(default)]
+    ticket_prefix: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawCloudAgents {
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    short_id: Option<String>,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    runs_table: Option<String>,
+    #[serde(default)]
+    cluster: Option<String>,
+    #[serde(default)]
+    task_definition: Option<String>,
+    #[serde(default)]
+    sg_export_name: Option<String>,
+    #[serde(default)]
+    log_group: Option<String>,
+    #[serde(default)]
+    aws_profile_fallback: Option<String>,
+    #[serde(default)]
+    s3_artifacts_bucket: Option<String>,
+    #[serde(default)]
+    default_workspace_label: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1976,6 +2165,48 @@ impl Config {
         }
         if let Some(v) = raw.cloud_run.defaults.model {
             self.cloud_run.defaults.model = v;
+        }
+        if let Some(v) = raw.jira.domain {
+            self.jira.domain = v;
+        }
+        if let Some(v) = raw.jira.ticket_prefix {
+            self.jira.ticket_prefix = v;
+        }
+        if let Some(v) = raw.cloud_agents.label {
+            self.cloud_agents.label = v;
+        }
+        if let Some(v) = raw.cloud_agents.short_id {
+            self.cloud_agents.short_id = v;
+        }
+        if let Some(v) = raw.cloud_agents.region {
+            self.cloud_agents.region = v;
+        }
+        if let Some(v) = raw.cloud_agents.account_id {
+            self.cloud_agents.account_id = v;
+        }
+        if let Some(v) = raw.cloud_agents.runs_table {
+            self.cloud_agents.runs_table = v;
+        }
+        if let Some(v) = raw.cloud_agents.cluster {
+            self.cloud_agents.cluster = v;
+        }
+        if let Some(v) = raw.cloud_agents.task_definition {
+            self.cloud_agents.task_definition = v;
+        }
+        if let Some(v) = raw.cloud_agents.sg_export_name {
+            self.cloud_agents.sg_export_name = v;
+        }
+        if let Some(v) = raw.cloud_agents.log_group {
+            self.cloud_agents.log_group = v;
+        }
+        if let Some(v) = raw.cloud_agents.aws_profile_fallback {
+            self.cloud_agents.aws_profile_fallback = v;
+        }
+        if let Some(v) = raw.cloud_agents.s3_artifacts_bucket {
+            self.cloud_agents.s3_artifacts_bucket = v;
+        }
+        if let Some(v) = raw.cloud_agents.default_workspace_label {
+            self.cloud_agents.default_workspace_label = v;
         }
     }
 }

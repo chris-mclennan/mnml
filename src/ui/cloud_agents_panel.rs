@@ -1,10 +1,10 @@
 //! Rail-content panel for the Cloud Agents activity-bar section.
-//! Renders Tattle QWE runner rows (from `App::cloud_agents_rows`)
+//! Renders ECS runner rows (from `App::cloud_agents_rows`)
 //! grouped by state.
 //!
 //! Unlike the local Agents panel:
-//!   - No `+ New session` chip (yet — would need to call qwe-runner's
-//!     trigger API; deferred).
+//!   - No `+ New session` chip (yet — would need to call the ECS
+//!     runner's trigger API; deferred).
 //!   - No group-by-workspace mode (cloud rows are already per-ticket).
 //!   - Click → copy runId + toast (no local resume path).
 //!   - Right-click → context menu (Copy runId · Open CloudWatch · Open PR).
@@ -271,7 +271,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Cold-start placeholder.
     if app.agents_panel_built_at.is_none() && y < area.y + area.height {
         let label = if app.agents_panel_rx.is_some() {
-            "Scanning qwe-runner-runs…"
+            "Scanning ECS runner-runs…"
         } else {
             "(start a refresh — open Agents view)"
         };
@@ -317,22 +317,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let spinner = spinner_frame();
     let filter_lc = app.cloud_agents_filter.to_ascii_lowercase();
-    let matches_filter = |r: &crate::claude_agents::AgentRow,
-                          m: Option<&crate::tattle_qwe::TattleQweMeta>|
-     -> bool {
-        if filter_lc.is_empty() {
-            return true;
-        }
-        let mut parts: Vec<String> = vec![
-            r.workspace.to_ascii_lowercase(),
-            r.session_id.to_ascii_lowercase(),
-        ];
-        if let Some(m) = m {
-            parts.push(m.state.to_ascii_lowercase());
-            parts.push(m.flow.to_ascii_lowercase());
-        }
-        parts.iter().any(|p| p.contains(&filter_lc))
-    };
+    let matches_filter =
+        |r: &crate::claude_agents::AgentRow, m: Option<&crate::ecs_runner::EcsRunMeta>| -> bool {
+            if filter_lc.is_empty() {
+                return true;
+            }
+            let mut parts: Vec<String> = vec![
+                r.workspace.to_ascii_lowercase(),
+                r.session_id.to_ascii_lowercase(),
+            ];
+            if let Some(m) = m {
+                parts.push(m.state.to_ascii_lowercase());
+                parts.push(m.flow.to_ascii_lowercase());
+            }
+            parts.iter().any(|p| p.contains(&filter_lc))
+        };
 
     // Partition by state — same shape as the local panel's
     // "Action needed / Running / Done" but using qwe state.
@@ -403,7 +402,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // preserved; lines 2-3 surface ticket / flow / state / time +
     // a wider last-message excerpt.
     let make_row_standard = |r: &crate::claude_agents::AgentRow,
-                             m: Option<&crate::tattle_qwe::TattleQweMeta>|
+                             m: Option<&crate::ecs_runner::EcsRunMeta>|
      -> Vec<Line<'static>> {
         let (glyph, glyph_color) = if r.pending_tool_uses > 0 {
             ("!", t.red)

@@ -282,10 +282,11 @@ pub enum PromptKind {
     /// `mount.open` palette command for developer / testing flows
     /// while siblings get ported to the Bridge tier-4 protocol.
     MountBinary,
-    /// Accept ⇒ fire a qwe-runner cloud run for the typed ticket
-    /// (`TE-NNNN`). Default flow = triage, env = prod (mirrors
-    /// smoke.sh). Used by the `cloud_agents.new_run` palette
-    /// command.
+    /// Accept ⇒ fire an ECS cloud run for the typed ticket
+    /// (validated against `[jira] ticket_prefix`). Default flow
+    /// = triage, env = prod. Used by the `cloud_agents.new_run`
+    /// palette command; requires `[cloud_agents]` to be
+    /// configured.
     CloudRunTicket,
     /// Accept ⇒ if the input starts with `y`, call
     /// `App::install_sibling` for the family id captured in

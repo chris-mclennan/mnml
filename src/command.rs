@@ -2458,14 +2458,14 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.activity_cloud_agents",
-            title: "Activity: show Cloud agents (Tattle QWE runner)",
+            title: "Activity: show Cloud agents (ECS runner)",
             group: "view",
             keys: &[],
             run: |app| app.set_activity_section(crate::app::ActivitySection::CloudAgents),
         },
         Command {
             id: "cloud_agents.new_run",
-            title: "Cloud agents: fire a new qwe-runner run for a Jira ticket",
+            title: "Cloud agents: fire a new ECS run for a Jira ticket",
             group: "view",
             keys: &[],
             run: |app| app.prompt_cloud_run(),
@@ -2479,7 +2479,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "cloud_agents.new_run_wizard",
-            title: "Cloud agents: + New cloud run (Managed Agents · Tattle QWE)",
+            title: "Cloud agents: + New cloud run (Managed Agents · ECS)",
             group: "view",
             keys: &[],
             run: |app| app.open_new_cloud_run_wizard(),

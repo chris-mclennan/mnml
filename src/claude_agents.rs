@@ -37,10 +37,11 @@ pub enum AgentSource {
     /// pgrep matches the `codex` exe.
     Codex,
     /// Tattle QWE runner — cloud agents running in AWS Fargate.
-    /// State lives in the DynamoDB `qwe-runner-runs` table. No
-    /// local pid; the row's "live" state derives from the
-    /// DynamoDB `state` field.
-    TattleQwe,
+    /// ECS cloud-agent run — surfaced from the configured
+    /// `[cloud_agents]` DynamoDB run-records table. No local
+    /// pid; the row's "live" state derives from the DynamoDB
+    /// `state` field.
+    Ecs,
     /// Anthropic Managed Agents session — orchestration on
     /// Anthropic's side, sandbox runs in Anthropic cloud or a
     /// self-hosted worker. State comes from
@@ -54,7 +55,7 @@ impl AgentSource {
         match self {
             AgentSource::Claude => "claude",
             AgentSource::Codex => "codex",
-            AgentSource::TattleQwe => "tattle-qwe",
+            AgentSource::Ecs => "ecs",
             AgentSource::AnthropicManaged => "managed",
         }
     }
@@ -64,7 +65,7 @@ impl AgentSource {
             AgentSource::Codex => "codex",
             // Cloud-only rows never come from a local pid scan —
             // value unused. Kept for the exhaustive match.
-            AgentSource::TattleQwe | AgentSource::AnthropicManaged => "",
+            AgentSource::Ecs | AgentSource::AnthropicManaged => "",
         }
     }
 }

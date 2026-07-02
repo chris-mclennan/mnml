@@ -251,8 +251,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     p.source_filter = match p.source_filter {
                         None => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => Some(AgentSource::Codex),
-                        Some(AgentSource::Codex) => Some(AgentSource::TattleQwe),
-                        Some(AgentSource::TattleQwe) => Some(AgentSource::AnthropicManaged),
+                        Some(AgentSource::Codex) => Some(AgentSource::Ecs),
+                        Some(AgentSource::Ecs) => Some(AgentSource::AnthropicManaged),
                         Some(AgentSource::AnthropicManaged) => None,
                     };
                     p.selected = 0;

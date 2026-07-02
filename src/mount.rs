@@ -57,7 +57,7 @@ pub struct MountSession {
     /// Current geometry the sibling has been told about (so we
     /// can detect resize and emit `HostMessage::Resize`).
     pub geometry: Geometry,
-    /// Label for the pane chrome ("tattle-tests", "qwe-runs", …).
+    /// Label for the pane chrome ("custom-tests", "runs", …).
     pub label: String,
     /// True once the sibling closed its socket (clean exit or crash).
     pub disconnected: bool,

@@ -414,8 +414,8 @@ fn draw_step_prompt(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
             Some(CloudRunner::ManagedAgents) => {
                 "  Initial user message — what the agent should do."
             }
-            Some(CloudRunner::TattleQwe) => {
-                "  Free-form context for the qwe-runner triage (optional — ticket carries the work)."
+            Some(CloudRunner::Ecs) => {
+                "  Free-form context for the ECS runner triage (optional — ticket carries the work)."
             }
             None => "  Initial prompt",
         };
@@ -460,7 +460,7 @@ fn draw_step_review(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
     let bg = t.bg_dark;
     let summary: Vec<(&str, String)> = match app.panes.get(pane_id) {
         Some(Pane::NewCloudRunWizard(p)) => match p.runner {
-            CloudRunner::TattleQwe => vec![
+            CloudRunner::Ecs => vec![
                 ("Runner ", "Tattle QWE (ECS)".to_string()),
                 ("Ticket ", p.qwe_ticket.clone()),
                 ("Flow   ", "triage (default)".to_string()),

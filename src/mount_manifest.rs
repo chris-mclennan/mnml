@@ -18,9 +18,9 @@
 //! ## Manifest fields
 //!
 //! ```toml
-//! id = "tattle-tests"                  # unique stable id
-//! name = "Tattle tests"                # tooltip / pane label
-//! binary = "mnml-tattle-tests"         # PATH lookup, or absolute path
+//! id = "custom-tests"                  # unique stable id
+//! name = "Test executions"             # tooltip / pane label
+//! binary = "mnml-custom-tests"         # PATH lookup, or absolute path
 //! icon = "8"                     # Nerd Font glyph
 //! color = "green"                      # named theme color
 //! tooltip = "Live test executions"     # optional, falls back to name
@@ -176,9 +176,9 @@ icon = "8"
     #[test]
     fn parses_full_manifest() {
         let toml = r#"
-id = "tattle-tests"
-name = "Tattle tests"
-binary = "/opt/bin/mnml-tattle-tests"
+id = "custom-tests"
+name = "Test executions"
+binary = "/opt/bin/mnml-custom-tests"
 icon = "T"
 color = "green"
 tooltip = "Live test executions"

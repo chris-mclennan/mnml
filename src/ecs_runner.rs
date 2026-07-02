@@ -1,13 +1,15 @@
-//! Tattle QWE-runner integration — surface cloud-run rows from
-//! the `qwe-runner-runs` DynamoDB table alongside local Claude /
+//! Cloud-agent ECS runner — surface cloud-run rows from the
+//! configured DynamoDB run-records table alongside local Claude /
 //! Codex sessions in the Agents dashboard.
 //!
-//! Auth strategy: shell out to the `aws` CLI rather than embed
-//! the rust SDK (which would add ~50 transitive deps). The CLI
-//! picks up the user's SSO session via `AWS_PROFILE` (typically
-//! `tattle-dev`); no creds touched in-process.
+//! Auth: shell out to the `aws` CLI so the user's SSO session is
+//! picked up via `AWS_PROFILE`. No creds touched in-process.
 //!
-//! Data model (from `qwe-runner/packages/shared/src/types/run-record.ts`):
+//! The feature is a no-op until the user configures
+//! `[cloud_agents]` — rail rows return empty, the wizard entry is
+//! skipped, the trigger short-circuits with an "unconfigured" toast.
+//!
+//! Data model (per-row):
 //!   runId · ticket · flow · source · state · createdAt ·
 //!   finishedAt · approvalIntent · s3ArtifactPrefix · slackTs ·
 //!   prUrl · lastRunStatus · lastError
@@ -16,19 +18,12 @@
 //!                                                  ↘ dismissed / failed
 
 use crate::claude_agents::{AgentRow, AgentSource, AgentState};
+use crate::config::CloudAgentsConfig;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// AWS region the qwe-runner stack lives in.
-const REGION: &str = "us-east-1";
-/// AWS account id — used to build CloudWatch console URLs.
-const ACCOUNT: &str = "164153407337";
-/// DynamoDB table name (see qwe-runner's CDK stack).
-const TABLE: &str = "qwe-runner-runs";
-/// ECS log group for the claude-runner container.
-pub const LOG_GROUP: &str = "/ecs/qwe-runner/claude-runner";
 /// Only surface runs in the last N hours — keeps the rail tidy
 /// when historical rows accumulate.
 const RECENT_HOURS: u64 = 24;
@@ -38,28 +33,37 @@ const RECENT_HOURS: u64 = 24;
 /// but don't want to bolt onto every `AgentRow` (most rows are
 /// local Claude/Codex sessions that don't carry this data).
 #[derive(Debug, Clone, Default)]
-pub struct TattleQweMeta {
+pub struct EcsRunMeta {
     pub ticket: String,
     pub flow: String,
     pub state: String,
     pub pr_url: Option<String>,
     pub s3_artifact_prefix: Option<String>,
+    /// Snapshot of the account/region/log-group used to build
+    /// this run's CloudWatch URL. Kept on the meta so URL
+    /// construction stays stateless.
+    pub account_id: String,
+    pub region: String,
+    pub log_group: String,
 }
 
-impl TattleQweMeta {
+impl EcsRunMeta {
     /// Build a CloudWatch Logs Insights URL pre-filtered to lines
-    /// mentioning this `runId`. Falls back to the bare log-group
-    /// URL when no runId is supplied — user can filter there.
+    /// mentioning this `runId`. Returns an empty string when
+    /// account/region/log_group is missing.
     pub fn cloudwatch_url(&self, run_id: &str) -> String {
-        // Logs Insights query syntax is `fields … | filter @message like /runId/`.
-        // URL-encoded to fit the AWS console's hash-router format.
-        let encoded_group = LOG_GROUP.replace('/', "$252F");
+        if self.account_id.is_empty() || self.region.is_empty() || self.log_group.is_empty() {
+            return String::new();
+        }
+        let encoded_group = self.log_group.replace('/', "$252F");
         let query = format!(
             "fields @timestamp, @message | filter @message like /{run_id}/ | sort @timestamp desc"
         );
         let encoded_query = urlencoding_minimal(&query);
+        let region = &self.region;
+        let account = &self.account_id;
         format!(
-            "https://{REGION}.console.aws.amazon.com/cloudwatch/home?region={REGION}#logsV2:logs-insights$3FqueryDetail$3D~(end~0~start~-86400~timeType~'RELATIVE~unit~'seconds~editorString~'{encoded_query}~source~(~'{encoded_group}))?account={ACCOUNT}"
+            "https://{region}.console.aws.amazon.com/cloudwatch/home?region={region}#logsV2:logs-insights$3FqueryDetail$3D~(end~0~start~-86400~timeType~'RELATIVE~unit~'seconds~editorString~'{encoded_query}~source~(~'{encoded_group}))?account={account}"
         )
     }
 }
@@ -87,8 +91,9 @@ fn urlencoding_minimal(s: &str) -> String {
     out
 }
 
-/// Scan the `qwe-runner-runs` table for recent rows. Returns
-/// (rows, per-runId metadata) — both empty when:
+/// Scan the configured run-records DynamoDB table for recent
+/// rows. Returns (rows, per-runId metadata) — both empty when:
+///   - `cloud_agents` isn't configured,
 ///   - `aws` CLI is not on PATH,
 ///   - the user isn't SSO'd in (`aws` returns 255),
 ///   - the table is empty / the user can't read it,
@@ -96,14 +101,23 @@ fn urlencoding_minimal(s: &str) -> String {
 ///
 /// Logs nothing to stderr — silent failure is fine here; the rail
 /// just doesn't show cloud rows.
-pub fn collect_cloud_rows_with_meta() -> (Vec<AgentRow>, HashMap<String, TattleQweMeta>) {
+pub fn collect_cloud_rows_with_meta(
+    config: &CloudAgentsConfig,
+) -> (Vec<AgentRow>, HashMap<String, EcsRunMeta>) {
+    if !config.is_enabled() {
+        return (Vec::new(), HashMap::new());
+    }
+    let region = config.effective_region();
     let cutoff = SystemTime::now()
         .checked_sub(Duration::from_secs(RECENT_HOURS * 3600))
         .unwrap_or(UNIX_EPOCH);
     let cutoff_iso = system_time_to_iso(cutoff);
-    let bytes = run_scan(&cutoff_iso, None)
-        .or_else(|| run_scan(&cutoff_iso, Some("claude-ro")))
-        .or_else(|| run_scan(&cutoff_iso, Some("tattle-dev")));
+    let mut bytes = run_scan(&cutoff_iso, &region, &config.runs_table, None);
+    if bytes.is_none()
+        && let Some(fallback) = config.effective_aws_profile_fallback()
+    {
+        bytes = run_scan(&cutoff_iso, &region, &config.runs_table, Some(&fallback));
+    }
     let bytes = match bytes {
         Some(b) => b,
         None => return (Vec::new(), HashMap::new()),
@@ -116,10 +130,17 @@ pub fn collect_cloud_rows_with_meta() -> (Vec<AgentRow>, HashMap<String, TattleQ
         Some(a) => a,
         None => return (Vec::new(), HashMap::new()),
     };
+    let default_ws = config.effective_default_workspace_label().to_string();
     let mut rows = Vec::new();
     let mut meta = HashMap::new();
     for item in items {
-        if let Some((row, m)) = parse_run_record(item) {
+        if let Some((row, m)) = parse_run_record(
+            item,
+            &config.account_id,
+            &region,
+            &config.log_group,
+            &default_ws,
+        ) {
             meta.insert(row.session_id.clone(), m);
             rows.push(row);
         }
@@ -128,8 +149,14 @@ pub fn collect_cloud_rows_with_meta() -> (Vec<AgentRow>, HashMap<String, TattleQ
 }
 
 /// Parse one DynamoDB Item (in low-level type-wrapped form, i.e.
-/// `{"runId":{"S":"abc"},...}`) into an `(AgentRow, TattleQweMeta)`.
-fn parse_run_record(item: &serde_json::Value) -> Option<(AgentRow, TattleQweMeta)> {
+/// `{"runId":{"S":"abc"},...}`) into an `(AgentRow, EcsRunMeta)`.
+fn parse_run_record(
+    item: &serde_json::Value,
+    account_id: &str,
+    region: &str,
+    log_group: &str,
+    default_workspace: &str,
+) -> Option<(AgentRow, EcsRunMeta)> {
     let s = |k: &str| -> Option<String> {
         item.get(k)
             .and_then(|v| v.get("S"))
@@ -145,12 +172,15 @@ fn parse_run_record(item: &serde_json::Value) -> Option<(AgentRow, TattleQweMeta
     let pr_url = s("prUrl");
     let s3_prefix = s("s3ArtifactPrefix");
     let last_error = s("lastError");
-    let meta = TattleQweMeta {
+    let meta = EcsRunMeta {
         ticket: ticket.clone(),
         flow: flow.clone(),
         state: state_str.clone(),
         pr_url: pr_url.clone(),
         s3_artifact_prefix: s3_prefix,
+        account_id: account_id.to_string(),
+        region: region.to_string(),
+        log_group: log_group.to_string(),
     };
 
     let state = match state_str.as_str() {
@@ -176,14 +206,14 @@ fn parse_run_record(item: &serde_json::Value) -> Option<(AgentRow, TattleQweMeta
     };
 
     let row = AgentRow {
-        source: AgentSource::TattleQwe,
+        source: AgentSource::Ecs,
         // Transcript path is meaningless for cloud rows — use a
         // sentinel that `.is_file()` returns false on, so any
         // "open transcript" path no-ops cleanly.
-        transcript_path: PathBuf::from(format!("/dev/null/qwe/{run_id}")),
+        transcript_path: PathBuf::from(format!("/dev/null/ecs/{run_id}")),
         session_id: run_id,
         workspace: if ticket.is_empty() {
-            "tattle".to_string()
+            default_workspace.to_string()
         } else {
             ticket
         },
@@ -215,15 +245,15 @@ fn parse_run_record(item: &serde_json::Value) -> Option<(AgentRow, TattleQweMeta
 
 /// Single `aws dynamodb scan` invocation. Returns `Some(stdout)`
 /// on success, `None` on any failure (no auth, no network, …).
-fn run_scan(cutoff_iso: &str, profile: Option<&str>) -> Option<Vec<u8>> {
+fn run_scan(cutoff_iso: &str, region: &str, table: &str, profile: Option<&str>) -> Option<Vec<u8>> {
     let mut cmd = Command::new("aws");
     cmd.args([
         "dynamodb",
         "scan",
         "--table-name",
-        TABLE,
+        table,
         "--region",
-        REGION,
+        region,
         "--filter-expression",
         "createdAt > :since",
         "--expression-attribute-values",
@@ -252,9 +282,8 @@ fn system_time_to_iso(t: SystemTime) -> String {
     format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.000Z")
 }
 
-/// Parse a DynamoDB-style ISO-8601 string back to `SystemTime`.
-/// Accepts the `YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM]` shapes the
-/// qwe-runner emits.
+/// Parse an ISO-8601 string back to `SystemTime`. Accepts
+/// `YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM]`.
 fn iso_to_system_time(s: &str) -> Option<SystemTime> {
     let bytes = s.as_bytes();
     if bytes.len() < 19 {
@@ -301,4 +330,36 @@ fn epoch_to_ymdhms(epoch: i64) -> (i32, u32, u32, u32, u32, u32) {
     let mi = ((secs_of_day % 3600) / 60) as u32;
     let s = (secs_of_day % 60) as u32;
     (y, m, d, h, mi, s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_config_returns_empty() {
+        let cfg = CloudAgentsConfig::default();
+        let (rows, meta) = collect_cloud_rows_with_meta(&cfg);
+        assert!(rows.is_empty());
+        assert!(meta.is_empty());
+    }
+
+    #[test]
+    fn cloudwatch_url_empty_when_no_account() {
+        let m = EcsRunMeta::default();
+        assert!(m.cloudwatch_url("run-x").is_empty());
+    }
+
+    #[test]
+    fn cloudwatch_url_contains_region_and_account() {
+        let m = EcsRunMeta {
+            account_id: "123456789012".to_string(),
+            region: "us-east-1".to_string(),
+            log_group: "/ecs/my/log".to_string(),
+            ..Default::default()
+        };
+        let url = m.cloudwatch_url("run-abc");
+        assert!(url.contains("us-east-1"));
+        assert!(url.contains("123456789012"));
+    }
 }

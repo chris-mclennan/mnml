@@ -46,7 +46,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let source_chip = match p.source_filter {
         Some(AgentSource::Claude) => " · ✦claude",
         Some(AgentSource::Codex) => " · ◈codex",
-        Some(AgentSource::TattleQwe) => " · ☁tattle-qwe",
+        Some(AgentSource::Ecs) => " · ☁tattle-qwe",
         Some(AgentSource::AnthropicManaged) => " · ☁managed",
         None => "",
     };
@@ -339,7 +339,7 @@ fn draw_topbar(
             None => "all".to_string(),
             Some(crate::claude_agents::AgentSource::Claude) => "claude".to_string(),
             Some(crate::claude_agents::AgentSource::Codex) => "codex".to_string(),
-            Some(crate::claude_agents::AgentSource::TattleQwe) => "tattle-qwe".to_string(),
+            Some(crate::claude_agents::AgentSource::Ecs) => "tattle-qwe".to_string(),
             Some(crate::claude_agents::AgentSource::AnthropicManaged) => "managed".to_string(),
         }
     );
@@ -412,7 +412,7 @@ fn build_groups(mode: GroupBy, vis: &[usize], rows: &[AgentRow]) -> Vec<(Section
                 match rows[row_idx].source {
                     AgentSource::Claude => claude.push(vi),
                     AgentSource::Codex => codex.push(vi),
-                    AgentSource::TattleQwe => tattle.push(vi),
+                    AgentSource::Ecs => tattle.push(vi),
                     AgentSource::AnthropicManaged => managed.push(vi),
                 }
             }
@@ -424,7 +424,7 @@ fn build_groups(mode: GroupBy, vis: &[usize], rows: &[AgentRow]) -> Vec<(Section
                 out.push((SectionKey::Source(AgentSource::Codex), codex));
             }
             if !tattle.is_empty() {
-                out.push((SectionKey::Source(AgentSource::TattleQwe), tattle));
+                out.push((SectionKey::Source(AgentSource::Ecs), tattle));
             }
             if !managed.is_empty() {
                 out.push((SectionKey::Source(AgentSource::AnthropicManaged), managed));
@@ -482,9 +482,7 @@ fn section_header_keyed(
     let (label, accent, glyph) = match key {
         SectionKey::Source(AgentSource::Claude) => ("Claude Code".to_string(), t.purple, "✦"),
         SectionKey::Source(AgentSource::Codex) => ("Codex (OpenAI)".to_string(), t.teal, "◈"),
-        SectionKey::Source(AgentSource::TattleQwe) => {
-            ("Tattle QWE (cloud)".to_string(), t.blue, "☁")
-        }
+        SectionKey::Source(AgentSource::Ecs) => ("Tattle QWE (cloud)".to_string(), t.blue, "☁"),
         SectionKey::Source(AgentSource::AnthropicManaged) => {
             ("Managed Agents".to_string(), t.cyan, "☁")
         }
@@ -539,7 +537,7 @@ fn render_row(
     let (source_glyph, source_color) = match row.source {
         AgentSource::Claude => ("✦", t.purple),
         AgentSource::Codex => ("◈", t.teal),
-        AgentSource::TattleQwe => ("☁", t.blue),
+        AgentSource::Ecs => ("☁", t.blue),
         AgentSource::AnthropicManaged => ("☁", t.cyan),
     };
 

@@ -1125,8 +1125,8 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     p.source_filter = match p.source_filter {
                         None => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => Some(AgentSource::Codex),
-                        Some(AgentSource::Codex) => Some(AgentSource::TattleQwe),
-                        Some(AgentSource::TattleQwe) => Some(AgentSource::AnthropicManaged),
+                        Some(AgentSource::Codex) => Some(AgentSource::Ecs),
+                        Some(AgentSource::Ecs) => Some(AgentSource::AnthropicManaged),
                         Some(AgentSource::AnthropicManaged) => None,
                     };
                     p.selected = 0;
@@ -1137,8 +1137,8 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     use crate::claude_agents::AgentSource;
                     p.source_filter = match p.source_filter {
                         None => Some(AgentSource::AnthropicManaged),
-                        Some(AgentSource::AnthropicManaged) => Some(AgentSource::TattleQwe),
-                        Some(AgentSource::TattleQwe) => Some(AgentSource::Codex),
+                        Some(AgentSource::AnthropicManaged) => Some(AgentSource::Ecs),
+                        Some(AgentSource::Ecs) => Some(AgentSource::Codex),
                         Some(AgentSource::Codex) => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => None,
                     };

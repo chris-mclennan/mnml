@@ -140,10 +140,14 @@ impl App {
             self.toast("restarting session stream…");
             return;
         }
-        // Tattle QWE: rebuild log + artifact workers from scratch.
+        // ECS runner: rebuild log + artifact workers from scratch.
         let run_id = p.run_id.clone();
         let state = p.state.clone();
         let s3_prefix = p.s3_artifact_prefix.clone();
+        let log_group = self.config.cloud_agents.log_group.clone();
+        let Some(Pane::CloudAgentRun(p)) = self.panes.get_mut(id) else {
+            return;
+        };
         p.logs.clear();
         p.logs_loading = true;
         p.logs_err = None;
@@ -153,9 +157,7 @@ impl App {
         p.artifacts_loading = true;
         p.artifacts_err = None;
         p.log_rx = Some(crate::cloud_agent_run::spawn_log_fetcher(
-            run_id,
-            state,
-            "/ecs/qwe-runner/claude-runner".to_string(),
+            run_id, state, log_group,
         ));
         p.artifacts_rx = Some(crate::cloud_agent_run::spawn_artifacts_fetcher(s3_prefix));
         self.toast("refreshing logs + artifacts…");
@@ -214,7 +216,7 @@ impl App {
     }
 
     /// Open the Cloud Agents wizard (runner picker — Managed Agents
-    /// or Tattle QWE). Distinct from `open_new_cloud_agent_wizard`
+    /// or ECS runner). Distinct from `open_new_cloud_agent_wizard`
     /// which opens the local-agents PR wizard.
     pub fn open_new_cloud_run_wizard(&mut self) {
         if let Some(id) = self
@@ -359,14 +361,14 @@ impl App {
             _ => return,
         };
         match cfg.0 {
-            CloudRunner::TattleQwe => {
+            CloudRunner::Ecs => {
                 let t = cfg.1.trim().to_string();
                 if t.is_empty() {
                     self.toast("ticket is empty");
                     return;
                 }
                 self.fire_cloud_run(&t);
-                self.toast(format!("fired Tattle QWE run for {t}"));
+                self.toast(format!("fired ECS run for {t}"));
                 self.new_cloud_run_wizard_close();
             }
             CloudRunner::ManagedAgents => {
@@ -476,7 +478,7 @@ impl App {
     }
 
     /// Open the multi-step wizard for creating a new cloud agent
-    /// run. Routes to either Tattle QWE or Anthropic managed
+    /// run. Routes to either the ECS runner or Anthropic managed
     /// agents depending on the user's step-1 pick. The pane lives
     /// at the active leaf; close with Esc.
     pub fn open_new_cloud_agent_wizard(&mut self) {
@@ -829,20 +831,19 @@ impl App {
             .unwrap_or_else(|| "—".to_string());
         let pr_url = meta.as_ref().and_then(|m| m.pr_url.clone());
         // Prefer DynamoDB's recorded prefix; fall back to the
-        // standard qwe-runner upload path when missing. qwe-runner's
-        // artifacts.py writes to `s3://tattle-claude-artifacts/
-        // artifacts/{flow}/{run_id}/` regardless of whether the
-        // post-upload DynamoDB write succeeded — so the derived
-        // path is correct even for runs missing the meta field.
+        // configured `[cloud_agents] s3_artifacts_bucket` when
+        // missing (path convention: `artifacts/{flow}/{run_id}/`).
+        // Skipped entirely when no bucket is configured.
+        let s3_bucket = self.config.cloud_agents.s3_artifacts_bucket.clone();
         let s3_prefix = meta
             .as_ref()
             .and_then(|m| m.s3_artifact_prefix.clone())
             .or_else(|| {
-                if flow.is_empty() {
+                if flow.is_empty() || s3_bucket.is_empty() {
                     None
                 } else {
                     Some(format!(
-                        "s3://tattle-claude-artifacts/artifacts/{flow}/{}/",
+                        "s3://{s3_bucket}/artifacts/{flow}/{}/",
                         row.session_id
                     ))
                 }
@@ -850,7 +851,10 @@ impl App {
         let s3_console = s3_prefix
             .as_deref()
             .and_then(crate::cloud_agent_run::s3_console_url_for);
-        let jira_url = crate::cloud_agent_run::jira_url_for(&ticket);
+        let jira_url = crate::cloud_agent_run::jira_url_for(
+            &ticket,
+            self.config.jira.effective_domain().as_deref(),
+        );
         let cloudwatch_url = meta
             .as_ref()
             .map(|m| m.cloudwatch_url(&row.session_id))
@@ -872,7 +876,7 @@ impl App {
         pane.log_rx = Some(crate::cloud_agent_run::spawn_log_fetcher(
             row.session_id.clone(),
             state,
-            "/ecs/qwe-runner/claude-runner".to_string(),
+            self.config.cloud_agents.log_group.clone(),
         ));
         pane.artifacts_rx = Some(crate::cloud_agent_run::spawn_artifacts_fetcher(s3_prefix));
         self.panes.push(Pane::CloudAgentRun(pane));
@@ -1344,11 +1348,11 @@ impl App {
                         self.open_pty(profile);
                         self.toast("opened fresh codex (CLI is stateless)");
                     }
-                    AgentSource::TattleQwe => {
+                    AgentSource::Ecs => {
                         // Cloud row — no local resume. Surface
                         // the runId / state in a toast so the user
                         // can copy it / open CloudWatch logs.
-                        self.toast(format!("tattle-qwe run {sid} — cloud row, no local resume"));
+                        self.toast(format!("ecs run {sid} — cloud row, no local resume"));
                     }
                     AgentSource::AnthropicManaged => {
                         // Managed Agents session lives on
