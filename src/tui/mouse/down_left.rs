@@ -781,7 +781,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         if is_double && let Some(Pane::Editor(b)) = app.panes.get_mut(tab_pane) {
             b.is_preview = false;
         }
+        // qa-feature 2026-07-02 — preserve tree focus across
+        // split-tab double-click promote. Same rationale as the
+        // bufferline path in up_left.rs — arrow-browsing survives.
+        let was_tree_focus = matches!(app.focus, crate::focus::Focus::Tree);
         app.switch_split_tab(leaf_active, tab_pane);
+        if was_tree_focus {
+            app.focus_tree();
+        }
         return;
     }
     if let Some(r) = app.rects.bufferline_theme_toggle

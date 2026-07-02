@@ -175,10 +175,20 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
             if !armed && !src_is_dir {
                 // Plain click on a file → the deferred open.
                 let permanent = matches!(app.last_click, Some((_, _, _, c)) if c >= 2);
+                let was_tree_focus = matches!(app.focus, crate::focus::Focus::Tree);
                 if permanent {
                     app.open_path(&src_path);
                 } else {
                     app.open_path_preview(&src_path);
+                }
+                // qa-feature 2026-07-02 — preserve tree focus across
+                // tree-driven file opens (both preview + double-click
+                // promote). Was: `open_path*` → `reveal_pane` set
+                // Focus::Pane, so the user's next arrow moved the
+                // editor's cursor instead of continuing tree
+                // browsing.
+                if was_tree_focus {
+                    app.focus_tree();
                 }
             }
         } else {
@@ -268,7 +278,17 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
             if is_double && let Some(Pane::Editor(b)) = app.panes.get_mut(src) {
                 b.is_preview = false;
             }
+            // qa-feature 2026-07-02 — preserve tree focus across a
+            // tab double-click promote. `reveal_pane` shifts focus
+            // to Pane; if the user was arrow-browsing the tree,
+            // that stole their next arrow. Restore Focus::Tree when
+            // that was the pre-click state so keyboard browsing
+            // survives the "commit to this file" gesture.
+            let was_tree_focus = matches!(app.focus, crate::focus::Focus::Tree);
             app.reveal_pane(src);
+            if was_tree_focus {
+                app.focus_tree();
+            }
         }
     }
     app.rects.tab_drop_target = None;
