@@ -2637,6 +2637,12 @@ pub struct App {
     /// `crate::browser_pane::DEVICE_PRESETS`). Persisted in session.json so
     /// fresh `browser.open` calls auto-apply it. `None` ⇒ no preset.
     pub last_browser_device: Option<usize>,
+    /// qa-feature 2026-07-02 — bounds of the Ghostty + Chrome
+    /// windows BEFORE `browser.dock_toggle` moved them side-by-side.
+    /// `(ghostty_bounds, chrome_bounds)`; each is `[x, y, w, h]`.
+    /// When set, the next `browser.dock_toggle` call restores the
+    /// prior geometry and clears this field. macOS-only.
+    pub browser_dock_saved: Option<((i32, i32, i32, i32), (i32, i32, i32, i32))>,
     /// Stack of recently closed buffers (`(path, cursor_byte, scroll)`),
     /// newest last. `buffer.reopen` (`Ctrl+Shift+T`) pops the top entry
     /// and re-opens it. Capped at `CLOSED_BUFFERS_MAX`. Not persisted —
@@ -3897,6 +3903,7 @@ impl App {
             harpoon: Default::default(),
             browser_url_history: Vec::new(),
             last_browser_device: None,
+            browser_dock_saved: None,
             closed_buffers: Vec::new(),
             last_active: None,
             pane_mru: Vec::new(),

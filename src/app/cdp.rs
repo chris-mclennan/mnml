@@ -326,6 +326,165 @@ impl App {
         ));
     }
 
+    /// qa-feature 2026-07-02 — Dock Ghostty (~55% left) alongside
+    /// Chrome (~45% right) on the current display via AppleScript.
+    /// Toggles: first call moves + snapshots prior bounds; second
+    /// call restores. macOS-only; no-op with a toast elsewhere.
+    /// Requires Accessibility permission on first run.
+    pub fn browser_dock_toggle(&mut self) {
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.toast("browser.dock: macOS only");
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Some((ghostty_prev, chrome_prev)) = self.browser_dock_saved.take() {
+                // Restore.
+                let script = format!(
+                    r#"tell application "System Events"
+    try
+        set position of window 1 of application process "ghostty" to {{{gx}, {gy}}}
+        set size of window 1 of application process "ghostty" to {{{gw}, {gh}}}
+    end try
+    try
+        set position of window 1 of application process "Google Chrome for Testing" to {{{cx}, {cy}}}
+        set size of window 1 of application process "Google Chrome for Testing" to {{{cw}, {ch}}}
+    end try
+end tell"#,
+                    gx = ghostty_prev.0,
+                    gy = ghostty_prev.1,
+                    gw = ghostty_prev.2,
+                    gh = ghostty_prev.3,
+                    cx = chrome_prev.0,
+                    cy = chrome_prev.1,
+                    cw = chrome_prev.2,
+                    ch = chrome_prev.3,
+                );
+                let _ = std::process::Command::new("osascript")
+                    .args(["-e", &script])
+                    .status();
+                self.toast("browser.dock: restored");
+                return;
+            }
+            // Dock: snapshot current bounds, then move.
+            //
+            // The bounds query runs in a separate osascript so we can parse
+            // its stdout easily. Position + size are returned newline-
+            // separated: "x,y" then "w,h".
+            let read_bounds = |proc: &str| -> Option<(i32, i32, i32, i32)> {
+                let script = format!(
+                    r#"tell application "System Events"
+    try
+        set p to position of window 1 of application process "{proc}"
+        set s to size of window 1 of application process "{proc}"
+        return (item 1 of p as text) & "," & (item 2 of p as text) & "|" & (item 1 of s as text) & "," & (item 2 of s as text)
+    on error
+        return "err"
+    end try
+end tell"#
+                );
+                let out = std::process::Command::new("osascript")
+                    .args(["-e", &script])
+                    .output()
+                    .ok()?;
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if s == "err" || s.is_empty() {
+                    return None;
+                }
+                let (pos, size) = s.split_once('|')?;
+                let (px, py) = pos.split_once(',')?;
+                let (sw, sh) = size.split_once(',')?;
+                Some((
+                    px.trim().parse().ok()?,
+                    py.trim().parse().ok()?,
+                    sw.trim().parse().ok()?,
+                    sh.trim().parse().ok()?,
+                ))
+            };
+            let ghostty = match read_bounds("ghostty") {
+                Some(b) => b,
+                None => {
+                    self.toast("browser.dock: can't read ghostty bounds (Accessibility?)");
+                    return;
+                }
+            };
+            let chrome = match read_bounds("Google Chrome for Testing")
+                .or_else(|| read_bounds("Google Chrome"))
+            {
+                Some(b) => b,
+                None => {
+                    self.toast("browser.dock: no Chrome window found — open the browser first");
+                    return;
+                }
+            };
+            // Screen bounds from Ghostty's current display via
+            // `bounds of window 1 of desktop 1` — good enough for a
+            // single-display setup; multi-display would need a real
+            // desktop query per screen.
+            let screen_script = r#"tell application "Finder"
+    set b to bounds of window of desktop
+    return (item 1 of b as text) & "," & (item 2 of b as text) & "," & (item 3 of b as text) & "," & (item 4 of b as text)
+end tell"#;
+            let screen = std::process::Command::new("osascript")
+                .args(["-e", screen_script])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|s| {
+                    let parts: Vec<&str> = s.trim().split(',').collect();
+                    if parts.len() != 4 {
+                        return None;
+                    }
+                    let x = parts[0].trim().parse::<i32>().ok()?;
+                    let y = parts[1].trim().parse::<i32>().ok()?;
+                    let r = parts[2].trim().parse::<i32>().ok()?;
+                    let b = parts[3].trim().parse::<i32>().ok()?;
+                    Some((x, y, r - x, b - y))
+                })
+                .unwrap_or((0, 0, 1920, 1080));
+            let (sx, sy, sw, sh) = screen;
+            // Ghostty left ~55%, Chrome right ~45%. Leave 24px top
+            // for the macOS menu bar; the Finder desktop query
+            // already excludes it on newer macOS but the padding
+            // is harmless.
+            let gw = (sw as f32 * 0.55) as i32;
+            let cw = sw - gw;
+            let target_ghostty = (sx, sy, gw, sh);
+            let target_chrome = (sx + gw, sy, cw, sh);
+            let script = format!(
+                r#"tell application "System Events"
+    try
+        set position of window 1 of application process "ghostty" to {{{gx}, {gy}}}
+        set size of window 1 of application process "ghostty" to {{{gw}, {gh}}}
+    end try
+    try
+        set position of window 1 of application process "Google Chrome for Testing" to {{{cx}, {cy}}}
+        set size of window 1 of application process "Google Chrome for Testing" to {{{cw}, {ch}}}
+    on error
+        try
+            set position of window 1 of application process "Google Chrome" to {{{cx}, {cy}}}
+            set size of window 1 of application process "Google Chrome" to {{{cw}, {ch}}}
+        end try
+    end try
+end tell"#,
+                gx = target_ghostty.0,
+                gy = target_ghostty.1,
+                gw = target_ghostty.2,
+                gh = target_ghostty.3,
+                cx = target_chrome.0,
+                cy = target_chrome.1,
+                cw = target_chrome.2,
+                ch = target_chrome.3,
+            );
+            let _ = std::process::Command::new("osascript")
+                .args(["-e", &script])
+                .status();
+            self.browser_dock_saved = Some((ghostty, chrome));
+            self.toast("browser.dock: docked (run again to restore)");
+        }
+    }
+
     /// `r` in a browser pane — reload the page.
     pub fn browser_reload(&mut self) {
         if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {

@@ -4198,6 +4198,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_browser_prompt(),
         },
         Command {
+            id: "browser.dock_toggle",
+            title: "Browser: dock Chrome side-by-side (macOS) / restore",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_dock_toggle(),
+        },
+        Command {
             id: "browser.reload",
             title: "Browser: reload the current page (Page.reload)",
             group: "browser",
