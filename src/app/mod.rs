@@ -10572,10 +10572,19 @@ impl App {
             }
             let fmt = crate::image::ImageFormat::from_path(&r.path);
             if matches!(fmt, crate::image::ImageFormat::Other) {
-                None
-            } else {
-                Some(r.path.clone())
+                return None;
             }
+            // qa-feature 2026-07-02 — suppress the preview when the
+            // same image is already open as a `Pane::Image`. No
+            // point showing a thumbnail next to the full-size view.
+            let already_open = self.panes.iter().any(|p| match p {
+                Pane::Image(ip) => ip.data.path == r.path,
+                _ => false,
+            });
+            if already_open {
+                return None;
+            }
+            Some(r.path.clone())
         });
         match (cursor_image_path, self.tree_image_preview.take()) {
             (None, _) => {
