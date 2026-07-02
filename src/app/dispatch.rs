@@ -734,13 +734,20 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     if let Some(tr) = app.rects.tree
         && contains(tr, x, y)
     {
-        let d = list_scroll_clamp(delta);
-        for _ in 0..d.unsigned_abs() {
-            if d < 0 {
-                app.tree.move_up();
-            } else {
-                app.tree.move_down();
-            }
+        // qa-feature 2026-07-01 — tree wheel moves exactly ONE
+        // row per dispatched batch. Was: `list_scroll_clamp` +
+        // per-line loop, which on macOS smooth-scrolling fires
+        // several ScrollDown events per physical mouse notch —
+        // the coalescer packs them into a batch of N, we moved
+        // N rows, and the user saw the cursor skip 2-3 rows per
+        // notch. Trackpad swipes still feel smooth because
+        // separate physical swipes still produce separate
+        // dispatches; only the WITHIN-batch amplification is
+        // gone.
+        if delta < 0 {
+            app.tree.move_up();
+        } else {
+            app.tree.move_down();
         }
         return;
     }
@@ -790,14 +797,14 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         .iter()
         .find(|(r, _, _)| contains(*r, x, y))
     {
-        let d = list_scroll_clamp(delta);
+        // qa-feature 2026-07-01 — 1 row per dispatched batch,
+        // matching the primary tree fix above (avoids the
+        // smooth-scrolling cursor-skip on macOS).
         if let Some(ws) = app.extra_workspaces.get_mut(ws_idx) {
-            for _ in 0..d.unsigned_abs() {
-                if d < 0 {
-                    ws.tree.move_up();
-                } else {
-                    ws.tree.move_down();
-                }
+            if delta < 0 {
+                ws.tree.move_up();
+            } else {
+                ws.tree.move_down();
             }
         }
         return;
