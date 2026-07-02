@@ -325,6 +325,17 @@ impl App {
             self.open_image_pane(&path);
             return;
         }
+        // qa-feature 2026-07-02 — markdown files open as a rendered
+        // MdPreview pane by default (Obsidian-style "reading mode
+        // first"). Click the `✏ Edit` chip in the preview's banner to
+        // swap to raw editing. Preview-mode opens from tree clicks pass
+        // preview=true; permanent opens (:edit, picker, grep, etc.)
+        // pass preview=false — but the display style (rendered vs.
+        // raw) is the same either way for markdown.
+        if is_markdown_path(&path) {
+            self.open_md_preview_for_path(path.clone(), None, true);
+            return;
+        }
         // Push the *current* position onto the back-stack before navigating
         // (browser-style). Skip when the active editor is already on this
         // exact file — that'd just be churn. Clears the forward stack so

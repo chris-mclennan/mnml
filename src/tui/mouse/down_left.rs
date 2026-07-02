@@ -97,6 +97,28 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // qa-feature 2026-07-02 — markdown pane swap chips at the top of
+    // MdPreview + Editor(.md) panes. Checked BEFORE scrollbars so the
+    // chip at the far-right of the banner row isn't shadowed by
+    // anything below.
+    if let Some(&(_, pid)) = app
+        .rects
+        .md_preview_edit_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.md_preview_to_edit(pid);
+        return;
+    }
+    if let Some(&(_, pid)) = app
+        .rects
+        .editor_md_preview_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.md_edit_to_preview(pid);
+        return;
+    }
     // Grab a scrollbar (editor / diff / embedded-diff / tree) before
     // any pane-level handler — the bar sits inside the pane's
     // own rect, so without this short-circuit a click on the

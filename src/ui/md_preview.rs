@@ -27,7 +27,63 @@ pub fn draw(
         return None;
     }
     let bg = theme::cur().bg_dark;
+    let t = theme::cur();
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
+
+    // qa-feature 2026-07-02 — banner across the top of the preview
+    // pane with an `✏ Edit` chip. Click swaps this pane in place
+    // to a raw Editor of the same file.
+    let ascii = app.config.ui.ascii_icons;
+    let banner_h: u16 = if area.height >= 3 { 1 } else { 0 };
+    if banner_h > 0 {
+        let banner_rect = Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        };
+        let file_name = app
+            .panes
+            .get(pane_id)
+            .and_then(|p| match p {
+                Pane::MdPreview(mp) => mp
+                    .path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "preview".to_string());
+        let edit_glyph = if ascii { "e" } else { "\u{f044}" }; // codicon-edit
+        let edit_label = format!(" {edit_glyph} Edit ");
+        let edit_w = edit_label.chars().count() as u16;
+        let title = format!(" 󰃭 {file_name}");
+        let title_span = Span::styled(title, Style::default().fg(t.comment).bg(t.bg_darker));
+        let edit_span = Span::styled(
+            edit_label,
+            Style::default()
+                .fg(t.bg_darker)
+                .bg(t.blue)
+                .add_modifier(Modifier::BOLD),
+        );
+        // Layout: title on the left, edit chip on the right.
+        let pad_w = area
+            .width
+            .saturating_sub(title_span.content.chars().count() as u16 + edit_w);
+        let pad_span = Span::styled(" ".repeat(pad_w as usize), Style::default().bg(t.bg_darker));
+        let line = ratatui::text::Line::from(vec![title_span, pad_span, edit_span]);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(t.bg_darker)),
+            banner_rect,
+        );
+        let edit_rect = Rect {
+            x: area.x + area.width.saturating_sub(edit_w),
+            y: area.y,
+            width: edit_w,
+            height: 1,
+        };
+        app.rects.md_preview_edit_buttons.push((edit_rect, pane_id));
+    }
 
     let protocol = app.image_protocol;
     let image_rows = app.config.ui.md_image_rows;
@@ -35,11 +91,12 @@ pub fn draw(
         return None;
     };
     // A one-cell left margin so the text isn't flush against the divider.
+    // Banner (if drawn) claims the top row.
     let text_area = Rect {
         x: area.x + 1,
-        y: area.y,
+        y: area.y + banner_h,
         width: area.width.saturating_sub(1),
-        height: area.height,
+        height: area.height.saturating_sub(banner_h),
     };
     // Image-aware render path: when the terminal can paint images, reserve
     // rows for `![alt](path)` references so the post-draw overlay has a

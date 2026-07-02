@@ -1246,6 +1246,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // `Minimized` = hidden (just the ♪ chip).
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
+    app.rects.md_preview_edit_buttons.clear();
+    app.rects.editor_md_preview_buttons.clear();
     app.rects.pane_bodies.clear();
     app.rects.editor_gutters.clear();
     app.rects.fold_chips.clear();

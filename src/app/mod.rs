@@ -2053,6 +2053,14 @@ pub struct PaneRects {
     /// (gutter excluded). Click → focus that leaf + place the cursor; also the
     /// geometry `Ctrl+W`-style focus navigation uses.
     pub editor_panes: Vec<(Rect, PaneId)>,
+    /// qa-feature 2026-07-02 — `(banner_rect, pane_id)` per visible
+    /// MdPreview pane. Click → swap the pane to a raw Editor of the same
+    /// markdown file (`✏ Edit` banner).
+    pub md_preview_edit_buttons: Vec<(Rect, PaneId)>,
+    /// qa-feature 2026-07-02 — `(banner_rect, pane_id)` per visible
+    /// Editor pane whose buffer is a markdown file. Click → swap the pane
+    /// to an MdPreview of the same file (`👁 Preview` banner).
+    pub editor_md_preview_buttons: Vec<(Rect, PaneId)>,
     /// `(gutter_rect, pane_id)` per visible editor leaf — the line-number /
     /// sign-column strip on the left of each editor. Right-click here opens
     /// a per-line context menu (toggle breakpoint, goto def, blame at line, …);
@@ -6013,6 +6021,62 @@ impl App {
                 p.source = text.to_string();
             }
         }
+    }
+
+    /// qa-feature 2026-07-02 — Swap the given MdPreview pane in place
+    /// with a raw Editor of the same file. The pane keeps its slot in the
+    /// layout so tabs / split geometry don't shift. Toasts + no-op when
+    /// the pane isn't actually an MdPreview.
+    pub fn md_preview_to_edit(&mut self, pane_id: PaneId) {
+        let path = match self.panes.get(pane_id) {
+            Some(Pane::MdPreview(p)) => p.path.clone(),
+            _ => {
+                self.toast("not a preview pane");
+                return;
+            }
+        };
+        // Build the raw Editor buffer.
+        match crate::buffer::Buffer::open_or_new_empty(&path, &self.config) {
+            Ok(mut buf) => {
+                buf.apply_editorconfig(&self.workspace);
+                buf.input.set_ex_history(self.ex_history.clone());
+                if let Some(&(cursor_byte, scroll)) = self.file_cursors.get(&path) {
+                    let (row, col) = byte_to_row_col(buf.editor.text(), cursor_byte);
+                    buf.editor.place_cursor(row, col);
+                    buf.scroll = scroll;
+                }
+                let undo_path = crate::editor::undo_path_for(&self.workspace, &path);
+                crate::editor::load_history_from(&mut buf.editor, &undo_path);
+                let text = buf.editor.text().to_string();
+                self.panes[pane_id] = Pane::Editor(buf);
+                self.reveal_pane(pane_id);
+                self.lsp.did_open(&path, &text);
+            }
+            Err(e) => self.toast(format!("cannot open {}: {e}", path.display())),
+        }
+    }
+
+    /// qa-feature 2026-07-02 — Swap the given Editor pane (must hold a
+    /// markdown file) in place with an MdPreview of the same file. Reads
+    /// the CURRENT buffer contents so unsaved edits show up in the
+    /// preview immediately.
+    pub fn md_edit_to_preview(&mut self, pane_id: PaneId) {
+        let (path, source) = match self.panes.get(pane_id) {
+            Some(Pane::Editor(b)) if b.path.as_deref().is_some_and(is_markdown_path) => {
+                (b.path.clone().unwrap(), b.editor.text().to_string())
+            }
+            _ => {
+                self.toast("not a markdown editor");
+                return;
+            }
+        };
+        self.panes[pane_id] = Pane::MdPreview(crate::pane::MdPreview {
+            path,
+            source,
+            scroll: 0,
+            image_cache: std::collections::HashMap::new(),
+        });
+        self.reveal_pane(pane_id);
     }
 
     /// Scroll any open `Pane::MdPreview` of `path` so its top line roughly
