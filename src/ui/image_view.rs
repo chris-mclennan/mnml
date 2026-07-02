@@ -178,7 +178,12 @@ fn fit_area_aspect(body: Rect, img_w_px: u32, img_h_px: u32) -> Rect {
     if body.width == 0 || body.height == 0 || img_w_px == 0 || img_h_px == 0 {
         return body;
     }
-    const CELL_ASPECT: f32 = 2.0;
+    // Cell aspect ratio (cell_h_px / cell_w_px). Ghostty on macOS with
+    // SF Mono at typical sizes runs closer to 2.4 than the 2.0 flat
+    // assumption. Higher cell_aspect ⇒ fewer rows per col ⇒ image
+    // appears shorter, which is what the user asked for after a
+    // wide landscape screenshot still looked tall at 2.0.
+    const CELL_ASPECT: f32 = 2.4;
     let img_aspect = img_h_px as f32 / img_w_px as f32;
     // rows/cols needed to preserve aspect = img_aspect / CELL_ASPECT.
     let cells_ratio = img_aspect / CELL_ASPECT;
