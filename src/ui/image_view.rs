@@ -147,9 +147,19 @@ pub fn draw(
                 if let Some(Pane::Image(p)) = app.panes.get_mut(pane_id)
                     && let Ok(png_bytes) = p.data.ensure_png_bytes()
                 {
+                    // qa-feature 2026-07-02 — shrink the paint rect to
+                    // preserve aspect ratio inside body_area (Kitty
+                    // stretches to fill the given cols×rows otherwise).
+                    // Terminal cells are ~2:1 (h:w) — approximated
+                    // here; fine adjustments are barely perceptible.
+                    let fit_area = if let Some((iw, ih)) = p.data.pixel_size {
+                        fit_area_aspect(body_area, iw, ih)
+                    } else {
+                        body_area
+                    };
                     app.image_paint_requests.push(crate::image::PaintRequest {
                         pane_id,
-                        area: body_area,
+                        area: fit_area,
                         png_bytes,
                     });
                 }
@@ -158,4 +168,33 @@ pub fn draw(
     }
 
     None
+}
+
+/// qa-feature 2026-07-02 — compute the largest sub-rect of `body`
+/// that preserves the image's pixel aspect ratio. Terminal cells
+/// are approximated as 2:1 (height:width in pixels); the image
+/// centers inside `body`.
+fn fit_area_aspect(body: Rect, img_w_px: u32, img_h_px: u32) -> Rect {
+    if body.width == 0 || body.height == 0 || img_w_px == 0 || img_h_px == 0 {
+        return body;
+    }
+    const CELL_ASPECT: f32 = 2.0;
+    let img_aspect = img_h_px as f32 / img_w_px as f32;
+    // rows/cols needed to preserve aspect = img_aspect / CELL_ASPECT.
+    let cells_ratio = img_aspect / CELL_ASPECT;
+    let rows_if_full_cols = (body.width as f32 * cells_ratio).round() as u16;
+    let cols_if_full_rows = (body.height as f32 / cells_ratio).round() as u16;
+    let (cols, rows) = if rows_if_full_cols <= body.height {
+        (body.width, rows_if_full_cols.max(1))
+    } else {
+        (cols_if_full_rows.max(1), body.height)
+    };
+    let x_pad = body.width.saturating_sub(cols) / 2;
+    let y_pad = body.height.saturating_sub(rows) / 2;
+    Rect {
+        x: body.x + x_pad,
+        y: body.y + y_pad,
+        width: cols,
+        height: rows,
+    }
 }

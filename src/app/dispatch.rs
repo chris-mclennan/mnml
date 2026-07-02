@@ -33,6 +33,17 @@ pub(crate) fn emit_image_placements(app: &mut App) {
     }
     let pending = std::mem::take(&mut app.image_paint_requests);
     let any_now = !pending.is_empty();
+    // qa-feature 2026-07-02 — skip the whole clear+re-emit dance when
+    // the paint set is identical to last frame. The terminal keeps
+    // the previously-painted image on screen, which stops the
+    // per-frame flash. Also spares stdout bandwidth for a re-transmit
+    // of a large PNG every frame.
+    let current_paints: Vec<(crate::layout::PaneId, ratatui::layout::Rect)> =
+        pending.iter().map(|r| (r.pane_id, r.area)).collect();
+    if any_now && current_paints == app.last_image_paints {
+        app.had_image_pane = true;
+        return;
+    }
     let needs_clear = any_now || app.had_image_pane;
     let mut out = io::stdout();
     if needs_clear && matches!(protocol, ImageProtocol::Kitty) {
@@ -78,6 +89,7 @@ pub(crate) fn emit_image_placements(app: &mut App) {
     }
     let _ = out.flush();
     app.had_image_pane = any_now;
+    app.last_image_paints = current_paints;
 }
 
 /// Update [`App::dot_recording`] / [`App::dot_keys`] based on the mode +

@@ -2876,6 +2876,12 @@ pub struct App {
     /// escape — needed when the user closes / hides an image pane so the
     /// stale image doesn't linger over the next frame's content.
     pub had_image_pane: bool,
+    /// qa-feature 2026-07-02 — fingerprint of the last frame's image
+    /// paint requests (pane_id + area). When the current frame's set
+    /// matches, we skip both the `clear-all` and the placement escapes
+    /// entirely — the terminal keeps the already-painted image on
+    /// screen, which stops the per-frame flash the user reported.
+    pub last_image_paints: Vec<(crate::layout::PaneId, ratatui::layout::Rect)>,
     /// File-tree image hover-preview state. When the tree cursor lands on
     /// an image row, after a debounce we decode + cache the PNG and let
     /// `tree_view::draw` reserve a card Rect at the bottom of the rail
@@ -4024,6 +4030,7 @@ impl App {
             image_paint_requests: Vec::new(),
             tree_image_preview: None,
             had_image_pane: false,
+            last_image_paints: Vec::new(),
             scm_pr_cache: None,
             scm_pr_pending: None,
             repos,
