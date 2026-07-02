@@ -66,6 +66,69 @@ pub enum ImageProtocol {
 ///    `TERM`. `MNML_IMAGE_PROTOCOL=sixel` is the explicit opt-in
 ///    for terminals that support sixel without advertising via env
 ///    (notably xterm-with-sixel, where users opt-in by build flag).
+/// qa-feature 2026-07-02 — probe the controlling TTY for its cell pixel
+/// dimensions via `TIOCGWINSZ`. Returns `Some((cell_w_px, cell_h_px))`
+/// when the terminal reports non-zero pixel dims; `None` otherwise.
+/// All modern terminals (Ghostty, Kitty, iTerm2, WezTerm, Alacritty,
+/// Terminal.app, Foot, xterm) fill in the pixel fields — non-TTY stdout
+/// or exotic setups return zeros / fail and we fall back to a rough
+/// constant elsewhere.
+///
+/// Zero external deps — declares the `winsize` struct + `ioctl` signature
+/// inline with `TIOCGWINSZ` values hard-coded per OS (macOS/BSD:
+/// 0x40087468, Linux: 0x5413).
+#[cfg(unix)]
+pub fn probe_cell_pixel_size() -> Option<(u16, u16)> {
+    use std::os::unix::io::AsRawFd;
+
+    #[repr(C)]
+    struct WinSize {
+        ws_row: u16,
+        ws_col: u16,
+        ws_xpixel: u16,
+        ws_ypixel: u16,
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "freebsd", target_os = "openbsd"))]
+    const TIOCGWINSZ: u64 = 0x40087468;
+    #[cfg(target_os = "linux")]
+    const TIOCGWINSZ: u64 = 0x5413;
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "linux",
+    )))]
+    const TIOCGWINSZ: u64 = 0x5413; // best-effort fallback
+
+    unsafe extern "C" {
+        fn ioctl(fd: i32, req: u64, arg: *mut WinSize) -> i32;
+    }
+
+    let fd = std::io::stdout().as_raw_fd();
+    let mut ws = WinSize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let ret = unsafe { ioctl(fd, TIOCGWINSZ, &mut ws) };
+    if ret != 0 || ws.ws_row == 0 || ws.ws_col == 0 || ws.ws_xpixel == 0 || ws.ws_ypixel == 0 {
+        return None;
+    }
+    let cell_w = ws.ws_xpixel / ws.ws_col;
+    let cell_h = ws.ws_ypixel / ws.ws_row;
+    if cell_w == 0 || cell_h == 0 {
+        return None;
+    }
+    Some((cell_w, cell_h))
+}
+
+#[cfg(not(unix))]
+pub fn probe_cell_pixel_size() -> Option<(u16, u16)> {
+    None
+}
+
 pub fn detect_protocol() -> ImageProtocol {
     // Explicit user override beats everything — for testing, for
     // terminals whose env doesn't advertise, and for users who'd

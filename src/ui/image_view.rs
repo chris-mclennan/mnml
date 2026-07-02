@@ -144,16 +144,20 @@ pub fn draw(
                 // Stage a paint request for tui.rs to act on after draw.
                 // Compute the PNG bytes first (decoding non-PNG sources
                 // on first access) so the emitter can stay agnostic.
+                let cell_size = app.cell_pixel_size;
                 if let Some(Pane::Image(p)) = app.panes.get_mut(pane_id)
                     && let Ok(png_bytes) = p.data.ensure_png_bytes()
                 {
                     // qa-feature 2026-07-02 — shrink the paint rect to
-                    // preserve aspect ratio inside body_area (Kitty
-                    // stretches to fill the given cols×rows otherwise).
-                    // Terminal cells are ~2:1 (h:w) — approximated
-                    // here; fine adjustments are barely perceptible.
+                    // preserve the image's aspect ratio inside
+                    // `body_area`. Kitty stretches to fill the
+                    // supplied cols×rows otherwise. When TIOCGWINSZ
+                    // gave us real cell pixel dimensions we use those;
+                    // else we fall back to a rough constant (~2.2 for
+                    // typical macOS monospace fonts) that's usually
+                    // close enough.
                     let fit_area = if let Some((iw, ih)) = p.data.pixel_size {
-                        fit_area_aspect(body_area, iw, ih)
+                        fit_area_aspect(body_area, iw, ih, cell_size)
                     } else {
                         body_area
                     };
@@ -171,22 +175,28 @@ pub fn draw(
 }
 
 /// qa-feature 2026-07-02 — compute the largest sub-rect of `body`
-/// that preserves the image's pixel aspect ratio. Terminal cells
-/// are approximated as 2:1 (height:width in pixels); the image
-/// centers inside `body`.
-fn fit_area_aspect(body: Rect, img_w_px: u32, img_h_px: u32) -> Rect {
+/// that preserves the image's aspect ratio. `cell_size` is the
+/// terminal's actual cell pixel dimensions (probed via TIOCGWINSZ);
+/// when `None`, falls back to a constant that's close for typical
+/// macOS monospace fonts.
+fn fit_area_aspect(
+    body: Rect,
+    img_w_px: u32,
+    img_h_px: u32,
+    cell_size: Option<(u16, u16)>,
+) -> Rect {
     if body.width == 0 || body.height == 0 || img_w_px == 0 || img_h_px == 0 {
         return body;
     }
-    // Cell aspect ratio (cell_h_px / cell_w_px). Iterated from 2.0
-    // (too tall) → 2.4 (too wide) → 2.2, which is very close to
-    // SF Mono at typical sizes on Ghostty. Not a probe — a
-    // constant. A real per-terminal probe would query
-    // `\e[16t` / `TIOCGWINSZ` at startup; parked for later.
-    const CELL_ASPECT: f32 = 2.2;
+    // rows/cols needed to preserve aspect = (img_h_px / img_w_px) * (cell_w_px / cell_h_px).
+    // With a real probe, that's exact. Without one, `~2.2` is a
+    // decent SF-Mono-on-Ghostty middle ground.
+    let (cell_w, cell_h) = match cell_size {
+        Some((w, h)) if w > 0 && h > 0 => (w as f32, h as f32),
+        _ => (1.0, 2.2),
+    };
     let img_aspect = img_h_px as f32 / img_w_px as f32;
-    // rows/cols needed to preserve aspect = img_aspect / CELL_ASPECT.
-    let cells_ratio = img_aspect / CELL_ASPECT;
+    let cells_ratio = img_aspect * (cell_w / cell_h);
     let rows_if_full_cols = (body.width as f32 * cells_ratio).round() as u16;
     let cols_if_full_rows = (body.height as f32 / cells_ratio).round() as u16;
     let (cols, rows) = if rows_if_full_cols <= body.height {

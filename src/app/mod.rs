@@ -2832,6 +2832,12 @@ pub struct App {
     /// whether `Pane::Image` paints actual pixels via Kitty / iTerm2
     /// escapes (post-`terminal.draw()`) or shows a metadata-only fallback.
     pub image_protocol: crate::image::ImageProtocol,
+    /// qa-feature 2026-07-02 — cell pixel size probed at startup via
+    /// TIOCGWINSZ. `Some((cell_w_px, cell_h_px))` when the terminal
+    /// reports both cell counts and pixel dimensions (all modern
+    /// terminals do); `None` when the probe fails. Used by the image
+    /// viewer to size placements without an aspect-ratio guess.
+    pub cell_pixel_size: Option<(u16, u16)>,
     /// Pending image paints captured during this frame's render. `tui.rs`
     /// drains this *after* `terminal.draw()` and emits the protocol-
     /// specific escape so the image lands on top of ratatui's reserved
@@ -3988,6 +3994,7 @@ impl App {
             primary_position: 0,
             git_rail,
             image_protocol: crate::image::detect_protocol(),
+            cell_pixel_size: crate::image::probe_cell_pixel_size(),
             image_paint_requests: Vec::new(),
             had_image_pane: false,
             last_image_paints: Vec::new(),
