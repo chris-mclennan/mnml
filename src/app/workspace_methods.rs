@@ -221,6 +221,13 @@ impl App {
                 _ => {}
             }
         }
+        // qa-feature 2026-07-01 — drop any stale "workspace opened:"
+        // toasts from the stack so back-to-back promotes don't leave
+        // the previous name lingering next to the new one. Without
+        // this the user saw two stacked toast boxes after clicking
+        // a second `○` while the first was still within its 4s TTL.
+        self.toast_stack
+            .retain(|(msg, _)| !msg.starts_with("workspace opened:"));
         self.toast(format!("workspace opened: {name}"));
     }
 
