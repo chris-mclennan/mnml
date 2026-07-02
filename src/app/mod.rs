@@ -3271,10 +3271,6 @@ pub struct App {
     /// any click / `view.welcome` toggles. Persists the dismiss across
     /// launches.
     pub show_welcome: bool,
-    /// Background "is there a newer release?" probe. `None` if the
-    /// user opted out via `[ui] check_updates = false`, or we're in
-    /// headless mode. See `src/update_check.rs`.
-    pub update_check: Option<std::sync::Arc<crate::update_check::UpdateCheck>>,
     /// Startup workspace picker — `Some` while the launch-time
     /// chooser overlay is shown. See `src/ui/startup_picker.rs` for
     /// rationale. Set by `App::new` based on the `--startup-picker`
@@ -4046,7 +4042,6 @@ impl App {
             show_discovery_overlay: false,
             discovery_flash: None,
             show_welcome: false,
-            update_check: None,
             startup_picker: None,
             show_about: false,
             scratch_term: None,
@@ -10452,7 +10447,6 @@ impl App {
         // NewCloudAgentWizard panes — drain PR-list fetcher.
         self.drain_new_cloud_agent_wizards();
         self.drain_git_results();
-        self.maybe_announce_update();
         self.drain_now_playing();
         self.drain_http_jobs();
         self.drain_sse_jobs();

@@ -250,11 +250,6 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if mnml::app::App::want_startup_picker(args.startup_picker) {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());
     }
-    // Background "is there a newer release?" check. Skipped in
-    // headless mode and when the user opted out via [ui] check_updates = false.
-    if app.config.ui.check_updates && !args.headless {
-        app.update_check = Some(mnml::update_check::UpdateCheck::spawn());
-    }
 
     let result = if args.headless {
         mnml::headless::run(app)

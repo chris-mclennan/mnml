@@ -484,18 +484,6 @@ pub struct UiConfig {
     /// ```
     pub ticket_prefixes: Vec<String>,
 
-    /// When true, mnml pings the GitHub releases API in the
-    /// background on launch and shows a one-shot toast if a
-    /// newer tag exists than the running version. Disabled by
-    /// default in dev builds (Cargo.toml version often runs
-    /// ahead of the latest tag).
-    ///
-    /// ```toml
-    /// [ui]
-    /// check_updates = false  # opt out of the network call
-    /// ```
-    pub check_updates: bool,
-
     /// Which source the statusline `♪` miniplayer reads from.
     /// `"mixr"` (default) — the sibling mixr DJ app
     /// (`~/.mixr/quick.txt`). No permission prompts, cheap.
@@ -1236,7 +1224,6 @@ impl Default for Config {
                     // by vscode-user-mouse second hunt as SEV-3.
                 ],
                 ticket_prefixes: Vec::new(),
-                check_updates: true,
                 // qa-feature 2026-07-02 — default "mixr" instead of
                 // "auto". Auto polled macOS Music/Spotify via
                 // osascript every 3s, which triggers the

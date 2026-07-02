@@ -2396,29 +2396,6 @@ fn builtin_commands() -> Vec<Command> {
                 app.add_workspace_runtime(p, None);
             },
         },
-        Command {
-            id: "update.install_latest",
-            title: "Update mnml to the latest release (download + install + relaunch)",
-            group: "update",
-            keys: &[],
-            // Pulls `latest_version` from the launch-time GitHub
-            // releases check. No-op + toast when no update is
-            // available (avoids "downgrade to the version we're
-            // already on" surprise). Spawns a Pty pane that runs the
-            // platform-specific install script; user watches live,
-            // quits with Ctrl+Q + relaunches when done.
-            run: |app| {
-                let Some(uc) = app.update_check.as_ref() else {
-                    app.toast("update check disabled or not started");
-                    return;
-                };
-                let Some(latest) = uc.latest() else {
-                    app.toast("no newer mnml release found");
-                    return;
-                };
-                crate::update_apply::run_install(app, &latest);
-            },
-        },
         // ── Activity bar (vscode-style left-rail icon strip) ──
         // Each command flips `App.active_section` to its matching
         // value; the rail layout dispatches on it to pick which

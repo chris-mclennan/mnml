@@ -116,10 +116,6 @@ fn brand_menu() -> MenuDef {
                 command_id: "view.about",
             },
             MenuItem::Action {
-                label: "Check for updates",
-                command_id: "update.install_latest",
-            },
-            MenuItem::Action {
                 label: "Settings…",
                 command_id: "view.settings",
             },

@@ -350,27 +350,6 @@ impl App {
     /// chosen workspace's tree section (collapses other extras so the rail
     /// reads as "this is the one I'm working in"). Primary workspace just
     /// gets focused.
-    /// Surface a one-shot toast when the background update-check
-    /// has resolved with a newer version than `CARGO_PKG_VERSION`.
-    /// No-op once the toast has fired this session, when the user
-    /// opted out, or when the background fetch hasn't completed.
-    pub(crate) fn maybe_announce_update(&mut self) {
-        let Some(uc) = self.update_check.as_ref() else {
-            return;
-        };
-        let Some(latest) = uc.take_pending_announcement() else {
-            return;
-        };
-        // Toast hints at `:update.install_latest` (the palette
-        // command) — that command spawns a Pty pane that runs the
-        // download + sha256-verify + install script, after which
-        // the user quits + relaunches to use the new binary.
-        self.toast(format!(
-            "mnml v{latest} available — :update.install_latest  ·  {}",
-            crate::update_check::UpdateCheck::release_url(&latest),
-        ));
-    }
-
     pub fn switch_workspace(&mut self, idx: usize) {
         // 0 = primary, 1+ = extras (offset by -1 into `extra_workspaces`).
         self.focus_tree();
