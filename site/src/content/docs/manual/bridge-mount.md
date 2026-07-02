@@ -100,7 +100,7 @@ field is one of:
 | Integrations | `integrations` |
 | Sessions | `sessions` |
 | Agents (local Claude/Codex) | `agents` |
-| Cloud agents (Tattle QWE) | `cloud_agents` |
+| Cloud agents (ECS runner) | `cloud_agents` |
 
 For a manifest-registered Mount sibling, the section key is the
 manifest `id`.
@@ -115,15 +115,41 @@ a dep:
 
 ```toml
 [dependencies]
-mnml-bridge = "0.1"
+mnml-bridge = "0.2"
 ```
 
-The bare crate exposes only the wire types — small dep tree. To
-get the **Mount client** (tier 4) you opt in:
+The bare crate exposes:
+
+- **Wire types** — `Cell`, `HostMessage`, `SiblingMessage`,
+  `read_message` / `write_message`. Used by any sibling that
+  wants a typed wrapper around the Mount UDS protocol.
+- **Tier-2 IPC helpers** — `toast()`, `set_activity_badge()`,
+  `register_command()`. Write JSONL commands to
+  `$MNML_IPC_DIR/command` so a sibling can toast, badge, or
+  register a global chord without hand-rolling the JSON. All
+  three are fire-and-forget (silent no-op when
+  `MNML_IPC_DIR` isn't set — safe to call outside mnml).
+
+```rust
+mnml_bridge::toast("upload complete");
+mnml_bridge::set_activity_badge("my-tests", 3);
+mnml_bridge::register_command(
+    "my-tests.run", "Run tests",
+    Some("plugin"),
+    &["<leader>tr"],
+);
+```
+
+To get the **Mount client** (tier 4) opt in with the `client`
+feature (pulls in ratatui):
 
 ```toml
-mnml-bridge = { version = "0.1", features = ["client"] }
+mnml-bridge = { version = "0.2", features = ["client"] }
 ```
+
+Mount siblings can call the same helpers as methods on
+`Mount` — `mount.toast(...)`, `mount.set_activity_badge(...)`,
+`mount.register_command(...)`.
 
 Most siblings won't need `client` — tier 2 covers everything
 short of taking over a pane.
@@ -166,12 +192,12 @@ Manifest fields:
 | `color` | no | Named theme color — `red`/`orange`/`yellow`/`green`/`blue`/`cyan`/`teal`/`purple`/`pink`/`comment`. Defaults to cyan. |
 | `tooltip` | no | Hover text. Falls back to `name`. |
 
-Example — registering the Tattle test-executions browser:
+Example — registering a custom test-executions browser:
 
 ```toml
-id = "tattle-tests"
-name = "Tattle tests"
-binary = "mnml-tattle-tests"
+id = "custom-tests"
+name = "Test executions"
+binary = "mnml-custom-tests"
 icon = ""
 color = "green"
 ```
@@ -256,9 +282,8 @@ its tick cadence; ~30 fps is fine for most UI.
 | A rich, custom panel that owns rail + body | Tier 4 (Mount) |
 
 Most siblings are happy with tiers 1 + 2. Tier 4 is for tools
-where Pty rendering doesn't fit the shape of the UI (the
-`mnml-tattle-tests` 3-env-column dashboard is the canonical
-example).
+where Pty rendering doesn't fit the shape of the UI (a 3-column
+dashboard that owns its own layout is the canonical example).
 
 ## See also
 

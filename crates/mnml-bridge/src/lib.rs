@@ -48,6 +48,9 @@ pub mod client;
 #[cfg(feature = "client")]
 pub use client::Mount;
 
+pub mod ipc;
+pub use ipc::{register_command, set_activity_badge, toast};
+
 /// A single terminal cell — one grapheme + style. Mirrors
 /// ratatui's `buffer::Cell` shape but with serde derived.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

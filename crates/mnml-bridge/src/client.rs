@@ -140,6 +140,36 @@ impl Mount {
         let _ = write_message(&mut self.writer, &SiblingMessage::Bye);
         let _ = self.writer.flush();
     }
+
+    /// Convenience wrapper around [`crate::toast`] — surfaces a
+    /// toast in the host without going through the Mount socket
+    /// (uses the tier-2 JSONL command channel).
+    pub fn toast(&self, message: impl AsRef<str>) {
+        crate::ipc::toast(message)
+    }
+
+    /// Convenience wrapper around
+    /// [`crate::set_activity_badge`] — sets / clears the badge on
+    /// the sibling's own activity-bar section. Most siblings use
+    /// their manifest `id` as `section`.
+    pub fn set_activity_badge(&self, section: impl AsRef<str>, count: u32) {
+        crate::ipc::set_activity_badge(section, count)
+    }
+
+    /// Convenience wrapper around
+    /// [`crate::register_command`] — registers a plugin command
+    /// + optional key chords with the host. Commands appear in
+    /// the palette and (if `keys` is non-empty) fire on the
+    /// given chords.
+    pub fn register_command(
+        &self,
+        id: impl AsRef<str>,
+        title: impl AsRef<str>,
+        group: Option<&str>,
+        keys: &[&str],
+    ) {
+        crate::ipc::register_command(id, title, group, keys)
+    }
 }
 
 fn reader_loop<R: Read>(
