@@ -113,6 +113,12 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
             } else {
                 app.tree.move_up();
             }
+            // qa-feature 2026-07-01 — VS Code-style preview:
+            // arrowing over a file loads it into the preview
+            // pane, focus stays in the tree so the user can
+            // keep arrowing to browse. Enter still opens fully
+            // + shifts focus.
+            preview_selected_tree_file(app);
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if let Some(ws_idx) = app.focused_extra_ws
@@ -122,6 +128,7 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
             } else {
                 app.tree.move_down();
             }
+            preview_selected_tree_file(app);
         }
         // Tab is the explicit cross-section affordance — flips into the
         // git rail (when expanded + non-empty) and back. Replaces the
@@ -148,6 +155,34 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc if !app.tree.filter.is_empty() => app.tree.filter_clear_and_exit(),
         _ => {}
     }
+}
+
+/// qa-feature 2026-07-01 — VS Code-style tree preview. When the
+/// cursor lands on a FILE row (primary or focused extra), open it
+/// as a preview pane but keep focus on the tree so the user can
+/// keep arrowing. No-op on dir rows. Callers should invoke this
+/// after each move_up/move_down in the tree section. Only fires
+/// when the "standard" input style is active (vim users don't
+/// have preview panes by design — every file is its own tab).
+fn preview_selected_tree_file(app: &mut App) {
+    if app.config.editor.input_style != "standard" {
+        return;
+    }
+    let selected: Option<std::path::PathBuf> = if let Some(ws_idx) = app.focused_extra_ws {
+        app.extra_workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tree.selected_file())
+    } else {
+        app.tree.selected_file()
+    };
+    let Some(path) = selected else {
+        return;
+    };
+    app.open_path_preview(&path);
+    // open_path_preview → open_path_inner → reveal_pane sets
+    // Focus::Pane. Restore Focus::Tree so subsequent arrow keys
+    // continue routing to the tree handler.
+    app.focus_tree();
 }
 
 /// True for panes that should let `:` and `Ctrl+W` (the vim
