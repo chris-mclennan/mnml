@@ -29,6 +29,16 @@ pub enum MenuAction {
     /// tree's directory-row context menu. User-requested 2026-06-18
     /// for "I opened at ~/Projects, drill into one of these into."
     SetAsWorkspace(PathBuf),
+    /// qa-feature 2026-07-01 — recursively expand/collapse a dir + all its
+    /// descendants. Surfaced from the tree dir right-click menu; equivalent
+    /// to Alt+click on the dir row.
+    TreeExpandRecursive(PathBuf),
+    TreeCollapseRecursive(PathBuf),
+    /// qa-feature 2026-07-01 — remove the currently-primary workspace
+    /// (promotes the first extra in position order to primary first, then
+    /// drops the demoted old primary). No-op / hidden when there are no
+    /// extras, since removing would leave the app with nothing loaded.
+    RemovePrimaryWorkspace,
     /// Open the integration-edit panel for the integration with the
     /// given id, pre-filled with that entry's glyph/color/tooltip.
     /// Surfaced by the integration-chip right-click menu so users

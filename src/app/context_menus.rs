@@ -198,6 +198,14 @@ impl App {
                 MenuItem::new("Set as workspace", MenuAction::SetAsWorkspace(path.clone())),
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent.clone())),
+                MenuItem::new(
+                    "Expand recursively",
+                    MenuAction::TreeExpandRecursive(path.clone()),
+                ),
+                MenuItem::new(
+                    "Collapse recursively",
+                    MenuAction::TreeCollapseRecursive(path.clone()),
+                ),
                 MenuItem::new("Open in terminal", MenuAction::OpenTerminal(parent)),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
@@ -373,7 +381,7 @@ impl App {
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| "workspace".into());
-        let items = vec![
+        let mut items = vec![
             MenuItem::new(
                 "Toggle expand",
                 MenuAction::Command("view.toggle_tree_section"),
@@ -383,12 +391,26 @@ impl App {
                 MenuAction::Command("view.switch_workspace"),
             ),
             MenuItem::new("Add workspace…", MenuAction::Command("view.add_workspace")),
-            MenuItem::new(
-                "Reveal in Finder",
-                MenuAction::RevealInFinder(self.workspace.clone()),
-            ),
-            MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")),
         ];
+        // qa-feature 2026-07-01 — "Remove workspace" only when there's
+        // at least one extra to fall back on. If we removed the sole
+        // primary, mnml would be left with no tree, no repos, and no
+        // graceful state to recover to — better to hide the option
+        // than crash into an empty rail.
+        if !self.extra_workspaces.is_empty() {
+            items.push(MenuItem::new(
+                "Remove workspace",
+                MenuAction::RemovePrimaryWorkspace,
+            ));
+        }
+        items.push(MenuItem::new(
+            "Reveal in Finder",
+            MenuAction::RevealInFinder(self.workspace.clone()),
+        ));
+        items.push(MenuItem::new(
+            "Refresh tree",
+            MenuAction::Command("tree.refresh"),
+        ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
@@ -754,6 +776,15 @@ impl App {
             }
             SetAsWorkspace(p) => {
                 self.set_workspace_to(p);
+            }
+            TreeExpandRecursive(p) => {
+                self.tree.expand_subtree(&p);
+            }
+            TreeCollapseRecursive(p) => {
+                self.tree.collapse_subtree(&p);
+            }
+            RemovePrimaryWorkspace => {
+                self.remove_primary_workspace();
             }
             EditIntegration(id) => {
                 self.open_integration_edit_by_id(&id);

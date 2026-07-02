@@ -414,10 +414,42 @@ impl Tree {
         }
     }
 
+    /// Expand this dir and every descendant dir. No-op if `target` isn't a
+    /// known dir. Used by the tree dir right-click "Expand recursively".
+    pub fn expand_subtree(&mut self, target: &Path) {
+        let dirs: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir && (e.path == target || e.path.starts_with(target)))
+            .map(|e| e.path.clone())
+            .collect();
+        for p in dirs {
+            self.expanded.insert(p);
+        }
+        let max = self.visible_rows().len().saturating_sub(1);
+        self.cursor = self.cursor.min(max);
+    }
+
+    /// Collapse this dir and every descendant dir. No-op if `target` isn't a
+    /// known dir. Used by the tree dir right-click "Collapse recursively".
+    pub fn collapse_subtree(&mut self, target: &Path) {
+        let dirs: Vec<PathBuf> = self
+            .entries
+            .iter()
+            .filter(|e| e.is_dir && (e.path == target || e.path.starts_with(target)))
+            .map(|e| e.path.clone())
+            .collect();
+        for p in dirs {
+            self.expanded.remove(&p);
+        }
+        let max = self.visible_rows().len().saturating_sub(1);
+        self.cursor = self.cursor.min(max);
+    }
+
     /// Recursively toggle expand/collapse on the row under the cursor.
     /// If the dir is currently collapsed, expand it AND every descendant
     /// dir. If expanded, collapse it AND every descendant dir. No-op on
-    /// files. Bound to Shift+click on the tree row (VS Code convention).
+    /// files. Bound to Alt+click on the tree row (VS Code convention).
     pub fn toggle_current_recursive(&mut self) {
         let Some(row) = self.selected_row() else {
             return;

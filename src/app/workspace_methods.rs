@@ -231,6 +231,53 @@ impl App {
         self.toast(format!("workspace opened: {name}"));
     }
 
+    /// qa-feature 2026-07-01 — Remove the currently-primary workspace.
+    /// Promotes the first extra (in position order) to primary, then
+    /// drops the just-demoted OLD primary from the list. No-op when
+    /// there are no extras — the context-menu item is hidden in that
+    /// case, but we double-guard here so a stale command / rebind
+    /// can't leave the app with nothing loaded.
+    pub fn remove_primary_workspace(&mut self) {
+        if self.extra_workspaces.is_empty() {
+            self.toast("can't remove: no other workspace to fall back on");
+            return;
+        }
+        // Pick the extra with the smallest .position — the visually
+        // topmost row after the primary.
+        let Some(target_idx) = self
+            .extra_workspaces
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, w)| w.position)
+            .map(|(i, _)| i)
+        else {
+            return;
+        };
+        let target = self.extra_workspaces[target_idx].root.clone();
+        let target_name = self.extra_workspaces[target_idx].name.clone();
+        // Snapshot the OLD primary's root before promotion swaps them.
+        let old_primary_root = self.workspace.clone();
+        // Promote — swaps `.position` and moves the OLD primary into the
+        // target's slot in `extra_workspaces`.
+        self.promote_to_primary_workspace(target, target_name);
+        // Drop the demoted OLD primary from the extras.
+        self.extra_workspaces.retain(|w| w.root != old_primary_root);
+        // Rebuild the flat repo list since we dropped a workspace's repos.
+        let mut fresh_repos = crate::git::repos::discover_repos(&self.workspace);
+        for extra in &self.extra_workspaces {
+            let mut extra_repos = crate::git::repos::discover_repos(&extra.root);
+            fresh_repos.append(&mut extra_repos);
+        }
+        self.repos = fresh_repos;
+        self.active_repo = 0;
+        let name = old_primary_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("workspace")
+            .to_string();
+        self.toast(format!("workspace removed: {name}"));
+    }
+
     /// Smallest positive integer not already in use by
     /// `primary_position` or any extra's `.position`.
     fn next_free_workspace_position(&self) -> usize {
