@@ -167,10 +167,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if pinned { 0 } else { 1 }
     });
     let sep = 1u16; // cell between tabs (rendered as the bg color)
-    // Reserve 2 cells on each side of the tab strip for the overflow chevrons
-    // when there's content past the edge.
-    let overflow_l = 1u16;
-    let overflow_r = 1u16;
+    // qa-feature 2026-07-02 — 3-cell scroll buttons on each side of
+    // the tab strip. Always painted (dim + disabled when no
+    // overflow) so users can find them.
+    let overflow_l = 3u16;
+    let overflow_r = 3u16;
     let inner_left = area.x + overflow_l;
     let inner_right = tabs_max_x.saturating_sub(overflow_r);
     let inner_width = inner_right.saturating_sub(inner_left);
@@ -225,30 +226,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let first_visible = app.bufferline_first_visible;
 
     let mut spans: Vec<Span> = Vec::new();
-    // Left overflow chevron — only painted if there's a tab off the left edge.
-    let left_chev_used = if first_visible > 0 {
-        spans.push(Span::styled(
-            "‹",
-            Style::default()
-                .fg(theme::cur().blue)
-                .bg(theme::cur().bg_darker),
-        ));
-        // Register the click rect so the mouse handler can scroll left on click.
+    // qa-feature 2026-07-02 — always paint a 3-cell `‹` button on
+    // the left. Enabled + colored when there's a tab off-screen to
+    // scroll to; dim + non-interactive otherwise. Wider than the
+    // old 1-cell chevron so users can actually see + click it.
+    let left_enabled = first_visible > 0;
+    let (l_fg, l_bg) = if left_enabled {
+        (theme::cur().bg_darker, theme::cur().blue)
+    } else {
+        (theme::cur().comment, theme::cur().bg_darker)
+    };
+    spans.push(Span::styled(
+        " ‹ ",
+        Style::default()
+            .fg(l_fg)
+            .bg(l_bg)
+            .add_modifier(Modifier::BOLD),
+    ));
+    if left_enabled {
         app.rects.bufferline_overflow_left = Some(ratatui::layout::Rect {
             x: area.x,
             y: area.y,
-            width: 1,
+            width: 3,
             height: 1,
         });
-        1
     } else {
-        spans.push(Span::styled(
-            " ",
-            Style::default().bg(theme::cur().bg_darker),
-        ));
-        1
-    };
-    let mut x = area.x + left_chev_used as u16;
+        app.rects.bufferline_overflow_left = None;
+    }
+    let left_chev_used: u16 = 3;
+    let mut x = area.x + left_chev_used;
     // render-reviewer #3 — hoist theme::cur() so the per-tab loop
     // doesn't acquire its RwLock 27× per tab. With 30 panes that's
     // ~810 lock acquisitions/frame just from this branch.
@@ -437,8 +443,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Are there tabs past the right edge? (Either we broke out of the render
     // loop, or there are tabs after the last one we drew that we never reached.)
     let more_right = overflow_right || (last_drawn + 1 < visible.len());
-    // fill the gap up to the cap, then the right overflow chevron (or a blank
-    // cell when nothing's past the edge).
+    // fill the gap up to the cap, then the 3-cell right scroll button.
     let fill_end = inner_right;
     if x < fill_end {
         spans.push(Span::styled(
@@ -446,21 +451,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Style::default().bg(theme::cur().bg_darker),
         ));
     }
+    // qa-feature 2026-07-02 — 3-cell `›` button. Enabled + blue when
+    // there are more tabs to the right; dim + non-interactive
+    // otherwise. Matches the left `‹` button styling above.
+    let (r_fg, r_bg) = if more_right {
+        (theme::cur().bg_darker, theme::cur().blue)
+    } else {
+        (theme::cur().comment, theme::cur().bg_darker)
+    };
     spans.push(Span::styled(
-        if more_right { "›" } else { " " },
+        " › ",
         Style::default()
-            .fg(theme::cur().blue)
-            .bg(theme::cur().bg_darker),
+            .fg(r_fg)
+            .bg(r_bg)
+            .add_modifier(Modifier::BOLD),
     ));
     if more_right {
-        // Right chevron sits at the cell just before the right cap, which
-        // is at `inner_right` (= `fill_end`). The cap takes 1 cell after it.
         app.rects.bufferline_overflow_right = Some(ratatui::layout::Rect {
             x: inner_right,
             y: area.y,
-            width: 1,
+            width: 3,
             height: 1,
         });
+    } else {
+        app.rects.bufferline_overflow_right = None;
     }
     let _ = last_drawn;
 
