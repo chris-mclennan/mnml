@@ -11,11 +11,11 @@ This page covers the workflow. For the per-forge viewers' UX, see [Bitbucket](/m
 
 ```
 > __                                    47 items
-  BB  tattle-api      #2487  fix auth retry on 401            chris    2h
+  BB  example-api      #2487  fix auth retry on 401            chris    2h
   GH  chris-mclennan/mnml  #82  CDP browser split             chris    4h
   GL  acme/api        !314   bump axios for CVE-2024-…        bob      6h
   AZ  api             #421   feat/v2 → main                   alice   12h
-  BB  tattle-platform #2492  redshift dms backfill            …        1d
+  BB  example-platform #2492  redshift dms backfill            …        1d
   …
 ```
 
@@ -78,17 +78,17 @@ Each prints (single JSON object, to stdout):
   "prs": [
     {
       "id": "2487",
-      "url": "https://bitbucket.org/tattle/tattle-api/pull-requests/2487",
-      "owner": "tattle",
-      "repo": "tattle-api",
+      "url": "https://bitbucket.org/example-org/example-api/pull-requests/2487",
+      "owner": "example-org",
+      "repo": "example-api",
       "title": "fix auth retry on 401",
       "author": "chris",
       "source_branch": "fix/auth-retry",
       "dest_branch": "main",
       "state": "open",
       "updated_at": "2026-06-06T15:43:00Z",
-      "remote_url_https": "https://bitbucket.org/tattle/tattle-api.git",
-      "remote_url_ssh": "git@bitbucket.org:tattle/tattle-api.git"
+      "remote_url_https": "https://bitbucket.org/example-org/example-api.git",
+      "remote_url_ssh": "git@bitbucket.org:example-org/example-api.git"
     }
   ]
 }
@@ -109,11 +109,11 @@ Each prints (single JSON object, to stdout):
 
 ```sh
 mnml-forge-bitbucket --find-pipeline-for-pr \
-    --owner tattle --repo tattle-api --branch fix/auth-retry --json
-# → { "url": "https://bitbucket.org/tattle/tattle-api/pipelines/results/47" }
+    --owner example-org --repo example-api --branch fix/auth-retry --json
+# → { "url": "https://bitbucket.org/example-org/example-api/pipelines/results/47" }
 
 mnml-forge-bitbucket --find-pipeline-for-pr \
-    --owner tattle --repo tattle-api --branch no-such-branch --json
+    --owner example-org --repo example-api --branch no-such-branch --json
 # → { "url": null }
 ```
 

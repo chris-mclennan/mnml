@@ -23,7 +23,7 @@
 #
 # Flow recorded:
 # 1. Pre-seed a tempfile with several JSONL rows across multiple
-#    workspaces (mnml, tattle, mixr) — varied methods, statuses,
+#    workspaces (mnml, acme-api, mixr) — varied methods, statuses,
 #    durations — to make the cross-workspace surface obvious.
 # 2. Export `MNML_HISTORY_GLOBAL_PATH` to point mnml at that file.
 # 3. Launch mnml on a tempdir.
@@ -68,10 +68,10 @@ Sleep 200ms
 Type `printf '%s\n' '{"ts":1718900001000,"workspace":"mnml","workspace_path":"/Users/me/Projects/mnml","method":"GET","url":"https://api.github.com/repos/chris-mclennan/mnml","status":200,"duration_ms":182,"body_bytes":4821,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
-Type `printf '%s\n' '{"ts":1718900002000,"workspace":"tattle","workspace_path":"/Users/me/Projects/tattle","method":"POST","url":"https://api.tattle.dev/v1/auth/login","status":200,"duration_ms":341,"body_bytes":612,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
+Type `printf '%s\n' '{"ts":1718900002000,"workspace":"acme-api","workspace_path":"/Users/me/Projects/acme-api","method":"POST","url":"https://api.example.dev/v1/auth/login","status":200,"duration_ms":341,"body_bytes":612,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
-Type `printf '%s\n' '{"ts":1718900003000,"workspace":"tattle","workspace_path":"/Users/me/Projects/tattle","method":"GET","url":"https://api.tattle.dev/v1/merchants?limit=20","status":200,"duration_ms":97,"body_bytes":9821,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
+Type `printf '%s\n' '{"ts":1718900003000,"workspace":"acme-api","workspace_path":"/Users/me/Projects/acme-api","method":"GET","url":"https://api.example.dev/v1/merchants?limit=20","status":200,"duration_ms":97,"body_bytes":9821,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
 Type `printf '%s\n' '{"ts":1718900004000,"workspace":"mixr","workspace_path":"/Users/me/Projects/mixr","method":"GET","url":"https://api.beatport.com/v4/catalog/tracks?per_page=10","status":401,"duration_ms":221,"body_bytes":58,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
@@ -83,7 +83,7 @@ Sleep 150ms
 Type `printf '%s\n' '{"ts":1718900006000,"workspace":"docs","workspace_path":"/Users/me/Projects/docs","method":"GET","url":"https://api.openai.com/v1/models","status":null,"duration_ms":3001,"body_bytes":null,"error":"connect timeout"}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
-Type `printf '%s\n' '{"ts":1718900007000,"workspace":"tattle","workspace_path":"/Users/me/Projects/tattle","method":"DELETE","url":"https://api.tattle.dev/v1/sessions/abc123","status":204,"duration_ms":151,"body_bytes":0,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
+Type `printf '%s\n' '{"ts":1718900007000,"workspace":"acme-api","workspace_path":"/Users/me/Projects/acme-api","method":"DELETE","url":"https://api.example.dev/v1/sessions/abc123","status":204,"duration_ms":151,"body_bytes":0,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 200ms
 
@@ -116,7 +116,7 @@ Sleep 1.2s
 # Title: "HTTP history · all workspaces". Rows show
 # `<METHOD> <host/path>` + detail `<workspace> · <status> · <ms>`.
 # Most-recent first (the picker reverses tail order so the
-# DELETE-on-tattle entry lands at the top).
+# DELETE-on-acme-api entry lands at the top).
 Type ":http.history_global"
 Sleep 500ms
 Enter
@@ -124,7 +124,7 @@ Sleep 2s
 
 # ── Stage 2: scroll through the entries to show the workspace mix ──────
 # `j` walks down through the rows — each detail line surfaces a
-# different workspace (tattle, mixr, mnml, docs…) so the
+# different workspace (acme-api, mixr, mnml, docs…) so the
 # cross-workspace nature of the surface is clear.
 Down
 Sleep 600ms

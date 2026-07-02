@@ -7,12 +7,12 @@ description: mnml-forge-bitbucket — a Bitbucket Cloud pull-request, pipelines,
 
 ```
 ┌─ bitbucket PRs ──────────────────────────────────────────────────┐
-│ ▸1.Mine (3)  2.Reviewing (7)  3.tattle-api PRs (12)              │
+│ ▸1.Mine (3)  2.Reviewing (7)  3.example-api PRs (12)              │
 └──────────────────────────────────────────────────────────────────┘
 ┌─ Mine ───────────────────────────────────────────────────────────┐
 │ REPO              │ PR     │ STATE │ AUTHOR  │ BRANCH → DEST     │
-│ tattlecorp/api    │ #1234  │ OPEN  │ Chris   │ chris/fix → main  │
-│ tattlecorp/web    │ #821   │ OPEN  │ Chris   │ chris/redesign…   │
+│ acme/api    │ #1234  │ OPEN  │ Chris   │ chris/fix → main  │
+│ acme/web    │ #821   │ OPEN  │ Chris   │ chris/redesign…   │
 │ …                                                                │
 └──────────────────────────────────────────────────────────────────┘
   1-9 tab · ↑↓/jk move · Enter/o open · r refresh · q quit
@@ -76,14 +76,14 @@ name = "Reviewing"
 mode = "reviewing"          # kind defaults to pull_requests
 
 [[tabs]]
-name = "tattle-api pipelines"
+name = "example-api pipelines"
 kind = "pipelines"
-repo = "tattle-api"
+repo = "example-api"
 
 [[tabs]]
-name = "tattle-api branches"
+name = "example-api branches"
 kind = "branches"
-repo = "tattle-api"
+repo = "example-api"
 ```
 
 ### Pull-request tab shapes
@@ -94,8 +94,8 @@ Three shapes for `kind = "pull_requests"`:
 
 ```toml
 [[tabs]]
-name  = "tattle-api PRs"
-repo  = "tattle-api"
+name  = "example-api PRs"
+repo  = "example-api"
 state = "OPEN"             # OPEN / MERGED / DECLINED / SUPERSEDED
 ```
 
@@ -128,7 +128,7 @@ For finer-grained control you can supply a raw Bitbucket Query Language string v
 ```toml
 [[tabs]]
 name  = "Stale PRs"
-repo  = "tattle-api"
+repo  = "example-api"
 state = "OPEN"
 q     = "updated_on <= 2026-05-01T00:00:00+00:00"
 ```
