@@ -4205,6 +4205,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.browser_dock_toggle(),
         },
         Command {
+            id: "browser.install_cft",
+            title: "Browser: install Chrome for Testing via npx",
+            group: "browser",
+            keys: &[],
+            run: |app| app.browser_install_cft(),
+        },
+        Command {
             id: "browser.reload",
             title: "Browser: reload the current page (Page.reload)",
             group: "browser",

@@ -38,7 +38,16 @@ pub enum CdpEvent {
 }
 
 /// Binaries (and well-known macOS paths) we try, in order, for `browser.open`.
+/// Chrome for Testing (CfT) is preferred — it's the version puppeteer/mnml
+/// automation targets and doesn't auto-update, so a pinned CfT install is
+/// stable for scripted browser work. Falls through to stock Chrome / Chromium
+/// so users without CfT still get a working `browser.open`.
 const CHROME_BINS: &[&str] = &[
+    // Chrome for Testing installed via `npx @puppeteer/browsers install`
+    // typically lands under one of these paths.
+    "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+    "chrome-for-testing",
+    // @puppeteer/browsers cache locations.
     "google-chrome",
     "google-chrome-stable",
     "chromium",
@@ -48,6 +57,46 @@ const CHROME_BINS: &[&str] = &[
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
 ];
+
+/// Return the first `~/chrome-for-testing/mac-<version>/chrome-mac-*/…/Google
+/// Chrome for Testing` path that exists on disk. Handles the layout that
+/// `npx @puppeteer/browsers install chrome@stable` writes — a
+/// versioned dir under `~/chrome-for-testing/`. Returns `None` when no
+/// matching install is found.
+pub fn find_chrome_for_testing_puppeteer_cache() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    // Common puppeteer cache paths.
+    let candidates = [
+        format!("{home}/.cache/puppeteer/chrome"),
+        format!("{home}/Library/Caches/puppeteer/chrome"),
+        format!("{home}/chrome-for-testing"),
+    ];
+    for base in &candidates {
+        let base = std::path::Path::new(base);
+        if !base.exists() {
+            continue;
+        }
+        // Walk one level of version dirs; return the FIRST binary we find.
+        let Ok(entries) = std::fs::read_dir(base) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            // macOS: <p>/chrome-mac-*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing
+            if let Ok(inner) = std::fs::read_dir(&p) {
+                for e in inner.flatten() {
+                    let bin = e.path().join(
+                        "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+                    );
+                    if bin.exists() {
+                        return Some(bin);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Build a JSON-RPC request string with the given `id`, `method`, and `params`.
 pub fn rpc(id: i64, method: &str, params: serde_json::Value) -> String {
@@ -425,7 +474,16 @@ fn spawn_chrome(url: &str, profile_dir: &Path, headless: bool) -> Result<Child, 
     } else {
         url.trim()
     };
-    for bin in CHROME_BINS {
+    // qa-feature 2026-07-02 — prefer Chrome for Testing (puppeteer cache)
+    // before falling into the stock Chrome / Chromium fallbacks. This
+    // catches installs that put CfT under
+    // `~/.cache/puppeteer/chrome/…` where a hard-coded path wouldn't.
+    let mut all_bins: Vec<String> = Vec::with_capacity(CHROME_BINS.len() + 1);
+    if let Some(cft) = find_chrome_for_testing_puppeteer_cache() {
+        all_bins.push(cft.display().to_string());
+    }
+    all_bins.extend(CHROME_BINS.iter().map(|s| s.to_string()));
+    for bin in &all_bins {
         let mut cmd = Command::new(bin);
         cmd.arg("--remote-debugging-port=0")
             .arg(format!("--user-data-dir={}", profile_dir.display()))
@@ -450,7 +508,10 @@ fn spawn_chrome(url: &str, profile_dir: &Path, headless: bool) -> Result<Child, 
             return Ok(c);
         }
     }
-    Err("no Chrome / Chromium found (tried google-chrome, chromium, …)".to_string())
+    Err(
+        "Chrome not found. Install Chrome for Testing:\n    npx @puppeteer/browsers install chrome@stable\nor run `:browser.install_cft`."
+            .to_string(),
+    )
 }
 
 /// Read Chrome's stderr for the `DevTools listening on ws://127.0.0.1:PORT/…` line

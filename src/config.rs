@@ -497,13 +497,18 @@ pub struct UiConfig {
     pub check_updates: bool,
 
     /// Which source the statusline `♪` miniplayer reads from.
-    /// `"auto"` (default) — mixr first, then macOS Music / Spotify.
-    /// `"mixr"` — only the sibling mixr DJ app (`~/.mixr/quick.txt`).
-    /// `"macos"` — only macOS Music / Spotify via AppleScript.
+    /// `"mixr"` (default) — the sibling mixr DJ app
+    /// (`~/.mixr/quick.txt`). No permission prompts, cheap.
+    /// `"macos"` — macOS Music / Spotify via AppleScript. First-run
+    /// triggers macOS's "allow mnml to control Music" permission
+    /// dialog; grant it once to enable.
+    /// `"auto"` — mixr first, macOS as fallback. Same permission
+    /// prompt as `"macos"` fires because we poll both.
     ///
-    /// Use `"mixr"` or `"macos"` to skip the other source's poll —
-    /// noticeable when the macOS variant is the slow one (`osascript`
-    /// shell-out) and you're not playing through Music / Spotify.
+    /// Default was `"auto"` before qa-feature 2026-07-02; changed
+    /// to `"mixr"` so users who don't use mixr AND don't want
+    /// macOS media integration aren't prompted for a permission
+    /// they don't need.
     ///
     /// ```toml
     /// [ui]
@@ -1232,7 +1237,15 @@ impl Default for Config {
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,
-                now_playing_source: "auto".to_string(),
+                // qa-feature 2026-07-02 — default "mixr" instead of
+                // "auto". Auto polled macOS Music/Spotify via
+                // osascript every 3s, which triggers the
+                // "allow mnml to control Music" permission dialog for
+                // every macOS user (Music.app ships bundled). Opt in
+                // to macOS polling explicitly via `now_playing_source
+                // = "macos"` or `= "auto"`. mixr is a cheap file
+                // read — no prompt fires.
+                now_playing_source: "mixr".to_string(),
                 preferred_music_app: "mixr".to_string(),
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),

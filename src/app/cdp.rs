@@ -10,6 +10,38 @@
 
 use super::*;
 
+/// qa-feature 2026-07-02 — cheap best-effort check for a launchable
+/// Chrome/Chromium/CfT. Returns true if the puppeteer cache has an
+/// install OR any of the well-known binaries is on PATH. Doesn't
+/// launch Chrome; just checks paths/executable-in-PATH.
+fn chrome_is_available() -> bool {
+    if crate::cdp::find_chrome_for_testing_puppeteer_cache().is_some() {
+        return true;
+    }
+    for name in [
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "chrome",
+    ] {
+        if crate::integration_detect::is_binary_installed(name) {
+            return true;
+        }
+    }
+    for path in [
+        "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+    ] {
+        if std::path::Path::new(path).exists() {
+            return true;
+        }
+    }
+    false
+}
+
 /// A short text rendering of a CDP `RemoteObject` (console args, eval results).
 fn cdp_remote_object_str(o: &serde_json::Value) -> String {
     if let Some(v) = o.get("value") {
@@ -252,6 +284,16 @@ impl App {
     /// `shared` profile modes) land in a sibling `chrome-profile-N` dir so
     /// Chrome doesn't refuse to start against an already-locked user-data-dir.
     pub fn open_browser(&mut self, url: &str) {
+        // qa-feature 2026-07-02 — upfront Chrome availability check.
+        // Was: opened a browser pane, then failed silently when the
+        // worker couldn't find any Chrome. Now toast a helpful hint
+        // that points at `:browser.install_cft`.
+        if !chrome_is_available() {
+            self.toast(
+                "no Chrome found — run `:browser.install_cft` to install Chrome for Testing",
+            );
+            return;
+        }
         let existing_browsers = self
             .panes
             .iter()
@@ -483,6 +525,34 @@ end tell"#,
             self.browser_dock_saved = Some((ghostty, chrome));
             self.toast("browser.dock: docked (run again to restore)");
         }
+    }
+
+    /// qa-feature 2026-07-02 — spawn a Pty pane that installs Chrome
+    /// for Testing via `npx @puppeteer/browsers install chrome@stable`.
+    /// Requires `npx` (Node) on PATH; toasts a hint otherwise. The
+    /// install lands in `~/.cache/puppeteer/chrome/` where
+    /// `spawn_chrome` will find it on the next `browser.open`.
+    pub fn browser_install_cft(&mut self) {
+        if !crate::integration_detect::is_binary_installed("npx") {
+            self.toast(
+                "npx not found — install Node.js first, then run `:browser.install_cft` again",
+            );
+            return;
+        }
+        let profile = crate::pty_pane::BinaryProfile {
+            label: "install: chrome for testing".to_string(),
+            exe: "npx".to_string(),
+            args: vec![
+                "@puppeteer/browsers".to_string(),
+                "install".to_string(),
+                "chrome@stable".to_string(),
+            ],
+            cwd: None,
+            env: Vec::new(),
+            session_id: None,
+        };
+        self.open_pty(profile);
+        self.toast("installing Chrome for Testing… try `:browser.open` when done");
     }
 
     /// `r` in a browser pane — reload the page.
