@@ -167,11 +167,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if pinned { 0 } else { 1 }
     });
     let sep = 1u16; // cell between tabs (rendered as the bg color)
-    // qa-feature 2026-07-02 — 3-cell scroll buttons on each side of
-    // the tab strip. Always painted (dim + disabled when no
-    // overflow) so users can find them.
-    let overflow_l = 3u16;
-    let overflow_r = 3u16;
+    // qa-feature 2026-07-02 — both 3-cell scroll buttons live on the
+    // RIGHT edge, side-by-side, just before the H/V split buttons.
+    // Tab strip starts at the far left. User preference — the
+    // buttons feel more like a paired scroll widget when they're
+    // next to each other.
+    let overflow_l = 0u16;
+    let overflow_r = 6u16; // ‹ (3) + › (3)
     let inner_left = area.x + overflow_l;
     let inner_right = tabs_max_x.saturating_sub(overflow_r);
     let inner_width = inner_right.saturating_sub(inner_left);
@@ -226,35 +228,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let first_visible = app.bufferline_first_visible;
 
     let mut spans: Vec<Span> = Vec::new();
-    // qa-feature 2026-07-02 — always paint a 3-cell `‹` button on
-    // the left. Enabled + colored when there's a tab off-screen to
-    // scroll to; dim + non-interactive otherwise. Wider than the
-    // old 1-cell chevron so users can actually see + click it.
-    let left_enabled = first_visible > 0;
-    let (l_fg, l_bg) = if left_enabled {
-        (theme::cur().bg_darker, theme::cur().blue)
-    } else {
-        (theme::cur().comment, theme::cur().bg_darker)
-    };
-    spans.push(Span::styled(
-        " ‹ ",
-        Style::default()
-            .fg(l_fg)
-            .bg(l_bg)
-            .add_modifier(Modifier::BOLD),
-    ));
-    if left_enabled {
-        app.rects.bufferline_overflow_left = Some(ratatui::layout::Rect {
-            x: area.x,
-            y: area.y,
-            width: 3,
-            height: 1,
-        });
-    } else {
-        app.rects.bufferline_overflow_left = None;
-    }
-    let left_chev_used: u16 = 3;
-    let mut x = area.x + left_chev_used;
+    // qa-feature 2026-07-02 — both scroll buttons now live on the
+    // RIGHT (side-by-side), so nothing here. Tab strip starts at
+    // area.x. The buttons are painted at the very end of this
+    // function, next to the H/V split cluster.
+    app.rects.bufferline_overflow_left = None;
+    let mut x = area.x;
     // render-reviewer #3 — hoist theme::cur() so the per-tab loop
     // doesn't acquire its RwLock 27× per tab. With 30 panes that's
     // ~810 lock acquisitions/frame just from this branch.
@@ -443,7 +422,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Are there tabs past the right edge? (Either we broke out of the render
     // loop, or there are tabs after the last one we drew that we never reached.)
     let more_right = overflow_right || (last_drawn + 1 < visible.len());
-    // fill the gap up to the cap, then the 3-cell right scroll button.
+    // qa-feature 2026-07-02 — fill the gap up to the paired-arrow
+    // cluster, then paint `‹` and `›` side-by-side.
     let fill_end = inner_right;
     if x < fill_end {
         spans.push(Span::styled(
@@ -451,24 +431,46 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Style::default().bg(theme::cur().bg_darker),
         ));
     }
-    // qa-feature 2026-07-02 — 3-cell `›` button. Enabled + blue when
-    // there are more tabs to the right; dim + non-interactive
-    // otherwise. Matches the left `‹` button styling above.
-    let (r_fg, r_bg) = if more_right {
-        (theme::cur().bg_darker, theme::cur().blue)
+    // Left arrow (paints at inner_right..inner_right+3).
+    let left_enabled = first_visible > 0;
+    let l_fg = if left_enabled {
+        theme::cur().blue
     } else {
-        (theme::cur().comment, theme::cur().bg_darker)
+        theme::cur().comment
+    };
+    spans.push(Span::styled(
+        " ‹ ",
+        Style::default()
+            .fg(l_fg)
+            .bg(theme::cur().bg_darker)
+            .add_modifier(Modifier::BOLD),
+    ));
+    if left_enabled {
+        app.rects.bufferline_overflow_left = Some(ratatui::layout::Rect {
+            x: inner_right,
+            y: area.y,
+            width: 3,
+            height: 1,
+        });
+    } else {
+        app.rects.bufferline_overflow_left = None;
+    }
+    // Right arrow (paints at inner_right+3..inner_right+6).
+    let r_fg = if more_right {
+        theme::cur().blue
+    } else {
+        theme::cur().comment
     };
     spans.push(Span::styled(
         " › ",
         Style::default()
             .fg(r_fg)
-            .bg(r_bg)
+            .bg(theme::cur().bg_darker)
             .add_modifier(Modifier::BOLD),
     ));
     if more_right {
         app.rects.bufferline_overflow_right = Some(ratatui::layout::Rect {
-            x: inner_right,
+            x: inner_right + 3,
             y: area.y,
             width: 3,
             height: 1,
