@@ -1134,9 +1134,20 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     // The `> WORKSPACE-NAME` section header — clicking it toggles the
     // workspace section's expand/collapse state (VS-Code Explorer-style).
+    // qa-feature 2026-07-01 — Alt+click on the header ALSO fully
+    // expands or fully collapses every dir inside the primary tree,
+    // matching the recursive alt-click gesture on individual dir rows.
     if let Some(tr) = app.rects.tree_toggle
         && crate::app::dispatch::contains(tr, x, y)
     {
+        if m.modifiers.contains(KeyModifiers::ALT) {
+            let was_expanded = app.tree_root_expanded;
+            if was_expanded {
+                app.tree.collapse_all();
+            } else {
+                app.tree.expand_all_dirs();
+            }
+        }
         app.toggle_tree_root_expanded();
         return;
     }
@@ -1203,12 +1214,26 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // Extra-workspace section header → toggle expansion.
+    // qa-feature 2026-07-01 — Alt+click on an extra's header ALSO
+    // fully expands/collapses every dir inside that extra's tree,
+    // matching the recursive alt-click gesture on individual dir
+    // rows. Symmetrical with the primary header handling above.
     if let Some(&(_, ws_idx)) = app
         .rects
         .extra_workspace_toggles
         .iter()
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
+        if m.modifiers.contains(KeyModifiers::ALT)
+            && let Some(ws) = app.extra_workspaces.get_mut(ws_idx)
+        {
+            let was_expanded = ws.expanded;
+            if was_expanded {
+                ws.tree.collapse_all();
+            } else {
+                ws.tree.expand_all_dirs();
+            }
+        }
         app.toggle_extra_workspace(ws_idx);
         return;
     }
