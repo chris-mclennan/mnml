@@ -1050,6 +1050,19 @@ impl Default for Config {
                         in_palette_bar: false,
                     },
                     IntegrationIcon {
+                        id: "gcal".to_string(),
+                        glyph: "\u{F0EDE}".to_string(), // nf-md-calendar_month
+                        fallback: "Ca".to_string(),
+                        command: ":term mnml-msg-gcal".to_string(),
+                        color: "blue".to_string(),
+                        tooltip: Some(
+                            "Google Calendar — today + week + upcoming meetings + create"
+                                .to_string(),
+                        ),
+                        enabled: false,
+                        in_palette_bar: false,
+                    },
+                    IntegrationIcon {
                         id: "docker".to_string(),
                         glyph: "\u{F0868}".to_string(), // nf-md-docker
                         fallback: "Dk".to_string(),

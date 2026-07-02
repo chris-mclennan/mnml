@@ -1391,6 +1391,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("term mnml-msg-gmail"),
         },
         Command {
+            id: "forge.open_gcal",
+            title: "Forge: open Google Calendar (mnml-msg-gcal)",
+            group: "forge",
+            keys: &[],
+            run: |app| app.run_ex_command("term mnml-msg-gcal"),
+        },
+        Command {
             id: "forge.open_jira",
             title: "Forge: open Jira ticket viewer (mnml-tracker-jira)",
             group: "forge",

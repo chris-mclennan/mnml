@@ -630,6 +630,20 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Gmail browse + send (per-user GCP project required)",
         },
     },
+    FamilySibling {
+        id: "gcal",
+        binary: "mnml-msg-gcal",
+        category: Category::Msg,
+        repo_url: "https://github.com/chris-mclennan/mnml-msg-gcal",
+        pinned_version: "main",
+        one_liner: "Google Calendar — today + week + upcoming meetings + create",
+        icon: IconTemplate {
+            glyph: "\u{F0EDE}", // nf-md-calendar_month
+            fallback: "Ca",
+            color: "blue",
+            tooltip: "Google Calendar browse + create (per-user GCP project required)",
+        },
+    },
     // ── CDN / Edge ────────────────────────────────────────────
     FamilySibling {
         id: "cloudflare",
