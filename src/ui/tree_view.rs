@@ -1351,6 +1351,22 @@ fn draw_extra_workspace_section(
     app.rects
         .extra_workspace_toggles
         .push((header_rect, ws_idx));
+    // qa-feature 2026-07-01 — register the `○` marker as its own
+    // click target so a click there promotes this extra to primary
+    // (same as right-click → Set as workspace). The dot sits right
+    // after the section chevron (` ▶ ` = 3 chars) and the marker
+    // itself is `○ ` = 2 chars.
+    // chev_str is ` ▶ ` / ` ▼ ` = 3 cells.
+    const CHEV_STR_W: u16 = 3;
+    let dot_rect = Rect {
+        x: area.x + CHEV_STR_W,
+        y: header_y,
+        width: 2,
+        height: 1,
+    };
+    app.rects
+        .extra_workspace_promote_dots
+        .push((dot_rect, ws_idx));
     let _ = width;
 
     if !expanded {

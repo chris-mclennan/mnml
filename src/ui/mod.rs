@@ -170,6 +170,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.request_edit_tabs.clear();
     app.rects.extra_workspace_bodies.clear();
     app.rects.extra_workspace_toggles.clear();
+    app.rects.extra_workspace_promote_dots.clear();
     app.rects.rail_git_header_buttons.clear();
     app.rects.help_section_headers.clear();
     // render-reviewer #3 — workspace chevron + name rect were not

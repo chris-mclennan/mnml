@@ -1593,6 +1593,11 @@ pub struct PaneRects {
     /// `(rect, ws_idx)` per extra-workspace section's header row. Click →
     /// toggle that section's expansion.
     pub extra_workspace_toggles: Vec<(Rect, usize)>,
+    /// qa-feature 2026-07-01 — `(rect, ws_idx)` per extra-workspace's
+    /// hollow `○` marker. Click → promote that workspace to primary
+    /// (same as right-click → Set as workspace). Sits inside the
+    /// `extra_workspace_toggles` rect but wins in the dispatcher.
+    pub extra_workspace_promote_dots: Vec<(Rect, usize)>,
     /// `(rect, hit)` per visible row in the GIT section. Click → focus + run
     /// the row's default action; right-click → context menu.
     pub git_rail_rows: Vec<(Rect, crate::git::rail::GitRailHit)>,

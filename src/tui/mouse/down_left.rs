@@ -1213,6 +1213,21 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         });
         return;
     }
+    // qa-feature 2026-07-01 — click on an extra's `○` marker
+    // promotes it to primary (same as right-click → Set as
+    // workspace). Sits inside the toggle rect; this check has to
+    // come FIRST so the promotion wins over the section-toggle.
+    if let Some(&(_, ws_idx)) = app
+        .rects
+        .extra_workspace_promote_dots
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        if let Some(path) = app.extra_workspaces.get(ws_idx).map(|w| w.root.clone()) {
+            app.set_workspace_to(path);
+        }
+        return;
+    }
     // Extra-workspace section header → toggle expansion.
     // qa-feature 2026-07-01 — Alt+click on an extra's header ALSO
     // fully expands/collapses every dir inside that extra's tree,
