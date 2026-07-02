@@ -108,6 +108,7 @@ pub(crate) mod tools;
 pub(crate) mod tree;
 pub mod tui;
 pub mod ui;
+pub mod update_check;
 pub(crate) mod whichkey;
 
 /// One clickable button in the `Pane::GitGraph` top toolbar.

@@ -350,6 +350,24 @@ impl App {
     /// chosen workspace's tree section (collapses other extras so the rail
     /// reads as "this is the one I'm working in"). Primary workspace just
     /// gets focused.
+    /// qa-feature 2026-07-02 — notification-only update flow. Fires
+    /// one toast per session with a channel-appropriate upgrade
+    /// instruction (`cargo install …`, `brew upgrade …`, or a GitHub
+    /// URL for .app users). No in-app installer.
+    pub(crate) fn maybe_announce_update(&mut self) {
+        let Some(uc) = self.update_check.as_ref() else {
+            return;
+        };
+        let Some(latest) = uc.take_pending_announcement() else {
+            return;
+        };
+        let channel = uc.channel;
+        self.toast(format!(
+            "mnml v{latest} available — {}",
+            channel.upgrade_hint(&latest)
+        ));
+    }
+
     pub fn switch_workspace(&mut self, idx: usize) {
         // 0 = primary, 1+ = extras (offset by -1 into `extra_workspaces`).
         self.focus_tree();

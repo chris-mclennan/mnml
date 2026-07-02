@@ -250,6 +250,11 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if mnml::app::App::want_startup_picker(args.startup_picker) {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());
     }
+    // Background GitHub-releases probe. Skipped in headless (no
+    // toast surface). Notification-only — no in-app installer.
+    if !args.headless {
+        app.update_check = Some(mnml::update_check::UpdateCheck::spawn());
+    }
 
     let result = if args.headless {
         mnml::headless::run(app)
