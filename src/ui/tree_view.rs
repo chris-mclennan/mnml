@@ -163,15 +163,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // ── `+ Add workspace` row — qa-feature 2026-07-01 pinned
-    //    to the BOTTOM of the workspace area rather than trailing
-    //    the last workspace by one row. Prior placement wasted
-    //    N-M rows below the affordance whenever the expanded
-    //    workspace's tree was shorter than the rail's remaining
-    //    height. Pinning fixes visual alignment across states
-    //    (nothing expanded, one expanded, multi expanded).
-    if next_y < ws_end_y {
-        draw_add_repo_row(frame, app, area, ws_end_y.saturating_sub(1), nerd, rail_bg);
+    // ── `+ Add workspace` row — sits ONE row below the last
+    //    workspace so it visually belongs to the group. Extends
+    //    down only when an expanded workspace pushes the last
+    //    row further; when nothing's expanded, the chip stays
+    //    right under the last collapsed extra with 1 cell of
+    //    padding (user preference — was briefly pinned to
+    //    ws_end_y - 1 but that left a huge dead zone below the
+    //    workspaces when nothing was expanded).
+    if next_y + 1 < ws_end_y {
+        draw_add_repo_row(frame, app, area, next_y + 1, nerd, rail_bg);
     }
 
     // ── INTEGRATIONS section: pinned just above GIT (with a blank
