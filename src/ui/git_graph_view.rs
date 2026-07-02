@@ -496,23 +496,28 @@ pub fn draw(
         // Graph column takes graph_w cells + lane_pad cells between
         // each pair of adjacent lanes (no pad after the last lane).
         let graph_col_w = graph_w + lane_pad * graph_w.saturating_sub(1);
-        let fixed_used = 1
-            + 2
-            + branch_section
-            + graph_col_w
-            + 3
-            + (if cols.author > 0 { cols.author + 3 } else { 0 })
+        // Prefix columns painted BEFORE the subject: cursor gutter
+        // (1) + row spacer (2) + branch section + graph column +
+        // trailing separator (3).
+        let prefix_used = 1 + 2 + branch_section + graph_col_w + 3;
+        // Trailing columns painted AFTER the subject.
+        let suffix_used = (if cols.author > 0 { cols.author + 3 } else { 0 })
             + (if cols.age > 0 { cols.age + 3 } else { 0 })
             + (if cols.sha > 0 { cols.sha + 3 } else { 0 })
             + SHA_RIGHT_PAD;
+        let fixed_used = prefix_used + suffix_used;
         let subject_w = (body_area.width as usize).saturating_sub(fixed_used);
         let subject = pad_or_truncate(&c.subject, subject_w);
         // qa-feature 2026-07-01 — register a hover rect on the
         // subject cell so the full commit message shows in a
         // tooltip when the pane is narrow. `commit_idx` locates
         // the source commit inside the pane's commits vec.
+        // Panic fix 2026-07-01 — was `fixed_used - subject_w`,
+        // which underflowed whenever the pane was wider than the
+        // fixed columns (i.e. almost always). Subject starts at
+        // `prefix_used`, not at `fixed_used - subject_w`.
         if let Some(commit_idx) = c_idx {
-            let subject_x = body_area.x + (fixed_used - subject_w) as u16;
+            let subject_x = body_area.x + prefix_used as u16;
             let screen_y = body_area.y + (v_idx - g.scroll) as u16;
             app.rects.git_graph_subject_cells.push((
                 ratatui::layout::Rect {
