@@ -179,7 +179,7 @@ impl BinaryProfile {
         }
     }
 
-    /// `mixr` — the sibling TUI DJ app (`~/Projects/mixr-rs`). Launches with
+    /// `mixr` — the sibling TUI DJ app (`~/Projects/mixr`). Launches with
     /// `--dashboard` so it lands directly on the controller view (skipping the
     /// browser); the user can press `v` in mixr to cycle through its Panel
     /// layouts to fit mnml's split.

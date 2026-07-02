@@ -354,7 +354,7 @@ pub const CATALOG: &[FamilySibling] = &[
         id: "mixr",
         binary: "mixr",
         category: Category::Music,
-        repo_url: "https://github.com/chris-mclennan/mixr-rs",
+        repo_url: "https://github.com/chris-mclennan/mixr",
         pinned_version: "main",
         one_liner: "Family DJ app — Pty pane",
         icon: IconTemplate {

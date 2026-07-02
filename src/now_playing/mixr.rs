@@ -1,6 +1,6 @@
 //! mixr now-playing source.
 //!
-//! The sibling `mixr-rs` DJ app writes a flat `key=value` status
+//! The sibling `mixr` DJ app writes a flat `key=value` status
 //! summary to `~/.mixr/quick.txt` on every render — purpose-built for
 //! a cheap external read (alongside the richer `status.json`). An
 //! absent file ⇒ `None` (mixr has never run); a *stale* file ⇒ `None`

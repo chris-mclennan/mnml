@@ -23,7 +23,7 @@
 #
 # Flow recorded:
 # 1. Pre-seed a tempfile with several JSONL rows across multiple
-#    workspaces (mnml, tattle, mixr-rs) — varied methods, statuses,
+#    workspaces (mnml, tattle, mixr) — varied methods, statuses,
 #    durations — to make the cross-workspace surface obvious.
 # 2. Export `MNML_HISTORY_GLOBAL_PATH` to point mnml at that file.
 # 3. Launch mnml on a tempdir.
@@ -74,7 +74,7 @@ Sleep 150ms
 Type `printf '%s\n' '{"ts":1718900003000,"workspace":"tattle","workspace_path":"/Users/me/Projects/tattle","method":"GET","url":"https://api.tattle.dev/v1/merchants?limit=20","status":200,"duration_ms":97,"body_bytes":9821,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
-Type `printf '%s\n' '{"ts":1718900004000,"workspace":"mixr-rs","workspace_path":"/Users/me/Projects/mixr-rs","method":"GET","url":"https://api.beatport.com/v4/catalog/tracks?per_page=10","status":401,"duration_ms":221,"body_bytes":58,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
+Type `printf '%s\n' '{"ts":1718900004000,"workspace":"mixr","workspace_path":"/Users/me/Projects/mixr","method":"GET","url":"https://api.beatport.com/v4/catalog/tracks?per_page=10","status":401,"duration_ms":221,"body_bytes":58,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
 Enter
 Sleep 150ms
 Type `printf '%s\n' '{"ts":1718900005000,"workspace":"mnml","workspace_path":"/Users/me/Projects/mnml","method":"POST","url":"https://httpbin.org/post","status":200,"duration_ms":418,"body_bytes":312,"error":null}' >> $MNML_HISTORY_GLOBAL_PATH`
@@ -124,7 +124,7 @@ Sleep 2s
 
 # ── Stage 2: scroll through the entries to show the workspace mix ──────
 # `j` walks down through the rows — each detail line surfaces a
-# different workspace (tattle, mixr-rs, mnml, docs…) so the
+# different workspace (tattle, mixr, mnml, docs…) so the
 # cross-workspace nature of the surface is clear.
 Down
 Sleep 600ms

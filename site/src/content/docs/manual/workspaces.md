@@ -85,15 +85,15 @@ Each workspace header has a small chip cluster on the right edge:
 
 ## Sibling workspaces
 
-A workspace can have *additional* directories pinned alongside it in the rail. Useful when you're working on a multi-repo project — say `mnml` + `mixr-rs` + `fim-engine` — and want one mnml window with three collapsible workspace sections instead of three separate launches.
+A workspace can have *additional* directories pinned alongside it in the rail. Useful when you're working on a multi-repo project — say `mnml` + `mixr` + `fim-engine` — and want one mnml window with three collapsible workspace sections instead of three separate launches.
 
 Add them via `[[workspaces]]` in the workspace-local config:
 
 ```toml
 # <workspace>/.mnml/config.toml
 [[workspaces]]
-name = "mixr-rs"
-path = "~/Projects/mixr-rs"
+name = "mixr"
+path = "~/Projects/mixr"
 
 [[workspaces]]
 path = "~/Projects/fim-engine"     # name defaults to "fim-engine" (basename)
