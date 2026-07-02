@@ -496,15 +496,6 @@ pub struct UiConfig {
     /// ```
     pub check_updates: bool,
 
-    /// File-tree hover-preview: paint a small thumbnail card at the
-    /// bottom of the rail when the tree cursor sits on an image file
-    /// (PNG / JPEG / GIF / WebP / BMP) for ≥250 ms. Requires a
-    /// terminal that speaks Kitty graphics, iTerm2 inline images, or
-    /// sixel (mnml auto-detects; force a protocol via
-    /// `$MNML_IMAGE_PROTOCOL`). Default on; set to `false` to skip
-    /// the decode + paint entirely.
-    pub tree_image_preview: bool,
-
     /// Which source the statusline `♪` miniplayer reads from.
     /// `"auto"` (default) — mixr first, then macOS Music / Spotify.
     /// `"mixr"` — only the sibling mixr DJ app (`~/.mixr/quick.txt`).
@@ -1228,7 +1219,6 @@ impl Default for Config {
                 ],
                 ticket_prefixes: Vec::new(),
                 check_updates: true,
-                tree_image_preview: true,
                 now_playing_source: "auto".to_string(),
                 preferred_music_app: "mixr".to_string(),
                 projects_dir: String::new(),

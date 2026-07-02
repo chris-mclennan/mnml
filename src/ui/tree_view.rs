@@ -1187,105 +1187,14 @@ fn draw_workspace_files(
     // Hover preview: when the cursor's on an image row and the cache
     // is warm, paint a small card at the bottom-left of the tree area.
     // The image escape lands post-`terminal.draw()` so it covers the
-    // tree text underneath — we still wipe the cells in ratatui-land
-    // so they don't bleed through when the protocol clears the image.
-    draw_tree_image_preview(frame, app, inner);
+    // qa-feature 2026-07-02 — tree image thumbnail removed
+    // entirely. When the user navigates to an image (via keyboard
+    // arrow or click), the full image already opens in a pane, so
+    // the small thumbnail on the rail was redundant either
+    // way. Callers left the `inner` unchanged; the thumbnail
+    // function is gone.
+    let _ = inner;
     start_y + drew
-}
-
-/// Paint the file-tree hover-preview card at the bottom-left of the
-/// workspace tree area, if there's an active preview with PNG bytes
-/// loaded. Skipped when the area is too short (<8 rows) so a narrow
-/// rail doesn't lose half its tree to a thumbnail.
-fn draw_tree_image_preview(frame: &mut Frame, app: &mut App, inner: Rect) {
-    const CARD_W: u16 = 14;
-    const CARD_H: u16 = 5; // 1 caption row + 4 image rows
-    const MIN_TREE_REMAINING: u16 = 4;
-    let Some(prev) = app.tree_image_preview.clone() else {
-        return;
-    };
-    // Only paint once we've got something to show — either decoded
-    // bytes or an error caption.
-    if prev.png_bytes.is_none() && prev.error.is_none() {
-        return;
-    }
-    // Don't squash the tree to less than `MIN_TREE_REMAINING` rows;
-    // bail rather than push the card into the user's working area.
-    if inner.height < CARD_H + MIN_TREE_REMAINING || inner.width < CARD_W {
-        return;
-    }
-    let bg = theme::cur().bg_darker;
-    let card_x = inner.x;
-    let card_y = inner.y + inner.height - CARD_H;
-    let card_rect = Rect {
-        x: card_x,
-        y: card_y,
-        width: CARD_W.min(inner.width),
-        height: CARD_H,
-    };
-    // Wipe the cells the card occupies so the tree text below the
-    // workspace fold doesn't peek through under the image (the image
-    // escape paints pixels, not cells; ratatui's previous-frame
-    // glyphs would otherwise persist around the image edges).
-    frame.render_widget(
-        ratatui::widgets::Block::default().style(Style::default().bg(bg)),
-        card_rect,
-    );
-    // Caption row: filename, truncated to fit. Errors get their own
-    // line (already short by construction).
-    let fname = prev
-        .path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("?")
-        .to_string();
-    let caption_text = match &prev.error {
-        Some(e) => e.clone(),
-        None => {
-            let max = (CARD_W as usize).saturating_sub(2);
-            if fname.chars().count() > max {
-                let truncated: String = fname.chars().take(max.saturating_sub(1)).collect();
-                format!("{truncated}…")
-            } else {
-                fname
-            }
-        }
-    };
-    let caption_style = if prev.error.is_some() {
-        Style::default().fg(theme::cur().red).bg(bg)
-    } else {
-        Style::default().fg(theme::cur().comment).bg(bg)
-    };
-    let caption_rect = Rect {
-        x: card_rect.x,
-        y: card_rect.y,
-        width: card_rect.width,
-        height: 1,
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(caption_text, caption_style))),
-        caption_rect,
-    );
-    // Image area is the rest of the card. Reserve the cells via an
-    // empty Block (already wiped above) then push the PaintRequest;
-    // the post-draw emitter writes the protocol escape, which paints
-    // pixels into the reserved area.
-    if let Some(png) = prev.png_bytes {
-        let image_rect = Rect {
-            x: card_rect.x,
-            y: card_rect.y + 1,
-            width: card_rect.width,
-            height: card_rect.height - 1,
-        };
-        // Pane id is just a logging tag for the emitter — use a
-        // sentinel value so it's obvious in any debugging output
-        // that this came from the tree preview, not a real Pane.
-        app.image_paint_requests.push(crate::image::PaintRequest {
-            pane_id: usize::MAX,
-            area: image_rect,
-            png_bytes: png,
-        });
-    }
 }
 
 /// Draw one extra-workspace section starting at `start_y`. Renders a
