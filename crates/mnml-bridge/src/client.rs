@@ -170,6 +170,95 @@ impl Mount {
     ) {
         crate::ipc::register_command(id, title, group, keys)
     }
+
+    // ── Toasts (level-tagged + persistent) ──────────────
+
+    /// Info-level toast — comment border, ephemeral.
+    pub fn toast_info(&self, message: impl AsRef<str>) {
+        crate::ipc::toast_info(message)
+    }
+    /// Warn-level toast — comment border, ephemeral (renders
+    /// identically to info per current design; wire preserves
+    /// the level for future rendering flexibility).
+    pub fn toast_warn(&self, message: impl AsRef<str>) {
+        crate::ipc::toast_warn(message)
+    }
+    /// Error-level toast — red border, ephemeral.
+    pub fn toast_error(&self, message: impl AsRef<str>) {
+        crate::ipc::toast_error(message)
+    }
+    /// Pinned toast — stays visible until [`Self::toast_dismiss`].
+    pub fn toast_persistent(
+        &self,
+        id: impl AsRef<str>,
+        message: impl AsRef<str>,
+        level: crate::ipc::ToastLevel,
+    ) {
+        crate::ipc::toast_persistent(id, message, level)
+    }
+    /// Dismiss a persistent toast by id.
+    pub fn toast_dismiss(&self, id: impl AsRef<str>) {
+        crate::ipc::toast_dismiss(id)
+    }
+
+    // ── Progress notifications ──────────────
+
+    /// Start an in-flight progress notification.
+    pub fn progress_start(&self, id: impl AsRef<str>, label: impl AsRef<str>) {
+        crate::ipc::progress_start(id, label)
+    }
+    /// Update label / percent on an in-flight progress.
+    pub fn progress_update(&self, id: impl AsRef<str>, label: Option<&str>, percent: Option<u8>) {
+        crate::ipc::progress_update(id, label, percent)
+    }
+    /// Finish a progress notification with a terminal status.
+    pub fn progress_end(&self, id: impl AsRef<str>, status: crate::ipc::ProgressStatus) {
+        crate::ipc::progress_end(id, status)
+    }
+
+    // ── Statusline segments ──────────────
+
+    /// Insert or update a statusline segment. See
+    /// [`crate::statusline_set_segment`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn statusline_set_segment(
+        &self,
+        id: impl AsRef<str>,
+        side: crate::ipc::SegmentSide,
+        text: impl AsRef<str>,
+        color: Option<&str>,
+        click_command: Option<&str>,
+        priority: u8,
+        min_width: u16,
+        max_width: u16,
+    ) {
+        crate::ipc::statusline_set_segment(
+            id,
+            side,
+            text,
+            color,
+            click_command,
+            priority,
+            min_width,
+            max_width,
+        )
+    }
+    /// Remove a statusline segment.
+    pub fn statusline_clear_segment(&self, id: impl AsRef<str>) {
+        crate::ipc::statusline_clear_segment(id)
+    }
+
+    // ── OS notifications ──────────────
+
+    /// Fire an OS-level notification. See [`crate::notify`].
+    pub fn notify(
+        &self,
+        title: impl AsRef<str>,
+        body: impl AsRef<str>,
+        opts: crate::ipc::NotifyOpts,
+    ) {
+        crate::ipc::notify(title, body, opts)
+    }
 }
 
 fn reader_loop<R: Read>(

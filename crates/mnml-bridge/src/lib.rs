@@ -48,8 +48,19 @@ pub mod client;
 #[cfg(feature = "client")]
 pub use client::Mount;
 
+pub mod install;
 pub mod ipc;
-pub use ipc::{register_command, set_activity_badge, toast};
+pub use install::{
+    ChipSpec, CommandSpec, ContextMenuEntry, IntegrationSpec, MenuBarEntry, NotificationsSpec,
+    OsNotifyPolicy, Requires, SettingsPage, StatuslineSpec, install_integration,
+    integration_manifest_path, list_installed_integrations, uninstall_integration,
+};
+pub use ipc::{
+    NotifyOpts, ProgressStatus, SegmentSide, ToastLevel, notify, progress_end, progress_start,
+    progress_update, register_command, set_activity_badge, statusline_clear_segment,
+    statusline_set_segment, toast, toast_dismiss, toast_error, toast_info, toast_persistent,
+    toast_warn,
+};
 
 /// A single terminal cell — one grapheme + style. Mirrors
 /// ratatui's `buffer::Cell` shape but with serde derived.
