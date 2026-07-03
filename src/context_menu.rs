@@ -167,6 +167,12 @@ pub enum MenuAction {
     /// Move an integration chip one position later in the ordered
     /// list. No-op when already last. Persists.
     MoveIntegrationDown(String),
+    /// Move an integration chip to position 0. No-op when already
+    /// there. Persists.
+    MoveIntegrationToTop(String),
+    /// Move an integration chip to the last position. No-op when
+    /// already there. Persists.
+    MoveIntegrationToBottom(String),
     /// Toggle a launcher chip's `enabled` field by `id`.
     ToggleLauncherEnabled(String),
     /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty

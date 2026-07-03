@@ -278,11 +278,19 @@ impl App {
                 "Move up",
                 MenuAction::MoveIntegrationUp(id.clone()),
             ));
+            items.push(MenuItem::new(
+                "Move to top",
+                MenuAction::MoveIntegrationToTop(id.clone()),
+            ));
         }
         if !is_last {
             items.push(MenuItem::new(
                 "Move down",
                 MenuAction::MoveIntegrationDown(id.clone()),
+            ));
+            items.push(MenuItem::new(
+                "Move to bottom",
+                MenuAction::MoveIntegrationToBottom(id.clone()),
             ));
         }
         items.push(MenuItem::new(
@@ -855,6 +863,40 @@ impl App {
                 {
                     self.config.ui.integration_icons.swap(pos, pos + 1);
                     self.toast(format!("moved {id} down"));
+                    let _ = crate::app::discovery::persist_integration_icons(
+                        &self.config.ui.integration_icons,
+                    );
+                }
+            }
+            MoveIntegrationToTop(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .position(|i| i.id == id)
+                    && pos > 0
+                {
+                    let icon = self.config.ui.integration_icons.remove(pos);
+                    self.config.ui.integration_icons.insert(0, icon);
+                    self.toast(format!("moved {id} to top"));
+                    let _ = crate::app::discovery::persist_integration_icons(
+                        &self.config.ui.integration_icons,
+                    );
+                }
+            }
+            MoveIntegrationToBottom(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .position(|i| i.id == id)
+                    && pos + 1 < self.config.ui.integration_icons.len()
+                {
+                    let icon = self.config.ui.integration_icons.remove(pos);
+                    self.config.ui.integration_icons.push(icon);
+                    self.toast(format!("moved {id} to bottom"));
                     let _ = crate::app::discovery::persist_integration_icons(
                         &self.config.ui.integration_icons,
                     );
