@@ -1988,6 +1988,13 @@ impl Config {
             // who saved their config before a new field was added
             // silently lost the built-in's default (e.g. browser's
             // `in_palette_bar = true` vanished on config reload).
+            //
+            // 2026-07-03 — walk the user file's array FIRST so any
+            // reorder the user made via the right-click "Move up /
+            // to top / down / to bottom" menu survives a restart.
+            // Prior version walked built-ins in default order and
+            // layered users on top, which silently reset any manual
+            // reorder back to the built-in sequence.
             let user_raws: Vec<RawLauncherIcon> = raws;
             let id_of_raw = |r: &RawLauncherIcon| -> Option<String> {
                 if let Some(id) = &r.id {
@@ -2001,65 +2008,75 @@ impl Config {
                         .to_string()
                 })
             };
-            // 1. Built-ins (in order), with matching user raws
-            //    layered on top field-by-field.
-            let mut merged: Vec<IntegrationIcon> = self
+            // Snapshot the built-in defaults keyed by id — we'll
+            // pull from this both to inherit unspecified fields and
+            // to append built-ins the user file didn't list at all.
+            let builtins_by_id: std::collections::HashMap<String, IntegrationIcon> = self
                 .ui
                 .integration_icons
                 .iter()
-                .map(|builtin| {
-                    let user = user_raws
-                        .iter()
-                        .find(|r| id_of_raw(r).as_deref() == Some(builtin.id.as_str()));
-                    match user {
-                        None => builtin.clone(),
-                        Some(r) => IntegrationIcon {
-                            id: builtin.id.clone(),
-                            glyph: r.glyph.clone().unwrap_or_else(|| builtin.glyph.clone()),
-                            fallback: r
-                                .fallback
-                                .clone()
-                                .unwrap_or_else(|| builtin.fallback.clone()),
-                            command: r.command.clone().unwrap_or_else(|| builtin.command.clone()),
-                            color: r.color.clone().unwrap_or_else(|| builtin.color.clone()),
-                            tooltip: r.tooltip.clone().or_else(|| builtin.tooltip.clone()),
-                            enabled: r.enabled.unwrap_or(builtin.enabled),
-                            in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),
-                            // User explicitly authored this override —
-                            // no sibling manifest may overwrite it.
-                            manifest_can_override: false,
-                        },
-                    }
-                })
+                .map(|b| (b.id.clone(), b.clone()))
                 .collect();
-            // 2. User-only entries (no matching built-in id) —
-            //    still need glyph+command to be a valid chip.
-            let builtin_ids: std::collections::HashSet<String> = self
-                .ui
-                .integration_icons
-                .iter()
-                .map(|e| e.id.clone())
-                .collect();
+            let mut merged: Vec<IntegrationIcon> = Vec::new();
+            let mut consumed: std::collections::HashSet<String> = std::collections::HashSet::new();
+            // 1. User file order — this is the authoritative
+            //    sequence. Each user raw gets built-in field
+            //    inheritance if a matching built-in exists;
+            //    otherwise it stands on its own (must carry
+            //    glyph + command).
             for r in &user_raws {
                 let Some(id) = id_of_raw(r) else { continue };
-                if builtin_ids.contains(&id) {
+                if consumed.contains(&id) {
+                    // Duplicate id in the file — first entry wins.
                     continue;
                 }
-                let (Some(glyph), Some(command)) = (r.glyph.clone(), r.command.clone()) else {
-                    continue;
+                let icon = match builtins_by_id.get(&id) {
+                    Some(builtin) => IntegrationIcon {
+                        id: builtin.id.clone(),
+                        glyph: r.glyph.clone().unwrap_or_else(|| builtin.glyph.clone()),
+                        fallback: r
+                            .fallback
+                            .clone()
+                            .unwrap_or_else(|| builtin.fallback.clone()),
+                        command: r.command.clone().unwrap_or_else(|| builtin.command.clone()),
+                        color: r.color.clone().unwrap_or_else(|| builtin.color.clone()),
+                        tooltip: r.tooltip.clone().or_else(|| builtin.tooltip.clone()),
+                        enabled: r.enabled.unwrap_or(builtin.enabled),
+                        in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),
+                        // User explicitly authored this override —
+                        // no sibling manifest may overwrite it.
+                        manifest_can_override: false,
+                    },
+                    None => {
+                        let (Some(glyph), Some(command)) = (r.glyph.clone(), r.command.clone())
+                        else {
+                            continue;
+                        };
+                        IntegrationIcon {
+                            id: id.clone(),
+                            glyph,
+                            fallback: r.fallback.clone().unwrap_or_else(|| "*".to_string()),
+                            command,
+                            color: r.color.clone().unwrap_or_else(|| "fg".to_string()),
+                            tooltip: r.tooltip.clone(),
+                            enabled: r.enabled.unwrap_or(false),
+                            in_palette_bar: r.in_palette_bar.unwrap_or(false),
+                            // User-authored — sibling manifests can't override.
+                            manifest_can_override: false,
+                        }
+                    }
                 };
-                merged.push(IntegrationIcon {
-                    id,
-                    glyph,
-                    fallback: r.fallback.clone().unwrap_or_else(|| "*".to_string()),
-                    command,
-                    color: r.color.clone().unwrap_or_else(|| "fg".to_string()),
-                    tooltip: r.tooltip.clone(),
-                    enabled: r.enabled.unwrap_or(false),
-                    in_palette_bar: r.in_palette_bar.unwrap_or(false),
-                    // User-authored — sibling manifests can't override.
-                    manifest_can_override: false,
-                });
+                consumed.insert(id);
+                merged.push(icon);
+            }
+            // 2. Built-ins the user file didn't mention — append
+            //    in original built-in-default order so newly-added
+            //    built-ins land in a stable position rather than
+            //    vanishing.
+            for builtin in &self.ui.integration_icons {
+                if !consumed.contains(&builtin.id) {
+                    merged.push(builtin.clone());
+                }
             }
             self.ui.integration_icons = merged;
         }
@@ -3162,6 +3179,56 @@ repo  = "example-knowledge"
             .unwrap();
         assert_eq!(claude.command, "ai.claude_code");
         assert_eq!(claude.color, "orange");
+    }
+
+    /// Regression 2026-07-03: reordering integration chips via
+    /// the right-click "Move up / Move to top / Move down / Move
+    /// to bottom" menu writes the whole `[[ui.integration_icon]]`
+    /// array to config in the new order. On the NEXT load, the
+    /// prior config-load code walked built-in defaults first and
+    /// layered user overrides on top — so the user's reorder was
+    /// silently reset to built-in-default order. Now the load
+    /// honors the user file's order verbatim.
+    #[test]
+    fn user_reorder_of_integration_icons_survives_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        // Write out a config that puts `github` (built-in) at the
+        // very top even though it defaults later in the list.
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[[ui.integration_icon]]
+id = "github"
+[[ui.integration_icon]]
+id = "claude_code"
+[[ui.integration_icon]]
+id = "bitbucket"
+"#
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file(&cfg_path);
+        let ids: Vec<&str> = cfg
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.as_str())
+            .collect();
+        // The three user entries must appear FIRST, in file order.
+        assert_eq!(
+            &ids[..3],
+            &["github", "claude_code", "bitbucket"],
+            "user-file order must be preserved verbatim; got {ids:?}"
+        );
+        // Any built-in the user file didn't list must still be
+        // present (appended at the end) so newly-shipped chips
+        // don't vanish for existing users.
+        assert!(
+            ids.contains(&"codex"),
+            "built-ins the user didn't list must still be present; got {ids:?}"
+        );
     }
 
     #[test]
