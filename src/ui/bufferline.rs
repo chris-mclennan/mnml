@@ -358,8 +358,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // natural devicon color on every tab — active or
         // inactive — so file types stay recognizable at a
         // glance (matches NvChad's tabufline).
+        //
+        // 2026-07-03 padding bug — earlier fixes touched the
+        // width-precompute string at the top of this fn but
+        // MISSED this actual span-render path. The " {glyph} "
+        // single-space form was what actually painted, so the
+        // wide-cell Nerd Font terminal glyph visually kissed
+        // the label. Match the 3-space padding used in the
+        // width string so hitboxes + visuals stay aligned.
         spans.push(Span::styled(
-            format!(" {glyph} "),
+            format!(" {glyph}   "),
             Style::default().fg(icon_color).bg(bg),
         ));
         spans.push(Span::styled(format!("{name} "), name_style));
