@@ -7,41 +7,25 @@ and the only thing missing is a session to do it in.
 ## HTTP
 
 ### WebSocket support
-**Status:** v1 (external `websocat` shell-out, one-shot
-fire-and-receive) **shipped** as `:ws.send`. Active .ws JSON
-file shape: `{ url, message, timeout_ms?, headers? }`. Output
-lands in `[ws-response]` scratch.
+**Status: complete.** Both tracks shipped:
 
-**v2 (native persistent connection) also shipped**: `:ws.connect`
-prompts for a wss:// URL, spawns a worker thread on `tungstenite`
-(already in tree for CDP). Incoming messages stream into a
-`[ws-<host>]` scratch buffer with `← text` per line; outgoing
-appear with `→ text`. `:ws.send_message` prompts for a message
-to push over the live connection; `:ws.disconnect` closes.
+- **One-shot**: `:ws.send` fires a single frame against a `.ws`
+  JSON file (`{ url, message, timeout_ms?, headers? }`) and lands
+  the reply in `[ws-response]`.
+- **Persistent**: `:ws.connect` opens a `Pane::Websocket` with a
+  live `tungstenite` worker, `[ws-<host>]` scratch log (`← text`
+  in / `→ text` out), and `:ws.send_message` / `:ws.disconnect`
+  companion commands. Multi-connection works: each `:ws.connect`
+  spawns a fresh pane. `:ws.history` picker replays past
+  connections from `~/.mnml/ws-history/<slug>/history.jsonl`.
+- **Runtime knobs** (2026-07-03): `[ws]` config table —
+  `subprotocols` (Sec-WebSocket-Protocol header), `ping_interval_secs`
+  (default 30, 0=off), `reconnect_max_attempts` (default 3, 0=off,
+  1s→2s→4s→8s→16s backoff).
 
-Single connection per App for v1 (multi-connection would need a
-proper `Pane::Websocket` variant + the ~10 match-arm updates;
-queued). Subprotocol selection + ping-interval tuning + auto-
-reconnect also queued for v2.
-
-Why deferred: needs protocol-design discussion before writing code.
-Possible shapes:
-
-1. **`Pane::Websocket`** — new pane variant with a connection state
-   machine (connecting → open → closing → closed), a live message
-   log (one row per frame in/out), and a typed-message input at the
-   bottom. Reuses ratatui-style scrollback similar to Pty panes.
-2. **`:ws.send` palette command + transient log** — minimal:
-   `:ws.send wss://… text/binary` opens a connection, sends one frame,
-   prints the response, closes. No persistent pane state.
-3. **Hybrid:** start with #2 (one-shot), graduate to #1 if users
-   want to keep connections open across commands.
-
-The cookie jar from f3f4c53 would extend naturally to WebSocket if
-the same domain is involved (WS reuses HTTP cookies on the
-upgrade handshake). Auth presets would also apply directly.
-
-Pick #2 for v1 if/when this lands. Discuss before coding.
+Not planned: cookie-jar reuse on the upgrade handshake (mnml's
+cookie jar is HTTP-only for now). Open a fresh ticket if there's
+a specific workflow that needs it.
 
 ## Other (uncategorized)
 

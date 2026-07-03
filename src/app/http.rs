@@ -734,7 +734,12 @@ impl App {
                 return;
             }
         }
-        let pane = Pane::Websocket(crate::websocket::WebsocketPane::connect(url.clone()));
+        let opts = crate::websocket::WsConnectOpts {
+            subprotocols: self.config.ws.subprotocols.clone(),
+            ping_interval_secs: self.config.ws.ping_interval_secs,
+            reconnect_max_attempts: self.config.ws.reconnect_max_attempts,
+        };
+        let pane = Pane::Websocket(crate::websocket::WebsocketPane::connect(url.clone(), opts));
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);

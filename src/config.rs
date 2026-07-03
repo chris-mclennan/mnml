@@ -49,6 +49,8 @@ pub struct Config {
     /// `default_env` (mnml-native equivalent of `.rqst/config`'s
     /// `default_env=…`). Other HTTP-track keys grow here later.
     pub http: HttpConfig,
+    /// `[ws]` — WebSocket runtime knobs for `:ws.connect`.
+    pub ws: WsConfig,
     /// `[git_graph]` — visual tuning of the git graph pane.
     pub git_graph: GitGraphConfig,
     /// `[tasks.<name>]` — named shell commands openable in a pty pane (`task.run`).
@@ -366,6 +368,36 @@ pub struct HttpConfig {
     /// falls through to `$MNML_ENV` and then `.rqst/config`. Empty
     /// strings ignored.
     pub default_env: Option<String>,
+}
+
+/// `[ws]` config table (2026-07-03). Runtime knobs for
+/// `:ws.connect` — subprotocol negotiation, keepalive ping, and
+/// auto-reconnect on drop. See
+/// [`crate::websocket::WsConnectOpts`] for the runtime shape.
+#[derive(Debug, Clone)]
+pub struct WsConfig {
+    /// `[ws] subprotocols = ["json.chat", "graphql-transport-ws"]`
+    /// Sec-WebSocket-Protocol values (preference order). Empty
+    /// disables negotiation.
+    pub subprotocols: Vec<String>,
+    /// `[ws] ping_interval_secs = 30` — send a Ping frame every N
+    /// seconds. 0 disables. Default 30 keeps most NAT/LB paths
+    /// warm.
+    pub ping_interval_secs: u32,
+    /// `[ws] reconnect_max_attempts = 3` — retry a dropped
+    /// connection up to N times with 1s/2s/4s/8s/16s backoff (cap
+    /// 16s). 0 disables.
+    pub reconnect_max_attempts: u32,
+}
+
+impl Default for WsConfig {
+    fn default() -> Self {
+        Self {
+            subprotocols: Vec::new(),
+            ping_interval_secs: 30,
+            reconnect_max_attempts: 3,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1424,6 +1456,7 @@ impl Default for Config {
             ai: toml::Value::Table(Default::default()),
             tools: toml::Value::Table(Default::default()),
             http: HttpConfig::default(),
+            ws: WsConfig::default(),
             git_graph: GitGraphConfig::default(),
             tasks: BTreeMap::new(),
             startup_tasks: Vec::new(),
@@ -1464,6 +1497,8 @@ struct RawConfig {
     tools: Option<toml::Value>,
     #[serde(default)]
     http: RawHttp,
+    #[serde(default)]
+    ws: RawWs,
     #[serde(default)]
     git_graph: RawGitGraph,
     #[serde(default)]
@@ -1517,6 +1552,14 @@ struct RawCi {
 #[derive(Debug, Default, Deserialize)]
 struct RawHttp {
     default_env: Option<String>,
+}
+
+/// `[ws]` raw table (2026-07-03).
+#[derive(Debug, Default, Deserialize)]
+struct RawWs {
+    subprotocols: Option<Vec<String>>,
+    ping_interval_secs: Option<u32>,
+    reconnect_max_attempts: Option<u32>,
 }
 
 /// `[git_graph]` raw table (qa-feature 2026-06-30).
@@ -2100,6 +2143,19 @@ impl Config {
             if !trimmed.is_empty() {
                 self.http.default_env = Some(trimmed.to_string());
             }
+        }
+        if let Some(ps) = raw.ws.subprotocols {
+            self.ws.subprotocols = ps
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        if let Some(v) = raw.ws.ping_interval_secs {
+            self.ws.ping_interval_secs = v;
+        }
+        if let Some(v) = raw.ws.reconnect_max_attempts {
+            self.ws.reconnect_max_attempts = v;
         }
         if let Some(rs) = raw.git_graph.lane_spacing {
             self.git_graph.lane_spacing = rs.min(4);

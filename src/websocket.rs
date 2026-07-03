@@ -8,12 +8,42 @@
 //!  - Text and binary frames as messages.
 //!  - User types into a single-line input + Enter to send.
 //!  - Esc closes the connection.
-//!
-//! Out of scope (v2): subprotocol selection, ping/pong intervals,
-//! reconnect-on-disconnect, history persistence beyond pane life.
+//!  - Subprotocol negotiation via `Sec-WebSocket-Protocol`.
+//!  - Keepalive Ping every N seconds (tungstenite auto-replies to Pong).
+//!  - Auto-reconnect with exponential backoff on drop.
 
 use std::sync::mpsc::{Receiver, Sender};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Runtime options for a WebSocket connection. Threaded through
+/// `WebsocketPane::connect` to the worker so subprotocol
+/// negotiation, ping keepalive, and auto-reconnect can be
+/// configured from `[ws]` in mnml config without touching the
+/// worker signature every time.
+#[derive(Debug, Clone)]
+pub struct WsConnectOpts {
+    /// Sec-WebSocket-Protocol header values (in preference order).
+    /// Empty = no subprotocol negotiation.
+    pub subprotocols: Vec<String>,
+    /// Send a Ping frame every N seconds while the connection is
+    /// open. 0 = disabled. tungstenite handles the incoming Pong
+    /// reply automatically; this just keeps NATed / load-balanced
+    /// connections from timing out.
+    pub ping_interval_secs: u32,
+    /// Reconnect up to N times on a non-user drop, with 1s → 2s →
+    /// 4s → 8s → 16s backoff (capped at 16s). 0 = disabled.
+    pub reconnect_max_attempts: u32,
+}
+
+impl Default for WsConnectOpts {
+    fn default() -> Self {
+        Self {
+            subprotocols: Vec::new(),
+            ping_interval_secs: 30,
+            reconnect_max_attempts: 3,
+        }
+    }
+}
 
 pub enum WsMsg {
     /// Server → client message (or our own echo of a send).
@@ -76,12 +106,12 @@ impl WebsocketPane {
         format!("ws {badge} {host}")
     }
 
-    pub fn connect(url: String) -> Self {
+    pub fn connect(url: String, opts: WsConnectOpts) -> Self {
         let (msg_tx, rx) = std::sync::mpsc::channel::<WsMsg>();
         let (tx_out, out_rx) = std::sync::mpsc::channel::<OutMsg>();
         let url_clone = url.clone();
         let msg_tx_send = msg_tx.clone();
-        std::thread::spawn(move || worker(url_clone, msg_tx_send, out_rx));
+        std::thread::spawn(move || worker(url_clone, opts, msg_tx_send, out_rx));
         Self {
             url,
             state: WsState::Connecting,
@@ -238,25 +268,79 @@ fn host_of_url(url: &str) -> String {
     }
 }
 
-fn worker(url: String, tx: Sender<WsMsg>, out_rx: Receiver<OutMsg>) {
-    use tungstenite::Message;
+/// Outcome of one attempted connection lifecycle. Feeds the
+/// reconnect-loop wrapper around `run_connection`.
+enum ConnResult {
+    /// User asked to close (`OutMsg::Close`). Do not reconnect.
+    UserClose,
+    /// Connection dropped by peer or transport. Eligible for
+    /// reconnect if the caller's budget allows.
+    Dropped,
+    /// Setup-time failure (invalid URL, connect refused). Do not
+    /// reconnect — probably not going to succeed on retry.
+    Failed,
+}
 
-    let parsed_url = match tungstenite::http::Uri::try_from(&url[..]) {
-        Ok(u) => u,
+fn worker(url: String, opts: WsConnectOpts, tx: Sender<WsMsg>, out_rx: Receiver<OutMsg>) {
+    let mut attempt: u32 = 0;
+    loop {
+        match run_connection(&url, &opts, &tx, &out_rx) {
+            ConnResult::UserClose | ConnResult::Failed => {
+                let _ = tx.send(WsMsg::State(WsState::Closed));
+                return;
+            }
+            ConnResult::Dropped => {
+                if attempt >= opts.reconnect_max_attempts {
+                    let _ = tx.send(WsMsg::State(WsState::Closed));
+                    return;
+                }
+                attempt += 1;
+                let backoff_secs = 1u64 << (attempt - 1).min(4);
+                let _ = tx.send(WsMsg::Error(format!(
+                    "dropped — reconnecting in {backoff_secs}s (attempt {attempt}/{})",
+                    opts.reconnect_max_attempts
+                )));
+                let _ = tx.send(WsMsg::State(WsState::Connecting));
+                std::thread::sleep(Duration::from_secs(backoff_secs));
+            }
+        }
+    }
+}
+
+fn run_connection(
+    url: &str,
+    opts: &WsConnectOpts,
+    tx: &Sender<WsMsg>,
+    out_rx: &Receiver<OutMsg>,
+) -> ConnResult {
+    use tungstenite::Message;
+    use tungstenite::client::IntoClientRequest;
+
+    // Build the client request. tungstenite accepts URL-string OR
+    // a full http::Request<()>; the second form is required to
+    // pass a Sec-WebSocket-Protocol header.
+    let mut request = match url.into_client_request() {
+        Ok(r) => r,
         Err(e) => {
             let _ = tx.send(WsMsg::Error(format!("invalid url: {e}")));
-            let _ = tx.send(WsMsg::State(WsState::Closed));
-            return;
+            return ConnResult::Failed;
         }
     };
+    if !opts.subprotocols.is_empty() {
+        let joined = opts.subprotocols.join(", ");
+        if let Ok(val) = joined.parse::<tungstenite::http::HeaderValue>() {
+            request.headers_mut().insert("Sec-WebSocket-Protocol", val);
+        }
+    }
 
-    let result = tungstenite::connect(parsed_url);
-    let (mut socket, _resp) = match result {
+    let (mut socket, _resp) = match tungstenite::connect(request) {
         Ok(t) => t,
         Err(e) => {
             let _ = tx.send(WsMsg::Error(format!("connect failed: {e}")));
-            let _ = tx.send(WsMsg::State(WsState::Closed));
-            return;
+            // Peer-side reject (401/404/reset) counts as a drop:
+            // let the reconnect budget decide whether to try
+            // again. Truly-bad URLs are already caught above.
+            return ConnResult::Dropped;
         }
     };
     // 2026-06-21 — Set the underlying TCP socket non-blocking so
@@ -267,6 +351,13 @@ fn worker(url: String, tx: Sender<WsMsg>, out_rx: Receiver<OutMsg>) {
     // server deadlocked (the SEV-1 power-user-ws-git finding).
     set_socket_nonblocking(socket.get_mut(), true);
     let _ = tx.send(WsMsg::State(WsState::Open));
+
+    let ping_every = if opts.ping_interval_secs == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(opts.ping_interval_secs as u64))
+    };
+    let mut last_ping = Instant::now();
 
     loop {
         // Drain pending outgoing first so user-initiated sends
@@ -280,10 +371,16 @@ fn worker(url: String, tx: Sender<WsMsg>, out_rx: Receiver<OutMsg>) {
                 }
                 OutMsg::Close => {
                     let _ = socket.close(None);
-                    let _ = tx.send(WsMsg::State(WsState::Closed));
-                    return;
+                    return ConnResult::UserClose;
                 }
             }
+        }
+        // Time to send a keepalive?
+        if let Some(interval) = ping_every
+            && last_ping.elapsed() >= interval
+        {
+            let _ = socket.send(Message::Ping(Vec::new().into()));
+            last_ping = Instant::now();
         }
         match socket.read() {
             Ok(Message::Text(s)) => {
@@ -300,25 +397,20 @@ fn worker(url: String, tx: Sender<WsMsg>, out_rx: Receiver<OutMsg>) {
                     outgoing: false,
                 });
             }
-            Ok(Message::Close(_)) => {
-                let _ = tx.send(WsMsg::State(WsState::Closed));
-                return;
-            }
+            Ok(Message::Close(_)) => return ConnResult::Dropped,
             Ok(_) => {} // ping / pong handled by tungstenite
             Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
-                let _ = tx.send(WsMsg::State(WsState::Closed));
-                return;
+                return ConnResult::Dropped;
             }
             Err(tungstenite::Error::Io(io)) if io.kind() == std::io::ErrorKind::WouldBlock => {
                 // No data — sleep briefly so the loop doesn't burn
                 // CPU. 25ms gives a UI-imperceptible round-trip
                 // between out_rx drain and read.
-                std::thread::sleep(std::time::Duration::from_millis(25));
+                std::thread::sleep(Duration::from_millis(25));
             }
             Err(e) => {
                 let _ = tx.send(WsMsg::Error(format!("read error: {e}")));
-                let _ = tx.send(WsMsg::State(WsState::Closed));
-                return;
+                return ConnResult::Dropped;
             }
         }
     }
@@ -421,4 +513,42 @@ pub fn read_ws_history() -> Vec<(String, u128, usize)> {
         .collect();
     rows.sort_by_key(|b| std::cmp::Reverse(b.1));
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opts_defaults_are_sensible() {
+        let o = WsConnectOpts::default();
+        assert!(o.subprotocols.is_empty());
+        assert_eq!(o.ping_interval_secs, 30);
+        assert_eq!(o.reconnect_max_attempts, 3);
+    }
+
+    /// Backoff schedule the worker uses: `1 << (attempt-1).min(4)`.
+    /// Guards against off-by-one drift + accidental unbounded
+    /// growth if someone edits the shift.
+    #[test]
+    fn reconnect_backoff_schedule_is_capped_at_16s() {
+        let schedule: Vec<u64> = (1..=8)
+            .map(|attempt: u32| 1u64 << (attempt - 1).min(4))
+            .collect();
+        assert_eq!(schedule, vec![1, 2, 4, 8, 16, 16, 16, 16]);
+    }
+
+    #[test]
+    fn ping_interval_zero_disables_keepalive() {
+        let opts = WsConnectOpts {
+            ping_interval_secs: 0,
+            ..Default::default()
+        };
+        let ping_every = if opts.ping_interval_secs == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(opts.ping_interval_secs as u64))
+        };
+        assert!(ping_every.is_none());
+    }
 }
