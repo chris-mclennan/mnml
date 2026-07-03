@@ -840,14 +840,6 @@ impl App {
                 let app = item.id.clone();
                 self.run_manifest_command("go.mod", "go", "run", &format!("run ./cmd/{app}"));
             }
-            PickerKind::GrpcService => {
-                let service = item.id.clone();
-                self.grpc_discover_service(service);
-            }
-            PickerKind::GrpcMethod => {
-                let method = item.id.clone();
-                self.grpc_discover_method(method);
-            }
             PickerKind::WsHistory => {
                 let url = item.id.clone();
                 self.ws_history_open(url);
@@ -1602,10 +1594,6 @@ impl App {
             crate::prompt::PromptKind::GoRunPath => {
                 let path = p.input.clone();
                 self.go_run_path_accept(path);
-            }
-            crate::prompt::PromptKind::GrpcDiscoverHost => {
-                let host = p.input.clone();
-                self.grpc_discover_host(host);
             }
             crate::prompt::PromptKind::GitMergeConfirm => {
                 if p.input.trim().eq_ignore_ascii_case("merge") {

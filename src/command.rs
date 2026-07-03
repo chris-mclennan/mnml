@@ -3770,24 +3770,6 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.ws_send_active(),
         },
         Command {
-            id: "grpc.discover",
-            title: "gRPC: reflect a server → pick service/method → seed scratch",
-            group: "http",
-            keys: &[],
-            run: |app| app.grpc_discover_prompt(),
-        },
-        Command {
-            id: "grpc.send",
-            title: "gRPC: send the active .grpc file via grpcurl",
-            group: "http",
-            // Active file shape (JSON):
-            //   { server, method, plaintext?, headers?, message }
-            // Shells out to grpcurl on PATH; output lands in a
-            // [grpc-response] scratch buffer.
-            keys: &[],
-            run: |app| app.grpc_send_active(),
-        },
-        Command {
             id: "http.format_body",
             title: "HTTP: pretty-print JSON Body field of the active Request pane",
             group: "http",
