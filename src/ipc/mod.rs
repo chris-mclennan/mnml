@@ -103,6 +103,15 @@ fn parse_toast_level(s: Option<&str>) -> crate::app::ToastLevel {
     }
 }
 
+fn parse_progress_status(s: Option<&str>) -> crate::app::ProgressStatus {
+    use crate::app::ProgressStatus;
+    match s.map(|v| v.to_ascii_lowercase()).as_deref() {
+        Some("failed") | Some("fail") | Some("error") => ProgressStatus::Failed,
+        Some("cancelled") | Some("canceled") => ProgressStatus::Cancelled,
+        _ => ProgressStatus::Success,
+    }
+}
+
 #[derive(Debug)]
 pub enum IpcCommand {
     /// Open a file (path relative to the workspace, or absolute).
@@ -202,6 +211,21 @@ pub enum IpcCommand {
     },
     /// Bridge tier-2: dismiss a persistent toast by id.
     ToastDismiss(String),
+    /// Bridge tier-2: start a progress notification.
+    ProgressStart { id: String, label: String },
+    /// Bridge tier-2: update an in-flight progress. `label` and
+    /// `percent` are both optional (either or both may be `None`).
+    ProgressUpdate {
+        id: String,
+        label: Option<String>,
+        percent: Option<u8>,
+    },
+    /// Bridge tier-2: finish a progress notification with a
+    /// terminal status. Failed status also fires a toast_error.
+    ProgressEnd {
+        id: String,
+        status: crate::app::ProgressStatus,
+    },
     /// Bridge tier-2: spawn a new Pty pane running `command` in
     /// `cwd` (defaults to the workspace). The first element of
     /// `command` is the executable; the rest are args. Used by
@@ -509,6 +533,25 @@ fn parse_command(line: &str) -> IpcCommand {
         "toast-dismiss" => match raw.id {
             Some(id) => IpcCommand::ToastDismiss(id),
             None => IpcCommand::Unknown(line.to_string()),
+        },
+        "progress-start" => match (raw.id, raw.text) {
+            (Some(id), Some(label)) => IpcCommand::ProgressStart { id, label },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "progress-update" => match raw.id {
+            Some(id) => IpcCommand::ProgressUpdate {
+                id,
+                label: raw.text,
+                percent: raw.count.map(|c| c.min(100) as u8),
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "progress-end" => match raw.id {
+            Some(id) => IpcCommand::ProgressEnd {
+                id,
+                status: parse_progress_status(raw.text.as_deref()),
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
         },
         "open-pty" => {
             if raw.command.is_empty() {
@@ -919,6 +962,23 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
         IpcCommand::ToastDismiss(id) => {
             app.toast_dismiss(id);
             json_event(&[("event", "toast_dismiss"), ("id", id)])
+        }
+        IpcCommand::ProgressStart { id, label } => {
+            app.progress_start(id.clone(), label.clone());
+            json_event(&[("event", "progress_start"), ("id", id), ("label", label)])
+        }
+        IpcCommand::ProgressUpdate { id, label, percent } => {
+            app.progress_update(id, label.clone(), *percent);
+            json_event(&[("event", "progress_update"), ("id", id)])
+        }
+        IpcCommand::ProgressEnd { id, status } => {
+            app.progress_end(id, *status);
+            let s = match status {
+                crate::app::ProgressStatus::Success => "success",
+                crate::app::ProgressStatus::Failed => "failed",
+                crate::app::ProgressStatus::Cancelled => "cancelled",
+            };
+            json_event(&[("event", "progress_end"), ("id", id), ("status", s)])
         }
         IpcCommand::OpenPty { cwd, command } => {
             if command.is_empty() {
@@ -1643,6 +1703,59 @@ mod tests {
             cmd,
             IpcCommand::Toast(_, crate::app::ToastLevel::Info)
         ));
+    }
+
+    #[test]
+    fn progress_start_update_end_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
+        apply(
+            &mut app,
+            &IpcCommand::ProgressStart {
+                id: "build.1".into(),
+                label: "Compiling…".into(),
+            },
+        );
+        assert_eq!(app.progress_items.len(), 1);
+        assert_eq!(app.progress_items[0].label, "Compiling…");
+        assert_eq!(app.progress_items[0].percent, None);
+
+        apply(
+            &mut app,
+            &IpcCommand::ProgressUpdate {
+                id: "build.1".into(),
+                label: Some("Linking…".into()),
+                percent: Some(75),
+            },
+        );
+        assert_eq!(app.progress_items[0].label, "Linking…");
+        assert_eq!(app.progress_items[0].percent, Some(75));
+
+        // Percent > 100 clamps.
+        apply(
+            &mut app,
+            &IpcCommand::ProgressUpdate {
+                id: "build.1".into(),
+                label: None,
+                percent: Some(200),
+            },
+        );
+        assert_eq!(app.progress_items[0].percent, Some(100));
+
+        apply(
+            &mut app,
+            &IpcCommand::ProgressEnd {
+                id: "build.1".into(),
+                status: crate::app::ProgressStatus::Failed,
+            },
+        );
+        assert!(app.progress_items[0].finished.is_some());
+        // Failed status also fires a toast_error.
+        assert!(
+            app.toast_stack
+                .iter()
+                .any(|t| t.level == crate::app::ToastLevel::Error)
+        );
     }
 
     #[test]

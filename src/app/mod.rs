@@ -68,6 +68,10 @@ pub(crate) use util::*;
 
 const TOAST_TTL: Duration = Duration::from_secs(4);
 const TOAST_STACK_MAX: usize = 5;
+/// How long a completed progress item lingers on screen after
+/// `progress_end` before it's removed. Long enough for the user
+/// to notice the terminal-status glyph (✓ / ✗ / ⊘).
+pub(crate) const PROGRESS_END_FADE: Duration = Duration::from_millis(2500);
 /// How long the mouse must rest on a clickable chip before its tooltip
 /// appears. 500ms matches VS Code / browser hover-tooltip convention.
 pub const HOVER_TOOLTIP_DELAY_MS: u64 = 500;
@@ -2459,6 +2463,36 @@ pub struct ToastEntry {
     pub persistent_id: Option<String>,
 }
 
+/// Outcome of `progress_end` — determines the follow-up toast
+/// that fires (if any) and the terminal glyph on the row before
+/// it fades.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressStatus {
+    Success,
+    Failed,
+    Cancelled,
+}
+
+/// One in-flight progress notification. Rendered above the toast
+/// stack with an animated Braille spinner (or a final-status
+/// glyph after `progress_end`). Keyed by external `id` so the
+/// sibling can call `progress_update` with the same id to nudge
+/// the label / percentage.
+#[derive(Debug, Clone)]
+pub struct ProgressItem {
+    pub id: String,
+    pub label: String,
+    /// `None` = indeterminate (spinner only). `Some(n)` renders
+    /// `n%` next to the spinner (clamped to 0..=100).
+    pub percent: Option<u8>,
+    pub started_at: Instant,
+    /// Once `progress_end` fires, this is `Some(status)` and the
+    /// row lingers for [`PROGRESS_END_FADE`] before removal.
+    /// Callers keeping the progress item visible after completion
+    /// can also just call `progress_end` immediately.
+    pub finished: Option<(ProgressStatus, Instant)>,
+}
+
 pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
@@ -2952,6 +2986,12 @@ pub struct App {
     /// Keyed by external `id`; a repeat `toast_persistent(id, …)`
     /// with the same id updates the entry in place.
     pub persistent_toasts: Vec<ToastEntry>,
+    /// In-flight progress notifications from siblings. Rendered
+    /// above the toast stack with an animated Braille spinner.
+    /// Keyed by external `id` so `progress_update` and
+    /// `progress_end` can find the item. Auto-purged
+    /// PROGRESS_END_FADE after finishing.
+    pub progress_items: Vec<ProgressItem>,
     pub should_quit: bool,
     /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
     /// (the `run.sh` wrapper watches for the distinct exit code).
@@ -4059,6 +4099,7 @@ impl App {
             toast: None,
             toast_stack: std::collections::VecDeque::new(),
             persistent_toasts: Vec::new(),
+            progress_items: Vec::new(),
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
@@ -10583,6 +10624,77 @@ impl App {
         self.persistent_toasts
             .retain(|t| t.persistent_id.as_deref() != Some(id));
     }
+
+    /// Start (or restart) a progress notification for `id`. If an
+    /// item with the same id already exists, it's reset —
+    /// spinner phase restarts, percent clears.
+    pub fn progress_start(&mut self, id: impl Into<String>, label: impl Into<String>) {
+        let id: String = id.into();
+        let label: String = label.into();
+        if self.silent_depth > 0 {
+            return;
+        }
+        if let Some(slot) = self.progress_items.iter_mut().find(|p| p.id == id) {
+            slot.label = label;
+            slot.percent = None;
+            slot.started_at = Instant::now();
+            slot.finished = None;
+        } else {
+            self.progress_items.push(ProgressItem {
+                id,
+                label,
+                percent: None,
+                started_at: Instant::now(),
+                finished: None,
+            });
+        }
+    }
+
+    /// Update an in-flight progress item. `label` is optional —
+    /// pass `None` to keep the previous label. `percent` similarly
+    /// optional; clamped to 0..=100. No-op if `id` isn't tracked
+    /// or already finished.
+    pub fn progress_update(&mut self, id: &str, label: Option<String>, percent: Option<u8>) {
+        if let Some(p) = self.progress_items.iter_mut().find(|p| p.id == id)
+            && p.finished.is_none()
+        {
+            if let Some(l) = label {
+                p.label = l;
+            }
+            if let Some(pct) = percent {
+                p.percent = Some(pct.min(100));
+            }
+        }
+    }
+
+    /// Finish a progress item. Sets its terminal status glyph and
+    /// starts the fade timer — the row lingers for
+    /// [`PROGRESS_END_FADE`] before removal so the user can see
+    /// the outcome. `Failed` also fires a `toast_error` with the
+    /// item's label. `Success` and `Cancelled` don't toast (the
+    /// on-screen glyph is enough — cheap common cases).
+    pub fn progress_end(&mut self, id: &str, status: ProgressStatus) {
+        let Some(p) = self.progress_items.iter_mut().find(|p| p.id == id) else {
+            return;
+        };
+        if p.finished.is_some() {
+            return;
+        }
+        p.finished = Some((status, Instant::now()));
+        let label = p.label.clone();
+        if matches!(status, ProgressStatus::Failed) {
+            self.toast_error(format!("failed: {label}"));
+        }
+    }
+
+    /// Purge progress items whose fade has elapsed. Called from
+    /// the main tick.
+    pub(crate) fn expire_progress_items(&mut self) {
+        self.progress_items.retain(|p| match p.finished {
+            None => true,
+            Some((_, at)) => at.elapsed() < PROGRESS_END_FADE,
+        });
+    }
     /// Current toast text if it hasn't expired.
     pub fn live_toast(&self) -> Option<&str> {
         self.toast
@@ -10723,6 +10835,7 @@ impl App {
         {
             self.toast_stack.pop_back();
         }
+        self.expire_progress_items();
     }
 
     /// Lines of viewport drift before [`Self::refresh_scroll_semantic_tokens`]
