@@ -24,6 +24,7 @@ It's the GitHub side of the **forge** integration class — sibling to [`mnml-fo
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-forge-github mnml-forge-github
+mnml-forge-github --install
 ```
 
 Homebrew tap + binary releases will follow once the binary stabilises.

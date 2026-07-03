@@ -22,6 +22,7 @@ description: mnml-forge-azdevops — an Azure DevOps Pull Requests + Builds view
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-forge-azdevops mnml-forge-azdevops
+mnml-forge-azdevops --install
 ```
 
 Homebrew tap + binary releases will follow once the binary stabilises.

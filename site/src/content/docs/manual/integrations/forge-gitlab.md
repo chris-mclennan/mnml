@@ -22,6 +22,7 @@ description: mnml-forge-gitlab — a GitLab Merge Requests + Pipelines viewer (s
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-forge-gitlab mnml-forge-gitlab
+mnml-forge-gitlab --install
 ```
 
 Homebrew tap + binary releases will follow once the binary stabilises.

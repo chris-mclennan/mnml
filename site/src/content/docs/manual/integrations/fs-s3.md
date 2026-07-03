@@ -28,6 +28,7 @@ This is the **first of the family's `mnml-fs-*` siblings** — opens up `mnml-fs
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-fs-s3 mnml-fs-s3
+mnml-fs-s3 --install
 ```
 
 You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured (`aws configure` or any of the usual environment variables / shared-credentials files).

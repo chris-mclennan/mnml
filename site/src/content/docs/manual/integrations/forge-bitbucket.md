@@ -22,6 +22,7 @@ description: mnml-forge-bitbucket — a Bitbucket Cloud pull-request, pipelines,
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-forge-bitbucket mnml-forge-bitbucket
+mnml-forge-bitbucket --install
 ```
 
 Homebrew tap + binary releases will follow once the binary stabilises.

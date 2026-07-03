@@ -24,6 +24,7 @@ description: mnml-aws-amplify — a terminal viewer for AWS Amplify apps, branch
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-aws-amplify mnml-aws-amplify
+mnml-aws-amplify --install
 ```
 
 You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured.

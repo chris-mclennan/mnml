@@ -24,6 +24,7 @@ This is the sibling that picked up the CodeBuild + CloudWatch panes that used to
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-aws-codebuild mnml-aws-codebuild
+mnml-aws-codebuild --install
 ```
 
 You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured (`aws configure` or any of the usual environment variables / shared-credentials files).

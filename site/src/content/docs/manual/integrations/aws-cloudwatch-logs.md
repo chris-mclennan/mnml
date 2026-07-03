@@ -24,7 +24,8 @@ This generalizes the Logs tabs that used to live inside [`mnml-aws-codebuild`](/
 ## Install
 
 ```sh
-cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs --tag v0.2.0 mnml-aws-cloudwatch-logs
+cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs mnml-aws-cloudwatch-logs
+mnml-aws-cloudwatch-logs --install
 ```
 
 You'll also need the [AWS CLI](https://aws.amazon.com/cli/) on your `$PATH` with credentials configured (`aws configure` or any of the usual environment variables / shared-credentials files).

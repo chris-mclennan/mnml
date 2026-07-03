@@ -27,6 +27,7 @@ description: mnml-tracker-jira — a Jira ticket viewer (standalone or hosted as
 
 ```sh
 cargo install --git https://github.com/chris-mclennan/mnml-tracker-jira mnml-tracker-jira
+mnml-tracker-jira --install
 ```
 
 Homebrew tap + binary releases will follow once the binary stabilises.
