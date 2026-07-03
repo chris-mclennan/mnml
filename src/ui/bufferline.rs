@@ -298,11 +298,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             "x"
         };
         let diag = &diag_chips[i];
-        // ` <icon> <name>[ <diag>] <badge> `
+        // ` <icon>  <name>[ <diag>] <badge> `
+        // Two spaces between icon + name — 2026-07-03 user-feedback:
+        // wide Nerd Font glyphs (▶, ✦, ✓, ⎇, …) render into ~1.5
+        // cells but ratatui bills them as 1, so a single space made
+        // the icon visually kiss the label text. Two spaces is
+        // safe: no glyph in the set below overflows two cells.
         let label = if diag.is_empty() {
-            format!(" {glyph} {name} {badge} ")
+            format!(" {glyph}  {name} {badge} ")
         } else {
-            format!(" {glyph} {name} {diag} {badge} ")
+            format!(" {glyph}  {name} {diag} {badge} ")
         };
         let cells = label.chars().count() as u16;
         if x + cells > inner_right {

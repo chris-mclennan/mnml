@@ -996,12 +996,29 @@ impl App {
                 } else {
                     // `:term <cmd>` — open a one-shot pty pane running the
                     // given shell command in the active workspace.
+                    //
+                    // Tab-label derivation (2026-07-03):
+                    //   - `:term mnml-aws-amplify` → `amplify` (strip
+                    //     the `mnml-<category>-` prefix so sibling
+                    //     integrations show their family name, not
+                    //     the noisy `mnml-aws-amplify` binary path).
+                    //   - `:term npm run dev` → `npm` (first word).
+                    // The manifest's own `name` field would be
+                    // richer but doesn't reach `:term` — this handler
+                    // is oblivious to which command line dispatched
+                    // to it. Prefix-stripping gets us 90% there
+                    // without threading manifest context.
+                    let cmdline = rest.trim();
+                    let first = cmdline.split_whitespace().next().unwrap_or("term");
+                    let label = if let Some(rest) = first.strip_prefix("mnml-") {
+                        rest.rsplit_once('-')
+                            .map_or(rest, |(_, tail)| tail)
+                            .to_string()
+                    } else {
+                        first.to_string()
+                    };
                     let ws = self.active_workspace_path().to_path_buf();
-                    self.open_pty(crate::pty_pane::BinaryProfile::task(
-                        "term",
-                        rest.trim(),
-                        ws,
-                    ));
+                    self.open_pty(crate::pty_pane::BinaryProfile::task(&label, cmdline, ws));
                 }
             }
             // `:version` — toast the build sha (formerly the bottom-right
