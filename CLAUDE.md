@@ -188,6 +188,39 @@ work landed:
    `/opt/homebrew/opt/zig@0.15/bin` to PATH so `libghostty-vt-sys`'s build.rs
    doesn't silently fail on macOS shells without zig in PATH.
 
+**Integration SDK shipped + mnml 0.2.0 tag-ready (2026-07-03).** The big
+release. Community-default `IntegrationIcon` entries move out of mnml core
+into sibling-owned manifests, and mnml gains a full runtime-helper surface
+for siblings:
+
+- **`mnml-bridge` 0.3.0 on crates.io.** Sibling `Cargo.toml` uses
+  `mnml-bridge = "0.3"` (no more path-dep tricks). New SDK API:
+  `install_integration()` / `uninstall_integration()` (fs-based, no IPC)
+  and IPC helpers `toast_{info,warn,error,persistent}`, `progress_*`,
+  `statusline_set_segment`, `notify` (OSC 9 + OSC 777).
+- **File-based integration manifests.** `~/.config/mnml/integrations/<id>.toml`
+  with workspace override at `<ws>/.mnml/integrations/<id>.toml`. Precedence:
+  user config > manifest > built-in default. `integrations.refresh` palette
+  command re-scans without restart.
+- **37 sibling repos self-install.** Every `mnml-*` on GitHub ships
+  `--install` / `--uninstall` subcommands + a check-only CI workflow. The
+  older rolling-`latest-build` prebuild workflow (`prebuild.yml`) also
+  coexists per sibling for fast install.
+- **`tattle_qwe` → `ecs_runner`.** AWS-Fargate cloud-agent runner is now
+  generic + config-driven. `AgentSource::TattleQwe` → `AgentSource::Ecs`;
+  empty `[cloud_agents]` config = no-op.
+
+Reconciled all 34 divergent sibling repos onto their remotes in this session:
+each got `mnml-bridge = "0.3"` (crates.io), `src/install.rs`, `--install`
+dispatch in `src/main.rs`, README setup step, a fresh `ci.yml` (no
+clone-mnml step needed). 8 of them were also missing basic deps
+(`mnml-bridge` outright, plus `unicode-width` on 4 messaging siblings)
+— added during the sweep. `mnml-msg-gcal` created + pushed as a new
+public repo (Google Calendar v3 + OAuth loopback flow).
+
+Still user-driven: `cargo publish` the 37 siblings to crates.io + tag
+`v0.2.0` on mnml so cargo-dist takes over.
+
 **For prior history** (the 7-month arc that built tmnl + the
 blit protocol + mixr-host + chrome chips integration) see
 `git log` before the cleanup commits. Those entries used to live
