@@ -1225,18 +1225,6 @@ impl Default for Config {
                         in_palette_bar: false,
                     },
                     IntegrationIcon {
-                        id: "tattle_inbox".to_string(),
-                        glyph: "\u{F01F0}".to_string(), // nf-md-email_search_outline
-                        fallback: "Ti".to_string(),
-                        command: ":term mnml-tattle-inbox".to_string(),
-                        color: "magenta".to_string(),
-                        tooltip: Some(
-                            "Tattle inbox (INTERNAL — dev/staging email/SMS sink)".to_string(),
-                        ),
-                        enabled: false,
-                        in_palette_bar: false,
-                    },
-                    IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
                         glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
                         fallback: "CW".to_string(),

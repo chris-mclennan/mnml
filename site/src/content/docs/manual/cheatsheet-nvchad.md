@@ -319,7 +319,6 @@ The sibling-binary launcher trie. NvChad has no analog — these are mnml-family
 | `<leader>iG` | `forge.open_gmail` | Gmail |
 | `<leader>ij` | `forge.open_jira` | Jira |
 | `<leader>iF` | `forge.open_cloudflare` | Cloudflare |
-| `<leader>it` | `forge.open_tattle_inbox` | Tattle inbox |
 | `<leader>ih` | `tools.htop` | htop |
 | `<leader>iI` | `tools.iftop` | iftop |
 

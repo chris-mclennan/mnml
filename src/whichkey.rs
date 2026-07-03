@@ -332,10 +332,6 @@ pub fn root() -> &'static Leader {
                             ('C', cmd("forge.open_gcal", "Google Calendar")),
                             ('j', cmd("forge.open_jira", "Jira ticket viewer")),
                             ('F', cmd("forge.open_cloudflare", "Cloudflare CDN")),
-                            (
-                                't',
-                                cmd("forge.open_tattle_inbox", "Tattle inbox (internal)"),
-                            ),
                         ],
                     ),
                 ),

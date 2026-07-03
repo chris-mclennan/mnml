@@ -408,7 +408,6 @@ Each chord launches the matching `mnml-*` sibling binary as a tab. The sibling m
 | Docker containers | `<leader>iK` | (palette) | `forge.open_docker` |
 | Gmail browse + send | `<leader>iG` | (palette) | `forge.open_gmail` |
 | Cloudflare CDN | `<leader>iF` | (palette) | `forge.open_cloudflare` |
-| Tattle inbox (internal) | `<leader>it` | (palette) | `forge.open_tattle_inbox` |
 | htop | `<leader>ih` | (palette) | `tools.htop` |
 | iftop | `<leader>iI` | (palette) | `tools.iftop` |
 | Add-integration overlay | (rail `+` chip) | (rail `+` chip) | `integrations.add` |
