@@ -351,11 +351,15 @@ fn draw_step_qwe_ticket(frame: &mut Frame, app: &mut App, area: Rect, pane_id: P
         Some(Pane::NewCloudRunWizard(p)) => p.qwe_ticket.clone(),
         _ => return,
     };
+    let prefix = app.config.jira.effective_ticket_prefix();
+    let prefix_display = prefix.as_deref().unwrap_or("PROJ-");
     let mut y = area.y;
     if y < area.y + area.height {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                "  Jira ticket (TE-NNNNN). Flow defaults to triage; env to prod.",
+                format!(
+                    "  Jira ticket ({prefix_display}NNNN). Flow defaults to triage; env to prod."
+                ),
                 Style::default().fg(t.comment).bg(bg),
             ))),
             Rect {
@@ -369,7 +373,7 @@ fn draw_step_qwe_ticket(frame: &mut Frame, app: &mut App, area: Rect, pane_id: P
     }
     if y < area.y + area.height {
         let label = if ticket.is_empty() {
-            "TE-".to_string()
+            prefix_display.to_string()
         } else {
             ticket
         };

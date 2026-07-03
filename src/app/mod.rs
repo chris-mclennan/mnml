@@ -6217,9 +6217,14 @@ impl App {
     /// palette command.
     pub fn prompt_cloud_run(&mut self) {
         use crate::prompt::{Prompt, PromptKind};
+        let prefix = self
+            .config
+            .jira
+            .effective_ticket_prefix()
+            .unwrap_or_else(|| "PROJ-".to_string());
         self.prompt = Some(Prompt::new(
             PromptKind::CloudRunTicket,
-            "New cloud run — Jira ticket (TE-NNNN)",
+            format!("New cloud run — Jira ticket ({prefix}NNNN)"),
         ));
     }
 
