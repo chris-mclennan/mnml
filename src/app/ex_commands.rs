@@ -446,7 +446,16 @@ impl App {
     }
 
     pub fn run_ex_command(&mut self, line: &str) {
-        let line = line.trim();
+        // Callers land here from two paths:
+        //   1. The cmdline overlay (`:term foo` typed by the user) — the
+        //      leading `:` is stripped by the overlay before we see it.
+        //   2. Manifest-registered integration commands whose `run`
+        //      field is stored *with* the leading `:` (2026-07-03 SDK
+        //      bug: `run = ":term mnml-aws-amplify"` reached here as
+        //      literal `":term mnml-aws-amplify"` and got dispatched as
+        //      the unknown command `":term"`).
+        // Normalize both by stripping any single leading colon.
+        let line = line.trim().trim_start_matches(':').trim_start();
         if line.is_empty() {
             return;
         }
@@ -3739,5 +3748,43 @@ mod ex_commands_tests {
             .map(|b| b.editor.text().to_string())
             .unwrap();
         assert_eq!(text, "alpha\nbeta\n");
+    }
+
+    /// SDK bug 2026-07-03: manifest-registered commands store `run =
+    /// ":term mnml-…"` verbatim, with the leading colon. `run_ex_command`
+    /// received the string as-is and split into `cmd=":term"` which
+    /// matched nothing → all 37 integrations dispatched as "unknown
+    /// command". The normalization strips a single leading `:` before
+    /// parsing; this test locks it.
+    #[test]
+    fn run_ex_command_strips_leading_colon_from_manifest_commands() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("a.txt");
+        fs::write(&p, "hi").unwrap();
+        let mut app = App::new(d.path().to_path_buf(), Config::default()).unwrap();
+        app.open_path(&p);
+
+        let before = app.message_log.len();
+        // User-typed form (no leading colon) — must reach `:version`.
+        app.run_ex_command("version");
+        let user_msgs: Vec<_> = app.message_log[before..].to_vec();
+        assert!(
+            user_msgs.iter().any(|m| m.starts_with("mnml ")),
+            "user-typed 'version' should emit a `mnml <sha>` toast; log tail = {user_msgs:?}"
+        );
+
+        let before = app.message_log.len();
+        // Manifest-registered form (":version" verbatim) — must
+        // reach the same arm, not "unknown command".
+        app.run_ex_command(":version");
+        let manifest_msgs: Vec<_> = app.message_log[before..].to_vec();
+        assert!(
+            manifest_msgs.iter().any(|m| m.starts_with("mnml ")),
+            "manifest ':version' should emit a `mnml <sha>` toast; log tail = {manifest_msgs:?}"
+        );
+        assert!(
+            manifest_msgs.iter().all(|m| !m.contains("unknown")),
+            "manifest ':version' should NOT toast 'unknown command'; log tail = {manifest_msgs:?}"
+        );
     }
 }
