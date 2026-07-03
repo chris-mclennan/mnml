@@ -298,17 +298,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             "x"
         };
         let diag = &diag_chips[i];
-        // ` <icon>   <name>[ <diag>] <badge> `
-        // Three spaces between icon + name — 2026-07-03 second pass:
-        // the terminal glyph `\u{f489}` (nf-oct-terminal) renders
-        // ~1.5 cells wide but ratatui bills it as 1, so two spaces
-        // (previous fix) still visually kissed the label. Three
-        // spaces reliably clears the widest glyph in the tab-icon
-        // set with a comfortable visual gap.
+        // ` <icon>  <name>[ <diag>] <badge> `
+        // Two spaces between icon + name — 2026-07-03 third pass:
+        // three (the previous fix) looked too airy once the actual
+        // render path was fixed to match. Two is the balance point
+        // for the wide nf-oct-terminal glyph vs the rest of the
+        // icon set.
         let label = if diag.is_empty() {
-            format!(" {glyph}   {name} {badge} ")
+            format!(" {glyph}  {name} {badge} ")
         } else {
-            format!(" {glyph}   {name} {diag} {badge} ")
+            format!(" {glyph}  {name} {diag} {badge} ")
         };
         let cells = label.chars().count() as u16;
         if x + cells > inner_right {
@@ -367,7 +366,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // the label. Match the 3-space padding used in the
         // width string so hitboxes + visuals stay aligned.
         spans.push(Span::styled(
-            format!(" {glyph}   "),
+            format!(" {glyph}  "),
             Style::default().fg(icon_color).bg(bg),
         ));
         spans.push(Span::styled(format!("{name} "), name_style));
