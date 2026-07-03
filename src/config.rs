@@ -771,6 +771,12 @@ pub struct IntegrationIcon {
     /// Browser is the only default-on integration (its `browser.open`
     /// is a common enough action to warrant top-bar real estate).
     pub in_palette_bar: bool,
+    /// True for built-in defaults that a sibling's manifest is
+    /// allowed to override. Set to false as soon as the user
+    /// authors a matching `[[ui.integration_icon]]` entry — user
+    /// intent always beats sibling-authored manifests.
+    #[doc(hidden)]
+    pub manifest_can_override: bool,
 }
 
 /// One entry in the bufferline's right-side launcher-icon strip.
@@ -910,6 +916,7 @@ impl Default for Config {
                         ),
                         enabled: true,
                         in_palette_bar: true,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "claude_code".to_string(),
@@ -926,6 +933,7 @@ impl Default for Config {
                         tooltip: Some("Claude Code".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "codex".to_string(),
@@ -940,6 +948,7 @@ impl Default for Config {
                         tooltip: Some("Codex".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "bitbucket".to_string(),
@@ -954,6 +963,7 @@ impl Default for Config {
                         tooltip: Some("Bitbucket pipelines + PRs".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "jira".to_string(),
@@ -969,6 +979,7 @@ impl Default for Config {
                         tooltip: Some("Jira tracker".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "http".to_string(),
@@ -984,6 +995,7 @@ impl Default for Config {
                         tooltip: Some("HTTP: send active request".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         // Postman-style "new request" chip — matches
@@ -998,6 +1010,7 @@ impl Default for Config {
                         tooltip: Some("HTTP: new blank request".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "codebuild".to_string(),
@@ -1012,6 +1025,7 @@ impl Default for Config {
                         tooltip: Some("AWS CodeBuild + logs".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "github".to_string(),
@@ -1026,6 +1040,7 @@ impl Default for Config {
                         tooltip: Some("GitHub Actions + PRs".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "azdevops".to_string(),
@@ -1040,6 +1055,7 @@ impl Default for Config {
                         tooltip: Some("Azure DevOps PRs + builds".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "gitlab".to_string(),
@@ -1054,6 +1070,7 @@ impl Default for Config {
                         tooltip: Some("GitLab MRs + Pipelines".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "s3".to_string(),
@@ -1068,6 +1085,7 @@ impl Default for Config {
                         tooltip: Some("Amazon S3 browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "azure_blob".to_string(),
@@ -1078,6 +1096,7 @@ impl Default for Config {
                         tooltip: Some("Azure Blob Storage browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     // Terminal-native diagnostic tools. Open as Pty
                     // panes inside mnml's layout. The sidebar filter
@@ -1092,6 +1111,7 @@ impl Default for Config {
                         tooltip: Some("htop — interactive process viewer".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "iftop".to_string(),
@@ -1105,6 +1125,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "btop".to_string(),
@@ -1117,6 +1138,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "datadog".to_string(),
@@ -1129,6 +1151,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "buttondown".to_string(),
@@ -1139,6 +1162,7 @@ impl Default for Config {
                         tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "slack".to_string(),
@@ -1151,6 +1175,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "teams".to_string(),
@@ -1163,6 +1188,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "mandrill".to_string(),
@@ -1176,6 +1202,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "gmail".to_string(),
@@ -1188,6 +1215,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "gcal".to_string(),
@@ -1201,6 +1229,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "docker".to_string(),
@@ -1213,6 +1242,7 @@ impl Default for Config {
                         ),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "cloudflare".to_string(),
@@ -1223,6 +1253,7 @@ impl Default for Config {
                         tooltip: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "cloudwatch_logs".to_string(),
@@ -1233,6 +1264,7 @@ impl Default for Config {
                         tooltip: Some("CloudWatch Logs live tail".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "amplify".to_string(),
@@ -1243,6 +1275,7 @@ impl Default for Config {
                         tooltip: Some("Amplify apps + deploys".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "dynamodb".to_string(),
@@ -1253,6 +1286,7 @@ impl Default for Config {
                         tooltip: Some("DynamoDB table browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "lambda".to_string(),
@@ -1263,6 +1297,7 @@ impl Default for Config {
                         tooltip: Some("Lambda function browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "eventbridge".to_string(),
@@ -1273,6 +1308,7 @@ impl Default for Config {
                         tooltip: Some("EventBridge buses + rules".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "rds".to_string(),
@@ -1287,6 +1323,7 @@ impl Default for Config {
                         tooltip: Some("RDS database browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "ecs".to_string(),
@@ -1297,6 +1334,7 @@ impl Default for Config {
                         tooltip: Some("ECS clusters + services".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "ecr".to_string(),
@@ -1307,6 +1345,7 @@ impl Default for Config {
                         tooltip: Some("ECR container registry".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "cognito".to_string(),
@@ -1317,6 +1356,7 @@ impl Default for Config {
                         tooltip: Some("Cognito User Pools + users".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "sqs".to_string(),
@@ -1327,6 +1367,7 @@ impl Default for Config {
                         tooltip: Some("SQS queues".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "sns".to_string(),
@@ -1337,6 +1378,7 @@ impl Default for Config {
                         tooltip: Some("SNS topics + subscriptions".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     // mixr rail chip — opens the family DJ app via
                     // `mixr.show` as a Pty pane.
@@ -1349,6 +1391,7 @@ impl Default for Config {
                         tooltip: Some("mixr DJ".to_string()),
                         enabled: false,
                         in_palette_bar: false,
+                        manifest_can_override: true,
                     },
                     // 2026-06-19 — removed a duplicate `id: "http"`
                     // entry that lived here. The earlier `IntegrationIcon`
@@ -1939,6 +1982,9 @@ impl Config {
                             tooltip: r.tooltip.clone().or_else(|| builtin.tooltip.clone()),
                             enabled: r.enabled.unwrap_or(builtin.enabled),
                             in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),
+                            // User explicitly authored this override —
+                            // no sibling manifest may overwrite it.
+                            manifest_can_override: false,
                         },
                     }
                 })
@@ -1968,6 +2014,8 @@ impl Config {
                     tooltip: r.tooltip.clone(),
                     enabled: r.enabled.unwrap_or(false),
                     in_palette_bar: r.in_palette_bar.unwrap_or(false),
+                    // User-authored — sibling manifests can't override.
+                    manifest_can_override: false,
                 });
             }
             self.ui.integration_icons = merged;

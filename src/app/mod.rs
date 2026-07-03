@@ -4316,42 +4316,46 @@ impl App {
     /// commands as dynamic commands. Called from `App::new` and
     /// again by the `integrations.refresh` palette command.
     ///
-    /// Precedence rule: user config `[[ui.integration_icon]]`
-    /// entries win over manifest chips of the same id (manifest
-    /// only fills gaps). Reason: the user's own config is the
-    /// most explicit intent; a sibling shouldn't be able to
-    /// clobber it.
+    /// Precedence:
+    ///   user config > manifest > built-in default
+    ///
+    /// - **User-authored entries** (`manifest_can_override = false`)
+    ///   are never touched — user intent always wins.
+    /// - **Built-in defaults + prior-manifest entries**
+    ///   (`manifest_can_override = true`) get replaced in place
+    ///   when a manifest with the same id arrives. So installing
+    ///   `<sibling> --install` overrides the built-in with the
+    ///   sibling's own glyph / command / chord.
     pub fn merge_integration_manifests(&mut self) {
-        use std::collections::HashSet;
-        let existing_ids: HashSet<String> = self
-            .config
-            .ui
-            .integration_icons
-            .iter()
-            .map(|i| i.id.clone())
-            .collect();
         for m in &self.integration_manifests {
             let Some(chip) = &m.chip else { continue };
-            if existing_ids.contains(&m.id) {
-                continue; // user config already has this id — skip
-            }
-            self.config
+            let new_icon = crate::config::IntegrationIcon {
+                id: m.id.clone(),
+                glyph: chip.glyph.clone(),
+                fallback: chip.fallback.clone(),
+                command: m
+                    .commands
+                    .first()
+                    .map(|c| c.id.clone())
+                    .unwrap_or_else(|| format!("term {}", m.binary)),
+                color: chip.color.clone(),
+                tooltip: chip.tooltip.clone(),
+                enabled: chip.enabled,
+                in_palette_bar: chip.in_palette_bar,
+                // A later manifest re-scan can re-apply/override.
+                manifest_can_override: true,
+            };
+            match self
+                .config
                 .ui
                 .integration_icons
-                .push(crate::config::IntegrationIcon {
-                    id: m.id.clone(),
-                    glyph: chip.glyph.clone(),
-                    fallback: chip.fallback.clone(),
-                    command: m
-                        .commands
-                        .first()
-                        .map(|c| c.id.clone())
-                        .unwrap_or_else(|| format!("term {}", m.binary)),
-                    color: chip.color.clone(),
-                    tooltip: chip.tooltip.clone(),
-                    enabled: chip.enabled,
-                    in_palette_bar: chip.in_palette_bar,
-                });
+                .iter_mut()
+                .find(|i| i.id == m.id)
+            {
+                Some(slot) if slot.manifest_can_override => *slot = new_icon,
+                Some(_) => {} // user-authored — leave alone
+                None => self.config.ui.integration_icons.push(new_icon),
+            }
         }
         // Register each manifest command as a dynamic command
         // with its ex_run baked in. Idempotent via

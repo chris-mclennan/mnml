@@ -664,6 +664,8 @@ impl App {
             // Palette-bar visibility is a separate opt-in — user
             // enables via right-click → Show in palette bar.
             in_palette_bar: false,
+            // User-authored — sibling manifests can't override.
+            manifest_can_override: false,
         };
         match panel.mode {
             IntegrationEditMode::Edit => {
@@ -932,6 +934,7 @@ impl App {
             tooltip: Some(s.icon_tooltip().to_string()),
             enabled: true,
             in_palette_bar: false,
+            manifest_can_override: false, // user chose to add — treat as user-authored
         });
         // Best-effort TOML persistence so the chip survives a restart.
         // On failure we still report "added" but flag the persistence
@@ -1263,6 +1266,7 @@ color = \"blue\"
                 tooltip: Some("Lambda".to_string()),
                 enabled: false,
                 in_palette_bar: false,
+                manifest_can_override: false,
             },
             IntegrationIcon {
                 id: "s3".to_string(),
@@ -1273,6 +1277,7 @@ color = \"blue\"
                 tooltip: None,
                 enabled: false,
                 in_palette_bar: false,
+                manifest_can_override: false,
             },
         ];
         let out = append_integration_icon_blocks("", &icons);
@@ -1296,6 +1301,7 @@ color = \"blue\"
             tooltip: None,
             enabled: false,
             in_palette_bar: false,
+            manifest_can_override: false,
         }];
         let first = append_integration_icon_blocks("", &icons);
         let stripped = strip_integration_icon_blocks(&first);
@@ -1325,6 +1331,7 @@ color = \"blue\"
             tooltip: Some("My App".to_string()),
             enabled: true,
             in_palette_bar: false,
+            manifest_can_override: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);
         assert!(
@@ -1355,6 +1362,7 @@ color = \"blue\"
             tooltip: None,
             enabled: false,
             in_palette_bar: false,
+            manifest_can_override: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);
         assert!(
