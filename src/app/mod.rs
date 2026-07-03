@@ -2434,6 +2434,31 @@ type SuggestReply = (u64, Result<String, String>);
 /// One local-FIM worker request — `(request_id, prefix, suffix, max_tokens)`.
 type FimRequest = (u64, String, String, usize);
 
+/// Severity of a toast — affects the border color at render time.
+/// Per the current design: info + warn render identically (comment
+/// border, keeps the ambient noise low); error gets a red border so
+/// actual failures stand out. Flip-a-switch behavior — the render
+/// mapping is a single match in `toast_stack.rs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToastLevel {
+    #[default]
+    Info,
+    Warn,
+    Error,
+}
+
+/// One toast in either `toast_stack` (ephemeral, TTL-expiring) or
+/// `persistent_toasts` (pinned until `toast_dismiss`).
+#[derive(Debug, Clone)]
+pub struct ToastEntry {
+    pub text: String,
+    pub created_at: Instant,
+    pub level: ToastLevel,
+    /// `Some(id)` for persistent toasts (dismissable by id, never
+    /// aged out). `None` for ephemeral toasts (TTL-expiring stack).
+    pub persistent_id: Option<String>,
+}
+
 pub struct App {
     pub workspace: PathBuf,
     pub config: Config,
@@ -2920,7 +2945,13 @@ pub struct App {
     /// top-right vertical overlay when more than one entry is live, so
     /// rapid-fire toasts ("staged hunk", "saved", "git refreshed") don't
     /// clobber each other. nvim-notify-style stacked notifications.
-    pub toast_stack: std::collections::VecDeque<(String, Instant)>,
+    pub toast_stack: std::collections::VecDeque<ToastEntry>,
+    /// Pinned toasts — stay on screen until an explicit dismiss by
+    /// id. Rendered above the ephemeral stack. Errors here get a
+    /// red border; info/warn use the standard comment border.
+    /// Keyed by external `id`; a repeat `toast_persistent(id, …)`
+    /// with the same id updates the entry in place.
+    pub persistent_toasts: Vec<ToastEntry>,
     pub should_quit: bool,
     /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
     /// (the `run.sh` wrapper watches for the distinct exit code).
@@ -4027,6 +4058,7 @@ impl App {
             git,
             toast: None,
             toast_stack: std::collections::VecDeque::new(),
+            persistent_toasts: Vec::new(),
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
@@ -10464,14 +10496,26 @@ impl App {
     }
 
     pub fn toast(&mut self, msg: impl Into<String>) {
+        self.toast_leveled(msg, ToastLevel::Info);
+    }
+
+    /// Level-tagged toast. Info + warn render with the standard
+    /// comment-color border; error renders red. All toasts also
+    /// land in `message_log` (recoverable via `:messages`).
+    pub fn toast_leveled(&mut self, msg: impl Into<String>, level: ToastLevel) {
         let s: String = msg.into();
         // `:silent <cmd>` suppresses the visible toast but the message
         // is still recorded in the log so `:messages` can recover it.
         if self.silent_depth == 0 {
             let now = Instant::now();
             self.toast = Some((s.clone(), now));
-            // Push onto the stack (newest at front). Cap at TOAST_STACK_MAX.
-            self.toast_stack.push_front((s.clone(), now));
+            let entry = ToastEntry {
+                text: s.clone(),
+                created_at: now,
+                level,
+                persistent_id: None,
+            };
+            self.toast_stack.push_front(entry);
             while self.toast_stack.len() > TOAST_STACK_MAX {
                 self.toast_stack.pop_back();
             }
@@ -10481,6 +10525,63 @@ impl App {
             let drop = self.message_log.len() - MESSAGE_LOG_MAX;
             self.message_log.drain(..drop);
         }
+    }
+
+    /// Convenience — level=Info.
+    pub fn toast_info(&mut self, msg: impl Into<String>) {
+        self.toast_leveled(msg, ToastLevel::Info);
+    }
+    /// Convenience — level=Warn (renders same as Info per current design).
+    pub fn toast_warn(&mut self, msg: impl Into<String>) {
+        self.toast_leveled(msg, ToastLevel::Warn);
+    }
+    /// Convenience — level=Error (renders with red border).
+    pub fn toast_error(&mut self, msg: impl Into<String>) {
+        self.toast_leveled(msg, ToastLevel::Error);
+    }
+
+    /// Show a pinned toast identified by `id`. A repeat call with
+    /// the same `id` updates the text/level in place (single toast,
+    /// not stacked). Stays visible until `toast_dismiss(id)`.
+    pub fn toast_persistent(
+        &mut self,
+        id: impl Into<String>,
+        msg: impl Into<String>,
+        level: ToastLevel,
+    ) {
+        let id: String = id.into();
+        let s: String = msg.into();
+        self.message_log.push(s.clone());
+        if self.message_log.len() > MESSAGE_LOG_MAX {
+            let drop = self.message_log.len() - MESSAGE_LOG_MAX;
+            self.message_log.drain(..drop);
+        }
+        if self.silent_depth > 0 {
+            return;
+        }
+        if let Some(slot) = self
+            .persistent_toasts
+            .iter_mut()
+            .find(|t| t.persistent_id.as_deref() == Some(id.as_str()))
+        {
+            slot.text = s;
+            slot.level = level;
+            slot.created_at = Instant::now();
+        } else {
+            self.persistent_toasts.push(ToastEntry {
+                text: s,
+                created_at: Instant::now(),
+                level,
+                persistent_id: Some(id),
+            });
+        }
+    }
+
+    /// Dismiss a persistent toast by id. No-op if the id isn't
+    /// currently pinned.
+    pub fn toast_dismiss(&mut self, id: &str) {
+        self.persistent_toasts
+            .retain(|t| t.persistent_id.as_deref() != Some(id));
     }
     /// Current toast text if it hasn't expired.
     pub fn live_toast(&self) -> Option<&str> {
@@ -10618,7 +10719,7 @@ impl App {
         while self
             .toast_stack
             .back()
-            .is_some_and(|(_, t)| t.elapsed() >= TOAST_TTL)
+            .is_some_and(|e| e.created_at.elapsed() >= TOAST_TTL)
         {
             self.toast_stack.pop_back();
         }

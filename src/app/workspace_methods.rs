@@ -227,7 +227,7 @@ impl App {
         // this the user saw two stacked toast boxes after clicking
         // a second `○` while the first was still within its 4s TTL.
         self.toast_stack
-            .retain(|(msg, _)| !msg.starts_with("workspace opened:"));
+            .retain(|e| !e.text.starts_with("workspace opened:"));
         self.toast(format!("workspace opened: {name}"));
     }
 

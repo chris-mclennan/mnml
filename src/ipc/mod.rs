@@ -88,6 +88,19 @@ struct RawCommand {
     /// `set-activity-badge`: notification count (0 clears).
     #[serde(default)]
     count: Option<u32>,
+    /// `toast` / `toast-persistent`: severity level.
+    /// `"info"` (default) | `"warn"` | `"error"`.
+    #[serde(default)]
+    level: Option<String>,
+}
+
+fn parse_toast_level(s: Option<&str>) -> crate::app::ToastLevel {
+    use crate::app::ToastLevel;
+    match s.map(|v| v.to_ascii_lowercase()).as_deref() {
+        Some("warn") | Some("warning") => ToastLevel::Warn,
+        Some("error") | Some("err") => ToastLevel::Error,
+        _ => ToastLevel::Info,
+    }
 }
 
 #[derive(Debug)]
@@ -175,10 +188,20 @@ pub enum IpcCommand {
     },
     /// Force a fresh dump of `screen.txt` / `status.json`.
     Snapshot,
-    /// Bridge tier-2: show a toast message in the host. Used by
-    /// siblings to surface progress / errors to the user without
-    /// a separate notification channel.
-    Toast(String),
+    /// Bridge tier-2: show a toast message in the host. Level
+    /// defaults to Info; Error gets a red border, others use the
+    /// standard comment border (per current design).
+    Toast(String, crate::app::ToastLevel),
+    /// Bridge tier-2: show a pinned toast keyed by `id`. Repeat
+    /// calls with the same id update the entry in place. Stays
+    /// visible until `ToastDismiss`.
+    ToastPersistent {
+        id: String,
+        text: String,
+        level: crate::app::ToastLevel,
+    },
+    /// Bridge tier-2: dismiss a persistent toast by id.
+    ToastDismiss(String),
     /// Bridge tier-2: spawn a new Pty pane running `command` in
     /// `cwd` (defaults to the workspace). The first element of
     /// `command` is the executable; the rest are args. Used by
@@ -472,7 +495,19 @@ fn parse_command(line: &str) -> IpcCommand {
         },
         "snapshot" => IpcCommand::Snapshot,
         "toast" => match raw.text {
-            Some(t) => IpcCommand::Toast(t),
+            Some(t) => IpcCommand::Toast(t, parse_toast_level(raw.level.as_deref())),
+            None => IpcCommand::Unknown(line.to_string()),
+        },
+        "toast-persistent" => match (raw.id, raw.text) {
+            (Some(id), Some(text)) => IpcCommand::ToastPersistent {
+                id,
+                text,
+                level: parse_toast_level(raw.level.as_deref()),
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "toast-dismiss" => match raw.id {
+            Some(id) => IpcCommand::ToastDismiss(id),
             None => IpcCommand::Unknown(line.to_string()),
         },
         "open-pty" => {
@@ -868,9 +903,22 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             ])
         }
         IpcCommand::Snapshot => json_event(&[("event", "snapshot")]),
-        IpcCommand::Toast(text) => {
-            app.toast(text.clone());
-            json_event(&[("event", "toast"), ("text", text)])
+        IpcCommand::Toast(text, level) => {
+            app.toast_leveled(text.clone(), *level);
+            let level_str = match level {
+                crate::app::ToastLevel::Warn => "warn",
+                crate::app::ToastLevel::Error => "error",
+                _ => "info",
+            };
+            json_event(&[("event", "toast"), ("text", text), ("level", level_str)])
+        }
+        IpcCommand::ToastPersistent { id, text, level } => {
+            app.toast_persistent(id.clone(), text.clone(), *level);
+            json_event(&[("event", "toast_persistent"), ("id", id), ("text", text)])
+        }
+        IpcCommand::ToastDismiss(id) => {
+            app.toast_dismiss(id);
+            json_event(&[("event", "toast_dismiss"), ("id", id)])
         }
         IpcCommand::OpenPty { cwd, command } => {
             if command.is_empty() {
@@ -1570,6 +1618,62 @@ mod tests {
     fn screen_to_text_trims_trailing_space_and_joins_rows() {
         let buf = ratatui::buffer::Buffer::with_lines(["ab  ", "cd"]);
         assert_eq!(screen_to_text(&buf), "ab\ncd\n");
+    }
+
+    #[test]
+    fn toast_parses_optional_level() {
+        // No level → Info.
+        let cmd = parse_command(r#"{"cmd":"toast","text":"hi"}"#);
+        match cmd {
+            IpcCommand::Toast(t, l) => {
+                assert_eq!(t, "hi");
+                assert_eq!(l, crate::app::ToastLevel::Info);
+            }
+            other => panic!("expected Toast, got {other:?}"),
+        }
+        // Explicit level=error.
+        let cmd = parse_command(r#"{"cmd":"toast","text":"broke","level":"error"}"#);
+        assert!(matches!(
+            cmd,
+            IpcCommand::Toast(_, crate::app::ToastLevel::Error)
+        ));
+        // Unknown level → Info fallback.
+        let cmd = parse_command(r#"{"cmd":"toast","text":"x","level":"neon"}"#);
+        assert!(matches!(
+            cmd,
+            IpcCommand::Toast(_, crate::app::ToastLevel::Info)
+        ));
+    }
+
+    #[test]
+    fn toast_persistent_and_dismiss_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
+        apply(
+            &mut app,
+            &IpcCommand::ToastPersistent {
+                id: "job.1".into(),
+                text: "running…".into(),
+                level: crate::app::ToastLevel::Info,
+            },
+        );
+        assert_eq!(app.persistent_toasts.len(), 1);
+        assert_eq!(app.persistent_toasts[0].text, "running…");
+        // Repeat with same id → updates in place.
+        apply(
+            &mut app,
+            &IpcCommand::ToastPersistent {
+                id: "job.1".into(),
+                text: "still going…".into(),
+                level: crate::app::ToastLevel::Warn,
+            },
+        );
+        assert_eq!(app.persistent_toasts.len(), 1);
+        assert_eq!(app.persistent_toasts[0].text, "still going…");
+        assert_eq!(app.persistent_toasts[0].level, crate::app::ToastLevel::Warn);
+        // Dismiss.
+        apply(&mut app, &IpcCommand::ToastDismiss("job.1".into()));
+        assert!(app.persistent_toasts.is_empty());
     }
 
     #[test]
