@@ -118,6 +118,7 @@ export default defineConfig({
             { label: 'Cross-host PR workflow', slug: 'manual/cross-host-prs' },
             { label: 'Headless & .test', slug: 'manual/headless' },
             { label: 'Settings & configuration', slug: 'manual/settings' },
+            { label: 'Cloud agents runner (ECS)', slug: 'manual/cloud-agents-config' },
             { label: 'Now-playing & transport', slug: 'manual/now-playing' },
             { label: 'In-app updater', slug: 'manual/updates' },
           ],
