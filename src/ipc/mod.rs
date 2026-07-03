@@ -110,6 +110,12 @@ struct RawCommand {
     /// `statusline-set-segment`: preferred / max render width.
     #[serde(default)]
     max_width: Option<u16>,
+    /// `notify`: opt-in bell / sound.
+    #[serde(default)]
+    sound: Option<bool>,
+    /// `notify`: source integration id — for rate-limit lookup.
+    #[serde(default)]
+    source: Option<String>,
 }
 
 fn parse_toast_level(s: Option<&str>) -> crate::app::ToastLevel {
@@ -266,6 +272,17 @@ pub enum IpcCommand {
     },
     /// Bridge tier-2: remove a sibling statusline segment.
     StatuslineClearSegment { id: String },
+    /// Bridge tier-2: fire a notification. Always shows an
+    /// in-app toast at the given level; also queues an OS
+    /// notification via OSC 9/777 escapes if the source
+    /// integration's policy allows and rate-limit has elapsed.
+    Notify {
+        title: String,
+        body: String,
+        level: crate::app::ToastLevel,
+        sound: bool,
+        source: Option<String>,
+    },
     /// Bridge tier-2: spawn a new Pty pane running `command` in
     /// `cwd` (defaults to the workspace). The first element of
     /// `command` is the executable; the rest are args. Used by
@@ -608,6 +625,16 @@ fn parse_command(line: &str) -> IpcCommand {
         },
         "statusline-clear-segment" => match raw.id {
             Some(id) => IpcCommand::StatuslineClearSegment { id },
+            None => IpcCommand::Unknown(line.to_string()),
+        },
+        "notify" => match raw.text {
+            Some(body) => IpcCommand::Notify {
+                title: raw.title.unwrap_or_else(|| "mnml".to_string()),
+                body,
+                level: parse_toast_level(raw.level.as_deref()),
+                sound: raw.sound.unwrap_or(false),
+                source: raw.source,
+            },
             None => IpcCommand::Unknown(line.to_string()),
         },
         "open-pty" => {
@@ -1066,6 +1093,22 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
         IpcCommand::StatuslineClearSegment { id } => {
             app.statusline_clear_segment(id);
             json_event(&[("event", "statusline_clear_segment"), ("id", id)])
+        }
+        IpcCommand::Notify {
+            title,
+            body,
+            level,
+            sound,
+            source,
+        } => {
+            app.notify(
+                title.clone(),
+                body.clone(),
+                *level,
+                *sound,
+                source.as_deref(),
+            );
+            json_event(&[("event", "notify"), ("title", title), ("body", body)])
         }
         IpcCommand::OpenPty { cwd, command } => {
             if command.is_empty() {
@@ -1790,6 +1833,70 @@ mod tests {
             cmd,
             IpcCommand::Toast(_, crate::app::ToastLevel::Info)
         ));
+    }
+
+    #[test]
+    fn notify_fires_toast_and_queues_os_notification_when_no_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
+        apply(
+            &mut app,
+            &IpcCommand::Notify {
+                title: "Slack".into(),
+                body: "@chris mentioned you".into(),
+                level: crate::app::ToastLevel::Info,
+                sound: false,
+                source: None,
+            },
+        );
+        // In-app toast fired.
+        assert!(app.toast_stack.iter().any(|t| t.text.contains("mentioned")));
+        // OS notification queued.
+        assert_eq!(app.pending_os_notifications.len(), 1);
+        let (title, body, sound) = &app.pending_os_notifications[0];
+        assert_eq!(title, "Slack");
+        assert_eq!(body, "@chris mentioned you");
+        assert!(!sound);
+    }
+
+    #[test]
+    fn notify_respects_never_policy() {
+        use crate::integration_manifest::{IntegrationManifest, NotificationsSpec, OsNotifyPolicy};
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
+        app.integration_manifests.push(IntegrationManifest {
+            id: "silent".into(),
+            name: "Silent".into(),
+            description: None,
+            version: None,
+            binary: "mnml-silent".into(),
+            category: None,
+            chip: None,
+            commands: vec![],
+            context_menu: vec![],
+            menu_bar: vec![],
+            statusline: None,
+            settings: vec![],
+            notifications: Some(NotificationsSpec {
+                os_notify_on: OsNotifyPolicy::Never,
+                os_rate_limit_sec: 0,
+            }),
+            requires: None,
+            source_path: std::path::PathBuf::new(),
+        });
+        apply(
+            &mut app,
+            &IpcCommand::Notify {
+                title: "Silent".into(),
+                body: "hi".into(),
+                level: crate::app::ToastLevel::Info,
+                sound: false,
+                source: Some("silent".into()),
+            },
+        );
+        // Toast fires but no OS notification queued.
+        assert_eq!(app.toast_stack.len(), 1);
+        assert_eq!(app.pending_os_notifications.len(), 0);
     }
 
     #[test]

@@ -38,6 +38,29 @@ use crate::ipc::{self, Ipc};
 use crate::pane::Pane;
 use crate::ui;
 
+/// Drain queued OS notifications from `app.pending_os_notifications`
+/// and emit each as an OSC 9 + OSC 777 escape sequence (with an
+/// optional BEL for sound). Ghostty / iTerm2 / kitty / WezTerm
+/// route these to native OS notification banners; other
+/// terminals silently consume the sequence.
+fn emit_pending_os_notifications(
+    app: &mut App,
+    backend: &mut CrosstermBackend<Stdout>,
+) -> io::Result<()> {
+    use ratatui::crossterm::style::Print;
+    for (title, body, sound) in app.take_pending_os_notifications() {
+        // OSC 9 — the de facto standard used by iTerm2 (and now
+        // Ghostty, WezTerm, kitty, Windows Terminal). Body-only.
+        let osc9 = format!("\x1b]9;{title}: {body}\x07");
+        // OSC 777 — xterm / gnome-terminal / older kitty format.
+        // Takes title + body separately.
+        let osc777 = format!("\x1b]777;notify;{title};{body}\x07");
+        let bel = if sound { "\x07" } else { "" };
+        let _ = execute!(backend, Print(osc9), Print(osc777), Print(bel));
+    }
+    Ok(())
+}
+
 /// Run the terminal UI. `Ok(true)` ⇒ exit for a rebuild+relaunch (the `run.sh`
 /// wrapper watches for that); `Ok(false)` ⇒ normal quit.
 pub fn run(mut app: App) -> Result<bool, String> {
@@ -138,6 +161,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
             term.clear()?;
         }
         term.draw(|f| ui::draw(f, app))?;
+        emit_pending_os_notifications(app, term.backend_mut())?;
         crate::app::dispatch::emit_image_placements(app);
         if let Some(ipc) = ipc.as_mut() {
             ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);

@@ -3036,6 +3036,17 @@ pub struct App {
     /// budget < `min_width`. Left- and right-side segments compete
     /// separately for their half of the statusline.
     pub dynamic_segments: Vec<DynamicSegment>,
+    /// OS notifications queued this tick — drained + emitted as
+    /// terminal escape sequences (OSC 9 / OSC 777) after the next
+    /// paint. Ghostty/iTerm2/kitty/WezTerm route these to native
+    /// macOS/Linux notification banners; terminals that don't
+    /// understand the escape silently ignore it. Tuple:
+    /// (title, body, sound).
+    pub pending_os_notifications: Vec<(String, String, bool)>,
+    /// Rate-limit tracker for `notify` calls, keyed by `source`
+    /// (integration id). Values are the last-fire wall-clock time
+    /// (as monotonic Instants).
+    pub notify_last_fired: std::collections::HashMap<String, Instant>,
     pub should_quit: bool,
     /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
     /// (the `run.sh` wrapper watches for the distinct exit code).
@@ -4145,6 +4156,8 @@ impl App {
             persistent_toasts: Vec::new(),
             progress_items: Vec::new(),
             dynamic_segments: Vec::new(),
+            pending_os_notifications: Vec::new(),
+            notify_last_fired: std::collections::HashMap::new(),
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
@@ -10785,6 +10798,81 @@ impl App {
     /// Remove a sibling statusline segment by id.
     pub fn statusline_clear_segment(&mut self, id: &str) {
         self.dynamic_segments.retain(|s| s.id != id);
+    }
+
+    /// Fire a notification. Always renders an in-app toast at
+    /// `level` (per Call 1: info + warn share the comment border,
+    /// error gets red). If the `source` integration's manifest
+    /// permits OS notifications and the per-integration rate
+    /// limit has elapsed, also queues the OSC 9 / OSC 777 escape
+    /// sequences for the next render pass — the terminal (Ghostty
+    /// / iTerm2 / kitty) routes those to native banners.
+    ///
+    /// Rate-limit behavior:
+    ///   - `source = None` → always fires (no rate tracking).
+    ///   - `source = Some(id)` → suppressed if last fire was
+    ///     within `os_rate_limit_sec` on the integration's
+    ///     manifest (default 5s). Suppressed OS fires still fire
+    ///     the in-app toast.
+    pub fn notify(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        level: ToastLevel,
+        sound: bool,
+        source: Option<&str>,
+    ) {
+        let title: String = title.into();
+        let body: String = body.into();
+        // In-app toast always fires.
+        self.toast_leveled(format!("{title}: {body}"), level);
+        // OS notification is opt-in per integration.
+        let (os_ok, rate_secs) = match source {
+            None => (true, 0), // no source → no policy → fire
+            Some(id) => self.os_notify_policy_for(id),
+        };
+        if !os_ok {
+            return;
+        }
+        if let Some(src) = source
+            && rate_secs > 0
+        {
+            let now = Instant::now();
+            if let Some(&last) = self.notify_last_fired.get(src)
+                && now.duration_since(last) < Duration::from_secs(rate_secs)
+            {
+                return; // rate-limited — in-app toast only
+            }
+            self.notify_last_fired.insert(src.to_string(), now);
+        }
+        self.pending_os_notifications.push((title, body, sound));
+    }
+
+    /// Resolve the OS-notification policy for an integration id
+    /// by consulting its manifest. Returns `(should_fire,
+    /// rate_secs)`. Absent manifest → default policy: fire, no
+    /// rate limit. Present manifest with `os_notify_on = "never"`
+    /// → don't fire.
+    fn os_notify_policy_for(&self, id: &str) -> (bool, u64) {
+        let Some(m) = self.integration_manifests.iter().find(|m| m.id == id) else {
+            return (true, 0);
+        };
+        let Some(n) = &m.notifications else {
+            return (true, 0);
+        };
+        let fire = !matches!(
+            n.os_notify_on,
+            crate::integration_manifest::OsNotifyPolicy::Never
+        );
+        (fire, n.os_rate_limit_sec)
+    }
+
+    /// Drain queued OS notifications — invoked by the tui render
+    /// loop after `term.draw`. Returns the drained items so the
+    /// caller can flush them via crossterm's `execute!` (App
+    /// doesn't own stdout).
+    pub fn take_pending_os_notifications(&mut self) -> Vec<(String, String, bool)> {
+        std::mem::take(&mut self.pending_os_notifications)
     }
     /// Current toast text if it hasn't expired.
     pub fn live_toast(&self) -> Option<&str> {
