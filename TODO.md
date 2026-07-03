@@ -102,7 +102,7 @@ without clicking through. User wants two view modes:
    run is doing without drilling in.
 3. **Hover tooltip** (bonus) — even more detail when the user
    mouses over: full title, all metadata, retry count,
-   parameters passed to the QWE run.
+   parameters passed to the cloud run.
 
 Persist the choice per-workspace in
 `.mnml/cloud_agents_view.toml` so each project remembers.
@@ -116,7 +116,7 @@ Shape:
 
 ### Cloud agents / Pty: tab strip should be per-split, not global
 **Status:** caught 2026-06-27 — user reported "4 tabs" when
-tailing two QWE runs.
+tailing two cloud runs.
 
 Today: opening two Tail-logs flows creates two splits AND each
 split's tab strip shows BOTH viewer buffers. Visually that's
@@ -177,13 +177,12 @@ captures what's next.
   - Same Action templates apply.
 
 ### + New Cloud Agent wizard — expanded scope (phase 2)
-**Status:** v1 wizard scaffolding landed 2026-06-27 with Tattle
-QWE + Claude managed paths. User then expanded the scope —
+**Status:** v1 wizard scaffolding landed 2026-06-27 with the ECS runner + Claude managed paths. User then expanded the scope —
 captured here for phase 2.
 
 **New step structure (replaces the simple 2-agent picker):**
 
-1. **Agent**: Claude Code · Codex · Tattle QWE · GitKraken
+1. **Agent**: Claude Code · Codex · ECS runner · GitKraken
    Kepler · Keck (user clarification needed on the last two —
    are these distinct tools, or one product I'm missing?) ·
    Other (free-form binary).
@@ -202,8 +201,7 @@ captured here for phase 2.
 **Required new wiring:**
   - GitHub PR list per repo (use `gh pr list` or GraphQL).
   - Jira "assigned to me" list (REST API: `/rest/api/3/search?jql=assignee=currentUser()`).
-  - Tattle ticket list (DynamoDB scan, already partially wired
-    in `tattle_qwe.rs`).
+  - Cloud-run ticket list (DynamoDB scan, wired in `ecs_runner.rs`).
   - Multi-select checkbox widget — generic, useful elsewhere.
   - Action templates per (agent, action) combo — these become
     the initial prompt sent to the agent.
@@ -211,7 +209,7 @@ captured here for phase 2.
     - Claude Code: spawn `claude --resume`-style or
       `claude --new-session <prompt>` Pty pane.
     - Codex: `codex --new-session <prompt>` Pty.
-    - Tattle QWE: existing `fire_cloud_run`.
+    - ECS runner: existing `fire_cloud_run`.
     - GitKraken Kepler: need to investigate API.
   - For multi-select + batch: a "run N agents in parallel"
     fan-out flow with progress tracking.
