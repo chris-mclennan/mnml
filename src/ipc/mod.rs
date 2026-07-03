@@ -92,6 +92,24 @@ struct RawCommand {
     /// `"info"` (default) | `"warn"` | `"error"`.
     #[serde(default)]
     level: Option<String>,
+    /// `statusline-set-segment`: `"left"` | `"right"`.
+    #[serde(default)]
+    side: Option<String>,
+    /// `statusline-set-segment`: named theme color.
+    #[serde(default)]
+    color: Option<String>,
+    /// `statusline-set-segment`: click_command as an ex-command.
+    #[serde(default)]
+    click_command: Option<String>,
+    /// `statusline-set-segment`: overflow priority (0..=255).
+    #[serde(default)]
+    priority: Option<u8>,
+    /// `statusline-set-segment`: minimum render width.
+    #[serde(default)]
+    min_width: Option<u16>,
+    /// `statusline-set-segment`: preferred / max render width.
+    #[serde(default)]
+    max_width: Option<u16>,
 }
 
 fn parse_toast_level(s: Option<&str>) -> crate::app::ToastLevel {
@@ -109,6 +127,14 @@ fn parse_progress_status(s: Option<&str>) -> crate::app::ProgressStatus {
         Some("failed") | Some("fail") | Some("error") => ProgressStatus::Failed,
         Some("cancelled") | Some("canceled") => ProgressStatus::Cancelled,
         _ => ProgressStatus::Success,
+    }
+}
+
+fn parse_segment_side(s: Option<&str>) -> crate::app::SegmentSide {
+    use crate::app::SegmentSide;
+    match s.map(|v| v.to_ascii_lowercase()).as_deref() {
+        Some("left") => SegmentSide::Left,
+        _ => SegmentSide::Right,
     }
 }
 
@@ -226,6 +252,20 @@ pub enum IpcCommand {
         id: String,
         status: crate::app::ProgressStatus,
     },
+    /// Bridge tier-2: insert or update a sibling statusline
+    /// segment. Repeat with same id updates in place.
+    StatuslineSetSegment {
+        id: String,
+        side: crate::app::SegmentSide,
+        text: String,
+        color: Option<String>,
+        click_command: Option<String>,
+        priority: u8,
+        min_width: u16,
+        max_width: u16,
+    },
+    /// Bridge tier-2: remove a sibling statusline segment.
+    StatuslineClearSegment { id: String },
     /// Bridge tier-2: spawn a new Pty pane running `command` in
     /// `cwd` (defaults to the workspace). The first element of
     /// `command` is the executable; the rest are args. Used by
@@ -552,6 +592,23 @@ fn parse_command(line: &str) -> IpcCommand {
                 status: parse_progress_status(raw.text.as_deref()),
             },
             _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "statusline-set-segment" => match (raw.id, raw.text) {
+            (Some(id), Some(text)) => IpcCommand::StatuslineSetSegment {
+                id,
+                side: parse_segment_side(raw.side.as_deref()),
+                text,
+                color: raw.color,
+                click_command: raw.click_command,
+                priority: raw.priority.unwrap_or(100),
+                min_width: raw.min_width.unwrap_or(4),
+                max_width: raw.max_width.unwrap_or(30),
+            },
+            _ => IpcCommand::Unknown(line.to_string()),
+        },
+        "statusline-clear-segment" => match raw.id {
+            Some(id) => IpcCommand::StatuslineClearSegment { id },
+            None => IpcCommand::Unknown(line.to_string()),
         },
         "open-pty" => {
             if raw.command.is_empty() {
@@ -979,6 +1036,36 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                 crate::app::ProgressStatus::Cancelled => "cancelled",
             };
             json_event(&[("event", "progress_end"), ("id", id), ("status", s)])
+        }
+        IpcCommand::StatuslineSetSegment {
+            id,
+            side,
+            text,
+            color,
+            click_command,
+            priority,
+            min_width,
+            max_width,
+        } => {
+            app.statusline_set_segment(
+                id.clone(),
+                *side,
+                text.clone(),
+                color.clone(),
+                click_command.clone(),
+                *priority,
+                *min_width,
+                *max_width,
+            );
+            json_event(&[
+                ("event", "statusline_set_segment"),
+                ("id", id),
+                ("text", text),
+            ])
+        }
+        IpcCommand::StatuslineClearSegment { id } => {
+            app.statusline_clear_segment(id);
+            json_event(&[("event", "statusline_clear_segment"), ("id", id)])
         }
         IpcCommand::OpenPty { cwd, command } => {
             if command.is_empty() {
@@ -1703,6 +1790,54 @@ mod tests {
             cmd,
             IpcCommand::Toast(_, crate::app::ToastLevel::Info)
         ));
+    }
+
+    #[test]
+    fn statusline_segment_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
+        apply(
+            &mut app,
+            &IpcCommand::StatuslineSetSegment {
+                id: "slack.status".into(),
+                side: crate::app::SegmentSide::Right,
+                text: "◇ 3 dms".into(),
+                color: Some("purple".into()),
+                click_command: Some("slack.open".into()),
+                priority: 150,
+                min_width: 4,
+                max_width: 20,
+            },
+        );
+        assert_eq!(app.dynamic_segments.len(), 1);
+        assert_eq!(app.dynamic_segments[0].text, "◇ 3 dms");
+        assert_eq!(app.dynamic_segments[0].priority, 150);
+
+        // Repeat with same id — updates in place.
+        apply(
+            &mut app,
+            &IpcCommand::StatuslineSetSegment {
+                id: "slack.status".into(),
+                side: crate::app::SegmentSide::Right,
+                text: "◇ 5 dms".into(),
+                color: Some("red".into()),
+                click_command: None,
+                priority: 200,
+                min_width: 4,
+                max_width: 20,
+            },
+        );
+        assert_eq!(app.dynamic_segments.len(), 1);
+        assert_eq!(app.dynamic_segments[0].text, "◇ 5 dms");
+        assert_eq!(app.dynamic_segments[0].color.as_deref(), Some("red"));
+
+        apply(
+            &mut app,
+            &IpcCommand::StatuslineClearSegment {
+                id: "slack.status".into(),
+            },
+        );
+        assert!(app.dynamic_segments.is_empty());
     }
 
     #[test]

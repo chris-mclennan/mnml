@@ -2463,6 +2463,44 @@ pub struct ToastEntry {
     pub persistent_id: Option<String>,
 }
 
+/// Left/right anchor for a dynamic statusline segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentSide {
+    Left,
+    Right,
+}
+
+/// A sibling-authored statusline segment. Kept simple: the render
+/// pass reads the current `text` and computes width against
+/// [min_width, max_width]. When space is tight (competing
+/// segments overflow the available lane), lower-priority segments
+/// drop entirely. Higher priorities keep their `max_width`
+/// allocation as long as budget remains.
+#[derive(Debug, Clone)]
+pub struct DynamicSegment {
+    pub id: String,
+    pub side: SegmentSide,
+    pub text: String,
+    /// Named theme color (`"red"`, `"green"`, `"cyan"`, …) — see
+    /// [`crate::integration_manifest::ALLOWED_COLORS`]. Unknown /
+    /// unset renders in `comment`.
+    pub color: Option<String>,
+    /// Ex-command to run when the segment is clicked. `None` =
+    /// non-interactive.
+    pub click_command: Option<String>,
+    /// Higher wins the layout race. 100 = normal, 200 = "always
+    /// show," 50 = "nice to have."
+    pub priority: u8,
+    /// Below this width the segment is dropped entirely (not
+    /// rendered) rather than truncated further.
+    pub min_width: u16,
+    /// Preferred width. Text longer than this gets truncated
+    /// with `…`. Text shorter is padded to the actual text width
+    /// (no trailing whitespace).
+    pub max_width: u16,
+    pub last_updated: Instant,
+}
+
 /// Outcome of `progress_end` — determines the follow-up toast
 /// that fires (if any) and the terminal glyph on the row before
 /// it fades.
@@ -2992,6 +3030,12 @@ pub struct App {
     /// `progress_end` can find the item. Auto-purged
     /// PROGRESS_END_FADE after finishing.
     pub progress_items: Vec<ProgressItem>,
+    /// Sibling-authored statusline segments. Hybrid packing at
+    /// render time: sorted by priority desc, allocated their
+    /// `max_width` while budget allows, dropped when the remaining
+    /// budget < `min_width`. Left- and right-side segments compete
+    /// separately for their half of the statusline.
+    pub dynamic_segments: Vec<DynamicSegment>,
     pub should_quit: bool,
     /// Set alongside `should_quit` when the loop should exit *for a rebuild+relaunch*
     /// (the `run.sh` wrapper watches for the distinct exit code).
@@ -4100,6 +4144,7 @@ impl App {
             toast_stack: std::collections::VecDeque::new(),
             persistent_toasts: Vec::new(),
             progress_items: Vec::new(),
+            dynamic_segments: Vec::new(),
             should_quit: false,
             restart_requested: false,
             redraw_requested: false,
@@ -10694,6 +10739,52 @@ impl App {
             None => true,
             Some((_, at)) => at.elapsed() < PROGRESS_END_FADE,
         });
+    }
+
+    /// Insert or update a sibling statusline segment. Keyed by
+    /// `id`; repeat calls with the same id update the entry in
+    /// place. Rendered on the next paint.
+    #[allow(clippy::too_many_arguments)]
+    pub fn statusline_set_segment(
+        &mut self,
+        id: impl Into<String>,
+        side: SegmentSide,
+        text: impl Into<String>,
+        color: Option<String>,
+        click_command: Option<String>,
+        priority: u8,
+        min_width: u16,
+        max_width: u16,
+    ) {
+        let id: String = id.into();
+        let text: String = text.into();
+        if let Some(slot) = self.dynamic_segments.iter_mut().find(|s| s.id == id) {
+            slot.side = side;
+            slot.text = text;
+            slot.color = color;
+            slot.click_command = click_command;
+            slot.priority = priority;
+            slot.min_width = min_width;
+            slot.max_width = max_width;
+            slot.last_updated = Instant::now();
+        } else {
+            self.dynamic_segments.push(DynamicSegment {
+                id,
+                side,
+                text,
+                color,
+                click_command,
+                priority,
+                min_width,
+                max_width,
+                last_updated: Instant::now(),
+            });
+        }
+    }
+
+    /// Remove a sibling statusline segment by id.
+    pub fn statusline_clear_segment(&mut self, id: &str) {
+        self.dynamic_segments.retain(|s| s.id != id);
     }
     /// Current toast text if it hasn't expired.
     pub fn live_toast(&self) -> Option<&str> {

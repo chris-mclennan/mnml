@@ -18,7 +18,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::App;
+use crate::app::{App, DynamicSegment, SegmentSide};
 use crate::focus::Focus;
 use crate::input::EditingMode;
 use crate::ui::{icons, theme};
@@ -94,6 +94,97 @@ impl Seg {
     }
 }
 
+/// Cap of columns dynamic sibling segments can consume on either
+/// side of the statusline (per side). At least 20 cells always
+/// available; scales with terminal width up to `total / 3`.
+fn dynamic_lane_budget(total_width: usize) -> usize {
+    (total_width / 3).max(20)
+}
+
+/// One dynamic segment that survived packing, in the form we
+/// render (already truncated to fit its allocation).
+struct RenderedDynamicSegment {
+    text: String,
+    color: Option<String>,
+}
+
+/// Hybrid pack: sort by priority desc, allocate each segment its
+/// `max_width` (or the natural text width, whichever is smaller)
+/// while budget allows. Segments that would exceed the remaining
+/// budget below their `min_width` are dropped entirely (not
+/// truncated further). Higher-priority always wins.
+fn collect_dynamic_segments(
+    all: &[DynamicSegment],
+    side: SegmentSide,
+    total_width: usize,
+) -> Vec<RenderedDynamicSegment> {
+    let mut candidates: Vec<&DynamicSegment> = all.iter().filter(|s| s.side == side).collect();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.priority));
+
+    let mut budget = dynamic_lane_budget(total_width);
+    let mut out: Vec<RenderedDynamicSegment> = Vec::new();
+    for s in candidates {
+        let natural_width = s.text.chars().count();
+        // The width we'd LIKE to allocate — clamp text width to
+        // max_width, then to what's left of the budget.
+        let desired = natural_width.min(s.max_width as usize);
+        let alloc = desired.min(budget);
+        // Drop when the remaining budget can't even give this
+        // segment its declared minimum.
+        if alloc < s.min_width as usize {
+            continue;
+        }
+        // Truncate + pad to allocation.
+        let mut text = if natural_width > alloc {
+            ellipsize(&s.text, alloc)
+        } else {
+            s.text.clone()
+        };
+        // Powerline chips read cleaner with a leading + trailing
+        // space; segment text usually already has them, but pad
+        // if not.
+        if !text.starts_with(' ') {
+            text.insert(0, ' ');
+        }
+        if !text.ends_with(' ') {
+            text.push(' ');
+        }
+        let final_width = text.chars().count();
+        budget = budget.saturating_sub(final_width);
+        out.push(RenderedDynamicSegment {
+            text,
+            color: s.color.clone(),
+        });
+    }
+    out
+}
+
+/// Convert a packed dynamic segment into a `Seg` for the render
+/// pipeline. Named theme color lookup falls back to `comment`
+/// (matches the manifest loader's fallback).
+fn seg_from_dynamic(rd: &RenderedDynamicSegment) -> Seg {
+    let t = theme::cur();
+    let fg = t.bg_darker; // dark text on colored chip
+    let bg = match rd.color.as_deref() {
+        Some("red") => t.red,
+        Some("orange") => t.orange,
+        Some("yellow") => t.yellow,
+        Some("green") => t.green,
+        Some("blue") => t.blue,
+        Some("cyan") => t.cyan,
+        Some("teal") => t.teal,
+        Some("purple") => t.purple,
+        Some("pink") => t.pink,
+        Some("magenta") => t.purple,
+        Some("comment") => t.comment,
+        _ => t.comment,
+    };
+    Seg::new(rd.text.clone(), fg, bg)
+}
+
 /// Shorten `s` so its char count is at most `target_cols`. Appends
 /// `…` as a marker that truncation happened. Tries to preserve the
 /// leading single-space padding many segs have (better visual fit).
@@ -137,6 +228,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             | EditingMode::Normal
     );
     let mut left: Vec<Seg> = Vec::new();
+    // Sibling-authored dynamic segments (hybrid packing: sort by
+    // priority desc, allocate max_width while budget allows, drop
+    // lower-priority when full). Left-lane segments go here so
+    // they render right after the mode chip.
+    let dyn_left = collect_dynamic_segments(&app.dynamic_segments, SegmentSide::Left, width);
     // Index of the git-branch chip in `left` once pushed — used after
     // render_left to register a clickable rect that fires `git.graph`.
     let mut branch_seg_idx: Option<usize> = None;
@@ -162,6 +258,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         left.push(Seg::new(format!(" {mode_label} "), theme::cur().bg_darker, mode_bg).bold());
     }
     let mode_seg_end = left.len(); // exclusive
+    // Append left-lane dynamic segments (from sibling
+    // `statusline_set_segment` calls) right after the mode chip.
+    for spec in &dyn_left {
+        left.push(seg_from_dynamic(spec));
+    }
     {
         let g = app.git.snapshot();
         if let Some(branch) = &g.branch {
@@ -301,6 +402,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // ── right ──
     let mut right: Vec<Seg> = Vec::new();
+    // Sibling-authored right-lane dynamic segments (packed by
+    // priority, dropped if overflow). Rendered leftmost on the
+    // right lane so they don't push the builtin chips off screen
+    // — losing a sibling segment is better than losing line/col.
+    let dyn_right = collect_dynamic_segments(&app.dynamic_segments, SegmentSide::Right, width);
+    for spec in &dyn_right {
+        right.push(seg_from_dynamic(spec));
+    }
     // Test-runner chip — `🧪 <label>`. Shown when the user has
     // launched a test pane in this session (cargo / npm / pytest /
     // go / playwright) and that pane is still alive. Click →
