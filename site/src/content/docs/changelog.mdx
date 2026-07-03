@@ -51,6 +51,11 @@ Versions auto-tagged at [github.com/chris-mclennan/mnml/releases](https://github
 
 The big release. **Integration SDK** ships: siblings self-install into mnml via `<sibling> --install` (mnml-bridge 0.3), the community-default IntegrationIcons for 37 siblings move out of mnml core into sibling-owned manifests, and mnml gains a runtime helper surface for level-tagged toasts, persistent toasts, progress spinners, dynamic statusline segments, and OS notifications via OSC 9 / 777 terminal escapes.
 
+import sdkInstallGif from '../../assets/tapes/sdk-install-flow.gif';
+
+<img src={sdkInstallGif.src} alt="The Integration SDK install flow — cargo install a sibling, then <sibling> --install writes a manifest that mnml picks up on integrations.refresh, adding a rail chip + palette command + chord binding." />
+
+
 #### The story
 
 Before 0.2, mnml core carried default `IntegrationIcon` entries for every community sibling — bitbucket, github, slack, datadog, and 33 more. Users installed the sibling binary and the chip was already in the rail (disabled), because mnml shipped the metadata. That worked but had three costs:
