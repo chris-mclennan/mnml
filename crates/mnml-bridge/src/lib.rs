@@ -1,7 +1,7 @@
 //! # mnml-bridge — Mount protocol for mnml sibling tools
 //!
 //! Bridge / Mount is the integration layer that lets sibling tools
-//! (`mnml-tattle-tests`, `mnml-db-postgres`, …) render their UI as a
+//! (`mnml-db-postgres`, `mnml-forge-bitbucket`, …) render their UI as a
 //! first-class pane inside mnml — owning the activity-bar icon, the
 //! rail content, and the editor body — instead of running as a
 //! plain `Pty` pane.
