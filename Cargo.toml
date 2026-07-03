@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "mnml-rs"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.90"
 description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."

@@ -10,6 +10,85 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+### Added (2026-07-03) — Integration SDK
+
+- **File-based integration manifests** — siblings register their rail
+  chip + palette commands + chord bindings + context-menu entries +
+  statusline segment + notification policy via a single TOML file at
+  `~/.config/mnml/integrations/<id>.toml`. mnml discovers on startup +
+  on the new `integrations.refresh` palette command. Precedence:
+  workspace > user > built-in defaults; user `[[ui.integration_icon]]`
+  in config.toml overrides any manifest (users always win).
+- **`mnml-bridge` 0.3.0** — install / uninstall / list_installed
+  helpers write the manifest without touching IPC. Full runtime IPC
+  helper surface for level-tagged toasts, persistent toasts,
+  progress notifications, activity badges, statusline segments, OS
+  notifications. See [Bridge / Mount protocol](/manual/bridge-mount/).
+- **Level-tagged toasts** — `App::toast_info` / `toast_warn` /
+  `toast_error`. Per current design: info + warn share the standard
+  comment border (calm ambient state); error gets a red border so
+  actual failures stand out. Wire supports the level flip if you
+  want all three colored later.
+- **Persistent toasts** — `toast_persistent(id, msg, level)` pins
+  until an explicit `toast_dismiss(id)`. Rendered above the
+  ephemeral toast stack; repeat calls with the same id update in
+  place.
+- **Progress notifications** — `progress_start` / `progress_update`
+  / `progress_end`. Animated Braille spinner + label + optional %.
+  Terminal-status glyph on end (✓ / ✗ / ⊘) that lingers ~2.5s
+  before auto-removal. Failed status also fires `toast_error(label)`.
+- **Dynamic statusline segments** — `statusline_set_segment(...)`
+  with a hybrid packing model (priority desc, allocate max_width
+  while budget allows, drop when below min_width). Left- and
+  right-lane segments compete separately for their half of the
+  statusline. Losing a sibling segment beats losing canonical state
+  (line/col, workspace, language).
+- **OS notifications** — `notify(title, body, opts)` fires the
+  terminal-native OSC 9 + OSC 777 escape sequences. Ghostty / iTerm2
+  / kitty / WezTerm / Windows Terminal route to native OS banners.
+  Per-integration policy from the manifest `[notifications]` block:
+  `os_notify_on = never | error_only | always` and
+  `os_rate_limit_sec`. Terminal-focus suppression deferred to the
+  terminal (Ghostty already respects DND).
+- **`[jira]` config** — `domain` + `ticket_prefix` fields, with
+  `MNML_JIRA_DOMAIN` and `MNML_JIRA_TICKET_PREFIX` env overrides.
+  Used to build ticket URLs + validate ticket ids in the ECS
+  runner trigger. Empty = feature no-op.
+- **`[cloud_agents]` config** — full ECS runner infrastructure
+  fields (region, account_id, runs_table, cluster, task_definition,
+  sg_export_name, log_group, s3_artifacts_bucket, aws_profile_fallback,
+  label, short_id, default_workspace_label). Feature no-ops when
+  `region` or `runs_table` is empty. Env overrides for
+  `MNML_CLOUD_AGENTS_REGION` and `MNML_AWS_PROFILE`. See
+  [Cloud agents runner](/manual/cloud-agents-config/).
+
+### Changed (2026-07-03)
+
+- **`tattle_qwe` → `ecs_runner`** — the AWS Fargate cloud-agent
+  runner is now a generic config-driven feature instead of
+  Tattle-specific infra hardcoded in source. `AgentSource::TattleQwe`
+  → `AgentSource::Ecs` (and matching `CloudRunSource` / `CloudRunner`
+  renames). Wizard label reads from config; falls back to
+  `"ECS runner"`. Hardcoded AWS account id + `tattle.atlassian.net`
+  domain + `tattle-claude-artifacts` bucket + all AWS resource
+  names moved to `[cloud_agents]` config. Existing users need to
+  populate the config section to keep the feature working.
+- **`is_valid_ticket` accepts any `[A-Z]+-\d+`** by default —
+  supply a `[jira] ticket_prefix` to constrain to your org's
+  canonical prefix. Was hardcoded to `TE-` before.
+
+### Removed (2026-07-03)
+
+- **Private Tattle Inbox surface** — `forge.open_tattle_inbox`
+  palette command, `<leader>it` chord binding, and default
+  `tattle_inbox` IntegrationIcon. Superseded by the Integration
+  SDK: the sibling's own `--install` writes a manifest at
+  `~/.config/mnml/integrations/tattle_inbox.toml` and mnml picks
+  it up. No mnml-core-shipped mentions of Tattle Inbox anymore.
+- **`Category::Tattle` + `tattle_tests` catalog entry** — last
+  private-catalog entry removed. `FamilySibling::is_private()` kept
+  as an API hook (returns false).
+
 ### Added (2026-06-29)
 
 - **Right panel v5 polish** — `Ctrl+Alt+W` closes the active tab from the
