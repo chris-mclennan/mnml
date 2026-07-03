@@ -130,7 +130,74 @@ When one sibling's data points at another sibling's surface — a Lambda functio
 
 ## Wiring a launcher chip
 
-Once your integration is installed, users can add a one-click chip to mnml's left rail by adding to their `~/.config/mnml/config.toml`:
+There are two paths — pick whichever suits your integration.
+
+### Path A: `--install` (recommended, mnml 0.2+)
+
+Add [`mnml-bridge`](https://crates.io/crates/mnml-bridge) as a dep + expose a `--install` subcommand. Users run it once after `cargo install <your-repo>` and mnml auto-discovers the chip + palette command + chord on next restart (or after `integrations.refresh`).
+
+```toml
+# Cargo.toml
+[dependencies]
+mnml-bridge = "0.3"
+```
+
+```rust
+// src/install.rs
+use anyhow::Result;
+use mnml_bridge::{
+    ChipSpec, CommandSpec, IntegrationSpec,
+    install_integration, uninstall_integration,
+};
+
+pub fn install() -> Result<()> {
+    install_integration(&IntegrationSpec {
+        id: "your-thing".into(),
+        name: "Your Thing".into(),
+        version: Some(env!("CARGO_PKG_VERSION").into()),
+        binary: "mnml-your-thing".into(),
+        category: Some("db".into()),  // or forge/tracker/aws/fs/msg/…
+        chip: Some(ChipSpec {
+            glyph: "\u{F0411}".into(),   // any Nerd Font glyph
+            fallback: "Y".into(),
+            color: "blue".into(),
+            tooltip: Some("Open your thing".into()),
+            enabled: true,
+            in_palette_bar: false,
+            badge_key: Some("your-thing".into()),
+        }),
+        commands: vec![CommandSpec {
+            id: "your-thing.open".into(),
+            title: "Your Thing: open".into(),
+            group: Some("integrations".into()),
+            keys: vec!["<leader>iY".into()],
+            run: ":term mnml-your-thing".into(),
+        }],
+        ..Default::default()
+    })?;
+    Ok(())
+}
+
+pub fn uninstall() -> Result<()> {
+    uninstall_integration("your-thing")?;
+    Ok(())
+}
+```
+
+Wire it into `main.rs` before your auth / config loads:
+
+```rust
+if cli.install { return install::install(); }
+if cli.uninstall { return install::uninstall(); }
+```
+
+`install_integration` writes `~/.config/mnml/integrations/your-thing.toml`. Precedence in mnml: user config > manifest > built-in default, so a sibling manifest never clobbers user-authored `[[ui.integration_icon]]` overrides.
+
+The SDK also exposes runtime helpers — level-tagged toasts, progress notifications, activity badges, statusline segments, OS notifications via OSC 9 / 777 — see the [Bridge / Mount protocol](/manual/bridge-mount/) doc's Tier 3 section for the full API.
+
+### Path B: manual `[[ui.integration_icon]]` config
+
+For integrations you'd rather not depend on `mnml-bridge` for, or for users who want to customize a chip's glyph / color, add a block to `~/.config/mnml/config.toml`:
 
 ```toml
 [[ui.integration_icon]]
