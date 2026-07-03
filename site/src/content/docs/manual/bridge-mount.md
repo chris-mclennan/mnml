@@ -115,41 +115,121 @@ a dep:
 
 ```toml
 [dependencies]
-mnml-bridge = "0.2"
+mnml-bridge = "0.3"
 ```
 
 The bare crate exposes:
 
 - **Wire types** — `Cell`, `HostMessage`, `SiblingMessage`,
-  `read_message` / `write_message`. Used by any sibling that
-  wants a typed wrapper around the Mount UDS protocol.
-- **Tier-2 IPC helpers** — `toast()`, `set_activity_badge()`,
-  `register_command()`. Write JSONL commands to
-  `$MNML_IPC_DIR/command` so a sibling can toast, badge, or
-  register a global chord without hand-rolling the JSON. All
-  three are fire-and-forget (silent no-op when
-  `MNML_IPC_DIR` isn't set — safe to call outside mnml).
+  `read_message` / `write_message`. Typed wrapper around the
+  Mount UDS protocol (tier 4).
+- **Integration install helpers** — self-registration for the
+  rail chip + palette commands + chord bindings + context menu +
+  statusline segment + notification policy. One TOML file per
+  integration at `~/.config/mnml/integrations/<id>.toml`.
+- **Tier-2 IPC helpers** — toasts (with levels + persistent),
+  progress notifications, activity badges, statusline segments,
+  OS notifications. All fire-and-forget (silent no-op when the
+  sibling isn't running under mnml).
+
+### Install helpers
 
 ```rust
-mnml_bridge::toast("upload complete");
+use mnml_bridge::{
+    install_integration, ChipSpec, CommandSpec, IntegrationSpec,
+};
+
+install_integration(&IntegrationSpec {
+    id: "my-tests".into(),
+    name: "My Tests".into(),
+    version: Some(env!("CARGO_PKG_VERSION").into()),
+    binary: "mnml-my-tests".into(),
+    category: Some("test".into()),
+    chip: Some(ChipSpec {
+        glyph: "T".into(),
+        fallback: "MT".into(),
+        color: "green".into(),
+        tooltip: Some("My Tests".into()),
+        enabled: true,
+        in_palette_bar: false,
+        badge_key: Some("my-tests".into()),
+    }),
+    commands: vec![CommandSpec {
+        id: "my-tests.run".into(),
+        title: "Run tests".into(),
+        group: Some("integrations".into()),
+        keys: vec!["<leader>tr".into()],
+        run: ":term mnml-my-tests".into(),
+    }],
+    ..Default::default()
+}).ok();
+```
+
+Companion helpers: `uninstall_integration(id)`,
+`list_installed_integrations()`, `integration_manifest_path(id)`.
+
+Typical sibling pattern: expose `--install` / `--uninstall`
+subcommands that call these. Users run once after `cargo install`
+and the chip / commands appear on next mnml restart (or after
+the `integrations.refresh` palette command).
+
+### Tier-2 IPC helpers
+
+```rust
+// Toasts (level-tagged + persistent)
+mnml_bridge::toast_info("uploaded");
+mnml_bridge::toast_error("build failed");
+mnml_bridge::toast_persistent("incident.42", "on call: DB down",
+    mnml_bridge::ToastLevel::Error);
+mnml_bridge::toast_dismiss("incident.42");
+
+// Progress (spinner + label + optional %)
+mnml_bridge::progress_start("build", "Compiling…");
+mnml_bridge::progress_update("build", Some("Linking…"), Some(80));
+mnml_bridge::progress_end("build", mnml_bridge::ProgressStatus::Success);
+
+// Activity badges (numeric on rail chip)
 mnml_bridge::set_activity_badge("my-tests", 3);
+
+// Statusline segments (hybrid packing)
+mnml_bridge::statusline_set_segment(
+    "my-tests.status", mnml_bridge::SegmentSide::Right,
+    "◇ 3 failing", Some("red"), Some("my-tests.run"),
+    150, 4, 20,
+);
+mnml_bridge::statusline_clear_segment("my-tests.status");
+
+// OS notifications (OSC 9/777 — Ghostty/iTerm2/kitty/WezTerm)
+mnml_bridge::notify(
+    "My Tests", "3 tests failed",
+    mnml_bridge::NotifyOpts {
+        level: mnml_bridge::ToastLevel::Error,
+        sound: false,
+        source: Some("my-tests".into()),
+    },
+);
+
+// Register a palette command that fires back to the sibling via
+// events.jsonl (as opposed to the manifest-registered
+// self-executing commands).
 mnml_bridge::register_command(
-    "my-tests.run", "Run tests",
-    Some("plugin"),
-    &["<leader>tr"],
+    "my-tests.custom", "Run custom pattern",
+    Some("plugin"), &["<leader>tp"],
 );
 ```
 
-To get the **Mount client** (tier 4) opt in with the `client`
-feature (pulls in ratatui):
+### Mount client (opt-in)
+
+For siblings that want to render into an mnml pane (not just
+run as a Pty), opt in to the `client` feature:
 
 ```toml
-mnml-bridge = { version = "0.2", features = ["client"] }
+mnml-bridge = { version = "0.3", features = ["client"] }
 ```
 
-Mount siblings can call the same helpers as methods on
-`Mount` — `mount.toast(...)`, `mount.set_activity_badge(...)`,
-`mount.register_command(...)`.
+Mount siblings can call every IPC helper as a method on `Mount`
+— `mount.toast_info(...)`, `mount.notify(...)`,
+`mount.statusline_set_segment(...)`, etc.
 
 Most siblings won't need `client` — tier 2 covers everything
 short of taking over a pane.
