@@ -3986,7 +3986,17 @@ impl App {
         let right_panel_visible_default = config.ui.right_panel_visible;
         let right_panel_width_default = config.ui.right_panel_width;
         let mount_manifests = crate::mount_manifest::load_all(&workspace);
-        let integration_manifests = crate::integration_manifest::load_all(&workspace);
+        // Under `cargo test`, skip the user-global integration
+        // manifests scan so the test harness isn't contaminated by
+        // whatever manifests the developer has installed in
+        // ~/.config/mnml/integrations/. Tests use
+        // `App::new` + `app.integration_manifests.push(...)` to
+        // exercise manifest behavior in isolation.
+        let integration_manifests = if cfg!(test) {
+            crate::integration_manifest::load_all_with_user_base(&workspace, None)
+        } else {
+            crate::integration_manifest::load_all(&workspace)
+        };
         Ok(App {
             workspace,
             config,

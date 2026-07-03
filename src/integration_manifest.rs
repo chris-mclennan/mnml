@@ -262,10 +262,20 @@ pub struct Requires {
 /// Scan both manifest dirs and return the merged list. Workspace
 /// entries shadow user-global entries with the same id.
 pub fn load_all(workspace: &Path) -> Vec<IntegrationManifest> {
+    load_all_with_user_base(workspace, user_dir())
+}
+
+/// Same as `load_all` but with an explicit user-config base
+/// directory (used by tests to isolate from `~/.config/mnml/`).
+/// Pass `None` to skip the user-global scan entirely.
+pub fn load_all_with_user_base(
+    workspace: &Path,
+    user_base: Option<PathBuf>,
+) -> Vec<IntegrationManifest> {
     let mut out: Vec<IntegrationManifest> = Vec::new();
 
     // User-global first (lower priority).
-    if let Some(dir) = user_dir() {
+    if let Some(dir) = user_base {
         scan_dir(&dir, &mut out);
     }
     // Workspace second (higher priority).
@@ -462,7 +472,7 @@ binary = "mnml-foo"
 "#
         )
         .unwrap();
-        let manifests = load_all(&ws);
+        let manifests = load_all_with_user_base(&ws, None);
         assert_eq!(manifests.len(), 1);
         assert_eq!(manifests[0].name, "Workspace Foo");
     }
@@ -488,7 +498,7 @@ color = "nonsense-neon"
 "#
         )
         .unwrap();
-        let manifests = load_all(&ws);
+        let manifests = load_all_with_user_base(&ws, None);
         assert_eq!(manifests.len(), 1);
         assert_eq!(manifests[0].chip.as_ref().unwrap().color, "cyan");
     }
@@ -502,7 +512,7 @@ color = "nonsense-neon"
         std::fs::create_dir_all(&ws_dir).unwrap();
         let mut f = std::fs::File::create(ws_dir.join("bad.toml")).unwrap();
         writeln!(f, r#"name = "No Id" # missing id"#).unwrap();
-        let manifests = load_all(&ws);
+        let manifests = load_all_with_user_base(&ws, None);
         assert!(manifests.is_empty());
     }
 
