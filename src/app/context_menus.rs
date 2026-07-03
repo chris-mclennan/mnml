@@ -263,16 +263,33 @@ impl App {
         } else {
             "Enable (show chip)"
         };
-        // "Remove from rail" was stale (integrations moved out of
-        // the rail and into the palette bar). Now just "Remove".
-        let items = vec![
-            MenuItem::new(
-                toggle_label,
-                MenuAction::ToggleIntegrationEnabled(id.clone()),
-            ),
-            MenuItem::new("Edit…", MenuAction::EditIntegration(id.clone())),
-            MenuItem::new("Remove", MenuAction::RemoveIntegration(id)),
-        ];
+        // Position-aware reorder items — skip Move up on the first
+        // row, Move down on the last, so the menu doesn't offer
+        // no-ops. 2026-07-03 user-request: reorder from UI.
+        let is_first = icon_idx == 0;
+        let is_last = icon_idx + 1 >= self.config.ui.integration_icons.len();
+        let mut items = Vec::new();
+        items.push(MenuItem::new(
+            toggle_label,
+            MenuAction::ToggleIntegrationEnabled(id.clone()),
+        ));
+        if !is_first {
+            items.push(MenuItem::new(
+                "Move up",
+                MenuAction::MoveIntegrationUp(id.clone()),
+            ));
+        }
+        if !is_last {
+            items.push(MenuItem::new(
+                "Move down",
+                MenuAction::MoveIntegrationDown(id.clone()),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Edit…",
+            MenuAction::EditIntegration(id.clone()),
+        ));
+        items.push(MenuItem::new("Remove", MenuAction::RemoveIntegration(id)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
@@ -806,6 +823,38 @@ impl App {
                         "integration {id} {}",
                         if now { "enabled" } else { "disabled" }
                     ));
+                    let _ = crate::app::discovery::persist_integration_icons(
+                        &self.config.ui.integration_icons,
+                    );
+                }
+            }
+            MoveIntegrationUp(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .position(|i| i.id == id)
+                    && pos > 0
+                {
+                    self.config.ui.integration_icons.swap(pos, pos - 1);
+                    self.toast(format!("moved {id} up"));
+                    let _ = crate::app::discovery::persist_integration_icons(
+                        &self.config.ui.integration_icons,
+                    );
+                }
+            }
+            MoveIntegrationDown(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .position(|i| i.id == id)
+                    && pos + 1 < self.config.ui.integration_icons.len()
+                {
+                    self.config.ui.integration_icons.swap(pos, pos + 1);
+                    self.toast(format!("moved {id} down"));
                     let _ = crate::app::discovery::persist_integration_icons(
                         &self.config.ui.integration_icons,
                     );

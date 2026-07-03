@@ -160,6 +160,13 @@ pub enum MenuAction {
     /// chips reappear in the palette bar; visible chips hide.
     /// Persists to user config TOML.
     ToggleIntegrationEnabled(String),
+    /// Move an integration chip one position earlier in the ordered
+    /// list. No-op when already first. Persists via
+    /// `persist_integration_icons`.
+    MoveIntegrationUp(String),
+    /// Move an integration chip one position later in the ordered
+    /// list. No-op when already last. Persists.
+    MoveIntegrationDown(String),
     /// Toggle a launcher chip's `enabled` field by `id`.
     ToggleLauncherEnabled(String),
     /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
