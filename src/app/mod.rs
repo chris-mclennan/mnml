@@ -5002,7 +5002,15 @@ impl App {
         if let Some(slot) = self.dynamic_commands.iter_mut().find(|c| c.id == dc.id) {
             *slot = dc;
         } else {
-            self.toast(format!("plugin command registered: {}", dc.title));
+            // 2026-07-03: only IPC-registered plugin commands
+            // (ex_run.is_none()) get an announcement toast. Manifest-
+            // registered integration commands (ex_run.is_some())
+            // land at startup — one per installed integration —
+            // and toasting each stacked ~15 messages the first
+            // time the user opened mnml with the SDK sweep done.
+            if dc.ex_run.is_none() {
+                self.toast(format!("plugin command registered: {}", dc.title));
+            }
             self.dynamic_commands.push(dc);
         }
     }
