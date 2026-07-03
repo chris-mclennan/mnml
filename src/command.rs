@@ -36,9 +36,17 @@ impl Command {
 }
 
 /// A command registered at runtime by an out-of-process plugin (over the file-IPC
-/// channel — see `ipc::IpcCommand::RegisterCommand`). Invoking it doesn't call
-/// Rust code; it appends a `{"event":"plugin-command","id":…}` line the plugin
-/// reads. Lives on `App` (not the static [`Registry`]) since it's per-session.
+/// channel — see `ipc::IpcCommand::RegisterCommand`). Lives on `App` (not the
+/// static [`Registry`]) since it's per-session.
+///
+/// Two flavors, distinguished by `ex_run`:
+///
+/// - **`ex_run = None`** — IPC-registered. Invoking it doesn't call
+///   Rust code; it appends a `{"event":"plugin-command","id":…}` line
+///   the plugin reads. Requires the plugin to be running.
+/// - **`ex_run = Some(cmdline)`** — Manifest-registered. Invoking runs
+///   `cmdline` as an ex-command (e.g. `":term mnml-msg-slack"`). Works
+///   whether the sibling is running or not.
 #[derive(Debug, Clone)]
 pub struct DynCommand {
     pub id: String,
@@ -46,6 +54,10 @@ pub struct DynCommand {
     pub group: String,
     /// Keyspecs to bind (best-effort — bad specs are ignored). May be empty.
     pub keys: Vec<String>,
+    /// If `Some`, invoking runs this ex-command line directly. If
+    /// `None`, invocation queues an event for the plugin to react.
+    #[allow(dead_code)]
+    pub ex_run: Option<String>,
 }
 
 pub struct Registry {
@@ -3987,6 +3999,13 @@ fn builtin_commands() -> Vec<Command> {
             group: "mount",
             keys: &[],
             run: |app| app.refresh_mount_manifests(),
+        },
+        Command {
+            id: "integrations.refresh",
+            title: "Integrations: re-scan manifests in .mnml/integrations/ + ~/.config/mnml/integrations/",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.refresh_integration_manifests(),
         },
         Command {
             id: "mounts.install",

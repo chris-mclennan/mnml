@@ -2483,6 +2483,14 @@ pub struct App {
     /// as extra activity-bar icons after the builtins. Indexed
     /// by `ActivitySection::Mount(u16)`.
     pub mount_manifests: Vec<crate::mount_manifest::MountManifest>,
+    /// Manifest-registered integration siblings discovered at
+    /// startup. One entry per `<id>.toml` under
+    /// `<ws>/.mnml/integrations/` + `~/.config/mnml/integrations/`.
+    /// Chips are merged into `config.ui.integration_icons` and
+    /// commands into `dynamic_commands` at startup; the vec is
+    /// kept so `integrations.refresh` can re-scan without
+    /// restart.
+    pub integration_manifests: Vec<crate::integration_manifest::IntegrationManifest>,
     /// Notification badges on activity-bar sections — keyed by
     /// the section's serialized id (e.g. `"agents"`, `"cloud_agents"`,
     /// manifest mount id). Set by siblings via the
@@ -3852,6 +3860,7 @@ impl App {
         let right_panel_visible_default = config.ui.right_panel_visible;
         let right_panel_width_default = config.ui.right_panel_width;
         let mount_manifests = crate::mount_manifest::load_all(&workspace);
+        let integration_manifests = crate::integration_manifest::load_all(&workspace);
         Ok(App {
             workspace,
             config,
@@ -3865,6 +3874,7 @@ impl App {
             tree_visible: true,
             active_section: ActivitySection::Explorer,
             mount_manifests,
+            integration_manifests,
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
             pending_tool_install: None,
@@ -4167,7 +4177,80 @@ impl App {
             pending_plugin_invocations: Vec::new(),
             lsp,
             test_history,
-        })
+        }
+        .with_integration_manifests_merged())
+    }
+
+    /// Layer each integration manifest onto config + register its
+    /// commands as dynamic commands. Called from `App::new` and
+    /// again by the `integrations.refresh` palette command.
+    ///
+    /// Precedence rule: user config `[[ui.integration_icon]]`
+    /// entries win over manifest chips of the same id (manifest
+    /// only fills gaps). Reason: the user's own config is the
+    /// most explicit intent; a sibling shouldn't be able to
+    /// clobber it.
+    pub fn merge_integration_manifests(&mut self) {
+        use std::collections::HashSet;
+        let existing_ids: HashSet<String> = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.clone())
+            .collect();
+        for m in &self.integration_manifests {
+            let Some(chip) = &m.chip else { continue };
+            if existing_ids.contains(&m.id) {
+                continue; // user config already has this id — skip
+            }
+            self.config
+                .ui
+                .integration_icons
+                .push(crate::config::IntegrationIcon {
+                    id: m.id.clone(),
+                    glyph: chip.glyph.clone(),
+                    fallback: chip.fallback.clone(),
+                    command: m
+                        .commands
+                        .first()
+                        .map(|c| c.id.clone())
+                        .unwrap_or_else(|| format!("term {}", m.binary)),
+                    color: chip.color.clone(),
+                    tooltip: chip.tooltip.clone(),
+                    enabled: chip.enabled,
+                    in_palette_bar: chip.in_palette_bar,
+                });
+        }
+        // Register each manifest command as a dynamic command
+        // with its ex_run baked in. Idempotent via
+        // register_dynamic_command's id-match update path.
+        let cmds: Vec<crate::command::DynCommand> = self
+            .integration_manifests
+            .iter()
+            .flat_map(|m| {
+                m.commands.iter().map(|c| crate::command::DynCommand {
+                    id: c.id.clone(),
+                    title: c.title.clone(),
+                    group: c
+                        .group
+                        .clone()
+                        .unwrap_or_else(|| "integrations".to_string()),
+                    keys: c.keys.clone(),
+                    ex_run: Some(c.run.clone()),
+                })
+            })
+            .collect();
+        for c in cmds {
+            self.register_dynamic_command(c);
+        }
+    }
+
+    /// Consuming helper — used by `App::new` to fold the manifest
+    /// merge into the constructor.
+    fn with_integration_manifests_merged(mut self) -> Self {
+        self.merge_integration_manifests();
+        self
     }
 
     // ─── which-key (leader menu) ────────────────────────────────────
@@ -4783,9 +4866,23 @@ impl App {
             self.dynamic_commands.push(dc);
         }
     }
-    /// If `id` is a plugin command, queue it for the IPC layer to log and return
-    /// true; otherwise false. (Called by `command::run` after the builtin lookup.)
+    /// If `id` is a dynamic command, either dispatch its ex-command
+    /// locally (manifest-registered) or queue for the IPC layer to
+    /// log (plugin-registered). Returns true if the id matched.
+    /// (Called by `command::run` after the builtin lookup.)
     pub fn run_dynamic_command(&mut self, id: &str) -> bool {
+        // Manifest-registered commands carry an ex-command line.
+        // Dispatch locally so the sibling doesn't need to be
+        // running to answer the invocation.
+        let ex_run = self
+            .dynamic_commands
+            .iter()
+            .find(|c| c.id == id)
+            .and_then(|c| c.ex_run.clone());
+        if let Some(cmdline) = ex_run {
+            self.run_ex_command(&cmdline);
+            return true;
+        }
         if self.dynamic_commands.iter().any(|c| c.id == id) {
             self.pending_plugin_invocations.push(id.to_string());
             true

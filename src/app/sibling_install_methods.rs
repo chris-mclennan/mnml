@@ -303,6 +303,21 @@ impl App {
         ));
     }
 
+    /// Refresh the integration manifest list — re-scans both dirs
+    /// and re-merges chips + commands. Called by the
+    /// `integrations.refresh` palette command; also fires
+    /// implicitly after a sibling's `--install` writes a new
+    /// manifest file (user runs the palette command to pick up
+    /// the change without restarting mnml).
+    pub fn refresh_integration_manifests(&mut self) {
+        self.integration_manifests = crate::integration_manifest::load_all(&self.workspace);
+        self.merge_integration_manifests();
+        self.toast(format!(
+            "integrations: {} manifest(s) loaded",
+            self.integration_manifests.len()
+        ));
+    }
+
     /// Spawn a hosted sibling as a `Pane::Mount`. Called by the
     /// MountBinary prompt's accept handler.
     pub fn open_mount(&mut self, binary: &str) {

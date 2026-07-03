@@ -76,6 +76,7 @@ pub mod http;
 pub(crate) mod image;
 pub(crate) mod input;
 pub(crate) mod integration_detect;
+pub mod integration_manifest;
 pub mod ipc;
 pub(crate) mod layout;
 pub(crate) mod linter;

@@ -637,6 +637,7 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                 title: title.clone(),
                 group: group.clone(),
                 keys: keys.clone(),
+                ex_run: None,
             });
             json_event(&[
                 ("event", "command_registered"),
