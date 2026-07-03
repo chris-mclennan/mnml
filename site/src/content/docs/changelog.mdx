@@ -47,9 +47,94 @@ Already subscribed? [Manage your subscription](https://buttondown.com/chrismclen
 
 Versions auto-tagged at [github.com/chris-mclennan/mnml/releases](https://github.com/chris-mclennan/mnml/releases) — this page summarizes the user-facing changes. For commit-level history, see the GitHub release notes.
 
+### 0.2.0 — 2026-07-03 — The Integration SDK
+
+The big release. **Integration SDK** ships: siblings self-install into mnml via `<sibling> --install` (mnml-bridge 0.3), the community-default IntegrationIcons for 37 siblings move out of mnml core into sibling-owned manifests, and mnml gains a runtime helper surface for level-tagged toasts, persistent toasts, progress spinners, dynamic statusline segments, and OS notifications via OSC 9 / 777 terminal escapes.
+
+#### The story
+
+Before 0.2, mnml core carried default `IntegrationIcon` entries for every community sibling — bitbucket, github, slack, datadog, and 33 more. Users installed the sibling binary and the chip was already in the rail (disabled), because mnml shipped the metadata. That worked but had three costs:
+
+1. **Tattle-branded stragglers.** `mnml-tattle-inbox` shipped as a default chip visible to every crates.io user — a private internal sibling with an "INTERNAL — dev/staging" tooltip. Removed as part of the arc.
+2. **mnml core carried release cycles for every sibling.** Change a sibling's tooltip → mnml core needed a release.
+3. **No first-class registration story.** Community authors couldn't publish a chip; they had to send a PR to mnml.
+
+The SDK inverts that:
+
+- Each sibling ships a `--install` subcommand using [`mnml-bridge`](/manual/bridge-mount/#tier-3-mnml-bridge-sdk) 0.3's `install_integration()`. Writes `~/.config/mnml/integrations/<id>.toml`.
+- mnml scans that directory on startup + on the new `integrations.refresh` palette command. Rail chip + palette command + chord binding land automatically.
+- Precedence rules keep user config on top: **user config > manifest > built-in default**. A sibling manifest can never clobber a user's own `[[ui.integration_icon]]` override.
+
+#### mnml-bridge 0.3.0 — SDK API
+
+**Install helpers** (fs-based, no IPC needed):
+
+```rust
+mnml_bridge::install_integration(spec)      -> io::Result<PathBuf>
+mnml_bridge::uninstall_integration(id)      -> io::Result<bool>
+mnml_bridge::list_installed_integrations()  -> io::Result<Vec<String>>
+```
+
+**Runtime IPC helpers** (tier-2 JSONL channel):
+
+```rust
+// Toasts (level-tagged + persistent)
+toast_info(msg) / toast_warn(msg) / toast_error(msg)
+toast_persistent(id, msg, level) / toast_dismiss(id)
+
+// Progress notifications (animated Braille spinner)
+progress_start(id, label)
+progress_update(id, label?, percent?)
+progress_end(id, ProgressStatus)
+
+// Dynamic statusline segments (hybrid packing)
+statusline_set_segment(id, side, text, color?, click?, priority, min_width, max_width)
+statusline_clear_segment(id)
+
+// OS notifications (OSC 9 + OSC 777 → Ghostty/iTerm2/kitty/WezTerm banners)
+notify(title, body, NotifyOpts { level, sound, source })
+```
+
+Every helper is fire-and-forget — silent no-op when `MNML_IPC_DIR` isn't set, so siblings can call them freely even when running standalone outside mnml.
+
+#### New in mnml core
+
+- **File-based integration manifests** — `~/.config/mnml/integrations/<id>.toml` (workspace override at `<ws>/.mnml/integrations/<id>.toml`). Mirrors the mount manifest pattern.
+- **`integrations.refresh` palette command** — re-scan without restart.
+- **Level-tagged toasts** — `App::toast_info` / `toast_warn` / `toast_error`. Info + warn share the standard comment border (calm ambient); error gets a red border so failures stand out.
+- **Persistent toasts** — pinned until an explicit dismiss by id. Repeat calls with the same id update in place.
+- **Progress notifications** — animated Braille spinner with terminal-status glyph on end (✓ / ✗ / ⊘). Failed status auto-fires `toast_error`.
+- **Dynamic statusline segments** — sibling-authored chips with priority-based overflow (drop lowest-priority when the lane is tight; never push the canonical mode / line-col / workspace chips off screen).
+- **OS notifications via OSC 9 + OSC 777** — Ghostty / iTerm2 / kitty / WezTerm / Windows Terminal route to native banners. Per-integration `[notifications]` policy: `never` / `error_only` / `always` + rate limit.
+- **`[jira]` + `[cloud_agents]` config** — org-specific Jira wiring (`domain` + `ticket_prefix`) and full config-driven ECS runner for cloud agents. Both empty by default; the whole feature no-ops without config. See [Cloud agents runner](/manual/cloud-agents-config/).
+
+#### `tattle_qwe` → `ecs_runner`
+
+The AWS-Fargate cloud-agent runner that was hardcoded as Tattle-specific infra is now a generic config-driven feature. `AgentSource::TattleQwe` → `AgentSource::Ecs` etc. Existing users populate `[cloud_agents]` config to keep the feature; empty config = no-op.
+
+#### The family — 37 siblings, all self-installing
+
+Everything under the `mnml-*` prefix from forges (bitbucket, github, gitlab, azdevops) through trackers (jira, linear), messaging (slack, teams, gmail, gcal, buttondown, mandrill), AWS (11 services), databases (7), cloud filesystems (s3, azure-blob), observability (datadog), CDN (cloudflare), containers (docker), and testing (playwright, cypress). Each ships `--install` + `--uninstall`. See [Community integrations](/manual/integrations/community/) for the directory.
+
+#### Migration for existing users
+
+Users on 0.1.x who had community sibling chips visible:
+
+- **If you'd already installed the sibling binary:** run `<sibling> --install` once. Chip stays working; now driven by the sibling's own manifest instead of mnml's built-in default. `integrations.refresh` picks it up.
+- **If you had a custom `[[ui.integration_icon]]` in `~/.config/mnml/config.toml`:** untouched. User config wins over manifests.
+- **If you were relying on the built-in default without having the sibling installed:** the chip continues to show (built-in defaults still ship as discovery hints); clicking still fires `:term <sibling>` which errors "not installed" until you run `cargo install <sibling>` and `<sibling> --install`.
+
+No breaking changes for the shipped user experience — every 0.1.x flow continues working. The SDK is additive.
+
+#### Migration for sibling authors
+
+Add `mnml-bridge = "0.3"` to your `Cargo.toml`, add `--install` / `--uninstall` CLI flags backed by `install_integration()` / `uninstall_integration()`. See [Building integrations](/manual/integrations/building/) for the full walkthrough.
+
+---
+
 ### Unreleased
 
-User-facing changes landed on `main` since v0.1.2 and waiting for the next tag:
+User-facing changes landed on `main` since v0.2.0 and waiting for the next tag:
 
 - **Startup picker** — JetBrains-style chooser overlay shown on launch when invoked with `--startup-picker` (or `MNML_STARTUP_PICKER=1`). Rows: New file · Open file… · 1-9 entries from `[[workspaces]]`. Keys: ↑↓ / jk move · Enter / 1-9 select · Esc / q skip. The `mnml.app` and `mnml-nightly.app` launchers now export the env var so opening mnml from Finder lands on the chooser instead of dropping you into `$HOME`. See the [Startup picker manual](/manual/startup-picker/).
 - **Update-check toast** — on launch, mnml pings `api.github.com/repos/chris-mclennan/mnml/releases/latest` in a background thread and shows a one-shot toast with the release URL if a newer tag is available. Opt out with `[ui] check_updates = false`. Skipped automatically in `--headless` mode. See the [Update check](/manual/settings/#update-check) section in Settings.
