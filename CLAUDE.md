@@ -210,7 +210,7 @@ for siblings:
   generic + config-driven. `AgentSource::TattleQwe` → `AgentSource::Ecs`;
   empty `[cloud_agents]` config = no-op.
 
-Reconciled all 34 divergent sibling repos onto their remotes in this session:
+Reconciled the 34 sibling repos that had diverged from their remotes:
 each got `mnml-bridge = "0.3"` (crates.io), `src/install.rs`, `--install`
 dispatch in `src/main.rs`, README setup step, a fresh `ci.yml` (no
 clone-mnml step needed). 8 of them were also missing basic deps
