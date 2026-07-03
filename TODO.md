@@ -27,6 +27,25 @@ Not planned: cookie-jar reuse on the upgrade handshake (mnml's
 cookie jar is HTTP-only for now). Open a fresh ticket if there's
 a specific workflow that needs it.
 
+## Integrations
+
+### GitHub Issues sibling (mnml-tracker-github)
+**Shape:** a `mnml-tracker-*` sibling that mirrors the existing
+`mnml-tracker-jira` + `mnml-tracker-linear` tools but for GitHub
+Issues. Uses `gh api` under the hood (no new deps — the auth chain
+that already backs `mnml-forge-github` reuses cleanly). Manifest
+registers as `github_issues` (distinct from `github` forge chip).
+
+Tabs: mirror the jira / linear shape — `Assigned to me`,
+`Mentioned`, `Created by me`, plus configurable saved-search tabs
+(e.g. by label / milestone / repo). Row Enter opens the console
+URL; Enter on a body cell opens a scratch pane with the full
+markdown for quick reference.
+
+Sibling repo goes at `mnml-tracker-github` alongside the jira +
+linear ones. Integration manifest registers `<leader>ig` chord for
+"GitHub Issues: open". First-party family entry, not community.
+
 ## Other (uncategorized)
 
 ### Cloud agents list: compact vs standard view modes
