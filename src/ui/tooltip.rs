@@ -503,7 +503,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             Some((
                 rect,
                 "new cloud run".into(),
-                Some("click: open wizard (Managed Agents · Tattle QWE)".into()),
+                Some("click: open wizard (Managed Agents · ECS runner)".into()),
             ))
         }
         HoverChip::CloudRunAutoRefresh => {

@@ -181,7 +181,7 @@ fn step_content_rows(s: CloudRunStep) -> u16 {
         CloudRunStep::QweTicket => 3,
         // 1 hint + 1 blank + 1 input row
         CloudRunStep::Prompt => 3,
-        // 4-5 summary rows (Tattle = 5, Managed = 4); use the max
+        // 4-5 summary rows (ECS = 5, Managed = 4); use the max
         CloudRunStep::Review => 5,
     }
 }
@@ -465,7 +465,7 @@ fn draw_step_review(frame: &mut Frame, app: &mut App, area: Rect, pane_id: PaneI
     let summary: Vec<(&str, String)> = match app.panes.get(pane_id) {
         Some(Pane::NewCloudRunWizard(p)) => match p.runner {
             CloudRunner::Ecs => vec![
-                ("Runner ", "Tattle QWE (ECS)".to_string()),
+                ("Runner ", "ECS runner".to_string()),
                 ("Ticket ", p.qwe_ticket.clone()),
                 ("Flow   ", "triage (default)".to_string()),
                 ("Env    ", "prod (default)".to_string()),

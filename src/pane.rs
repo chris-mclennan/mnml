@@ -119,7 +119,7 @@ pub enum Pane {
     /// frame. Input flows the other way (key/mouse events forwarded
     /// when the pane has focus). See `src/mount.rs`.
     Mount(crate::mount::MountSession),
-    /// Comprehensive view of a single cloud-agent run (Tattle QWE
+    /// Comprehensive view of a single cloud-agent run (ECS runner
     /// runner): ticket / flow / state header, web links (Jira, PR,
     /// CloudWatch console, S3 console), S3 artifacts list,
     /// CloudWatch logs viewport. Tail-follows when the run is
@@ -127,13 +127,13 @@ pub enum Pane {
     /// `src/cloud_agent_run.rs`.
     CloudAgentRun(crate::cloud_agent_run::CloudAgentRunPane),
     /// Multi-step wizard that fires a Cloud Agents run (Managed
-    /// Agents OR Tattle QWE). Lives in the Cloud Agents panel,
+    /// Agents OR ECS runner). Lives in the Cloud Agents panel,
     /// distinct from `NewCloudAgentWizard` which handles local
     /// Claude Code sessions from PR lists in the Agents panel.
     /// See `src/new_cloud_run_wizard.rs`.
     NewCloudRunWizard(crate::new_cloud_run_wizard::NewCloudRunWizardPane),
     /// Multi-step wizard that creates a new cloud agent run.
-    /// Supports the existing Tattle QWE trigger path AND
+    /// Supports the existing ECS runner trigger path AND
     /// Anthropic's managed-agents API with cloud or self-hosted
     /// sandbox modes (per-machine local worker or remote
     /// Vercel/Cloudflare/Modal/etc). See

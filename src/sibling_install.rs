@@ -191,17 +191,21 @@ mod tests {
 
     #[test]
     fn cargo_install_skips_tag_for_main() {
+        // Any "main"-pinned entry does — pick the first.
         let sib = crate::family_catalog::CATALOG
             .iter()
-            .find(|s| s.id == "tattle_tests")
-            .expect("tattle_tests in catalog");
+            .find(|s| s.pinned_version == "main")
+            .expect("catalog has at least one main-pinned entry");
         let argv = cargo_install_argv(sib);
         assert!(!argv.iter().any(|a| a == "--tag"));
     }
 
     #[test]
-    fn install_kind_mount_for_tattle_tests() {
-        assert!(matches!(install_kind("tattle_tests"), InstallKind::Mount));
+    fn install_kind_pty_for_unknown_id() {
+        // No MOUNT_STUBS ship in-tree after 2026-07-03 — every
+        // catalog entry currently installs as a Pty. Mount siblings
+        // now self-register via the Integration SDK.
+        assert!(matches!(install_kind("bogus_id"), InstallKind::Pty));
     }
 
     #[test]

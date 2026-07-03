@@ -1575,7 +1575,7 @@ mod tests {
         assert!(matches!(parse_command(r#"{"cmd":"quit"}"#), Quit));
         assert!(matches!(parse_command(r#"{"cmd":"restart"}"#), Restart));
         assert!(matches!(
-            parse_command(r#"{"cmd":"install-sibling","id":"tattle_tests"}"#),
+            parse_command(r#"{"cmd":"install-sibling","id":"bitbucket"}"#),
             InstallSibling { .. }
         ));
         assert!(matches!(

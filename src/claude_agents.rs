@@ -36,7 +36,7 @@ pub enum AgentSource {
     /// present; the dashboard falls back to PID-only when not).
     /// pgrep matches the `codex` exe.
     Codex,
-    /// Tattle QWE runner — cloud agents running in AWS Fargate.
+    /// ECS runner — cloud agents running in AWS Fargate.
     /// ECS cloud-agent run — surfaced from the configured
     /// `[cloud_agents]` DynamoDB run-records table. No local
     /// pid; the row's "live" state derives from the DynamoDB

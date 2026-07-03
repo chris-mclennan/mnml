@@ -26,7 +26,6 @@ pub enum Category {
     Obs,
     Msg,
     Cdn,
-    Tattle,
     Virt,
     Other,
 }
@@ -45,7 +44,6 @@ impl Category {
             Category::Obs => "Observability",
             Category::Msg => "Messaging",
             Category::Cdn => "CDN / Edge",
-            Category::Tattle => "Tattle (internal)",
             Category::Virt => "Virtualization & containers",
             Category::Other => "Other",
         }
@@ -88,14 +86,7 @@ pub fn mount_stub_for(id: &str) -> Option<MountStub> {
         .map(|(_, stub)| *stub)
 }
 
-const MOUNT_STUBS: &[(&str, MountStub)] = &[(
-    "tattle_tests",
-    MountStub {
-        name: "Tattle tests",
-        icon: "\u{F0668}", // nf-md-checkbox-marked-circle-outline
-        color: "green",
-    },
-)];
+const MOUNT_STUBS: &[(&str, MountStub)] = &[];
 
 #[derive(Copy, Clone, Debug)]
 pub struct FamilySibling {
@@ -129,12 +120,12 @@ impl FamilySibling {
 
     /// `true` for entries that should be hidden from public UI
     /// surfaces (Integrations rail discovery overlay + install
-    /// picker). The catalog still carries them so the owner can
-    /// install via direct cargo invocation, but other users don't
-    /// see them. Currently: every `Category::Tattle` entry (private
-    /// company tooling — the repos aren't public).
+    /// picker). Currently unused — the last private entry was
+    /// removed 2026-07-03 (moved to the Integration SDK's
+    /// user-managed manifests). Kept as an API hook for future
+    /// private-catalog needs.
     pub fn is_private(&self) -> bool {
-        matches!(self.category, Category::Tattle)
+        false
     }
 
     /// The full `cargo install` invocation a user would run. Returns
@@ -659,28 +650,6 @@ pub const CATALOG: &[FamilySibling] = &[
             tooltip: "Cloudflare CDN browser",
         },
     },
-    // ── Tattle (internal) ─────────────────────────────────────
-    // INTERNAL tooling. Repos are private; only catalog-listed
-    // when the actual repo exists. mnml-tattle-inbox was removed
-    // 2026-06-26 (placeholder repo never created).
-    // First Mount-capable sibling — renders into an mnml pane via
-    // the Bridge tier-4 UDS protocol (not a Pty). MountStub at the
-    // top of this file describes the activity-bar icon the
-    // auto-installer registers on install.
-    FamilySibling {
-        id: "tattle_tests",
-        binary: "mnml-tattle-tests",
-        category: Category::Tattle,
-        repo_url: "https://github.com/chris-mclennan/mnml-tattle-tests",
-        pinned_version: "main",
-        one_liner: "Tattle 3-env TestExecutions browser (Mount — INTERNAL)",
-        icon: IconTemplate {
-            glyph: "\u{F0668}", // nf-md-checkbox-marked-circle-outline
-            fallback: "Tt",
-            color: "green",
-            tooltip: "Tattle test executions (INTERNAL)",
-        },
-    },
     // ── Virtualization & containers ───────────────────────────
     FamilySibling {
         id: "docker",
@@ -876,7 +845,6 @@ fn class_to_category(class: &str) -> Category {
         "obs" => Category::Obs,
         "msg" => Category::Msg,
         "cdn" => Category::Cdn,
-        "tattle" => Category::Tattle,
         "virt" => Category::Virt,
         _ => Category::Other,
     }
@@ -907,7 +875,6 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Obs => "purple",
         Category::Msg => "green",
         Category::Cdn => "orange",
-        Category::Tattle => "magenta",
         Category::Virt => "blue",
         Category::Other => "cyan",
     }
@@ -934,7 +901,6 @@ fn category_class(category: Category) -> &'static str {
         Category::Obs => "obs",
         Category::Msg => "msg",
         Category::Cdn => "cdn",
-        Category::Tattle => "tattle",
         Category::Virt => "virt",
         Category::Other => "other",
     }
@@ -983,16 +949,20 @@ mod tests {
 
     #[test]
     fn install_command_skips_tag_when_pin_is_main() {
-        // tattle_tests is the first catalog entry pinned to `main`
-        // (no tagged release yet). The yank-able install command
-        // must omit `--tag main` (cargo would fail looking for a
-        // tag named `main`). Mirrors the same guard in
-        // sibling_install::cargo_install_argv.
-        let s = find_by_binary("mnml-tattle-tests").expect("tattle_tests in catalog");
+        // Every catalog entry currently pinned to `main` has no
+        // tagged release yet. The yank-able install command must
+        // omit `--tag main` (cargo would fail looking for a tag
+        // named `main`). Mirrors the same guard in
+        // sibling_install::cargo_install_argv. Pick any
+        // main-pinned entry.
+        let s = CATALOG
+            .iter()
+            .find(|e| e.pinned_version == "main")
+            .expect("catalog has at least one main-pinned entry");
         let cmd = s.install_command();
         assert!(cmd.contains("--git"));
         assert!(!cmd.contains("--tag"), "got: {cmd}");
-        assert!(cmd.contains("mnml-tattle-tests"));
+        assert!(cmd.contains(s.binary));
     }
 
     #[test]

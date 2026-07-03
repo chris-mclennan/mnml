@@ -59,9 +59,9 @@ impl EnvSet {
     ///   1. `explicit` (the `--env NAME` CLI flag / palette arg)
     ///   2. `$MNML_ENV`
     ///   3. `<workspace>/.rqst/config`'s `default_env=…` (rqst legacy
-    ///      workspaces; phase 1 of the port-back means a user
-    ///      launching mnml at a `~/Projects/tattle-mnml-workspace`
-    ///      gets `dev` selected without re-configuring)
+    ///      workspaces; a user launching mnml at a workspace that
+    ///      has an existing `.rqst/config` gets its default env
+    ///      selected without re-configuring)
     /// `None`/empty ⇒ empty set.
     pub fn select(workspace: &Path, explicit: Option<&str>) -> Self {
         Self::select_with_config_default(workspace, explicit, None)

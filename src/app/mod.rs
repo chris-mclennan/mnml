@@ -1390,7 +1390,7 @@ pub enum ActivitySection {
     /// with an animated spinner glyph on running rows, filter
     /// input + `+ New` at the top.
     Agents,
-    /// Cloud agents only — Tattle QWE runner rows (and any
+    /// Cloud agents only — ECS runner rows (and any
     /// future cloud bots). Separated from `Agents` because the
     /// affordances differ: cloud rows don't have a "resume in
     /// pty" action; they expose Copy runId / Open CloudWatch /
@@ -1427,7 +1427,7 @@ impl ActivitySection {
             Self::Sessions => ("\u{F0392}", "T", "Sessions", "view.activity_sessions"),
             // nf-md-robot — agents (Claude / Codex) dashboard
             Self::Agents => ("\u{F06A9}", "A", "Agents", "view.activity_agents"),
-            // nf-md-cloud — cloud-only agents (Tattle QWE)
+            // nf-md-cloud — cloud-only agents (ECS runner)
             Self::CloudAgents => (
                 "\u{F0163}",
                 "C",
@@ -3271,7 +3271,7 @@ pub struct App {
     /// `[cloud_run.defaults]` — no wizard needed.
     pub cloud_run_prompt_input: String,
     pub cloud_run_prompt_focused: bool,
-    /// Cloud-only rows (Tattle QWE). Built by the same worker
+    /// Cloud-only rows (ECS runner). Built by the same worker
     /// thread that builds `agents_panel_rows`; rendered by the
     /// Cloud Agents activity-bar panel.
     pub cloud_agents_rows: Vec<crate::claude_agents::AgentRow>,
@@ -6640,7 +6640,7 @@ impl App {
         match rx.try_recv() {
             Ok((local_rows, cloud_rows, meta)) => {
                 // Count action-needed rows before moving the vecs
-                // into App state. For Tattle QWE rows, `staged` runs
+                // into App state. For ECS runner rows, `staged` runs
                 // land with `pending_tool_uses = 1` per `parse_run_record`,
                 // so this matches the "awaiting your Slack approval"
                 // semantic the rail header already surfaces. Local

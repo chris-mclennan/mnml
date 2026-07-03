@@ -385,8 +385,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect, _focu
     y += 1;
 
     // ── logs ─────────────────────────────────────────────────────
-    // Both sources share the logs viewport. Tattle fills it from
-    // CloudWatch via log_rx; managed agents fill it from the SSE
+    // Both sources share the logs viewport. ECS runner fills it
+    // from CloudWatch via log_rx; managed agents fill it from the SSE
     // session-events stream via session_event_rx (drained in
     // CloudAgentRunPane::drain).
     if y >= end_y {

@@ -46,7 +46,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let source_chip = match p.source_filter {
         Some(AgentSource::Claude) => " · ✦claude",
         Some(AgentSource::Codex) => " · ◈codex",
-        Some(AgentSource::Ecs) => " · ☁tattle-qwe",
+        Some(AgentSource::Ecs) => " · ☁ecs",
         Some(AgentSource::AnthropicManaged) => " · ☁managed",
         None => "",
     };
@@ -339,7 +339,7 @@ fn draw_topbar(
             None => "all".to_string(),
             Some(crate::claude_agents::AgentSource::Claude) => "claude".to_string(),
             Some(crate::claude_agents::AgentSource::Codex) => "codex".to_string(),
-            Some(crate::claude_agents::AgentSource::Ecs) => "tattle-qwe".to_string(),
+            Some(crate::claude_agents::AgentSource::Ecs) => "ecs".to_string(),
             Some(crate::claude_agents::AgentSource::AnthropicManaged) => "managed".to_string(),
         }
     );
@@ -406,13 +406,13 @@ fn build_groups(mode: GroupBy, vis: &[usize], rows: &[AgentRow]) -> Vec<(Section
         GroupBy::Source => {
             let mut claude: Vec<usize> = Vec::new();
             let mut codex: Vec<usize> = Vec::new();
-            let mut tattle: Vec<usize> = Vec::new();
+            let mut ecs: Vec<usize> = Vec::new();
             let mut managed: Vec<usize> = Vec::new();
             for (vi, &row_idx) in vis.iter().enumerate() {
                 match rows[row_idx].source {
                     AgentSource::Claude => claude.push(vi),
                     AgentSource::Codex => codex.push(vi),
-                    AgentSource::Ecs => tattle.push(vi),
+                    AgentSource::Ecs => ecs.push(vi),
                     AgentSource::AnthropicManaged => managed.push(vi),
                 }
             }
@@ -423,8 +423,8 @@ fn build_groups(mode: GroupBy, vis: &[usize], rows: &[AgentRow]) -> Vec<(Section
             if !codex.is_empty() {
                 out.push((SectionKey::Source(AgentSource::Codex), codex));
             }
-            if !tattle.is_empty() {
-                out.push((SectionKey::Source(AgentSource::Ecs), tattle));
+            if !ecs.is_empty() {
+                out.push((SectionKey::Source(AgentSource::Ecs), ecs));
             }
             if !managed.is_empty() {
                 out.push((SectionKey::Source(AgentSource::AnthropicManaged), managed));
@@ -482,7 +482,7 @@ fn section_header_keyed(
     let (label, accent, glyph) = match key {
         SectionKey::Source(AgentSource::Claude) => ("Claude Code".to_string(), t.purple, "✦"),
         SectionKey::Source(AgentSource::Codex) => ("Codex (OpenAI)".to_string(), t.teal, "◈"),
-        SectionKey::Source(AgentSource::Ecs) => ("Tattle QWE (cloud)".to_string(), t.blue, "☁"),
+        SectionKey::Source(AgentSource::Ecs) => ("ECS runner (cloud)".to_string(), t.blue, "☁"),
         SectionKey::Source(AgentSource::AnthropicManaged) => {
             ("Managed Agents".to_string(), t.cyan, "☁")
         }
@@ -937,7 +937,7 @@ const HELP_LINES: &[HelpEntry] = &[
     ),
     HelpEntry::Row(
         "> / <",
-        "cycle source filter (all → claude → codex → tattle-qwe → managed → all)",
+        "cycle source filter (all → claude → codex → ecs → managed → all)",
     ),
     HelpEntry::Row(
         "W",

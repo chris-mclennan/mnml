@@ -68,8 +68,7 @@ pub fn load(workspace: &Path) -> Result<Option<Vec<Source>>, String> {
         };
         let url = url.to_string();
         // `out` is a path relative to the workspace, or absolute.
-        // Falls back to `.rqst/requests/<name>` for parity with rqst
-        // — same shape the existing tattle workspace already uses.
+        // Falls back to `.rqst/requests/<name>` for parity with rqst.
         let out_path = v
             .get("out")
             .and_then(|s| s.as_str())

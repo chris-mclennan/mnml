@@ -1024,11 +1024,11 @@ fn agent_tools(write: bool, shell: bool) -> serde_json::Value {
     }
     tools.push(serde_json::json!({
         "name": "install_mnml_sibling",
-        "description": "Install an mnml family sibling by its catalog id (e.g. `cloudwatch_logs`, `s3`, `tattle_tests`). Spawns `cargo install --git <repo> [--tag <version>] <binary>` in a visible Pty pane so the user can watch progress. When the sibling supports the Bridge tier-4 Mount protocol, ALSO writes `~/.config/mnml/mounts/<id>.toml` so the activity-bar icon appears immediately. Always-on tool — does NOT require api_shell_tools. Use this whenever the user asks to add / install / set up a family integration.",
+        "description": "Install an mnml family sibling by its catalog id (e.g. `cloudwatch_logs`, `s3`, `bitbucket`). Spawns `cargo install --git <repo> [--tag <version>] <binary>` in a visible Pty pane so the user can watch progress. When the sibling supports the Bridge tier-4 Mount protocol, ALSO writes `~/.config/mnml/mounts/<id>.toml` so the activity-bar icon appears immediately. Always-on tool — does NOT require api_shell_tools. Use this whenever the user asks to add / install / set up a family integration.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "id": { "type": "string", "description": "Catalog id from family_catalog::CATALOG — e.g. cloudwatch_logs, s3, tattle_tests, tattle_inbox." }
+                "id": { "type": "string", "description": "Catalog id from family_catalog::CATALOG — e.g. cloudwatch_logs, s3, bitbucket, github, jira." }
             },
             "required": ["id"]
         }
@@ -1173,7 +1173,7 @@ fn execute_tool(
 fn tool_install_sibling(workspace: &Path, id: &str) -> Result<String, String> {
     let sib = crate::sibling_install::lookup(id).ok_or_else(|| {
         format!(
-            "install_mnml_sibling: unknown id `{id}` — valid ids include cloudwatch_logs, s3, tattle_tests, tattle_inbox, plus any other entry in family_catalog::CATALOG"
+            "install_mnml_sibling: unknown id `{id}` — valid ids include cloudwatch_logs, s3, bitbucket, github, jira, plus any other entry in family_catalog::CATALOG"
         )
     })?;
     let ipc_dir = workspace.join(".mnml").join("ipc");
