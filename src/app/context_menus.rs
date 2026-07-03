@@ -275,12 +275,12 @@ impl App {
         ));
         if !is_first {
             items.push(MenuItem::new(
-                "Move up",
-                MenuAction::MoveIntegrationUp(id.clone()),
-            ));
-            items.push(MenuItem::new(
                 "Move to top",
                 MenuAction::MoveIntegrationToTop(id.clone()),
+            ));
+            items.push(MenuItem::new(
+                "Move up",
+                MenuAction::MoveIntegrationUp(id.clone()),
             ));
         }
         if !is_last {
