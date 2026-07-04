@@ -11284,10 +11284,11 @@ fn saved_layout_from(layout: &Layout, pane_to_idx: &[Option<usize>]) -> Option<S
 /// `idx_to_pane`. Returns `None` if any leaf points at a file that didn't
 /// re-open — we'd rather skip layout restore than show a stale id.
 /// Show the one-time "sudo tools need a password" hint the first
-/// time the user launches a needs_sudo tool. Marker file at
-/// `~/.config/mnml/.tools-sudo-hint-shown` — deleted manually if
-/// the user wants to see it again. Silent when the config dir
-/// isn't resolvable ($HOME + $XDG_CONFIG_HOME both unset).
+/// time the user launches a needs_sudo tool. Uses a persistent toast
+/// so it survives the pty pane's paint noise and stays visible until
+/// the user hits Esc / clicks it away. Marker file at
+/// `~/.config/mnml/.tools-sudo-hint-shown` — delete it to see the
+/// hint again. Silent when the config dir can't be resolved.
 fn maybe_show_sudo_tools_hint(app: &mut App) {
     let Some(cfg_path) = crate::config::user_config_path() else {
         return;
@@ -11301,7 +11302,11 @@ fn maybe_show_sudo_tools_hint(app: &mut App) {
     }
     let _ = std::fs::create_dir_all(cfg_dir);
     let _ = std::fs::write(&marker, "");
-    app.toast("sudo needed for packet capture · skip the prompt: see docs/tools.md#passwordless");
+    app.toast_persistent(
+        "tools-sudo-hint",
+        "sudo needed for packet capture · skip the prompt: see docs/tools.md#passwordless",
+        ToastLevel::Warn,
+    );
 }
 
 fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Option<Layout> {
