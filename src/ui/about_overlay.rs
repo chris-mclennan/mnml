@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -70,16 +70,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         height: h,
     };
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(t.bg_darker)
-                .bg(t.blue)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().fg(t.fg).bg(t.bg2));
+    let block = crate::ui::design_tokens::modal_panel(title);
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(rows.len() + 1);
     for (k, v) in rows {
         let key_padded = format!(" {k:<w$}  ", w = key_w);

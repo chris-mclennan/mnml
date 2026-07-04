@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -33,15 +33,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     frame.render_widget(Clear, overlay);
 
-    let border_style = Style::default().fg(t.cyan);
-    let title = format!(" ✦ peek · {} · Esc closes ", po.title());
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(Span::styled(
-            title,
-            Style::default().fg(t.cyan).add_modifier(Modifier::BOLD),
-        ));
+    let title = format!("✦ peek · {} · Esc closes", po.title());
+    let block = crate::ui::design_tokens::modal_panel(title);
     let inner = block.inner(overlay);
     frame.render_widget(block, overlay);
 
