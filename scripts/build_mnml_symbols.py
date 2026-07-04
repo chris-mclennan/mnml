@@ -151,8 +151,8 @@ def main() -> int:
         # our custom glyphs. Width overflow (~15%) is tolerated
         # because MnmlSymbols is a fallback font and the neighbor
         # cells are empty background.
-        target_w = cell_w * 1.15
-        target_h = em * 0.75
+        target_w = cell_w * 1.25
+        target_h = em * 0.80
         scale = min(target_w / glyph_w, target_h / glyph_h)
         glyph.transform((scale, 0.0, 0.0, scale, 0.0, 0.0))
 
