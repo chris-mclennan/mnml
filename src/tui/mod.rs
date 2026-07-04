@@ -1010,12 +1010,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // Integration edit panel — all-keys-stolen while open; Enter
     // saves, Esc cancels, Tab cycles fields, ←→ cycles color, other
     // chars type into the focused text field.
-    if app.integration_edit.is_some() {
-        handle_integration_edit_key(app, key);
-        return;
-    }
+    // Glyph builder is checked BEFORE integration_edit because when
+    // both are open (edit panel → glyph action menu → builder), the
+    // builder is the visual front layer. Reverse order made Esc
+    // close the edit panel first (behind) then the builder — user
+    // saw two Escs to close what they expected to be one.
     if app.glyph_builder.is_some() {
         handle_glyph_builder_key(app, key);
+        return;
+    }
+    if app.integration_edit.is_some() {
+        handle_integration_edit_key(app, key);
         return;
     }
     // Search activity-bar section: input focused → printable keys

@@ -267,9 +267,14 @@ pub fn rasterize(
     const CELL_W: f32 = 600.0;
     const EM: f32 = 1000.0;
 
-    let svg_size = tree.size();
-    let src_w = svg_size.width();
-    let src_h = svg_size.height();
+    // Use the actual CONTENT bounding box (not the viewBox) so
+    // amplify-style SVGs with lots of viewBox padding still fill the
+    // preview correctly. `abs_bounding_box` walks the render tree.
+    let content_bbox = tree.root().abs_bounding_box();
+    let src_x = content_bbox.x();
+    let src_y = content_bbox.y();
+    let src_w = content_bbox.width();
+    let src_h = content_bbox.height();
     if src_w <= 0.0 || src_h <= 0.0 {
         return Err("empty svg".to_string());
     }
@@ -278,32 +283,36 @@ pub fn rasterize(
     let target_h_units = EM * height_frac;
     let scale = (target_w_units / src_w).min(target_h_units / src_h);
 
-    // Vertical center offset relative to em.
-    let scaled_h = src_h * scale;
-    let scaled_w = src_w * scale;
-    let center_y = EM * center_frac;
-    let bottom_units = center_y - scaled_h / 2.0;
-    let left_units = (CELL_W - scaled_w) / 2.0;
-
-    // Now project the "em box" (0..CELL_W wide, 0..EM tall with y-up)
-    // into pixmap pixels. Sample at ~2px per em-unit for crisp preview.
     let pixmap_w = target_w.max(2);
     let pixmap_h = target_h.max(2);
     let px_per_unit_x = pixmap_w as f32 / CELL_W;
     let px_per_unit_y = pixmap_h as f32 / EM;
 
+    // Where the glyph's center lands in pixel space. SVG's y-down
+    // and the pixmap's y-down agree, so no flip is needed. But
+    // font "center_frac" is measured from the BASELINE up (y-up
+    // convention), so we invert it once when translating to
+    // top-down pixmap space: pixmap_y_of_center = (1 - center_frac)
+    // * pixmap_h.
+    let px_glyph_w = src_w * scale * px_per_unit_x;
+    let px_glyph_h = src_h * scale * px_per_unit_y;
+    let px_center_y = (1.0 - center_frac) * pixmap_h as f32;
+    let px_left = (pixmap_w as f32 - px_glyph_w) / 2.0;
+    let px_top = px_center_y - px_glyph_h / 2.0;
+
     let mut pixmap = Pixmap::new(pixmap_w, pixmap_h).ok_or("alloc pixmap")?;
 
-    // Compose the render transform (resvg applies right-to-left):
-    //   1. Scale SVG source units to em-units (× `scale`).
-    //   2. Translate so the glyph sits at (left_units, bottom_units)
-    //      in font (y-up) coordinates.
-    //   3. Convert em-units to pixmap pixels — flip Y because the
-    //      pixmap origin is top-left while our em coords are y-up.
-    let t = Transform::from_scale(scale, scale)
-        .post_translate(left_units, bottom_units)
-        .post_scale(px_per_unit_x, -px_per_unit_y)
-        .post_translate(0.0, pixmap_h as f32);
+    // Compose (resvg applies right-to-left):
+    //   1. Shift the content-bbox origin to (0,0) so scaling is pinned
+    //      to the actual glyph, not the viewBox's padding.
+    //   2. Scale SVG units → pixmap pixels using the font-size scale
+    //      times the em → pixel ratio.
+    //   3. Translate to (px_left, px_top) inside the pixmap.
+    let sx = scale * px_per_unit_x;
+    let sy = scale * px_per_unit_y;
+    let t = Transform::from_translate(-src_x, -src_y)
+        .post_scale(sx, sy)
+        .post_translate(px_left, px_top);
     resvg::render(&tree, t, &mut pixmap.as_mut());
 
     // Encode as PNG (image crate) so the existing sixel encoder can
