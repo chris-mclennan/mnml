@@ -127,116 +127,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
     }
 
-    // Text-based "actual glyph" preview — the terminal renders the
-    // character at the current codepoint using its loaded font, which
-    // is the same MnmlSymbols.ttf mnml just baked to. Simpler, faster,
-    // and more accurate than sixel-rasterizing the SVG separately;
-    // caveat is that during pre-bake tuning, the char shows the LAST
-    // baked version, not the currently-tuned parameters. Note printed
-    // below reminds the user to bake if width/height/center changed.
-    let preview_top = inner.y + form_rows + 1;
+    // No live preview — the terminal can't hot-reload the patched
+    // font mid-session, so any "preview" would be either stale
+    // (showing the last-baked version) or a lossy raster (the sixel
+    // path we tried and users found visually misleading).
+    //
+    // Instead surface the character at the current codepoint on a
+    // single line, styled as informational — user sees what the
+    // terminal currently renders for this codepoint (whatever's in
+    // the font today) without any "preview" framing that would
+    // suggest live-updates.
+    let _ = preview_rows;
     let baked_char = u32::from_str_radix(&state.codepoint_hex, 16)
         .ok()
         .and_then(char::from_u32);
-    if preview_rows >= 3
-        && let Some(ch) = baked_char
-    {
-        let label_rect = Rect {
+    if let Some(ch) = baked_char {
+        let info_rect = Rect {
             x: inner.x + 2,
-            y: preview_top,
+            y: inner.y + form_rows + 1,
             width: inner.width.saturating_sub(4),
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "preview (actual font glyph)",
-                Style::default()
-                    .fg(t.comment)
-                    .add_modifier(Modifier::ITALIC),
-            ))),
-            label_rect,
-        );
-
-        // Row 1 — as it would appear in a bufferline tab.
-        let tab_rect = Rect {
-            x: inner.x + 4,
-            y: preview_top + 2,
-            width: inner.width.saturating_sub(6),
-            height: 1,
-        };
-        frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("tab:  ", Style::default().fg(t.comment)),
-                Span::styled(format!(" {ch}  "), Style::default().fg(t.orange)),
-                Span::styled(state.name.clone(), Style::default().fg(t.fg)),
-                Span::styled(" × ", Style::default().fg(t.grey)),
-            ])),
-            tab_rect,
-        );
-
-        // Row 2 — rail chip style.
-        let chip_rect = Rect {
-            x: inner.x + 4,
-            y: preview_top + 3,
-            width: inner.width.saturating_sub(6),
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("chip: ", Style::default().fg(t.comment)),
-                Span::styled(format!("{ch} "), Style::default().fg(t.purple)),
-                Span::styled(state.name.clone(), Style::default().fg(t.fg)),
-            ])),
-            chip_rect,
-        );
-
-        // Row 3 — bare char, several times so scale is visible.
-        let bare_rect = Rect {
-            x: inner.x + 4,
-            y: preview_top + 4,
-            width: inner.width.saturating_sub(6),
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("bare: ", Style::default().fg(t.comment)),
+                Span::styled("current glyph at U+", Style::default().fg(t.comment)),
+                Span::styled(state.codepoint_hex.clone(), Style::default().fg(t.comment)),
+                Span::styled(":  ", Style::default().fg(t.comment)),
+                Span::styled(format!("{ch}  "), Style::default().fg(t.fg)),
                 Span::styled(
-                    format!("{ch}  {ch}  {ch}  U+{:04X}", ch as u32),
-                    Style::default().fg(t.fg),
+                    "(restart terminal after bake to refresh)",
+                    Style::default().fg(t.grey).add_modifier(Modifier::ITALIC),
                 ),
             ])),
-            bare_rect,
+            info_rect,
         );
-
-        // Reminder row: shown when the currently-tuned params differ
-        // from what's baked into the font (i.e. the user has been
-        // tuning but hasn't re-baked yet).
-        let stale = crate::glyph_builder::load_meta()
-            .glyphs
-            .iter()
-            .find(|g| g.codepoint == state.codepoint_hex)
-            .map(|g| {
-                (g.width_frac - state.width_frac).abs() > 0.001
-                    || (g.height_frac - state.height_frac).abs() > 0.001
-                    || (g.center_frac - state.center_frac).abs() > 0.001
-                    || g.svg != state.svg_path
-            })
-            .unwrap_or(true);
-        if stale && preview_rows >= 6 {
-            let note_rect = Rect {
-                x: inner.x + 4,
-                y: preview_top + 6,
-                width: inner.width.saturating_sub(6),
-                height: 1,
-            };
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "↵ bake to update — glyph above reflects last-baked version",
-                    Style::default().fg(t.yellow).add_modifier(Modifier::ITALIC),
-                ))),
-                note_rect,
-            );
-        }
     }
     // Hint line at bottom of inner.
     let hint_y = inner.y + inner.height.saturating_sub(1);
