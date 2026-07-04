@@ -41,13 +41,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     };
 
     frame.render_widget(Clear, area);
-    // Context menus use the shared popup chrome — rounded border,
-    // subtle color accent, bg_darker fill. Title is optional; when
-    // absent, the block still renders cleanly.
-    let block = match &menu.title {
-        Some(title) => crate::ui::design_tokens::popup_panel(title.clone()),
-        None => crate::ui::design_tokens::popup_panel(""),
-    };
+    // Context menus use the quiet menu chrome — square border,
+    // default fg color, `bg2` fill — so visual weight sits on the
+    // selected row, not the frame. Matches macOS / VS Code menus.
+    let block = crate::ui::design_tokens::popup_menu(menu.title.as_deref().unwrap_or(""));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {

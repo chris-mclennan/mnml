@@ -50,6 +50,28 @@ pub fn modal_panel(title: impl AsRef<str>) -> Block<'static> {
     }
 }
 
+/// Menu-style chrome — for menu bar dropdowns, right-click context
+/// menus, and inline pickers where the visual weight should sit on
+/// the SELECTED ROW, not the frame. Square border, default fg color,
+/// `bg2` fill. Matches the pre-design-system menu_bar look; the
+/// aesthetic is macOS/VS Code menu, quiet frame + prominent row.
+pub fn popup_menu(title: impl AsRef<str>) -> Block<'static> {
+    let t = theme::cur();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .style(Style::default().fg(t.fg).bg(t.bg2));
+    let title = title.as_ref().trim();
+    if title.is_empty() {
+        block
+    } else {
+        block.title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(t.comment).add_modifier(Modifier::BOLD),
+        ))
+    }
+}
+
 /// Popup-style chrome for anchored / transient overlays. Rounded
 /// border, subtle color accent, `bg_darker` fill. Passing an empty
 /// title skips the title span entirely so the top border draws

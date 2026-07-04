@@ -67,7 +67,7 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
     };
     frame.render_widget(Clear, area);
 
-    let block = crate::ui::design_tokens::popup_panel("");
+    let block = crate::ui::design_tokens::popup_menu("");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
