@@ -921,6 +921,11 @@ impl App {
                     }
                 }
             }
+            PickerKind::GlyphAction => {
+                // 3-option Enter-on-Glyph chooser. Dispatch by id.
+                let id = item.id.clone();
+                self.glyph_action_dispatch(&id);
+            }
         }
     }
 

@@ -274,4 +274,85 @@ impl App {
     pub fn glyph_builder_focused_field(&self) -> Option<BuilderField> {
         self.glyph_builder.as_ref().map(|s| s.focused_field)
     }
+
+    /// Open the 3-option "what do you want to do with a glyph?"
+    /// chooser. Fired by Enter on the Glyph field of the integration
+    /// edit panel so the user doesn't have to remember Right = browse,
+    /// Ctrl+N = new, or that the picker has an edit-existing key.
+    pub fn open_glyph_action_menu(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        // Only offer "Edit current glyph" when the current Glyph field
+        // has a codepoint we can actually load (custom U+F1B00+ range,
+        // and there's meta OR a shipped built-in for it).
+        let cur_cp: Option<u32> = self
+            .integration_edit
+            .as_ref()
+            .and_then(|p| p.glyph.chars().next().map(|c| c as u32));
+        let has_editable = cur_cp.is_some_and(|cp| {
+            let cp_hex = format!("{cp:04X}");
+            let meta = crate::glyph_builder::load_meta();
+            meta.glyphs.iter().any(|g| g.codepoint == cp_hex)
+                || crate::glyph_builder::builtin_for_codepoint(cp).is_some()
+        });
+        let mut items = vec![
+            PickerItem {
+                id: "library".to_string(),
+                label: "󰉦  Choose from library".to_string(),
+                detail: "browse all glyphs".to_string(),
+                priority: 0,
+            },
+            PickerItem {
+                id: "new".to_string(),
+                label: "  Create custom glyph…".to_string(),
+                detail: "bake an SVG".to_string(),
+                priority: 0,
+            },
+        ];
+        if has_editable {
+            let name = cur_cp
+                .and_then(|cp| crate::glyph_builder::builtin_for_codepoint(cp).map(|b| b.name))
+                .unwrap_or("current glyph");
+            items.insert(
+                1,
+                PickerItem {
+                    id: "edit".to_string(),
+                    label: format!("  Edit current ({name})"),
+                    detail: "re-tune size / alignment".to_string(),
+                    priority: 0,
+                },
+            );
+        }
+        let picker = Picker::new(PickerKind::GlyphAction, "Glyph action", items);
+        self.open_picker(picker);
+    }
+
+    /// Dispatch a `PickerKind::GlyphAction` accept. Called from the
+    /// picker's accept handler.
+    pub fn glyph_action_dispatch(&mut self, id: &str) {
+        match id {
+            "library" => {
+                self.close_picker();
+                self.open_icon_picker();
+            }
+            "new" => {
+                self.close_picker();
+                self.open_glyph_builder_from_edit();
+            }
+            "edit" => {
+                self.close_picker();
+                let cur_cp = self
+                    .integration_edit
+                    .as_ref()
+                    .and_then(|p| p.glyph.chars().next().map(|c| c as u32));
+                if let Some(cp) = cur_cp
+                    && !self.open_glyph_builder_for_edit_cp(cp)
+                {
+                    self.toast(format!(
+                        "glyph U+{cp:04X} not editable — no metadata + not shipped"
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
 }

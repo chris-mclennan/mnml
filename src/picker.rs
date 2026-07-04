@@ -233,6 +233,11 @@ pub enum PickerKind {
     /// the `\u{XXXX}` escape to clipboard and toast the result.
     /// Populated by `integrations.icon_picker`.
     IconGlyphs,
+    /// 3-option chooser opened by Enter on the Glyph field of the
+    /// integration edit panel. `id` is one of `"library"`, `"edit"`,
+    /// or `"new"`. Accept dispatches to the icon picker, glyph
+    /// builder (edit-existing), or glyph builder (fresh).
+    GlyphAction,
 }
 
 #[derive(Debug, Clone)]

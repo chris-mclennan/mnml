@@ -91,6 +91,10 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         .is_some_and(|p| matches!(p.focused_field, IntegrationEditField::Glyph));
     match key.code {
         KeyCode::Esc => app.integration_edit_cancel(),
+        // Enter on the Glyph field opens the 3-option chooser (Choose
+        // from library / Edit current / Create custom). Enter on any
+        // other field saves.
+        KeyCode::Enter if glyph_focused => app.open_glyph_action_menu(),
         KeyCode::Enter => app.integration_edit_save(),
         // → on the Glyph field opens the picker (Glyph is a menu-style
         // choice, not a text field). → on Color cycles the palette.
@@ -235,15 +239,28 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('e')
             if ctrl && matches!(picker.kind, crate::picker::PickerKind::IconGlyphs) =>
         {
-            let cp = picker
-                .selected_item()
-                .and_then(|it| u32::from_str_radix(&it.id, 16).ok());
-            if let Some(cp) = cp
-                && !app.open_glyph_builder_for_edit_cp(cp)
-            {
-                app.toast(format!(
-                    "glyph U+{cp:04X} wasn't built via mnml — no metadata to edit"
-                ));
+            let sel = picker.selected_item().cloned();
+            match sel {
+                // On the "+ Create custom glyph" banner: Ctrl+E is a
+                // no-op ("nothing to edit"). Toast so the user knows
+                // Ctrl+E was received but doesn't apply here.
+                Some(it) if it.id == "new" => {
+                    app.toast("Ctrl+E edits an existing glyph — move to a glyph first");
+                }
+                Some(it) => {
+                    if let Ok(cp) = u32::from_str_radix(&it.id, 16) {
+                        if !app.open_glyph_builder_for_edit_cp(cp) {
+                            app.toast(format!(
+                                "glyph U+{cp:04X} wasn't built via mnml — no metadata to edit"
+                            ));
+                        }
+                    } else {
+                        app.toast(format!("Ctrl+E: can't parse codepoint from id {:?}", it.id));
+                    }
+                }
+                None => {
+                    app.toast("Ctrl+E: no glyph selected");
+                }
             }
         }
         KeyCode::Backspace => picker.backspace(),
