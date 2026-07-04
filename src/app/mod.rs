@@ -2170,6 +2170,9 @@ pub struct PaneRects {
     pub picker_caret: Option<(u16, u16)>,
     /// `(rect, choice)` per button in the close-confirm overlay (0=Save, 1=Discard, 2=Cancel).
     pub close_prompt_buttons: Vec<(Rect, u8)>,
+    /// `(rect, code)` per button in the quit-confirm overlay. Codes are
+    /// the `QUIT_BTN_*` constants in `ui::prompt`.
+    pub quit_prompt_buttons: Vec<(Rect, u8)>,
     /// On-screen cell where the text-input prompt's caret should sit (when open).
     pub prompt_caret: Option<(u16, u16)>,
     /// The context-menu overlay's outer box (when open) and `(rect, item-index)` per row.
@@ -10621,31 +10624,29 @@ impl App {
     // ─── misc ───────────────────────────────────────────────────────
     pub fn request_quit(&mut self) {
         // A `Ctrl+Q` fat-finger shouldn't kill the session — open a
-        // confirm prompt. Esc cancels via the standard prompt machinery;
-        // Enter runs `accept_quit` which sets `should_quit` directly
-        // (skipping this method, so the prompt loop doesn't recur).
-        let dirty_names: Vec<String> = self
-            .panes
-            .iter()
-            .filter_map(|p| match p {
-                Pane::Editor(b) if b.dirty => Some(b.display_name().to_string()),
-                _ => None,
-            })
-            .collect();
-        let title = if dirty_names.is_empty() {
-            "Quit mnml? (Enter to confirm, Esc to cancel)".to_string()
-        } else {
-            format!(
-                "Quit mnml? UNSAVED: {} (Enter discards, Esc cancels)",
-                dirty_names.join(", ")
-            )
-        };
+        // button-based confirm prompt. Esc cancels via the standard
+        // prompt machinery. The renderer inspects the app for dirty
+        // panes so buttons adapt (clean: Quit/Cancel; dirty: Save all
+        // / Quit anyway / Cancel).
+        let title = "Quit mnml?".to_string();
         let prompt = crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::QuitConfirm,
             title,
             String::new(),
         );
         self.prompt = Some(prompt);
+    }
+
+    /// Dirty buffer display names, in pane order. Empty ⇒ nothing to
+    /// lose. Used by the quit confirm dialog to pick its button set.
+    pub fn dirty_buffer_names(&self) -> Vec<String> {
+        self.panes
+            .iter()
+            .filter_map(|p| match p {
+                Pane::Editor(b) if b.dirty => Some(b.display_name().to_string()),
+                _ => None,
+            })
+            .collect()
     }
 
     fn disarm_quit(&mut self) {

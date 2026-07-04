@@ -269,9 +269,78 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+fn run_quit_button(app: &mut App, code: u8) {
+    use crate::ui::prompt::{
+        QUIT_BTN_CANCEL, QUIT_BTN_QUIT_ANYWAY, QUIT_BTN_QUIT_CLEAN, QUIT_BTN_SAVE_ALL,
+    };
+    match code {
+        QUIT_BTN_SAVE_ALL => {
+            app.save_all();
+            app.should_quit = true;
+        }
+        QUIT_BTN_QUIT_ANYWAY | QUIT_BTN_QUIT_CLEAN => {
+            app.should_quit = true;
+        }
+        QUIT_BTN_CANCEL => {
+            // Prompt already cleared by caller.
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let Some(p) = app.prompt.as_mut() else { return };
+    // Quit confirm — button dialog. Left/Right cycle, Enter fires
+    // the focused button, S/Q/C are hotkeys, Esc cancels.
+    if matches!(p.kind, crate::prompt::PromptKind::QuitConfirm) {
+        let has_dirty = !app.dirty_buffer_names().is_empty();
+        let buttons = crate::ui::prompt::quit_buttons(has_dirty);
+        let n = buttons.len();
+        let Some(p) = app.prompt.as_mut() else { return };
+        match key.code {
+            KeyCode::Esc => {
+                app.prompt = None;
+                return;
+            }
+            KeyCode::Left | KeyCode::BackTab => {
+                p.cursor = (p.cursor + n - 1) % n;
+                return;
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                p.cursor = (p.cursor + 1) % n;
+                return;
+            }
+            KeyCode::Enter => {
+                let selected = p.cursor.min(buttons.len() - 1);
+                let code = buttons[selected].1;
+                app.prompt = None;
+                run_quit_button(app, code);
+                return;
+            }
+            KeyCode::Char(c) => {
+                let low = c.to_ascii_lowercase();
+                // Match by first-letter hotkey. Dirty state: s / q / c.
+                // Clean state: q / c. `y` → primary (Save all when
+                // dirty, else Quit); `n` → cancel.
+                let hit = match low {
+                    's' if has_dirty => Some(crate::ui::prompt::QUIT_BTN_SAVE_ALL),
+                    'q' if has_dirty => Some(crate::ui::prompt::QUIT_BTN_QUIT_ANYWAY),
+                    'q' => Some(crate::ui::prompt::QUIT_BTN_QUIT_CLEAN),
+                    'c' | 'n' => Some(crate::ui::prompt::QUIT_BTN_CANCEL),
+                    'y' if has_dirty => Some(crate::ui::prompt::QUIT_BTN_SAVE_ALL),
+                    'y' => Some(crate::ui::prompt::QUIT_BTN_QUIT_CLEAN),
+                    _ => None,
+                };
+                if let Some(code) = hit {
+                    app.prompt = None;
+                    run_quit_button(app, code);
+                }
+                return;
+            }
+            _ => return,
+        }
+    }
     let was_find = matches!(p.kind, crate::prompt::PromptKind::Find);
     // Up/Down on the Find prompt cycle through the find-history (shell-style).
     if was_find && matches!(key.code, KeyCode::Up | KeyCode::Down) {

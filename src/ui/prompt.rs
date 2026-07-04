@@ -18,6 +18,14 @@ use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let Some(p) = &app.prompt else { return };
+    // Quit confirm renders as a button dialog — no text input, no
+    // submit hint. Kept inside the Prompt state machine because
+    // Enter / Esc already route through it; the buttons just pick
+    // which action to take on Enter.
+    if matches!(p.kind, crate::prompt::PromptKind::QuitConfirm) {
+        draw_quit_confirm(frame, app, screen);
+        return;
+    }
     let title = format!(" {} ", p.title);
     let input = p.input.clone();
     let caret_col = p.caret_col();
@@ -147,6 +155,124 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
 
     let cx = inner.x + pad + (caret_col - start) as u16;
     app.rects.prompt_caret = Some((cx.min(inner.x + inner.width.saturating_sub(1)), field_y));
+}
+
+/// Quit-confirm buttons. Order matches `App::quit_prompt_buttons()`;
+/// the u8 payload is what `App::run_quit_button` dispatches on.
+pub const QUIT_BTN_SAVE_ALL: u8 = 0;
+pub const QUIT_BTN_QUIT_ANYWAY: u8 = 1;
+pub const QUIT_BTN_CANCEL: u8 = 2;
+pub const QUIT_BTN_QUIT_CLEAN: u8 = 3;
+
+/// Button set for the current dirty state — driven by [`App::dirty_buffer_names`].
+/// Returns `(label, action_code, hotkey_char_idx)` per button.
+pub fn quit_buttons(has_dirty: bool) -> Vec<(&'static str, u8, usize)> {
+    if has_dirty {
+        vec![
+            ("  Save all  ", QUIT_BTN_SAVE_ALL, 2),
+            (" Quit anyway ", QUIT_BTN_QUIT_ANYWAY, 1),
+            (" Cancel ", QUIT_BTN_CANCEL, 1),
+        ]
+    } else {
+        vec![
+            ("  Quit  ", QUIT_BTN_QUIT_CLEAN, 2),
+            (" Cancel ", QUIT_BTN_CANCEL, 1),
+        ]
+    }
+}
+
+fn draw_quit_confirm(frame: &mut Frame, app: &mut App, screen: Rect) {
+    let Some(p) = &app.prompt else { return };
+    let dirty = app.dirty_buffer_names();
+    let has_dirty = !dirty.is_empty();
+    let buttons = quit_buttons(has_dirty);
+    let selected = p.cursor.min(buttons.len().saturating_sub(1));
+
+    let title = p.title.clone();
+    let msg = if has_dirty {
+        format!("  Unsaved: {}", dirty.join(", "))
+    } else {
+        "  This will close mnml.".to_string()
+    };
+
+    let buttons_w: usize = buttons.iter().map(|(l, _, _)| l.chars().count() + 1).sum();
+    let inner_w = msg
+        .chars()
+        .count()
+        .max(buttons_w + 2)
+        .max(title.chars().count() + 4)
+        .max(32);
+    let w = (inner_w as u16 + 2).min(screen.width.saturating_sub(2));
+    // 3 rows of content: message + blank + buttons. +2 for borders.
+    let h = 5u16.min(screen.height.saturating_sub(2));
+    let area = Rect {
+        x: screen.x + (screen.width.saturating_sub(w)) / 2,
+        y: screen.y + (screen.height.saturating_sub(h)) / 3,
+        width: w,
+        height: h,
+    };
+
+    frame.render_widget(Clear, area);
+    let block = crate::ui::design_tokens::popup_menu(format!(" {title} "));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height < 2 {
+        return;
+    }
+
+    // Row 0: the message. Fill to inner width so the panel bg reads clean.
+    let msg_padded = format!("{msg:<width$}", width = inner.width as usize);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            msg_padded,
+            Style::default().fg(theme::cur().fg).bg(theme::cur().bg2),
+        ))),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
+
+    // Last inner row: right-aligned buttons. Focused button gets the
+    // menu-family highlight (cyan + bg_dark + bold) so it reads as the
+    // same primitive as menu bar / context menu selection.
+    let by = inner.y + inner.height - 1;
+    let total_bw: u16 = buttons
+        .iter()
+        .map(|(l, _, _)| l.chars().count() as u16 + 1)
+        .sum();
+    let mut bx = inner.x + inner.width.saturating_sub(total_bw);
+    app.rects.quit_prompt_buttons.clear();
+    for (i, (label, code, hk_idx)) in buttons.iter().enumerate() {
+        let focused = i == selected;
+        let style = if focused {
+            crate::ui::design_tokens::row_highlight_menu()
+        } else {
+            crate::ui::design_tokens::row_plain_menu()
+        };
+        let bw = label.chars().count() as u16;
+        if bx + bw > inner.x + inner.width {
+            break;
+        }
+        // Split so the hotkey letter is underlined.
+        let chars: Vec<char> = label.chars().collect();
+        let mut spans: Vec<Span> = Vec::new();
+        spans.push(Span::styled(
+            chars[..*hk_idx].iter().collect::<String>(),
+            style,
+        ));
+        if let Some(&hk) = chars.get(*hk_idx) {
+            spans.push(Span::styled(
+                hk.to_string(),
+                style.add_modifier(Modifier::UNDERLINED),
+            ));
+        }
+        spans.push(Span::styled(
+            chars[(hk_idx + 1)..].iter().collect::<String>(),
+            style,
+        ));
+        let rect = Rect::new(bx, by, bw, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)), rect);
+        app.rects.quit_prompt_buttons.push((rect, *code));
+        bx += bw + 1;
+    }
 }
 
 /// Split a path into a dimmed parent prefix (with trailing `/`) and

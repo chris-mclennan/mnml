@@ -738,6 +738,36 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // Quit-confirm overlay: only its buttons respond to clicks.
+    if app
+        .prompt
+        .as_ref()
+        .is_some_and(|p| matches!(p.kind, crate::prompt::PromptKind::QuitConfirm))
+    {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind
+            && let Some(&(_, code)) = app
+                .rects
+                .quit_prompt_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            use crate::ui::prompt::{
+                QUIT_BTN_CANCEL, QUIT_BTN_QUIT_ANYWAY, QUIT_BTN_QUIT_CLEAN, QUIT_BTN_SAVE_ALL,
+            };
+            app.prompt = None;
+            match code {
+                QUIT_BTN_SAVE_ALL => {
+                    app.save_all();
+                    app.should_quit = true;
+                }
+                QUIT_BTN_QUIT_ANYWAY | QUIT_BTN_QUIT_CLEAN => app.should_quit = true,
+                QUIT_BTN_CANCEL => {}
+                _ => {}
+            }
+        }
+        return;
+    }
+
     // The context menu is modal: a left-click on a row runs it; anywhere else
     // (or a right-click) dismisses. Mouse-move over a row highlights it
     // (matches macOS / VS Code menu hover).
