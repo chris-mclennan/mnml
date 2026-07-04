@@ -543,13 +543,18 @@ pub fn right_cluster_width(app: &App) -> u16 {
     // is just: ` + ` new-tab + ` TABS ` + tab-page chips + theme
     // + close.
     let _ = app.config.ui.launcher_icons.len();
-    let mut w: u16 = 3 + 6;
-    for i in 0..app.layouts.len() {
-        let dig = (i + 1).to_string().chars().count() as u16;
-        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-        w += 2 + dig + dirty;
-        if i == app.active_layout {
-            w += 2;
+    // ` + ` new-tab button — always present.
+    let mut w: u16 = 3;
+    // TABS label + per-tab-page chips — only when >= 2 tab-pages.
+    if app.layouts.len() >= 2 {
+        w += 6; // ` TABS `
+        for i in 0..app.layouts.len() {
+            let dig = (i + 1).to_string().chars().count() as u16;
+            let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
+            w += 2 + dig + dirty;
+            if i == app.active_layout {
+                w += 2;
+            }
         }
     }
     // theme toggle pill + ` × ` window close
@@ -668,7 +673,11 @@ pub fn paint_right_cluster(
         height: 1,
     });
     cluster_x += 3;
-    if !compact {
+    // Only paint the TABS switcher when there's actually more than
+    // one tab-page to switch between. With a single tab-page the
+    // switcher is dead chrome — the `+` new-tab button remains as
+    // the affordance for creating another one.
+    if !compact && app.layouts.len() >= 2 {
         // `TABS` label (decorative).
         spans.push(Span::styled(
             " TABS ",
