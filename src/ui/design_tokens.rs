@@ -125,6 +125,21 @@ pub fn row_plain_menu() -> Style {
     Style::default().fg(t.fg).bg(t.bg2)
 }
 
+/// A palette-bar chip — a 3-cell ` glyph ` span on the chrome row's
+/// `bg_dark`. Active chips (an open panel toggle, a focused tool)
+/// use cyan fg; inactive use `comment` fg. Used by the sidebar +
+/// right-panel toggles, launcher icons, integration icons, and any
+/// future top-row chip. Keeps all top-row glyphs reading as the
+/// same primitive.
+pub fn chip_bar_span(glyph: impl AsRef<str>, active: bool) -> Span<'static> {
+    let t = theme::cur();
+    let fg = if active { t.cyan } else { t.comment };
+    Span::styled(
+        format!(" {} ", glyph.as_ref()),
+        Style::default().fg(fg).bg(t.bg_dark),
+    )
+}
+
 /// Style for a section-label row inside a modal — the dim italic
 /// tag above a group of related fields (e.g. `preview` label above
 /// the preview area). Optional; use where visual grouping helps.

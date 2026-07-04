@@ -1942,8 +1942,6 @@ fn paint_integration_chips_in_gap(
     cluster_left: u16,
     y: u16,
 ) {
-    use ratatui::style::Style;
-    use ratatui::text::Span;
     use ratatui::widgets::Paragraph;
     // Even with no integrations configured, paint the `+` chip
     // so the user has a discoverable entry point. The discovery
@@ -1971,7 +1969,6 @@ fn paint_integration_chips_in_gap(
     if avail_w < per_chip {
         return;
     }
-    let t = theme::cur();
     let nerd = !app.config.ui.ascii_icons;
     // Both launcher icons and integration icons paint here, in a
     // single strip close to the palette dropdown. They look the
@@ -2052,10 +2049,7 @@ fn paint_integration_chips_in_gap(
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                format!(" {glyph} "),
-                Style::default().fg(t.comment).bg(t.bg_dark),
-            )),
+            Paragraph::new(crate::ui::design_tokens::chip_bar_span(glyph, false)),
             chip_rect,
         );
         app.rects.launcher_icon_rects.push((chip_rect, i));
@@ -2070,10 +2064,7 @@ fn paint_integration_chips_in_gap(
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                format!(" {glyph} "),
-                Style::default().fg(t.comment).bg(t.bg_dark),
-            )),
+            Paragraph::new(crate::ui::design_tokens::chip_bar_span(glyph, false)),
             chip_rect,
         );
         app.rects.integration_icon_rects.push((chip_rect, i));
