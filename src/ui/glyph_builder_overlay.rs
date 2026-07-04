@@ -40,7 +40,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         return;
     }
     let t = theme::cur();
-    let width = 78.min(parent.width.saturating_sub(4));
+    let width = 62.min(parent.width.saturating_sub(4));
     let height = 22.min(parent.height.saturating_sub(4));
     let x = parent.x + (parent.width.saturating_sub(width)) / 2;
     // Same fixed top-anchor as integration_edit_overlay so switching
@@ -127,144 +127,117 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
     }
 
-    // Preview area — draw a border, then have dispatch::emit_image_placements
-    // paint the sixel bytes at this cell.
+    // Text-based "actual glyph" preview — the terminal renders the
+    // character at the current codepoint using its loaded font, which
+    // is the same MnmlSymbols.ttf mnml just baked to. Simpler, faster,
+    // and more accurate than sixel-rasterizing the SVG separately;
+    // caveat is that during pre-bake tuning, the char shows the LAST
+    // baked version, not the currently-tuned parameters. Note printed
+    // below reminds the user to bake if width/height/center changed.
     let preview_top = inner.y + form_rows + 1;
-    if preview_rows >= 3 {
-        // Preview box sized ~9:10 aspect (matches the rasterizer's
-        // 1.5·CELL_W × EM pixmap = 900:1000). At ~8:16 cell aspect,
-        // a 14-cell wide × 8-cell tall box gives 112×128 px = 7:8
-        // (close enough that Lanczos resize doesn't distort).
-        let preview_rect = Rect {
+    let baked_char = u32::from_str_radix(&state.codepoint_hex, 16)
+        .ok()
+        .and_then(char::from_u32);
+    if preview_rows >= 3
+        && let Some(ch) = baked_char
+    {
+        let label_rect = Rect {
             x: inner.x + 2,
             y: preview_top,
-            width: 14.min(inner.width.saturating_sub(4)),
-            height: preview_rows,
+            width: inner.width.saturating_sub(4),
+            height: 1,
         };
-        let box_block = Block::default()
-            .borders(Borders::ALL)
-            .title(Span::styled(" preview ", Style::default().fg(t.comment)))
-            .style(Style::default().fg(t.comment).bg(t.bg_dark));
-        frame.render_widget(box_block, preview_rect);
-        if let Some(err) = &state.error {
-            let err_rect = Rect {
-                x: preview_rect.x + 1,
-                y: preview_rect.y + 1,
-                width: preview_rect.width.saturating_sub(2),
-                height: preview_rect.height.saturating_sub(2),
-            };
-            frame.render_widget(
-                Paragraph::new(Span::styled(
-                    err.clone(),
-                    Style::default().fg(t.red).add_modifier(Modifier::ITALIC),
-                )),
-                err_rect,
-            );
-        } else if let Some(png) = state.preview_png.clone() {
-            let inner_rect = Rect {
-                x: preview_rect.x + 1,
-                y: preview_rect.y + 1,
-                width: preview_rect.width.saturating_sub(2),
-                height: preview_rect.height.saturating_sub(2),
-            };
-            app.rects.glyph_builder_preview = Some(inner_rect);
-            // Queue the sixel/kitty paint request. The dispatch loop
-            // drains this at frame end and writes the escape to
-            // stdout at `inner_rect`'s cursor position. pane_id 0
-            // is synthetic — the emitter doesn't look it up.
-            app.image_paint_requests.push(crate::image::PaintRequest {
-                pane_id: 0,
-                area: inner_rect,
-                png_bytes: std::sync::Arc::new(png),
-            });
-        }
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "preview (actual font glyph)",
+                Style::default()
+                    .fg(t.comment)
+                    .add_modifier(Modifier::ITALIC),
+            ))),
+            label_rect,
+        );
 
-        // "At cell size" preview — a second row to the right of the
-        // big preview showing the glyph rendered at ~1-2 cell width
-        // next to sample text so users can eyeball how it will
-        // actually read in a tab or chip.
-        let sample_col_x = preview_rect.x + preview_rect.width + 2;
-        if sample_col_x + 22 < inner.x + inner.width && preview_rows >= 6 {
-            let label_rect = Rect {
-                x: sample_col_x,
-                y: preview_rect.y,
-                width: 22.min(inner.width.saturating_sub(sample_col_x - inner.x)),
-                height: 1,
-            };
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "at cell size",
-                    Style::default()
-                        .fg(t.comment)
-                        .add_modifier(Modifier::ITALIC),
-                ))),
-                label_rect,
-            );
-            // Rasterize a second pixmap at ~2 cells wide × 2 cells
-            // tall so the mini preview shows the glyph at the
-            // approximate size it will render in a bufferline tab
-            // or chip. Cached via the same signature check as the
-            // big preview since dimensions match.
-            let mini_target_w = 18u32; // ~2 cells at 8 px/cell + slack
-            let mini_target_h = 32u32;
-            let mini_png = crate::glyph_builder::rasterize(
-                &state.svg_path,
-                state.width_frac,
-                state.height_frac,
-                state.center_frac,
-                mini_target_w,
-                mini_target_h,
-            )
-            .ok();
+        // Row 1 — as it would appear in a bufferline tab.
+        let tab_rect = Rect {
+            x: inner.x + 4,
+            y: preview_top + 2,
+            width: inner.width.saturating_sub(6),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("tab:  ", Style::default().fg(t.comment)),
+                Span::styled(format!(" {ch}  "), Style::default().fg(t.orange)),
+                Span::styled(state.name.clone(), Style::default().fg(t.fg)),
+                Span::styled(" × ", Style::default().fg(t.grey)),
+            ])),
+            tab_rect,
+        );
 
-            // Sample chip row: [glyph]  amplify example
-            let sample_y = preview_rect.y + 2;
-            if let Some(png) = mini_png {
-                let mini_rect = Rect {
-                    x: sample_col_x,
-                    y: sample_y,
-                    width: 3,
-                    height: 2,
-                };
-                app.image_paint_requests.push(crate::image::PaintRequest {
-                    pane_id: 0,
-                    area: mini_rect,
-                    png_bytes: std::sync::Arc::new(png),
-                });
-            }
-            // Text next to the mini glyph.
-            let sample_text_rect = Rect {
-                x: sample_col_x + 4,
-                y: sample_y,
-                width: 20.min(inner.width.saturating_sub(sample_col_x + 4 - inner.x)),
-                height: 1,
-            };
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    "amplify · sample",
+        // Row 2 — rail chip style.
+        let chip_rect = Rect {
+            x: inner.x + 4,
+            y: preview_top + 3,
+            width: inner.width.saturating_sub(6),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("chip: ", Style::default().fg(t.comment)),
+                Span::styled(format!("{ch} "), Style::default().fg(t.purple)),
+                Span::styled(state.name.clone(), Style::default().fg(t.fg)),
+            ])),
+            chip_rect,
+        );
+
+        // Row 3 — bare char, several times so scale is visible.
+        let bare_rect = Rect {
+            x: inner.x + 4,
+            y: preview_top + 4,
+            width: inner.width.saturating_sub(6),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("bare: ", Style::default().fg(t.comment)),
+                Span::styled(
+                    format!("{ch}  {ch}  {ch}  U+{:04X}", ch as u32),
                     Style::default().fg(t.fg),
-                ))),
-                sample_text_rect,
-            );
-            // Hint line below.
-            let hint_rect = Rect {
-                x: sample_col_x,
-                y: sample_y + 3,
-                width: 24.min(inner.width.saturating_sub(sample_col_x - inner.x)),
+                ),
+            ])),
+            bare_rect,
+        );
+
+        // Reminder row: shown when the currently-tuned params differ
+        // from what's baked into the font (i.e. the user has been
+        // tuning but hasn't re-baked yet).
+        let stale = crate::glyph_builder::load_meta()
+            .glyphs
+            .iter()
+            .find(|g| g.codepoint == state.codepoint_hex)
+            .map(|g| {
+                (g.width_frac - state.width_frac).abs() > 0.001
+                    || (g.height_frac - state.height_frac).abs() > 0.001
+                    || (g.center_frac - state.center_frac).abs() > 0.001
+                    || g.svg != state.svg_path
+            })
+            .unwrap_or(true);
+        if stale && preview_rows >= 6 {
+            let note_rect = Rect {
+                x: inner.x + 4,
+                y: preview_top + 6,
+                width: inner.width.saturating_sub(6),
                 height: 1,
             };
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "≈ tab / chip render",
-                    Style::default()
-                        .fg(t.comment)
-                        .add_modifier(Modifier::ITALIC),
+                    "↵ bake to update — glyph above reflects last-baked version",
+                    Style::default().fg(t.yellow).add_modifier(Modifier::ITALIC),
                 ))),
-                hint_rect,
+                note_rect,
             );
         }
     }
-
     // Hint line at bottom of inner.
     let hint_y = inner.y + inner.height.saturating_sub(1);
     let hint_rect = Rect {
