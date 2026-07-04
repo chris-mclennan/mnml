@@ -261,6 +261,15 @@ impl PtySession {
         if let Some(cwd) = &profile.cwd {
             cmd.cwd(cwd);
         }
+        // Override TERM to a universally-known terminfo entry. mnml's
+        // parent process is often launched from Ghostty which sets
+        // TERM=xterm-ghostty; ncurses tools (iftop / htop / less / vim)
+        // fail with "Error opening terminal: xterm-ghostty" when the
+        // terminfo entry isn't installed on the machine. Mnml's
+        // internal ghostty terminal core still handles xterm-256color
+        // output correctly, and profile.env below can still override
+        // this per-profile if needed.
+        cmd.env("TERM", "xterm-256color");
         for (k, v) in &profile.env {
             cmd.env(k, v);
         }
