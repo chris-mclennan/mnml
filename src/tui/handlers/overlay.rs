@@ -91,11 +91,9 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         .is_some_and(|p| matches!(p.focused_field, IntegrationEditField::Glyph));
     match key.code {
         KeyCode::Esc => app.integration_edit_cancel(),
-        // Enter / Right on the Glyph field open the picker (Glyph is
-        // a menu-style choice, not a text field). Enter on any other
-        // field commits the save. Right on Color cycles the palette.
-        KeyCode::Enter if glyph_focused => app.open_icon_picker(),
         KeyCode::Enter => app.integration_edit_save(),
+        // → on the Glyph field opens the picker (Glyph is a menu-style
+        // choice, not a text field). → on Color cycles the palette.
         KeyCode::Right if glyph_focused => app.open_icon_picker(),
         KeyCode::Right => app.integration_edit_color_cycle(1),
         KeyCode::Tab => app.integration_edit_cycle_field(1),
@@ -104,11 +102,6 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up => app.integration_edit_cycle_field(-1),
         KeyCode::Down => app.integration_edit_cycle_field(1),
         KeyCode::Backspace => app.integration_edit_backspace(),
-        // Ctrl+G also opens the picker — muscle memory for the
-        // original chord before Enter / Right were wired up.
-        KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.open_icon_picker();
-        }
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.integration_edit_type_char(c);
         }

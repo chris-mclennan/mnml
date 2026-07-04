@@ -107,7 +107,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             ));
         } else if is_focused && matches!(field, IntegrationEditField::Glyph) {
             spans.push(Span::styled(
-                "  ↵ or → pick".to_string(),
+                "  → pick".to_string(),
                 Style::default().fg(t.cyan).add_modifier(Modifier::BOLD),
             ));
         } else if is_focused && !readonly {
