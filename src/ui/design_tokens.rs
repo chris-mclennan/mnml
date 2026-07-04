@@ -27,40 +27,53 @@ use crate::ui::theme;
 
 /// Modal-panel chrome. Returns a configured `Block` ready to render.
 /// The caller emits the widget + uses `block.inner()` for its content.
+/// Passing an empty title skips the title span so the border draws
+/// continuously.
 pub fn modal_panel(title: impl AsRef<str>) -> Block<'static> {
     let t = theme::cur();
-    let title = format!(" {} ", title.as_ref().trim());
-    Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(t.fg).bg(t.bg_dark))
-        .title(Span::styled(
-            title,
+        .style(Style::default().fg(t.fg).bg(t.bg_dark));
+    let title = title.as_ref().trim();
+    if title.is_empty() {
+        block
+    } else {
+        block.title(Span::styled(
+            format!(" {title} "),
             Style::default()
                 .fg(t.bg_dark)
                 .bg(t.cyan)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().fg(t.fg).bg(t.bg_dark))
+    }
 }
 
 /// Popup-style chrome for anchored / transient overlays. Rounded
-/// border, subtle color accent, `bg_darker` fill.
+/// border, subtle color accent, `bg_darker` fill. Passing an empty
+/// title skips the title span entirely so the top border draws
+/// continuously (tooltip / menu-bar dropdown / titleless
+/// context menus).
 pub fn popup_panel(title: impl AsRef<str>) -> Block<'static> {
     let t = theme::cur();
-    let title = format!(" {} ", title.as_ref().trim());
-    Block::default()
+    let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(t.blue).bg(t.bg_darker))
-        .title(Span::styled(
-            title,
+        .style(Style::default().fg(t.fg).bg(t.bg_darker));
+    let title = title.as_ref().trim();
+    if title.is_empty() {
+        block
+    } else {
+        block.title(Span::styled(
+            format!(" {title} "),
             Style::default()
                 .fg(t.blue)
                 .bg(t.bg_darker)
                 .add_modifier(Modifier::BOLD),
         ))
-        .style(Style::default().fg(t.fg).bg(t.bg_darker))
+    }
 }
 
 /// Style for the hint line at the bottom of a modal panel — the
