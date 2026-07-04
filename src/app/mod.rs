@@ -7027,10 +7027,15 @@ impl App {
             // qa-feature 2026-07-01 — tools that require root
             // (e.g. iftop needs /dev/bpf*) are launched under
             // `sudo` so the user gets a password prompt instead
-            // of a permission-denied dump. The `-p` flag preserves
-            // the prompt behavior; -A would try askpass first.
+            // of a permission-denied dump.
+            // 2026-07-04 — `--preserve-env=TERM,TERMINFO_DIRS` so
+            // the terminfo lookup path we set on the pty child
+            // survives across sudo's env-scrub (default sudoers
+            // whitelist doesn't include TERMINFO_DIRS, so iftop
+            // otherwise dies with "Error opening terminal:
+            // xterm-ghostty").
             let cmdline = if tool.needs_sudo {
-                format!("sudo {}", tool.binary)
+                format!("sudo --preserve-env=TERM,TERMINFO_DIRS {}", tool.binary)
             } else {
                 tool.binary.to_string()
             };
