@@ -122,11 +122,16 @@ impl App {
         ));
     }
 
-    /// Pick the next free PUA codepoint at or above U+F300 by
+    /// Pick the next free PUA codepoint at or above U+F1B00 by
     /// scanning every currently-configured integration / launcher
-    /// glyph for collisions. The script's own range comment notes
-    /// U+F300+ is the recommended user-add range, well clear of
-    /// Nerd Fonts' own `nf-*` glyphs.
+    /// glyph for collisions.
+    ///
+    /// 2026-07-04 — moved from U+F300+ to U+F1B00+ because U+F300-F381
+    /// is Nerd Fonts' Font Logos range (Alpine, Debian, Ubuntu, etc.),
+    /// so custom AWS glyphs collided with real Nerd Font glyphs and
+    /// were shadowed by any bundled Symbols Nerd Font (Ghostty's
+    /// behavior). U+F1AF1+ is past the end of Material Design Icons
+    /// (which stop at U+F1AF0) and unclaimed by any Nerd Font block.
     fn next_free_pua_codepoint(&self) -> Option<u32> {
         let mut taken: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for ic in &self.config.ui.integration_icons {
@@ -139,9 +144,10 @@ impl App {
                 taken.insert(c as u32);
             }
         }
-        // Walk U+F300 → U+F8FF (end of the BMP Private Use Area).
-        let mut cp = 0xF300u32;
-        while cp <= 0xF8FF {
+        // Walk U+F1B00 → U+F1FFF (well past MDI end at U+F1AF0, well
+        // inside the Supplementary Private Use Area).
+        let mut cp = 0xF1B00u32;
+        while cp <= 0xF1FFF {
             if !taken.contains(&cp) {
                 return Some(cp);
             }

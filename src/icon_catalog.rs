@@ -10,6 +10,25 @@
 //!
 //! To add more: drop a line here. The picker re-reads on every
 //! open; no codegen, no bake step.
+//!
+//! ## Custom mnml-patched glyph codepoint layout
+//!
+//! mnml's own branded logos (AWS Amplify, Claude Code, etc.) live in
+//! the Supplementary Private Use Area past U+F1AF0 — the end of
+//! Material Design Icons — because that's the first range every
+//! Nerd Font leaves untouched. Reserved blocks:
+//!
+//! - `U+F1B00 – U+F1BFF` — AWS Architecture (256 slots)
+//! - `U+F1C00 – U+F1CFF` — Google Cloud (reserved, unused)
+//! - `U+F1D00 – U+F1DFF` — Azure (reserved, unused)
+//! - `U+F1E00 – U+F1EFF` — AI tools: Claude Code, Codex, Copilot, Cursor, Aider, etc.
+//! - `U+F1F00 – U+F1FFF` — SaaS integrations: Datadog, PagerDuty, Notion, Linear, …
+//! - `U+F2000 – U+F20FF` — Dev tools: Docker, npm, PostgreSQL, Redis, Kafka, …
+//!
+//! Never allocate custom glyphs at U+F300+ or below U+F1AF0 — those
+//! ranges clash with Nerd Fonts' Font Logos and Material Design Icons
+//! blocks respectively, and terminals that ship a bundled Nerd Font
+//! (Ghostty) will shadow mnml's patch with the stock glyph.
 
 /// One catalog entry.
 pub struct IconEntry {
@@ -81,31 +100,38 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     // ── aws (mnml-patched from official AWS Architecture Icons ──
     // Two variants per service: inverted (transparent bg, colored
     // lines — the default) and color (colored bg, white lines).
-    // Layout: U+F300-F30B = inverted, U+F310-F31B = color.
-    IconEntry { codepoint: "F300", name: "aws-amplify (inverted)", category: "aws" },
-    IconEntry { codepoint: "F310", name: "aws-amplify (color)", category: "aws" },
-    IconEntry { codepoint: "F301", name: "aws-lambda (inverted)", category: "aws" },
-    IconEntry { codepoint: "F311", name: "aws-lambda (color)", category: "aws" },
-    IconEntry { codepoint: "F302", name: "aws-ecs (inverted)", category: "aws" },
-    IconEntry { codepoint: "F312", name: "aws-ecs (color)", category: "aws" },
-    IconEntry { codepoint: "F303", name: "aws-ecr (inverted)", category: "aws" },
-    IconEntry { codepoint: "F313", name: "aws-ecr (color)", category: "aws" },
-    IconEntry { codepoint: "F304", name: "aws-rds (inverted)", category: "aws" },
-    IconEntry { codepoint: "F314", name: "aws-rds (color)", category: "aws" },
-    IconEntry { codepoint: "F305", name: "aws-sqs (inverted)", category: "aws" },
-    IconEntry { codepoint: "F315", name: "aws-sqs (color)", category: "aws" },
-    IconEntry { codepoint: "F306", name: "aws-sns (inverted)", category: "aws" },
-    IconEntry { codepoint: "F316", name: "aws-sns (color)", category: "aws" },
-    IconEntry { codepoint: "F307", name: "aws-dynamodb (inverted)", category: "aws" },
-    IconEntry { codepoint: "F317", name: "aws-dynamodb (color)", category: "aws" },
-    IconEntry { codepoint: "F308", name: "aws-cognito (inverted)", category: "aws" },
-    IconEntry { codepoint: "F318", name: "aws-cognito (color)", category: "aws" },
-    IconEntry { codepoint: "F309", name: "aws-cloudwatch (inverted)", category: "aws" },
-    IconEntry { codepoint: "F319", name: "aws-cloudwatch (color)", category: "aws" },
-    IconEntry { codepoint: "F30A", name: "aws-codebuild (inverted)", category: "aws" },
-    IconEntry { codepoint: "F31A", name: "aws-codebuild (color)", category: "aws" },
-    IconEntry { codepoint: "F30B", name: "aws-eventbridge (inverted)", category: "aws" },
-    IconEntry { codepoint: "F31B", name: "aws-eventbridge (color)", category: "aws" },
+    // Layout: U+F1B00-F1B0B = inverted, U+F1B10-F1B1B = color.
+    //
+    // 2026-07-04 — moved from U+F300+ to U+F1B00+ because U+F300-F381
+    // is Nerd Fonts' Font Logos block (Alpine, Debian, Ubuntu, etc)
+    // and our custom AWS glyphs collided — Ghostty was rendering the
+    // Alpine mountain logo for our "amplify" codepoint. U+F1AF1+ is
+    // truly free (past the end of Material Design Icons at U+F1AF0)
+    // so no Nerd Font ever claims these codepoints.
+    IconEntry { codepoint: "F1B00", name: "aws-amplify (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B10", name: "aws-amplify (color)", category: "aws" },
+    IconEntry { codepoint: "F1B01", name: "aws-lambda (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B11", name: "aws-lambda (color)", category: "aws" },
+    IconEntry { codepoint: "F1B02", name: "aws-ecs (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B12", name: "aws-ecs (color)", category: "aws" },
+    IconEntry { codepoint: "F1B03", name: "aws-ecr (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B13", name: "aws-ecr (color)", category: "aws" },
+    IconEntry { codepoint: "F1B04", name: "aws-rds (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B14", name: "aws-rds (color)", category: "aws" },
+    IconEntry { codepoint: "F1B05", name: "aws-sqs (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B15", name: "aws-sqs (color)", category: "aws" },
+    IconEntry { codepoint: "F1B06", name: "aws-sns (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B16", name: "aws-sns (color)", category: "aws" },
+    IconEntry { codepoint: "F1B07", name: "aws-dynamodb (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B17", name: "aws-dynamodb (color)", category: "aws" },
+    IconEntry { codepoint: "F1B08", name: "aws-cognito (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B18", name: "aws-cognito (color)", category: "aws" },
+    IconEntry { codepoint: "F1B09", name: "aws-cloudwatch (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B19", name: "aws-cloudwatch (color)", category: "aws" },
+    IconEntry { codepoint: "F1B0A", name: "aws-codebuild (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B1A", name: "aws-codebuild (color)", category: "aws" },
+    IconEntry { codepoint: "F1B0B", name: "aws-eventbridge (inverted)", category: "aws" },
+    IconEntry { codepoint: "F1B1B", name: "aws-eventbridge (color)", category: "aws" },
     IconEntry { codepoint: "F085B", name: "brain", category: "ai" },
     IconEntry { codepoint: "F02D3", name: "robot", category: "ai" },
 
