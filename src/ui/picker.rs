@@ -204,10 +204,9 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
         return;
     };
     let t = theme::cur();
-    // Cell = `<glyph> ` — 2 cells wide. Tighter packing than a 3-cell
-    // grid so the selection highlight (a full cell of cyan bg) covers
-    // the glyph proportionally instead of trailing 2 pad cells right.
-    let cell_w: usize = 2;
+    // Cell = ` <glyph> ` — 3 cells wide, symmetric pad. Highlight
+    // extends one cell to the LEFT and RIGHT of the glyph.
+    let cell_w: usize = 3;
     let cols = (list_area.width as usize / cell_w).max(1);
     picker.grid_cols = cols;
     // Reserve the bottom row for the "selected: <name>" footer when
@@ -258,12 +257,13 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             if is_sel {
                 style = style.add_modifier(Modifier::BOLD);
             }
-            // Tile = ` <glyph>` — leading pad cell so the highlight
-            // extends one cell to the LEFT of the glyph, giving each
-            // selected glyph symmetric breathing room. Set the bg on
-            // the Paragraph itself so ratatui paints the entire rect
-            // background regardless of unicode-width quirks.
-            let cell_text = format!(" {glyph}");
+            // Tile = ` <glyph> ` — symmetric pad so the highlight
+            // extends one cell to the LEFT and RIGHT of the glyph.
+            // Set the bg on the Paragraph itself so ratatui paints
+            // the entire rect background regardless of unicode-width
+            // quirks (wide glyphs would otherwise leave the trailing
+            // space unpainted).
+            let cell_text = format!(" {glyph} ");
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(cell_text, style)))
                     .style(Style::default().bg(bg)),
