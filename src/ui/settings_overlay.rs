@@ -12,7 +12,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::app::settings::{RESET_ALL_KEY, SettingItem, build_settings};
@@ -58,23 +58,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // match what they're running against the release tag /
     // changelog. 2026-06-08 family-wide ask.
     let version_title = concat!(" v", env!("CARGO_PKG_VERSION"), " ");
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " Settings ",
-            Style::default()
-                .fg(t.bg_dark)
-                .bg(t.blue)
-                .add_modifier(Modifier::BOLD),
+    let block = crate::ui::design_tokens::modal_panel("Settings").title_top(
+        ratatui::text::Line::from(Span::styled(
+            version_title,
+            Style::default().fg(t.comment).add_modifier(Modifier::DIM),
         ))
-        .title_top(
-            ratatui::text::Line::from(Span::styled(
-                version_title,
-                Style::default().fg(t.comment).add_modifier(Modifier::DIM),
-            ))
-            .right_aligned(),
-        )
-        .style(Style::default().fg(t.fg).bg(t.bg_dark));
+        .right_aligned(),
+    );
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

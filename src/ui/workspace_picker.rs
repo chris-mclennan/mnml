@@ -12,7 +12,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Clear, Paragraph},
 };
 
 use crate::app::App;
@@ -82,9 +82,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         height: h.min(screen_h),
     };
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default().fg(t.fg).bg(t.bg2));
+    let block = crate::ui::design_tokens::modal_panel("Workspaces");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

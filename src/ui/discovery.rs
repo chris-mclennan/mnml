@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::DiscoveryCategory;
 use crate::app::{App, DISCOVERY_FLASH_MS};
@@ -144,16 +144,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         ));
     }
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(t.bg_darker)
-                .bg(t.yellow)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().fg(t.fg).bg(t.bg2));
+    let block = crate::ui::design_tokens::modal_panel(title);
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(rows.len() + 1);
     let active_flash = app
         .discovery_flash
