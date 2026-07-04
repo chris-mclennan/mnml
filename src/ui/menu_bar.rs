@@ -6,7 +6,7 @@
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
@@ -81,25 +81,18 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
             height: 1,
         };
         let is_highlighted = highlight_visible && i == open.item_idx;
-        let row_bg = if is_highlighted { t.cyan } else { t.bg2 };
-        let row_fg = if is_highlighted { t.bg_dark } else { t.fg };
+        let row_style = if is_highlighted {
+            crate::ui::design_tokens::row_highlight_menu()
+        } else {
+            crate::ui::design_tokens::row_plain_menu()
+        };
         let line = match item {
             MenuItem::Action { label, .. } => {
                 let pad = inner.width.saturating_sub(label.chars().count() as u16 + 1) as usize;
                 Line::from(vec![
-                    Span::styled(" ", Style::default().bg(row_bg)),
-                    Span::styled(
-                        label.to_string(),
-                        Style::default()
-                            .fg(row_fg)
-                            .bg(row_bg)
-                            .add_modifier(if is_highlighted {
-                                Modifier::BOLD
-                            } else {
-                                Modifier::empty()
-                            }),
-                    ),
-                    Span::styled(" ".repeat(pad), Style::default().bg(row_bg)),
+                    Span::styled(" ", row_style),
+                    Span::styled(label.to_string(), row_style),
+                    Span::styled(" ".repeat(pad), row_style),
                 ])
             }
             MenuItem::Separator => Line::from(vec![Span::styled(

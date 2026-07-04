@@ -5,12 +5,10 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
-use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let Some(menu) = &app.context_menu else {
@@ -21,7 +19,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     if menu.items.is_empty() || screen.width < 4 || screen.height < 3 {
         return;
     }
-    let t = theme::cur();
 
     let inner_w = menu.content_width();
     let w = ((inner_w as u16) + 2).min(screen.width.saturating_sub(1));
@@ -61,15 +58,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // still fire whatever's at `selected` (0 by default), so
         // the no-highlight state isn't inert.
         let selected = row == menu.selected && menu.interacted;
-        // Match menu_bar's selected-row style so the two menu
-        // aesthetics stay consistent: cyan bg + bg_dark fg + bold.
         let style = if selected {
-            Style::default()
-                .fg(t.bg_dark)
-                .bg(t.cyan)
-                .add_modifier(Modifier::BOLD)
+            crate::ui::design_tokens::row_highlight_menu()
         } else {
-            Style::default().fg(t.fg).bg(t.bg2)
+            crate::ui::design_tokens::row_plain_menu()
         };
         // Pad the label so the highlight fills the row.
         let mut label = format!(" {} ", item.label);

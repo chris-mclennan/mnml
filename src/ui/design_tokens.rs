@@ -105,6 +105,26 @@ pub fn hint_style() -> Style {
     Style::default().fg(t.comment).bg(t.bg_dark)
 }
 
+/// Row-highlight style for the *menu* family — menu-bar dropdowns,
+/// right-click context menus, workspaces_editor list. Reads as
+/// "commit action on Enter": cyan bg + bg_dark fg + bold. Pair with
+/// [`popup_menu`] chrome so the row is the visual weight, not the
+/// frame.
+pub fn row_highlight_menu() -> Style {
+    let t = theme::cur();
+    Style::default()
+        .fg(t.bg_dark)
+        .bg(t.cyan)
+        .add_modifier(Modifier::BOLD)
+}
+
+/// Unselected row style inside the menu family. Plain fg on the
+/// `bg2` panel fill — matches [`popup_menu`]'s background.
+pub fn row_plain_menu() -> Style {
+    let t = theme::cur();
+    Style::default().fg(t.fg).bg(t.bg2)
+}
+
 /// Style for a section-label row inside a modal — the dim italic
 /// tag above a group of related fields (e.g. `preview` label above
 /// the preview area). Optional; use where visual grouping helps.
