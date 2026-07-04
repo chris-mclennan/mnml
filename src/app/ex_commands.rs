@@ -1010,6 +1010,28 @@ impl App {
                     // without threading manifest context.
                     let cmdline = rest.trim();
                     let first = cmdline.split_whitespace().next().unwrap_or("term");
+                    // 2026-07-03 — if a Pty pane is already running
+                    // this exact cmdline (e.g. the user clicked the
+                    // Amplify chip a second time), focus it instead
+                    // of splitting with a duplicate. The chip click
+                    // dispatches `:term <binary>` directly to this
+                    // handler, so the dedup needs to live here as
+                    // well as in run_dynamic_command.
+                    let existing = self.panes.iter().enumerate().find_map(|(pid, p)| {
+                        let crate::pane::Pane::Pty(s) = p else {
+                            return None;
+                        };
+                        let args_joined = s.profile.args.join(" ");
+                        if args_joined.trim() == cmdline || args_joined.trim().ends_with(cmdline) {
+                            Some(pid)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(pid) = existing {
+                        self.active = Some(pid);
+                        return;
+                    }
                     let label = if let Some(rest) = first.strip_prefix("mnml-") {
                         rest.rsplit_once('-')
                             .map_or(rest, |(_, tail)| tail)
