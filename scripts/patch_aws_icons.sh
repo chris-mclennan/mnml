@@ -3,11 +3,13 @@
 # Nerd Font, at codepoints U+F300-F30B (inverted variants).
 #
 # Usage:
-#   scripts/patch_aws_icons.sh [OUT_SUFFIX]
+#   scripts/patch_aws_icons.sh
 #
-# `OUT_SUFFIX` renames the output file so macOS's font cache picks up the
-# refresh without a reboot — pass e.g. `mnml3` to write
-# `JetBrainsMonoNerdFont-Regular-mnml3.ttf`. Defaults to `mnml`.
+# Always overwrites `JetBrainsMonoNerdFont-Regular-mnml.ttf` and then
+# clears macOS's user font cache (`atsutil databases -removeUser`, no
+# sudo on macOS 14+) so the reload picks up the new file. Restart your
+# terminal after this runs — Ghostty caches the loaded font in-process,
+# a font-cache flush alone won't refresh a running window.
 #
 # Each glyph is scaled with `width=1.0` (fits inside the cell — the earlier
 # default of 1.4 overflowed by 20% on each side, eating the tab-icon
@@ -16,10 +18,9 @@
 
 set -euo pipefail
 
-SUFFIX="${1:-mnml}"
 SVG_DIR="$HOME/Downloads/mnml-aws-icon-preview-inverted"
 FONT_IN="$HOME/Library/Fonts/JetBrainsMonoNerdFont-Regular.ttf"
-FONT_OUT="$HOME/Library/Fonts/JetBrainsMonoNerdFont-Regular-${SUFFIX}.ttf"
+FONT_OUT="$HOME/Library/Fonts/JetBrainsMonoNerdFont-Regular-mnml.ttf"
 
 if [[ ! -d "$SVG_DIR" ]]; then
   echo "SVG dir not found: $SVG_DIR" >&2
@@ -61,11 +62,15 @@ done
 
 echo "→ patching $FONT_OUT with ${#GLYPHS[@]} AWS icons (width=1.0, fits cell)"
 fontforge -script "$(dirname "$0")/patch_nerd_font.py" "${ARGS[@]}"
+
+# Flush the user-level font cache so macOS re-reads the file we just
+# wrote. `atsutil databases -removeUser` works without sudo on macOS
+# 14+; on older systems it silently no-ops (harmless).
 echo
-echo "✓ done. Point your terminal at:"
-echo "   $(basename "$FONT_OUT" .ttf)"
+echo "→ flushing font cache"
+atsutil databases -removeUser >/dev/null 2>&1 || true
+
 echo
-echo "If the font doesn't refresh, either:"
-echo "  · rename this output to a suffix you haven't used yet (macOS caches"
-echo "    fonts by file path) and update your Ghostty config to match, or"
-echo "  · sudo atsutil databases -remove   # then log out + back in"
+echo "✓ done. Restart your terminal to pick up the refreshed font"
+echo "  (Ghostty caches the loaded font in-process — a cache flush"
+echo "   alone won't refresh already-open windows)."
