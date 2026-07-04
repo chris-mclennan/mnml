@@ -99,6 +99,16 @@ pub(crate) fn handle_discovery_overlay_key(app: &mut App, key: KeyEvent) {
             KeyCode::Up => app.integration_edit_cycle_field(-1),
             KeyCode::Down => app.integration_edit_cycle_field(1),
             KeyCode::Backspace => app.integration_edit_backspace(),
+            // Ctrl+G — browse glyphs. 2026-07-03 user feedback:
+            // the Glyph field is text-only; users want a picker
+            // that shows every configured icon (including the
+            // 24 mnml-patched AWS variants) with click-to-choose.
+            // The picker's accept handler routes back into the
+            // Glyph field when the edit panel is open (see
+            // `PickerKind::IconGlyphs` handler in app/picker.rs).
+            KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.open_icon_picker();
+            }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.integration_edit_type_char(c);
             }

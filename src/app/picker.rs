@@ -889,16 +889,39 @@ impl App {
                 self.install_sibling(&id);
             }
             PickerKind::IconGlyphs => {
-                // id = uppercase hex codepoint. Build the glyph + a
-                // Rust-style `\u{XXXX}` escape; copy BOTH formats so
-                // the user can paste straight into a config field
-                // (literal) or a Rust source string (escape).
+                // id = uppercase hex codepoint. Build the glyph.
                 if let Ok(cp) = u32::from_str_radix(&item.id, 16)
                     && let Some(ch) = char::from_u32(cp)
                 {
-                    let line = format!("{ch}  \\u{{{}}}  ({})", item.id, item.label);
-                    self.clipboard.set(line, false);
-                    self.toast(format!("icon copied — paste: {ch} or \\u{{{}}}", item.id));
+                    // Route straight into the edit panel's Glyph
+                    // field when the panel is open — the user
+                    // triggered the picker from Ctrl+G there.
+                    let edit_active = self
+                        .discovery_overlay
+                        .as_ref()
+                        .is_some_and(|s| s.edit_panel.is_some());
+                    if edit_active {
+                        // Replace whatever's in the Glyph field
+                        // with the picked char + close the picker.
+                        // Backspace + type_char keeps the buffer
+                        // logic centralized.
+                        if let Some(state) = self.discovery_overlay.as_mut()
+                            && let Some(panel) = state.edit_panel.as_mut()
+                        {
+                            panel.focused_field =
+                                crate::app::discovery::IntegrationEditField::Glyph;
+                            panel.glyph.clear();
+                            panel.glyph.push(ch);
+                        }
+                        self.toast(format!("glyph: {ch}"));
+                    } else {
+                        // Bare palette-triggered picker still
+                        // copies to clipboard (both literal +
+                        // \u{...} escape).
+                        let line = format!("{ch}  \\u{{{}}}  ({})", item.id, item.label);
+                        self.clipboard.set(line, false);
+                        self.toast(format!("icon copied — paste: {ch} or \\u{{{}}}", item.id));
+                    }
                 }
             }
         }
