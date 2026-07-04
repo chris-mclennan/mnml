@@ -258,12 +258,12 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             if is_sel {
                 style = style.add_modifier(Modifier::BOLD);
             }
-            // Fill the whole 2-cell tile: `<glyph> `. Set the bg on
-            // the Paragraph itself (not just the Span) so ratatui paints
-            // the entire rect background — otherwise unicode-width
-            // quirks (wide glyphs clipping the trailing space) leave
-            // the second cell unpainted and the highlight disappears.
-            let cell_text = format!("{glyph} ");
+            // Tile = ` <glyph>` — leading pad cell so the highlight
+            // extends one cell to the LEFT of the glyph, giving each
+            // selected glyph symmetric breathing room. Set the bg on
+            // the Paragraph itself so ratatui paints the entire rect
+            // background regardless of unicode-width quirks.
+            let cell_text = format!(" {glyph}");
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(cell_text, style)))
                     .style(Style::default().bg(bg)),
