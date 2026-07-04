@@ -96,6 +96,12 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         // choice, not a text field). → on Color cycles the palette.
         KeyCode::Right if glyph_focused => app.open_icon_picker(),
         KeyCode::Right => app.integration_edit_color_cycle(1),
+        // Ctrl+N on the Glyph field opens the glyph builder — bake a
+        // custom SVG into MnmlSymbols and route the codepoint back
+        // into this edit panel's Glyph field on commit.
+        KeyCode::Char('n') if glyph_focused && key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.open_glyph_builder_from_edit();
+        }
         KeyCode::Tab => app.integration_edit_cycle_field(1),
         KeyCode::BackTab => app.integration_edit_cycle_field(-1),
         KeyCode::Left => app.integration_edit_color_cycle(-1),

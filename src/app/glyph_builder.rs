@@ -15,6 +15,19 @@ impl App {
         self.glyph_builder = Some(GlyphBuilderState::new());
     }
 
+    /// Same as `open_glyph_builder`, but marks the panel as opened
+    /// from an integration edit context. On commit, the resulting
+    /// codepoint char flows back into the edit panel's Glyph field
+    /// so the user doesn't have to reopen it manually.
+    pub fn open_glyph_builder_from_edit(&mut self) {
+        let mut s = GlyphBuilderState::new();
+        s.from_integration_edit = true;
+        // Also close the icon picker if it's open (this path can be
+        // reached from the picker's "+ Create custom glyph" row).
+        self.picker = None;
+        self.glyph_builder = Some(s);
+    }
+
     pub fn close_glyph_builder(&mut self) {
         self.glyph_builder = None;
     }
@@ -148,15 +161,34 @@ impl App {
         };
         // Copy the codepoint char to the clipboard so the user can
         // paste it into their integration config immediately.
-        if let Some(c) = char::from_u32(cp) {
+        let cp_char = char::from_u32(cp);
+        if let Some(c) = cp_char {
             let mut clip = crate::clipboard::Clipboard::new();
             clip.set(c.to_string(), false);
         }
+        let route_to_edit = s.from_integration_edit;
         self.close_glyph_builder();
+        // Route the codepoint char straight back into the still-open
+        // integration edit panel's Glyph field when we were opened
+        // from that context.
+        if route_to_edit
+            && let Some(c) = cp_char
+            && let Some(panel) = self.integration_edit.as_mut()
+        {
+            panel.focused_field = crate::app::discovery::IntegrationEditField::Glyph;
+            panel.glyph.clear();
+            panel.glyph.push(c);
+        }
         self.open_pty(profile);
-        self.toast(format!(
-            "baking U+{cp:04X} · glyph copied · restart terminal after fontforge exits"
-        ));
+        if route_to_edit {
+            self.toast(format!(
+                "baking U+{cp:04X} · glyph inserted into edit panel · restart terminal after fontforge exits"
+            ));
+        } else {
+            self.toast(format!(
+                "baking U+{cp:04X} · glyph copied · restart terminal after fontforge exits"
+            ));
+        }
     }
 
     /// Where the UI should look for the current focus. Used by the

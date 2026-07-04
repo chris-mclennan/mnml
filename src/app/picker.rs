@@ -889,6 +889,16 @@ impl App {
                 self.install_sibling(&id);
             }
             PickerKind::IconGlyphs => {
+                // Special "+ Create custom glyph…" row — opens the
+                // glyph builder in edit-panel context; commit routes
+                // the resulting codepoint back to the still-open edit
+                // panel. Only surfaces when integration_edit is Some
+                // (see the row-add block in `open_icon_picker`), but
+                // guard here too in case that invariant changes.
+                if item.id == "new" && self.integration_edit.is_some() {
+                    self.open_glyph_builder_from_edit();
+                    return;
+                }
                 // id = uppercase hex codepoint. Build the glyph.
                 if let Ok(cp) = u32::from_str_radix(&item.id, 16)
                     && let Some(ch) = char::from_u32(cp)
@@ -960,6 +970,23 @@ impl App {
     pub fn open_icon_picker(&mut self) {
         let mut items: Vec<crate::picker::PickerItem> = Vec::with_capacity(2048);
         let mut seen = std::collections::HashSet::<u32>::new();
+
+        // "+ Create custom glyph…" pseudo-row — pinned at the very top
+        // via priority=2. Special id "new" is handled by the accept
+        // path in this file: opens the glyph builder in edit-panel
+        // context so the resulting codepoint flows straight back into
+        // the still-open integration edit panel's Glyph field.
+        // Only surface this affordance when the picker was launched
+        // from an integration edit context (otherwise the resulting
+        // glyph has nowhere to flow back to).
+        if self.integration_edit.is_some() {
+            items.push(crate::picker::PickerItem {
+                id: "new".to_string(),
+                label: "+ Create custom glyph (SVG → font)".to_string(),
+                detail: "opens glyph builder".to_string(),
+                priority: 2,
+            });
+        }
 
         // Hand-curated section — pinned first via priority=1 so
         // typing a search matches these before generic entries.

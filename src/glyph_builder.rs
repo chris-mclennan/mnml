@@ -114,6 +114,12 @@ pub struct GlyphBuilderState {
     /// Non-empty when the last preview attempt failed. Renderer shows
     /// this in the preview area instead of an image.
     pub error: Option<String>,
+    /// True when opened from inside an integration edit panel (via
+    /// Ctrl+N on the Glyph field OR the "+ Create custom glyph" row
+    /// in the icon picker). On commit, the baked codepoint char
+    /// flows straight back into the edit panel's Glyph field so the
+    /// user doesn't have to reopen the edit panel and paste.
+    pub from_integration_edit: bool,
 }
 
 /// Hash-friendly snapshot of the fields the preview depends on.
@@ -139,6 +145,7 @@ impl Default for GlyphBuilderState {
             preview_png: None,
             preview_signature: None,
             error: None,
+            from_integration_edit: false,
         }
     }
 }
