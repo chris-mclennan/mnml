@@ -45,8 +45,19 @@ elif [ -x "/Applications/Ghostty.app/Contents/MacOS/ghostty" ]; then
     ghostty_bin="/Applications/Ghostty.app/Contents/MacOS/ghostty"
 fi
 if [ -n "$ghostty_bin" ]; then
-    echo "  found ghostty at $ghostty_bin — exec ghostty -e mnml" >> "$log_file"
-    exec "$ghostty_bin" -e "$mnml_bin"
+    # Force the ARM64 slice of Ghostty's universal binary on Apple
+    # Silicon so we can't accidentally launch under Rosetta if a
+    # parent process (Finder, Launcher, whatever) was translated. The
+    # `arch` tool is a no-op when the requested slice matches the
+    # native arch, so on Intel it just falls through to arch=x86_64.
+    host_arch="$(/usr/bin/uname -m 2>/dev/null || echo unknown)"
+    if [ "$host_arch" = "arm64" ]; then
+        echo "  arm64 host — exec /usr/bin/arch -arm64 ghostty -e mnml" >> "$log_file"
+        exec /usr/bin/arch -arm64 "$ghostty_bin" -e "$mnml_bin"
+    else
+        echo "  $host_arch host — exec ghostty -e mnml" >> "$log_file"
+        exec "$ghostty_bin" -e "$mnml_bin"
+    fi
 fi
 echo "  ghostty not found — falling back to Terminal.app" >> "$log_file"
 osascript <<EOF
