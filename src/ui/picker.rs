@@ -251,22 +251,19 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             let glyph_ch = item.label.chars().next().unwrap_or(' ');
             let glyph = glyph_ch.to_string();
             let is_sel = idx == picker_ref.selected;
-            let fg = if is_sel { t.bg_dark } else { t.fg };
-            let bg = if is_sel { t.cyan } else { t.bg_darker };
-            let mut style = Style::default().fg(fg).bg(bg);
-            if is_sel {
-                style = style.add_modifier(Modifier::BOLD);
-            }
-            // Tile = ` <glyph> ` — symmetric pad so the highlight
-            // extends one cell to the LEFT and RIGHT of the glyph.
-            // Set the bg on the Paragraph itself so ratatui paints
-            // the entire rect background regardless of unicode-width
-            // quirks (wide glyphs would otherwise leave the trailing
-            // space unpainted).
+            // No background paint — color the glyph itself so we sidestep
+            // every unicode-width / cell-alignment trap. Selected =
+            // bright cyan + bold; unselected = a dim comment color so the
+            // one selected glyph pops.
+            let (fg, modifier) = if is_sel {
+                (t.cyan, Modifier::BOLD)
+            } else {
+                (t.fg, Modifier::empty())
+            };
+            let style = Style::default().fg(fg).add_modifier(modifier);
             let cell_text = format!(" {glyph} ");
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(cell_text, style)))
-                    .style(Style::default().bg(bg)),
+                Paragraph::new(Line::from(Span::styled(cell_text, style))),
                 cell_rect,
             );
             app.rects.picker_items.push((cell_rect, idx));
