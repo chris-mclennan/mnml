@@ -145,16 +145,24 @@ def main() -> int:
             print(f"  ! empty glyph from {svg_path}, skipping")
             continue
 
-        # Scale so the glyph fits exactly inside the cell. No overflow.
-        target_w = cell_w * 1.0
-        target_h = em * 0.85
+        # Scale so the glyph reads at ~90% of surrounding cap-height.
+        # width_frac = 1.4 allows up to 40% overflow into neighboring
+        # cells — but MnmlSymbols is a fallback font used only where
+        # padding cells are empty background, so overflow is invisible
+        # against the shell bg. Real programming fonts (JBM NF, etc.)
+        # do the same thing with wide devicon glyphs.
+        target_w = cell_w * 1.4
+        target_h = em * 0.90
         scale = min(target_w / glyph_w, target_h / glyph_h)
         glyph.transform((scale, 0.0, 0.0, scale, 0.0, 0.0))
 
         bbox = glyph.boundingBox()
         dx = -bbox[0] + (cell_w - (bbox[2] - bbox[0])) / 2
         glyph_h = bbox[3] - bbox[1]
-        target_center = em * 0.38
+        # Center vertically at 0.36 * em ≈ Latin cap-height mid-point
+        # (cap ~720 for JetBrainsMono, mid = 360). Was 0.38 which sat
+        # the glyph visibly high compared to adjacent text.
+        target_center = em * 0.36
         dy = target_center - (bbox[1] + glyph_h / 2.0)
         glyph.transform((1.0, 0.0, 0.0, 1.0, dx, dy))
         glyph.width = cell_w
