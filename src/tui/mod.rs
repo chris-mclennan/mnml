@@ -608,11 +608,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // stealing keys while the user is in a pane. Also skipped when
     // any modal overlay is up (picker / integration_edit) — those
     // steal keys further down and got their typing eaten by this
-    // block until 2026-07-04.
+    // block until 2026-07-04. Also skipped when the cmdline is
+    // open (`:` was pressed) — otherwise `:` opens the cmdline
+    // popup and then the letters of the ex command get eaten by
+    // this block instead of reaching the cmdline (2026-07-04).
     if app.focus == crate::focus::Focus::Tree
         && app.active_section == crate::app::ActivitySection::Integrations
         && app.picker.is_none()
         && app.integration_edit.is_none()
+        && app.no_pane_cmdline.is_none()
     {
         match key.code {
             KeyCode::Esc if !app.integrations_panel_filter.is_empty() => {
