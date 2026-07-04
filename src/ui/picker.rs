@@ -257,10 +257,7 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             // grid being muted, not from a highlight rectangle. This
             // sidesteps every padding-width alignment trap.
             let (fg, modifier) = if is_sel {
-                (
-                    ratatui::style::Color::Rgb(255, 255, 255),
-                    Modifier::BOLD | Modifier::UNDERLINED,
-                )
+                (ratatui::style::Color::Rgb(255, 255, 255), Modifier::BOLD)
             } else {
                 (t.comment, Modifier::empty())
             };
