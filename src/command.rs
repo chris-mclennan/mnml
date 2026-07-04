@@ -1693,13 +1693,6 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_icon_picker(),
         },
         Command {
-            id: "integrations.add",
-            title: "Integrations: discover + add family siblings (opens overlay)",
-            group: "integrations",
-            keys: &[],
-            run: |app| app.open_discovery_overlay(),
-        },
-        Command {
             id: "integrations.patch_nerd_font_svg",
             title: "Integrations: bake an SVG into your Nerd Font as a glyph",
             group: "integrations",

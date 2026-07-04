@@ -311,10 +311,6 @@ pub fn root() -> &'static Leader {
                             ),
                             ('r', cmd("tools.btop", "btop — resource monitor")),
                             (
-                                '+',
-                                cmd("integrations.add", "add integration (discovery overlay)"),
-                            ),
-                            (
                                 'p',
                                 cmd("integrations.icon_picker", "browse Nerd Font glyphs"),
                             ),

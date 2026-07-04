@@ -5028,6 +5028,38 @@ impl App {
             .find(|c| c.id == id)
             .and_then(|c| c.ex_run.clone());
         if let Some(cmdline) = ex_run {
+            // 2026-07-03 — for `:term <binary>` dispatched from
+            // an integration chip (rail click, chord, palette
+            // fire), if a Pty pane hosting that exact binary is
+            // already open, FOCUS it instead of spawning a new
+            // one that splits the layout. User doesn't expect a
+            // second Amplify to appear when they click the chip
+            // twice.
+            let trimmed = cmdline.trim().trim_start_matches(':').trim();
+            if let Some(binary) = trimmed
+                .strip_prefix("term ")
+                .or_else(|| trimmed.strip_prefix("terminal "))
+                .map(|s| s.trim())
+                && !binary.contains(char::is_whitespace)
+            {
+                // Match by profile.args (the shell -c argument
+                // is the binary invocation).
+                let existing = self.panes.iter().enumerate().find_map(|(pid, p)| {
+                    let crate::pane::Pane::Pty(s) = p else {
+                        return None;
+                    };
+                    let args_joined = s.profile.args.join(" ");
+                    if args_joined.trim() == binary || args_joined.trim().ends_with(binary) {
+                        Some(pid)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(pid) = existing {
+                    self.active = Some(pid);
+                    return true;
+                }
+            }
             self.run_ex_command(&cmdline);
             return true;
         }

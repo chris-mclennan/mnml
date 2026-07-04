@@ -1476,20 +1476,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     about_overlay::draw(frame, app, area);
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
-    // "+ Add integration" overlay — `:integrations.add`. Suppressed
-    // when the user is on the edit sub-panel (right-click chip →
-    // Edit) so the browse list doesn't distract from a focused
-    // per-integration edit.
-    let editing = app
-        .discovery_overlay
-        .as_ref()
-        .is_some_and(|s| s.edit_panel.is_some());
-    if !editing {
-        discovery_overlay::draw(frame, app, area);
-    }
-    // Integration edit panel — reads `discovery_overlay.edit_panel`.
-    // Rendered whether or not the discovery list is visible so the
-    // right-click → Edit flow shows JUST this panel.
+    // Discovery browse-list overlay — REMOVED 2026-07-03. The
+    // sidebar Installed / Marketplace tabs cover browse + enable
+    // + install, so the big overlay was redundant. The Edit
+    // sub-panel that used to live inside it is now the ONLY
+    // reachable path (right-click chip → Edit).
+    // Integration edit panel — reads `discovery_overlay.edit_panel`
+    // still (the struct scaffolding stays for the edit host until
+    // a deeper refactor); the browse chrome around it never paints.
     integration_edit_overlay::draw(frame, app, area);
     // Help overlay — `?` / view.help (auto-generated keymap reference).
     help_overlay::draw(frame, app, area);

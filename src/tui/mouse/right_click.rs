@@ -248,17 +248,14 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         && crate::app::dispatch::contains(r, x, y)
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![
-            MenuItem::new("Add integration…", MenuAction::Command("integrations.add")),
-            MenuItem::new(
-                if app.integration_section_expanded {
-                    "Collapse section"
-                } else {
-                    "Expand section"
-                },
-                MenuAction::Command("view.toggle_integrations_section"),
-            ),
-        ];
+        let items = vec![MenuItem::new(
+            if app.integration_section_expanded {
+                "Collapse section"
+            } else {
+                "Expand section"
+            },
+            MenuAction::Command("view.toggle_integrations_section"),
+        )];
         app.context_menu = Some(ContextMenu::new(
             Some("integrations".to_string()),
             (x, y),
