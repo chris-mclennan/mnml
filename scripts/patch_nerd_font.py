@@ -181,22 +181,21 @@ def main() -> int:
 
         # Scale the SVG. Two knobs:
         #   `width` — fraction of the monospace advance the glyph is
-        #     allowed to span. 1.0 = stays inside one cell; 1.4 =
-        #     ~20% overflow on each side. Modern terminals (Apple
-        #     Terminal, Ghostty, iTerm2, kitty) render that overflow
-        #     into surrounding cells without clipping; mnml's
-        #     integration row paints the glyph as `"  glyph "` so
-        #     the overflow lands on whitespace.
+        #     allowed to span. 1.0 = stays inside the cell (default).
+        #     Values >1.0 overflow into neighboring cells — good for
+        #     matching the visual weight of stock Nerd Font icons in
+        #     isolation, BAD for anything that renders in a tab or
+        #     row with tight padding (the overflow eats the pad and
+        #     the label kisses the glyph).
         #   `height` — vertical fill as a fraction of em. 1.0 fills
         #     the em-square; 0.85 leaves headroom for asc/descenders.
-        # Override either per-glyph via
+        # Override per-glyph via
         # `--glyph PATH:CP:NAME:width=1.6:height=0.95`.
-        # Defaults bumped 2026-06-23: was width=1.0, height=0.85
-        # (sized for tmnl's per-cell clip). Modern terminals render
-        # overflow fine; the larger defaults match the visual weight
-        # of stock Nerd Font glyphs.
-        width_frac = float(extras.get("width", "1.4"))
-        height_frac = float(extras.get("height", "1.0"))
+        # Default was 1.4 (2026-06-23); reverted to 1.0 on 2026-07-04
+        # because the AWS icons at 1.4 overflowed 120 font-units into
+        # the tab padding and the bufferline label crowded the glyph.
+        width_frac = float(extras.get("width", "1.0"))
+        height_frac = float(extras.get("height", "0.85"))
         target_w = cell_w * width_frac
         target_h = em * height_frac
         scale = min(target_w / glyph_w, target_h / glyph_h)
