@@ -474,21 +474,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Style::default().bg(theme::cur().bg_darker),
         ));
     }
-    // Left arrow (paints at inner_right..inner_right+3).
+    // Left arrow (paints at inner_right..inner_right+3). Only rendered
+    // when there's actual overflow on that side — the 3-cell footprint
+    // is still reserved by the layout so tabs don't jitter when the
+    // arrow appears / disappears, but idle chrome stays quiet.
     let left_enabled = first_visible > 0;
-    let l_fg = if left_enabled {
-        theme::cur().blue
-    } else {
-        theme::cur().comment
-    };
-    spans.push(Span::styled(
-        " ‹ ",
-        Style::default()
-            .fg(l_fg)
-            .bg(theme::cur().bg_darker)
-            .add_modifier(Modifier::BOLD),
-    ));
     if left_enabled {
+        spans.push(Span::styled(
+            " ‹ ",
+            Style::default()
+                .fg(theme::cur().blue)
+                .bg(theme::cur().bg_darker)
+                .add_modifier(Modifier::BOLD),
+        ));
         app.rects.bufferline_overflow_left = Some(ratatui::layout::Rect {
             x: inner_right,
             y: area.y,
@@ -496,22 +494,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         });
     } else {
+        spans.push(Span::styled(
+            "   ",
+            Style::default().bg(theme::cur().bg_darker),
+        ));
         app.rects.bufferline_overflow_left = None;
     }
     // Right arrow (paints at inner_right+3..inner_right+6).
-    let r_fg = if more_right {
-        theme::cur().blue
-    } else {
-        theme::cur().comment
-    };
-    spans.push(Span::styled(
-        " › ",
-        Style::default()
-            .fg(r_fg)
-            .bg(theme::cur().bg_darker)
-            .add_modifier(Modifier::BOLD),
-    ));
     if more_right {
+        spans.push(Span::styled(
+            " › ",
+            Style::default()
+                .fg(theme::cur().blue)
+                .bg(theme::cur().bg_darker)
+                .add_modifier(Modifier::BOLD),
+        ));
         app.rects.bufferline_overflow_right = Some(ratatui::layout::Rect {
             x: inner_right + 3,
             y: area.y,
@@ -519,6 +516,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         });
     } else {
+        spans.push(Span::styled(
+            "   ",
+            Style::default().bg(theme::cur().bg_darker),
+        ));
         app.rects.bufferline_overflow_right = None;
     }
     let _ = last_drawn;
