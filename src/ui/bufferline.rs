@@ -255,7 +255,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, tt.orange),
             Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, tt.green),
             Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, tt.yellow),
-            Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, tt.teal),
+            Pane::Pty(s) => {
+                // 2026-07-03 — sibling integrations that run as
+                // Pty panes (mnml-aws-amplify etc.) inherit their
+                // integration's chip glyph so the tab icon
+                // matches the rail chip the user clicked. Match
+                // the profile label ("amplify" / "lambda" / …)
+                // against the label of any known integration_icon
+                // whose `run` command mentions the same binary.
+                // Falls back to the generic terminal glyph when
+                // the Pty isn't a sibling (shell, npm run, etc).
+                let profile_label = s.profile.label.as_str();
+                let sibling_glyph = app
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .find(|ic| {
+                        let cmd = ic.command.as_str();
+                        cmd.starts_with(":term ")
+                            && cmd
+                                .strip_prefix(":term ")
+                                .and_then(|bin| bin.split('-').next_back())
+                                .map(|last| last == profile_label)
+                                .unwrap_or(false)
+                    })
+                    .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)));
+                match sibling_glyph {
+                    Some((g, c)) if nerd => (Box::leak(g.into_boxed_str()) as &str, c),
+                    _ => (if nerd { "\u{f489}" } else { "▶" }, tt.teal),
+                }
+            }
             Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, tt.purple),
             Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, tt.green),
             Pane::Browser(_) => (if nerd { "\u{f059f}" } else { "◉" }, tt.blue),
