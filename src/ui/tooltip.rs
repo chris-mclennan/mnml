@@ -11,7 +11,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::HoverChip;
 use crate::app::{App, HOVER_TOOLTIP_DELAY_MS};
@@ -67,9 +67,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             Style::default().fg(t.comment).bg(t.bg2),
         ));
     }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default().fg(t.comment).bg(t.bg2));
+    let block = crate::ui::design_tokens::popup_panel("");
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
