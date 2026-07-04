@@ -49,7 +49,7 @@ for spec in "${GLYPHS[@]}"; do
     echo "  skipping $svg — file not found at $path" >&2
     continue
   fi
-  args+=(--glyph "${path}:${cp}:${name}")
+  args+=(--glyph "${path}:${cp}:${name}:width=1.25:height=0.80:center=0.36")
 done
 
 echo "→ building MnmlSymbols.ttf with ${#GLYPHS[@]} glyphs"

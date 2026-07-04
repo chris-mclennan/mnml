@@ -34,6 +34,7 @@ mod ex_commands;
 mod find;
 mod git;
 mod git_async;
+pub(crate) mod glyph_builder;
 mod grep;
 pub(crate) mod help;
 mod http;
@@ -2160,6 +2161,9 @@ pub struct PaneRects {
     /// column (or sets it as the sort key if it wasn't).
     pub spend_headers: Vec<(Rect, usize, crate::pane::SpendSortKey)>,
     /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
+    /// Inner rect of the glyph builder's live-preview area. Sixel
+    /// bytes get painted here at frame end by the render loop.
+    pub glyph_builder_preview: Option<Rect>,
     pub picker_box: Option<Rect>,
     pub picker_items: Vec<(Rect, usize)>,
     /// On-screen cell where the picker's query caret should sit (when open).
@@ -3457,6 +3461,9 @@ pub struct App {
     /// is open (right-click chip → Edit or Add custom). See
     /// `app/discovery.rs::IntegrationEditState`.
     pub integration_edit: Option<discovery::IntegrationEditState>,
+    /// Glyph builder panel — SVG → font glyph with live rasterized
+    /// preview. Opened by `integrations.glyph_builder`.
+    pub glyph_builder: Option<crate::glyph_builder::GlyphBuilderState>,
     /// Help overlay state — `Some` while the in-app help is open.
     /// Auto-generated from the command registry; see `app/help.rs`.
     pub help_overlay: Option<help::HelpOverlayState>,
@@ -4195,6 +4202,7 @@ impl App {
             settings_overlay: None,
             menu_open: None,
             integration_edit: None,
+            glyph_builder: None,
             help_overlay: None,
             prompt: None,
             context_menu: None,

@@ -67,6 +67,7 @@ pub mod new_cloud_agent_wizard_view;
 pub mod new_cloud_run_wizard_view;
 // GitHub views moved to mnml-forge-github.
 // GitLab views moved to mnml-forge-gitlab.
+pub mod glyph_builder_overlay;
 pub mod grep_view;
 pub mod help_overlay;
 pub mod hover;
@@ -1482,6 +1483,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // (which opens the icon picker) lands the picker over the
     // edit panel, not under it.
     integration_edit_overlay::draw(frame, app, area);
+    // Glyph builder — same freestanding overlay pattern; sits behind
+    // the picker (which handles Ctrl+G glyph search) but on top of
+    // most other overlays.
+    glyph_builder_overlay::draw(frame, app, area);
     // Re-paint the picker on top of the edit panel so Ctrl+G /
     // Enter / → from the Glyph field surfaces the picker instead
     // of hiding it behind the edit box. Cheap no-op when the

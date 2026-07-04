@@ -109,6 +109,34 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// Key dispatch for the glyph builder panel — path/name/codepoint
+/// are text fields, category/width/height/center cycle with ←→.
+pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
+    use crate::glyph_builder::BuilderField;
+    let text_field = matches!(
+        app.glyph_builder.as_ref().map(|s| s.focused_field),
+        Some(BuilderField::Path) | Some(BuilderField::Name) | Some(BuilderField::Codepoint)
+    );
+    match key.code {
+        KeyCode::Esc => app.close_glyph_builder(),
+        KeyCode::Enter => app.glyph_builder_commit(),
+        KeyCode::Tab => app.glyph_builder_cycle_field(1),
+        KeyCode::BackTab => app.glyph_builder_cycle_field(-1),
+        KeyCode::Up => app.glyph_builder_cycle_field(-1),
+        KeyCode::Down => app.glyph_builder_cycle_field(1),
+        // Left / Right cycle values on the non-text fields; on text
+        // fields they'd normally move the cursor but this panel keeps
+        // text single-line + append-only, so ignore.
+        KeyCode::Left if !text_field => app.glyph_builder_cycle_value(-1),
+        KeyCode::Right if !text_field => app.glyph_builder_cycle_value(1),
+        KeyCode::Backspace => app.glyph_builder_backspace(),
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.glyph_builder_type_char(c);
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
     // Text/Color rows enter a greedy edit mode on Enter — every
     // keystroke goes to the buffer until Enter commits (or Esc

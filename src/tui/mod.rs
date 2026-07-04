@@ -8,8 +8,9 @@ pub mod handlers;
 pub mod mouse;
 pub use chord::{CHORD_CHAIN_TIMEOUT_MS, dispatch_chord_chain, tick_chord_chain};
 use handlers::overlay::{
-    handle_git_section_commit_key, handle_help_overlay_key, handle_integration_edit_key,
-    handle_picker_key, handle_prompt_key, handle_search_section_key, handle_settings_overlay_key,
+    handle_git_section_commit_key, handle_glyph_builder_key, handle_help_overlay_key,
+    handle_integration_edit_key, handle_picker_key, handle_prompt_key, handle_search_section_key,
+    handle_settings_overlay_key,
 };
 use handlers::pane::{handle_pane_key, handle_tree_key};
 pub(crate) use mouse::coalesce_scroll;
@@ -1011,6 +1012,10 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // chars type into the focused text field.
     if app.integration_edit.is_some() {
         handle_integration_edit_key(app, key);
+        return;
+    }
+    if app.glyph_builder.is_some() {
+        handle_glyph_builder_key(app, key);
         return;
     }
     // Search activity-bar section: input focused → printable keys

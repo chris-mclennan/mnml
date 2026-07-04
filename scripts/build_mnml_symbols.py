@@ -47,16 +47,24 @@ def main() -> int:
             font_out = args[i + 1]
             i += 2
         elif a == "--glyph":
+            # Format: SVG_PATH:CODEPOINT[:NAME[:KEY=VAL[:KEY=VAL...]]]
+            # Keys: width, height, center (all float fractions).
             spec = args[i + 1].split(":", 3)
             if len(spec) < 2:
-                raise SystemExit(f"--glyph wants SVG_PATH:CODEPOINT[:NAME], got {args[i + 1]!r}")
+                raise SystemExit(f"--glyph wants SVG_PATH:CODEPOINT[:NAME[:KEY=VAL]], got {args[i + 1]!r}")
             svg_path = spec[0]
             try:
                 codepoint = int(spec[1], 16)
             except ValueError:
                 raise SystemExit(f"codepoint must be hex, got {spec[1]!r}")
             name = spec[2] if len(spec) > 2 else f"u{codepoint:04X}"
-            glyphs.append((svg_path, codepoint, name))
+            extras = {}
+            extras_tail = spec[3] if len(spec) > 3 else ""
+            for part in extras_tail.split(":") if extras_tail else []:
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    extras[k] = v
+            glyphs.append((svg_path, codepoint, name, extras))
             i += 2
         elif a in ("-h", "--help"):
             print(__doc__)
@@ -69,13 +77,21 @@ def main() -> int:
     if not glyphs:
         raise SystemExit("at least one --glyph is required")
 
-    # Fresh empty font. Em-size 1000 matches JetBrainsMono NF so the
-    # x-height + baseline line up when MnmlSymbols is used as a
-    # fallback beside JBM. Advance width 600 matches JetBrainsMono
-    # Mono's monospace cell.
-    font = fontforge.font()
-    font.em = 1000
-    font.familyname = "MnmlSymbols"
+    # Preserve existing MnmlSymbols.ttf glyphs when the file already
+    # exists — additive mode. That way `mnml install-font` seeds the
+    # AWS batch, and the in-app "add custom glyph" panel can append
+    # user glyphs one at a time without wiping the initial set.
+    if os.path.exists(font_out):
+        print(f"loading existing font: {font_out}")
+        font = fontforge.open(font_out)
+    else:
+        # Fresh empty font. Em-size 1000 matches JetBrainsMono NF so the
+        # x-height + baseline line up when MnmlSymbols is used as a
+        # fallback beside JBM. Advance width 600 matches JetBrainsMono
+        # Mono's monospace cell.
+        font = fontforge.font()
+        font.em = 1000
+        font.familyname = "MnmlSymbols"
     font.fontname = "MnmlSymbols-Regular"
     font.fullname = "MnmlSymbols Regular"
     font.weight = "Regular"
@@ -107,7 +123,7 @@ def main() -> int:
     script_dir = os.path.dirname(os.path.realpath(__file__))
     flatten_script = os.path.join(script_dir, "flatten_svg_evenodd.py")
 
-    for svg_path, codepoint, name in glyphs:
+    for svg_path, codepoint, name, extras in glyphs:
         print(f"adding U+{codepoint:04X} ({name}) ← {svg_path}")
 
         # Pre-flatten evenodd fill so FontForge's non-zero winding
@@ -151,8 +167,11 @@ def main() -> int:
         # our custom glyphs. Width overflow (~15%) is tolerated
         # because MnmlSymbols is a fallback font and the neighbor
         # cells are empty background.
-        target_w = cell_w * 1.25
-        target_h = em * 0.80
+        # Per-glyph size overrides via `--glyph …:width=X:height=X`.
+        width_frac = float(extras.get("width", "1.25"))
+        height_frac = float(extras.get("height", "0.80"))
+        target_w = cell_w * width_frac
+        target_h = em * height_frac
         scale = min(target_w / glyph_w, target_h / glyph_h)
         glyph.transform((scale, 0.0, 0.0, scale, 0.0, 0.0))
 
@@ -162,7 +181,8 @@ def main() -> int:
         # Center vertically at 0.36 * em ≈ Latin cap-height mid-point
         # (cap ~720 for JetBrainsMono, mid = 360). Was 0.38 which sat
         # the glyph visibly high compared to adjacent text.
-        target_center = em * 0.36
+        center_frac = float(extras.get("center", "0.36"))
+        target_center = em * center_frac
         dy = target_center - (bbox[1] + glyph_h / 2.0)
         glyph.transform((1.0, 0.0, 0.0, 1.0, dx, dy))
         glyph.width = cell_w

@@ -1700,6 +1700,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_patch_nerd_font_svg_prompt(),
         },
         Command {
+            id: "integrations.glyph_builder",
+            title: "Integrations: add custom glyph (SVG → font with live preview)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.open_glyph_builder(),
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",
