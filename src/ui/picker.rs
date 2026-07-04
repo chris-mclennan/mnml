@@ -249,19 +249,27 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             };
             let picker_ref = app.picker.as_ref().unwrap();
             let item = picker_ref.items_view().nth(idx).unwrap();
-            let glyph = item
-                .label
-                .chars()
-                .next()
-                .map(|c| c.to_string())
-                .unwrap_or_default();
+            let glyph_ch = item.label.chars().next().unwrap_or(' ');
+            let glyph = glyph_ch.to_string();
+            // Some Nerd Font glyphs render double-wide (Devicons,
+            // emoji-style icons). Pad narrow glyphs with an extra
+            // space so both variants occupy the same visual footprint
+            // and the neighbor cells don't touch — user reported
+            // "some are too short on right side" from mixed-width
+            // rows.
+            let glyph_w = unicode_width::UnicodeWidthChar::width(glyph_ch).unwrap_or(1);
             let is_sel = idx == picker_ref.selected;
             let bg = if is_sel { t.bg2 } else { t.bg_darker };
             let mut style = Style::default().fg(t.fg).bg(bg);
             if is_sel {
                 style = style.add_modifier(Modifier::BOLD | Modifier::REVERSED);
             }
-            let cell_text = format!(" {glyph} ");
+            // Left-align the glyph and always pad to cell_w so
+            // narrow + wide glyphs occupy identical visual columns.
+            // Narrow (w=1) → `<glyph>  ` (glyph + 2 spaces = 3 cells).
+            // Wide   (w=2) → `<glyph> `  (glyph + 1 space  = 3 cells).
+            let pad_right = cell_w.saturating_sub(glyph_w);
+            let cell_text = format!("{glyph}{}", " ".repeat(pad_right));
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(cell_text, style))),
                 cell_rect,
