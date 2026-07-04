@@ -41,7 +41,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     };
 
     frame.render_widget(Clear, area);
-    let block = crate::ui::design_tokens::popup_panel(title);
+    let block = crate::ui::design_tokens::popup_menu(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height < 2 {
@@ -82,7 +82,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
                 hint,
                 Style::default()
                     .fg(theme::cur().comment)
-                    .bg(theme::cur().bg_darker),
+                    .bg(theme::cur().bg2),
             ))),
             Rect::new(inner.x, hint_y, inner.width, 1),
         );
@@ -101,28 +101,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             let focused = p.selected_suggestion == Some(i);
             let row_rect = Rect::new(inner.x, y, inner.width, 1);
             let (parent, name) = split_for_display(path);
+            // Focused row uses the menu-family highlight (cyan bg,
+            // bg_dark fg); unfocused rows match the panel's own bg2.
             let bg = if focused {
-                theme::cur().bg2
+                theme::cur().cyan
             } else {
-                theme::cur().bg_darker
+                theme::cur().bg2
+            };
+            let fg_main = if focused {
+                theme::cur().bg_dark
+            } else {
+                theme::cur().fg
             };
             let cursor = if focused { "▸" } else { " " };
             let line = Line::from(vec![
+                Span::styled(format!(" {cursor} "), Style::default().fg(fg_main).bg(bg)),
                 Span::styled(
-                    format!(" {cursor} "),
+                    parent,
                     Style::default()
                         .fg(if focused {
-                            theme::cur().cyan
+                            theme::cur().bg_dark
                         } else {
                             theme::cur().comment
                         })
                         .bg(bg),
                 ),
-                Span::styled(parent, Style::default().fg(theme::cur().comment).bg(bg)),
                 Span::styled(
                     name,
                     Style::default()
-                        .fg(theme::cur().fg)
+                        .fg(fg_main)
                         .bg(bg)
                         .add_modifier(if focused {
                             Modifier::BOLD
