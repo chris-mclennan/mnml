@@ -209,34 +209,96 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
     let cell_w: usize = 3;
     let cols = (list_area.width as usize / cell_w).max(1);
     picker.grid_cols = cols;
+
+    // Check for the "+ Create custom glyph" pseudo-item at position 0.
+    // When present we render it as a full-width banner at the top so
+    // it's visually distinct — the grid at 3 cells/tile hides labels
+    // and a lone "+" reads as just another glyph tile among 12k.
+    let has_new_banner = picker
+        .items_view()
+        .next()
+        .map(|it| it.id == "new")
+        .unwrap_or(false);
+
     // Reserve the bottom row for the "selected: <name>" footer when
     // there's height for it; otherwise use every row for glyphs.
     let has_footer = list_area.height >= 3;
-    let grid_h = if has_footer {
-        list_area.height.saturating_sub(1) as usize
-    } else {
-        list_area.height as usize
-    };
-    let total = picker.len();
-    let scroll_rows = picker.scroll / cols;
-    let sel_row = picker.selected / cols;
-    let scroll_rows = if sel_row < scroll_rows {
+    let banner_rows: u16 = if has_new_banner { 2 } else { 0 };
+    let footer_rows: u16 = if has_footer { 1 } else { 0 };
+    let grid_h = list_area.height.saturating_sub(banner_rows + footer_rows) as usize;
+    let grid_top_y = list_area.y + banner_rows;
+
+    // Grid iterates the picker's items but skips index 0 when the
+    // banner is present. `grid_offset` is the index into
+    // `items_view()` where the grid starts painting.
+    let grid_offset = if has_new_banner { 1 } else { 0 };
+    let total = picker.len().saturating_sub(grid_offset);
+    let sel_idx_grid = picker.selected.saturating_sub(grid_offset);
+    let scroll_grid = picker.scroll.saturating_sub(grid_offset);
+    let scroll_rows = scroll_grid / cols;
+    let sel_row = sel_idx_grid / cols;
+    let scroll_rows = if picker.selected < grid_offset {
+        // Selection is on the banner — keep the grid parked at 0.
+        0
+    } else if sel_row < scroll_rows {
         sel_row
     } else if sel_row >= scroll_rows + grid_h {
         sel_row + 1 - grid_h
     } else {
         scroll_rows
     };
-    picker.scroll = scroll_rows * cols;
+    picker.scroll = scroll_rows * cols + grid_offset;
     let scroll = picker.scroll;
     app.rects.picker_items.clear();
 
+    // Paint the "+ Create custom glyph" banner.
+    if has_new_banner {
+        let banner_rect = Rect {
+            x: list_area.x,
+            y: list_area.y,
+            width: list_area.width,
+            height: 1,
+        };
+        let is_sel = picker.selected == 0;
+        let (fg, bg, marker) = if is_sel {
+            (t.bg_dark, t.cyan, "▶")
+        } else {
+            (t.cyan, t.bg2, " ")
+        };
+        let style = Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD);
+        let label = format!(" {marker} + Create custom glyph…");
+        let hint = "Ctrl+N new · Ctrl+E edit existing";
+        let inner_w = list_area.width as usize;
+        let mid_pad = inner_w.saturating_sub(label.chars().count() + hint.chars().count() + 1);
+        let banner_text = format!("{label}{}{hint} ", " ".repeat(mid_pad));
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(banner_text, style))),
+            banner_rect,
+        );
+        // Hitbox for click.
+        app.rects.picker_items.push((banner_rect, 0));
+        // Blank spacer row so the banner reads distinct from the grid.
+        let spacer_rect = Rect {
+            x: list_area.x,
+            y: list_area.y + 1,
+            width: list_area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ".repeat(list_area.width as usize),
+                Style::default().bg(theme::cur().bg_darker),
+            ))),
+            spacer_rect,
+        );
+    }
+
     // Render each grid cell.
     for row_i in 0..grid_h {
-        let row_y = list_area.y + row_i as u16;
+        let row_y = grid_top_y + row_i as u16;
         for col_i in 0..cols {
             let idx = scroll + row_i * cols + col_i;
-            if idx >= total {
+            if idx >= total + grid_offset {
                 break;
             }
             let cell_x = list_area.x + (col_i * cell_w) as u16;

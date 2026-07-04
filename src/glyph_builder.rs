@@ -318,6 +318,82 @@ pub fn rasterize(
     Ok(png)
 }
 
+/// Per-glyph build metadata persisted in
+/// `~/.config/mnml/glyph_meta.toml`. Read on picker "edit existing"
+/// so the builder pre-fills with the original SVG path + transform
+/// tuning; written by `App::glyph_builder_commit` on every bake so a
+/// glyph can be re-tuned later without remembering which SVG built it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GlyphMeta {
+    /// Uppercase hex, no `U+` prefix (e.g. `"F1B00"`).
+    pub codepoint: String,
+    /// Internal glyph name (`aws-amplify-inv`).
+    pub name: String,
+    /// Absolute path to the SVG source.
+    pub svg: String,
+    /// Cell-width fraction the glyph was baked with.
+    pub width_frac: f32,
+    pub height_frac: f32,
+    pub center_frac: f32,
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct GlyphMetaFile {
+    #[serde(default, rename = "glyph")]
+    pub glyphs: Vec<GlyphMeta>,
+}
+
+/// Path to `~/.config/mnml/glyph_meta.toml`. Returns `None` if the
+/// user config dir can't be resolved (no `$HOME` / `$XDG_CONFIG_HOME`).
+pub fn meta_path() -> Option<std::path::PathBuf> {
+    let cfg = crate::config::user_config_path()?;
+    let dir = cfg.parent()?;
+    Some(dir.join("glyph_meta.toml"))
+}
+
+pub fn load_meta() -> GlyphMetaFile {
+    let Some(p) = meta_path() else {
+        return GlyphMetaFile::default();
+    };
+    let Ok(txt) = std::fs::read_to_string(&p) else {
+        return GlyphMetaFile::default();
+    };
+    toml::from_str(&txt).unwrap_or_default()
+}
+
+/// Insert-or-replace a glyph's metadata, then rewrite the file.
+pub fn upsert_meta(entry: GlyphMeta) {
+    let Some(p) = meta_path() else {
+        return;
+    };
+    let mut file = load_meta();
+    file.glyphs.retain(|g| g.codepoint != entry.codepoint);
+    file.glyphs.push(entry);
+    // Stable sort by codepoint so the file is diff-friendly.
+    file.glyphs.sort_by(|a, b| a.codepoint.cmp(&b.codepoint));
+    let Ok(txt) = toml::to_string_pretty(&file) else {
+        return;
+    };
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&p, txt);
+}
+
+/// Recover the category from a codepoint by matching against
+/// `BuilderCategory::range_start()`/`range_end()`. Returns
+/// `BuilderCategory::Aws` when the codepoint is outside any reserved
+/// range — a defensible default since AWS is the first block and
+/// most existing custom glyphs will land there.
+pub fn category_for_codepoint(cp: u32) -> BuilderCategory {
+    for cat in BuilderCategory::ALL {
+        if cp >= cat.range_start() && cp <= cat.range_end() {
+            return *cat;
+        }
+    }
+    BuilderCategory::Aws
+}
+
 /// Refresh `state.preview_png` if a preview-affecting field changed.
 /// `target_w × target_h` pick the pixel resolution for the preview —
 /// the caller uses the panel's on-screen preview cell dimensions.

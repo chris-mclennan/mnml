@@ -28,6 +28,42 @@ impl App {
         self.glyph_builder = Some(s);
     }
 
+    /// Open the glyph builder pre-filled from an existing glyph's
+    /// stored metadata (`~/.config/mnml/glyph_meta.toml`). Used by
+    /// the icon picker's `e` key to re-tune width/height/center for
+    /// a previously-baked custom glyph without retyping the SVG path.
+    ///
+    /// Returns `false` when no metadata exists for `cp` — caller
+    /// should toast that the glyph wasn't built via mnml (e.g. it's
+    /// a stock Nerd Font glyph) and no edit path applies.
+    pub fn open_glyph_builder_for_edit_cp(&mut self, cp: u32) -> bool {
+        use crate::glyph_builder::{
+            BuilderField, GlyphBuilderState, category_for_codepoint, load_meta,
+        };
+        let meta = load_meta();
+        let cp_hex = format!("{cp:04X}");
+        let Some(entry) = meta.glyphs.iter().find(|g| g.codepoint == cp_hex) else {
+            return false;
+        };
+        let s = GlyphBuilderState {
+            svg_path: entry.svg.clone(),
+            category: category_for_codepoint(cp),
+            name: entry.name.clone(),
+            codepoint_hex: entry.codepoint.clone(),
+            width_frac: entry.width_frac,
+            height_frac: entry.height_frac,
+            center_frac: entry.center_frac,
+            focused_field: BuilderField::WidthFrac,
+            preview_png: None,
+            preview_signature: None,
+            error: None,
+            from_integration_edit: self.integration_edit.is_some(),
+        };
+        self.picker = None;
+        self.glyph_builder = Some(s);
+        true
+    }
+
     pub fn close_glyph_builder(&mut self) {
         self.glyph_builder = None;
     }
@@ -159,6 +195,18 @@ impl App {
             env: vec![],
             session_id: None,
         };
+        // Persist the build metadata so the "edit existing" flow
+        // (picker `e` key) can re-load it. Best-effort — write
+        // failure just means the user can't re-tune later without
+        // remembering the SVG path.
+        crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
+            codepoint: format!("{cp:04X}"),
+            name: name.to_string(),
+            svg: svg.to_string(),
+            width_frac: s.width_frac,
+            height_frac: s.height_frac,
+            center_frac: s.center_frac,
+        });
         // Copy the codepoint char to the clipboard so the user can
         // paste it into their integration config immediately.
         let cp_char = char::from_u32(cp);

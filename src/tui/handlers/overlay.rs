@@ -227,6 +227,25 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
             app.on_picker_moved();
         }
         KeyCode::Char('u') if ctrl => picker.clear_query(),
+        // Ctrl+E on the icon picker: re-tune the currently-highlighted
+        // custom glyph via the glyph builder, pre-filled from its
+        // stored metadata. No-op when the selected glyph wasn't baked
+        // via mnml (no meta entry) — toasts a hint. Ctrl is required
+        // so bare 'e' can still filter the query string.
+        KeyCode::Char('e')
+            if ctrl && matches!(picker.kind, crate::picker::PickerKind::IconGlyphs) =>
+        {
+            let cp = picker
+                .selected_item()
+                .and_then(|it| u32::from_str_radix(&it.id, 16).ok());
+            if let Some(cp) = cp
+                && !app.open_glyph_builder_for_edit_cp(cp)
+            {
+                app.toast(format!(
+                    "glyph U+{cp:04X} wasn't built via mnml — no metadata to edit"
+                ));
+            }
+        }
         KeyCode::Backspace => picker.backspace(),
         KeyCode::Char(c) if !ctrl => picker.type_char(c),
         _ => {}
