@@ -5,9 +5,9 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -63,18 +63,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
     } else {
         " hover ".to_string()
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.grey_fg).bg(t.bg_darker))
-        .style(Style::default().bg(t.bg_darker))
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(t.bg_darker)
-                .bg(t.cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
+    let block = crate::ui::design_tokens::popup_panel(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {

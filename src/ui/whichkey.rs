@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -54,22 +54,7 @@ fn draw_popup_with_title(
         height: panel_h,
     };
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(
-            Style::default()
-                .fg(theme::cur().purple)
-                .bg(theme::cur().bg_darker),
-        )
-        .title(Span::styled(
-            title.to_string(),
-            Style::default()
-                .fg(theme::cur().purple)
-                .bg(theme::cur().bg_darker)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().bg(theme::cur().bg_darker));
+    let block = crate::ui::design_tokens::popup_panel(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -170,22 +155,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     } else {
         format!(" <leader> {prefix} ")
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(
-            Style::default()
-                .fg(theme::cur().purple)
-                .bg(theme::cur().bg_darker),
-        )
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(theme::cur().purple)
-                .bg(theme::cur().bg_darker)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().bg(theme::cur().bg_darker));
+    let block = crate::ui::design_tokens::popup_panel(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {

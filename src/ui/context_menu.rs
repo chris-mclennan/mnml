@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -41,25 +41,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     };
 
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.grey_fg).bg(t.bg2))
-        .style(Style::default().bg(t.bg2));
-    // Title is just a dim label in the border area, NOT a chip.
-    // The previous solid-blue chip styling visually merged with
-    // the (auto-selected) first row's highlight, making it look
-    // like the first row was part of the title. Match the
-    // macOS / IDE menu-bar look — quiet header, no chip.
+    // Context menus use the shared popup chrome — rounded border,
+    // subtle color accent, bg_darker fill. Title is optional; when
+    // absent, the block still renders cleanly.
     let block = match &menu.title {
-        Some(title) => block.title(Span::styled(
-            format!(" {title} "),
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg2)
-                .add_modifier(Modifier::BOLD),
-        )),
-        None => block,
+        Some(title) => crate::ui::design_tokens::popup_panel(title.clone()),
+        None => crate::ui::design_tokens::popup_panel(""),
     };
     let inner = block.inner(area);
     frame.render_widget(block, area);

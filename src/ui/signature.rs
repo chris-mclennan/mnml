@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -56,11 +56,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect, cursor: Option<(u16, u16
     };
 
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(t.purple).bg(t.bg_darker))
-        .style(Style::default().bg(t.bg_darker));
+    let block = crate::ui::design_tokens::popup_panel("signature");
     frame.render_widget(block, area);
 
     let inner = Rect {
