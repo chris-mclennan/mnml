@@ -54,7 +54,7 @@ fn draw_popup_with_title(
         height: panel_h,
     };
     frame.render_widget(Clear, area);
-    let block = crate::ui::design_tokens::popup_panel(title);
+    let block = crate::ui::design_tokens::popup_menu(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -86,22 +86,22 @@ fn draw_popup_with_title(
                 key.to_string(),
                 Style::default()
                     .fg(key_color)
-                    .bg(theme::cur().bg_darker)
+                    .bg(theme::cur().bg2)
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 " → ",
                 Style::default()
                     .fg(theme::cur().comment)
-                    .bg(theme::cur().bg_darker),
+                    .bg(theme::cur().bg2),
             ));
             spans.push(Span::styled(
                 label,
-                Style::default().fg(label_color).bg(theme::cur().bg_darker),
+                Style::default().fg(label_color).bg(theme::cur().bg2),
             ));
             spans.push(Span::styled(
                 " ".repeat(pad),
-                Style::default().bg(theme::cur().bg_darker),
+                Style::default().bg(theme::cur().bg2),
             ));
         }
         lines.push(Line::from(spans));
@@ -111,11 +111,11 @@ fn draw_popup_with_title(
             "  esc to cancel",
             Style::default()
                 .fg(theme::cur().grey_fg)
-                .bg(theme::cur().bg_darker),
+                .bg(theme::cur().bg2),
         )));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_darker)),
+        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg2)),
         inner,
     );
 }
@@ -155,7 +155,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     } else {
         format!(" <leader> {prefix} ")
     };
-    let block = crate::ui::design_tokens::popup_panel(title);
+    let block = crate::ui::design_tokens::popup_menu(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -190,22 +190,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
                 key.to_string(),
                 Style::default()
                     .fg(key_color)
-                    .bg(theme::cur().bg_darker)
+                    .bg(theme::cur().bg2)
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 " → ",
                 Style::default()
                     .fg(theme::cur().comment)
-                    .bg(theme::cur().bg_darker),
+                    .bg(theme::cur().bg2),
             ));
             spans.push(Span::styled(
                 label,
-                Style::default().fg(label_color).bg(theme::cur().bg_darker),
+                Style::default().fg(label_color).bg(theme::cur().bg2),
             ));
             spans.push(Span::styled(
                 " ".repeat(pad),
-                Style::default().bg(theme::cur().bg_darker),
+                Style::default().bg(theme::cur().bg2),
             ));
         }
         lines.push(Line::from(spans));
@@ -216,11 +216,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             "  esc to cancel",
             Style::default()
                 .fg(theme::cur().grey_fg)
-                .bg(theme::cur().bg_darker),
+                .bg(theme::cur().bg2),
         )));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_darker)),
+        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg2)),
         inner,
     );
 }
