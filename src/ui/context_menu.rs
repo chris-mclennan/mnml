@@ -61,14 +61,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // still fire whatever's at `selected` (0 by default), so
         // the no-highlight state isn't inert.
         let selected = row == menu.selected && menu.interacted;
+        // Match menu_bar's selected-row style so the two menu
+        // aesthetics stay consistent: cyan bg + bg_dark fg + bold.
         let style = if selected {
-            // Selected-row text on blue: use bg_dark (darker than bg2)
-            // for max contrast on the cyan/blue accent. Keeps the
-            // selection visually distinct now that the menu's body
-            // bg is lighter (bg2).
             Style::default()
                 .fg(t.bg_dark)
-                .bg(t.blue)
+                .bg(t.cyan)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(t.fg).bg(t.bg2)
