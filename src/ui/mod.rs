@@ -3204,6 +3204,57 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
 
         y = y.saturating_add(3);
     }
+
+    // 2026-07-03 — scrollbar on the far-right column of the
+    // panel body. Renders whenever the icon list is taller than
+    // the body area (both Installed + Marketplace tabs). Cheap
+    // manual paint — one column of dim rail, plus a solid thumb
+    // whose length + offset track the current scroll state.
+    let body_h = body_area.height as usize;
+    let visible_rows = (body_h / rows_per).max(1);
+    let total_rows = icons.len();
+    if total_rows > visible_rows {
+        let track_x = area.x + area.width.saturating_sub(1);
+        let track_h = body_area.height;
+        // Fill the track with a dim rail glyph.
+        for row_y in 0..track_h {
+            let cell = Rect {
+                x: track_x,
+                y: body_area.y + row_y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new("│").style(Style::default().fg(t.comment).bg(bg)),
+                cell,
+            );
+        }
+        // Thumb sizing: proportional to visible/total; min 1
+        // cell so it's always visible.
+        let thumb_h = ((visible_rows * track_h as usize) / total_rows).max(1) as u16;
+        // Thumb offset: proportional to how far we've scrolled,
+        // capped so thumb never overflows the track.
+        let max_scroll_rows = total_rows.saturating_sub(visible_rows);
+        let scrolled_rows = (app.integrations_panel_scroll / rows_per).min(max_scroll_rows);
+        let track_movable = track_h.saturating_sub(thumb_h);
+        let thumb_offset = if max_scroll_rows == 0 {
+            0
+        } else {
+            (scrolled_rows as u32 * track_movable as u32 / max_scroll_rows as u32) as u16
+        };
+        for row_y in thumb_offset..(thumb_offset + thumb_h).min(track_h) {
+            let cell = Rect {
+                x: track_x,
+                y: body_area.y + row_y,
+                width: 1,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new("█").style(Style::default().fg(t.fg).bg(bg)),
+                cell,
+            );
+        }
+    }
 }
 
 /// 2026-06-22 — paint a multi-tab strip above an in-split leaf,
