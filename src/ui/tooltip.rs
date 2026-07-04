@@ -30,15 +30,14 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     let Some((anchor, label, sublabel)) = describe(chip, app) else {
         return;
     };
-    // Compose the label as up to two lines: primary action + secondary
-    // (right-click) hint. No border/padding — the yellow chip IS the
-    // visual boundary. Width = max line + 2 (each row has one space
-    // of padding on either side via the `format!(" … ")` at render).
+    // Tooltip uses the shared menu chrome (square border, default fg,
+    // bg2 fill) — matches the menu bar / right-click menu aesthetic
+    // the user preferred. Two lines when a subtitle is present.
     let prim_w = label.chars().count();
     let sub_w = sublabel.as_deref().map(|s| s.chars().count()).unwrap_or(0);
     let inner_w = prim_w.max(sub_w) as u16;
-    let w = inner_w + 2;
-    let h: u16 = if sublabel.is_some() { 2 } else { 1 };
+    let w = inner_w + 4; // 2 padding + 2 borders
+    let h: u16 = if sublabel.is_some() { 4 } else { 3 };
     // Anchor: place above the chip when there's room; else below.
     let want_y = anchor.y.saturating_sub(h);
     let y = if anchor.y >= h {
@@ -56,11 +55,13 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     let t = theme::cur();
     frame.render_widget(Clear, area);
     let mut lines: Vec<Line<'static>> = Vec::new();
+    // Primary line: bold fg text on the menu bg (bg2). No yellow chip
+    // — matches menu bar / right-click menu label style.
     lines.push(Line::styled(
         format!(" {label} "),
         Style::default()
-            .fg(t.bg_darker)
-            .bg(t.yellow)
+            .fg(t.fg)
+            .bg(t.bg2)
             .add_modifier(Modifier::BOLD),
     ));
     if let Some(s) = sublabel {
@@ -69,9 +70,8 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             Style::default().fg(t.comment).bg(t.bg2),
         ));
     }
-    // Tooltip is a chip, not a bordered popup — the yellow-highlight
-    // primary + dark subtitle IS the visual. No border wrapping.
-    frame.render_widget(Paragraph::new(lines), area);
+    let block = crate::ui::design_tokens::popup_menu("");
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// `(anchor_rect, primary_line, secondary_line)`. None ⇒ chip's rect isn't
