@@ -129,22 +129,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     }
 
     // Hint row at the bottom.
-    let hint_y = inner.y + inner.height.saturating_sub(1);
-    let hint_rect = Rect {
-        x: inner.x,
-        y: hint_y,
-        width: inner.width,
-        height: 1,
-    };
-    let hint = "Tab field · ↵ save · esc cancel";
-    let pad = inner.width.saturating_sub(hint.chars().count() as u16) / 2;
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            format!("{}{hint}", " ".repeat(pad as usize)),
-            Style::default().fg(t.comment),
-        ))),
-        hint_rect,
-    );
+    crate::ui::design_tokens::paint_hint_row(frame, inner, "Tab field · ↵ save · esc cancel");
 }
 
 fn visible_fields(panel: &IntegrationEditState) -> Vec<IntegrationEditField> {

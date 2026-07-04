@@ -19,9 +19,11 @@
 //! pick up the change; overlays that still hand-roll their Block
 //! stay put (migrate them opportunistically).
 
+use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Span;
-use ratatui::widgets::{Block, BorderType, Borders};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 
 use crate::ui::theme;
 
@@ -123,6 +125,32 @@ pub fn row_highlight_menu() -> Style {
 pub fn row_plain_menu() -> Style {
     let t = theme::cur();
     Style::default().fg(t.fg).bg(t.bg2)
+}
+
+/// Paint the standard hint row at the bottom of a modal panel — the
+/// `Tab field · ↵ save · esc cancel` style help line. Centered
+/// horizontally on the last row of `inner`, `hint_style()` colors
+/// (comment fg on the panel's own `bg_dark`). Used by any modal
+/// whose bottom row is just a shortcut hint (no chip cluster).
+pub fn paint_hint_row(frame: &mut Frame, inner: Rect, hint: &str) {
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let y = inner.y + inner.height.saturating_sub(1);
+    let row = Rect {
+        x: inner.x,
+        y,
+        width: inner.width,
+        height: 1,
+    };
+    let pad = inner.width.saturating_sub(hint.chars().count() as u16) / 2;
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            format!("{}{hint}", " ".repeat(pad as usize)),
+            hint_style(),
+        ))),
+        row,
+    );
 }
 
 /// A palette-bar chip — a 3-cell ` glyph ` span on the chrome row's
