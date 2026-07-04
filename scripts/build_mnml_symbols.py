@@ -145,14 +145,14 @@ def main() -> int:
             print(f"  ! empty glyph from {svg_path}, skipping")
             continue
 
-        # Scale so the glyph reads at ~90% of surrounding cap-height.
-        # width_frac = 1.4 allows up to 40% overflow into neighboring
-        # cells — but MnmlSymbols is a fallback font used only where
-        # padding cells are empty background, so overflow is invisible
-        # against the shell bg. Real programming fonts (JBM NF, etc.)
-        # do the same thing with wide devicon glyphs.
-        target_w = cell_w * 1.4
-        target_h = em * 0.90
+        # Scale so the glyph reads at ~75% of surrounding cap-height —
+        # matches the visual weight of stock Nerd Font icons
+        # (crown, chat, globe, server, etc.) that share a chip with
+        # our custom glyphs. Width overflow (~15%) is tolerated
+        # because MnmlSymbols is a fallback font and the neighbor
+        # cells are empty background.
+        target_w = cell_w * 1.15
+        target_h = em * 0.75
         scale = min(target_w / glyph_w, target_h / glyph_h)
         glyph.transform((scale, 0.0, 0.0, scale, 0.0, 0.0))
 
