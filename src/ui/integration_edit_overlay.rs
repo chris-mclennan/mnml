@@ -1,13 +1,12 @@
-//! Integration-edit panel — overlays the discovery overlay when the
-//! user presses `e` on a rail integration row (Edit mode) or selects
-//! the `[+ Add custom integration]` row (AddCustom mode).
+//! Integration-edit panel — opens from the chip right-click context
+//! menu (Edit… / Add custom…). Reads from [`App::integration_edit`].
 //!
 //! Family-Settings-style row layout: `▸ <label>: <value>` per row,
 //! Tab cycles focus, ←→ cycles the color value, typing edits text
 //! fields, Enter saves, Esc cancels.
 //!
-//! Painted on top of the discovery overlay's box (not freestanding)
-//! so the user keeps the discovery context visible at the edges.
+//! Freestanding centered overlay — the browse-list overlay it used
+//! to nest inside was removed 2026-07-03.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -41,14 +40,9 @@ fn edit_rect(parent: Rect, mode: &IntegrationEditMode) -> Rect {
     }
 }
 
-/// Paint the edit panel. No-op when the discovery overlay isn't open
-/// or its `edit_panel` slot is empty. Caller (`ui::mod.rs::draw`)
-/// runs this after the discovery overlay so the box stacks on top.
+/// Paint the edit panel. No-op when `App::integration_edit` is `None`.
 pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
-    let Some(state) = app.discovery_overlay.as_ref() else {
-        return;
-    };
-    let Some(panel) = state.edit_panel.as_ref().cloned() else {
+    let Some(panel) = app.integration_edit.as_ref().cloned() else {
         return;
     };
     let rect = edit_rect(parent, &panel.mode);

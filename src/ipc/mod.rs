@@ -1313,14 +1313,6 @@ pub fn rects_dump_json(app: &App) -> String {
             *r,
         );
     }
-    for (r, idx) in &app.rects.discovery_integration_rows {
-        push_rect(
-            &mut out,
-            &mut first,
-            &format!("discovery_integration_row:{idx}"),
-            *r,
-        );
-    }
     for (r, _) in &app.rects.git_rail_rows {
         push_rect(&mut out, &mut first, "git_rail_row", *r);
     }

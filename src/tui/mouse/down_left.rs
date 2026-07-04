@@ -518,14 +518,6 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.close_pane(id);
         return;
     }
-    // qa-feature 2026-07-01 — "configure" link in Integrations panel
-    // header opens the discovery / install overlay.
-    if let Some(rect) = app.rects.integrations_configure_button
-        && crate::app::dispatch::contains(rect, x, y)
-    {
-        app.open_discovery_overlay();
-        return;
-    }
     // qa-feature 2026-07-01 — Installed / Marketplace tab chips in the
     // Integrations panel. Click switches the active sub-view; also
     // resets the panel scroll so the new list starts at the top.

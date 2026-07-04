@@ -81,7 +81,6 @@ pub mod picker;
 // pipeline_log_view removed after 2026-06 SCM split.
 pub mod agents_panel;
 pub mod cloud_agents_panel;
-pub mod discovery_overlay;
 pub mod dock;
 pub mod git_palette;
 pub mod menu_bar;
@@ -1476,14 +1475,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     about_overlay::draw(frame, app, area);
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
-    // Discovery browse-list overlay — REMOVED 2026-07-03. The
-    // sidebar Installed / Marketplace tabs cover browse + enable
-    // + install, so the big overlay was redundant. The Edit
-    // sub-panel that used to live inside it is now the ONLY
-    // reachable path (right-click chip → Edit).
-    // Integration edit panel — reads `discovery_overlay.edit_panel`
-    // still (the struct scaffolding stays for the edit host until
-    // a deeper refactor); the browse chrome around it never paints.
+    // Integration edit panel — freestanding overlay opened from
+    // the chip right-click context menu (Edit / Add custom).
+    // Reads `App::integration_edit`.
     integration_edit_overlay::draw(frame, app, area);
     // Help overlay — `?` / view.help (auto-generated keymap reference).
     help_overlay::draw(frame, app, area);
@@ -2928,10 +2922,6 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         header_rect,
     );
-    // The gear-configure link was replaced by the Marketplace tab
-    // below (same job — surfacing everything the user could enable).
-    app.rects.integrations_configure_button = None;
-
     // qa-feature 2026-07-01 — Installed / Marketplace tabs below
     // the header. `Installed` is the daily-driver rail (enabled
     // icons only); `Marketplace` is what the gear link used to open

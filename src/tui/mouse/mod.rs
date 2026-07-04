@@ -624,67 +624,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         return;
     }
-    // "+ Add integration" overlay — scroll wheel moves the row cursor.
-    // Left-click on a sibling row focuses + Enters that row (matches
-    // the keyboard `↑↓ Enter` flow). Left-click outside any row
-    // dismisses the overlay — preserves the no-mouse-trap semantic
-    // from the 2026-06-07 fix without the row-swallow regression the
-    // 2026-06-08 vscode-mouse hunt caught.
-    if app.discovery_overlay.is_some() {
-        match m.kind {
-            MouseEventKind::ScrollUp => app.discovery_move_row(-1),
-            MouseEventKind::ScrollDown => app.discovery_move_row(1),
-            MouseEventKind::Down(MouseButton::Left) => {
-                // Tab chip click first — flips Installed ↔ Marketplace.
-                let chip_hit = app
-                    .rects
-                    .discovery_tab_chips
-                    .iter()
-                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-                    .map(|(_, tab)| *tab);
-                if let Some(tab) = chip_hit {
-                    if let Some(o) = app.discovery_overlay.as_mut()
-                        && o.tab != tab
-                    {
-                        o.tab = tab;
-                        o.selected_row = 0;
-                    }
-                    return;
-                }
-                let row_hit = app
-                    .rects
-                    .discovery_integration_rows
-                    .iter()
-                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-                    .map(|(_, idx)| *idx);
-                if let Some(idx) = row_hit {
-                    let cur = app
-                        .discovery_overlay
-                        .as_ref()
-                        .map(|s| s.selected_row)
-                        .unwrap_or(0);
-                    let delta = idx as isize - cur as isize;
-                    if delta != 0 {
-                        app.discovery_move_row(delta);
-                    }
-                    app.discovery_enter();
-                } else if let Some(area) = app.rects.discovery_overlay_rect
-                    && !crate::app::dispatch::contains(area, x, y)
-                {
-                    // Only OUTSIDE-rect clicks dismiss. Clicks inside
-                    // the overlay that miss a sibling row (e.g., on a
-                    // section header or the hint footer) are no-ops —
-                    // the user is still interacting with the overlay.
-                    // 2026-06-13 vscode-mouse SEV-2 fix.
-                    app.discovery_overlay = None;
-                    app.rects.discovery_overlay_rect = None;
-                }
-            }
-            _ => {}
-        }
-        return;
-    }
-    // Discovery overlay — intercept clicks on its rows so the user can
+    // F1 discovery overlay — intercept clicks on its rows so the user can
     // flash the matching on-screen rects. A click outside the panel
     // closes the overlay (so it can't trap the user).
     if app.show_discovery_overlay && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {

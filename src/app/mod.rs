@@ -29,7 +29,6 @@ mod cdp;
 mod context_menus;
 mod dap;
 pub(crate) mod discovery;
-pub use discovery::DiscoveryTab;
 pub(crate) mod dispatch;
 mod ex_commands;
 mod find;
@@ -1708,10 +1707,6 @@ pub struct PaneRects {
     /// opens the wizard so the user can swap agent / env /
     /// sandbox.
     pub cloud_agents_change_defaults_chip: Option<Rect>,
-    /// Click rects for the two tabs ([Installed] [Marketplace])
-    /// at the top of the integrations discovery overlay. Empty when
-    /// the overlay is closed.
-    pub discovery_tab_chips: Vec<(Rect, crate::app::DiscoveryTab)>,
     /// Click rect for the workspace NAME (not the chevron) in the
     /// file-tree header. In multi-repo workspaces, clicking the
     /// name opens the repo picker; in single-repo workspaces, it
@@ -1768,9 +1763,6 @@ pub struct PaneRects {
     /// qa-feature 2026-07-01 — clickable close button on a pty pane's
     /// exit banner (`[× close]`). `(rect, pane_id)`.
     pub pty_exit_close_buttons: Vec<(Rect, PaneId)>,
-    /// qa-feature 2026-07-01 — "configure" link in the Integrations
-    /// panel header. Click opens the discovery / install overlay.
-    pub integrations_configure_button: Option<Rect>,
     /// qa-feature 2026-07-01 — filter input row below the header.
     /// Click focuses the filter (typing appends; Backspace pops;
     /// Esc clears). The filter is auto-focused whenever the
@@ -1948,23 +1940,6 @@ pub struct PaneRects {
     /// to flash the matching on-screen rects. Cleared + repopulated by
     /// `ui::discovery::draw` when the overlay is visible.
     pub discovery_rows: Vec<(Rect, crate::DiscoveryCategory)>,
-    /// One rect per Sibling row in the `+ Add integration` overlay —
-    /// `usize` is the row index `discovery_move_row` operates on (skips
-    /// section headers). Repopulated by `ui::discovery_overlay::draw`.
-    /// Used by the mouse dispatcher to focus + Enter a clicked row
-    /// instead of dismissing the overlay (2026-06-08 vscode-mouse hunt
-    /// fix: row-clicks were swallowed as outside-overlay clicks).
-    pub discovery_integration_rows: Vec<(Rect, usize)>,
-    /// The outer `+ Add integration` overlay rect — used by the
-    /// dispatcher to detect click-outside-to-close. `None` when the
-    /// overlay isn't open. A click INSIDE the rect but NOT on a
-    /// sibling row (e.g., on a section header or the footer hint)
-    /// is a no-op; only an outside-rect click dismisses. Repopulated
-    /// by `ui::discovery_overlay::draw`. 2026-06-13 vscode-mouse
-    /// SEV-2 fix: previously ANY click that wasn't a sibling row
-    /// dismissed the overlay, so clicking a section header silently
-    /// closed it.
-    pub discovery_overlay_rect: Option<Rect>,
     /// The outer settings-overlay rect — used by the dispatcher to
     /// detect click-outside-to-close. `None` when the overlay isn't
     /// open. Repopulated by `ui::settings_overlay::draw`.
@@ -3478,10 +3453,10 @@ pub struct App {
     /// letter, or F10. See `src/menu_bar.rs` for the bar layout
     /// + `src/ui/menu_bar.rs` for the renderer.
     pub menu_open: Option<crate::menu_bar::MenuOpenState>,
-    /// "+ Add integration" discovery overlay state. Opened by the `+`
-    /// chip on the sidebar's INTEGRATIONS header or `integrations.add`.
-    /// See `app/discovery.rs`.
-    pub discovery_overlay: Option<discovery::DiscoveryOverlayState>,
+    /// Integration edit panel state — `Some` while the edit overlay
+    /// is open (right-click chip → Edit or Add custom). See
+    /// `app/discovery.rs::IntegrationEditState`.
+    pub integration_edit: Option<discovery::IntegrationEditState>,
     /// Help overlay state — `Some` while the in-app help is open.
     /// Auto-generated from the command registry; see `app/help.rs`.
     pub help_overlay: Option<help::HelpOverlayState>,
@@ -4219,7 +4194,7 @@ impl App {
             close_prompt: None,
             settings_overlay: None,
             menu_open: None,
-            discovery_overlay: None,
+            integration_edit: None,
             help_overlay: None,
             prompt: None,
             context_menu: None,

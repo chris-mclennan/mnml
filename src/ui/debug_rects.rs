@@ -74,9 +74,6 @@ pub fn draw(frame: &mut Frame, app: &App) {
     for (r, _) in &app.rects.extra_workspace_toggles {
         paint_single(frame, Some(*r), Color::Cyan);
     }
-    for (r, _) in &app.rects.discovery_integration_rows {
-        paint_single(frame, Some(*r), Color::Magenta);
-    }
     for (r, _) in &app.rects.git_rail_rows {
         paint_single(frame, Some(*r), Color::Green);
     }

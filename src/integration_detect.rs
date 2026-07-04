@@ -195,16 +195,6 @@ fn mnml_discovery_cache() -> &'static Mutex<Option<Vec<String>>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
-/// Reset both caches (per-name install + discovery sweep). Called
-/// implicitly by the `+` overlay open path so a fresh `cargo install`
-/// is reflected immediately.
-pub fn clear_all_caches() {
-    clear_cache();
-    if let Ok(mut m) = mnml_discovery_cache().lock() {
-        *m = None;
-    }
-}
-
 /// `true` for strings shaped like `mnml-<class>-<name>` where both
 /// segments are non-empty and consist of ASCII alphanumerics or `-`
 /// (after the first two `-`). The reserved root binary `mnml` and
