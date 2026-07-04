@@ -251,27 +251,20 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             let glyph_ch = item.label.chars().next().unwrap_or(' ');
             let glyph = glyph_ch.to_string();
             let is_sel = idx == picker_ref.selected;
-            // Selected → dark fg on yellow bg + bold, painted on ONLY
-            // the glyph char (spans keep the pad cells at the default
-            // fg/bg). Yellow was picked because it contrasts against
-            // every theme's default fg and stands out against the mostly-
-            // gray glyph grid better than cyan did.
-            let (glyph_fg, glyph_bg, modifier) = if is_sel {
-                (t.bg_dark, t.yellow, Modifier::BOLD)
+            // NO background paint. Dim every unselected glyph to the
+            // comment color; paint the selected one in bright yellow
+            // + bold. The visual contrast comes from the rest of the
+            // grid being muted, not from a highlight rectangle. This
+            // sidesteps every padding-width alignment trap.
+            let (fg, modifier) = if is_sel {
+                (t.yellow, Modifier::BOLD)
             } else {
-                (t.fg, t.bg_darker, Modifier::empty())
+                (t.comment, Modifier::empty())
             };
-            let pad_style = Style::default().fg(t.fg);
-            let glyph_style = Style::default()
-                .fg(glyph_fg)
-                .bg(glyph_bg)
-                .add_modifier(modifier);
+            let style = Style::default().fg(fg).add_modifier(modifier);
+            let cell_text = format!(" {glyph} ");
             frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled(" ", pad_style),
-                    Span::styled(glyph, glyph_style),
-                    Span::styled(" ", pad_style),
-                ])),
+                Paragraph::new(Line::from(Span::styled(cell_text, style))),
                 cell_rect,
             );
             app.rects.picker_items.push((cell_rect, idx));
