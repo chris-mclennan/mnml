@@ -77,6 +77,35 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     // ── ai / coding ──
     IconEntry { codepoint: "F8B0",  name: "claude-spark (mnml-patched)", category: "ai" },
     IconEntry { codepoint: "F8B1",  name: "codex (mnml-patched)", category: "ai" },
+
+    // ── aws (mnml-patched from official AWS Architecture Icons ──
+    // Two variants per service: inverted (transparent bg, colored
+    // lines — the default) and color (colored bg, white lines).
+    // Layout: U+F300-F30B = inverted, U+F310-F31B = color.
+    IconEntry { codepoint: "F300", name: "aws-amplify (inverted)", category: "aws" },
+    IconEntry { codepoint: "F310", name: "aws-amplify (color)", category: "aws" },
+    IconEntry { codepoint: "F301", name: "aws-lambda (inverted)", category: "aws" },
+    IconEntry { codepoint: "F311", name: "aws-lambda (color)", category: "aws" },
+    IconEntry { codepoint: "F302", name: "aws-ecs (inverted)", category: "aws" },
+    IconEntry { codepoint: "F312", name: "aws-ecs (color)", category: "aws" },
+    IconEntry { codepoint: "F303", name: "aws-ecr (inverted)", category: "aws" },
+    IconEntry { codepoint: "F313", name: "aws-ecr (color)", category: "aws" },
+    IconEntry { codepoint: "F304", name: "aws-rds (inverted)", category: "aws" },
+    IconEntry { codepoint: "F314", name: "aws-rds (color)", category: "aws" },
+    IconEntry { codepoint: "F305", name: "aws-sqs (inverted)", category: "aws" },
+    IconEntry { codepoint: "F315", name: "aws-sqs (color)", category: "aws" },
+    IconEntry { codepoint: "F306", name: "aws-sns (inverted)", category: "aws" },
+    IconEntry { codepoint: "F316", name: "aws-sns (color)", category: "aws" },
+    IconEntry { codepoint: "F307", name: "aws-dynamodb (inverted)", category: "aws" },
+    IconEntry { codepoint: "F317", name: "aws-dynamodb (color)", category: "aws" },
+    IconEntry { codepoint: "F308", name: "aws-cognito (inverted)", category: "aws" },
+    IconEntry { codepoint: "F318", name: "aws-cognito (color)", category: "aws" },
+    IconEntry { codepoint: "F309", name: "aws-cloudwatch (inverted)", category: "aws" },
+    IconEntry { codepoint: "F319", name: "aws-cloudwatch (color)", category: "aws" },
+    IconEntry { codepoint: "F30A", name: "aws-codebuild (inverted)", category: "aws" },
+    IconEntry { codepoint: "F31A", name: "aws-codebuild (color)", category: "aws" },
+    IconEntry { codepoint: "F30B", name: "aws-eventbridge (inverted)", category: "aws" },
+    IconEntry { codepoint: "F31B", name: "aws-eventbridge (color)", category: "aws" },
     IconEntry { codepoint: "F085B", name: "brain", category: "ai" },
     IconEntry { codepoint: "F02D3", name: "robot", category: "ai" },
 
