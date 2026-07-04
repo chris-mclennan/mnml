@@ -3024,9 +3024,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
 
     // qa-feature 2026-07-01 — first cut by tab (Installed = enabled,
     // Marketplace = the rest), then by the filter query.
+    // 2026-07-03 — Marketplace is now sorted alphabetically by
+    // tooltip / id so users can scan a very long list. Installed
+    // keeps the config-file order because that's the user's own
+    // reorder (Move up / Move to top / …) which we must respect.
     let all_icons = app.config.ui.integration_icons.clone();
     let filter_lc = app.integrations_panel_filter.to_ascii_lowercase();
-    let icons: Vec<(usize, crate::config::IntegrationIcon)> = all_icons
+    let mut icons: Vec<(usize, crate::config::IntegrationIcon)> = all_icons
         .iter()
         .enumerate()
         .filter(|(_, icon)| match active_tab {
@@ -3048,6 +3052,23 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .map(|(i, icon)| (i, icon.clone()))
         .collect();
+    if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
+        icons.sort_by(|(_, a), (_, b)| {
+            let key_a = a
+                .tooltip
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| a.id.clone())
+                .to_ascii_lowercase();
+            let key_b = b
+                .tooltip
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| b.id.clone())
+                .to_ascii_lowercase();
+            key_a.cmp(&key_b)
+        });
+    }
 
     // Empty-state per tab.
     if icons.is_empty() {
