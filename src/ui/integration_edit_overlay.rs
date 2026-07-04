@@ -107,8 +107,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             ));
         } else if is_focused && matches!(field, IntegrationEditField::Glyph) {
             spans.push(Span::styled(
-                "  (one char or codepoint)".to_string(),
-                Style::default().fg(t.comment),
+                "  ^G pick glyph".to_string(),
+                Style::default().fg(t.cyan).add_modifier(Modifier::BOLD),
             ));
         } else if is_focused && !readonly {
             // Caret on the focused text field — a thin block at end.
@@ -131,7 +131,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         width: inner.width,
         height: 1,
     };
-    let hint = "Tab field · ←→ cycle color · ↵ save · esc cancel";
+    let hint = "Tab field · ←→ color · ^G glyph · ↵ save · esc cancel";
     let pad = inner.width.saturating_sub(hint.chars().count() as u16) / 2;
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(

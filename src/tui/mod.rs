@@ -992,6 +992,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_settings_overlay_key(app, key);
         return;
     }
+    // An open picker / palette overlay steals all keys until it's
+    // dismissed. Checked BEFORE the integration-edit panel so Ctrl+G
+    // from inside the edit panel (which opens the glyph picker on
+    // top) routes subsequent keys to the picker's filter input,
+    // not back into the Glyph field char-by-char.
+    if app.picker.is_some() {
+        handle_picker_key(app, key);
+        return;
+    }
     // Integration edit panel — all-keys-stolen while open; Enter
     // saves, Esc cancels, Tab cycles fields, ←→ cycles color, other
     // chars type into the focused text field.
@@ -1016,11 +1025,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // Help overlay — scroll + dismiss. No editing.
     if app.help_overlay.is_some() {
         handle_help_overlay_key(app, key);
-        return;
-    }
-    // An open picker / palette overlay steals all keys until it's dismissed.
-    if app.picker.is_some() {
-        handle_picker_key(app, key);
         return;
     }
     // The LSP signature-help popup: Esc dismisses; Up / Down cycle through
