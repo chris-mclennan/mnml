@@ -10,10 +10,41 @@
 //! `ui::draw` for synthetic mouse events) keep working unchanged.
 
 use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 
 use super::{send_macos_player, send_mixr_command};
 use crate::app::App;
 use crate::pane::Pane;
+use crate::pty_pane::{PtySession, sgr_mouse_button_code, sgr_mouse_mod_bits};
+
+/// Encode `event` as an SGR mouse report (CSI `<` … M/m) and
+/// write it to `session`'s pty. `pane_rect` is the on-screen
+/// rectangle occupied by the pane so we can translate absolute
+/// terminal coordinates to 1-based pane-local cell coordinates.
+fn forward_mouse_to_pty(session: &mut PtySession, pane_rect: Rect, event: MouseEvent) {
+    // Reject events outside the rect (shouldn't happen if the
+    // caller found it via `dispatch::contains`, but guards
+    // against off-by-one bugs).
+    if event.column < pane_rect.x || event.row < pane_rect.y {
+        return;
+    }
+    let col = (event.column - pane_rect.x) + 1;
+    let row = (event.row - pane_rect.y) + 1;
+    let mods = sgr_mouse_mod_bits(event.modifiers);
+    // Map crossterm's kind → SGR button code + press-vs-release.
+    // Move (drag) events emit the same button code as Down but
+    // with bit 5 set (+32) — a "motion" flag.
+    let (button_code, pressed) = match event.kind {
+        MouseEventKind::Down(btn) => (sgr_mouse_button_code(btn) + mods, true),
+        MouseEventKind::Up(btn) => (sgr_mouse_button_code(btn) + mods, false),
+        MouseEventKind::Drag(btn) => (sgr_mouse_button_code(btn) + 32 + mods, true),
+        MouseEventKind::ScrollUp => (64 + mods, true),
+        MouseEventKind::ScrollDown => (65 + mods, true),
+        // ScrollLeft / ScrollRight aren't standard in SGR; skip.
+        _ => return,
+    };
+    session.write_sgr_mouse_report(button_code, col, row, pressed);
+}
 
 mod coalesce;
 mod down_left;
@@ -30,6 +61,24 @@ pub(crate) use coalesce::{coalesce_scroll, take_coalesce_leftover, take_scroll_b
 
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
+
+    // 2026-07-03 — mouse-forwarding to Pty children. When the
+    // child inside a Pty pane has enabled terminal-mouse
+    // tracking (any of X10 / normal / button / any-event), the
+    // event should reach it via an SGR mouse report instead of
+    // being intercepted by mnml's own handlers (dock menu,
+    // focus, scrollback). This unblocks click / right-click /
+    // wheel inside every mouse-aware sibling (mnml-aws-amplify
+    // and friends).
+    if let Some(&(rect, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
+        crate::app::dispatch::contains(*r, x, y)
+            && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
+    }) && let Some(Pane::Pty(session)) = app.panes.get_mut(pid)
+        && session.is_mouse_tracking()
+    {
+        forward_mouse_to_pty(session, rect, m);
+        return;
+    }
 
     // Cmdline popup wheel scroll — route ScrollUp/ScrollDown to
     // the popup nav when the cursor is over the popup body. Must

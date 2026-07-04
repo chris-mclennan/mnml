@@ -437,6 +437,27 @@ impl PtySession {
         let _ = self.writer.flush();
     }
 
+    /// Whether the child process has enabled any form of mouse
+    /// tracking (X10 / normal / button / any-event via the
+    /// standard `CSI ?1000h / ?1002h / ?1003h` sequences).
+    /// When true, mnml forwards mouse events to the child
+    /// instead of handling them itself (dock menu, focus, etc.).
+    pub fn is_mouse_tracking(&self) -> bool {
+        self.term.is_mouse_tracking().unwrap_or(false)
+    }
+
+    /// Write an SGR mouse-report escape sequence to the child.
+    /// This is the `CSI < <buttons>;<col>;<row> M/m` extended
+    /// form (`?1006`); modern crossterm / termion / etc. clients
+    /// enable it whenever they call EnableMouseCapture. `col` /
+    /// `row` are 1-based cell coordinates INSIDE the pty grid.
+    /// `pressed` = trailing `M`; released = trailing `m`.
+    pub fn write_sgr_mouse_report(&mut self, button_code: u32, col: u16, row: u16, pressed: bool) {
+        let final_byte = if pressed { 'M' } else { 'm' };
+        let bytes = format!("\x1b[<{button_code};{col};{row}{final_byte}");
+        self.write_bytes(bytes.as_bytes());
+    }
+
     /// Scroll the view `delta` lines further into the scroll-back history
     /// (negative ⇒ back toward the live bottom). libghostty's `Delta` is
     /// "up is negative", so we negate the old vt100 "+ = further back" sign.
@@ -518,6 +539,34 @@ impl PtySession {
             None => name,
         }
     }
+}
+
+/// SGR mouse-report button code for a given crossterm mouse
+/// button. Left = 0, Middle = 1, Right = 2.
+pub fn sgr_mouse_button_code(button: ratatui::crossterm::event::MouseButton) -> u32 {
+    use ratatui::crossterm::event::MouseButton;
+    match button {
+        MouseButton::Left => 0,
+        MouseButton::Middle => 1,
+        MouseButton::Right => 2,
+    }
+}
+
+/// Encode the modifier bits into the SGR button field. Shift =
+/// 4, Alt = 8, Ctrl = 16. Added directly to the button code.
+pub fn sgr_mouse_mod_bits(mods: ratatui::crossterm::event::KeyModifiers) -> u32 {
+    use ratatui::crossterm::event::KeyModifiers;
+    let mut bits = 0;
+    if mods.contains(KeyModifiers::SHIFT) {
+        bits |= 4;
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        bits |= 8;
+    }
+    if mods.contains(KeyModifiers::CONTROL) {
+        bits |= 16;
+    }
+    bits
 }
 
 /// Build a flat [`RenderGrid`] from a terminal + render state. Contains all of
