@@ -1476,13 +1476,20 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     about_overlay::draw(frame, app, area);
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
-    // "+ Add integration" overlay — `:integrations.add` or clicking
-    // the + chip on the sidebar's INTEGRATIONS header.
-    discovery_overlay::draw(frame, app, area);
-    // Integration edit panel — layered on TOP of the discovery
-    // overlay when the user presses `e` on a rail row or selects the
-    // `[+ Add custom integration]` row. No-op when no edit is in
-    // flight; the renderer reads `discovery_overlay.edit_panel`.
+    // "+ Add integration" overlay — `:integrations.add`. Suppressed
+    // when the user is on the edit sub-panel (right-click chip →
+    // Edit) so the browse list doesn't distract from a focused
+    // per-integration edit.
+    let editing = app
+        .discovery_overlay
+        .as_ref()
+        .is_some_and(|s| s.edit_panel.is_some());
+    if !editing {
+        discovery_overlay::draw(frame, app, area);
+    }
+    // Integration edit panel — reads `discovery_overlay.edit_panel`.
+    // Rendered whether or not the discovery list is visible so the
+    // right-click → Edit flow shows JUST this panel.
     integration_edit_overlay::draw(frame, app, area);
     // Help overlay — `?` / view.help (auto-generated keymap reference).
     help_overlay::draw(frame, app, area);
