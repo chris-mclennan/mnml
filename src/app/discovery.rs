@@ -606,9 +606,13 @@ impl App {
     /// Close the edit panel without saving. Esc binding inside the
     /// panel; also called when the overlay itself is dismissed.
     pub fn integration_edit_cancel(&mut self) {
-        if let Some(state) = self.discovery_overlay.as_mut() {
-            state.edit_panel = None;
-        }
+        // 2026-07-03 — Esc used to close only the inner edit
+        // sub-panel, revealing the discovery browse list
+        // underneath. But we now hide the browse list whenever
+        // the edit panel is open (mod.rs::draw), so the list
+        // would suddenly APPEAR on Esc — the opposite of what
+        // the user expects. Close both together.
+        self.close_discovery_overlay();
     }
 
     /// Commit the edit panel's current field values to
