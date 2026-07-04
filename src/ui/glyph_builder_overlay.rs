@@ -65,12 +65,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Pull the panel state out for reading; refresh preview first so
-    // the sixel emit path sees fresh bytes.
-    let preview_w = ((inner.width as u32) * 8).min(256);
-    let preview_h = 96u32; // ~6 cells at 16 px/cell
+    // Preview pixel target — the rasterizer chooses the pixmap
+    // dimensions from these while preserving the em-box aspect
+    // (3:5). We aim for ~160 px tall so the sixel encoder has enough
+    // resolution to render a crisp glyph inside the preview box.
+    let preview_target_w = 96u32;
+    let preview_target_h = 160u32;
     if let Some(state) = app.glyph_builder.as_mut() {
-        crate::glyph_builder::maybe_refresh_preview(state, preview_w, preview_h);
+        crate::glyph_builder::maybe_refresh_preview(state, preview_target_w, preview_target_h);
     }
     let state = match app.glyph_builder.as_ref() {
         Some(s) => s.clone(),
@@ -127,10 +129,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // paint the sixel bytes at this cell.
     let preview_top = inner.y + form_rows + 1;
     if preview_rows >= 3 {
+        // Preview box sized to roughly match the em-box aspect
+        // (3:5 vertical) so the rasterized glyph fills the box
+        // instead of stretching wide. At ~8px:16px cell ratio, a
+        // 10-cell wide × 8-cell tall box works out to ~80×128 px
+        // (5:8) which is close enough to em-box 3:5 that Lanczos
+        // resize doesn't visibly distort.
         let preview_rect = Rect {
             x: inner.x + 2,
             y: preview_top,
-            width: 20.min(inner.width.saturating_sub(4)),
+            width: 10.min(inner.width.saturating_sub(4)),
             height: preview_rows,
         };
         let box_block = Block::default()

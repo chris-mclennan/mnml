@@ -283,8 +283,21 @@ pub fn rasterize(
     let target_h_units = EM * height_frac;
     let scale = (target_w_units / src_w).min(target_h_units / src_h);
 
-    let pixmap_w = target_w.max(2);
-    let pixmap_h = target_h.max(2);
+    // The pixmap keeps the em-box aspect ratio (CELL_W : EM = 3 : 5)
+    // so the rendered preview is proportional to the actual font
+    // glyph. The caller may pass any target_w/target_h; we honor the
+    // taller dimension and derive the other. Also samples at the SAME
+    // px-per-em-unit ratio for X and Y, so the glyph never squashes.
+    let (pixmap_w, pixmap_h) = if target_h * CELL_W as u32 >= target_w * EM as u32 {
+        // Height-limited: pick w to preserve aspect.
+        let h = target_h.max(2);
+        let w = ((h as f32) * CELL_W / EM).round() as u32;
+        (w.max(2), h)
+    } else {
+        let w = target_w.max(2);
+        let h = ((w as f32) * EM / CELL_W).round() as u32;
+        (w, h.max(2))
+    };
     let px_per_unit_x = pixmap_w as f32 / CELL_W;
     let px_per_unit_y = pixmap_h as f32 / EM;
 

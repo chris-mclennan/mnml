@@ -41,10 +41,21 @@ fn edit_rect(parent: Rect, mode: &IntegrationEditMode) -> Rect {
 }
 
 /// Paint the edit panel. No-op when `App::integration_edit` is `None`.
+///
+/// Also skipped while the Glyph action picker is up — that chooser is
+/// conceptually a submenu of the edit panel's Glyph field, so showing
+/// both stacked reads as visual clutter. The edit panel reappears
+/// automatically when the picker closes (Esc or accept).
 pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let Some(panel) = app.integration_edit.as_ref().cloned() else {
         return;
     };
+    if matches!(
+        app.picker.as_ref().map(|p| p.kind),
+        Some(crate::picker::PickerKind::GlyphAction)
+    ) {
+        return;
+    }
     let rect = edit_rect(parent, &panel.mode);
     let t = theme::cur();
     frame.render_widget(Clear, rect);
