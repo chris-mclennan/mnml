@@ -204,10 +204,10 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
         return;
     };
     let t = theme::cur();
-    // Cell = ` <glyph> ` — 3 cells wide, symmetric so the selected-
-    // cell highlight sits tight around the glyph instead of trailing
-    // 2 empty cells to the right (2026-07-04 fix).
-    let cell_w: usize = 3;
+    // Cell = `<glyph> ` — 2 cells wide. Tighter packing than a 3-cell
+    // grid so the selection highlight (a full cell of cyan bg) covers
+    // the glyph proportionally instead of trailing 2 pad cells right.
+    let cell_w: usize = 2;
     let cols = (list_area.width as usize / cell_w).max(1);
     picker.grid_cols = cols;
     // Reserve the bottom row for the "selected: <name>" footer when
@@ -258,21 +258,13 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             if is_sel {
                 style = style.add_modifier(Modifier::BOLD);
             }
-            // Paint just the glyph as a single cell (no padding
-            // background), so the selected-cell highlight is a tight
-            // 1-cell square around the glyph, not a 3-cell rectangle
-            // trailing into blank space. `unicode-width` says most
-            // Nerd Font glyphs are ambiguous — the terminal ultimately
-            // decides, but at 1 cell that's what most render.
-            let glyph_rect = Rect {
-                x: cell_x,
-                y: row_y,
-                width: 1,
-                height: 1,
-            };
+            // Fill the whole 2-cell tile: `<glyph> `. Selection paints
+            // the full tile background so the highlight is visible but
+            // not oversized.
+            let cell_text = format!("{glyph} ");
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(glyph, style))),
-                glyph_rect,
+                Paragraph::new(Line::from(Span::styled(cell_text, style))),
+                cell_rect,
             );
             app.rects.picker_items.push((cell_rect, idx));
         }
