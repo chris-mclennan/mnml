@@ -261,15 +261,17 @@ impl PtySession {
         if let Some(cwd) = &profile.cwd {
             cmd.cwd(cwd);
         }
-        // Override TERM to a universally-known terminfo entry. mnml's
-        // parent process is often launched from Ghostty which sets
-        // TERM=xterm-ghostty; ncurses tools (iftop / htop / less / vim)
-        // fail with "Error opening terminal: xterm-ghostty" when the
-        // terminfo entry isn't installed on the machine. Mnml's
-        // internal ghostty terminal core still handles xterm-256color
-        // output correctly, and profile.env below can still override
-        // this per-profile if needed.
-        cmd.env("TERM", "xterm-256color");
+        // ncurses tools (iftop / htop / less / vim) fail with "Error
+        // opening terminal: xterm-ghostty" when Ghostty's terminfo
+        // isn't installed system-wide (stock macOS/Linux ncurses
+        // packages don't ship it). Ghostty bundles its own compiled
+        // terminfo in the .app bundle; prepend it to `TERMINFO_DIRS`
+        // so children resolve `TERM=xterm-ghostty` correctly without
+        // us having to touch TERM or COLORTERM. No feature loss for
+        // Ghostty-aware apps.
+        if let Some(dirs) = terminfo_search_dirs() {
+            cmd.env("TERMINFO_DIRS", dirs);
+        }
         for (k, v) in &profile.env {
             cmd.env(k, v);
         }
@@ -735,6 +737,45 @@ pub(crate) fn scan_for_ticket(text: &str, prefixes: &[String]) -> Option<String>
 /// priority order: an explicit user-set name, the program's OSC window
 /// title, then the binary profile's default label. Blank candidates
 /// are skipped. The thinking-spinner glyph is layered on by the caller
+/// Build a `TERMINFO_DIRS` value that includes every terminfo
+/// directory a child pty might need. Prepends bundled locations
+/// (Ghostty.app on macOS, `/usr/local/share/terminfo` where users
+/// often drop custom entries) to the parent's `$TERMINFO_DIRS`
+/// (or the ncurses defaults if unset). Returns `None` when the
+/// resulting list is empty — caller then skips the env override
+/// so ncurses uses its compiled-in defaults.
+fn terminfo_search_dirs() -> Option<String> {
+    let mut dirs: Vec<String> = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        let ghostty = "/Applications/Ghostty.app/Contents/Resources/terminfo";
+        if std::path::Path::new(ghostty).is_dir() {
+            dirs.push(ghostty.to_string());
+        }
+    }
+    for extra in ["/usr/local/share/terminfo", "/opt/homebrew/share/terminfo"] {
+        if std::path::Path::new(extra).is_dir() {
+            dirs.push(extra.to_string());
+        }
+    }
+    let inherited = std::env::var("TERMINFO_DIRS").unwrap_or_default();
+    if !inherited.is_empty() {
+        dirs.push(inherited);
+    } else {
+        // ncurses defaults so we don't shadow the system terminfo db.
+        for def in ["/usr/share/terminfo", "/etc/terminfo", "/lib/terminfo"] {
+            if std::path::Path::new(def).is_dir() {
+                dirs.push(def.to_string());
+            }
+        }
+    }
+    if dirs.is_empty() {
+        None
+    } else {
+        Some(dirs.join(":"))
+    }
+}
+
 /// ([`PtySession::tab_label`]) — it's not a name. Pure — unit-tested.
 pub(crate) fn resolve_tab_label(
     display_name: Option<&str>,
