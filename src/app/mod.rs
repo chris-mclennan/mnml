@@ -7050,6 +7050,14 @@ impl App {
             } else {
                 bin_with_args
             };
+            // First-launch hint for sudo-needing tools — one-time
+            // toast pointing at the docs page with the sudoers.d
+            // one-liner so power users can skip the password prompt.
+            // Marker at `~/.config/mnml/.tools-sudo-hint-shown` so it
+            // only fires once across sessions. See docs/tools.md.
+            if tool.needs_sudo {
+                maybe_show_sudo_tools_hint(self);
+            }
             self.open_pty(crate::pty_pane::BinaryProfile::task("tools", &cmdline, ws));
             return;
         }
@@ -11275,6 +11283,27 @@ fn saved_layout_from(layout: &Layout, pane_to_idx: &[Option<usize>]) -> Option<S
 /// Rebuild a `Layout` from `SavedLayout`, looking each leaf's saved-index up in
 /// `idx_to_pane`. Returns `None` if any leaf points at a file that didn't
 /// re-open — we'd rather skip layout restore than show a stale id.
+/// Show the one-time "sudo tools need a password" hint the first
+/// time the user launches a needs_sudo tool. Marker file at
+/// `~/.config/mnml/.tools-sudo-hint-shown` — deleted manually if
+/// the user wants to see it again. Silent when the config dir
+/// isn't resolvable ($HOME + $XDG_CONFIG_HOME both unset).
+fn maybe_show_sudo_tools_hint(app: &mut App) {
+    let Some(cfg_path) = crate::config::user_config_path() else {
+        return;
+    };
+    let Some(cfg_dir) = cfg_path.parent() else {
+        return;
+    };
+    let marker = cfg_dir.join(".tools-sudo-hint-shown");
+    if marker.exists() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(cfg_dir);
+    let _ = std::fs::write(&marker, "");
+    app.toast("sudo needed for packet capture · skip the prompt: see docs/tools.md#passwordless");
+}
+
 fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Option<Layout> {
     match saved {
         SavedLayout::Empty => Some(Layout::Empty),
