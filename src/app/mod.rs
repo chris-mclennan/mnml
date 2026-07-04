@@ -3269,6 +3269,12 @@ pub struct App {
     /// Case-insensitive substring match against each icon's
     /// tooltip / id / command. Empty ⇒ no filter.
     pub integrations_panel_filter: String,
+    /// Integrations activity panel — explicit filter focus.
+    /// Was auto-focused (any char in the section went to the filter)
+    /// but that class-of-bugs stole ex-command chars, palette
+    /// shortcuts, etc. Now: `/` in the panel or clicking the filter
+    /// chip sets this to true; Esc or Enter clears it.
+    pub integrations_panel_filter_focused: bool,
     /// Integrations activity panel — which sub-view is active.
     /// `Installed` (default) lists the user's enabled integrations
     /// — the daily-driver rail. `Marketplace` lists everything
@@ -4099,6 +4105,7 @@ impl App {
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
             integrations_panel_filter: String::new(),
+            integrations_panel_filter_focused: false,
             integrations_panel_tab: IntegrationsPanelTab::Installed,
             agents_panel_filter_focused: false,
             cloud_agents_view: CloudAgentsView::default(),

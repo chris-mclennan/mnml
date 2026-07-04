@@ -601,41 +601,55 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
-    // qa-feature 2026-07-01 — Integrations rail filter. Auto-focused
-    // whenever the section owns the rail (no explicit toggle needed —
-    // `active_section` already gates it). Chars append, Backspace
-    // pops, Esc clears the query. Uses focus == Tree to avoid
-    // stealing keys while the user is in a pane. Also skipped when
-    // any modal overlay is up (picker / integration_edit) — those
-    // steal keys further down and got their typing eaten by this
-    // block until 2026-07-04. Also skipped when the cmdline is
-    // open (`:` was pressed) — otherwise `:` opens the cmdline
-    // popup and then the letters of the ex command get eaten by
-    // this block instead of reaching the cmdline (2026-07-04).
+    // Integrations rail filter — explicit focus (was auto-focused,
+    // but that stole `:` / palette shortcuts / any global char while
+    // the section was open; kept accreting gates for every collision
+    // until 2026-07-04 flipped it to explicit). Focus is set by
+    // pressing `/` in the panel or clicking the filter chip.
     if app.focus == crate::focus::Focus::Tree
         && app.active_section == crate::app::ActivitySection::Integrations
         && app.picker.is_none()
         && app.integration_edit.is_none()
-        && app.no_pane_cmdline.is_none()
     {
-        match key.code {
-            KeyCode::Esc if !app.integrations_panel_filter.is_empty() => {
-                app.integrations_panel_filter.clear();
-                return;
-            }
-            KeyCode::Backspace => {
-                app.integrations_panel_filter.pop();
-                return;
-            }
-            KeyCode::Char(c)
-                if !key
+        // Not-yet-focused: `/` enters filter mode (matches vim /
+        // less search idiom). All other chars flow through so
+        // global shortcuts still fire from the panel.
+        if !app.integrations_panel_filter_focused {
+            if let KeyCode::Char('/') = key.code
+                && !key
                     .modifiers
-                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
             {
-                app.integrations_panel_filter.push(c);
+                app.integrations_panel_filter_focused = true;
                 return;
             }
-            _ => {}
+        } else {
+            // Focused: chars append, Backspace pops, Esc clears +
+            // unfocuses, Enter commits + unfocuses.
+            match key.code {
+                KeyCode::Esc => {
+                    app.integrations_panel_filter.clear();
+                    app.integrations_panel_filter_focused = false;
+                    return;
+                }
+                KeyCode::Enter => {
+                    app.integrations_panel_filter_focused = false;
+                    return;
+                }
+                KeyCode::Backspace => {
+                    app.integrations_panel_filter.pop();
+                    return;
+                }
+                KeyCode::Char(c)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    app.integrations_panel_filter.push(c);
+                    return;
+                }
+                _ => {}
+            }
         }
     }
     // Agents rail filter — when focused, intercept typing /

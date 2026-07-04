@@ -535,6 +535,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.integrations_panel_scroll = 0;
         return;
     }
+    // Integrations filter chip — click to focus filter input.
+    if let Some(rect) = app.rects.integrations_filter_chip
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.integrations_panel_filter_focused = true;
+        return;
+    }
     // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.
     if let Some(&(_, id)) = app
         .rects

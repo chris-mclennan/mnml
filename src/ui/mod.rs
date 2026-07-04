@@ -2990,13 +2990,12 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     let search_glyph = if nerd { "\u{f002}" } else { "/" };
-    let filter_focused = app.active_section == crate::app::ActivitySection::Integrations
-        && app.focus == crate::focus::Focus::Tree;
+    let filter_focused = app.integrations_panel_filter_focused;
     let filter_display = if app.integrations_panel_filter.is_empty() {
         if filter_focused {
             "type to filter…".to_string()
         } else {
-            "filter".to_string()
+            "/ filter".to_string()
         }
     } else {
         app.integrations_panel_filter.clone()
@@ -3008,6 +3007,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     } else {
         t.comment
     };
+    let cursor = if filter_focused { "▏" } else { "" };
     frame.render_widget(
         Paragraph::new(ratatui::text::Line::from(vec![
             Span::styled(
@@ -3015,6 +3015,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(t.comment).bg(bg),
             ),
             Span::styled(filter_display, Style::default().fg(filter_fg).bg(bg)),
+            Span::styled(cursor, Style::default().fg(t.cyan).bg(bg)),
         ])),
         filter_row,
     );
