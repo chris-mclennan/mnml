@@ -19,15 +19,19 @@
 set -euo pipefail
 
 SVG_DIR="$HOME/Downloads/mnml-aws-icon-preview-inverted"
-FONT_IN="$HOME/Library/Fonts/JetBrainsMonoNerdFont-Regular.ttf"
-FONT_OUT="$HOME/Library/Fonts/JetBrainsMonoNerdFont-Regular-mnml.ttf"
+# Patch BOTH the NF (Nerd Font) and NFM (Nerd Font Mono) variants of
+# JetBrainsMono because Ghostty resolves the "…Mono" one by default
+# and the plain "…NF" one when the app or user config asks for it. If
+# only one is patched, U+F300 either renders as tofu (Ghostty picked
+# the un-patched variant) or as the old stale glyph (Ghostty picked
+# an older -mnml Mono file that wasn't updated).
+FONT_INS=(
+  "$HOME/Library/Fonts/JetBrainsMonoNerdFont-Regular.ttf"
+  "$HOME/Library/Fonts/JetBrainsMonoNerdFontMono-Regular.ttf"
+)
 
 if [[ ! -d "$SVG_DIR" ]]; then
   echo "SVG dir not found: $SVG_DIR" >&2
-  exit 1
-fi
-if [[ ! -f "$FONT_IN" ]]; then
-  echo "Font input not found: $FONT_IN" >&2
   exit 1
 fi
 
@@ -49,28 +53,49 @@ declare -a GLYPHS=(
   "eventbridge.svg:F30B:aws-eventbridge-inv"
 )
 
-ARGS=(--font "$FONT_IN" --output "$FONT_OUT")
-for spec in "${GLYPHS[@]}"; do
-  IFS=':' read -r svg cp name <<<"$spec"
-  path="$SVG_DIR/$svg"
-  if [[ ! -f "$path" ]]; then
-    echo "skipping $svg — file not found at $path" >&2
+patched_any=0
+for font_in in "${FONT_INS[@]}"; do
+  if [[ ! -f "$font_in" ]]; then
+    echo "skipping (not installed): $font_in"
     continue
   fi
-  ARGS+=(--glyph "${path}:${cp}:${name}:width=1.0:height=0.85")
+  # Output alongside the input, with the -mnml suffix inserted before .ttf.
+  base="$(basename "$font_in" .ttf)"
+  font_out="$HOME/Library/Fonts/${base}-mnml.ttf"
+
+  args=(--font "$font_in" --output "$font_out")
+  for spec in "${GLYPHS[@]}"; do
+    IFS=':' read -r svg cp name <<<"$spec"
+    path="$SVG_DIR/$svg"
+    if [[ ! -f "$path" ]]; then
+      echo "  skipping $svg — file not found at $path" >&2
+      continue
+    fi
+    args+=(--glyph "${path}:${cp}:${name}:width=1.0:height=0.85")
+  done
+
+  echo "→ patching $(basename "$font_out") with ${#GLYPHS[@]} AWS icons (width=1.0)"
+  fontforge -script "$(dirname "$0")/patch_nerd_font.py" "${args[@]}"
+  patched_any=1
 done
 
-echo "→ patching $FONT_OUT with ${#GLYPHS[@]} AWS icons (width=1.0, fits cell)"
-fontforge -script "$(dirname "$0")/patch_nerd_font.py" "${ARGS[@]}"
+if (( patched_any == 0 )); then
+  echo "no source fonts found; install JetBrainsMono Nerd Font first" >&2
+  exit 1
+fi
 
-# Flush the user-level font cache so macOS re-reads the file we just
+# Flush the user-level font cache so macOS re-reads the files we just
 # wrote. `atsutil databases -removeUser` works without sudo on macOS
-# 14+; on older systems it silently no-ops (harmless).
+# 14+; on older systems it silently no-ops (harmless). Also kick the
+# user font daemon so its in-memory registry re-scans immediately —
+# without this, deleted -mnml{2,3}.ttf entries survive as zombies
+# and Ghostty resolves the family name to the wrong (stale) file.
 echo
-echo "→ flushing font cache"
+echo "→ flushing font cache + kicking fontd"
 atsutil databases -removeUser >/dev/null 2>&1 || true
+killall fontd 2>/dev/null || true
 
 echo
-echo "✓ done. Restart your terminal to pick up the refreshed font"
-echo "  (Ghostty caches the loaded font in-process — a cache flush"
-echo "   alone won't refresh already-open windows)."
+echo "✓ done. Restart your terminal to pick up the refreshed fonts."
+echo "  Ghostty caches the loaded font in-process — cache flush"
+echo "  alone won't refresh already-open windows."
