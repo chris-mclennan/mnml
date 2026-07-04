@@ -604,9 +604,14 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // whenever the section owns the rail (no explicit toggle needed —
     // `active_section` already gates it). Chars append, Backspace
     // pops, Esc clears the query. Uses focus == Tree to avoid
-    // stealing keys while the user is in a pane.
+    // stealing keys while the user is in a pane. Also skipped when
+    // any modal overlay is up (picker / integration_edit) — those
+    // steal keys further down and got their typing eaten by this
+    // block until 2026-07-04.
     if app.focus == crate::focus::Focus::Tree
         && app.active_section == crate::app::ActivitySection::Integrations
+        && app.picker.is_none()
+        && app.integration_edit.is_none()
     {
         match key.code {
             KeyCode::Esc if !app.integrations_panel_filter.is_empty() => {
