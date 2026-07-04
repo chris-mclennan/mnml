@@ -105,7 +105,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let caret_x = query_area.x + caret_offset.min(query_area.width.saturating_sub(1));
     app.rects.picker_caret = Some((caret_x, query_area.y));
 
-    // ── list ──
+    // ── grid mode (icon glyphs) ──
+    if matches!(picker.kind, crate::picker::PickerKind::IconGlyphs) {
+        draw_glyph_grid(frame, app, list_area);
+        return;
+    }
+
+    // ── list mode ──
+    // List rendering leaves grid mode off; grid renderer sets it fresh.
+    picker.grid_cols = 0;
     let visible = list_area.height as usize;
     if picker.selected < picker.scroll {
         picker.scroll = picker.selected;
@@ -185,6 +193,118 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_darker)),
         list_area,
     );
+}
+
+/// Grid renderer for `PickerKind::IconGlyphs`. Cells are 4 cells wide
+/// (1 space + 1 glyph + 2 spaces), so a ~86-col picker fits ~21 glyphs
+/// per row and shows hundreds per screen. Below the grid, a footer row
+/// prints the selected glyph's full name + `\u{XXXX}` escape.
+fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
+    let Some(picker) = app.picker.as_mut() else {
+        return;
+    };
+    let t = theme::cur();
+    let cell_w: usize = 4;
+    let cols = (list_area.width as usize / cell_w).max(1);
+    picker.grid_cols = cols;
+    // Reserve the bottom row for the "selected: <name>" footer when
+    // there's height for it; otherwise use every row for glyphs.
+    let has_footer = list_area.height >= 3;
+    let grid_h = if has_footer {
+        list_area.height.saturating_sub(1) as usize
+    } else {
+        list_area.height as usize
+    };
+    let total = picker.len();
+    let scroll_rows = picker.scroll / cols;
+    let sel_row = picker.selected / cols;
+    let scroll_rows = if sel_row < scroll_rows {
+        sel_row
+    } else if sel_row >= scroll_rows + grid_h {
+        sel_row + 1 - grid_h
+    } else {
+        scroll_rows
+    };
+    picker.scroll = scroll_rows * cols;
+    let scroll = picker.scroll;
+    app.rects.picker_items.clear();
+
+    // Render each grid cell.
+    for row_i in 0..grid_h {
+        let row_y = list_area.y + row_i as u16;
+        for col_i in 0..cols {
+            let idx = scroll + row_i * cols + col_i;
+            if idx >= total {
+                break;
+            }
+            let cell_x = list_area.x + (col_i * cell_w) as u16;
+            let cell_rect = Rect {
+                x: cell_x,
+                y: row_y,
+                width: cell_w as u16,
+                height: 1,
+            };
+            let picker_ref = app.picker.as_ref().unwrap();
+            let item = picker_ref.items_view().nth(idx).unwrap();
+            let glyph = item
+                .label
+                .chars()
+                .next()
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+            let is_sel = idx == picker_ref.selected;
+            let bg = if is_sel { t.bg2 } else { t.bg_darker };
+            let mut style = Style::default().fg(t.fg).bg(bg);
+            if is_sel {
+                style = style.add_modifier(Modifier::BOLD | Modifier::REVERSED);
+            }
+            let cell_text = format!(" {glyph}  ");
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(cell_text, style))),
+                cell_rect,
+            );
+            app.rects.picker_items.push((cell_rect, idx));
+        }
+    }
+
+    // Footer with the selected item's name + codepoint.
+    if has_footer {
+        let picker_ref = app.picker.as_ref().unwrap();
+        let footer_y = list_area.y + list_area.height - 1;
+        let footer_rect = Rect {
+            x: list_area.x,
+            y: footer_y,
+            width: list_area.width,
+            height: 1,
+        };
+        let footer_text = picker_ref
+            .selected_item()
+            .map(|it| {
+                let g = it.label.chars().next().unwrap_or(' ');
+                format!(" {g}  {}   {}", strip_leading_glyph(&it.label), it.detail)
+            })
+            .unwrap_or_else(|| " (no matches) ".to_string());
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                footer_text,
+                Style::default()
+                    .fg(t.comment)
+                    .bg(t.bg_darker)
+                    .add_modifier(Modifier::ITALIC),
+            ))),
+            footer_rect,
+        );
+    }
+}
+
+/// Strip the leading glyph + whitespace from a label like
+/// `"  cloud-outline  [cloud]"` → `"cloud-outline  [cloud]"`. The
+/// icon picker's `PickerItem.label` is built as
+/// `"{glyph}  {name}  [{category}]"` in `open_icon_picker`.
+fn strip_leading_glyph(label: &str) -> String {
+    let mut chars = label.chars();
+    let _glyph = chars.next();
+    chars.as_str().trim_start().to_string()
 }
 
 #[cfg(test)]

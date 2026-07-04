@@ -173,6 +173,17 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
             picker.move_down();
             app.on_picker_moved();
         }
+        // Left / Right only navigate in grid mode (icon picker). List
+        // pickers ignore them so typing arrow-shaped modifiers into
+        // paths doesn't disturb the selection.
+        KeyCode::Left => {
+            picker.move_left();
+            app.on_picker_moved();
+        }
+        KeyCode::Right => {
+            picker.move_right();
+            app.on_picker_moved();
+        }
         KeyCode::Char('p') if ctrl => {
             picker.move_up();
             app.on_picker_moved();

@@ -279,6 +279,12 @@ pub struct Picker {
     pub selected: usize,
     /// First visible row (the view keeps `selected` on screen).
     pub scroll: usize,
+    /// Columns per row when the picker is rendered as a grid
+    /// (currently only `PickerKind::IconGlyphs`). `0` ⇒ list mode
+    /// (Up/Down jump ±1). Set fresh by the renderer each frame from
+    /// `list_area.width / cell_width`; nav uses it to jump ±grid_cols
+    /// for Up/Down and ±1 for Left/Right.
+    pub grid_cols: usize,
 }
 
 impl Picker {
@@ -291,6 +297,7 @@ impl Picker {
             filtered: Vec::new(),
             selected: 0,
             scroll: 0,
+            grid_cols: 0,
         };
         p.refilter();
         p
@@ -347,12 +354,33 @@ impl Picker {
         self.refilter();
     }
     pub fn move_down(&mut self) {
-        if self.selected + 1 < self.filtered.len() {
-            self.selected += 1;
-        }
+        let step = if self.grid_cols > 0 {
+            self.grid_cols
+        } else {
+            1
+        };
+        let last = self.filtered.len().saturating_sub(1);
+        self.selected = (self.selected + step).min(last);
     }
     pub fn move_up(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        let step = if self.grid_cols > 0 {
+            self.grid_cols
+        } else {
+            1
+        };
+        self.selected = self.selected.saturating_sub(step);
+    }
+    /// Grid mode only — move one cell left. No-op in list mode.
+    pub fn move_left(&mut self) {
+        if self.grid_cols > 0 {
+            self.selected = self.selected.saturating_sub(1);
+        }
+    }
+    /// Grid mode only — move one cell right. No-op in list mode.
+    pub fn move_right(&mut self) {
+        if self.grid_cols > 0 && self.selected + 1 < self.filtered.len() {
+            self.selected += 1;
+        }
     }
     pub fn set_selected(&mut self, idx: usize) {
         if idx < self.filtered.len() {

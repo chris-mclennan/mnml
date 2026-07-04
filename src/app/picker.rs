@@ -951,38 +951,76 @@ impl App {
     }
 
     /// Open the integrations icon picker — a searchable list of
-    /// hand-picked Nerd Font glyphs. Accept copies the literal char
-    /// + the `\u{XXXX}` escape to the clipboard. v1 of #607.
+    /// every Nerd Font glyph. Hand-curated entries (with real names +
+    /// categories) rank first (priority 1) so a search for "aws" or
+    /// "git" hits them; the rest of the PUA ranges are appended so
+    /// users can browse the full catalog. Accept in the picker feeds
+    /// the char back into the integration-edit panel's Glyph field
+    /// (see `PickerKind::IconGlyphs` in `picker.rs::accept`).
     pub fn open_icon_picker(&mut self) {
-        let items: Vec<crate::picker::PickerItem> = crate::icon_catalog::ICON_CATALOG
-            .iter()
-            .map(|e| {
-                // Build the displayed glyph from the codepoint so the
-                // user sees the actual icon in the list. If the
-                // codepoint is malformed (shouldn't happen for our
-                // hand-typed table), fall back to a question mark.
-                let glyph = u32::from_str_radix(e.codepoint, 16)
-                    .ok()
-                    .and_then(char::from_u32)
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "?".to_string());
-                // design-critic Issue 6 — embed category in the label
-                // so fuzzy search matches it (was in detail-only, which
-                // the picker doesn't search). User can type "fs" or
-                // "git" to filter by domain.
-                crate::picker::PickerItem {
-                    id: e.codepoint.to_string(),
-                    label: format!("{glyph}  {}  [{}]", e.name, e.category),
-                    detail: format!("\\u{{{}}}", e.codepoint),
-                    priority: 0,
+        let mut items: Vec<crate::picker::PickerItem> = Vec::with_capacity(2048);
+        let mut seen = std::collections::HashSet::<u32>::new();
+
+        // Hand-curated section — pinned first via priority=1 so
+        // typing a search matches these before generic entries.
+        for e in crate::icon_catalog::ICON_CATALOG {
+            let Some(cp) = u32::from_str_radix(e.codepoint, 16).ok() else {
+                continue;
+            };
+            let Some(ch) = char::from_u32(cp) else {
+                continue;
+            };
+            seen.insert(cp);
+            items.push(crate::picker::PickerItem {
+                id: format!("{cp:04X}"),
+                label: format!("{ch}  {}  [{}]", e.name, e.category),
+                detail: format!("\\u{{{cp:04X}}}"),
+                priority: 1,
+            });
+        }
+
+        // Full Nerd Fonts PUA ranges. Some codepoints are unassigned
+        // in a given Nerd Font (renders as tofu) — filtering those
+        // requires font introspection, so we surface every codepoint
+        // and let the user visually skip blanks.
+        const NERD_RANGES: &[(u32, u32)] = &[
+            (0xE000, 0xE00A),   // Pomicons
+            (0xE0A0, 0xE0A2),   // Powerline
+            (0xE0B0, 0xE0B3),   // Powerline
+            (0xE0A3, 0xE0A3),   // Powerline Extra
+            (0xE0B4, 0xE0C8),   // Powerline Extra
+            (0xE0CA, 0xE0CA),   // Powerline Extra
+            (0xE0CC, 0xE0D4),   // Powerline Extra
+            (0xE200, 0xE2A9),   // IEC Power Symbols
+            (0xE300, 0xE3E3),   // Weather
+            (0xE5FA, 0xE6B7),   // Seti-UI + Custom
+            (0xE700, 0xE8EF),   // Devicons
+            (0xEA60, 0xEC1E),   // Codicons
+            (0xED00, 0xEFCE),   // Font Awesome
+            (0xF000, 0xF2FF),   // Font Awesome
+            (0xF300, 0xF381),   // Font Logos
+            (0xF400, 0xF533),   // Octicons
+            (0xF0001, 0xF1AF0), // Material Design Icons
+        ];
+        for &(start, end) in NERD_RANGES {
+            for cp in start..=end {
+                if seen.contains(&cp) {
+                    continue;
                 }
-            })
-            .collect();
-        let picker = crate::picker::Picker::new(
-            crate::picker::PickerKind::IconGlyphs,
-            "Pick glyph".to_string(),
-            items,
-        );
+                let Some(ch) = char::from_u32(cp) else {
+                    continue;
+                };
+                items.push(crate::picker::PickerItem {
+                    id: format!("{cp:04X}"),
+                    label: format!("{ch} U+{cp:04X}"),
+                    detail: format!("\\u{{{cp:04X}}}"),
+                    priority: 0,
+                });
+            }
+        }
+        let title = format!("Pick glyph · {} shown", items.len());
+        let picker =
+            crate::picker::Picker::new(crate::picker::PickerKind::IconGlyphs, title, items);
         self.open_picker(picker);
     }
 
