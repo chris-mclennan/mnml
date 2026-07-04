@@ -14,7 +14,16 @@ use crate::ui::theme;
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     // Geometry: capped (clamps may exceed a tiny screen — it'll clip, fine).
     let w = screen.width.saturating_sub(8).clamp(30, 90);
-    let h = screen.height.saturating_sub(4).clamp(7, 22);
+    // 2026-07-04 — raised the height cap from 22 to fit more items
+    // per screen (the icon picker has ~100 entries; 22 rows meant
+    // seeing 4× less of the list than the screen had room for).
+    // Still caps at 80% of the screen so the picker never fully
+    // hides the underlying pane.
+    let h = screen
+        .height
+        .saturating_sub(4)
+        .min((screen.height * 4) / 5)
+        .max(7);
     let x = screen.x + (screen.width.saturating_sub(w)) / 2;
     // `[ui] picker_position` — `"top"` drops the box flush with the top
     // edge (the common modern quick-open convention); anything else
