@@ -28,31 +28,61 @@ impl App {
         self.glyph_builder = Some(s);
     }
 
-    /// Open the glyph builder pre-filled from an existing glyph's
-    /// stored metadata (`~/.config/mnml/glyph_meta.toml`). Used by
-    /// the icon picker's `e` key to re-tune width/height/center for
-    /// a previously-baked custom glyph without retyping the SVG path.
+    /// Open the glyph builder pre-filled from a glyph's saved
+    /// metadata. Precedence:
     ///
-    /// Returns `false` when no metadata exists for `cp` — caller
-    /// should toast that the glyph wasn't built via mnml (e.g. it's
-    /// a stock Nerd Font glyph) and no edit path applies.
+    ///   1. User's `~/.config/mnml/glyph_meta.toml` (per-bake meta —
+    ///      whatever the user baked most recently, including custom
+    ///      SVGs they added themselves).
+    ///   2. `BUILTIN_GLYPHS` shipped list (the AWS set + future
+    ///      built-ins). The SVG is resolved from the mnml install
+    ///      or dev tree; if it's not found on disk, we can't render
+    ///      a preview and fall through to `false`.
+    ///
+    /// Returns `false` when neither source has an entry — caller
+    /// toasts that the glyph wasn't built via mnml.
     pub fn open_glyph_builder_for_edit_cp(&mut self, cp: u32) -> bool {
         use crate::glyph_builder::{
-            BuilderField, GlyphBuilderState, category_for_codepoint, load_meta,
+            BuilderField, GlyphBuilderState, builtin_for_codepoint, category_for_codepoint,
+            load_meta, resolve_builtin_svg,
         };
-        let meta = load_meta();
         let cp_hex = format!("{cp:04X}");
-        let Some(entry) = meta.glyphs.iter().find(|g| g.codepoint == cp_hex) else {
-            return false;
-        };
+
+        // 1. User meta — most recent per-bake state wins.
+        let meta = load_meta();
+        let (svg, name, width, height, center) =
+            if let Some(entry) = meta.glyphs.iter().find(|g| g.codepoint == cp_hex) {
+                (
+                    entry.svg.clone(),
+                    entry.name.clone(),
+                    entry.width_frac,
+                    entry.height_frac,
+                    entry.center_frac,
+                )
+            } else if let Some(bi) = builtin_for_codepoint(cp) {
+                // 2. Fall back to the built-in catalog.
+                let Some(svg_path) = resolve_builtin_svg(bi.svg_relpath) else {
+                    return false;
+                };
+                (
+                    svg_path.to_string_lossy().into_owned(),
+                    bi.name.to_string(),
+                    bi.width_frac,
+                    bi.height_frac,
+                    bi.center_frac,
+                )
+            } else {
+                return false;
+            };
+
         let s = GlyphBuilderState {
-            svg_path: entry.svg.clone(),
+            svg_path: svg,
             category: category_for_codepoint(cp),
-            name: entry.name.clone(),
-            codepoint_hex: entry.codepoint.clone(),
-            width_frac: entry.width_frac,
-            height_frac: entry.height_frac,
-            center_frac: entry.center_frac,
+            name,
+            codepoint_hex: cp_hex,
+            width_frac: width,
+            height_frac: height,
+            center_frac: center,
             focused_field: BuilderField::WidthFrac,
             preview_png: None,
             preview_signature: None,

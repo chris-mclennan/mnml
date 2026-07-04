@@ -13,14 +13,19 @@
 
 set -euo pipefail
 
-SVG_DIR="$HOME/Downloads/mnml-aws-icon-preview-inverted"
 FONT_OUT="$HOME/Library/Fonts/MnmlSymbols.ttf"
 
-if [[ ! -d "$SVG_DIR" ]]; then
-  echo "SVG dir not found: $SVG_DIR" >&2
-  echo "(expected the AWS architecture SVGs from the design assets)" >&2
+# Prefer the vendored SVGs shipped with the mnml repo; fall back to
+# the design-assets Downloads dir so pre-vendored setups still work.
+if [[ -d "$(dirname "$0")/../assets/glyphs/aws" ]]; then
+  SVG_DIR="$(cd "$(dirname "$0")/../assets/glyphs/aws" && pwd)"
+elif [[ -d "$HOME/Downloads/mnml-aws-icon-preview-inverted" ]]; then
+  SVG_DIR="$HOME/Downloads/mnml-aws-icon-preview-inverted"
+else
+  echo "SVG dir not found: assets/glyphs/aws/ or ~/Downloads/mnml-aws-icon-preview-inverted/" >&2
   exit 1
 fi
+echo "using SVG source: $SVG_DIR"
 
 # Codepoints match src/icon_catalog.rs. U+F1B00-F1B0B = inverted
 # variants (transparent bg, colored lines — the default rail glyph).

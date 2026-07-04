@@ -318,6 +318,168 @@ pub fn rasterize(
     Ok(png)
 }
 
+/// Per-glyph metadata for a glyph that mnml SHIPS. Used when the
+/// user's `~/.config/mnml/glyph_meta.toml` doesn't have an entry for
+/// a codepoint they want to edit — falls back to the shipped SVG
+/// path so the edit-existing flow works out of the box for the 12
+/// AWS icons (and any future built-ins).
+///
+/// The `svg_relpath` is resolved at runtime against the mnml source
+/// tree — either the installed app's `Contents/Resources/glyphs/…`
+/// or the dev tree's `assets/glyphs/…`. See `resolve_builtin_svg`.
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinGlyph {
+    pub codepoint: u32,
+    pub name: &'static str,
+    pub svg_relpath: &'static str,
+    pub width_frac: f32,
+    pub height_frac: f32,
+    pub center_frac: f32,
+}
+
+/// mnml-shipped glyphs. Codepoints match `src/icon_catalog.rs`.
+/// Defaults match the tuned `scripts/build_mnml_symbols.sh`.
+pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
+    BuiltinGlyph {
+        codepoint: 0xF1B00,
+        name: "aws-amplify-inv",
+        svg_relpath: "assets/glyphs/aws/amplify.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B01,
+        name: "aws-lambda-inv",
+        svg_relpath: "assets/glyphs/aws/lambda.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B02,
+        name: "aws-ecs-inv",
+        svg_relpath: "assets/glyphs/aws/ecs.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B03,
+        name: "aws-ecr-inv",
+        svg_relpath: "assets/glyphs/aws/ecr.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B04,
+        name: "aws-rds-inv",
+        svg_relpath: "assets/glyphs/aws/rds.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B05,
+        name: "aws-sqs-inv",
+        svg_relpath: "assets/glyphs/aws/sqs.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B06,
+        name: "aws-sns-inv",
+        svg_relpath: "assets/glyphs/aws/sns.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B07,
+        name: "aws-dynamodb-inv",
+        svg_relpath: "assets/glyphs/aws/dynamodb.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B08,
+        name: "aws-cognito-inv",
+        svg_relpath: "assets/glyphs/aws/cognito.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B09,
+        name: "aws-cloudwatch-inv",
+        svg_relpath: "assets/glyphs/aws/cloudwatch.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B0A,
+        name: "aws-codebuild-inv",
+        svg_relpath: "assets/glyphs/aws/codebuild.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1B0B,
+        name: "aws-eventbridge-inv",
+        svg_relpath: "assets/glyphs/aws/eventbridge.svg",
+        width_frac: 1.25,
+        height_frac: 0.80,
+        center_frac: 0.36,
+    },
+];
+
+/// Locate a shipped SVG on disk. Tries in order:
+///   1. `<installed-app>/Contents/Resources/<relpath>`
+///   2. `<mnml exe parent>/../<relpath>` (dev build inside `target/`)
+///   3. `~/Projects/mnml/<relpath>` (fallback for repo checkout)
+///
+/// Returns the first path that exists.
+pub fn resolve_builtin_svg(relpath: &str) -> Option<std::path::PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        // .app bundle layout: MacOS/mnml → ../Resources/<relpath>
+        if let Some(parent) = exe.parent()
+            && let Some(macos_parent) = parent.parent()
+        {
+            let cand = macos_parent.join("Resources").join(relpath);
+            if cand.exists() {
+                return Some(cand);
+            }
+        }
+        // Dev build: target/debug/mnml → target/../<relpath>
+        let mut cur = exe;
+        while cur.pop() {
+            let cand = cur.join(relpath);
+            if cand.exists() {
+                return Some(cand);
+            }
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let cand = std::path::PathBuf::from(home)
+            .join("Projects/mnml")
+            .join(relpath);
+        if cand.exists() {
+            return Some(cand);
+        }
+    }
+    None
+}
+
+/// Look up a codepoint in the built-in shipped-glyph list.
+pub fn builtin_for_codepoint(cp: u32) -> Option<&'static BuiltinGlyph> {
+    BUILTIN_GLYPHS.iter().find(|g| g.codepoint == cp)
+}
+
 /// Per-glyph build metadata persisted in
 /// `~/.config/mnml/glyph_meta.toml`. Read on picker "edit existing"
 /// so the builder pre-fills with the original SVG path + transform
