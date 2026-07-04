@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as RLayout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::ui::theme;
@@ -49,15 +49,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     app.rects.picker_items.clear();
 
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(
-            Style::default()
-                .fg(theme::cur().blue)
-                .bg(theme::cur().bg_darker),
-        )
-        .style(Style::default().bg(theme::cur().bg_darker));
+    let block = crate::ui::design_tokens::modal_panel(
+        app.picker
+            .as_ref()
+            .map(|p| p.title.as_str())
+            .unwrap_or("Picker"),
+    );
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -70,44 +67,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let rows = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(inner);
     let (query_area, list_area) = (rows[0], rows[1]);
 
-    // ── title + query line ──
+    // ── query line ──
+    // Title moved to the block's title bar; the query row is just
+    // the input + item count.
     let count = picker.len();
-    let title = format!(" {} ", picker.title);
     let counter = format!(" {count} ");
     let prompt = format!("  {}", picker.query);
-    let title_cols = title.chars().count();
     let avail = query_area.width as usize;
-    let pad = avail.saturating_sub(title_cols + counter.chars().count() + prompt.chars().count());
+    let pad = avail.saturating_sub(counter.chars().count() + prompt.chars().count());
+    let panel_bg = theme::cur().bg_dark;
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                title,
-                Style::default()
-                    .fg(theme::cur().bg_darker)
-                    .bg(theme::cur().blue)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" ", Style::default().bg(theme::cur().bg_darker)),
-            Span::styled(
                 prompt.clone(),
-                Style::default()
-                    .fg(theme::cur().fg)
-                    .bg(theme::cur().bg_darker),
+                Style::default().fg(theme::cur().fg).bg(panel_bg),
             ),
-            Span::styled(" ".repeat(pad), Style::default().bg(theme::cur().bg_darker)),
+            Span::styled(" ".repeat(pad), Style::default().bg(panel_bg)),
             Span::styled(
                 counter,
-                Style::default()
-                    .fg(theme::cur().comment)
-                    .bg(theme::cur().bg_darker),
+                Style::default().fg(theme::cur().comment).bg(panel_bg),
             ),
         ])),
         query_area,
     );
-    // Caret: just after the prompt text. The query line renders as
-    // [title][" "][prompt="  "+query][pad][counter], so the caret must skip the
-    // title span + separator space + the prompt's leading indent, not just "  ".
-    let caret_offset = title_cols as u16 + 1 + prompt.chars().count() as u16;
+    // Caret sits right after the query text — the row is just
+    // [prompt="  "+query][pad][counter], so the caret is at the
+    // end of the prompt span.
+    let caret_offset = prompt.chars().count() as u16;
     let caret_x = query_area.x + caret_offset.min(query_area.width.saturating_sub(1));
     app.rects.picker_caret = Some((caret_x, query_area.y));
 
@@ -134,7 +120,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         let bg = if is_sel {
             theme::cur().bg2
         } else {
-            theme::cur().bg_darker
+            theme::cur().bg_dark
         };
         let marker = if is_sel { "▌ " } else { "  " };
         // render-reviewer N-1 + drive-mnml 2026-06-28: cap detail
@@ -192,11 +178,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
             "  (no matches)",
             Style::default()
                 .fg(theme::cur().comment)
-                .bg(theme::cur().bg_darker),
+                .bg(theme::cur().bg_dark),
         )));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_darker)),
+        Paragraph::new(lines).style(Style::default().bg(theme::cur().bg_dark)),
         list_area,
     );
 }
@@ -293,7 +279,7 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 " ".repeat(list_area.width as usize),
-                Style::default().bg(theme::cur().bg_darker),
+                Style::default().bg(theme::cur().bg_dark),
             ))),
             spacer_rect,
         );
@@ -361,7 +347,7 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
                 footer_text,
                 Style::default()
                     .fg(t.comment)
-                    .bg(t.bg_darker)
+                    .bg(t.bg_dark)
                     .add_modifier(Modifier::ITALIC),
             ))),
             footer_rect,

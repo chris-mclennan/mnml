@@ -12,7 +12,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::app::discovery::{IntegrationEditField, IntegrationEditMode, IntegrationEditState};
@@ -66,16 +66,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         IntegrationEditMode::Edit => format!(" edit · {} ", panel.id),
         IntegrationEditMode::AddCustom => " + add custom integration ".to_string(),
     };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(t.bg_dark)
-                .bg(t.cyan)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().fg(t.fg).bg(t.bg_dark));
+    let block = crate::ui::design_tokens::modal_panel(&title);
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 

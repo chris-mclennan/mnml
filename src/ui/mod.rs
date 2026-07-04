@@ -22,6 +22,7 @@
 pub mod about_overlay;
 pub mod activity_bar;
 pub mod ai_view;
+pub mod design_tokens;
 pub mod spend_report_view;
 
 /// 2026-06-21 vscode-mouse SEV-2 — which Claude Agents dashboard

@@ -29,7 +29,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
 use crate::glyph_builder::{BuilderCategory, BuilderField};
@@ -54,16 +54,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     };
     frame.render_widget(Clear, area);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            " + Add custom glyph ",
-            Style::default()
-                .fg(t.bg_dark)
-                .bg(t.cyan)
-                .add_modifier(Modifier::BOLD),
-        ))
-        .style(Style::default().fg(t.fg).bg(t.bg_dark));
+    let block = crate::ui::design_tokens::modal_panel("+ Add custom glyph");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
