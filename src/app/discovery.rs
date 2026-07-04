@@ -108,11 +108,6 @@ impl App {
             tooltip: icon.tooltip.unwrap_or_default(),
             focused_field: IntegrationEditField::Glyph,
         });
-        // 2026-07-04 — user feedback: "why on earth do I have to press
-        // Ctrl+G". Changing the glyph is the common Edit reason, so
-        // launch the picker immediately. Esc closes the picker → the
-        // edit panel is still there for color / fallback / tooltip.
-        self.open_icon_picker();
     }
 
     /// Pop the "patch nerd font with this SVG" prompt — the user
