@@ -33,7 +33,10 @@ U+F0000+ — different block.)
 Example: U+F300 = Claude · U+F301 = Codex · U+F302–F30F free.
 """
 
+import os
+import subprocess
 import sys
+import tempfile
 
 import fontforge
 
@@ -165,10 +168,46 @@ def main() -> int:
                 break
     print(f"cell width detected: {cell_w} (em={em})")
 
+    # Path to the evenodd flattener sibling script. Runs when the SVG's
+    # fill-rule is `evenodd` (AWS Architecture Icons rely on it for
+    # interior hollows). Without the pre-flatten, `importOutlines` +
+    # `removeOverlap` collapses hollow logos like the Amplify "A" into
+    # a solid red blob.
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    flatten_script = os.path.join(script_dir, "flatten_svg_evenodd.py")
+
     for svg_path, codepoint, name, extras in glyphs:
         print(f"adding U+{codepoint:04X} ({name}) ← {svg_path}")
+
+        # Pre-flatten evenodd fill so FontForge's non-zero winding
+        # interpretation matches what a browser renders.
+        needs_flatten = 'fill-rule="evenodd"' in open(svg_path).read()
+        if needs_flatten and os.path.exists(flatten_script):
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".svg", delete=False, mode="w"
+            )
+            tmp.close()
+            try:
+                subprocess.run(
+                    ["python3", flatten_script, svg_path, tmp.name],
+                    check=True,
+                )
+                import_from = tmp.name
+                print(f"  ↳ pre-flattened evenodd → {tmp.name}")
+            except Exception as e:
+                print(f"  ! flatten failed ({e}) — importing raw SVG")
+                import_from = svg_path
+        else:
+            import_from = svg_path
+
         glyph = font.createChar(codepoint, name)
-        glyph.importOutlines(svg_path)
+        glyph.clear()
+        # Pass empty flags tuple explicitly. The default flags include
+        # `removeoverlap`, which fragments an evenodd-flattened compound
+        # path (like Amplify's hollow "A") into ~10 fixup contours with
+        # inverted winding — the classic "hexagon blob" outcome. With
+        # `()` we keep the 6 clean contours the flattener produced.
+        glyph.importOutlines(import_from, ())
         bbox = glyph.boundingBox()  # (x0, y0, x1, y1)
         glyph_w = bbox[2] - bbox[0]
         glyph_h = bbox[3] - bbox[1]
@@ -217,8 +256,18 @@ def main() -> int:
         dy = target_center - (bbox[1] + glyph_h / 2.0)
         glyph.transform((1.0, 0.0, 0.0, 1.0, dx, dy))
         glyph.width = cell_w
+        # Fix winding: SVG's y-down coordinate system flips during import
+        # to font y-up, which reverses every subpath's winding order.
+        # Shapely emitted exteriors CCW + interiors CW; after the flip
+        # they're backwards (interiors would fill, exteriors would be
+        # holes). `correctDirection` re-orients each contour so
+        # TrueType's non-zero winding rule fills exteriors and cuts
+        # interiors.
+        glyph.correctDirection()
+        # `simplify` cleans redundant nodes. No `removeOverlap` — the
+        # flatten_svg_evenodd pre-pass already made every contour
+        # non-overlapping.
         glyph.simplify()
-        glyph.removeOverlap()
 
         # Optional erosion: `thin=N` shrinks every outline inward by ~N
         # font-units. Useful for icons with thin protrusions (e.g. the
