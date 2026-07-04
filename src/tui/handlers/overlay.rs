@@ -84,19 +84,28 @@ pub(crate) fn handle_search_section_key(app: &mut App, key: KeyEvent) {
 /// → Edit / Add custom). Steals every key until Enter saves or Esc
 /// cancels.
 pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
+    use crate::app::discovery::IntegrationEditField;
+    let glyph_focused = app
+        .integration_edit
+        .as_ref()
+        .is_some_and(|p| matches!(p.focused_field, IntegrationEditField::Glyph));
     match key.code {
         KeyCode::Esc => app.integration_edit_cancel(),
+        // Enter / Right on the Glyph field open the picker (Glyph is
+        // a menu-style choice, not a text field). Enter on any other
+        // field commits the save. Right on Color cycles the palette.
+        KeyCode::Enter if glyph_focused => app.open_icon_picker(),
         KeyCode::Enter => app.integration_edit_save(),
+        KeyCode::Right if glyph_focused => app.open_icon_picker(),
+        KeyCode::Right => app.integration_edit_color_cycle(1),
         KeyCode::Tab => app.integration_edit_cycle_field(1),
         KeyCode::BackTab => app.integration_edit_cycle_field(-1),
         KeyCode::Left => app.integration_edit_color_cycle(-1),
-        KeyCode::Right => app.integration_edit_color_cycle(1),
         KeyCode::Up => app.integration_edit_cycle_field(-1),
         KeyCode::Down => app.integration_edit_cycle_field(1),
         KeyCode::Backspace => app.integration_edit_backspace(),
-        // Ctrl+G — browse glyphs. Picker accept handler routes back
-        // into the Glyph field when the edit panel is open (see
-        // `PickerKind::IconGlyphs` handler in app/picker.rs).
+        // Ctrl+G also opens the picker — muscle memory for the
+        // original chord before Enter / Right were wired up.
         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.open_icon_picker();
         }
