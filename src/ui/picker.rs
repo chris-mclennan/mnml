@@ -251,28 +251,28 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             let item = picker_ref.items_view().nth(idx).unwrap();
             let glyph_ch = item.label.chars().next().unwrap_or(' ');
             let glyph = glyph_ch.to_string();
-            // Some Nerd Font glyphs render double-wide (Devicons,
-            // emoji-style icons). Pad narrow glyphs with an extra
-            // space so both variants occupy the same visual footprint
-            // and the neighbor cells don't touch — user reported
-            // "some are too short on right side" from mixed-width
-            // rows.
-            let glyph_w = unicode_width::UnicodeWidthChar::width(glyph_ch).unwrap_or(1);
             let is_sel = idx == picker_ref.selected;
-            let bg = if is_sel { t.bg2 } else { t.bg_darker };
-            let mut style = Style::default().fg(t.fg).bg(bg);
+            let fg = if is_sel { t.bg_dark } else { t.fg };
+            let bg = if is_sel { t.cyan } else { t.bg_darker };
+            let mut style = Style::default().fg(fg).bg(bg);
             if is_sel {
-                style = style.add_modifier(Modifier::BOLD | Modifier::REVERSED);
+                style = style.add_modifier(Modifier::BOLD);
             }
-            // Left-align the glyph and always pad to cell_w so
-            // narrow + wide glyphs occupy identical visual columns.
-            // Narrow (w=1) → `<glyph>  ` (glyph + 2 spaces = 3 cells).
-            // Wide   (w=2) → `<glyph> `  (glyph + 1 space  = 3 cells).
-            let pad_right = cell_w.saturating_sub(glyph_w);
-            let cell_text = format!("{glyph}{}", " ".repeat(pad_right));
+            // Paint just the glyph as a single cell (no padding
+            // background), so the selected-cell highlight is a tight
+            // 1-cell square around the glyph, not a 3-cell rectangle
+            // trailing into blank space. `unicode-width` says most
+            // Nerd Font glyphs are ambiguous — the terminal ultimately
+            // decides, but at 1 cell that's what most render.
+            let glyph_rect = Rect {
+                x: cell_x,
+                y: row_y,
+                width: 1,
+                height: 1,
+            };
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(cell_text, style))),
-                cell_rect,
+                Paragraph::new(Line::from(Span::styled(glyph, style))),
+                glyph_rect,
             );
             app.rects.picker_items.push((cell_rect, idx));
         }
