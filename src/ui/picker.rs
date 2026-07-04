@@ -204,7 +204,10 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
         return;
     };
     let t = theme::cur();
-    let cell_w: usize = 4;
+    // Cell = ` <glyph> ` — 3 cells wide, symmetric so the selected-
+    // cell highlight sits tight around the glyph instead of trailing
+    // 2 empty cells to the right (2026-07-04 fix).
+    let cell_w: usize = 3;
     let cols = (list_area.width as usize / cell_w).max(1);
     picker.grid_cols = cols;
     // Reserve the bottom row for the "selected: <name>" footer when
@@ -258,7 +261,7 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             if is_sel {
                 style = style.add_modifier(Modifier::BOLD | Modifier::REVERSED);
             }
-            let cell_text = format!(" {glyph}  ");
+            let cell_text = format!(" {glyph} ");
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(cell_text, style))),
                 cell_rect,
