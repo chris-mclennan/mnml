@@ -294,6 +294,64 @@ pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
     },
 ];
 
+/// Best-effort detection of the primary network interface (the one
+/// the default route uses). Runs `route -n get default` on macOS
+/// and `ip route show default` on Linux, then parses the interface
+/// name from the output. Returns `None` if neither command works or
+/// the output can't be parsed.
+///
+/// Used by the iftop launcher so the tool binds to the interface
+/// with actual traffic instead of macOS's `anpi2` (Apple secondary
+/// radio) auto-pick.
+pub fn default_route_iface() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("route")
+            .args(["-n", "get", "default"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        for line in stdout.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("interface:") {
+                let iface = rest.trim();
+                if !iface.is_empty() {
+                    return Some(iface.to_string());
+                }
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let out = std::process::Command::new("ip")
+            .args(["route", "show", "default"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        // Example: `default via 192.168.1.1 dev en0 proto dhcp`
+        let mut parts = stdout.split_whitespace();
+        while let Some(tok) = parts.next() {
+            if tok == "dev"
+                && let Some(iface) = parts.next()
+            {
+                return Some(iface.to_string());
+            }
+        }
+        None
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
+}
+
 /// Check whether `bin` is on `$PATH`. Walks PATH directories looking
 /// for a file matching `bin` (case-sensitive on Unix; honors `.exe` on
 /// Windows). Returns `true` on first hit.

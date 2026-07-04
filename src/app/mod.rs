@@ -7034,10 +7034,21 @@ impl App {
             // whitelist doesn't include TERMINFO_DIRS, so iftop
             // otherwise dies with "Error opening terminal:
             // xterm-ghostty").
+            let bin_with_args = match tool.id {
+                // iftop's auto-picked interface is often `anpi2` on
+                // macOS (Apple's secondary radio) which sees zero
+                // traffic. Detect the default-route interface and
+                // pass it explicitly.
+                "iftop" => match crate::tools::default_route_iface() {
+                    Some(iface) => format!("{} -i {}", tool.binary, iface),
+                    None => tool.binary.to_string(),
+                },
+                _ => tool.binary.to_string(),
+            };
             let cmdline = if tool.needs_sudo {
-                format!("sudo --preserve-env=TERM,TERMINFO_DIRS {}", tool.binary)
+                format!("sudo --preserve-env=TERM,TERMINFO_DIRS {}", bin_with_args)
             } else {
-                tool.binary.to_string()
+                bin_with_args
             };
             self.open_pty(crate::pty_pane::BinaryProfile::task("tools", &cmdline, ws));
             return;
