@@ -45,17 +45,18 @@ elif [ -x "/Applications/Ghostty.app/Contents/MacOS/ghostty" ]; then
     ghostty_bin="/Applications/Ghostty.app/Contents/MacOS/ghostty"
 fi
 if [ -n "$ghostty_bin" ]; then
-    # Force the ARM64 slice of Ghostty's universal binary on Apple
-    # Silicon so we can't accidentally launch under Rosetta if a
-    # parent process (Finder, Launcher, whatever) was translated. The
-    # `arch` tool is a no-op when the requested slice matches the
-    # native arch, so on Intel it just falls through to arch=x86_64.
-    host_arch="$(/usr/bin/uname -m 2>/dev/null || echo unknown)"
-    if [ "$host_arch" = "arm64" ]; then
-        echo "  arm64 host — exec /usr/bin/arch -arm64 ghostty -e mnml" >> "$log_file"
+    # Force the ARM64 slice of Ghostty on Apple Silicon so Ghostty
+    # can't inherit x86_64 preference from a translated parent.
+    # Use `sysctl hw.optional.arm64` (hardware capability check,
+    # authoritative) instead of `uname -m` — `uname -m` reports the
+    # CURRENT process's arch, which is x86_64 when the launcher
+    # itself was spawned under Rosetta (the exact bug we're fixing).
+    is_arm64_hw="$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || echo 0)"
+    if [ "$is_arm64_hw" = "1" ]; then
+        echo "  arm64 hardware — exec /usr/bin/arch -arm64 ghostty -e mnml" >> "$log_file"
         exec /usr/bin/arch -arm64 "$ghostty_bin" -e "$mnml_bin"
     else
-        echo "  $host_arch host — exec ghostty -e mnml" >> "$log_file"
+        echo "  intel hardware — exec ghostty -e mnml" >> "$log_file"
         exec "$ghostty_bin" -e "$mnml_bin"
     fi
 fi
