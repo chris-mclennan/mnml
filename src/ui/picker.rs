@@ -251,19 +251,27 @@ fn draw_glyph_grid(frame: &mut Frame, app: &mut App, list_area: Rect) {
             let glyph_ch = item.label.chars().next().unwrap_or(' ');
             let glyph = glyph_ch.to_string();
             let is_sel = idx == picker_ref.selected;
-            // No background paint — color the glyph itself so we sidestep
-            // every unicode-width / cell-alignment trap. Selected =
-            // bright cyan + bold; unselected = a dim comment color so the
-            // one selected glyph pops.
-            let (fg, modifier) = if is_sel {
-                (t.cyan, Modifier::BOLD)
+            // Selected → dark fg on yellow bg + bold, painted on ONLY
+            // the glyph char (spans keep the pad cells at the default
+            // fg/bg). Yellow was picked because it contrasts against
+            // every theme's default fg and stands out against the mostly-
+            // gray glyph grid better than cyan did.
+            let (glyph_fg, glyph_bg, modifier) = if is_sel {
+                (t.bg_dark, t.yellow, Modifier::BOLD)
             } else {
-                (t.fg, Modifier::empty())
+                (t.fg, t.bg_darker, Modifier::empty())
             };
-            let style = Style::default().fg(fg).add_modifier(modifier);
-            let cell_text = format!(" {glyph} ");
+            let pad_style = Style::default().fg(t.fg);
+            let glyph_style = Style::default()
+                .fg(glyph_fg)
+                .bg(glyph_bg)
+                .add_modifier(modifier);
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(cell_text, style))),
+                Paragraph::new(Line::from(vec![
+                    Span::styled(" ", pad_style),
+                    Span::styled(glyph, glyph_style),
+                    Span::styled(" ", pad_style),
+                ])),
                 cell_rect,
             );
             app.rects.picker_items.push((cell_rect, idx));
