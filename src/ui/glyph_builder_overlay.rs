@@ -40,7 +40,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         return;
     }
     let t = theme::cur();
-    let width = 62.min(parent.width.saturating_sub(4));
+    let width = 78.min(parent.width.saturating_sub(4));
     let height = 22.min(parent.height.saturating_sub(4));
     let x = parent.x + (parent.width.saturating_sub(width)) / 2;
     // Same fixed top-anchor as integration_edit_overlay so switching
@@ -177,6 +177,91 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 area: inner_rect,
                 png_bytes: std::sync::Arc::new(png),
             });
+        }
+
+        // "At cell size" preview — a second row to the right of the
+        // big preview showing the glyph rendered at ~1-2 cell width
+        // next to sample text so users can eyeball how it will
+        // actually read in a tab or chip.
+        let sample_col_x = preview_rect.x + preview_rect.width + 2;
+        if sample_col_x + 22 < inner.x + inner.width && preview_rows >= 6 {
+            let label_rect = Rect {
+                x: sample_col_x,
+                y: preview_rect.y,
+                width: 22.min(inner.width.saturating_sub(sample_col_x - inner.x)),
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "at cell size",
+                    Style::default()
+                        .fg(t.comment)
+                        .add_modifier(Modifier::ITALIC),
+                ))),
+                label_rect,
+            );
+            // Rasterize a second pixmap at ~2 cells wide × 2 cells
+            // tall so the mini preview shows the glyph at the
+            // approximate size it will render in a bufferline tab
+            // or chip. Cached via the same signature check as the
+            // big preview since dimensions match.
+            let mini_target_w = 18u32; // ~2 cells at 8 px/cell + slack
+            let mini_target_h = 32u32;
+            let mini_png = crate::glyph_builder::rasterize(
+                &state.svg_path,
+                state.width_frac,
+                state.height_frac,
+                state.center_frac,
+                mini_target_w,
+                mini_target_h,
+            )
+            .ok();
+
+            // Sample chip row: [glyph]  amplify example
+            let sample_y = preview_rect.y + 2;
+            if let Some(png) = mini_png {
+                let mini_rect = Rect {
+                    x: sample_col_x,
+                    y: sample_y,
+                    width: 3,
+                    height: 2,
+                };
+                app.image_paint_requests.push(crate::image::PaintRequest {
+                    pane_id: 0,
+                    area: mini_rect,
+                    png_bytes: std::sync::Arc::new(png),
+                });
+            }
+            // Text next to the mini glyph.
+            let sample_text_rect = Rect {
+                x: sample_col_x + 4,
+                y: sample_y,
+                width: 20.min(inner.width.saturating_sub(sample_col_x + 4 - inner.x)),
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "amplify · sample",
+                    Style::default().fg(t.fg),
+                ))),
+                sample_text_rect,
+            );
+            // Hint line below.
+            let hint_rect = Rect {
+                x: sample_col_x,
+                y: sample_y + 3,
+                width: 24.min(inner.width.saturating_sub(sample_col_x - inner.x)),
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "≈ tab / chip render",
+                    Style::default()
+                        .fg(t.comment)
+                        .add_modifier(Modifier::ITALIC),
+                ))),
+                hint_rect,
+            );
         }
     }
 
