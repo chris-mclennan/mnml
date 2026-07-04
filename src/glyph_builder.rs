@@ -283,32 +283,34 @@ pub fn rasterize(
     let target_h_units = EM * height_frac;
     let scale = (target_w_units / src_w).min(target_h_units / src_h);
 
-    // The pixmap keeps the em-box aspect ratio (CELL_W : EM = 3 : 5)
-    // so the rendered preview is proportional to the actual font
-    // glyph. The caller may pass any target_w/target_h; we honor the
-    // taller dimension and derive the other. Also samples at the SAME
-    // px-per-em-unit ratio for X and Y, so the glyph never squashes.
-    let (pixmap_w, pixmap_h) = if target_h * CELL_W as u32 >= target_w * EM as u32 {
-        // Height-limited: pick w to preserve aspect.
+    // Pixmap aspect is (CELL_W * OVERFLOW_MARGIN) : EM so we have
+    // room for glyphs that overflow the em-box horizontally (any
+    // width_frac > 1.0). Without the margin, wide glyphs like
+    // amplify at width=1.25 get clipped on both sides of the pixmap.
+    // 1.5 covers everything up to width_frac = 1.5 without cropping.
+    const OVERFLOW_MARGIN: f32 = 1.5;
+    let box_w = CELL_W * OVERFLOW_MARGIN;
+    let (pixmap_w, pixmap_h) = if (target_h as f32) * box_w >= (target_w as f32) * EM {
         let h = target_h.max(2);
-        let w = ((h as f32) * CELL_W / EM).round() as u32;
+        let w = ((h as f32) * box_w / EM).round() as u32;
         (w.max(2), h)
     } else {
         let w = target_w.max(2);
-        let h = ((w as f32) * EM / CELL_W).round() as u32;
+        let h = ((w as f32) * EM / box_w).round() as u32;
         (w, h.max(2))
     };
-    let px_per_unit_x = pixmap_w as f32 / CELL_W;
-    let px_per_unit_y = pixmap_h as f32 / EM;
+    // SAME px per em-unit on both axes so the glyph never distorts.
+    // Height wins because we scale the em-box to the pixmap height.
+    let px_per_unit = pixmap_h as f32 / EM;
 
-    // Where the glyph's center lands in pixel space. SVG's y-down
-    // and the pixmap's y-down agree, so no flip is needed. But
-    // font "center_frac" is measured from the BASELINE up (y-up
-    // convention), so we invert it once when translating to
-    // top-down pixmap space: pixmap_y_of_center = (1 - center_frac)
-    // * pixmap_h.
-    let px_glyph_w = src_w * scale * px_per_unit_x;
-    let px_glyph_h = src_h * scale * px_per_unit_y;
+    // Position the glyph inside the pixmap. Both axes use the same
+    // px_per_unit so no distortion. Center horizontally on the pixmap
+    // (which is 1.5× cell-width) so overflow shows symmetrically on
+    // left + right. Vertically, `center_frac` is measured from the
+    // baseline up (y-up); convert once to top-down pixmap space
+    // (`1 - center_frac`).
+    let px_glyph_w = src_w * scale * px_per_unit;
+    let px_glyph_h = src_h * scale * px_per_unit;
     let px_center_y = (1.0 - center_frac) * pixmap_h as f32;
     let px_left = (pixmap_w as f32 - px_glyph_w) / 2.0;
     let px_top = px_center_y - px_glyph_h / 2.0;
@@ -319,12 +321,11 @@ pub fn rasterize(
     //   1. Shift the content-bbox origin to (0,0) so scaling is pinned
     //      to the actual glyph, not the viewBox's padding.
     //   2. Scale SVG units → pixmap pixels using the font-size scale
-    //      times the em → pixel ratio.
+    //      times the em → pixel ratio (same for X and Y).
     //   3. Translate to (px_left, px_top) inside the pixmap.
-    let sx = scale * px_per_unit_x;
-    let sy = scale * px_per_unit_y;
+    let s = scale * px_per_unit;
     let t = Transform::from_translate(-src_x, -src_y)
-        .post_scale(sx, sy)
+        .post_scale(s, s)
         .post_translate(px_left, px_top);
     resvg::render(&tree, t, &mut pixmap.as_mut());
 

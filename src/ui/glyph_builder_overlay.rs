@@ -43,7 +43,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let width = 62.min(parent.width.saturating_sub(4));
     let height = 22.min(parent.height.saturating_sub(4));
     let x = parent.x + (parent.width.saturating_sub(width)) / 2;
-    let y = parent.y + (parent.height.saturating_sub(height)) / 3;
+    // Same fixed top-anchor as integration_edit_overlay so switching
+    // between the two panels doesn't cause a vertical jump.
+    let y = parent.y + parent.height / 6;
     let area = Rect {
         x,
         y,
@@ -129,16 +131,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // paint the sixel bytes at this cell.
     let preview_top = inner.y + form_rows + 1;
     if preview_rows >= 3 {
-        // Preview box sized to roughly match the em-box aspect
-        // (3:5 vertical) so the rasterized glyph fills the box
-        // instead of stretching wide. At ~8px:16px cell ratio, a
-        // 10-cell wide × 8-cell tall box works out to ~80×128 px
-        // (5:8) which is close enough to em-box 3:5 that Lanczos
-        // resize doesn't visibly distort.
+        // Preview box sized ~9:10 aspect (matches the rasterizer's
+        // 1.5·CELL_W × EM pixmap = 900:1000). At ~8:16 cell aspect,
+        // a 14-cell wide × 8-cell tall box gives 112×128 px = 7:8
+        // (close enough that Lanczos resize doesn't distort).
         let preview_rect = Rect {
             x: inner.x + 2,
             y: preview_top,
-            width: 10.min(inner.width.saturating_sub(4)),
+            width: 14.min(inner.width.saturating_sub(4)),
             height: preview_rows,
         };
         let box_block = Block::default()
