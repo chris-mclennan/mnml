@@ -1477,8 +1477,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     settings_overlay::draw(frame, app, area);
     // Integration edit panel — freestanding overlay opened from
     // the chip right-click context menu (Edit / Add custom).
-    // Reads `App::integration_edit`.
+    // Reads `App::integration_edit`. Painted BEFORE the picker is
+    // re-drawn on top (below) so ↵ / → / Ctrl+G on the Glyph field
+    // (which opens the icon picker) lands the picker over the
+    // edit panel, not under it.
     integration_edit_overlay::draw(frame, app, area);
+    // Re-paint the picker on top of the edit panel so Ctrl+G /
+    // Enter / → from the Glyph field surfaces the picker instead
+    // of hiding it behind the edit box. Cheap no-op when the
+    // picker isn't open.
+    if app.picker.is_some() {
+        picker::draw(frame, app, area);
+    }
     // Help overlay — `?` / view.help (auto-generated keymap reference).
     help_overlay::draw(frame, app, area);
     // Startup picker — drawn last among modal overlays so it sits on
