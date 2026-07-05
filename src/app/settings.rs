@@ -38,6 +38,14 @@ pub struct SettingsOverlayState {
     /// this snapshot (undoing the live per-setting disk writes); `None` ⇒
     /// the file is deleted on cancel if editing created it.
     pub original_workspace_file: Option<String>,
+    /// Case-insensitive substring filter applied to row labels + option
+    /// values. Empty ⇒ show everything. Feeds into the same visible-row
+    /// projection the renderer + `selected_row` navigate against.
+    pub filter: String,
+    /// `/` in the overlay focuses the filter input; typing appends;
+    /// Esc clears + unfocuses; Enter commits + unfocuses. Mirrors
+    /// the Integrations / Agents rail filter pattern.
+    pub filter_focused: bool,
 }
 
 /// Captured state for the active text-edit on a Text/Color row.
@@ -63,6 +71,8 @@ impl SettingsOverlayState {
             selected_row: 0,
             text_edit: None,
             original_workspace_file,
+            filter: String::new(),
+            filter_focused: false,
         }
     }
 }
@@ -106,6 +116,43 @@ impl SettingItem {
             Self::Number(n) => Some(n.key),
             Self::Text(r) => Some(r.key),
             Self::Color(r) => Some(r.key),
+        }
+    }
+
+    /// Human-readable label — used by the filter's substring match
+    /// and by the section-header display.
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Section(s) => s,
+            Self::Row(r) => r.label,
+            Self::Number(n) => n.label,
+            Self::Text(r) => r.label,
+            Self::Color(r) => r.label,
+        }
+    }
+
+    /// Does this row's label (or any of a Row's option strings)
+    /// contain the query (case-insensitive)? Section headers always
+    /// return `false` here — the filter driver decides whether to
+    /// keep a header based on whether any of its child rows match.
+    pub fn matches_row(&self, q_lower: &str) -> bool {
+        if q_lower.is_empty() {
+            return true;
+        }
+        match self {
+            Self::Section(_) => false,
+            Self::Row(r) => {
+                r.label.to_ascii_lowercase().contains(q_lower)
+                    || r.options
+                        .iter()
+                        .any(|o| o.to_ascii_lowercase().contains(q_lower))
+            }
+            Self::Number(n) => n.label.to_ascii_lowercase().contains(q_lower),
+            Self::Text(r) => {
+                r.label.to_ascii_lowercase().contains(q_lower)
+                    || r.value.to_ascii_lowercase().contains(q_lower)
+            }
+            Self::Color(r) => r.label.to_ascii_lowercase().contains(q_lower),
         }
     }
 
@@ -186,6 +233,32 @@ pub const MANAGE_WORKSPACES_KEY: &str = "__manage_workspaces__";
 
 /// Build the full settings list for the current `Config`. Recomputed
 /// per render — cheap.
+/// Apply the overlay's filter to a full settings list. Empty
+/// filter returns `items` unchanged. Non-empty filter drops
+/// non-matching rows AND section headers whose entire body
+/// was dropped, so the reader isn't left with orphan headers.
+pub fn filter_settings(items: Vec<SettingItem>, query: &str) -> Vec<SettingItem> {
+    let q = query.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        return items;
+    }
+    let mut out: Vec<SettingItem> = Vec::with_capacity(items.len());
+    let mut pending_section: Option<SettingItem> = None;
+    for item in items {
+        if matches!(item, SettingItem::Section(_)) {
+            pending_section = Some(item);
+            continue;
+        }
+        if item.matches_row(&q) {
+            if let Some(header) = pending_section.take() {
+                out.push(header);
+            }
+            out.push(item);
+        }
+    }
+    out
+}
+
 pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
     let d = Config::default();
     let mut out = Vec::new();
@@ -1067,15 +1140,73 @@ impl App {
         self.toast(format!("menu bar: {}", self.config.ui.menu_bar));
     }
 
+    /// Full settings item list with the overlay's active filter
+    /// applied. Callers navigate + apply against this same view so
+    /// `selected_row` indexes stay in sync with what the renderer
+    /// paints.
+    pub fn filtered_settings_items(&self) -> Vec<SettingItem> {
+        let all = build_settings(&self.config);
+        let query = self
+            .settings_overlay
+            .as_ref()
+            .map(|s| s.filter.as_str())
+            .unwrap_or("");
+        filter_settings(all, query)
+    }
+
+    /// `/` in the overlay — focus the filter input.
+    pub fn settings_filter_focus(&mut self) {
+        if let Some(s) = self.settings_overlay.as_mut() {
+            s.filter_focused = true;
+        }
+    }
+
+    /// Esc while filter focused — clear query + unfocus. Also
+    /// re-clamps `selected_row` to the new (larger) row count.
+    pub fn settings_filter_cancel(&mut self) {
+        if let Some(s) = self.settings_overlay.as_mut() {
+            s.filter.clear();
+            s.filter_focused = false;
+            s.selected_row = 0;
+        }
+    }
+
+    /// Enter while filter focused — commit the query + unfocus.
+    pub fn settings_filter_commit(&mut self) {
+        if let Some(s) = self.settings_overlay.as_mut() {
+            s.filter_focused = false;
+        }
+    }
+
+    /// Appends `c` to the filter buffer + clamps the selection to
+    /// the new (typically shorter) row count.
+    pub fn settings_filter_push(&mut self, c: char) {
+        if let Some(s) = self.settings_overlay.as_mut() {
+            s.filter.push(c);
+            s.selected_row = 0;
+        }
+    }
+
+    /// Pops the last char from the filter buffer.
+    pub fn settings_filter_backspace(&mut self) {
+        if let Some(s) = self.settings_overlay.as_mut() {
+            s.filter.pop();
+            s.selected_row = 0;
+        }
+    }
+
     /// Move the focused row by `delta` (positive = down). Skips
     /// section headers — `selected_row` only counts editable rows.
     pub fn settings_move_row(&mut self, delta: isize) {
+        if self.settings_overlay.is_none() {
+            return;
+        }
+        let items = self.filtered_settings_items();
+        let row_count = items.iter().filter(|i| i.is_row()).count();
+        if row_count == 0 {
+            return;
+        }
         if let Some(state) = self.settings_overlay.as_mut() {
-            let items = build_settings(&self.config);
-            let row_count = items.iter().filter(|i| i.is_row()).count();
-            if row_count == 0 {
-                return;
-            }
             // Clamp at the boundaries — was `rem_euclid` which wrapped
             // around. Same shape as the discovery-overlay clamp
             // (ea6bbd9); the wrap was equally wrong here — wheel
@@ -1097,7 +1228,7 @@ impl App {
         let Some(state) = self.settings_overlay.as_ref() else {
             return;
         };
-        let items = build_settings(&self.config);
+        let items = self.filtered_settings_items();
         let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
         let Some(row) = rows.get(state.selected_row) else {
             return;
@@ -1147,7 +1278,7 @@ impl App {
         let Some(state) = self.settings_overlay.as_ref() else {
             return;
         };
-        let items = build_settings(&self.config);
+        let items = self.filtered_settings_items();
         let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
         let Some(row) = rows.get(state.selected_row) else {
             return;
@@ -1408,7 +1539,7 @@ impl App {
         let Some(state) = self.settings_overlay.as_ref() else {
             return;
         };
-        let items = build_settings(&self.config);
+        let items = self.filtered_settings_items();
         let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
         let Some(row) = rows.get(state.selected_row) else {
             return;

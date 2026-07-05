@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::App;
-use crate::app::settings::{RESET_ALL_KEY, SettingItem, build_settings};
+use crate::app::settings::{RESET_ALL_KEY, SettingItem};
 use crate::ui::theme;
 
 /// Compute the overlay rect — centered, ~60% width × ~70% height,
@@ -68,8 +68,68 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Build rows + paint.
-    let items = build_settings(&app.config);
+    // Row 0 of the inner area is the filter input — `/` focuses, chars
+    // type, Esc clears. Sits above the settings list; the rest of the
+    // rendered rows shift down by 1.
+    let filter_focused = app
+        .settings_overlay
+        .as_ref()
+        .is_some_and(|s| s.filter_focused);
+    let filter_text = app
+        .settings_overlay
+        .as_ref()
+        .map(|s| s.filter.clone())
+        .unwrap_or_default();
+    let filter_display = if filter_text.is_empty() {
+        if filter_focused {
+            "type to filter…".to_string()
+        } else {
+            "/ filter".to_string()
+        }
+    } else {
+        filter_text.clone()
+    };
+    let filter_fg = if !filter_text.is_empty() {
+        t.fg
+    } else if filter_focused {
+        t.cyan
+    } else {
+        t.comment
+    };
+    let cursor = if filter_focused { "▏" } else { "" };
+    let search_glyph = if app.config.ui.ascii_icons {
+        "/"
+    } else {
+        "\u{f002}"
+    };
+    let filter_row_rect = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(" {search_glyph} "),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ),
+            Span::styled(filter_display, Style::default().fg(filter_fg).bg(t.bg_dark)),
+            Span::styled(cursor, Style::default().fg(t.cyan).bg(t.bg_dark)),
+        ])),
+        filter_row_rect,
+    );
+    // Body area for the settings list — starts one row below.
+    let body_area = Rect {
+        x: inner.x,
+        y: inner.y + 1,
+        width: inner.width,
+        height: inner.height.saturating_sub(1),
+    };
+
+    // Build rows + paint. Uses the app-side filtered projection so
+    // `selected_row` maps 1:1 to the visible list.
+    let items = app.filtered_settings_items();
     let selected = app
         .settings_overlay
         .as_ref()
@@ -296,27 +356,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     }
 
     // Scroll-window the lines so the focused row stays visible. Reserve
-    // a 1-row hint bar at the bottom of the inner rect.
-    let body_h = (inner.height as usize).saturating_sub(1);
+    // a 1-row hint bar at the bottom of the outer inner rect (the
+    // filter input already took the top row via body_area).
+    let body_h = (body_area.height as usize).saturating_sub(1);
     let focused_line_idx = focused_item_idx.unwrap_or(0);
     let scroll = if focused_line_idx >= body_h {
         focused_line_idx + 1 - body_h
     } else {
         0
     };
-    // Truncate each line to fit inner.width — without this, long
+    // Truncate each line to fit body_area.width — without this, long
     // descriptions used to cut mid-word at the right border with no
     // indicator (looked broken). 2026-06-07 bug-hunt SEV-3.
     let window: Vec<Line<'static>> = lines
         .iter()
         .skip(scroll)
         .take(body_h)
-        .map(|l| truncate_line_to_width(l, inner.width as usize))
+        .map(|l| truncate_line_to_width(l, body_area.width as usize))
         .collect();
     let body_rect = Rect {
-        x: inner.x,
-        y: inner.y,
-        width: inner.width,
+        x: body_area.x,
+        y: body_area.y,
+        width: body_area.width,
         height: body_h as u16,
     };
     // Hit-test rects: one per visible Row line, mapped to the

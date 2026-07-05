@@ -148,6 +148,33 @@ pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
 }
 
 pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
+    // Filter input has priority when focused — chars append to the
+    // query, Enter commits + unfocuses, Esc clears + unfocuses.
+    let filter_focused = app
+        .settings_overlay
+        .as_ref()
+        .is_some_and(|s| s.filter_focused);
+    if filter_focused {
+        match key.code {
+            KeyCode::Esc => app.settings_filter_cancel(),
+            KeyCode::Enter => app.settings_filter_commit(),
+            KeyCode::Backspace => app.settings_filter_backspace(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.settings_filter_push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+    // `/` at the top level focuses the filter (matches the
+    // Integrations / Agents rail idiom).
+    if let KeyCode::Char('/') = key.code
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && !app.settings_text_edit_active()
+    {
+        app.settings_filter_focus();
+        return;
+    }
     // Text/Color rows enter a greedy edit mode on Enter — every
     // keystroke goes to the buffer until Enter commits (or Esc
     // cancels). Other navigation keys are intercepted to avoid the
