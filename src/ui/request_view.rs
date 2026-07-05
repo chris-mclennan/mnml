@@ -166,14 +166,21 @@ pub fn draw(
             // Row 0: blank (breathing room above the chip).
             Line::from(Span::raw("")),
             // Row 1: `ai` chip + hint — click rect below points here.
+            // Hint uses `hint_style()` (comment fg on the panel bg)
+            // so the underline / attention treatment doesn't compete
+            // with the cyan chip. Cleaner visual weight.
             Line::from(vec![
                 section_header_chip(" ai ", t).spans[0].clone(),
                 Span::styled(
-                    "   (click to ask a custom question · `a` for quick debug)".to_string(),
+                    "   click here to ask a custom question   ".to_string(),
+                    crate::ui::design_tokens::hint_style(),
+                ),
+                Span::styled(
+                    "· `a`  quick debug".to_string(),
                     Style::default()
                         .fg(t.comment)
                         .bg(t.bg_dark)
-                        .add_modifier(Modifier::UNDERLINED),
+                        .add_modifier(Modifier::DIM),
                 ),
             ]),
         ];
