@@ -82,10 +82,25 @@ fn header_matches_filter(key: &str, value: &str, q_lower: &str) -> bool {
     key.to_ascii_lowercase().contains(q_lower) || value.to_ascii_lowercase().contains(q_lower)
 }
 
+/// Snap `idx` down to the nearest UTF-8 char boundary in `s`. Used
+/// by [`colored_line`] to keep `str` slicing safe when tree-sitter
+/// returns byte offsets that land mid-multi-byte. (Nightly's
+/// `floor_char_boundary` isn't available on stable yet.)
+fn floor_boundary(s: &str, mut idx: usize) -> usize {
+    while idx > 0 && !s.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
 /// Count filter matches across request headers + response headers +
 /// response body lines. Returns `(matched, total)` for the filter
 /// chip's hit indicator. Returns `None` when the filter is empty. (#11)
+/// Body walk is capped at 20 000 lines so pathological 10 MB+ JSON
+/// bodies don't tie up the render loop; the counter shows the sum
+/// up to that cap (`total` reflects actual work, not headline size).
 fn compute_filter_hits(rp: &crate::request_pane::RequestPane) -> Option<(usize, usize)> {
+    const BODY_LINE_CAP: usize = 20_000;
     let q = rp.filter.trim().to_ascii_lowercase();
     if q.is_empty() {
         return None;
@@ -105,7 +120,7 @@ fn compute_filter_hits(rp: &crate::request_pane::RequestPane) -> Option<(usize, 
                 matched += 1;
             }
         }
-        for line in r.body.lines() {
+        for line in r.body.lines().take(BODY_LINE_CAP) {
             total += 1;
             if line.to_ascii_lowercase().contains(&q) {
                 matched += 1;
@@ -188,38 +203,37 @@ fn colored_line(
     // Walk sorted spans and emit interleaved text — uncovered bytes
     // in `base_fg`, covered runs in their span color. Robust against
     // overlapping spans by ordering + skipping any span that ends
-    // before the current cursor.
+    // before the current cursor. All byte boundaries snap down to
+    // the nearest UTF-8 char boundary so spans that end mid-multi-
+    // byte (CJK, emoji in a JSON string) never slice a codepoint
+    // in half.
     let mut ordered: Vec<crate::highlight::ColoredSpan> = spans.to_vec();
     ordered.sort_by_key(|(s, _, _)| *s);
     let mut out: Vec<Span<'static>> = Vec::new();
     let mut cursor = 0usize;
-    let bytes = src.as_bytes();
+    let src_len = src.len();
     for (s, e, color) in ordered {
-        let s = s.min(bytes.len());
-        let e = e.min(bytes.len());
+        let s = floor_boundary(src, s.min(src_len));
+        let e = floor_boundary(src, e.min(src_len));
         if e <= cursor {
             continue;
         }
         if s > cursor {
-            // Emit uncovered chunk in the base fg.
-            let chunk = String::from_utf8_lossy(&bytes[cursor..s]).into_owned();
             out.push(Span::styled(
-                chunk,
+                src[cursor..s].to_string(),
                 Style::default().fg(base_fg).bg(t.bg_dark),
             ));
         }
         let start = s.max(cursor);
-        let chunk = String::from_utf8_lossy(&bytes[start..e]).into_owned();
         out.push(Span::styled(
-            chunk,
+            src[start..e].to_string(),
             Style::default().fg(color).bg(t.bg_dark),
         ));
         cursor = e;
     }
-    if cursor < bytes.len() {
-        let tail = String::from_utf8_lossy(&bytes[cursor..]).into_owned();
+    if cursor < src_len {
         out.push(Span::styled(
-            tail,
+            src[cursor..].to_string(),
             Style::default().fg(base_fg).bg(t.bg_dark),
         ));
     }
