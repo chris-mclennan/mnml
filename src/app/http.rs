@@ -3592,31 +3592,54 @@ impl App {
     /// Commit the inline params-add draft: parse key + value, append
     /// to the active URL, clear the draft. Called on Enter from the
     /// draft-row key handler.
-    pub fn http_params_add_commit(&mut self) {
+    /// Commit the current draft. `continue_drafting = true` starts
+    /// a fresh empty draft row after committing so the user can
+    /// keep adding rows without touching the mouse (spreadsheet-
+    /// style Enter → new row). `false` closes the draft.
+    pub fn http_params_add_commit(&mut self, continue_drafting: bool) {
         let Some(cur) = self.active else { return };
-        let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
-            return;
+        // Take the draft in a short scope so the pane borrow drops
+        // before we call `self.toast` (which needs `&mut self`).
+        let draft = {
+            let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+                return;
+            };
+            rp.params_add.take()
         };
-        let Some(draft) = rp.params_add.take() else {
-            return;
-        };
+        let Some(draft) = draft else { return };
         let key = draft.key.trim();
         if key.is_empty() {
+            // Empty key + empty value + Enter → "I'm done", silent
+            // close. Non-empty value with empty key → toast + put
+            // the draft back so the user can fix it.
+            if draft.value.trim().is_empty() {
+                return;
+            }
+            if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+                rp.params_add = Some(draft);
+            }
             self.toast("params: key can't be empty");
             return;
         }
         let value = draft.value.trim();
-        let sep = if rp.request.url.contains('?') {
-            '&'
-        } else {
-            '?'
-        };
-        rp.request.url.push(sep);
-        rp.request.url.push_str(key);
-        rp.request.url.push('=');
-        rp.request.url.push_str(value);
-        rp.url_cursor = rp.request.url.len();
-        self.toast(format!("params: added {key}={value}"));
+        let key_owned = key.to_string();
+        let value_owned = value.to_string();
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let sep = if rp.request.url.contains('?') {
+                '&'
+            } else {
+                '?'
+            };
+            rp.request.url.push(sep);
+            rp.request.url.push_str(&key_owned);
+            rp.request.url.push('=');
+            rp.request.url.push_str(&value_owned);
+            rp.url_cursor = rp.request.url.len();
+            if continue_drafting {
+                rp.params_add = Some(crate::request_pane::ParamsAddDraft::default());
+            }
+        }
+        self.toast(format!("params: added {key_owned}={value_owned}"));
     }
 
     /// Cancel the inline params-add draft (Esc from the draft row).

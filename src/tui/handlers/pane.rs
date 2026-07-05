@@ -2449,9 +2449,18 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     app.http_params_add_cancel();
                     return true;
                 }
-                KeyCode::Enter => {
+                // Enter commits + starts a fresh draft row so the
+                // user can keep adding rows without touching the
+                // mouse (spreadsheet-style). Shift+Enter (or the
+                // Esc chord) closes drafting entirely.
+                KeyCode::Enter if !shift => {
                     let _ = rp;
-                    app.http_params_add_commit();
+                    app.http_params_add_commit(true);
+                    return true;
+                }
+                KeyCode::Enter if shift => {
+                    let _ = rp;
+                    app.http_params_add_commit(false);
                     return true;
                 }
                 KeyCode::Tab | KeyCode::BackTab => {

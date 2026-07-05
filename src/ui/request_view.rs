@@ -1828,7 +1828,8 @@ fn draw_edit(
         } else {
             let hint_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                "    (Tab · `:` · Enter · Esc)".to_string(),
+                "    (Tab · `:`  ·  Enter → add + new row  ·  Shift+Enter → done  ·  Esc → cancel)"
+                    .to_string(),
                 dim,
             )]));
             register_tab_row(fields, hint_y);
