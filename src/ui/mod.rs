@@ -3681,9 +3681,6 @@ mod palette_bar_tests {
         let d = tempfile::tempdir().unwrap();
         let ws = d.path().to_path_buf();
         let mut cfg = Config::default();
-        // Seed a `theme_toggle` so the theme-pill paints (it's now
-        // hidden when unconfigured — see the 2026-07-04 change).
-        cfg.ui.theme_toggle = Some("light".to_string());
         // Seed a launcher icon so we can verify launcher_icon_rects
         // gets populated (and survives the full draw).
         cfg.ui.launcher_icons.push(crate::config::LauncherIcon {

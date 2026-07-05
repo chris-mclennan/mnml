@@ -5088,10 +5088,11 @@ impl App {
     /// hint so the user knows how to enable it.
     pub fn toggle_theme(&mut self) {
         let Some(alt) = self.config.ui.theme_toggle.clone() else {
-            self.toast(
-                "set `[ui] theme_toggle = \"<other>\"` in config.toml to enable the dark/light toggle"
-                    .to_string(),
-            );
+            // No alt configured — open the theme picker instead of
+            // toasting "go configure this." Users clicking the pill
+            // still get a useful action; power users can set
+            // `[ui] theme_toggle` for a one-click swap.
+            self.open_theme_picker();
             return;
         };
         let current = crate::ui::theme::cur().name.to_string();

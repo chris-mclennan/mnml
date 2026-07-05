@@ -558,17 +558,8 @@ pub fn right_cluster_width(app: &App) -> u16 {
             w += 2;
         }
     }
-    // theme toggle pill (only when [ui] theme_toggle is set) + ` × ` window close
-    if app
-        .config
-        .ui
-        .theme_toggle
-        .as_deref()
-        .is_some_and(|s| !s.trim().is_empty())
-    {
-        w += 4;
-    }
-    w += 3;
+    // theme toggle pill + ` × ` window close
+    w += 4 + 3;
     w
 }
 
@@ -598,22 +589,10 @@ pub fn pick_cluster_mode(
 /// mouse-user SEV-2 — width of the compact cluster (when the full
 /// cluster doesn't fit). Keeps the most-clicked chrome
 /// (+ new-tab, theme toggle, × window-close); drops TABS label
-/// and per-tab-page chips. Theme toggle is elided when
-/// `[ui] theme_toggle` isn't set (no alt to swap to).
-pub fn compact_cluster_width(app: &App) -> u16 {
-    // ` + ` (3) + optional theme toggle pill (4) + ` × ` (3)
-    let theme_pill = if app
-        .config
-        .ui
-        .theme_toggle
-        .as_deref()
-        .is_some_and(|s| !s.trim().is_empty())
-    {
-        4
-    } else {
-        0
-    };
-    3 + theme_pill + 3
+/// and per-tab-page chips.
+pub fn compact_cluster_width(_app: &App) -> u16 {
+    // ` + ` (3) + theme toggle pill (4) + ` × ` (3)
+    3 + 4 + 3
 }
 
 /// User-forced cluster mode overrides. Threaded from `[ui]
@@ -795,18 +774,10 @@ pub fn paint_right_cluster(
             }
         }
     }
-    // Theme toggle pill — only when the user has configured an
-    // alternate theme to toggle to. Without `[ui] theme_toggle`
-    // set, clicking the pill just toasts "configure this first",
-    // which is dead chrome. Users still reach the theme picker
-    // via `theme.pick` in the palette.
-    let show_theme_pill = app
-        .config
-        .ui
-        .theme_toggle
-        .as_deref()
-        .is_some_and(|s| !s.trim().is_empty());
-    if show_theme_pill {
+    // Theme toggle pill — always visible. Click behavior adapts:
+    // if `[ui] theme_toggle` is set, swap between primary and alt;
+    // otherwise open the theme picker so the click never dead-ends.
+    {
         let on_alt = app
             .config
             .ui
