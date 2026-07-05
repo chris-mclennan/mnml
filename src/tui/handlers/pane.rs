@@ -2542,20 +2542,36 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         // Filter input has priority when focused — chars append to
         // the filter, Backspace pops, Enter commits + unfocuses, Esc
         // clears + unfocuses. Matches the sidebar-filter idiom (#11).
+        // Tab exits filter mode AND falls through to the outer view-
+        // toggle handler so the user never gets stuck with no way to
+        // reach Edit view (reviewer catch — the sidebar-filter idiom
+        // has nothing underneath it; here the Response view lives on).
         if rp.filter_focused {
             match key.code {
                 KeyCode::Esc => {
                     rp.filter.clear();
                     rp.filter_focused = false;
+                    return true;
                 }
-                KeyCode::Enter => rp.filter_focused = false,
+                KeyCode::Enter => {
+                    rp.filter_focused = false;
+                    return true;
+                }
                 KeyCode::Backspace => {
                     rp.filter.pop();
+                    return true;
                 }
-                KeyCode::Char(c) if !ctrl => rp.filter.push(c),
-                _ => {}
+                KeyCode::Tab => {
+                    // Exit filter mode + fall through so Tab still
+                    // toggles Edit ⇄ Response.
+                    rp.filter_focused = false;
+                }
+                KeyCode::Char(c) if !ctrl => {
+                    rp.filter.push(c);
+                    return true;
+                }
+                _ => return true,
             }
-            return true;
         }
         match key.code {
             KeyCode::Tab => rp.toggle_view(),
