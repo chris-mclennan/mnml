@@ -373,7 +373,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, tt.blue),
             Pane::NewCloudAgentWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, tt.green),
             Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, tt.cyan),
-            Pane::HttpHome(_) => (if nerd { "\u{F1D8}" } else { "→" }, tt.blue),
         };
         // Status badge priority:
         //   dirty   → ● / *  (orange — any tab)

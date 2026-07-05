@@ -938,7 +938,6 @@ impl App {
             Pane::CloudAgentRun(_) => (None, None),
             Pane::NewCloudAgentWizard(_) => (None, None),
             Pane::NewCloudRunWizard(_) => (None, None),
-            Pane::HttpHome(_) => (None, None),
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);

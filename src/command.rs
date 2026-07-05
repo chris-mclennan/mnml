@@ -2483,13 +2483,6 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::Http),
         },
         Command {
-            id: "http.home",
-            title: "HTTP: open the hub pane (dashboard of recent + captured + files)",
-            group: "http",
-            keys: &[],
-            run: |app| app.open_http_home(),
-        },
-        Command {
             id: "view.activity_notes",
             title: "Activity: show Notes (workspace scratch notes)",
             group: "view",

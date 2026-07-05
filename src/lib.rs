@@ -74,7 +74,6 @@ pub mod headless;
 pub mod highlight;
 pub(crate) mod hover;
 pub mod http;
-pub(crate) mod http_home;
 pub(crate) mod image;
 pub(crate) mod input;
 pub(crate) mod integration_detect;

@@ -1804,61 +1804,6 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
-    // HttpHome dashboard rows — chips first (they sit inside the
-    // quick-action row), then recent / captured / file rows.
-    if let Some(r) = app.rects.http_home_new_chip
-        && crate::app::dispatch::contains(r, x, y)
-    {
-        app.http_panel_new_request();
-        return;
-    }
-    if let Some(r) = app.rects.http_home_capture_chip
-        && crate::app::dispatch::contains(r, x, y)
-    {
-        crate::command::run("http.capture_now", app);
-        return;
-    }
-    if let Some(r) = app.rects.http_home_paste_chip
-        && crate::app::dispatch::contains(r, x, y)
-    {
-        crate::command::run("http.paste_curl", app);
-        return;
-    }
-    if let Some((_, idx)) = app
-        .rects
-        .http_home_recent_rows
-        .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-    {
-        let idx = *idx;
-        if let Some(entry) = app.http_panel_recent_cache.get(idx).cloned() {
-            let (curl, method, url) = crate::http::history::entry_to_curl(&entry);
-            app.open_curl_scratch(&curl, &method, &url);
-        }
-        return;
-    }
-    if let Some((_, idx)) = app
-        .rects
-        .http_home_captured_rows
-        .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-    {
-        let idx = *idx;
-        if let Some(row) = app.http_panel_captured_cache.get(idx).cloned() {
-            app.open_curl_scratch(&row.to_curl(), &row.method, &row.url);
-        }
-        return;
-    }
-    if let Some((_, path)) = app
-        .rects
-        .http_home_files_rows
-        .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-    {
-        let path = path.clone();
-        app.open_path(&path);
-        return;
-    }
     // Notes panel — file rows + `+ New note` chip (#8).
     if let Some(r) = app.rects.notes_panel_new_chip
         && crate::app::dispatch::contains(r, x, y)

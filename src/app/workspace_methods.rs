@@ -572,41 +572,6 @@ impl App {
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
     }
 
-    /// Open (or focus) the `Pane::HttpHome` dashboard. Called when
-    /// the user activates the HTTP activity section so the icon
-    /// brings up both the sectioned sidebar AND an all-in-one main
-    /// pane. Idempotent — if the pane is already open we just
-    /// reveal it.
-    pub fn open_http_home(&mut self) {
-        use crate::layout::{Layout, SplitDir};
-        use crate::pane::Pane;
-        if let Some(id) = self
-            .panes
-            .iter()
-            .position(|p| matches!(p, Pane::HttpHome(_)))
-        {
-            self.reveal_pane(id);
-            return;
-        }
-        // Always refresh caches on first-open so the pane isn't blank
-        // when the user opens it after a long session.
-        self.http_panel_refresh();
-        let pane = Pane::HttpHome(crate::http_home::HttpHomePane::new());
-        match self.active {
-            Some(cur) => {
-                let new_id = self.split_leaf_with(cur, SplitDir::Vertical, pane);
-                self.active = Some(new_id);
-            }
-            None => {
-                self.panes.push(pane);
-                let id = self.panes.len() - 1;
-                *self.layout_mut() = Layout::leaf(id);
-                self.active = Some(id);
-            }
-        }
-        self.focus = crate::app::Focus::Pane;
-    }
-
     /// HTTP panel `+ New request` action — spawns a blank
     /// form-style Request pane (Edit view, no source file). The
     /// pane exists only in memory until the user hits Save-As;
