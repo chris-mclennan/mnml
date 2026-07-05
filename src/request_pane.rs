@@ -106,6 +106,10 @@ pub struct RequestPane {
     /// bar or the `Ctrl+\` chord. AI zone stays pinned to the pane's
     /// bottom regardless.
     pub split_orientation: SplitOrientation,
+    /// Currently-active Response sub-tab (Body / Headers / Timeline
+    /// / Tests). Persists on the pane so a user's choice sticks
+    /// across re-fires.
+    pub response_tab: ResponseTab,
 }
 
 /// Two-way orientation for the Request/Response zones inside a
@@ -123,6 +127,42 @@ impl SplitOrientation {
             SplitOrientation::Vertical => SplitOrientation::Horizontal,
             SplitOrientation::Horizontal => SplitOrientation::Vertical,
         }
+    }
+}
+
+/// Sub-tabs inside the Response zone — mirrors Bruno's Response
+/// pane (Body / Headers / Timeline / Tests). Kept on the
+/// `RequestPane` so the user's choice persists across renders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseTab {
+    Body,
+    Headers,
+    Timeline,
+    Tests,
+}
+
+impl ResponseTab {
+    pub const ALL: &'static [ResponseTab] = &[
+        ResponseTab::Body,
+        ResponseTab::Headers,
+        ResponseTab::Timeline,
+        ResponseTab::Tests,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            ResponseTab::Body => "Body",
+            ResponseTab::Headers => "Headers",
+            ResponseTab::Timeline => "Timeline",
+            ResponseTab::Tests => "Tests",
+        }
+    }
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+    pub fn prev(self) -> Self {
+        let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ALL[(i + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 }
 
@@ -367,6 +407,7 @@ impl RequestPane {
             hover_vars_key: None,
             hover_auth_id: None,
             split_orientation: SplitOrientation::Vertical,
+            response_tab: ResponseTab::Body,
         }
     }
 

@@ -1964,6 +1964,11 @@ pub struct PaneRects {
     /// Request block's top border. Click cycles Vertical <->
     /// Horizontal split. Same as `Ctrl+\` chord.
     pub request_split_toggle: Option<Rect>,
+    /// `(rect, tab)` per chip in the Response sub-tab strip
+    /// (Body / Headers / Timeline / Tests). Click → switch
+    /// `response_tab` on the active Request pane. Cleared +
+    /// repopulated each render.
+    pub request_response_tabs: Vec<(Rect, crate::request_pane::ResponseTab)>,
     /// Click rect for each row in the Auth tab. id values:
     /// `set_bearer` / `set_basic` / `set_api_key` / `apply_preset` /
     /// `save_preset` / `clear`. Cleared + repopulated each render.

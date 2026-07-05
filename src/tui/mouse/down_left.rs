@@ -412,6 +412,22 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // Click on a Response sub-tab chip (Body / Headers / Timeline
+    // / Tests) → switch the active pane's `response_tab`.
+    if let Some((_, tab)) = app
+        .rects
+        .request_response_tabs
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let tab = *tab;
+        if let Some(cur) = app.active
+            && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
+        {
+            rp.response_tab = tab;
+        }
+        return;
+    }
     // Click on a Vars-tab row → open the env editor
     // directly. Empty key (the `+ Add` row) → add prompt;
     // non-empty key → edit prompt for that key.

@@ -2475,6 +2475,18 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     rp.split_orientation = rp.split_orientation.toggle();
                     return true;
                 }
+                // Ctrl+Right / Ctrl+Left — cycle the Response
+                // sub-tab (Body → Headers → Timeline → Tests).
+                // Complements Ctrl+] / Ctrl+[ (which cycle the
+                // Request-side tab strip).
+                KeyCode::Right if ctrl => {
+                    rp.response_tab = rp.response_tab.next();
+                    return true;
+                }
+                KeyCode::Left if ctrl => {
+                    rp.response_tab = rp.response_tab.prev();
+                    return true;
+                }
                 // Ctrl+Enter — parse the Source-tab buffer into
                 // the structured fields. Companion chord to
                 // Ctrl+Shift+V for users who'd rather type/paste

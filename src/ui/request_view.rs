@@ -530,9 +530,26 @@ pub fn draw(
     };
     let response_inner = response_block.inner(response_rect);
     frame.render_widget(response_block, response_rect);
+    // Response sub-tab strip — Bruno-style: Body / Headers /
+    // Timeline / Tests. Painted as an overlay on the first row of
+    // `response_inner`; the actual response content flows below
+    // starting at `content_inner`.
+    let content_inner = if response_inner.height >= 2 {
+        app.rects.request_response_tabs =
+            paint_response_tab_strip(frame, rp.response_tab, response_inner, t);
+        Rect {
+            x: response_inner.x,
+            y: response_inner.y.saturating_add(1),
+            width: response_inner.width,
+            height: response_inner.height.saturating_sub(1),
+        }
+    } else {
+        app.rects.request_response_tabs.clear();
+        response_inner
+    };
     let mut response_rows: Vec<Line> = Vec::new();
-    if response_inner.width > 0 && response_inner.height > 0 {
-        // Filter chip lives at the top of the Response zone — visible
+    if content_inner.width > 0 && content_inner.height > 0 {
+        // Filter chip lives at the top of the Response content — visible
         // whenever the filter is active OR focused (so users see the
         // "/" hint even before typing). Empty + unfocused = hidden.
         if !rp.filter.is_empty() || rp.filter_focused {
@@ -540,15 +557,14 @@ pub fn draw(
             response_rows.push(filter_row(&rp.filter, rp.filter_focused, hits, t));
         }
         let wrap_width = if rp.body_wrap {
-            Some(response_inner.width.saturating_sub(2).max(20))
+            Some(content_inner.width.saturating_sub(2).max(20))
         } else {
             None
         };
         draw_response(rp, t, &mut response_rows, wrap_width);
-        // `rp.scroll` now applies to the Response zone only (was
-        // whole-pane scroll before the three-zone split). Clamp
-        // against Response content length.
-        let h = response_inner.height as usize;
+        // `rp.scroll` now applies to the Response content area
+        // (below the sub-tab strip). Clamp against content length.
+        let h = content_inner.height as usize;
         let max_scroll = response_rows
             .len()
             .saturating_sub(h.min(response_rows.len()));
@@ -557,7 +573,7 @@ pub fn draw(
         let response_view: Vec<Line> = response_rows.into_iter().skip(scroll).take(h).collect();
         frame.render_widget(
             Paragraph::new(response_view).style(Style::default().bg(t.bg_dark)),
-            response_inner,
+            content_inner,
         );
     }
 
@@ -744,6 +760,64 @@ fn response_status_title(
             ])
         }
     }
+}
+
+/// Response sub-tab strip — Bruno-style Body / Headers / Timeline
+/// / Tests row. Painted on the first row of `response_inner`;
+/// returns the click rects for each tab so the mouse handler can
+/// route clicks. Uses the same menu-family styling as the Request
+/// tab strip (row_highlight_menu for the active tab, `fg on bg2`
+/// chips for the inactive ones).
+fn paint_response_tab_strip(
+    frame: &mut Frame,
+    active: crate::request_pane::ResponseTab,
+    response_inner: Rect,
+    t: theme::Theme,
+) -> Vec<(Rect, crate::request_pane::ResponseTab)> {
+    let mut rects = Vec::new();
+    if response_inner.width == 0 || response_inner.height == 0 {
+        return rects;
+    }
+    let strip_rect = Rect {
+        x: response_inner.x,
+        y: response_inner.y,
+        width: response_inner.width,
+        height: 1,
+    };
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
+    let mut col: u16 = 2;
+    for tab in crate::request_pane::ResponseTab::ALL {
+        let label = tab.label();
+        let is_cur = active == *tab;
+        let display = format!(" {label} ");
+        let style = if is_cur {
+            crate::ui::design_tokens::row_highlight_menu()
+        } else {
+            Style::default().fg(t.fg).bg(t.bg2)
+        };
+        let chip_w = display.chars().count() as u16;
+        spans.push(Span::styled(display, style));
+        spans.push(Span::styled(
+            " ".to_string(),
+            Style::default().bg(t.bg_dark),
+        ));
+        rects.push((
+            Rect {
+                x: response_inner.x.saturating_add(col),
+                y: response_inner.y,
+                width: chip_w,
+                height: 1,
+            },
+            *tab,
+        ));
+        col += chip_w + 1;
+    }
+    frame.render_widget(
+        Paragraph::new(vec![Line::from(spans)]).style(Style::default().bg(t.bg_dark)),
+        strip_rect,
+    );
+    rects
 }
 
 /// Split-orientation toggle chip — floats at the top-right of the
@@ -1884,19 +1958,69 @@ fn draw_response(
             ));
         }
         RunState::Done(r) => {
-            // Status is now shown on the Response block's title bar
-            // (right-aligned via `response_status_title`); no inline
-            // status row here. The body starts flush against the
-            // top so it reads like a loaded file in the editor.
-            //
-            // Response headers still surface at the top of the body,
-            // above the JSON — matches VS Code's "Response" view.
-            // Also honors the pane's `/` filter.
-            for (k, v) in &r.headers {
-                if header_matches_filter(k, v, &q_lower) {
-                    rows.push(header_row(k, v, t));
+            // Response sub-tabs (Body / Headers / Timeline / Tests).
+            // The sub-tab strip is painted outside this fn; here we
+            // branch on `rp.response_tab` to render only the active
+            // tab's content.
+            use crate::request_pane::ResponseTab;
+            match rp.response_tab {
+                ResponseTab::Headers => {
+                    // Headers tab: full response-header list, filtered.
+                    for (k, v) in &r.headers {
+                        if header_matches_filter(k, v, &q_lower) {
+                            rows.push(header_row(k, v, t));
+                        }
+                    }
+                    return;
                 }
+                ResponseTab::Timeline => {
+                    // v1 placeholder — a full request timeline
+                    // (DNS/connect/TLS/send/receive) is a follow-up.
+                    // For now show the total elapsed as the one
+                    // number we do have.
+                    rows.push(plain(
+                        format!("  ⟳ total elapsed: {} ms", r.elapsed.as_millis()),
+                        Style::default().fg(t.fg).bg(t.bg_dark),
+                    ));
+                    rows.push(plain(String::new(), body_style));
+                    rows.push(plain(
+                        "  (per-phase timing is a follow-up)".to_string(),
+                        Style::default().fg(t.comment).bg(t.bg_dark),
+                    ));
+                    return;
+                }
+                ResponseTab::Tests => {
+                    // Tests tab: assertion results (@assert directives
+                    // in the .http file).
+                    if r.assertions.is_empty() {
+                        rows.push(plain(
+                            "  (no assertions in this request)".to_string(),
+                            Style::default().fg(t.comment).bg(t.bg_dark),
+                        ));
+                        return;
+                    }
+                    for a in &r.assertions {
+                        if a.passed {
+                            rows.push(plain(
+                                format!("  ✓ {}", a.label),
+                                Style::default().fg(t.green).bg(t.bg_dark),
+                            ));
+                        } else {
+                            rows.push(plain(
+                                format!("  ✗ {}", a.label),
+                                Style::default()
+                                    .fg(t.red)
+                                    .bg(t.bg_dark)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                        }
+                    }
+                    return;
+                }
+                ResponseTab::Body => {}
             }
+            // Body tab (default) — the pretty JSON body flows below
+            // starting fresh at row 0 (no header echo).
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);
             // Detect JSON so we can run the tree-sitter highlighter
