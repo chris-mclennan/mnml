@@ -180,10 +180,15 @@ pub enum EditTab {
 }
 
 impl EditTab {
+    // Bruno-style tab order — Params leads (what most REST-client
+    // users tweak first), Body next, then structural fields.
+    // Source is labeled "Script" to match Bruno's terminology (mnml
+    // uses it for the raw .http source view; the naming just
+    // parallels Bruno's Script tab).
     pub const ALL: &'static [EditTab] = &[
+        EditTab::Params,
         EditTab::Body,
         EditTab::Headers,
-        EditTab::Params,
         EditTab::Auth,
         EditTab::Vars,
         EditTab::Source,
@@ -195,7 +200,7 @@ impl EditTab {
             EditTab::Params => "Params",
             EditTab::Auth => "Auth",
             EditTab::Vars => "Vars",
-            EditTab::Source => "Source",
+            EditTab::Source => "Script",
         }
     }
     pub fn next(self) -> Self {

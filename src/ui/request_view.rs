@@ -835,13 +835,14 @@ fn paint_response_tab_strip(
         // row of the tab strip so it's visually detached from the
         // label baseline (matches the mockup's
         // `Response\n────────` look).
-        // `━` (U+2501, box-drawings-heavy-horizontal) — thicker
-        // stroke than `─` so the active-tab bar reads as a bold
-        // indicator, not a subtle underline.
+        // `━` (U+2501, box-drawings-heavy-horizontal) painted in
+        // theme yellow so the active-tab indicator pops without
+        // being harsh (matches Bruno's brand-color underline
+        // treatment while staying inside our theme palette).
         let bar_glyph = if is_cur { "\u{2501}" } else { " " };
         let bar_style = if is_cur {
             Style::default()
-                .fg(t.fg)
+                .fg(t.yellow)
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD)
         } else {
@@ -1355,12 +1356,12 @@ fn draw_edit(
                 "  ".to_string(),
                 Style::default().bg(t.bg_dark),
             ));
-            // Underline bar row — `━` under active, blank under
-            // inactive. Same heavy stroke as the Response strip.
+            // Underline bar row — `━` under active in theme yellow
+            // (matches the Response strip), blank under inactive.
             let bar_glyph = if is_cur { "\u{2501}" } else { " " };
             let bar_style = if is_cur {
                 Style::default()
-                    .fg(t.fg)
+                    .fg(t.yellow)
                     .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD)
             } else {
