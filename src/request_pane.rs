@@ -110,6 +110,25 @@ pub struct RequestPane {
     /// / Tests). Persists on the pane so a user's choice sticks
     /// across re-fires.
     pub response_tab: ResponseTab,
+    /// Inline params-add editor. `None` when idle. `Some(...)` when
+    /// the user clicked "+ Add new parameter" — renders as an
+    /// editable row at the bottom of the Params list with Tab
+    /// cycling between key and value. Enter commits (appends to
+    /// URL); Esc cancels.
+    pub params_add: Option<ParamsAddDraft>,
+}
+
+/// Draft state for the inline "add a new query parameter" editor
+/// on the Params tab. Bruno-style: key field on the left, value on
+/// the right, Tab cycles focus between them.
+#[derive(Debug, Default, Clone)]
+pub struct ParamsAddDraft {
+    pub key: String,
+    pub value: String,
+    pub key_cursor: usize,
+    pub value_cursor: usize,
+    /// `true` when the caret is on the value field; `false` on key.
+    pub on_value: bool,
 }
 
 /// Two-way orientation for the Request/Response zones inside a
@@ -413,6 +432,7 @@ impl RequestPane {
             hover_auth_id: None,
             split_orientation: SplitOrientation::Vertical,
             response_tab: ResponseTab::Body,
+            params_add: None,
         }
     }
 

@@ -3570,23 +3570,61 @@ impl App {
         ));
     }
 
-    /// `http.params_add` — open a prompt to type `KEY=VALUE`,
-    /// append to the active Request pane's URL as a query
-    /// parameter. Used when on the Params tab and you want to add
-    /// a new param without hand-editing the URL field.
+    /// `http.params_add` — start the inline params editor on the
+    /// active Request pane's Params tab. A draft row is appended
+    /// at the bottom of the Params list with focus on the key
+    /// field; Tab cycles to value; Enter commits (appends to URL);
+    /// Esc cancels. Replaces the earlier "modal prompt in the
+    /// middle of the screen" flow which felt out of place.
     pub fn http_params_add(&mut self) {
-        let has_request = matches!(
-            self.active.and_then(|i| self.panes.get(i)),
-            Some(Pane::Request(_))
-        );
-        if !has_request {
+        let Some(cur) = self.active else {
             self.toast("http.params_add: no active Request pane");
             return;
+        };
+        let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+            self.toast("http.params_add: no active Request pane");
+            return;
+        };
+        rp.edit_tab = crate::request_pane::EditTab::Params;
+        rp.params_add = Some(crate::request_pane::ParamsAddDraft::default());
+    }
+
+    /// Commit the inline params-add draft: parse key + value, append
+    /// to the active URL, clear the draft. Called on Enter from the
+    /// draft-row key handler.
+    pub fn http_params_add_commit(&mut self) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+            return;
+        };
+        let Some(draft) = rp.params_add.take() else {
+            return;
+        };
+        let key = draft.key.trim();
+        if key.is_empty() {
+            self.toast("params: key can't be empty");
+            return;
         }
-        self.prompt = Some(crate::prompt::Prompt::new(
-            crate::prompt::PromptKind::HttpParamAdd,
-            "Query parameter KEY=VALUE:".to_string(),
-        ));
+        let value = draft.value.trim();
+        let sep = if rp.request.url.contains('?') {
+            '&'
+        } else {
+            '?'
+        };
+        rp.request.url.push(sep);
+        rp.request.url.push_str(key);
+        rp.request.url.push('=');
+        rp.request.url.push_str(value);
+        rp.url_cursor = rp.request.url.len();
+        self.toast(format!("params: added {key}={value}"));
+    }
+
+    /// Cancel the inline params-add draft (Esc from the draft row).
+    pub fn http_params_add_cancel(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.params_add = None;
+        }
     }
 
     /// Accept handler for `PromptKind::HttpParamAdd`. Appends the

@@ -2437,6 +2437,69 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         use crate::request_pane::ViewMode;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        // Inline Params-add draft steals keys while active. Tab
+        // cycles between key + value fields, `:` in the key field
+        // jumps to value (natural HTTP-header rhythm), Enter
+        // commits, Esc cancels, printable chars append to the
+        // focused field, Backspace deletes.
+        if rp.view == ViewMode::Edit && rp.params_add.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    let _ = rp;
+                    app.http_params_add_cancel();
+                    return true;
+                }
+                KeyCode::Enter => {
+                    let _ = rp;
+                    app.http_params_add_commit();
+                    return true;
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    if let Some(d) = rp.params_add.as_mut() {
+                        d.on_value = !d.on_value;
+                    }
+                    return true;
+                }
+                KeyCode::Char(':') => {
+                    // Natural "type key:value" rhythm — colon on
+                    // the key field flips focus to value.
+                    if let Some(d) = rp.params_add.as_mut() {
+                        if d.on_value {
+                            d.value.push(':');
+                            d.value_cursor = d.value.len();
+                        } else {
+                            d.on_value = true;
+                        }
+                    }
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    if let Some(d) = rp.params_add.as_mut() {
+                        if d.on_value {
+                            d.value.pop();
+                            d.value_cursor = d.value.len();
+                        } else {
+                            d.key.pop();
+                            d.key_cursor = d.key.len();
+                        }
+                    }
+                    return true;
+                }
+                KeyCode::Char(c) if !ctrl => {
+                    if let Some(d) = rp.params_add.as_mut() {
+                        if d.on_value {
+                            d.value.push(c);
+                            d.value_cursor = d.value.len();
+                        } else {
+                            d.key.push(c);
+                            d.key_cursor = d.key.len();
+                        }
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
         if rp.view == ViewMode::Edit {
             match key.code {
                 // Ctrl+Shift+V — paste curl from clipboard +

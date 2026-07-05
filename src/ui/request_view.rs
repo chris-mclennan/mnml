@@ -1342,35 +1342,14 @@ fn draw_edit(
     let body_style = Style::default().fg(t.fg).bg(t.bg_dark);
     let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
     let dim = Style::default().fg(t.comment).bg(t.bg_dark);
-    let label_style = |is_focus: bool| {
-        let mut st = Style::default().bg(t.bg_dark);
-        if is_focus {
-            // Cyan matches the tab-strip active color + the section
-            // header chip, so every "this is the focused thing"
-            // signal in the pane speaks the same accent.
-            st = st.fg(t.cyan).add_modifier(Modifier::BOLD);
-        } else {
-            st = st.fg(t.comment);
-        }
-        st
-    };
-    // Left-edge focus bar — bold cyan `▌` when focused (matches the
-    // menu-family focus indicator across settings + agents +
-    // integrations); subtle `bg3` block when not, so the column is
-    // still visually present and easy to anchor on.
-    let bar_span = |is_focus: bool| {
-        if is_focus {
-            Span::styled(
-                "▌ ".to_string(),
-                Style::default()
-                    .fg(t.cyan)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
-            )
-        } else {
-            Span::styled("▏ ".to_string(), Style::default().fg(t.bg3).bg(t.bg_dark))
-        }
-    };
+    // `label_style` + `bar_span` closures were used by the old
+    // section-header rows (Body / Headers / Params labels above
+    // their content). The redundant labels were removed 2026-07-05
+    // since the tab strip already labels the active view. The
+    // closures are kept commented out here as a note; if a future
+    // sub-section header inside a tab needs the focus-bar treatment
+    // it can re-introduce them.
+    let _ = t;
 
     // Method + URL rows are drawn by the top-level `draw()` as two
     // side-by-side bordered sub-panels (Method box + URL box) so
@@ -1452,31 +1431,14 @@ fn draw_edit(
 
     if cur_tab == crate::request_pane::EditTab::Headers {
         // Headers (editable as `Key: Value` text; one line per entry)
+        // Redundant "Headers" section label removed 2026-07-05 —
+        // the active tab-strip already labels this view.
         let h_focus = rp.focus == EditField::Headers;
-        let headers_label_y = rows.len() as u16;
-        // Count of header lines (non-empty, non-comment) — surfaced
-        // in the section label as `Headers (N)` so users know the
-        // list size without scrolling / counting. (#11 polish)
-        let hdr_count = rp
-            .headers_buffer
-            .lines()
-            .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
-            .count();
-        let count_suffix = if hdr_count > 0 {
-            format!(" ({hdr_count})")
-        } else {
-            String::new()
-        };
-        rows.push(Line::from(vec![
-            bar_span(h_focus),
-            Span::styled(format!("Headers{count_suffix}"), label_style(h_focus)),
-        ]));
-        register_field(fields, headers_label_y, EditField::Headers);
         let hb = &rp.headers_buffer;
         if hb.is_empty() {
             let empty_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                "    (none — type `Name: value` to add)".to_string(),
+                "    (none — click here or type Name: value)".to_string(),
                 dim,
             )]));
             register_field(fields, empty_y, EditField::Headers);
@@ -1644,9 +1606,10 @@ fn draw_edit(
             EditField::Url,
         ));
     };
-    // ── Params tab — `+ Add` row + clickable existing params.
-    //     Click `+ Add` → :http.params_add prompt; click a row → no-op
-    //     today (v2: edit prompt). Mirrors the Vars tab UX. ───
+    // ── Params tab — inline `+ Add` row + clickable existing
+    //     params. Click `+ Add` → start an inline key/value draft
+    //     row (Tab cycles fields, Enter commits, Esc cancels).
+    //     No section label (the tab strip already labels this view).
     if cur_tab == crate::request_pane::EditTab::Params {
         let url = &rp.request.url;
         let params: Vec<(String, String)> = match url.find('?') {
@@ -1660,10 +1623,6 @@ fn draw_edit(
                 .collect(),
             None => Vec::new(),
         };
-        // `+ Add new parameter…` action row — uses the shared
-        // add_action_row helper so this reads the same as `+ New
-        // request` / `+ New note` / `+ New session` chips across the
-        // activity-bar panels.
         let add_y = rows.len() as u16;
         rows.push(add_action_row("Add new parameter…", t));
         params_rows_local.push((
@@ -1676,14 +1635,63 @@ fn draw_edit(
             String::new(),
         ));
         register_tab_row(fields, add_y);
-        if params.is_empty() {
+        // Inline params-add draft row — appears immediately below
+        // the `+ Add` chip when the user has clicked it. Two-column
+        // layout (KEY = VALUE) with a `▏` caret in the currently
+        // focused field. Tab cycles focus; Enter commits; Esc
+        // cancels.
+        if let Some(draft) = &rp.params_add {
+            let draft_y = rows.len() as u16;
+            let (key_fg, val_fg) = if draft.on_value {
+                (t.comment, t.fg)
+            } else {
+                (t.fg, t.comment)
+            };
+            let key_display = if draft.key.is_empty() && !draft.on_value {
+                "▏".to_string()
+            } else if draft.key.is_empty() {
+                "(key)".to_string()
+            } else if !draft.on_value {
+                format!("{}▏", draft.key)
+            } else {
+                draft.key.clone()
+            };
+            let val_display = if draft.value.is_empty() && draft.on_value {
+                "▏".to_string()
+            } else if draft.value.is_empty() {
+                "(value)".to_string()
+            } else if draft.on_value {
+                format!("{}▏", draft.value)
+            } else {
+                draft.value.clone()
+            };
+            rows.push(Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled("› ", Style::default().fg(t.yellow).bg(t.bg_dark)),
+                Span::styled(
+                    key_display,
+                    Style::default()
+                        .fg(key_fg)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" = ", Style::default().fg(t.comment).bg(t.bg_dark)),
+                Span::styled(val_display, Style::default().fg(val_fg).bg(t.bg_dark)),
+                Span::styled(
+                    "    (Tab · Enter · Esc)".to_string(),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                ),
+            ]));
+            register_tab_row(fields, draft_y);
+        }
+        if params.is_empty() && rp.params_add.is_none() {
             let row_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                "    (no query parameters yet — click + Add or :http.params_add)".to_string(),
+                "    (no query parameters yet)".to_string(),
                 dim,
             )]));
             register_tab_row(fields, row_y);
-        } else {
+        } else if !params.is_empty() {
             for (k, v) in &params {
                 let row_y = rows.len() as u16;
                 params_rows_local.push((
