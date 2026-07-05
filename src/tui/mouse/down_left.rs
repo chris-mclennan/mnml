@@ -470,6 +470,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             app.active.and_then(|i| app.panes.get(i)),
             Some(crate::pane::Pane::Request(rp)) if rp.edit_tab == crate::request_pane::EditTab::Headers
         );
+        // `__COMMIT__` sentinel = click on the draft row's ✓ cell
+        // → commit + open a fresh draft row (same as pressing
+        // Enter). Same code path both tabs share.
+        if key == "__COMMIT__" {
+            if is_headers {
+                app.http_headers_add_commit(true);
+            } else {
+                app.http_params_add_commit(true);
+            }
+            return;
+        }
         if key.is_empty() {
             if is_headers {
                 app.http_headers_add();

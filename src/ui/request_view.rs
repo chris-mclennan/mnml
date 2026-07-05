@@ -1590,14 +1590,30 @@ fn draw_edit(
             } else {
                 Style::default().fg(t.comment).bg(t.bg_dark)
             };
+            let draft_y = rows.len() as u16;
             rows.push(make_row(
                 key_display,
                 val_display,
                 key_style,
                 val_style,
-                "   ",
-                Style::default().bg(t.bg_dark),
+                " ✓ ",
+                Style::default()
+                    .fg(t.green)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
             ));
+            // ✓ column is 3 cells wide, starting at the column
+            // offset `8 + name_w + value_w` (relative to row start).
+            // Register the click rect so mouse users can commit
+            // without touching the keyboard.
+            let check_x_off = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
+            let check_rect = Rect {
+                x: area.x.saturating_add(check_x_off),
+                y: draft_y,
+                width: 3,
+                height: 1,
+            };
+            params_rows_local.push((check_rect, "__COMMIT__".to_string()));
         }
         rows.push(make_border('└', '┴', '┘', '─'));
         if rp.headers_add.is_none() {
@@ -1938,14 +1954,30 @@ fn draw_edit(
             } else {
                 Style::default().fg(t.comment).bg(t.bg_dark)
             };
+            let draft_y = rows.len() as u16;
             rows.push(make_row(
                 key_display,
                 val_display,
                 key_style,
                 val_style,
-                "   ",
-                Style::default().bg(t.bg_dark),
+                " ✓ ",
+                Style::default()
+                    .fg(t.green)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
             ));
+            // ✓ column is 3 cells wide, starting at the column
+            // offset `8 + name_w + value_w` (relative to row start).
+            // Register the click rect so mouse users can commit
+            // without touching the keyboard.
+            let check_x_off = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
+            let check_rect = Rect {
+                x: area.x.saturating_add(check_x_off),
+                y: draft_y,
+                width: 3,
+                height: 1,
+            };
+            params_rows_local.push((check_rect, "__COMMIT__".to_string()));
         }
         // Bottom border.
         rows.push(make_border('└', '┴', '┘', '─'));
