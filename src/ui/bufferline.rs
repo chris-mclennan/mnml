@@ -419,7 +419,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             format!(" {glyph}  {name} {diag} {badge} ")
         };
-        let cells = label.chars().count() as u16;
+        let mut cells = label.chars().count() as u16;
+        // Request panes render an extra non-green separator span
+        // between the verb chip and the URL (see the render loop
+        // below). Account for that extra cell here so the
+        // clickable hitbox matches the visually-painted tab width.
+        if matches!(pane, Pane::Request(_)) && split_http_verb(&name).is_some() {
+            cells = cells.saturating_add(1);
+        }
         if x + cells > inner_right {
             overflow_right = true;
             break;
@@ -495,11 +502,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             && let Some((verb, rest)) = split_http_verb(&name)
         {
             // Solid-color verb chip: verb-color as bg, tab bg color
-            // as text, always BOLD. Reads as a button/badge. The
-            // chip's own leading/trailing spaces (` GET `) provide
-            // padding, so no separator span is needed — matches the
-            // precomputed label width `{name} ` where `name` has a
-            // double-space between verb and url.
+            // as text, always BOLD. Reads as a button/badge. A
+            // dedicated non-green separator span sits between the
+            // chip and the URL so the chip has visible breathing
+            // room — the chip's own trailing space was green-bg,
+            // which read as "chip extends into empty green space"
+            // rather than a gap.
             spans.push(Span::styled(
                 format!(" {verb} "),
                 Style::default()
@@ -507,6 +515,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .bg(icon_color)
                     .add_modifier(Modifier::BOLD),
             ));
+            spans.push(Span::styled(" ".to_string(), Style::default().bg(bg)));
             spans.push(Span::styled(format!("{rest} "), name_style));
         } else {
             spans.push(Span::styled(format!("{name} "), name_style));
