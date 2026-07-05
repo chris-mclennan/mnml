@@ -82,11 +82,49 @@ fn header_matches_filter(key: &str, value: &str, q_lower: &str) -> bool {
     key.to_ascii_lowercase().contains(q_lower) || value.to_ascii_lowercase().contains(q_lower)
 }
 
+/// Count filter matches across request headers + response headers +
+/// response body lines. Returns `(matched, total)` for the filter
+/// chip's hit indicator. Returns `None` when the filter is empty. (#11)
+fn compute_filter_hits(rp: &crate::request_pane::RequestPane) -> Option<(usize, usize)> {
+    let q = rp.filter.trim().to_ascii_lowercase();
+    if q.is_empty() {
+        return None;
+    }
+    let mut matched = 0usize;
+    let mut total = 0usize;
+    for (k, v) in &rp.request.headers {
+        total += 1;
+        if header_matches_filter(k, v, &q) {
+            matched += 1;
+        }
+    }
+    if let RunState::Done(r) = &rp.state {
+        for (k, v) in &r.headers {
+            total += 1;
+            if header_matches_filter(k, v, &q) {
+                matched += 1;
+            }
+        }
+        for line in r.body.lines() {
+            total += 1;
+            if line.to_ascii_lowercase().contains(&q) {
+                matched += 1;
+            }
+        }
+    }
+    Some((matched, total))
+}
+
 /// Filter chip row rendered at the top of the response section when
 /// the pane's `/` filter is active. Placeholder reads `/ filter` when
 /// unfocused, `type to filter…` when focused. `▏` cursor marks focus.
 /// Matches the sidebar-filter idiom across the app (#11).
-fn filter_row(filter: &str, focused: bool, t: theme::Theme) -> Line<'static> {
+fn filter_row(
+    filter: &str,
+    focused: bool,
+    hits: Option<(usize, usize)>,
+    t: theme::Theme,
+) -> Line<'static> {
     let display = if filter.is_empty() {
         if focused {
             "type to filter headers + body…".to_string()
@@ -105,7 +143,7 @@ fn filter_row(filter: &str, focused: bool, t: theme::Theme) -> Line<'static> {
     };
     let cursor = if focused { "▏" } else { "" };
     let search_glyph = "\u{f002}";
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled(
             format!("{search_glyph} "),
@@ -113,7 +151,22 @@ fn filter_row(filter: &str, focused: bool, t: theme::Theme) -> Line<'static> {
         ),
         Span::styled(display, Style::default().fg(fg).bg(t.bg_dark)),
         Span::styled(cursor, Style::default().fg(t.cyan).bg(t.bg_dark)),
-    ])
+    ];
+    // Hit count chip — shows only when the filter is set. Colors track
+    // whether there's a match (cyan) or none (red).
+    if !filter.is_empty()
+        && let Some((matched, total)) = hits
+    {
+        let count_color = if matched > 0 { t.cyan } else { t.red };
+        spans.push(Span::styled(
+            format!("   {matched}/{total}"),
+            Style::default()
+                .fg(count_color)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    Line::from(spans)
 }
 
 /// `+ <label>` action row — matches the "+ New note" / "+ New session"
@@ -230,10 +283,19 @@ pub fn draw(
     // hint even before typing). Empty + unfocused = hidden to keep
     // the pane quiet on first render.
     if !rp.filter.is_empty() || rp.filter_focused {
-        rows.push(filter_row(&rp.filter, rp.filter_focused, t));
+        // Precompute matched/total for the hit-count chip so the
+        // filter row itself carries the feedback. Walks request
+        // headers + response headers + body lines. (#11 polish)
+        let hits = compute_filter_hits(rp);
+        rows.push(filter_row(&rp.filter, rp.filter_focused, hits, t));
     }
     rows.push(Line::from(Span::raw("")));
-    draw_response(rp, t, &mut rows);
+    let wrap_width = if rp.body_wrap {
+        Some(area.width.saturating_sub(4).max(20))
+    } else {
+        None
+    };
+    draw_response(rp, t, &mut rows, wrap_width);
 
     // 2026-06-20 — AI section now PINNED to the bottom of the pane
     // (poor man's independent scrolling). The Request + Response
@@ -574,9 +636,22 @@ fn draw_edit(
         // Headers (editable as `Key: Value` text; one line per entry)
         let h_focus = rp.focus == EditField::Headers;
         let headers_label_y = rows.len() as u16;
+        // Count of header lines (non-empty, non-comment) — surfaced
+        // in the section label as `Headers (N)` so users know the
+        // list size without scrolling / counting. (#11 polish)
+        let hdr_count = rp
+            .headers_buffer
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+            .count();
+        let count_suffix = if hdr_count > 0 {
+            format!(" ({hdr_count})")
+        } else {
+            String::new()
+        };
         rows.push(Line::from(vec![
             bar_span(h_focus),
-            Span::styled("Headers".to_string(), label_style(h_focus)),
+            Span::styled(format!("Headers{count_suffix}"), label_style(h_focus)),
         ]));
         register_field(fields, headers_label_y, EditField::Headers);
         let hb = &rp.headers_buffer;
@@ -1151,6 +1226,7 @@ fn draw_response(
     rp: &crate::request_pane::RequestPane,
     t: theme::Theme,
     rows: &mut Vec<Line<'static>>,
+    body_wrap_width: Option<u16>,
 ) {
     let body_style = Style::default().fg(t.fg).bg(t.bg_dark);
     let dim = Style::default().fg(t.comment).bg(t.bg_dark);
@@ -1250,6 +1326,24 @@ fn draw_response(
                 500..=599 => t.red,
                 _ => t.bg3,
             };
+            // Wrap chip — reflects the current body_wrap setting so
+            // users can see the mode at a glance + `w` to toggle.
+            let wrap_chip = if rp.body_wrap {
+                " wrap ON  "
+            } else {
+                " wrap OFF "
+            };
+            let wrap_chip_style = if rp.body_wrap {
+                Style::default()
+                    .fg(t.bg_dark)
+                    .bg(t.cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(t.comment)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::DIM)
+            };
             rows.push(Line::from(vec![
                 Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
                 Span::styled(
@@ -1275,6 +1369,8 @@ fn draw_response(
                     ),
                     dim,
                 ),
+                Span::styled("   ", Style::default().bg(t.bg_dark)),
+                Span::styled(wrap_chip, wrap_chip_style),
             ]));
             // Response headers use the same color-coded row as the
             // Edit-tab headers + request-summary headers — consistent
@@ -1287,13 +1383,26 @@ fn draw_response(
             }
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);
+            // Optional word-wrap — soft-wraps each line at the pane
+            // width so long JSON strings stay visible. `w` in Response
+            // view toggles. (#11)
+            let wrap_line =
+                |s: &str, out: &mut Vec<Line<'static>>, style: Style| match body_wrap_width {
+                    Some(w) if s.chars().count() > w as usize => {
+                        let chars: Vec<char> = s.chars().collect();
+                        for chunk in chars.chunks(w as usize) {
+                            out.push(plain(chunk.iter().collect(), style));
+                        }
+                    }
+                    _ => out.push(plain(s.to_string(), style)),
+                };
             // Body filter — same query as the header filter. A line
             // shows if it contains the query (case-insensitive) OR
             // its neighbors do (±1 for context). Empty filter shows
             // every line. #11.
             if q_lower.is_empty() {
                 for l in pretty.lines() {
-                    rows.push(plain(l.to_string(), body_style));
+                    wrap_line(l, rows, body_style);
                 }
             } else {
                 let lines: Vec<&str> = pretty.lines().collect();
@@ -1320,7 +1429,7 @@ fn draw_response(
                     } else {
                         body_style
                     };
-                    rows.push(plain(l.to_string(), style));
+                    wrap_line(l, rows, style);
                 }
                 if hits == 0 {
                     rows.push(plain(

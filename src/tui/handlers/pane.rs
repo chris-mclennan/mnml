@@ -2599,6 +2599,9 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
             KeyCode::Char('y') => app.copy_active_curl(),
             KeyCode::Char('Y') => app.copy_active_response_body(),
             KeyCode::Char('e') => rp.toggle_view(),
+            // Toggle response body word-wrap. Off by default; long
+            // lines clip. `w` = wrap on/off. (#11)
+            KeyCode::Char('w') => rp.body_wrap = !rp.body_wrap,
             KeyCode::Char('.') => app.ai_debug_request(),
             KeyCode::Esc => app.focus_tree(),
             _ => {}

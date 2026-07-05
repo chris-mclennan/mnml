@@ -85,6 +85,10 @@ pub struct RequestPane {
     /// `/` in the pane focuses the filter input; typing appends;
     /// Esc clears + unfocuses; Enter commits + unfocuses.
     pub filter_focused: bool,
+    /// Wrap response body lines instead of clipping. Toggled by the
+    /// `wrap` chip in the response section header (or `w` in Response
+    /// view). Off by default so JSON keeps its raw line breaks. (#11)
+    pub body_wrap: bool,
 }
 
 /// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
@@ -323,6 +327,7 @@ impl RequestPane {
             prev_response: None,
             filter: String::new(),
             filter_focused: false,
+            body_wrap: false,
         }
     }
 
