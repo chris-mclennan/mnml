@@ -51,11 +51,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     let mut y = area.y + 2;
 
-    // Discover `.http` / `.curl` files under the workspace. Bounded
-    // walk (depth-limited so an unexpectedly-deep tree doesn't stall
-    // the render loop). A gitignore-respecting walk lands in a
-    // follow-up.
-    let files = discover_http_files(&app.workspace);
+    // Files come from the cache — populated lazily on first
+    // activation, refreshed via a future `http.refresh` command.
+    // Keeps per-frame FS syscalls off the render path.
+    if !app.http_panel_scanned_once {
+        app.http_panel_refresh();
+    }
+    let files = app.http_panel_files_cache.clone();
     if files.is_empty() {
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
@@ -131,40 +133,5 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             new_rect,
         );
         app.rects.http_panel_new_chip = Some(new_rect);
-    }
-}
-
-/// Walk the workspace root looking for `.http` / `.curl` files.
-/// Depth-bounded to 4 levels — deeper trees are common but hitting
-/// them would stall the render loop. A future refactor swaps this
-/// for a background-cached list.
-fn discover_http_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let mut out = Vec::new();
-    walk(root, 0, &mut out);
-    out.sort();
-    out
-}
-
-fn walk(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
-    if depth > 4 || out.len() > 200 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if name_str.starts_with('.') || name_str == "target" || name_str == "node_modules" {
-            continue;
-        }
-        if path.is_dir() {
-            walk(&path, depth + 1, out);
-        } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
-            && (ext == "http" || ext == "curl" || ext == "rest")
-        {
-            out.push(path);
-        }
     }
 }

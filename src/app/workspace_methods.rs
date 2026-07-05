@@ -587,18 +587,60 @@ impl App {
             self.toast(format!("http: create failed: {e}"));
             return;
         }
+        self.http_panel_refresh();
         self.open_path(&path);
     }
 
     /// Scan the workspace for TODO markers and repopulate
     /// `todos_hits`. Bounded walk (skips huge files, target,
     /// node_modules, dotdirs) — under a second on typical
-    /// workspaces. (#9)
+    /// workspaces. (#9) On first activation this runs synchronously
+    /// (blocks one frame's render) but subsequent \`todos.refresh\`
+    /// clicks are cheap enough on typical trees. If it starts to
+    /// hurt, extract to a background thread + mpsc.
     pub fn todos_panel_refresh(&mut self) {
         let mut hits = Vec::new();
         walk_for_todos(&self.workspace, 0, &mut hits);
         hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
         self.todos_hits = hits;
+        self.todos_panel_scanned_once = true;
+    }
+
+    /// Refresh the HTTP panel file cache. Called from the panel
+    /// renderer only when the cache is empty (first activation) or
+    /// via the future \`http.refresh\` command. Keeps per-frame IO
+    /// from stat'ing the tree on every draw. (#10)
+    pub fn http_panel_refresh(&mut self) {
+        let mut out = Vec::new();
+        walk_for_http(&self.workspace, 0, &mut out);
+        out.sort();
+        self.http_panel_files_cache = out;
+        self.http_panel_scanned_once = true;
+    }
+
+    /// Refresh the Notes panel file cache. Same lazy pattern as the
+    /// HTTP one. (#8)
+    pub fn notes_panel_refresh(&mut self) {
+        let dir = crate::ui::notes_panel::notes_dir(&self.workspace);
+        let mut out: Vec<std::path::PathBuf> = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md") && p.is_file())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        // Sort by modified time descending — most-recently-worked-on first.
+        out.sort_by_key(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| std::cmp::Reverse(d.as_secs()))
+                .unwrap_or(std::cmp::Reverse(0))
+        });
+        self.notes_panel_files_cache = out;
+        self.notes_panel_scanned_once = true;
     }
 
     /// Notes panel `+ New note` action — creates a numbered markdown
@@ -621,7 +663,32 @@ impl App {
             self.toast(format!("notes: create failed: {e}"));
             return;
         }
+        self.notes_panel_refresh();
         self.open_path(&path);
+    }
+}
+
+fn walk_for_http(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
+    if depth > 4 || out.len() > 200 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.') || name_str == "target" || name_str == "node_modules" {
+            continue;
+        }
+        if path.is_dir() {
+            walk_for_http(&path, depth + 1, out);
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && (ext == "http" || ext == "curl" || ext == "rest")
+        {
+            out.push(path);
+        }
     }
 }
 

@@ -50,8 +50,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     let mut y = area.y + 2;
 
-    let dir = notes_dir(&app.workspace);
-    let files = list_notes(&dir);
+    // Files come from the cache — populated on first activation.
+    // Keeps per-frame stat() calls off the render path.
+    if !app.notes_panel_scanned_once {
+        app.notes_panel_refresh();
+    }
+    let files = app.notes_panel_files_cache.clone();
     if files.is_empty() {
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
@@ -128,25 +132,4 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
 pub fn notes_dir(workspace: &std::path::Path) -> std::path::PathBuf {
     workspace.join(".mnml").join("notes")
-}
-
-fn list_notes(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut out: Vec<std::path::PathBuf> = rd
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md") && p.is_file())
-        .collect();
-    // Sort by modified time descending — most-recently-worked-on first.
-    out.sort_by_key(|p| {
-        std::fs::metadata(p)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| std::cmp::Reverse(d.as_secs()))
-            .unwrap_or(std::cmp::Reverse(0))
-    });
-    out
 }

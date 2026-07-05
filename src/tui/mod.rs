@@ -129,6 +129,10 @@ fn restore_terminal(term: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result
         // returns to standard tracking.
         ratatui::crossterm::style::Print("\x1b[?1003l"),
         DisableMouseCapture,
+        // Pair with the EnableBracketedPaste we sent — otherwise the host
+        // shell keeps receiving \e[200~/\e[201~ markers around every paste,
+        // breaking clipboard paste after mnml exits.
+        ratatui::crossterm::event::DisableBracketedPaste,
         SetCursorStyle::DefaultUserShape
     )?;
     term.show_cursor()?;
@@ -262,17 +266,47 @@ fn try_open_dragged_path(app: &mut App, text: &str) -> bool {
     let mut opened_any = false;
     for raw in text.lines().map(str::trim).filter(|s| !s.is_empty()) {
         // Strip `file://` prefix + a common wrapping quote/escape pair.
-        let candidate = raw
+        let stripped = raw
             .strip_prefix("file://")
             .unwrap_or(raw)
             .trim_matches(&['"', '\''] as &[_]);
-        let path = std::path::PathBuf::from(candidate);
+        // Percent-decode `%20` etc — macOS Finder + several terminals
+        // emit percent-encoded URIs for paths with spaces.
+        let decoded = percent_decode(stripped);
+        let path = std::path::PathBuf::from(decoded);
         if path.is_file() {
             app.open_path(&path);
             opened_any = true;
         }
     }
     opened_any
+}
+
+/// Minimal `%XX` decoder — covers the URL-encoded drag-and-drop
+/// case without pulling in a URL crate. Malformed sequences pass
+/// through as-is so we never lose data.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2].is_ascii_hexdigit()
+            && let Ok(v) = u8::from_str_radix(
+                std::str::from_utf8(&bytes[i + 1..=i + 2]).unwrap_or("00"),
+                16,
+            )
+        {
+            out.push(v as char);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i] as char);
+        i += 1;
+    }
+    out
 }
 
 // ─── key dispatch (shared with headless/IPC) ────────────────────────

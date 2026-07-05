@@ -488,8 +488,9 @@ pub fn persist_ui_string(key: &'static str, value: &str) -> Result<std::path::Pa
             out.push(line.to_string());
             continue;
         }
-        if in_ui && !key_replaced && trimmed.starts_with(&format!("{key} "))
-            || trimmed.starts_with(&format!("{key}="))
+        if in_ui
+            && !key_replaced
+            && (trimmed.starts_with(&format!("{key} ")) || trimmed.starts_with(&format!("{key}=")))
         {
             // Preserve indentation.
             let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();

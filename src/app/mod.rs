@@ -2590,6 +2590,17 @@ pub struct App {
     /// Set to true after the first `todos_panel_refresh` fires so
     /// the panel doesn't re-scan on every draw.
     pub todos_panel_scanned_once: bool,
+    /// Cached `.http`/`.curl` file list for the HTTP activity panel
+    /// (#10). Refreshed lazily on panel activation (see
+    /// `App::http_panel_files_cached`) so we don't stat the tree
+    /// every render frame.
+    pub http_panel_files_cache: Vec<std::path::PathBuf>,
+    /// True after the first HTTP panel scan; drives lazy refresh.
+    pub http_panel_scanned_once: bool,
+    /// Cached notes file list for the Notes activity panel (#8).
+    /// Same lazy pattern as `http_panel_files_cache`.
+    pub notes_panel_files_cache: Vec<std::path::PathBuf>,
+    pub notes_panel_scanned_once: bool,
     /// qa-feature 2026-07-01 — stable position for the primary
     /// in the unified workspace visual list (primary + extras
     /// share one position space). Starts at 0. Promoting an
@@ -4181,6 +4192,10 @@ impl App {
             extra_workspaces,
             todos_hits: Vec::new(),
             todos_panel_scanned_once: false,
+            http_panel_files_cache: Vec::new(),
+            http_panel_scanned_once: false,
+            notes_panel_files_cache: Vec::new(),
+            notes_panel_scanned_once: false,
             primary_position: 0,
             git_rail,
             image_protocol: crate::image::detect_protocol(),
