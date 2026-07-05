@@ -370,6 +370,12 @@ pub fn draw(
         && request_inner.height >= METHOD_URL_ROW_H + 3;
 
     let mut edit_rows: Vec<Line> = Vec::new();
+    // Absolute-coord click rects for the Method + URL sub-panels.
+    // Registered directly into `app.rects.request_fields` below the
+    // tab-strip translation loop — the loop treats every entry in
+    // its `fields` vec as row-index-y and would double-translate
+    // these if we mixed them in.
+    let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let tabs_rect = if show_sub_panels {
         let method_rect = Rect {
             x: request_inner.x,
@@ -383,17 +389,12 @@ pub fn draw(
             width: request_inner.width.saturating_sub(METHOD_BOX_WIDTH),
             height: METHOD_URL_ROW_H,
         };
-        draw_method_box(frame, rp, method_rect, focused, pane_id, &mut fields, t);
-        draw_url_box(
-            frame,
-            rp,
-            url_rect,
-            focused,
-            pane_id,
-            &mut fields,
-            &mut caret,
-            t,
-        );
+        if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
+            method_url_absolute.push((mr, EditField::Method));
+        }
+        if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret, t) {
+            method_url_absolute.push((ur, EditField::Url));
+        }
         Rect {
             x: request_inner.x,
             y: request_inner.y.saturating_add(METHOD_URL_ROW_H),
@@ -501,25 +502,35 @@ pub fn draw(
     app.rects.editor_panes.push((area, pane_id));
 
     // ── Rect adjustment: edit_rows rects were collected with y = row
-    // index within `edit_rows` (0-based relative to request_inner).
-    // Translate to screen y = request_inner.y + row_index, clipped
-    // to request_inner.height so a click past the visible content
-    // doesn't fire.
-    let edit_h = request_inner.height as usize;
+    // index within `edit_rows` (0-based relative to `tabs_rect`).
+    // Translate to screen y = tabs_rect.y + row_index, clipped to
+    // tabs_rect.height so a click past the visible content doesn't
+    // fire. Uses `tabs_rect` (NOT `request_inner`) because that's
+    // the area `draw_edit` was passed — using `request_inner.y`
+    // would offset every tab-click by METHOD_URL_ROW_H (3 rows)
+    // and route Method-box clicks to the tab strip.
+    let edit_h = tabs_rect.height as usize;
+    let edit_origin_y = tabs_rect.y;
     for (mut r, pid, f) in fields.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
             continue;
         }
-        r.y = request_inner.y.saturating_add(row_off as u16);
+        r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_fields.push((r, pid, f));
+    }
+    // Method + URL sub-panel rects were built with ABSOLUTE
+    // screen coords by `draw_method_box` / `draw_url_box`; they
+    // don't go through the row-index → screen-y translation.
+    for (rect, field) in method_url_absolute.drain(..) {
+        app.rects.request_fields.push((rect, pane_id, field));
     }
     for (mut r, pid, tab) in edit_tabs_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
             continue;
         }
-        r.y = request_inner.y.saturating_add(row_off as u16);
+        r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_edit_tabs.push((r, pid, tab));
     }
     app.rects.request_vars_rows.clear();
@@ -528,7 +539,7 @@ pub fn draw(
         if row_off >= edit_h {
             continue;
         }
-        r.y = request_inner.y.saturating_add(row_off as u16);
+        r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_vars_rows.push((r, key));
     }
     app.rects.request_params_rows.clear();
@@ -537,7 +548,7 @@ pub fn draw(
         if row_off >= edit_h {
             continue;
         }
-        r.y = request_inner.y.saturating_add(row_off as u16);
+        r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_params_rows.push((r, key));
     }
     app.rects.request_auth_rows.clear();
@@ -546,17 +557,26 @@ pub fn draw(
         if row_off >= edit_h {
             continue;
         }
-        r.y = request_inner.y.saturating_add(row_off as u16);
+        r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_auth_rows.push((r, id));
     }
 
-    // Caret — draw_edit reports y as a row index within edit_rows.
-    // Translate to screen y within request_inner, drop if clipped.
-    caret.and_then(|(x, y)| {
-        if (y as usize) >= edit_h {
-            None
+    // Caret — two sources can set it:
+    //   * `draw_url_box` writes ABSOLUTE (x, y) inside the URL
+    //     sub-panel's inner rect.
+    //   * `draw_edit` writes a row-index y (0-based within the
+    //     tabs_rect content) for any focused Body/Headers field.
+    //
+    // Distinguishing them: absolute y from draw_url_box is
+    // always `>= request_inner.y` (well past `edit_h`), while
+    // row-index y is `< edit_h`. Route accordingly.
+    caret.map(|(x, y)| {
+        if (y as usize) < edit_h {
+            // Row-index — translate against tabs_rect origin.
+            (x, edit_origin_y.saturating_add(y))
         } else {
-            Some((x, request_inner.y.saturating_add(y)))
+            // Already an absolute coord (URL box) — pass through.
+            (x, y)
         }
     })
 }
@@ -576,28 +596,29 @@ fn border_color(focused: bool, t: theme::Theme) -> Style {
 /// the verb rendered as COLORED TEXT (not a colored bg chip) and a
 /// trailing `▼` down-arrow so the box reads as a dropdown affordance.
 /// Colors follow `method_color` (GET green, POST orange, PUT blue,
-/// PATCH cyan, DELETE red, HEAD yellow, OPTIONS purple).
+/// PATCH cyan, DELETE red, HEAD yellow, OPTIONS purple). Returns the
+/// absolute-coord click rect for the whole Method box (the caller
+/// registers it directly into `app.rects.request_fields`, skipping
+/// the row-index translation loop that the tab-strip rects go
+/// through).
 fn draw_method_box(
     frame: &mut Frame,
     rp: &crate::request_pane::RequestPane,
     rect: Rect,
     focused: bool,
-    pane_id: PaneId,
-    fields: &mut Vec<(Rect, PaneId, EditField)>,
     t: theme::Theme,
-) {
+) -> Option<Rect> {
     let block =
         crate::ui::design_tokens::modal_panel("Method").border_style(border_color(focused, t));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
-        return;
+        return None;
     }
     let method = rp.request.method.to_uppercase();
     let m_color = method_color(&method, t);
     // Content row: " GET     ▼ " — verb in verb-color BOLD on
     // panel bg, dropdown arrow dim-comment on right.
-    let arrow_col = inner.width.saturating_sub(2);
     let verb_width = method.chars().count() as u16;
     let mid_pad = inner
         .width
@@ -621,32 +642,27 @@ fn draw_method_box(
         Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
         inner,
     );
-    // Whole inner rect is the Method click target — click cycles
-    // through verbs (existing `http.cycle_method` behavior).
-    fields.push((inner, pane_id, EditField::Method));
-    let _ = arrow_col; // reserved for future explicit arrow click rect
+    Some(inner)
 }
 
 /// URL sub-panel — legend-outline modal_panel titled "URL" spanning
 /// the remainder of the row's width. Renders the URL as editable
 /// text; when the URL field is focused, positions the terminal caret
-/// at the character offset that corresponds to `url_cursor`.
-#[allow(clippy::too_many_arguments)]
+/// at the character offset that corresponds to `url_cursor`. Returns
+/// the absolute-coord click rect for the URL box.
 fn draw_url_box(
     frame: &mut Frame,
     rp: &crate::request_pane::RequestPane,
     rect: Rect,
     focused: bool,
-    pane_id: PaneId,
-    fields: &mut Vec<(Rect, PaneId, EditField)>,
     caret: &mut Option<(u16, u16)>,
     t: theme::Theme,
-) {
+) -> Option<Rect> {
     let block = crate::ui::design_tokens::modal_panel("URL").border_style(border_color(focused, t));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
-        return;
+        return None;
     }
     let url_text = rp.request.url.clone();
     // Placeholder shown when the URL is empty — subtle comment-fg
@@ -675,12 +691,12 @@ fn draw_url_box(
         Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
         inner,
     );
-    fields.push((inner, pane_id, EditField::Url));
     if focused && rp.focus == EditField::Url {
         let caret_col = 1u16 + url_chars_before_cursor(&url_text, rp.url_cursor) as u16;
         let cx = inner.x + caret_col.min(inner.width.saturating_sub(1));
         *caret = Some((cx, inner.y));
     }
+    Some(inner)
 }
 
 #[allow(clippy::too_many_arguments)]
