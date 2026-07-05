@@ -454,9 +454,11 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
-    // Click on a Params-tab row → empty (`+ Add`) opens
-    // the KEY=VALUE prompt; non-empty deletes that param
-    // from the URL (v2 will open an edit prompt instead).
+    // Click on a Params- or Headers-tab row → empty key
+    // (`+ Add row`) starts the inline draft; non-empty key
+    // deletes that row (whole-row hitbox for v1). The dispatch
+    // routes to params vs headers based on the active pane's
+    // current edit_tab.
     if let Some((_, key)) = app
         .rects
         .request_params_rows
@@ -464,8 +466,18 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         .cloned()
     {
+        let is_headers = matches!(
+            app.active.and_then(|i| app.panes.get(i)),
+            Some(crate::pane::Pane::Request(rp)) if rp.edit_tab == crate::request_pane::EditTab::Headers
+        );
         if key.is_empty() {
-            app.http_params_add();
+            if is_headers {
+                app.http_headers_add();
+            } else {
+                app.http_params_add();
+            }
+        } else if is_headers {
+            app.http_headers_delete(&key);
         } else {
             app.http_params_delete(&key);
         }

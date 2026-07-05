@@ -115,14 +115,18 @@ pub struct RequestPane {
     /// editable row at the bottom of the Params list with Tab
     /// cycling between key and value. Enter commits (appends to
     /// URL); Esc cancels.
-    pub params_add: Option<ParamsAddDraft>,
+    pub params_add: Option<InlineKvDraft>,
+    /// Inline headers-add editor. Same shape as `params_add` —
+    /// Bruno-style key/value inline row. Enter commits (appends
+    /// `Name: value\n` to `headers_buffer`); Esc cancels.
+    pub headers_add: Option<InlineKvDraft>,
 }
 
-/// Draft state for the inline "add a new query parameter" editor
-/// on the Params tab. Bruno-style: key field on the left, value on
-/// the right, Tab cycles focus between them.
+/// Draft state for an inline "add a new key/value pair" editor.
+/// Shared by the Params and Headers tabs — Bruno-style: key field
+/// on the left, value on the right, Tab cycles focus.
 #[derive(Debug, Default, Clone)]
-pub struct ParamsAddDraft {
+pub struct InlineKvDraft {
     pub key: String,
     pub value: String,
     pub key_cursor: usize,
@@ -130,6 +134,9 @@ pub struct ParamsAddDraft {
     /// `true` when the caret is on the value field; `false` on key.
     pub on_value: bool,
 }
+
+/// Backwards-compat alias — old code called this `ParamsAddDraft`.
+pub type ParamsAddDraft = InlineKvDraft;
 
 /// Two-way orientation for the Request/Response zones inside a
 /// single Request pane. Kept on the pane so orientation persists
@@ -433,6 +440,7 @@ impl RequestPane {
             split_orientation: SplitOrientation::Vertical,
             response_tab: ResponseTab::Body,
             params_add: None,
+            headers_add: None,
         }
     }
 

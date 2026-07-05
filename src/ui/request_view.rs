@@ -1430,68 +1430,200 @@ fn draw_edit(
     let cur_tab = rp.edit_tab;
 
     if cur_tab == crate::request_pane::EditTab::Headers {
-        // Headers (editable as `Key: Value` text; one line per entry)
-        // Redundant "Headers" section label removed 2026-07-05 —
-        // the active tab-strip already labels this view.
-        let h_focus = rp.focus == EditField::Headers;
-        let hb = &rp.headers_buffer;
-        if hb.is_empty() {
-            let empty_y = rows.len() as u16;
-            rows.push(Line::from(vec![Span::styled(
-                "    (none — click here or type Name: value)".to_string(),
-                dim,
-            )]));
-            register_field(fields, empty_y, EditField::Headers);
-            if h_focus && focused && caret.is_none() {
-                let y = (rows.len() - 1) as u16;
-                *caret = Some((area.x + 4, y));
+        // Headers tab — same Excel-cell table as Params. Rows are
+        // parsed out of `headers_buffer` (skipping empty lines +
+        // comments). Inline `+ Add row` draft appends
+        // `Name: value\n` to the buffer + re-parses. Delete via
+        // row click. Whole-row hitbox (like Params).
+        let headers: Vec<(String, String)> = rp
+            .headers_buffer
+            .lines()
+            .filter_map(|l| {
+                let t = l.trim();
+                if t.is_empty() || t.starts_with('#') {
+                    return None;
+                }
+                let (k, v) = t.split_once(':')?;
+                Some((k.trim().to_string(), v.trim().to_string()))
+            })
+            .collect();
+        const TABLE_MAX_W: u16 = 100;
+        const TABLE_RIGHT_PAD: u16 = 3;
+        let table_x = area.x.saturating_add(2);
+        let table_w = area
+            .width
+            .saturating_sub(2)
+            .saturating_sub(TABLE_RIGHT_PAD)
+            .clamp(20, TABLE_MAX_W);
+        let x_col_w: u16 = 3;
+        let inner_w = table_w.saturating_sub(x_col_w).saturating_sub(4);
+        let name_w = (inner_w * 35 / 100).max(8);
+        let value_w = inner_w.saturating_sub(name_w);
+        let make_border = |left: char, sep: char, right: char, fill: char| -> Line<'static> {
+            let n_seg: String = std::iter::repeat_n(fill, (name_w + 2) as usize).collect();
+            let v_seg: String = std::iter::repeat_n(fill, (value_w + 2) as usize).collect();
+            let x_seg: String = std::iter::repeat_n(fill, x_col_w as usize).collect();
+            Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled(
+                    format!("{}{}{}{}{}{}{}", left, n_seg, sep, v_seg, sep, x_seg, right),
+                    Style::default().fg(t.bg3).bg(t.bg_dark),
+                ),
+            ])
+        };
+        let make_row = |key_text: String,
+                        val_text: String,
+                        key_style: Style,
+                        val_style: Style,
+                        x_glyph: &str,
+                        x_style: Style|
+         -> Line<'static> {
+            let mut key_s = key_text;
+            if key_s.chars().count() > name_w as usize {
+                let truncated: String = key_s.chars().take(name_w as usize).collect();
+                key_s = truncated;
             }
-        } else {
-            // Style each header line as `<key in cyan> : <value in fg>` —
-            // editing model is still the flat textarea (the user types `Name:
-            // value\n` like before), but at render time we split on the first
-            // `:` to color-code. Lines without `:` (mid-edit) render in dim
-            // gray as a hint they're not yet a valid header.
+            let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
+            let mut val_s = val_text;
+            if val_s.chars().count() > value_w as usize {
+                let truncated: String = val_s.chars().take(value_w as usize).collect();
+                val_s = truncated;
+            }
+            let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
+            let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
+            Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                Span::styled(key_s, key_style),
+                Span::styled(" ".repeat(pad_k), Style::default().bg(t.bg_dark)),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                Span::styled(val_s, val_style),
+                Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(x_glyph.to_string(), x_style),
+                border,
+            ])
+        };
+        rows.push(make_border('┌', '┬', '┐', '─'));
+        rows.push(make_row(
+            "Name".to_string(),
+            "Value".to_string(),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+            "   ",
+            Style::default().bg(t.bg_dark),
+        ));
+        rows.push(make_border('├', '┼', '┤', '─'));
+        for (i, (k, v)) in headers.iter().enumerate() {
             let key_style = Style::default()
                 .fg(t.cyan)
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD);
-            let sep_style = Style::default().fg(t.comment).bg(t.bg_dark);
             let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
-            let plain_dim = Style::default().fg(t.comment).bg(t.bg_dark);
-            for (i, line) in hb.lines().enumerate() {
-                let spans: Vec<Span> = if let Some(colon) = line.find(':') {
-                    let (k, rest) = line.split_at(colon);
-                    // Skip the `:` itself; preserve any leading space in the value.
-                    let v = &rest[1..];
-                    vec![
-                        Span::styled("    ".to_string(), val_style),
-                        Span::styled(k.to_string(), key_style),
-                        Span::styled(":".to_string(), sep_style),
-                        Span::styled(v.to_string(), val_style),
-                    ]
-                } else {
-                    vec![Span::styled(format!("    {line}"), plain_dim)]
-                };
-                let row_y = rows.len() as u16;
-                rows.push(Line::from(spans));
-                register_field(fields, row_y, EditField::Headers);
-                if h_focus && focused && caret.is_none() {
-                    let start = nth_line_start(hb, i);
-                    let end = nth_line_end(hb, i);
-                    if rp.headers_cursor >= start && rp.headers_cursor <= end {
-                        let col_in_line =
-                            hb[start..rp.headers_cursor.min(hb.len())].chars().count() as u16;
-                        let y = (rows.len() - 1) as u16;
-                        *caret = Some((area.x + 4 + col_in_line, y));
-                    }
-                }
+            let x_style = Style::default().fg(t.red).bg(t.bg_dark);
+            let row_y = rows.len() as u16;
+            rows.push(make_row(
+                k.clone(),
+                v.clone(),
+                key_style,
+                val_style,
+                " ✕ ",
+                x_style,
+            ));
+            let row_full_w = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1 + 3 + 1;
+            params_rows_local.push((
+                Rect {
+                    x: table_x,
+                    y: row_y,
+                    width: row_full_w,
+                    height: 1,
+                },
+                k.clone(),
+            ));
+            register_field(fields, row_y, EditField::Headers);
+            if i + 1 < headers.len() || rp.headers_add.is_some() {
+                rows.push(make_border('├', '┼', '┤', '─'));
             }
-            if h_focus && focused && caret.is_none() && hb.ends_with('\n') {
-                let y = rows.len() as u16;
-                rows.push(plain(String::new(), body_style));
-                *caret = Some((area.x + 4, y));
-            }
+        }
+        if let Some(draft) = &rp.headers_add {
+            let key_display = if draft.key.is_empty() && !draft.on_value {
+                "▏".to_string()
+            } else if draft.key.is_empty() {
+                "(name)".to_string()
+            } else if !draft.on_value {
+                format!("{}▏", draft.key)
+            } else {
+                draft.key.clone()
+            };
+            let val_display = if draft.value.is_empty() && draft.on_value {
+                "▏".to_string()
+            } else if draft.value.is_empty() {
+                "(value)".to_string()
+            } else if draft.on_value {
+                format!("{}▏", draft.value)
+            } else {
+                draft.value.clone()
+            };
+            let key_style = if draft.on_value {
+                Style::default().fg(t.comment).bg(t.bg_dark)
+            } else {
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
+            };
+            let val_style = if draft.on_value {
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.comment).bg(t.bg_dark)
+            };
+            rows.push(make_row(
+                key_display,
+                val_display,
+                key_style,
+                val_style,
+                "   ",
+                Style::default().bg(t.bg_dark),
+            ));
+        }
+        rows.push(make_border('└', '┴', '┘', '─'));
+        if rp.headers_add.is_none() {
+            let add_y = rows.len() as u16;
+            rows.push(add_action_row("Add row", t));
+            // Use params_rows_local with empty key = "start
+            // headers add" — the click dispatcher checks current
+            // tab to route to http_headers_add vs http_params_add.
+            params_rows_local.push((
+                Rect {
+                    x: area.x,
+                    y: add_y,
+                    width: area.width,
+                    height: 1,
+                },
+                String::new(),
+            ));
+            register_field(fields, add_y, EditField::Headers);
+        } else {
+            let hint_y = rows.len() as u16;
+            rows.push(Line::from(vec![Span::styled(
+                "    (Tab · `:`  ·  Enter → add + new row  ·  Shift+Enter → done  ·  Esc → cancel)"
+                    .to_string(),
+                dim,
+            )]));
+            register_field(fields, hint_y, EditField::Headers);
         }
     } // end Headers tab
 

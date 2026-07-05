@@ -3642,6 +3642,96 @@ impl App {
         self.toast(format!("params: added {key_owned}={value_owned}"));
     }
 
+    /// Start the inline headers-add draft — same shape as
+    /// `http_params_add` but writes to the Headers tab's editor.
+    pub fn http_headers_add(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("no active Request pane");
+            return;
+        };
+        let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+            self.toast("no active Request pane");
+            return;
+        };
+        rp.edit_tab = crate::request_pane::EditTab::Headers;
+        rp.headers_add = Some(crate::request_pane::InlineKvDraft::default());
+    }
+
+    /// Commit the current headers-add draft — appends
+    /// `Name: value\n` to `headers_buffer` and refreshes the
+    /// parsed `request.headers`. `continue_drafting` opens a new
+    /// blank draft after committing (same spreadsheet flow as
+    /// Params).
+    pub fn http_headers_add_commit(&mut self, continue_drafting: bool) {
+        let Some(cur) = self.active else { return };
+        let draft = {
+            let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+                return;
+            };
+            rp.headers_add.take()
+        };
+        let Some(draft) = draft else { return };
+        let key = draft.key.trim();
+        if key.is_empty() {
+            if draft.value.trim().is_empty() {
+                return;
+            }
+            if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+                rp.headers_add = Some(draft);
+            }
+            self.toast("headers: name can't be empty");
+            return;
+        }
+        let value = draft.value.trim();
+        let key_owned = key.to_string();
+        let value_owned = value.to_string();
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            if !rp.headers_buffer.is_empty() && !rp.headers_buffer.ends_with('\n') {
+                rp.headers_buffer.push('\n');
+            }
+            rp.headers_buffer
+                .push_str(&format!("{key_owned}: {value_owned}\n"));
+            rp.headers_cursor = rp.headers_buffer.len();
+            rp.commit_headers();
+            if continue_drafting {
+                rp.headers_add = Some(crate::request_pane::InlineKvDraft::default());
+            }
+        }
+        self.toast(format!("headers: added {key_owned}: {value_owned}"));
+    }
+
+    /// Cancel the inline headers-add draft.
+    pub fn http_headers_add_cancel(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.headers_add = None;
+        }
+    }
+
+    /// Delete a header row by name from the buffer. Mirrors
+    /// `http_params_delete` — used by row-click on the Headers
+    /// table (whole-row = delete for v1).
+    pub fn http_headers_delete(&mut self, name: &str) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let filtered: Vec<String> = rp
+                .headers_buffer
+                .lines()
+                .filter(|l| {
+                    let k = l.split_once(':').map(|(k, _)| k.trim()).unwrap_or("");
+                    !k.eq_ignore_ascii_case(name)
+                })
+                .map(str::to_string)
+                .collect();
+            rp.headers_buffer = filtered.join("\n");
+            if !rp.headers_buffer.is_empty() && !rp.headers_buffer.ends_with('\n') {
+                rp.headers_buffer.push('\n');
+            }
+            rp.headers_cursor = rp.headers_buffer.len();
+            rp.commit_headers();
+        }
+    }
+
     /// Cancel the inline params-add draft (Esc from the draft row).
     pub fn http_params_add_cancel(&mut self) {
         let Some(cur) = self.active else { return };

@@ -2437,42 +2437,60 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         use crate::request_pane::ViewMode;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        // Inline Params-add draft steals keys while active. Tab
-        // cycles between key + value fields, `:` in the key field
-        // jumps to value (natural HTTP-header rhythm), Enter
-        // commits, Esc cancels, printable chars append to the
-        // focused field, Backspace deletes.
-        if rp.view == ViewMode::Edit && rp.params_add.is_some() {
+        // Inline KV draft (Params OR Headers). Same key handling
+        // for both — dispatch by which is currently active.
+        let params_active = rp.view == ViewMode::Edit && rp.params_add.is_some();
+        let headers_active = rp.view == ViewMode::Edit && rp.headers_add.is_some();
+        if params_active || headers_active {
+            let cancel = |app: &mut App| {
+                if headers_active {
+                    app.http_headers_add_cancel();
+                } else {
+                    app.http_params_add_cancel();
+                }
+            };
+            let commit = |app: &mut App, cont: bool| {
+                if headers_active {
+                    app.http_headers_add_commit(cont);
+                } else {
+                    app.http_params_add_commit(cont);
+                }
+            };
+            // Local helper — grab a &mut to whichever draft is
+            // active. Inline to avoid closure lifetime pain.
+            macro_rules! draft_mut {
+                ($rp:expr) => {
+                    if headers_active {
+                        $rp.headers_add.as_mut()
+                    } else {
+                        $rp.params_add.as_mut()
+                    }
+                };
+            }
             match key.code {
                 KeyCode::Esc => {
                     let _ = rp;
-                    app.http_params_add_cancel();
+                    cancel(app);
                     return true;
                 }
-                // Enter commits + starts a fresh draft row so the
-                // user can keep adding rows without touching the
-                // mouse (spreadsheet-style). Shift+Enter (or the
-                // Esc chord) closes drafting entirely.
                 KeyCode::Enter if !shift => {
                     let _ = rp;
-                    app.http_params_add_commit(true);
+                    commit(app, true);
                     return true;
                 }
                 KeyCode::Enter if shift => {
                     let _ = rp;
-                    app.http_params_add_commit(false);
+                    commit(app, false);
                     return true;
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
-                    if let Some(d) = rp.params_add.as_mut() {
+                    if let Some(d) = draft_mut!(rp) {
                         d.on_value = !d.on_value;
                     }
                     return true;
                 }
                 KeyCode::Char(':') => {
-                    // Natural "type key:value" rhythm — colon on
-                    // the key field flips focus to value.
-                    if let Some(d) = rp.params_add.as_mut() {
+                    if let Some(d) = draft_mut!(rp) {
                         if d.on_value {
                             d.value.push(':');
                             d.value_cursor = d.value.len();
@@ -2483,7 +2501,7 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     return true;
                 }
                 KeyCode::Backspace => {
-                    if let Some(d) = rp.params_add.as_mut() {
+                    if let Some(d) = draft_mut!(rp) {
                         if d.on_value {
                             d.value.pop();
                             d.value_cursor = d.value.len();
@@ -2495,7 +2513,7 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     return true;
                 }
                 KeyCode::Char(c) if !ctrl => {
-                    if let Some(d) = rp.params_add.as_mut() {
+                    if let Some(d) = draft_mut!(rp) {
                         if d.on_value {
                             d.value.push(c);
                             d.value_cursor = d.value.len();
