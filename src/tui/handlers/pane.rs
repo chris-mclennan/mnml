@@ -2449,10 +2449,14 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     app.http_paste_curl_to_active();
                     return true;
                 }
-                // Ctrl+Shift+F — format JSON Body. Same chord as
-                // most IDEs use for code formatting. No-op on
+                // Alt+F — pretty-print the Body (JSON reformat with
+                // indentation). Was Ctrl+Shift+F but the global
+                // `find.grep` keymap wins over pane-local handlers,
+                // so the chord opened workspace grep instead of
+                // formatting. Alt+F doesn't collide with any global
+                // and matches nothing else in the pane. No-op on
                 // non-JSON Body (toast explains).
-                KeyCode::Char('f') if ctrl && shift => {
+                KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::ALT) => {
                     let _ = rp;
                     app.http_format_body();
                     return true;

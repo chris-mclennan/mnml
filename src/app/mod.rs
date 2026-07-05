@@ -1953,6 +1953,10 @@ pub struct PaneRects {
     /// `r` chord). Repainted every render so the button stays
     /// mouse-reachable regardless of scroll state.
     pub request_send_button: Option<Rect>,
+    /// Click rect over the "✕ Clear" sub-panel — resets the active
+    /// Request pane's fields to a blank template. Same code path as
+    /// the sidebar's `+ New request` chip.
+    pub request_clear_button: Option<Rect>,
     /// Click rect for each row in the Auth tab. id values:
     /// `set_bearer` / `set_basic` / `set_api_key` / `apply_preset` /
     /// `save_preset` / `clear`. Cleared + repopulated each render.

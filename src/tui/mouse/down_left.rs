@@ -380,6 +380,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         crate::command::run("http.send", app);
         return;
     }
+    // Click on the "✕ Clear" button → reset the active Request
+    // pane's fields to a blank template. Same code path as the
+    // sidebar's `+ New request` chip; toasts a hint.
+    if let Some(r) = app.rects.request_clear_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_panel_new_request();
+        app.toast("cleared — Recent list → row restores");
+        return;
+    }
     // Click on a Vars-tab row → open the env editor
     // directly. Empty key (the `+ Add` row) → add prompt;
     // non-empty key → edit prompt for that key.
