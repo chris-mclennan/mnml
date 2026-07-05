@@ -477,7 +477,18 @@ pub fn draw(
     }
 
     // ── Zone 2: Response ─────────────────────────────────────────
-    let response_block = crate::ui::design_tokens::modal_panel("Response");
+    // Bruno-style status chip on the right side of the Response
+    // block's top border: "200 OK · 165ms · 263 B" colored per
+    // status class (2xx green / 3xx yellow / 4xx orange / 5xx red).
+    // Sending / Streaming / Failed states render their own subtle
+    // status text; empty pane shows nothing.
+    let response_block = {
+        let mut block = crate::ui::design_tokens::modal_panel("Response");
+        if let Some(status_line) = response_status_title(rp, t) {
+            block = block.title_top(ratatui::text::Line::from(status_line).right_aligned());
+        }
+        block
+    };
     let response_inner = response_block.inner(response_rect);
     frame.render_widget(response_block, response_rect);
     let mut response_rows: Vec<Line> = Vec::new();
@@ -625,6 +636,73 @@ pub fn draw(
 // modal_panel(title) now uses the design-token default border
 // (t.fg on t.bg_dark), matching the rest of the app's bordered
 // panels instead of a per-pane blue-on-focus override.
+
+/// Compute the right-aligned status title for the Response block —
+/// Bruno-style "200 OK · 165ms · 263 B" on green (or matching status
+/// color). Returns `None` when there's no interesting state to show
+/// (fresh pane / placeholder). Sending / Streaming / non-placeholder
+/// Failed states each get their own compact title so the user can
+/// see the pane's state without reading the body.
+fn response_status_title(
+    rp: &crate::request_pane::RequestPane,
+    t: theme::Theme,
+) -> Option<Vec<Span<'static>>> {
+    match &rp.state {
+        RunState::Sending => Some(vec![Span::styled(
+            " \u{27F3} sending\u{2026} ",
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        RunState::Streaming(r) => Some(vec![Span::styled(
+            format!(" \u{25B6} streaming \u{00B7} {} events ", r.sse_event_count),
+            Style::default()
+                .fg(t.cyan)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        RunState::Failed(e) if is_not_sent_placeholder(e) => None,
+        RunState::Failed(_) => Some(vec![Span::styled(
+            " \u{2717} failed ",
+            Style::default()
+                .fg(t.red)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        RunState::Done(r) => {
+            let status_color = match r.status {
+                200..=299 => t.green,
+                300..=399 => t.yellow,
+                400..=499 => t.orange,
+                500..=599 => t.red,
+                _ => t.bg3,
+            };
+            let sep = |t: theme::Theme| {
+                Span::styled(" \u{00B7} ", Style::default().fg(t.comment).bg(t.bg_dark))
+            };
+            Some(vec![
+                Span::styled(
+                    format!(" {} {} ", r.status, r.status_text),
+                    Style::default()
+                        .fg(status_color)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                sep(t),
+                Span::styled(
+                    format!("{}ms", r.elapsed.as_millis()),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                ),
+                sep(t),
+                Span::styled(
+                    format!("{} ", human_bytes(r.body.len())),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                ),
+            ])
+        }
+    }
+}
 
 /// Clear sub-panel — modal_panel titled "Clear" with a bold red-ish
 /// "✕ Clear" label. Click resets the active Request pane's fields
@@ -1598,7 +1676,6 @@ fn draw_response(
     body_wrap_width: Option<u16>,
 ) {
     let body_style = Style::default().fg(t.fg).bg(t.bg_dark);
-    let dim = Style::default().fg(t.comment).bg(t.bg_dark);
     let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
 
     // The Response zone no longer echoes the request-line (▶ METHOD
@@ -1659,67 +1736,14 @@ fn draw_response(
             ));
         }
         RunState::Done(r) => {
-            // 2026-06-20 — status code as a colored chip (matches
-            // the Method chip styling for visual consistency).
-            // 2xx green, 3xx yellow, 4xx orange, 5xx red, anything
-            // else fg-on-bg3 (neutral).
-            let status_color = match r.status {
-                200..=299 => t.green,
-                300..=399 => t.yellow,
-                400..=499 => t.orange,
-                500..=599 => t.red,
-                _ => t.bg3,
-            };
-            // Wrap chip — reflects the current body_wrap setting so
-            // users can see the mode at a glance + `w` to toggle.
-            let wrap_chip = if rp.body_wrap {
-                " wrap ON  "
-            } else {
-                " wrap OFF "
-            };
-            let wrap_chip_style = if rp.body_wrap {
-                Style::default()
-                    .fg(t.bg_dark)
-                    .bg(t.cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .fg(t.comment)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::DIM)
-            };
-            rows.push(Line::from(vec![
-                Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
-                Span::styled(
-                    format!(" {} ", r.status),
-                    Style::default()
-                        .fg(t.bg_dark)
-                        .bg(status_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("  {}", r.status_text),
-                    Style::default()
-                        .fg(status_color)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("   {} ms", r.elapsed.as_millis()), dim),
-                Span::styled(
-                    format!(
-                        "   {} lines · {}",
-                        r.body.lines().count(),
-                        human_bytes(r.body.len())
-                    ),
-                    dim,
-                ),
-                Span::styled("   ", Style::default().bg(t.bg_dark)),
-                Span::styled(wrap_chip, wrap_chip_style),
-            ]));
-            // Response headers use the same color-coded row as the
-            // Edit-tab headers + request-summary headers — consistent
-            // rendering across every place a header list shows up.
-            // Also honors the pane's `/` filter (#11).
+            // Status is now shown on the Response block's title bar
+            // (right-aligned via `response_status_title`); no inline
+            // status row here. The body starts flush against the
+            // top so it reads like a loaded file in the editor.
+            //
+            // Response headers still surface at the top of the body,
+            // above the JSON — matches VS Code's "Response" view.
+            // Also honors the pane's `/` filter.
             for (k, v) in &r.headers {
                 if header_matches_filter(k, v, &q_lower) {
                     rows.push(header_row(k, v, t));
@@ -1748,33 +1772,63 @@ fn draw_response(
             let get_spans = |i: usize| -> &[crate::highlight::ColoredSpan] {
                 json_spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])
             };
+            // Line-number gutter — like the editor's. Width tracks
+            // the total-line-count digits so wide files (1000+ lines)
+            // don't crowd the body. Rendered on `bg_dark` in
+            // `comment` fg — same subdued treatment as the editor.
+            let total_lines = pretty.lines().count().max(1);
+            let gutter_w = total_lines.to_string().len();
+            let gutter = |n: usize, t: theme::Theme| {
+                Span::styled(
+                    format!(" {:>width$} ", n, width = gutter_w),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                )
+            };
             // Optional word-wrap — soft-wraps each line at the pane
             // width so long JSON strings stay visible. `w` in Response
-            // view toggles. Wrapped chunks all render in the same
-            // style since we can't easily reassemble spans across
-            // wrap boundaries; small trade-off vs. the visual win.
-            // (#11)
+            // view toggles. Wrapped continuation rows show a blank
+            // gutter so the number aligns with the FIRST wrapped chunk.
             let wrap_plain =
-                |s: &str, out: &mut Vec<Line<'static>>, style: Style| match body_wrap_width {
-                    Some(w) if s.chars().count() > w as usize => {
-                        let chars: Vec<char> = s.chars().collect();
-                        for chunk in chars.chunks(w as usize) {
-                            out.push(plain(chunk.iter().collect(), style));
+                |s: &str, out: &mut Vec<Line<'static>>, style: Style, n: usize, t: theme::Theme| {
+                    let blank_gutter =
+                        Span::styled(" ".repeat(gutter_w + 2), Style::default().bg(t.bg_dark));
+                    match body_wrap_width {
+                        Some(w) if s.chars().count() > w as usize => {
+                            let chars: Vec<char> = s.chars().collect();
+                            for (chunk_i, chunk) in chars.chunks(w as usize).enumerate() {
+                                let g = if chunk_i == 0 {
+                                    gutter(n, t)
+                                } else {
+                                    blank_gutter.clone()
+                                };
+                                let text: String = chunk.iter().collect();
+                                out.push(Line::from(vec![g, Span::styled(text, style)]));
+                            }
                         }
+                        _ => out.push(Line::from(vec![
+                            gutter(n, t),
+                            Span::styled(s.to_string(), style),
+                        ])),
                     }
-                    _ => out.push(plain(s.to_string(), style)),
+                };
+            let with_gutter =
+                |mut line: Line<'static>, n: usize, t: theme::Theme| -> Line<'static> {
+                    line.spans.insert(0, gutter(n, t));
+                    line
                 };
             // Body filter — same query as the header filter. A line
             // shows if it contains the query (case-insensitive) OR
             // its neighbors do (±1 for context). Empty filter shows
-            // every line. #11.
+            // every line. Original line numbers are preserved in the
+            // gutter even when non-matching lines are hidden.
             if q_lower.is_empty() {
                 for (i, l) in pretty.lines().enumerate() {
+                    let n = i + 1;
                     let spans = get_spans(i);
                     if body_wrap_width.is_none() && !spans.is_empty() {
-                        rows.push(colored_line(l, spans, t.fg, t));
+                        rows.push(with_gutter(colored_line(l, spans, t.fg, t), n, t));
                     } else {
-                        wrap_plain(l, rows, body_style);
+                        wrap_plain(l, rows, body_style, n, t);
                     }
                 }
             } else {
@@ -1795,6 +1849,7 @@ fn draw_response(
                     if !show {
                         continue;
                     }
+                    let n = i + 1;
                     // Highlight matching lines with a subtle bg tint
                     // so the match itself stands out from its context.
                     // Skip syntax highlighting for matched lines — the
@@ -1807,9 +1862,9 @@ fn draw_response(
                     };
                     let spans = get_spans(i);
                     if !matches[i] && body_wrap_width.is_none() && !spans.is_empty() {
-                        rows.push(colored_line(l, spans, t.fg, t));
+                        rows.push(with_gutter(colored_line(l, spans, t.fg, t), n, t));
                     } else {
-                        wrap_plain(l, rows, style);
+                        wrap_plain(l, rows, style, n, t);
                     }
                 }
                 if hits == 0 {
