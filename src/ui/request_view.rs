@@ -37,6 +37,22 @@ fn section_header_chip(text: &'static str, t: theme::Theme) -> Line<'static> {
     ))
 }
 
+/// Verb → chip color. Shared between the edit-row method chip and
+/// the response-summary method chip so a new HTTP verb only needs to
+/// land in one place.
+fn method_color(method: &str, t: theme::Theme) -> ratatui::style::Color {
+    match method.to_uppercase().as_str() {
+        "GET" => t.green,
+        "POST" => t.orange,
+        "PUT" => t.blue,
+        "PATCH" => t.cyan,
+        "DELETE" => t.red,
+        "HEAD" => t.yellow,
+        "OPTIONS" => t.purple,
+        _ => t.fg,
+    }
+}
+
 pub fn draw(
     frame: &mut Frame,
     app: &mut App,
@@ -361,16 +377,7 @@ fn draw_edit(
     let m_focus = rp.focus == EditField::Method;
     let u_focus = rp.focus == EditField::Url;
     let method = rp.request.method.to_uppercase();
-    let method_color = match method.as_str() {
-        "GET" => t.green,
-        "POST" => t.orange,
-        "PUT" => t.blue,
-        "PATCH" => t.cyan,
-        "DELETE" => t.red,
-        "HEAD" => t.yellow,
-        "OPTIONS" => t.purple,
-        _ => t.fg,
-    };
+    let m_color = method_color(&method, t);
     let method_chip = format!(" {method} ");
     let method_chip_len = method_chip.chars().count() as u16;
     let method_y = rows.len() as u16;
@@ -381,7 +388,7 @@ fn draw_edit(
             method_chip,
             Style::default()
                 .fg(t.bg_dark)
-                .bg(method_color)
+                .bg(m_color)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
@@ -1050,28 +1057,20 @@ fn draw_response(
 
     // ── request-line summary — mirrors the method-chip + URL row
     // from the Edit section so the response is anchored to what
-    // was fired. Method uses the same color-per-verb scheme as the
-    // Edit chip. Arrow indicator drops to cyan (matches the pane's
-    // active-focus color, not the historical yellow "attention"
-    // color that read as a warning). ──
+    // was fired. Method color routes through `method_color(...)` so
+    // both sites stay in sync when a new verb is added. Arrow
+    // indicator drops to cyan (matches the pane's active-focus
+    // color, not the historical yellow "attention" color that read
+    // as a warning). ──
     let method_upper = rp.request.method.to_uppercase();
-    let method_color = match method_upper.as_str() {
-        "GET" => t.green,
-        "POST" => t.orange,
-        "PUT" => t.blue,
-        "PATCH" => t.cyan,
-        "DELETE" => t.red,
-        "HEAD" => t.yellow,
-        "OPTIONS" => t.purple,
-        _ => t.fg,
-    };
+    let m_color = method_color(&method_upper, t);
     rows.push(Line::from(vec![
         Span::styled("▶ ", Style::default().fg(t.cyan).bg(t.bg_dark)),
         Span::styled(
             format!(" {method_upper} "),
             Style::default()
                 .fg(t.bg_dark)
-                .bg(method_color)
+                .bg(m_color)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
