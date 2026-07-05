@@ -786,8 +786,12 @@ fn draw_edit(
                     k.clone(),
                 ));
                 register_tab_row(fields, row_y);
+                // Chevron marker signals the row is clickable, so
+                // Params / Vars / etc. lists read as interactive
+                // menus instead of static text. (#11 v10)
                 rows.push(Line::from(vec![
-                    Span::styled("    ".to_string(), body_style),
+                    Span::styled("  ", body_style),
+                    Span::styled("› ", Style::default().fg(t.comment).bg(t.bg_dark)),
                     Span::styled(
                         k.clone(),
                         Style::default()
@@ -976,8 +980,11 @@ fn draw_edit(
                 } else {
                     v.clone()
                 };
+                // Chevron marker signals the row is clickable — same
+                // affordance as Params. (#11 v10)
                 rows.push(Line::from(vec![
-                    Span::styled("    ".to_string(), body_style),
+                    Span::styled("  ", body_style),
+                    Span::styled("› ", Style::default().fg(t.comment).bg(t.bg_dark)),
                     Span::styled(
                         k.clone(),
                         Style::default()
