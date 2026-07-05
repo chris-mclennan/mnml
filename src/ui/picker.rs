@@ -33,11 +33,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let x = screen.x + (screen.width.saturating_sub(w)) / 2;
     // `[ui] picker_position` — `"top"` drops the box flush with the top
     // edge (the common modern quick-open convention); anything else
-    // floats it a third of the way down (the historic default).
+    // centers vertically so pickers land in the same spot as every
+    // other panel overlay (settings, help, integration edit, glyph
+    // builder). Prior default was 1/3 down; the drift between "1/3
+    // for pickers, 1/2 for other modals" was the "things appear in
+    // different areas" complaint.
     let y = if app.config.ui.picker_position.eq_ignore_ascii_case("top") {
         screen.y
     } else {
-        screen.y + (screen.height.saturating_sub(h)) / 3
+        screen.y + (screen.height.saturating_sub(h)) / 2
     };
     let area = Rect {
         x,

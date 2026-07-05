@@ -719,26 +719,9 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
-    // The text-input prompt is modal — swallow mouse events while it's open.
-    if app.prompt.is_some() {
-        return;
-    }
-
-    // The "unsaved changes" overlay is modal too — only its buttons respond.
-    if app.close_prompt.is_some() {
-        if let MouseEventKind::Down(MouseButton::Left) = m.kind
-            && let Some(&(_, choice)) = app
-                .rects
-                .close_prompt_buttons
-                .iter()
-                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        {
-            app.close_prompt_resolve(choice);
-        }
-        return;
-    }
-
-    // Quit-confirm overlay: only its buttons respond to clicks.
+    // Quit-confirm overlay: only its buttons respond to clicks. This
+    // runs BEFORE the generic-prompt swallow below because QuitConfirm
+    // uses the Prompt state machine but wants button click routing.
     if app
         .prompt
         .as_ref()
@@ -764,6 +747,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 QUIT_BTN_CANCEL => {}
                 _ => {}
             }
+        }
+        return;
+    }
+
+    // The text-input prompt is modal — swallow mouse events while it's open.
+    if app.prompt.is_some() {
+        return;
+    }
+
+    // The "unsaved changes" overlay is modal too — only its buttons respond.
+    if app.close_prompt.is_some() {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind
+            && let Some(&(_, choice)) = app
+                .rects
+                .close_prompt_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.close_prompt_resolve(choice);
         }
         return;
     }
