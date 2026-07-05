@@ -2969,7 +2969,20 @@ impl App {
             self.toast("http.paste_curl: clipboard is empty");
             return;
         }
-        let parsed = match crate::http::parse(&raw) {
+        self.http_paste_curl_from_text(&raw);
+    }
+
+    /// Core impl behind `http.paste_curl` — parses `raw` as curl /
+    /// `.http` / `.rest` and populates the active Request pane's
+    /// fields. Opens a new Request pane first if none is active
+    /// (matches paste_curl's "just make it work" idiom). Shared
+    /// with the bracketed-paste handler so pasting a curl into a
+    /// blank Request pane populates the form directly.
+    pub fn http_paste_curl_from_text(&mut self, raw: &str) {
+        if raw.trim().is_empty() {
+            return;
+        }
+        let parsed = match crate::http::parse(raw) {
             Ok(r) => r,
             Err(e) => {
                 self.toast(format!("http.paste_curl: parse failed: {e}"));
@@ -2992,12 +3005,6 @@ impl App {
             rp.request = parsed;
             rp.view = crate::request_pane::ViewMode::Edit;
             rp.focus = crate::request_pane::EditField::Url;
-            // 2026-06-19 — api-workflow third hunt SEV-3: if the
-            // user was on the Source tab when paste_curl fired
-            // (the natural position per the Source tab's hint),
-            // the view stayed on Source showing the empty
-            // source_buffer. Auto-switch to Body so they see
-            // their populated request.
             rp.edit_tab = crate::request_pane::EditTab::Body;
         }
         let preview = if raw.trim().len() > 56 {
@@ -3006,6 +3013,31 @@ impl App {
             raw.trim().to_string()
         };
         self.toast(format!("paste_curl: populated from {preview}"));
+    }
+
+    /// Cheap "does this look like a curl / http-file paste?" check.
+    /// Used by the bracketed-paste handler to decide whether to
+    /// route a paste into the Request pane's field-population path
+    /// or fall through to the default (text-insert into focused
+    /// field). Handles the "curl -X POST ..." shape plus the
+    /// bare-URL + method-verb-prefix shapes that the http/rest
+    /// parsers accept.
+    pub fn text_looks_like_curl(raw: &str) -> bool {
+        let trimmed = raw.trim_start();
+        if trimmed.starts_with("curl ") || trimmed.starts_with("curl\t") {
+            return true;
+        }
+        // "GET https://..." / "POST http://..." shape.
+        for verb in [
+            "GET ", "POST ", "PUT ", "PATCH ", "DELETE ", "HEAD ", "OPTIONS ",
+        ] {
+            if let Some(rest) = trimmed.strip_prefix(verb)
+                && (rest.starts_with("http://") || rest.starts_with("https://"))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// `http.paste_source` — parse the active Request pane's

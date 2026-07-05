@@ -224,16 +224,31 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                 }
                 Event::Resize(_, _) => {}
                 Event::Paste(text) => {
-                    // Drag-and-drop of external files (#7) — terminals
-                    // that emit a bracketed-paste with a path that
-                    // exists on the filesystem get routed as an open
-                    // instead of a text-insert. Silently falls through
-                    // to a normal paste if the text doesn't look like
-                    // a path. Future: normal paste routing when we add
-                    // one; for now non-path pastes are dropped since
-                    // mnml doesn't yet route Paste events to editor
-                    // buffers.
-                    let _opened = try_open_dragged_path(app, &text);
+                    // Priority 1 — drag-and-drop of external files
+                    // (#7): terminals emit a bracketed-paste with a
+                    // filesystem path when the user drops a file.
+                    if try_open_dragged_path(app, &text) {
+                        continue;
+                    }
+                    // Priority 2 — pasting a curl / http-verb URL
+                    // shape into a Request pane populates the form
+                    // (matches Postman / Bruno "copy as cURL from
+                    // DevTools, paste here" workflow). Guarded on
+                    // the active pane being a Request AND the paste
+                    // content matching a lightweight curl-shape check
+                    // so a normal text paste into a text field isn't
+                    // hijacked.
+                    let request_active = app
+                        .active
+                        .and_then(|i| app.panes.get(i))
+                        .map(|p| matches!(p, crate::pane::Pane::Request(_)))
+                        .unwrap_or(false);
+                    if request_active && crate::app::App::text_looks_like_curl(&text) {
+                        app.http_paste_curl_from_text(&text);
+                        continue;
+                    }
+                    // Nothing else routes Paste events today; drop
+                    // silently as before.
                 }
                 _ => {}
             }
