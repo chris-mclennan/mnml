@@ -1960,6 +1960,10 @@ pub struct PaneRects {
     /// Click rect over the "{ } Format" sub-panel — pretty-prints
     /// a JSON Body in place. Same as `Shift+Alt+F` chord.
     pub request_format_button: Option<Rect>,
+    /// Click rect over the split-orientation toggle chip on the
+    /// Request block's top border. Click cycles Vertical <->
+    /// Horizontal split. Same as `Ctrl+\` chord.
+    pub request_split_toggle: Option<Rect>,
     /// Click rect for each row in the Auth tab. id values:
     /// `set_bearer` / `set_basic` / `set_api_key` / `apply_preset` /
     /// `save_preset` / `clear`. Cleared + repopulated each render.

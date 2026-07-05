@@ -99,6 +99,31 @@ pub struct RequestPane {
     pub hover_vars_key: Option<String>,
     /// Currently-hovered Auth-row id (same shape).
     pub hover_auth_id: Option<String>,
+    /// Orientation of the Request/Response split within the pane.
+    /// Vertical = stacked (Request top, Response bottom — default);
+    /// Horizontal = side-by-side (Request left, Response right).
+    /// Toggled by the `[ ▤ | ▥ ]` chip on the Request block's title
+    /// bar or the `Ctrl+\` chord. AI zone stays pinned to the pane's
+    /// bottom regardless.
+    pub split_orientation: SplitOrientation,
+}
+
+/// Two-way orientation for the Request/Response zones inside a
+/// single Request pane. Kept on the pane so orientation persists
+/// across renders + tab switches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitOrientation {
+    Vertical,
+    Horizontal,
+}
+
+impl SplitOrientation {
+    pub fn toggle(self) -> Self {
+        match self {
+            SplitOrientation::Vertical => SplitOrientation::Horizontal,
+            SplitOrientation::Horizontal => SplitOrientation::Vertical,
+        }
+    }
 }
 
 /// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
@@ -341,6 +366,7 @@ impl RequestPane {
             hover_params_key: None,
             hover_vars_key: None,
             hover_auth_id: None,
+            split_orientation: SplitOrientation::Vertical,
         }
     }
 

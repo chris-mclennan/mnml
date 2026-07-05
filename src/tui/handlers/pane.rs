@@ -2467,6 +2467,14 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     app.http_format_body();
                     return true;
                 }
+                // Ctrl+\ — cycle Request/Response split orientation
+                // (Vertical top/bottom <-> Horizontal left/right).
+                // Same effect as clicking the [ ▥ ▤ ] chip on the
+                // Request block's title bar.
+                KeyCode::Char('\\') if ctrl => {
+                    rp.split_orientation = rp.split_orientation.toggle();
+                    return true;
+                }
                 // Ctrl+Enter — parse the Source-tab buffer into
                 // the structured fields. Companion chord to
                 // Ctrl+Shift+V for users who'd rather type/paste

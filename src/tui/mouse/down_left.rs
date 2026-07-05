@@ -399,6 +399,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_format_body();
         return;
     }
+    // Click on the split-orientation toggle chip → cycle
+    // Vertical <-> Horizontal for the active Request pane. Same
+    // as `Ctrl+\` chord.
+    if let Some(r) = app.rects.request_split_toggle
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        if let Some(cur) = app.active
+            && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
+        {
+            rp.split_orientation = rp.split_orientation.toggle();
+        }
+        return;
+    }
     // Click on a Vars-tab row → open the env editor
     // directly. Empty key (the `+ Add` row) → add prompt;
     // non-empty key → edit prompt for that key.

@@ -310,42 +310,68 @@ pub fn draw(
     // AI       — quick prompt line, always visible (Postman feel)
     //
     // AI is a fixed 3-row block at the bottom (2 border + 1 content).
-    // Request + Response split the rest 55/45 (favor the form so the
-    // user isn't staring at empty response chrome before firing).
-    // Below a minimum panel height the split collapses gracefully —
-    // Response gets what's left after AI, Request clips to zero, and
-    // we fall back to a compact rendering path via `min_height`.
+    // Above AI, Request + Response split by the pane's stored
+    // orientation:
+    //   Vertical (default): Request top ~55%, Response bottom ~45%.
+    //   Horizontal:         Request left  ~50%, Response right ~50%.
+    // AI always spans the full width at the bottom.
     let ai_height = 3u16.min(area.height);
     let non_ai = area.height.saturating_sub(ai_height);
-    let request_height = ((non_ai as u32 * 55 / 100) as u16).max(6.min(non_ai));
-    let response_height = non_ai.saturating_sub(request_height);
-
-    let request_rect = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: request_height,
-    };
-    let response_rect = Rect {
-        x: area.x,
-        y: area.y.saturating_add(request_height),
-        width: area.width,
-        height: response_height,
-    };
     let ai_rect = Rect {
         x: area.x,
-        y: area
-            .y
-            .saturating_add(request_height)
-            .saturating_add(response_height),
+        y: area.y.saturating_add(non_ai),
         width: area.width,
         height: ai_height,
+    };
+    let (request_rect, response_rect) = match rp.split_orientation {
+        crate::request_pane::SplitOrientation::Vertical => {
+            let request_height = ((non_ai as u32 * 55 / 100) as u16).max(6.min(non_ai));
+            let response_height = non_ai.saturating_sub(request_height);
+            (
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: area.width,
+                    height: request_height,
+                },
+                Rect {
+                    x: area.x,
+                    y: area.y.saturating_add(request_height),
+                    width: area.width,
+                    height: response_height,
+                },
+            )
+        }
+        crate::request_pane::SplitOrientation::Horizontal => {
+            let request_width = area.width / 2;
+            let response_width = area.width.saturating_sub(request_width);
+            (
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: request_width,
+                    height: non_ai,
+                },
+                Rect {
+                    x: area.x.saturating_add(request_width),
+                    y: area.y,
+                    width: response_width,
+                    height: non_ai,
+                },
+            )
+        }
     };
 
     // ── Zone 1: Request ─────────────────────────────────────────
     let request_block = crate::ui::design_tokens::bordered_plain("Request");
     let request_inner = request_block.inner(request_rect);
     frame.render_widget(request_block, request_rect);
+    // Split-orientation toggle — floats at the top-right of the
+    // Request block's border row. `▤` = horizontal, `▥` = vertical
+    // (matches the mockup). Current orientation renders in cyan,
+    // the other in comment fg. Click cycles.
+    app.rects.request_split_toggle =
+        paint_split_toggle_chip(frame, rp.split_orientation, request_rect, t);
 
     // Method + URL sub-panels sit at the TOP of the Request zone,
     // side-by-side, each with its own legend outline. Method is
@@ -718,6 +744,68 @@ fn response_status_title(
             ])
         }
     }
+}
+
+/// Split-orientation toggle chip — floats at the top-right of the
+/// Request block's border row. Renders `[▥][▤]` where the active
+/// orientation is bold-cyan and the other is dim-comment. Click
+/// cycles orientation.
+fn paint_split_toggle_chip(
+    frame: &mut Frame,
+    orient: crate::request_pane::SplitOrientation,
+    request_rect: Rect,
+    t: theme::Theme,
+) -> Option<Rect> {
+    let chip_text = "[ ▥ ▤ ]";
+    let chip_w = chip_text.chars().count() as u16;
+    if request_rect.width < chip_w + 4 || request_rect.height == 0 {
+        return None;
+    }
+    let chip_x = request_rect
+        .x
+        .saturating_add(request_rect.width)
+        .saturating_sub(chip_w)
+        .saturating_sub(2);
+    let chip_rect = Rect {
+        x: chip_x,
+        y: request_rect.y,
+        width: chip_w,
+        height: 1,
+    };
+    let vert_active = matches!(orient, crate::request_pane::SplitOrientation::Vertical);
+    let horiz_active = matches!(orient, crate::request_pane::SplitOrientation::Horizontal);
+    let active_style = Style::default()
+        .fg(t.cyan)
+        .bg(t.bg_dark)
+        .add_modifier(Modifier::BOLD);
+    let inactive_style = Style::default().fg(t.comment).bg(t.bg_dark);
+    let bracket = Style::default().fg(t.bg3).bg(t.bg_dark);
+    let line = Line::from(vec![
+        Span::styled("[ ", bracket),
+        Span::styled(
+            "▥",
+            if vert_active {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::styled(" ", Style::default().bg(t.bg_dark)),
+        Span::styled(
+            "▤",
+            if horiz_active {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::styled(" ]", bracket),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![line]).style(Style::default().bg(t.bg_dark)),
+        chip_rect,
+    );
+    Some(chip_rect)
 }
 
 /// Body tab's Format chip — floats at the top-right of `tabs_rect`
