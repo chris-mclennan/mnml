@@ -552,14 +552,19 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
         height: h.min(screen.height),
     };
     frame.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .style(Style::default().fg(t.fg).bg(t.bg2));
+    let block = crate::ui::design_tokens::popup_menu("");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let mut y = inner.y;
     let mut item_rects: Vec<(Rect, usize)> = Vec::new();
+    // Row-highlight tokens are re-derived from the theme each row —
+    // Style is Copy, so this stays cheap. Matches menu bar / context
+    // menu / whichkey selection.
+    let sel_style = crate::ui::design_tokens::row_highlight_menu();
+    let sel_bg = sel_style.bg.unwrap_or(t.cyan);
+    let sel_fg = sel_style.fg.unwrap_or(t.bg_dark);
+    let sel_mod = Modifier::BOLD;
     // `y` advances per drawn row but also gates the early `break` below, so the
     // explicit counter is clearer here than a zipped range.
     #[allow(clippy::explicit_counter_loop)]
@@ -574,12 +579,6 @@ fn paint_kebab_menu(frame: &mut Frame, app: &mut App, t: crate::ui::theme::Theme
             width: inner.width,
             height: 1,
         };
-        // Selection style: bright cyan bg + dark fg + BOLD reads
-        // strongly against `t.bg2`. The earlier "cyan bg + t.fg"
-        // washed out because `t.fg` is light on light cyan.
-        let sel_bg = t.cyan;
-        let sel_fg = t.bg;
-        let sel_mod = Modifier::BOLD;
         let (text, fg, bg, indent, modifier) = match item {
             crate::dock::KebabMenuItem::Header(h) => {
                 (h.to_string(), t.comment, t.bg2, "", Modifier::BOLD)
