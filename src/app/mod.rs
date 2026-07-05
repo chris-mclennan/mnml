@@ -1957,6 +1957,10 @@ pub struct PaneRects {
     /// Click rect over the "</> Code" sub-panel — opens the
     /// Generate Code picker.
     pub request_code_button: Option<Rect>,
+    /// Click rect over the "JSON ▼" content-type chip on the
+    /// Response tab strip. Click → opens the response-format
+    /// override picker.
+    pub request_response_type_chip: Option<Rect>,
     /// Click rect over the split-orientation toggle chip on the
     /// Request block's top border. Click cycles Vertical <->
     /// Horizontal split. Same as `Ctrl+\` chord.

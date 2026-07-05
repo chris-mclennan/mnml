@@ -192,6 +192,10 @@ pub enum PickerKind {
     /// system clipboard, and toast. Bruno-style "Generate Code"
     /// affordance.
     HttpGenerateCode,
+    /// `id` = a response-body-format token (`auto` / `json` /
+    /// `xml` / `html` / `text`). Accept ⇒ set the active Request
+    /// pane's `response_body_format` override.
+    HttpResponseFormat,
     /// `id` = an env name (basename of a `.env` file, no extension).
     /// Accept ⇒ set `App::http_env_override` so the picked env
     /// resolves for the next `EnvSet::select` call. Populated from

@@ -317,6 +317,51 @@ impl App {
         ));
     }
 
+    /// Open a picker for the Response body's render format.
+    pub fn http_response_format_prompt(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let has_req = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_req {
+            return;
+        }
+        let items: Vec<PickerItem> = [
+            ("auto", "Auto", "detect from content-type + body shape"),
+            ("json", "JSON", "force syntax highlight"),
+            ("xml", "XML", "plain text (no highlight yet)"),
+            ("html", "HTML", "plain text (no highlight yet)"),
+            ("text", "Text", "plain text (no highlight)"),
+        ]
+        .iter()
+        .map(|(id, name, hint)| PickerItem::new(id.to_string(), name.to_string(), hint.to_string()))
+        .collect();
+        self.open_picker(Picker::new(
+            PickerKind::HttpResponseFormat,
+            "Render response as:",
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::HttpResponseFormat`. Stores
+    /// the choice on `RequestPane::response_body_format`.
+    pub fn accept_http_response_format(&mut self, format_id: &str) {
+        use crate::request_pane::ResponseBodyFormat;
+        let Some(cur) = self.active else { return };
+        let format = match format_id {
+            "auto" => ResponseBodyFormat::Auto,
+            "json" => ResponseBodyFormat::Json,
+            "xml" => ResponseBodyFormat::Xml,
+            "html" => ResponseBodyFormat::Html,
+            "text" => ResponseBodyFormat::Text,
+            _ => return,
+        };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.response_body_format = format;
+        }
+    }
+
     /// Accept handler for `PickerKind::HttpGenerateCode` — renders
     /// the active Request pane in the picked language and copies to
     /// the clipboard.

@@ -416,6 +416,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_generate_code_prompt();
         return;
     }
+    // Click on the "JSON ▼" content-type chip → open the
+    // response-format override picker.
+    if let Some(r) = app.rects.request_response_type_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_response_format_prompt();
+        return;
+    }
     // Click on the split-orientation toggle chip → cycle
     // Vertical <-> Horizontal for the active Request pane. Same
     // as `Ctrl+\` chord.

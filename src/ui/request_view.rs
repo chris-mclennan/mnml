@@ -891,7 +891,10 @@ pub fn draw(
     // The actual response content flows below starting at
     // `content_inner`.
     let content_inner = if response_inner.height >= 3 {
-        app.rects.request_response_tabs = paint_response_tab_strip(frame, rp, response_inner, t);
+        let mut type_chip: Option<Rect> = None;
+        app.rects.request_response_tabs =
+            paint_response_tab_strip(frame, rp, response_inner, t, &mut type_chip);
+        app.rects.request_response_type_chip = type_chip;
         Rect {
             x: response_inner.x,
             y: response_inner.y.saturating_add(2),
@@ -1126,7 +1129,9 @@ fn paint_response_tab_strip(
     rp: &crate::request_pane::RequestPane,
     response_inner: Rect,
     t: theme::Theme,
+    type_chip_out: &mut Option<Rect>,
 ) -> Vec<(Rect, crate::request_pane::ResponseTab)> {
+    *type_chip_out = None;
     let mut rects = Vec::new();
     if response_inner.width == 0 || response_inner.height < 2 {
         return rects;
@@ -1208,10 +1213,14 @@ fn paint_response_tab_strip(
         Paragraph::new(vec![Line::from(bar_spans)]).style(Style::default().bg(t.bg_dark)),
         bar_rect,
     );
-    // Right-aligned content-type chip on the labels row.
-    let type_label = detect_response_content_type(rp);
+    // Right-aligned content-type chip on the labels row. Reflects
+    // the *effective* format (override if set, else auto-detect).
+    // Click routes to `http_response_format_prompt` via
+    // `App::rects::request_response_type_chip`.
+    let type_label = effective_response_type_label(rp);
     let chip_text = format!(" {type_label} \u{25BC} ");
     let chip_w = chip_text.chars().count() as u16;
+    let mut chip_rect_out: Option<Rect> = None;
     if label_rect.width >= chip_w + 2 {
         let chip_x = label_rect
             .x
@@ -1224,6 +1233,7 @@ fn paint_response_tab_strip(
             width: chip_w,
             height: 1,
         };
+        chip_rect_out = Some(chip_rect);
         let chip_line = Line::from(vec![Span::styled(
             chip_text,
             Style::default()
@@ -1236,7 +1246,20 @@ fn paint_response_tab_strip(
             chip_rect,
         );
     }
+    *type_chip_out = chip_rect_out;
     rects
+}
+
+/// Effective response-type label — override wins over auto-detect.
+fn effective_response_type_label(rp: &crate::request_pane::RequestPane) -> String {
+    use crate::request_pane::ResponseBodyFormat;
+    match rp.response_body_format {
+        ResponseBodyFormat::Auto => detect_response_content_type(rp),
+        ResponseBodyFormat::Json => "JSON".to_string(),
+        ResponseBodyFormat::Xml => "XML".to_string(),
+        ResponseBodyFormat::Html => "HTML".to_string(),
+        ResponseBodyFormat::Text => "TEXT".to_string(),
+    }
 }
 
 /// Detect the response body's content type for the sub-tab strip's
@@ -2506,17 +2529,26 @@ fn draw_response(
             // starting fresh at row 0 (no header echo).
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);
-            // Detect JSON so we can run the tree-sitter highlighter
-            // over the body. Same predicate `pretty_body` uses so we
-            // don't disagree with the pretty-printing decision.
-            let is_json = r
-                .headers
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.contains("json"))
-                || {
-                    let b = pretty.trim_start();
-                    b.starts_with('{') || b.starts_with('[')
-                };
+            // JSON highlighting decision — the override wins over
+            // detect. Only `Json` and `Auto+detect-as-JSON` render
+            // as JSON; every other format (Text / Xml / Html) skips
+            // the highlighter.
+            use crate::request_pane::ResponseBodyFormat;
+            let is_json = match rp.response_body_format {
+                ResponseBodyFormat::Json => true,
+                ResponseBodyFormat::Text | ResponseBodyFormat::Xml | ResponseBodyFormat::Html => {
+                    false
+                }
+                ResponseBodyFormat::Auto => {
+                    r.headers
+                        .iter()
+                        .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.contains("json"))
+                        || {
+                            let b = pretty.trim_start();
+                            b.starts_with('{') || b.starts_with('[')
+                        }
+                }
+            };
             // Per-line tree-sitter spans. Empty when non-JSON so the
             // body renders in the base body_style like before.
             let json_spans: Vec<Vec<crate::highlight::ColoredSpan>> = if is_json {

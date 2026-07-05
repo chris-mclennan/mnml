@@ -123,6 +123,11 @@ pub struct RequestPane {
     /// In-place value-cell edit on an existing Params or Headers
     /// row. Populated when the user clicks a value cell.
     pub kv_edit: Option<KvValueEdit>,
+    /// Manual override for how the Response body renders (Auto /
+    /// JSON / XML / HTML / Text). Set by the `JSON ▼` chip on the
+    /// response tab strip. Default = Auto (existing detect_body
+    /// logic wins).
+    pub response_body_format: ResponseBodyFormat,
 }
 
 /// Draft state for an inline "add a new key/value pair" editor.
@@ -168,6 +173,20 @@ pub struct KvValueEdit {
 pub enum KvEditKind {
     Params,
     Headers,
+}
+
+/// Manual override for how the Response body renders in the Body
+/// sub-tab. `None` = auto-detect from content-type header + body
+/// shape (existing behavior). `Some(...)` forces that format
+/// regardless of what the server said. Set by the `JSON ▼` chip
+/// on the response tab strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseBodyFormat {
+    Auto,
+    Json,
+    Xml,
+    Html,
+    Text,
 }
 
 /// Two-way orientation for the Request/Response zones inside a
@@ -478,6 +497,7 @@ impl RequestPane {
             params_add: None,
             headers_add: None,
             kv_edit: None,
+            response_body_format: ResponseBodyFormat::Auto,
         }
     }
 
