@@ -606,15 +606,28 @@ impl App {
         self.todos_panel_scanned_once = true;
     }
 
-    /// Refresh the HTTP panel file cache. Called from the panel
-    /// renderer only when the cache is empty (first activation) or
-    /// via the future \`http.refresh\` command. Keeps per-frame IO
-    /// from stat'ing the tree on every draw. (#10)
+    /// Refresh the HTTP panel caches (files + recent history +
+    /// captured log). Called from the panel renderer only when the
+    /// cache is empty (first activation) or via `http.refresh`.
+    /// Keeps per-frame IO off the render path. (#10)
+    ///
+    /// Recent + captured are bounded (10 rows each in the sidebar);
+    /// the reads are cheap even on large logs because
+    /// `history::tail` tail-truncates and `captured::load` parses
+    /// linewise — but we still gate on `http_panel_scanned_once` so
+    /// they only run on activation, not every frame.
     pub fn http_panel_refresh(&mut self) {
         let mut out = Vec::new();
         walk_for_http(&self.workspace, 0, &mut out);
         out.sort();
         self.http_panel_files_cache = out;
+        // Recent — last 10 from `.rqst/history.jsonl`. The tail is
+        // reversed at display time so most-recent-first.
+        self.http_panel_recent_cache = crate::http::history::tail(&self.workspace, 10);
+        // Captured — last 10 from `.rqst/captured/log.jsonl`. `load`
+        // returns oldest-first; we cap + reverse at render.
+        let cap_path = crate::http::proxy::captured_log_path(&self.workspace);
+        self.http_panel_captured_cache = crate::http::captured::load(&cap_path);
         self.http_panel_scanned_once = true;
     }
 

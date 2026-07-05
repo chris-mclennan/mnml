@@ -152,6 +152,46 @@ pub fn tail_global(n: usize) -> Vec<Value> {
     out
 }
 
+/// Rebuild a `curl` command from a history entry. Uses the persisted
+/// `headers` + `request_body` when present; falls back to the minimal
+/// `curl -X METHOD URL` form for older entries. Returns
+/// `(curl_text, method, url)` so callers can drive `open_curl_scratch`.
+/// Shared between the `HistoryRows` picker and the sectioned HTTP
+/// sidebar so both re-fire history the same way.
+pub fn entry_to_curl(v: &Value) -> (String, String, String) {
+    let method = v
+        .get("method")
+        .and_then(|s| s.as_str())
+        .unwrap_or("GET")
+        .to_string();
+    let url = v
+        .get("url")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut curl = String::from("curl");
+    curl.push_str(&format!(" -X {method}"));
+    if let Some(headers) = v.get("headers").and_then(|h| h.as_array()) {
+        for h in headers {
+            if let Some(pair) = h.as_array()
+                && pair.len() == 2
+                && let (Some(name), Some(value)) = (pair[0].as_str(), pair[1].as_str())
+            {
+                let escaped_value = value.replace('\'', r"'\''");
+                curl.push_str(&format!(" -H '{name}: {escaped_value}'"));
+            }
+        }
+    }
+    if let Some(body) = v.get("request_body").and_then(|b| b.as_str())
+        && !body.is_empty()
+    {
+        let escaped_body = body.replace('\'', r"'\''");
+        curl.push_str(&format!(" --data-raw '{escaped_body}'"));
+    }
+    curl.push_str(&format!(" '{url}'"));
+    (curl, method, url)
+}
+
 /// Read the last `n` history entries (most recent last). Used by the
 /// (future) Ctrl+H history modal. Reads the entire file and tail-truncates,
 /// which is fine for files up to a few MB; rotate later if needed.

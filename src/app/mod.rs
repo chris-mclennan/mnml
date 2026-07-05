@@ -1782,6 +1782,22 @@ pub struct PaneRects {
     /// `ActivitySection::Http` panel `+ New request` row rect. Click →
     /// create a stub `.http` file and open it.
     pub http_panel_new_chip: Option<Rect>,
+    /// Recent (from history.jsonl) row rects — `(rect, cache_index)`.
+    /// Click → rebuild curl via `history::entry_to_curl` + open scratch.
+    pub http_panel_recent_rows: Vec<(Rect, usize)>,
+    /// Captured row rects — `(rect, cache_index)`. Click → `to_curl` +
+    /// open scratch (same treatment as `http.view_captured` picker).
+    pub http_panel_captured_rows: Vec<(Rect, usize)>,
+    /// Sectioned sidebar header rects — `(rect, section_index)` where
+    /// `0=Files`, `1=Recent`, `2=Captured`. Click → toggle
+    /// `http_panel_section_collapsed[i]`.
+    pub http_panel_section_headers: Vec<(Rect, u8)>,
+    /// `⟳ Start capture` action-row rect (inside the Captured
+    /// section header). Click → run `http.capture_now`.
+    pub http_panel_capture_chip: Option<Rect>,
+    /// `↓ Paste curl…` action-row rect (below files). Click → run
+    /// `http.paste_curl` (turn clipboard curl into a scratch request).
+    pub http_panel_discover_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel — one row per `.mnml/notes/*.md`.
     /// Click → open the note in an editor pane. (#8)
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
@@ -2602,6 +2618,19 @@ pub struct App {
     pub http_panel_files_cache: Vec<std::path::PathBuf>,
     /// True after the first HTTP panel scan; drives lazy refresh.
     pub http_panel_scanned_once: bool,
+    /// Cached tail of `.rqst/history.jsonl` — most-recent-last. Loaded
+    /// by `http_panel_refresh` when the HTTP activity section
+    /// activates. Fed to the sectioned sidebar's `Recent` section.
+    pub http_panel_recent_cache: Vec<serde_json::Value>,
+    /// Cached tail of `.rqst/captured/log.jsonl` — most-recent-last.
+    /// Same refresh cadence as recent; drives the sidebar's
+    /// `Captured` section + row-click → re-fire scratch.
+    pub http_panel_captured_cache: Vec<crate::http::captured::CapturedRow>,
+    /// Collapse state for the sectioned HTTP sidebar. Indices:
+    /// `0 = Files`, `1 = Recent`, `2 = Captured`. Persists across
+    /// activity-section toggles within a session; not saved to disk
+    /// (v1 — a follow-up can plumb into `session.json`).
+    pub http_panel_section_collapsed: [bool; 3],
     /// Cached notes file list for the Notes activity panel (#8).
     /// Same lazy pattern as `http_panel_files_cache`.
     pub notes_panel_files_cache: Vec<std::path::PathBuf>,
@@ -4205,6 +4234,9 @@ impl App {
             todos_panel_scanned_once: false,
             http_panel_files_cache: Vec::new(),
             http_panel_scanned_once: false,
+            http_panel_recent_cache: Vec::new(),
+            http_panel_captured_cache: Vec::new(),
+            http_panel_section_collapsed: [false; 3],
             notes_panel_files_cache: Vec::new(),
             notes_panel_scanned_once: false,
             primary_position: 0,
