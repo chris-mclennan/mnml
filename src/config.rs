@@ -738,17 +738,19 @@ pub struct UiConfig {
     /// ```
     pub top_bar_cluster_mode: String,
 
-    /// Optional AI-launch button on the right end of every tab
-    /// bar, immediately left of the terminal button. Click → fires
-    /// the corresponding `ai.*` palette command (drops a Claude
-    /// Code / Codex pane). Three values:
+    /// Optional AI-launch button(s) on the right end of every tab
+    /// bar, immediately left of the terminal button. Click → spawns
+    /// a NEW Claude Code / Codex session (via `ai.claude_code_new` /
+    /// `ai.codex_new` when available) and jumps focus into it — the
+    /// session shows up in the Sessions activity panel. Four values:
     ///   - `"none"` (default) — no AI button on the tab bar.
-    ///   - `"claude_code"` — Claude Code launcher.
-    ///   - `"codex"` — Codex launcher.
+    ///   - `"claude_code"` — Claude Code launcher only.
+    ///   - `"codex"` — Codex launcher only.
+    ///   - `"both"` — both Claude Code + Codex icons (#19).
     ///
     /// ```toml
     /// [ui]
-    /// tab_bar_ai_icon = "claude_code"
+    /// tab_bar_ai_icon = "both"
     /// ```
     pub tab_bar_ai_icon: String,
 
@@ -2138,7 +2140,10 @@ impl Config {
         }
         if let Some(s) = raw.ui.tab_bar_ai_icon {
             let normalized = s.trim().to_ascii_lowercase();
-            if matches!(normalized.as_str(), "none" | "claude_code" | "codex") {
+            if matches!(
+                normalized.as_str(),
+                "none" | "claude_code" | "codex" | "both"
+            ) {
                 self.ui.tab_bar_ai_icon = normalized;
             }
         }

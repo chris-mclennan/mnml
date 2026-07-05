@@ -644,6 +644,16 @@ impl App {
         );
     }
 
+    /// Always spawn a *new* Codex pane (no toggle / reuse). Parallel
+    /// of `open_claude_code_new` — split-strip AI chip in `both` mode
+    /// dispatches here.
+    pub fn open_codex_new(&mut self) {
+        self.open_pty_dir(
+            crate::pty_pane::BinaryProfile::codex(self.workspace.clone()),
+            crate::layout::SplitDir::Horizontal,
+        );
+    }
+
     /// Open the family DJ app `mixr` as a Pty pane. Reuses an
     /// existing mixr pty if one's already open; otherwise spawns a
     /// fresh one in a horizontal split (same shape as Codex).

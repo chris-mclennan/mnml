@@ -229,17 +229,24 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     // between Claude / Codex without changing the configured
     // default. Tab-strip Term + Split buttons are single-
     // action so they don't need menus.
-    if let Some(&(_, leaf_active)) = app
+    if let Some(&(_, leaf_active, _tag)) = app
         .rects
         .split_strip_ai_buttons
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         app.active = Some(leaf_active);
         let items = vec![
-            MenuItem::new("Open Claude Code", MenuAction::Command("ai.claude_code")),
+            MenuItem::new(
+                "Open new Claude Code session",
+                MenuAction::Command("ai.claude_code_new"),
+            ),
             MenuItem::new("Open Codex", MenuAction::Command("ai.codex")),
+            MenuItem::new(
+                "Toggle existing Claude pane",
+                MenuAction::Command("ai.claude_code"),
+            ),
         ];
         app.context_menu = Some(ContextMenu::new(
             Some("AI assistant".to_string()),

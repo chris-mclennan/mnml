@@ -4180,6 +4180,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_codex(),
         },
         Command {
+            id: "ai.codex_new",
+            title: "AI: open a NEW Codex session (multi-session)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_codex_new(),
+        },
+        Command {
             id: "mixr.show",
             title: "Mixr: open the TUI DJ in a Pty pane",
             group: "ai",

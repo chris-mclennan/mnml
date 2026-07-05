@@ -543,7 +543,7 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
         .rects
         .split_strip_ai_buttons
         .iter()
-        .any(|(r, _)| contains(*r, x, y))
+        .any(|(r, _, _)| contains(*r, x, y))
     {
         return Some(crate::HoverChip::SplitStripAiButton);
     }

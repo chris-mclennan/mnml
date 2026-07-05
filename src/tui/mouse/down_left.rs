@@ -702,18 +702,20 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.close_split_tab(leaf_active, tab_pane);
         return;
     }
-    // AI launch button in the split-strip cluster.
-    // Focus the clicked leaf, then fire the configured
-    // `ai.*` command (Claude Code / Codex).
-    if let Some(&(_, leaf_active)) = app
+    // AI launch button in the split-strip cluster. Focus the clicked
+    // leaf, then fire the matching `ai.*_new` command so each click
+    // spawns a fresh session (#19). The chip's `tag` disambiguates
+    // Claude vs. Codex for the `"both"` config mode.
+    if let Some(&(_, leaf_active, tag)) = app
         .rects
         .split_strip_ai_buttons
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
-        let cmd = match app.config.ui.tab_bar_ai_icon.as_str() {
-            "codex" => "ai.codex",
-            _ => "ai.claude_code",
+        let cmd = if tag == 1 {
+            "ai.codex_new"
+        } else {
+            "ai.claude_code_new"
         };
         app.active = Some(leaf_active);
         app.focus = crate::focus::Focus::Pane;

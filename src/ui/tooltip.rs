@@ -643,21 +643,30 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             Some((rect, "quit mnml".into(), Some("click: quit".into())))
         }
         HoverChip::SplitStripAiButton => {
+            // Anchor on the first AI-button rect (any of them work —
+            // the tooltip just needs a position to attach to). The
+            // config decides what the label reads.
             let rect = app
                 .rects
                 .split_strip_ai_buttons
                 .iter()
-                .map(|(r, _)| *r)
+                .map(|(r, _, _)| *r)
                 .next()?;
-            let which = match app.config.ui.tab_bar_ai_icon.as_str() {
-                "codex" => "Codex",
-                _ => "Claude Code",
+            let (primary, secondary) = match app.config.ui.tab_bar_ai_icon.as_str() {
+                "codex" => (
+                    "open Codex in this split".to_string(),
+                    "click: spawn Codex".into(),
+                ),
+                "both" => (
+                    "open Claude / Codex in this split".to_string(),
+                    "click a chip to spawn · right-click: menu".into(),
+                ),
+                _ => (
+                    "open new Claude Code session".to_string(),
+                    "click: spawn new session · right-click: menu".into(),
+                ),
             };
-            Some((
-                rect,
-                format!("open {which} in split"),
-                Some("click: spawn AI assistant in this leaf".into()),
-            ))
+            Some((rect, primary, Some(secondary)))
         }
         HoverChip::BufferlineTabClose(pid) => {
             let rect = app

@@ -2054,7 +2054,10 @@ pub struct PaneRects {
     /// is set to a non-`"none"` value. Left click → fires the
     /// configured `ai.*` command; right click → opens a context
     /// menu to switch between Claude Code / Codex / Hide.
-    pub split_strip_ai_buttons: Vec<(Rect, PaneId)>,
+    /// Split-strip AI launcher chips. `(rect, leaf_active_pane, ai_kind)`
+    /// where `ai_kind = 0` means Claude Code and `1` means Codex. Two
+    /// entries fill this when `[ui] tab_bar_ai_icon = "both"` (#19).
+    pub split_strip_ai_buttons: Vec<(Rect, PaneId, u8)>,
     /// The whole central split-tree area.
     pub body: Option<Rect>,
     /// `(text_area, pane_id)` per visible editor leaf — the editable region

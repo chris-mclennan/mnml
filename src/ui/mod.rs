@@ -3310,9 +3310,14 @@ fn paint_leaf_tab_strip(
     // existing chip_w logic.
     const SPLIT_BTN_W: u16 = 3;
     // Three base buttons (terminal + V-split + H-split) plus the
-    // optional AI button when `[ui] tab_bar_ai_icon != "none"`.
-    let ai_enabled = app.config.ui.tab_bar_ai_icon != "none";
-    let split_btns_total: u16 = SPLIT_BTN_W * if ai_enabled { 4 } else { 3 };
+    // optional AI button(s). `"both"` mode shows 2 AI chips.
+    let ai_kind_cfg = app.config.ui.tab_bar_ai_icon.as_str();
+    let ai_button_count: u16 = match ai_kind_cfg {
+        "none" => 0,
+        "both" => 2,
+        _ => 1,
+    };
+    let split_btns_total: u16 = SPLIT_BTN_W * (3 + ai_button_count);
     let mut chip_x = strip.x;
     let strip_right = strip.x + strip.width;
     let tabs_right = strip_right.saturating_sub(split_btns_total);
@@ -3443,10 +3448,17 @@ fn paint_leaf_tab_strip(
     let dim_fg = t.comment;
     let mut bx = strip_right.saturating_sub(split_btns_total);
 
-    // AI button (leftmost in cluster) — only when configured.
-    if ai_enabled {
-        let (ai_glyph, ai_fallback, ai_fg) =
-            theme::ai_chip_parts(app.config.ui.tab_bar_ai_icon.as_str(), &t);
+    // AI button(s), leftmost in cluster — `"both"` shows Claude AND
+    // Codex chips so users can pick which to spawn without changing
+    // config (#19).
+    let ai_kinds: Vec<&'static str> = match ai_kind_cfg {
+        "none" => Vec::new(),
+        "both" => vec!["claude_code", "codex"],
+        "codex" => vec!["codex"],
+        _ => vec!["claude_code"],
+    };
+    for kind in &ai_kinds {
+        let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(kind, &t);
         let glyph = if nerd { ai_glyph } else { ai_fallback };
         let ai_rect = Rect {
             x: bx,
@@ -3460,7 +3472,10 @@ fn paint_leaf_tab_strip(
             Span::styled(" ", Style::default().bg(strip_bg)),
         ]);
         frame.render_widget(Paragraph::new(line), ai_rect);
-        app.rects.split_strip_ai_buttons.push((ai_rect, active));
+        let tag = if *kind == "codex" { 1u8 } else { 0u8 };
+        app.rects
+            .split_strip_ai_buttons
+            .push((ai_rect, active, tag));
         bx = bx.saturating_add(SPLIT_BTN_W);
     }
 

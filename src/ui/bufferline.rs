@@ -874,10 +874,10 @@ pub const SPLIT_BUTTONS_W_WITH_AI: u16 = 12;
 
 /// Total width the cluster needs given the user's config.
 pub fn split_buttons_width(app: &App) -> u16 {
-    if app.config.ui.tab_bar_ai_icon == "none" {
-        SPLIT_BUTTONS_W
-    } else {
-        SPLIT_BUTTONS_W_WITH_AI
+    match app.config.ui.tab_bar_ai_icon.as_str() {
+        "none" => SPLIT_BUTTONS_W,
+        "both" => SPLIT_BUTTONS_W + 6, // 2 AI chips × 3 cells each
+        _ => SPLIT_BUTTONS_W_WITH_AI,
     }
 }
 
@@ -917,10 +917,24 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     let bg = t.bg_darker;
     let mut bx = area.x + area.width - total_w;
 
-    // AI button (leftmost in the cluster) — only when configured.
+    // AI button(s), leftmost in the cluster — configurable per
+    // `[ui] tab_bar_ai_icon`. "none" hides them; "both" paints
+    // Claude AND Codex chips (#19) so users can pick per-click
+    // without changing config. Each chip registers its own click
+    // rect; the handler in tui/mouse dispatches to the right
+    // `ai.*_new` command based on which was hit.
     let ai_kind = app.config.ui.tab_bar_ai_icon.as_str();
-    if ai_kind != "none" {
-        let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(ai_kind, &t);
+    // Build the visible chip list. `"both"` gets two chips (Claude
+    // then Codex); a single-mode config gets one chip; "none" gets
+    // an empty list.
+    let ai_kinds: Vec<&'static str> = match ai_kind {
+        "none" => Vec::new(),
+        "both" => vec!["claude_code", "codex"],
+        "codex" => vec!["codex"],
+        _ => vec!["claude_code"],
+    };
+    for kind in &ai_kinds {
+        let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(kind, &t);
         let glyph = if nerd { ai_glyph } else { ai_fallback };
         let ai_rect = Rect {
             x: bx,
@@ -934,7 +948,13 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" ", Style::default().bg(bg)),
         ]);
         frame.render_widget(Paragraph::new(ai_line), ai_rect);
-        app.rects.split_strip_ai_buttons.push((ai_rect, active));
+        // Tag the rect with which AI kind it is (0 = claude_code, 1 = codex)
+        // so the click handler knows which command to fire without
+        // re-reading config (matters for the "both" case).
+        let tag = if *kind == "codex" { 1u8 } else { 0u8 };
+        app.rects
+            .split_strip_ai_buttons
+            .push((ai_rect, active, tag));
         bx += 3;
     }
 

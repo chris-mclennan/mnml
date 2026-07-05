@@ -349,6 +349,7 @@ pub fn root() -> &'static Leader {
                             ('n', cmd("ai.claude_code_new", "new claude session")),
                             ('C', cmd("ai.chat", "claude chat (context)")),
                             ('x', cmd("ai.codex", "codex")),
+                            ('X', cmd("ai.codex_new", "new codex session")),
                             ('M', cmd("mixr.show", "mixr DJ")),
                         ],
                     ),
