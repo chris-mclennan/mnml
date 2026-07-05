@@ -5440,42 +5440,54 @@ impl App {
     /// Open a scratch buffer pre-seeded with `text` in a horizontal split
     /// below the active leaf. `_title` is decorative — scratch buffers
     /// have no path. Used by `:Capture <cmd>` to surface command output.
-    /// Open a `.curl`-flagged scratch buffer seeded with `curl_text`.
-    /// Used by the captured-rows / history picker accept paths so
-    /// the chosen row lands as a fireable scratch — `:http.send`
-    /// works because `language_ext = "curl"` is what the http
-    /// dispatcher checks. Phase 4 + 9 follow-ups.
+    /// Populate a Request pane (form-style) from `curl_text`. Used
+    /// by every "picked a curl-shaped row" flow — history / captured
+    /// pickers plus the sectioned sidebar + HttpHome dashboard row
+    /// clicks. `_method` / `_url` are kept in the signature for
+    /// callers that pre-parsed the row; the function re-parses
+    /// `curl_text` internally so all four callers share one code
+    /// path.
     ///
-    /// 2026-06-19 — api-workflow-user agent caught a SEV-2: the
-    /// earlier impl `split_active`'d (which itself pushes a blank
-    /// scratch buffer) then `panes.push`'d a second populated
-    /// buffer, leaving the blank one orphaned in the buffer list
-    /// every accept. Now builds the buffer first + uses
-    /// `split_leaf_with` to splice it directly into the layout
-    /// in one step.
+    /// Reuse policy — if the active pane is already a `Pane::Request`,
+    /// its fields are overwritten in place (matches
+    /// `http.paste_curl`'s "paste into the current request" idiom).
+    /// This is why clicking five history rows in a row leaves you
+    /// with ONE Request pane, not five stacked scratch buffers —
+    /// which is what the earlier `open_curl_scratch` did (built a
+    /// text scratch per click, hence the `[scratch]` pile-up the
+    /// user hit 2026-07-05).
+    ///
+    /// When there's no active Request pane, `open_new_request_pane`
+    /// creates one first (in Edit view with the "not sent" hint
+    /// state), then this method overwrites its fields with the
+    /// parsed row.
+    ///
+    /// Parse failure toasts + bails (no scratch is left behind).
     pub fn open_curl_scratch(&mut self, curl_text: &str, _method: &str, _url: &str) {
-        let mut buf = crate::buffer::Buffer::scratch(&self.config);
-        buf.language_ext = Some("curl".to_string());
-        let mut clip = crate::clipboard::Clipboard::detached();
-        let _ = buf.editor.apply(
-            crate::edit_op::EditOp::InsertStr(curl_text.to_string()),
-            24,
-            &mut clip,
-        );
-        buf.editor.place_cursor(0, 0);
-        let Some(cur) = self.active else {
-            // No active pane (empty-state landing) — push then
-            // adopt as primary. Rare path; matches what the
-            // existing scratch-from-empty case does.
-            self.panes.push(Pane::Editor(buf));
-            let new_id = self.panes.len() - 1;
-            self.reveal_pane(new_id);
-            return;
+        let parsed = match crate::http::parse(curl_text) {
+            Ok(r) => r,
+            Err(e) => {
+                self.toast(format!("http: parse failed: {e}"));
+                return;
+            }
         };
-        let new_id =
-            self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Editor(buf));
-        self.active = Some(new_id);
-        self.focus = Focus::Pane;
+        let has_request = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_request {
+            self.open_new_request_pane();
+        }
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.headers_buffer = crate::request_pane::headers_to_text(&parsed.headers);
+            rp.headers_cursor = rp.headers_buffer.len();
+            rp.url_cursor = parsed.url.len();
+            rp.body_cursor = parsed.body.as_deref().map(str::len).unwrap_or(0);
+            rp.request = parsed;
+            rp.view = crate::request_pane::ViewMode::Edit;
+            rp.edit_tab = crate::request_pane::EditTab::Body;
+        }
     }
 
     pub fn open_scratch_with_text(&mut self, _title: String, text: String) {
