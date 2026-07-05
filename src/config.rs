@@ -723,6 +723,21 @@ pub struct UiConfig {
     /// ```
     pub menu_bar: String,
 
+    /// Top-right chrome cluster mode. Values:
+    ///   - `"auto"` (default) — show the full cluster if it fits, drop
+    ///     to compact when horizontal space is tight, hide entirely if
+    ///     even compact overlaps the workspace chip.
+    ///   - `"expanded"` — force the full cluster (TABS + tab-pages);
+    ///     fall back only when it truly doesn't fit.
+    ///   - `"compact"` — force compact (`+` + theme + `×`); useful on
+    ///     narrow terminals or by preference.
+    ///
+    /// ```toml
+    /// [ui]
+    /// top_bar_cluster_mode = "expanded"
+    /// ```
+    pub top_bar_cluster_mode: String,
+
     /// Optional AI-launch button on the right end of every tab
     /// bar, immediately left of the terminal button. Click → fires
     /// the corresponding `ai.*` palette command (drops a Claude
@@ -1446,6 +1461,7 @@ impl Default for Config {
                 preferred_music_app: "mixr".to_string(),
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
+                top_bar_cluster_mode: "auto".to_string(),
                 tab_bar_ai_icon: "none".to_string(),
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
@@ -1732,6 +1748,9 @@ struct RawUi {
     /// See [`UiConfig::menu_bar`].
     #[serde(default)]
     menu_bar: Option<String>,
+    /// See [`UiConfig::top_bar_cluster_mode`].
+    #[serde(default)]
+    top_bar_cluster_mode: Option<String>,
     /// Tab-bar AI icon. `"none"` / `"claude_code"` / `"codex"`.
     /// See [`UiConfig::tab_bar_ai_icon`].
     #[serde(default)]
@@ -2109,6 +2128,12 @@ impl Config {
             let normalized = s.trim().to_ascii_lowercase();
             if matches!(normalized.as_str(), "always" | "auto" | "hidden") {
                 self.ui.menu_bar = normalized;
+            }
+        }
+        if let Some(s) = raw.ui.top_bar_cluster_mode {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "auto" | "expanded" | "compact") {
+                self.ui.top_bar_cluster_mode = normalized;
             }
         }
         if let Some(s) = raw.ui.tab_bar_ai_icon {

@@ -545,16 +545,17 @@ pub fn right_cluster_width(app: &App) -> u16 {
     let _ = app.config.ui.launcher_icons.len();
     // ` + ` new-tab button — always present.
     let mut w: u16 = 3;
-    // TABS label + per-tab-page chips — only when >= 2 tab-pages.
-    if app.layouts.len() >= 2 {
-        w += 6; // ` TABS `
-        for i in 0..app.layouts.len() {
-            let dig = (i + 1).to_string().chars().count() as u16;
-            let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-            w += 2 + dig + dirty;
-            if i == app.active_layout {
-                w += 2;
-            }
+    // ` TABS ` label + per-tab-page chips — always present in the
+    // full cluster so the feature is discoverable even at 1 tab-page.
+    // Compact fallback (when the full width doesn't fit or the user
+    // chose compact) drops both — that path uses `compact_cluster_width`.
+    w += 6;
+    for i in 0..app.layouts.len() {
+        let dig = (i + 1).to_string().chars().count() as u16;
+        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
+        w += 2 + dig + dirty;
+        if i == app.active_layout {
+            w += 2;
         }
     }
     // theme toggle pill + ` × ` window close
@@ -594,24 +595,51 @@ pub fn compact_cluster_width() -> u16 {
     3 + 4 + 3
 }
 
+/// User-forced cluster mode overrides. Threaded from `[ui]
+/// top_bar_cluster_mode`. `Auto` = pick whichever fits;
+/// `Expanded` = always try full, fall back only if it won't fit;
+/// `Compact` = always use compact (drops TABS + tab-page chips).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClusterModePref {
+    Auto,
+    Expanded,
+    Compact,
+}
+
+impl ClusterModePref {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "expanded" => Self::Expanded,
+            "compact" => Self::Compact,
+            _ => Self::Auto,
+        }
+    }
+}
+
 /// Pick the BEST cluster mode that fits — full, compact, or none.
-/// Returns `(width, is_compact)`.
+/// Returns `(width, is_compact)`. Respects the user's preference:
+/// `Expanded` forces full even if compact would also fit; `Compact`
+/// forces compact; `Auto` picks whichever survives the space check.
 pub fn pick_cluster_mode_tiered(
     area_x: u16,
     area_w: u16,
     palette_right_edge: u16,
     full_w: u16,
     gap: u16,
+    pref: ClusterModePref,
 ) -> Option<(u16, bool)> {
-    if let Some(w) = pick_cluster_mode(area_x, area_w, palette_right_edge, full_w, gap) {
-        return Some((w, false));
-    }
+    let full_fits = pick_cluster_mode(area_x, area_w, palette_right_edge, full_w, gap);
     let compact_w = compact_cluster_width();
-    let cluster_left = area_x + area_w.saturating_sub(compact_w);
-    if cluster_left >= palette_right_edge + gap {
+    let compact_left = area_x + area_w.saturating_sub(compact_w);
+    let compact_fits = if compact_left >= palette_right_edge + gap {
         Some((compact_w, true))
     } else {
         None
+    };
+    match pref {
+        ClusterModePref::Expanded => full_fits.map(|w| (w, false)).or(compact_fits),
+        ClusterModePref::Compact => compact_fits,
+        ClusterModePref::Auto => full_fits.map(|w| (w, false)).or(compact_fits),
     }
 }
 
@@ -643,6 +671,7 @@ pub fn paint_right_cluster(
     app.rects.bufferline_new_tab_button = None;
     app.rects.bufferline_tab_page_chips.clear();
     app.rects.bufferline_tab_page_close.clear();
+    app.rects.bufferline_tabs_label = None;
     app.rects.bufferline_theme_toggle = None;
     app.rects.bufferline_window_close = None;
 
@@ -673,12 +702,14 @@ pub fn paint_right_cluster(
         height: 1,
     });
     cluster_x += 3;
-    // Only paint the TABS switcher when there's actually more than
-    // one tab-page to switch between. With a single tab-page the
-    // switcher is dead chrome — the `+` new-tab button remains as
-    // the affordance for creating another one.
-    if !compact && app.layouts.len() >= 2 {
-        // `TABS` label (decorative).
+    // Full mode: always show the TABS label + per-tab-page chips
+    // (with `1` visible even on a single-tab session so the feature
+    // is discoverable). Compact mode drops both. User can force the
+    // mode via `[ui] top_bar_cluster_mode = "compact" | "expanded"`,
+    // otherwise the space-tight auto-fallback picks.
+    if !compact {
+        // `TABS` label — decorative click target: right-click opens
+        // the Expanded/Compact/Auto mode chooser.
         spans.push(Span::styled(
             " TABS ",
             Style::default()
@@ -686,6 +717,12 @@ pub fn paint_right_cluster(
                 .bg(t.fg)
                 .add_modifier(Modifier::BOLD),
         ));
+        app.rects.bufferline_tabs_label = Some(Rect {
+            x: cluster_x,
+            y: area.y,
+            width: 6,
+            height: 1,
+        });
         cluster_x += 6;
         // Per-tab-page chips with close on active.
         for i in 0..app.layouts.len() {

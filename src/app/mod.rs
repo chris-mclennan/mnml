@@ -1600,6 +1600,9 @@ pub struct PaneRects {
     /// window close `×`. Cleared + repopulated per bufferline render.
     pub bufferline_new_tab_button: Option<Rect>,
     pub bufferline_tab_page_chips: Vec<(Rect, usize)>,
+    /// The ` TABS ` label rect — right-click here opens the cluster
+    /// mode chooser (Expanded / Compact / Auto).
+    pub bufferline_tabs_label: Option<Rect>,
     pub bufferline_tab_page_close: Vec<(Rect, usize)>,
     pub bufferline_theme_toggle: Option<Rect>,
     pub bufferline_window_close: Option<Rect>,

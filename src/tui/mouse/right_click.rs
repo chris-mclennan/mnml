@@ -217,6 +217,14 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_launcher_chip_context_menu(icon_idx, (x, y));
         return;
     }
+    // Right-click on the TABS label → cluster mode chooser
+    // (Expanded / Compact / Auto).
+    if let Some(r) = app.rects.bufferline_tabs_label
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_top_bar_cluster_context_menu((x, y));
+        return;
+    }
     // Right-click on the split-strip AI button → choose
     // between Claude / Codex without changing the configured
     // default. Tab-strip Term + Split buttons are single-

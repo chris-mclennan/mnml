@@ -308,6 +308,31 @@ impl App {
     /// because launchers are TOML-only). vscode-user-mouse SEV-2:
     /// dropped the "parallel" claim from the doc since the menus
     /// genuinely diverge here.
+    pub fn open_top_bar_cluster_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let current = self.config.ui.top_bar_cluster_mode.as_str();
+        let marker = |val: &str| if val == current { "✓ " } else { "  " };
+        let items = vec![
+            MenuItem::new(
+                format!("{}Expanded (always show TABS)", marker("expanded")),
+                MenuAction::SetTopBarClusterMode("expanded"),
+            ),
+            MenuItem::new(
+                format!("{}Compact (hide TABS)", marker("compact")),
+                MenuAction::SetTopBarClusterMode("compact"),
+            ),
+            MenuItem::new(
+                format!("{}Auto (space-based)", marker("auto")),
+                MenuAction::SetTopBarClusterMode("auto"),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(
+            Some("Top-bar cluster".to_string()),
+            anchor,
+            items,
+        ));
+    }
+
     pub fn open_launcher_chip_context_menu(&mut self, icon_idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let Some(icon) = self.config.ui.launcher_icons.get(icon_idx) else {
@@ -936,6 +961,11 @@ impl App {
                         &self.config.ui.launcher_icons,
                     );
                 }
+            }
+            SetTopBarClusterMode(mode) => {
+                self.config.ui.top_bar_cluster_mode = mode.to_string();
+                let _ = crate::app::discovery::persist_top_bar_cluster_mode(mode);
+                self.toast(format!("top-bar cluster: {mode}"));
             }
             Command(id) => {
                 crate::command::run(id, self);

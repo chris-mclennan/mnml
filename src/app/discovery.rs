@@ -458,6 +458,72 @@ pub fn persist_integration_icons(icons: &[IntegrationIcon]) -> Result<std::path:
 /// the same way `persist_integration_icons` handles its peer.
 /// Filed against the 2026-06-28 TODO in context_menus.rs that
 /// noted launcher toggles didn't survive restart.
+/// Persist a single `[ui]` scalar setting to the user config. Reads
+/// the existing file, replaces the first `key = <old>` line inside
+/// the `[ui]` section with `key = "<value>"`, or appends the pair
+/// after the `[ui]` header if the key isn't present. If there's no
+/// `[ui]` section at all, adds one. Comments elsewhere in the file
+/// stay put.
+pub fn persist_ui_string(key: &'static str, value: &str) -> Result<std::path::PathBuf, String> {
+    let path = crate::config::user_config_path()
+        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let new_line = format!("{key} = \"{value}\"");
+
+    let mut out: Vec<String> = Vec::new();
+    let mut in_ui = false;
+    let mut ui_header_idx: Option<usize> = None;
+    let mut key_replaced = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            // Section header — leave `in_ui` for the `[ui]` case only.
+            in_ui = trimmed == "[ui]";
+            if in_ui {
+                ui_header_idx = Some(out.len());
+            }
+            out.push(line.to_string());
+            continue;
+        }
+        if in_ui && !key_replaced && trimmed.starts_with(&format!("{key} "))
+            || trimmed.starts_with(&format!("{key}="))
+        {
+            // Preserve indentation.
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            out.push(format!("{indent}{new_line}"));
+            key_replaced = true;
+            continue;
+        }
+        out.push(line.to_string());
+    }
+
+    if !key_replaced {
+        if let Some(idx) = ui_header_idx {
+            out.insert(idx + 1, new_line);
+        } else {
+            // No `[ui]` section anywhere — add one.
+            if !out.is_empty() && !out.last().is_some_and(|l| l.trim().is_empty()) {
+                out.push(String::new());
+            }
+            out.push("[ui]".to_string());
+            out.push(new_line);
+        }
+    }
+
+    let contents = out.join("\n") + "\n";
+    std::fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Sugar for the top-bar cluster mode setter. Called from the
+/// TABS right-click menu.
+pub fn persist_top_bar_cluster_mode(mode: &'static str) -> Result<std::path::PathBuf, String> {
+    persist_ui_string("top_bar_cluster_mode", mode)
+}
+
 pub fn persist_launcher_icons(
     icons: &[crate::config::LauncherIcon],
 ) -> Result<std::path::PathBuf, String> {

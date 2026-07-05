@@ -2461,12 +2461,14 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // compact (no TABS / tab-page chips) cluster when the full one
     // would overlap the workspace chip. Net: window-close + theme +
     // new-tab stay reachable at narrow widths instead of vanishing.
+    let cluster_pref = bufferline::ClusterModePref::parse(&app.config.ui.top_bar_cluster_mode);
     let cluster_mode = bufferline::pick_cluster_mode_tiered(
         area.x,
         area.width,
         palette_right_edge,
         full_w,
         4, // gap cells between palette + cluster
+        cluster_pref,
     );
     if let Some((w, compact)) = cluster_mode {
         let cluster_area = Rect {

@@ -175,6 +175,9 @@ pub enum MenuAction {
     MoveIntegrationToBottom(String),
     /// Toggle a launcher chip's `enabled` field by `id`.
     ToggleLauncherEnabled(String),
+    /// Set `[ui] top_bar_cluster_mode` to one of
+    /// `"auto"` / `"expanded"` / `"compact"` and persist to user config.
+    SetTopBarClusterMode(&'static str),
     /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
     /// pane, pre-filtered to the given log group + filter pattern.
     /// Used by the Cloud Agents row context menu's "Tail logs in
