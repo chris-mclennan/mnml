@@ -302,6 +302,83 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 1;
     }
 
+    // External Claude sessions (#5) — sessions running elsewhere
+    // (other mnml windows, bare shells) but rooted in this workspace.
+    // Filter the agents-panel snapshot to rows whose cwd points at
+    // this workspace, minus session_ids we already own as a Pty pane.
+    let owned_sids: std::collections::HashSet<String> = app
+        .panes
+        .iter()
+        .filter_map(|p| match p {
+            Pane::Pty(s) => s.profile.session_id.clone(),
+            _ => None,
+        })
+        .collect();
+    let ws_str = app.workspace.to_string_lossy();
+    let external: Vec<crate::claude_agents::AgentRow> = app
+        .agents_panel_rows
+        .iter()
+        .filter(|row| {
+            row.cwd
+                .as_deref()
+                .is_some_and(|c| c == ws_str.as_ref() || c.starts_with(ws_str.as_ref()))
+                && !owned_sids.contains(&row.session_id)
+        })
+        .cloned()
+        .collect();
+    if !external.is_empty() && y + 2 < area.y + area.height {
+        // Section divider.
+        let hdr = Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(
+                "EXTERNAL",
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(hdr),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        y += 1;
+        for row in external.iter().take(4) {
+            if y >= area.y + area.height {
+                break;
+            }
+            let branch = row
+                .git_branch
+                .as_deref()
+                .filter(|b| !b.is_empty())
+                .unwrap_or("—");
+            let short_sid: String = row.session_id.chars().take(8).collect();
+            let label = format!("  {branch}  ({short_sid})");
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    label,
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ))),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            y += 1;
+        }
+        y += 1;
+    }
+
     // `+ New session` row — last interactive row at the bottom
     // of the panel. Click → spawn a Claude Code pane (the most
     // common single-click case). A future picker could let the
