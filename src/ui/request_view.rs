@@ -363,7 +363,10 @@ pub fn draw(
     };
 
     // ── Zone 1: Request ─────────────────────────────────────────
-    let request_block = crate::ui::design_tokens::bordered_plain("Request");
+    // Fully-connected border — no "Request" title text on the top
+    // border since the sub-panels (Method, URL, Send, Clear) label
+    // themselves. Split-orientation chip still floats on the right.
+    let request_block = crate::ui::design_tokens::bordered_plain("");
     let request_inner = request_block.inner(request_rect);
     frame.render_widget(request_block, request_rect);
     // Split-orientation toggle — floats at the top-right of the
@@ -523,7 +526,10 @@ pub fn draw(
     // Sending / Streaming / Failed states render their own subtle
     // status text; empty pane shows nothing.
     let response_block = {
-        let mut block = crate::ui::design_tokens::bordered_plain("Response");
+        // Fully-connected border — no "Response" title text; the
+        // sub-tab strip (Body / Headers / Timeline / Tests) is the
+        // label. Status chip still floats on the right.
+        let mut block = crate::ui::design_tokens::bordered_plain("");
         if let Some(status_line) = response_status_title(rp, t) {
             block = block.title_top(ratatui::text::Line::from(status_line).right_aligned());
         }
