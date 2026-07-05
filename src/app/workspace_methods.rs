@@ -607,63 +607,50 @@ impl App {
         self.focus = crate::app::Focus::Pane;
     }
 
-    /// HTTP panel `+ New request` action — creates a `scratch.http`
-    /// under the workspace root (numbered if a stub already exists),
-    /// opens the source in an Editor pane, then immediately fires
-    /// `http.send` so the form-style `Pane::Request` (method / URL /
-    /// Params / Body / Auth / Vars / Source tabs + response) appears
-    /// as the primary view. Force `ViewMode::Edit` on the new pane
-    /// so the user lands on the FORM (not the "sending…" placeholder)
-    /// even while the stub request is still in flight — they can
-    /// tweak fields immediately and hit `http.send` again to re-fire.
+    /// HTTP panel `+ New request` action — spawns a blank
+    /// form-style Request pane (Edit view, no source file). The
+    /// pane exists only in memory until the user hits Save-As;
+    /// nothing lands on disk on click. This replaces the earlier
+    /// "write scratch-N.http + open editor + fire send + close
+    /// editor" dance, which was littering the workspace with
+    /// scratch-1.http … scratch-N.http files as the user
+    /// explored.
     ///
-    /// The stub target is `httpbin.org/get` — a public sandbox that
-    /// returns quickly and safely, so the newborn pane has a real
-    /// response to show once it lands.
+    /// If a Request pane is already active we don't spawn a new
+    /// one — matches the "reuse the current request pane"
+    /// semantics of `open_curl_scratch` + `paste_curl`. The
+    /// active pane just gets its fields cleared back to defaults.
     pub fn http_panel_new_request(&mut self) {
-        let stub = "### GET request example\nGET https://httpbin.org/get\n";
-        let mut path = self.workspace.join("scratch.http");
-        let mut i = 1;
-        while path.exists() {
-            path = self.workspace.join(format!("scratch-{i}.http"));
-            i += 1;
-        }
-        if let Err(e) = std::fs::write(&path, stub) {
-            self.toast(format!("http: create failed: {e}"));
+        use crate::pane::Pane;
+        use crate::request_pane::{EditField, EditTab, RunState, ViewMode};
+        let has_request = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_request {
+            self.open_new_request_pane();
             return;
         }
-        self.http_panel_refresh();
-        self.open_path(&path);
-        // Remember the editor's pane id BEFORE the split — after
-        // `send_request_from_active` runs, `self.active` points at
-        // the new Request pane and the editor sits in the other
-        // half of the split. We want the Request form to fill the
-        // whole main area, so we close the editor once the split
-        // has happened. The Request pane keeps `source_path`, so
-        // saves round-trip through the same file — the editor is
-        // just a scratch surface that the form-editor supersedes.
-        let editor_id = self.active;
-        self.send_request_from_active();
-        // Land on the Edit form first, not the "Sending…" response
-        // placeholder. `send_request_from_active` leaves `view` at
-        // its default (`Response`); flip it so the user sees the
-        // method/URL/Params/Body tabs immediately.
-        if let Some(cur) = self.active
-            && let Some(crate::pane::Pane::Request(rp)) = self.panes.get_mut(cur)
-        {
-            rp.view = crate::request_pane::ViewMode::Edit;
-        }
-        // Close the raw-file editor half of the split. Guarded so
-        // we never close the Request pane itself (the send may have
-        // failed early and left `active` pointing at the editor,
-        // in which case leave things alone). The Request pane's
-        // Source tab renders the same .http text if the user
-        // wants to see it.
-        if let (Some(eid), Some(cur)) = (editor_id, self.active)
-            && eid != cur
-            && matches!(self.panes.get(eid), Some(crate::pane::Pane::Editor(_)))
-        {
-            self.force_close_pane(eid);
+        // Reset the active Request pane back to a blank template.
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.request = crate::http::Request {
+                method: "GET".to_string(),
+                url: String::new(),
+                headers: Vec::new(),
+                body: None,
+            };
+            rp.headers_buffer = String::new();
+            rp.headers_cursor = 0;
+            rp.url_cursor = 0;
+            rp.body_cursor = 0;
+            rp.source_path = None;
+            rp.source_block_name = None;
+            rp.view = ViewMode::Edit;
+            rp.focus = EditField::Url;
+            rp.edit_tab = EditTab::Body;
+            rp.state =
+                RunState::Failed("(not sent — type a URL, then press `r` to fire)".to_string());
         }
     }
 

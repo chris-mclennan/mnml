@@ -1785,17 +1785,21 @@ impl App {
                 self.force_close_pane(pid);
             }
         }
-        // Entering HTTP from another section → open the HttpHome
-        // dashboard so the activity icon is a "hub-and-nav" gesture
-        // (custom sidebar AND custom main pane), not just a sidebar
-        // swap. Guarded so an idempotent re-click on the already-
-        // active HTTP icon doesn't yank the user off whatever
-        // Request pane they were editing.
+        // Entering HTTP from another section → land the user
+        // directly on a blank form-style Request pane (Postman
+        // feel) rather than the HttpHome dashboard. HttpHome
+        // shipped as a hub-and-nav idea but in practice the
+        // right thing to do when you click HTTP is start typing
+        // a request, not stare at a summary.
         //
-        // If a Request pane is already active we skip — the user
-        // is presumably mid-edit and doesn't want a context
-        // switch. The sidebar's Files section is a click away
-        // from HttpHome for whenever they want the dashboard.
+        // Guarded on:
+        // - An active Request pane already exists → leave it
+        //   (idempotent re-click on the HTTP icon shouldn't
+        //   yank you off your in-progress request).
+        // - `open_new_request_pane` spawns the pane in Edit view
+        //   with source_path = None, so nothing gets persisted to
+        //   disk until the user hits Save-As. Fixes the
+        //   scratch-N.http workspace pileup.
         if entering_http {
             let has_active_request = self
                 .active
@@ -1803,7 +1807,7 @@ impl App {
                 .map(|p| matches!(p, crate::pane::Pane::Request(_)))
                 .unwrap_or(false);
             if !has_active_request {
-                self.open_http_home();
+                self.open_new_request_pane();
             }
         }
     }
