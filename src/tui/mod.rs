@@ -92,6 +92,10 @@ fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>>
         // only turns on button + drag tracking by default. Needed for the
         // statusline chip tooltips.
         ratatui::crossterm::style::Print("\x1b[?1003h"),
+        // Enable bracketed paste (?2004h) so external file drops arrive
+        // as `Event::Paste(text)` instead of typed-through characters.
+        // Powers external drag-and-drop (#7).
+        ratatui::crossterm::event::EnableBracketedPaste,
         SetCursorStyle::SteadyBar,
         // OSC 0/2 — sets the terminal window/tab title.
         SetTitle(title),
@@ -215,6 +219,18 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                     }
                 }
                 Event::Resize(_, _) => {}
+                Event::Paste(text) => {
+                    // Drag-and-drop of external files (#7) — terminals
+                    // that emit a bracketed-paste with a path that
+                    // exists on the filesystem get routed as an open
+                    // instead of a text-insert. Silently falls through
+                    // to a normal paste if the text doesn't look like
+                    // a path. Future: normal paste routing when we add
+                    // one; for now non-path pastes are dropped since
+                    // mnml doesn't yet route Paste events to editor
+                    // buffers.
+                    let _opened = try_open_dragged_path(app, &text);
+                }
                 _ => {}
             }
         }
@@ -234,6 +250,30 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
 
 // T-2: coalesce_scroll + SCROLL_BATCH_COUNT + take_scroll_batch_count
 // moved to src/tui/mouse.rs (re-exported above).
+
+/// External drag-and-drop (#7). Terminals that emit a bracketed
+/// paste of a filesystem path should route as an open, not as a
+/// text-insert. Detects:
+/// - A single line (or newline-separated batch) whose trimmed value
+///   is an existing file path (or `file://` URL).
+/// - Multi-file drops: one open per line.
+/// Returns true when at least one path opened.
+fn try_open_dragged_path(app: &mut App, text: &str) -> bool {
+    let mut opened_any = false;
+    for raw in text.lines().map(str::trim).filter(|s| !s.is_empty()) {
+        // Strip `file://` prefix + a common wrapping quote/escape pair.
+        let candidate = raw
+            .strip_prefix("file://")
+            .unwrap_or(raw)
+            .trim_matches(&['"', '\''] as &[_]);
+        let path = std::path::PathBuf::from(candidate);
+        if path.is_file() {
+            app.open_path(&path);
+            opened_any = true;
+        }
+    }
+    opened_any
+}
 
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
 
