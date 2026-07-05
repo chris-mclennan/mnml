@@ -1623,34 +1623,140 @@ fn draw_edit(
                 .collect(),
             None => Vec::new(),
         };
-        let add_y = rows.len() as u16;
-        rows.push(add_action_row("Add new parameter…", t));
-        params_rows_local.push((
-            Rect {
-                x: area.x,
-                y: add_y,
-                width: area.width,
-                height: 1,
-            },
-            String::new(),
+        // Excel-cell table: Name | Value | X columns with box-
+        // drawing borders. Data rows separated by `├─┼─┼─┤` mid-
+        // lines. When the params-add draft is active, its row
+        // appears at the BOTTOM of the table with the caret in the
+        // focused field. `+ Add row` chip below the table starts a
+        // draft.
+        let table_x = area.x.saturating_add(2);
+        let table_w = area.width.saturating_sub(4).max(20);
+        let x_col_w: u16 = 3;
+        let inner_w = table_w.saturating_sub(x_col_w).saturating_sub(4);
+        let name_w = (inner_w * 35 / 100).max(8);
+        let value_w = inner_w.saturating_sub(name_w);
+        // Border helper — returns a Line for a horizontal rule row.
+        let make_border = |left: char, sep: char, right: char, fill: char| -> Line<'static> {
+            let n_seg: String = std::iter::repeat_n(fill, (name_w + 2) as usize).collect();
+            let v_seg: String = std::iter::repeat_n(fill, (value_w + 2) as usize).collect();
+            let x_seg: String = std::iter::repeat_n(fill, (x_col_w) as usize).collect();
+            let s = format!("{}{}{}{}{}{}{}", left, n_seg, sep, v_seg, sep, x_seg, right);
+            Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled(s, Style::default().fg(t.bg3).bg(t.bg_dark)),
+            ])
+        };
+        // Row content helper — pads/clips key + value strings to
+        // column widths and renders with the passed styles.
+        let make_row = |key_text: String,
+                        val_text: String,
+                        key_style: Style,
+                        val_style: Style,
+                        x_glyph: &str,
+                        x_style: Style|
+         -> Line<'static> {
+            let mut key_s = key_text;
+            if key_s.chars().count() > name_w as usize {
+                let truncated: String = key_s.chars().take(name_w as usize).collect();
+                key_s = truncated;
+            }
+            let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
+            let mut val_s = val_text;
+            if val_s.chars().count() > value_w as usize {
+                let truncated: String = val_s.chars().take(value_w as usize).collect();
+                val_s = truncated;
+            }
+            let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
+            let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
+            Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                Span::styled(key_s, key_style),
+                Span::styled(" ".repeat(pad_k), Style::default().bg(t.bg_dark)),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                Span::styled(val_s, val_style),
+                Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(x_glyph.to_string(), x_style),
+                border,
+            ])
+        };
+        // Track x offset of the X column so we can register its
+        // click rect per data row.
+        let x_col_off: u16 = 2 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
+
+        // Top border.
+        rows.push(make_border('┌', '┬', '┐', '─'));
+        // Header row.
+        rows.push(make_row(
+            "Name".to_string(),
+            "Value".to_string(),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+            "   ",
+            Style::default().bg(t.bg_dark),
         ));
-        register_tab_row(fields, add_y);
-        // Inline params-add draft row — appears immediately below
-        // the `+ Add` chip when the user has clicked it. Two-column
-        // layout (KEY = VALUE) with a `▏` caret in the currently
-        // focused field. Tab cycles focus; Enter commits; Esc
-        // cancels.
-        if let Some(draft) = &rp.params_add {
-            let draft_y = rows.len() as u16;
-            let (key_fg, val_fg) = if draft.on_value {
-                (t.comment, t.fg)
+        rows.push(make_border('├', '┼', '┤', '─'));
+
+        // Data rows for existing params.
+        for (i, (k, v)) in params.iter().enumerate() {
+            let is_hover = rp.hover_params_key.as_deref() == Some(k.as_str());
+            let key_style = if is_hover {
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                (t.fg, t.comment)
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
             };
+            let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
+            let x_style = Style::default().fg(t.red).bg(t.bg_dark);
+            let row_y = rows.len() as u16;
+            rows.push(make_row(
+                k.clone(),
+                v.clone(),
+                key_style,
+                val_style,
+                " ✕ ",
+                x_style,
+            ));
+            // Whole row → hover / row-click; X cell → delete.
+            params_rows_local.push((
+                Rect {
+                    x: table_x,
+                    y: row_y,
+                    width: table_w,
+                    height: 1,
+                },
+                k.clone(),
+            ));
+            register_tab_row(fields, row_y);
+            // Row separator between params (skipped after last).
+            if i + 1 < params.len() || rp.params_add.is_some() {
+                rows.push(make_border('├', '┼', '┤', '─'));
+            }
+            let _ = x_col_off; // reserved for future X-only click rect
+        }
+
+        // Draft row (if active).
+        if let Some(draft) = &rp.params_add {
             let key_display = if draft.key.is_empty() && !draft.on_value {
                 "▏".to_string()
             } else if draft.key.is_empty() {
-                "(key)".to_string()
+                "(name)".to_string()
             } else if !draft.on_value {
                 format!("{}▏", draft.key)
             } else {
@@ -1665,73 +1771,56 @@ fn draw_edit(
             } else {
                 draft.value.clone()
             };
-            rows.push(Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
-                Span::styled("› ", Style::default().fg(t.yellow).bg(t.bg_dark)),
-                Span::styled(
-                    key_display,
-                    Style::default()
-                        .fg(key_fg)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(" = ", Style::default().fg(t.comment).bg(t.bg_dark)),
-                Span::styled(val_display, Style::default().fg(val_fg).bg(t.bg_dark)),
-                Span::styled(
-                    "    (Tab · Enter · Esc)".to_string(),
-                    Style::default().fg(t.comment).bg(t.bg_dark),
-                ),
-            ]));
-            register_tab_row(fields, draft_y);
+            let key_style = if draft.on_value {
+                Style::default().fg(t.comment).bg(t.bg_dark)
+            } else {
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
+            };
+            let val_style = if draft.on_value {
+                Style::default()
+                    .fg(t.yellow)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.comment).bg(t.bg_dark)
+            };
+            rows.push(make_row(
+                key_display,
+                val_display,
+                key_style,
+                val_style,
+                "   ",
+                Style::default().bg(t.bg_dark),
+            ));
         }
-        if params.is_empty() && rp.params_add.is_none() {
-            let row_y = rows.len() as u16;
+        // Bottom border.
+        rows.push(make_border('└', '┴', '┘', '─'));
+
+        // Trailing `+ Add row` chip (only when no draft is active
+        // — while drafting the table's last row IS the add row).
+        if rp.params_add.is_none() {
+            let add_y = rows.len() as u16;
+            rows.push(add_action_row("Add row", t));
+            params_rows_local.push((
+                Rect {
+                    x: area.x,
+                    y: add_y,
+                    width: area.width,
+                    height: 1,
+                },
+                String::new(),
+            ));
+            register_tab_row(fields, add_y);
+        } else {
+            let hint_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
-                "    (no query parameters yet)".to_string(),
+                "    (Tab · `:` · Enter · Esc)".to_string(),
                 dim,
             )]));
-            register_tab_row(fields, row_y);
-        } else if !params.is_empty() {
-            for (k, v) in &params {
-                let row_y = rows.len() as u16;
-                params_rows_local.push((
-                    Rect {
-                        x: area.x,
-                        y: row_y,
-                        width: area.width,
-                        height: 1,
-                    },
-                    k.clone(),
-                ));
-                register_tab_row(fields, row_y);
-                // Hover highlight — when the mouse is over this row,
-                // paint it with the shared menu-family highlight so
-                // it reads as the row that'll react to a click.
-                // (#11 v13)
-                let is_hover = rp.hover_params_key.as_deref() == Some(k.as_str());
-                let row_bg = if is_hover { t.cyan } else { t.bg_dark };
-                let key_fg = if is_hover { t.bg_dark } else { t.cyan };
-                let sep_fg = if is_hover { t.bg_dark } else { t.comment };
-                let val_fg = if is_hover { t.bg_dark } else { t.fg };
-                let chev_fg = if is_hover { t.bg_dark } else { t.comment };
-                rows.push(Line::from(vec![
-                    Span::styled("  ", Style::default().bg(row_bg)),
-                    Span::styled("› ", Style::default().fg(chev_fg).bg(row_bg)),
-                    Span::styled(
-                        k.clone(),
-                        Style::default()
-                            .fg(key_fg)
-                            .bg(row_bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" = ".to_string(), Style::default().fg(sep_fg).bg(row_bg)),
-                    Span::styled(v.clone(), Style::default().fg(val_fg).bg(row_bg)),
-                ]));
-            }
-            rows.push(Line::from(vec![Span::styled(
-                "    (click a row to delete — value-edit is v2)".to_string(),
-                dim,
-            )]));
+            register_tab_row(fields, hint_y);
         }
     }
 
