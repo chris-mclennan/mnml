@@ -23,6 +23,20 @@ use crate::pane::Pane;
 use crate::request_pane::{EditField, RunState};
 use crate::ui::theme;
 
+/// Section header chip — matches the app-wide `modal_panel` title
+/// look (cyan bg + bg_dark fg + BOLD). Used for `response`, `ai`,
+/// and any future section title inside the Request pane so all
+/// section labels read as the same design primitive (#11).
+fn section_header_chip(text: &'static str, t: theme::Theme) -> Line<'static> {
+    Line::from(Span::styled(
+        text,
+        Style::default()
+            .fg(t.bg_dark)
+            .bg(t.cyan)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
 pub fn draw(
     frame: &mut Frame,
     app: &mut App,
@@ -105,20 +119,13 @@ pub fn draw(
         &mut auth_rows_local,
     );
 
-    // Section divider + Response panel
-    rows.push(Line::from(Span::styled(
-        "─"
-            .repeat(area.width.saturating_sub(2) as usize)
-            .to_string(),
-        Style::default().fg(t.bg3).bg(t.bg_dark),
-    )));
-    rows.push(Line::from(Span::styled(
-        "  response".to_string(),
-        Style::default()
-            .fg(t.yellow)
-            .bg(t.bg_dark)
-            .add_modifier(Modifier::BOLD),
-    )));
+    // Section divider + Response panel. Design polish (#11): use a
+    // consistent inline "chip" title matching the app-wide
+    // `modal_panel` title-bar look (cyan bg + bg_dark fg + BOLD),
+    // instead of per-section yellow / orange bold text. Reads as
+    // the same design primitive as every other section title.
+    rows.push(Line::from(Span::raw("")));
+    rows.push(section_header_chip(" response ", t));
     rows.push(Line::from(Span::raw("")));
     draw_response(rp, t, &mut rows);
 
@@ -156,22 +163,13 @@ pub fn draw(
             height: AI_ROWS,
         };
         let ai_lines: Vec<Line> = vec![
-            Line::from(Span::styled(
-                "─"
-                    .repeat(area.width.saturating_sub(2) as usize)
-                    .to_string(),
-                Style::default().fg(t.bg3).bg(t.bg_dark),
-            )),
+            // Row 0: blank (breathing room above the chip).
+            Line::from(Span::raw("")),
+            // Row 1: `ai` chip + hint — click rect below points here.
             Line::from(vec![
+                section_header_chip(" ai ", t).spans[0].clone(),
                 Span::styled(
-                    "  ai".to_string(),
-                    Style::default()
-                        .fg(t.orange)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    "   (click here to ask a custom question · `a` for quick debug)".to_string(),
+                    "   (click to ask a custom question · `a` for quick debug)".to_string(),
                     Style::default()
                         .fg(t.comment)
                         .bg(t.bg_dark)
