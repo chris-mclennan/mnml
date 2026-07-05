@@ -211,6 +211,23 @@ impl App {
         self.pending_suggest.is_some()
     }
 
+    /// Total count of background tasks currently in flight — LSP
+    /// progress, AI suggestions, tracked progress items, SCM
+    /// prefetches. Feeds the unified "mnml is busy" statusline chip
+    /// (#6) so long-running work never runs silent.
+    pub fn background_task_count(&self) -> usize {
+        let mut n = 0;
+        n += self.lsp_progress.len();
+        if self.pending_suggest.is_some() {
+            n += 1;
+        }
+        n += self.progress_items.len();
+        if self.scm_pr_pending.is_some() {
+            n += 1;
+        }
+        n
+    }
+
     /// `tick` hook — fire an AI ghost-text request once the debounce
     /// window has elapsed since the last edit. No-op when the feature
     /// is off, a request is already in flight, or a suggestion is

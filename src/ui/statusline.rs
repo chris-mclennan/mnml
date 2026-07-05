@@ -583,6 +583,26 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::cur().cyan,
         ));
     }
+    // Unified "mnml is busy" chip (#6) — supplements the per-signal
+    // chips above. Shown when the total background count is at least
+    // 2, so a single LSP/AI task (which the specific chip already
+    // covers) doesn't get a duplicate. Spinner phase follows the
+    // toast-stack pattern so the two animate in sync.
+    let bg_n = app.background_task_count();
+    if bg_n >= 2 {
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+        let idx = (ms / 100) as usize % frames.len();
+        let spin = frames[idx];
+        right.push(Seg::new(
+            format!(" {spin} {bg_n} "),
+            theme::cur().bg_darker,
+            theme::cur().cyan,
+        ));
+    }
     // `✦ AI` chip while an inline-suggestion request is in flight — the
     // ghost-text round-trip is ~0.5–1.5s, so this tells the user a
     // completion is coming (vs the editor just sitting idle).
