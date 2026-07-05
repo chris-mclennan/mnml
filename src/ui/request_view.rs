@@ -347,13 +347,69 @@ pub fn draw(
         crate::ui::design_tokens::modal_panel("Request").border_style(border_color(focused, t));
     let request_inner = request_block.inner(request_rect);
     frame.render_widget(request_block, request_rect);
+
+    // Method + URL sub-panels sit at the TOP of the Request zone,
+    // side-by-side, each with its own legend outline. Method is
+    // fixed-width (space for the widest verb + " ▼ " dropdown
+    // affordance); URL takes the rest of the width out to the
+    // right edge. Under those two, the tabs + tab content flow
+    // (rendered by draw_edit into `tabs_rect`).
+    //
+    // Layout math:
+    //   method_url_row height = 3 (border top + content + border bottom)
+    //   method_rect   width  = METHOD_BOX_WIDTH
+    //   url_rect      width  = request_inner.width - method_rect.width
+    //
+    // If the pane is too narrow to fit both boxes side-by-side
+    // (< METHOD_BOX_WIDTH + MIN_URL_WIDTH), we fall back to the
+    // old single-row rendering path below (skips the sub-panels).
+    const METHOD_BOX_WIDTH: u16 = 14;
+    const MIN_URL_WIDTH: u16 = 20;
+    const METHOD_URL_ROW_H: u16 = 3;
+    let show_sub_panels = request_inner.width >= METHOD_BOX_WIDTH + MIN_URL_WIDTH
+        && request_inner.height >= METHOD_URL_ROW_H + 3;
+
     let mut edit_rows: Vec<Line> = Vec::new();
-    if request_inner.width > 0 && request_inner.height > 0 {
+    let tabs_rect = if show_sub_panels {
+        let method_rect = Rect {
+            x: request_inner.x,
+            y: request_inner.y,
+            width: METHOD_BOX_WIDTH,
+            height: METHOD_URL_ROW_H,
+        };
+        let url_rect = Rect {
+            x: request_inner.x.saturating_add(METHOD_BOX_WIDTH),
+            y: request_inner.y,
+            width: request_inner.width.saturating_sub(METHOD_BOX_WIDTH),
+            height: METHOD_URL_ROW_H,
+        };
+        draw_method_box(frame, rp, method_rect, focused, pane_id, &mut fields, t);
+        draw_url_box(
+            frame,
+            rp,
+            url_rect,
+            focused,
+            pane_id,
+            &mut fields,
+            &mut caret,
+            t,
+        );
+        Rect {
+            x: request_inner.x,
+            y: request_inner.y.saturating_add(METHOD_URL_ROW_H),
+            width: request_inner.width,
+            height: request_inner.height.saturating_sub(METHOD_URL_ROW_H),
+        }
+    } else {
+        request_inner
+    };
+
+    if tabs_rect.width > 0 && tabs_rect.height > 0 {
         draw_edit(
             rp,
             t,
             &mut edit_rows,
-            request_inner,
+            tabs_rect,
             &mut caret,
             focused,
             pane_id,
@@ -370,12 +426,12 @@ pub fn draw(
         // is the main scrollable area; Edit fits by ratio).
         let edit_view: Vec<Line> = edit_rows
             .iter()
-            .take(request_inner.height as usize)
+            .take(tabs_rect.height as usize)
             .cloned()
             .collect();
         frame.render_widget(
             Paragraph::new(edit_view).style(Style::default().bg(t.bg_dark)),
-            request_inner,
+            tabs_rect,
         );
     }
 
@@ -516,6 +572,99 @@ fn border_color(focused: bool, t: theme::Theme) -> Style {
     }
 }
 
+/// Method sub-panel — legend-outline modal_panel titled "Method" with
+/// the verb rendered as COLORED TEXT (not a colored bg chip) and a
+/// trailing `▼` down-arrow so the box reads as a dropdown affordance.
+/// Colors follow `method_color` (GET green, POST orange, PUT blue,
+/// PATCH cyan, DELETE red, HEAD yellow, OPTIONS purple).
+fn draw_method_box(
+    frame: &mut Frame,
+    rp: &crate::request_pane::RequestPane,
+    rect: Rect,
+    focused: bool,
+    pane_id: PaneId,
+    fields: &mut Vec<(Rect, PaneId, EditField)>,
+    t: theme::Theme,
+) {
+    let block =
+        crate::ui::design_tokens::modal_panel("Method").border_style(border_color(focused, t));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let method = rp.request.method.to_uppercase();
+    let m_color = method_color(&method, t);
+    // Content row: " GET     ▼ " — verb in verb-color BOLD on
+    // panel bg, dropdown arrow dim-comment on right.
+    let arrow_col = inner.width.saturating_sub(2);
+    let verb_width = method.chars().count() as u16;
+    let mid_pad = inner
+        .width
+        .saturating_sub(1) // leading pad
+        .saturating_sub(verb_width)
+        .saturating_sub(2); // arrow + trailing pad
+    let content = Line::from(vec![
+        Span::styled(" ", Style::default().bg(t.bg_dark)),
+        Span::styled(
+            method.clone(),
+            Style::default()
+                .fg(m_color)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
+        Span::styled("\u{25BC}", Style::default().fg(t.comment).bg(t.bg_dark)),
+        Span::styled(" ", Style::default().bg(t.bg_dark)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
+        inner,
+    );
+    // Whole inner rect is the Method click target — click cycles
+    // through verbs (existing `http.cycle_method` behavior).
+    fields.push((inner, pane_id, EditField::Method));
+    let _ = arrow_col; // reserved for future explicit arrow click rect
+}
+
+/// URL sub-panel — legend-outline modal_panel titled "URL" spanning
+/// the remainder of the row's width. Renders the URL as editable
+/// text; when the URL field is focused, positions the terminal caret
+/// at the character offset that corresponds to `url_cursor`.
+#[allow(clippy::too_many_arguments)]
+fn draw_url_box(
+    frame: &mut Frame,
+    rp: &crate::request_pane::RequestPane,
+    rect: Rect,
+    focused: bool,
+    pane_id: PaneId,
+    fields: &mut Vec<(Rect, PaneId, EditField)>,
+    caret: &mut Option<(u16, u16)>,
+    t: theme::Theme,
+) {
+    let block = crate::ui::design_tokens::modal_panel("URL").border_style(border_color(focused, t));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let url_text = rp.request.url.clone();
+    let content = Line::from(vec![
+        Span::styled(" ", Style::default().bg(t.bg_dark)),
+        Span::styled(url_text.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
+        inner,
+    );
+    fields.push((inner, pane_id, EditField::Url));
+    if focused && rp.focus == EditField::Url {
+        let caret_col = 1u16 + url_chars_before_cursor(&url_text, rp.url_cursor) as u16;
+        let cx = inner.x + caret_col.min(inner.width.saturating_sub(1));
+        *caret = Some((cx, inner.y));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_edit(
     rp: &crate::request_pane::RequestPane,
@@ -583,71 +732,24 @@ fn draw_edit(
         }
     };
 
-    // 2026-06-20 — Method + URL on the same line, Postman-style.
-    // Method renders as a colored chip — GET green, POST orange,
-    // PUT blue, PATCH cyan, DELETE red, HEAD yellow, OPTIONS
-    // magenta. Click the chip → :http.cycle_method advances the
-    // verb (also Space when focused). URL fills the rest of the
-    // line.
-    let m_focus = rp.focus == EditField::Method;
-    let u_focus = rp.focus == EditField::Url;
-    let method = rp.request.method.to_uppercase();
-    let m_color = method_color(&method, t);
-    let method_chip = format!(" {method} ");
-    let method_chip_len = method_chip.chars().count() as u16;
-    let method_y = rows.len() as u16;
-    let url_text = rp.request.url.clone();
-    rows.push(Line::from(vec![
-        bar_span(m_focus || u_focus),
-        Span::styled(
-            method_chip,
-            Style::default()
-                .fg(t.bg_dark)
-                .bg(m_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
-        Span::styled(url_text.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
-    ]));
-    // Method chip rect — narrow (just the chip, no row-spanning).
-    // Click triggers cycle in tui.rs (gated on `rect.width ≤ 12`).
-    fields.push((
-        Rect {
-            x: area.x + 2, // skip bar
-            y: method_y,
-            width: method_chip_len,
-            height: 1,
-        },
-        pane_id,
-        EditField::Method,
-    ));
-    // URL field rect — area AFTER the method chip + 2 pad.
-    fields.push((
-        Rect {
-            x: area.x + 2 + method_chip_len + 2,
-            y: method_y,
-            width: area.width.saturating_sub(2 + method_chip_len + 2),
-            height: 1,
-        },
-        pane_id,
-        EditField::Url,
-    ));
-    // Label offset for caret math now = bar (2) + chip + 2 spaces.
-    let label_len = 2u16 + method_chip_len + 2;
-    let _url_y = method_y; // kept for the URL caret-positioning math reference
-    if u_focus && focused {
-        // y = index of the row we just pushed (0-based from rows[0])
-        let y = (rows.len() - 1) as u16;
-        let caret_col = label_len + url_chars_before_cursor(&url_text, rp.url_cursor) as u16;
-        *caret = Some((area.x + caret_col.min(area.width.saturating_sub(1)), y));
-    }
+    // Method + URL rows are drawn by the top-level `draw()` as two
+    // side-by-side bordered sub-panels (Method box + URL box) so
+    // each has its own legend outline. draw_edit no longer paints
+    // that row — the URL caret + method/url click rects are also
+    // registered by the top-level. draw_edit picks up from the tab
+    // strip.
+    let _ = focused;
+    let _ = caret;
 
-    // Tab strip (Params / Headers / Body / Auth / Vars / Source).
-    // Active tab uses the shared menu-family highlight (cyan bg +
-    // bg_dark fg + BOLD) — the same primitive as menu bar / context
-    // menu / settings row selection. Inactive tabs render as dim
-    // comment-fg text on the panel bg. Visual cue survives
-    // monochrome via BOLD on the active tab.
+    // Tab strip (Body / Headers / Params / Auth / Vars / Source).
+    // Menu-bar aesthetic: active tab = cyan bg + bg_dark fg + BOLD
+    // (`row_highlight_menu` — the exact primitive the menu-bar
+    // dropdowns use for their selected row). Inactive tabs = fg on
+    // `bg2` — the darker "chip" bg the menu bar's inactive items
+    // sit on — so all tabs read as discrete clickable chips on the
+    // panel's `bg_dark`, not floating text. 1-cell `bg_dark` gap
+    // between chips reinforces the "these are separate buttons"
+    // read.
     {
         use crate::request_pane::EditTab;
         let strip_y = rows.len() as u16;
@@ -666,7 +768,10 @@ fn draw_edit(
             let style = if is_cur {
                 crate::ui::design_tokens::row_highlight_menu()
             } else {
-                Style::default().fg(t.comment).bg(t.bg_dark)
+                // Menu-bar-style inactive chip: fg on bg2 (chip bg),
+                // not comment-fg on bg_dark. Reads as a button, not
+                // dim text.
+                Style::default().fg(t.fg).bg(t.bg2)
             };
             let chip_w = display.chars().count() as u16;
             spans.push(Span::styled(display, style));

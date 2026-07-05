@@ -22,6 +22,23 @@ use crate::ui::{icons, theme};
 // code-reviewer S3-1 — the dead `launcher_color` fn was removed.
 // All callers go through `theme::color_from_slot(name, &t)` now.
 
+/// If `name` starts with an HTTP verb followed by whitespace, split
+/// into `(verb, rest)`. Used by the Request-pane tab label to paint
+/// the verb in its method color while the URL/name takes the
+/// regular fg. Returns `None` for non-Request labels or unusual
+/// verbs — the caller falls back to a single-color label.
+fn split_http_verb(name: &str) -> Option<(String, String)> {
+    for verb in &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+        if let Some(rest) = name.strip_prefix(verb) {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return Some((verb.to_string(), rest.to_string()));
+            }
+        }
+    }
+    None
+}
+
 /// `✗N` (errors) / `⚠N` (warnings) / `""` for editor panes; `""` for everything
 /// else. Surfaced in the bufferline so broken buffers are visible without
 /// switching to them.
@@ -285,7 +302,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, tt.orange),
             Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, tt.orange),
             Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, tt.green),
-            Pane::Request(_) => (if nerd { "\u{F1D8}" } else { "→" }, tt.blue),
+            Pane::Request(r) => {
+                // Per-verb color so the tab icon reads as a method
+                // chip (GET green, POST orange, PUT blue, PATCH cyan,
+                // DELETE red, HEAD yellow, OPTIONS purple). Falls
+                // back to blue for unknown verbs.
+                let m = r.request.method.to_uppercase();
+                let color = match m.as_str() {
+                    "GET" => tt.green,
+                    "POST" => tt.orange,
+                    "PUT" => tt.blue,
+                    "PATCH" => tt.cyan,
+                    "DELETE" => tt.red,
+                    "HEAD" => tt.yellow,
+                    "OPTIONS" => tt.purple,
+                    _ => tt.blue,
+                };
+                (if nerd { "\u{F1D8}" } else { "→" }, color)
+            }
             Pane::Pty(s) => {
                 // 2026-07-03 — sibling integrations that run as
                 // Pty panes (mnml-aws-amplify etc.) inherit their
@@ -431,7 +465,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             format!(" {glyph}  "),
             Style::default().fg(icon_color).bg(bg),
         ));
-        spans.push(Span::styled(format!("{name} "), name_style));
+        // Bruno-style verb prefix: if this is a Request pane and
+        // the title starts with a known HTTP verb, split the label
+        // so the verb renders in its own color (matching the icon)
+        // and the URL/name renders in regular fg. Other panes keep
+        // the single-color label.
+        if matches!(pane, Pane::Request(_))
+            && let Some((verb, rest)) = split_http_verb(&name)
+        {
+            spans.push(Span::styled(
+                format!("{verb} "),
+                Style::default()
+                    .fg(icon_color)
+                    .bg(bg)
+                    .add_modifier(if active {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
+            ));
+            spans.push(Span::styled(format!("{rest} "), name_style));
+        } else {
+            spans.push(Span::styled(format!("{name} "), name_style));
+        }
         if !diag.is_empty() {
             let diag_fg = if diag.starts_with('\u{2717}') {
                 // `✗` chip — errors → red regardless of active state.

@@ -539,20 +539,40 @@ impl RequestPane {
     }
 
     pub fn title(&self) -> String {
-        let base = self
-            .source_path
-            .as_ref()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "request".to_string());
+        // Bruno-style tab label: `METHOD  short-url` when a URL is
+        // set. Falls back to source-file basename (or "request")
+        // when there's no URL yet. Method comes first so the
+        // per-verb tab coloring (bufferline picks the icon +
+        // fg color from `request.method`) reads as a chip prefix.
+        let method = self.request.method.to_uppercase();
+        let base = if !self.request.url.is_empty() {
+            let short = self
+                .request
+                .url
+                .strip_prefix("https://")
+                .or_else(|| self.request.url.strip_prefix("http://"))
+                .unwrap_or(&self.request.url);
+            let short = short.split(['?', '#']).next().unwrap_or(short);
+            format!("{method}  {short}")
+        } else {
+            self.source_path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| format!("{method}  new request"))
+        };
         let marker = match &self.state {
             RunState::Sending => "…",
             RunState::Streaming(_) => "▶",
-            RunState::Failed(_) => "✗",
+            RunState::Failed(_) => "",
             RunState::Done(r) if r.assertions.iter().any(|a| !a.passed) => "✗",
             RunState::Done(_) => "⚡",
         };
-        format!("{base} {marker}")
+        if marker.is_empty() {
+            base
+        } else {
+            format!("{base} {marker}")
+        }
     }
 
     /// `METHOD url` as a one-liner.
