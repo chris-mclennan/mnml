@@ -24,9 +24,11 @@ use crate::request_pane::{EditField, RunState};
 use crate::ui::theme;
 
 /// Section header chip — matches the app-wide `modal_panel` title
-/// look (cyan bg + bg_dark fg + BOLD). Used for `response`, `ai`,
-/// and any future section title inside the Request pane so all
-/// section labels read as the same design primitive (#11).
+/// look (cyan bg + bg_dark fg + BOLD). Was used for inline
+/// `response`/`ai` labels before the three-zone bordered layout
+/// took over the section-title role; retained for potential
+/// future use inside sub-sections (e.g. Response body vs. headers).
+#[allow(dead_code)]
 fn section_header_chip(text: &'static str, t: theme::Theme) -> Line<'static> {
     Line::from(Span::styled(
         text,
@@ -269,260 +271,249 @@ pub fn draw(
         return None;
     }
     let t = theme::cur();
+    // Backfill so any negative-space cells within `area` render the
+    // pane's own bg color, matching the previous impl.
     frame.render_widget(
         Paragraph::new("").style(Style::default().bg(t.bg_dark)),
         area,
     );
     // Detach the click-target registries so the draw fns below can push
-    // into them while `rp` is borrowed from `app.panes`. Restored at the
-    // bottom (and at the early-return below).
-    // 2026-06-20 — `tabs` (the old Edit/Response chip rects) and
-    // the top-level body_style/dim/plain locals went unused when
-    // the tab strip was removed; cleaned up.
+    // into them while `rp` is borrowed from `app.panes`. Restored at
+    // the bottom (and at the early-return below).
     let mut fields = std::mem::take(&mut app.rects.request_fields);
     let Some(Pane::Request(rp)) = app.panes.get_mut(pane_id) else {
         app.rects.request_fields = fields;
         return None;
     };
-    let mut rows: Vec<Line> = Vec::new();
-
-    // 2026-06-20 — removed [Edit][Response] tab strip. New
-    // Postman-style layout shows Request / Response / AI sections
-    // stacked vertically — both Edit and Response are always
-    // visible. `rp.view` still gates the key handler routing
-    // (edit-mode keys vs. response-mode scroll/refire) for now;
-    // user can flip with Tab or just type to land in fields.
-    // 2026-06-20 — removed Edit/Response click-rect registration
-    // since the visual tab strip is gone. `tabs` (the App.rects
-    // collection) is still drained/restored so the existing
-    // caller pattern keeps working, but no chips push into it
-    // from here anymore.
-    let _ = pane_id;
 
     // ── caret position to return (set when Edit-mode draws the focused field) ──
     let mut caret: Option<(u16, u16)> = None;
 
-    // Edit-tab chip rects collected with `y` = row index in
-    // `rows`; corrected to screen y after scroll is computed
-    // below (same shape as `request_fields`).
+    // Edit-tab chip rects — collected with `y` = row index within the
+    // Request zone, translated to a screen-y after we know that
+    // zone's inner rect.
     let mut edit_tabs_local: Vec<(Rect, PaneId, crate::request_pane::EditTab)> = Vec::new();
     app.rects
         .request_edit_tabs
         .retain(|(_, p, _)| *p != pane_id);
 
-    // 2026-06-20 — three-panel layout (Postman-style). Render all
-    // three sections vertically: Request (URL+tabs+content),
-    // Response (status+body), AI prompt at the bottom. The
-    // Edit/Response tab strip above is now visual scaffolding;
-    // the user can scroll the combined output to see whatever
-    // they need. rp.view stays as an internal hint for the
-    // tab-strip rendering above but doesn't gate which sections
-    // draw — both always draw.
     let show_ws = app.config.ui.show_whitespace;
     let workspace = app.workspace.clone();
     let env_override = app.http_env_override.clone();
     let mut vars_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut params_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut auth_rows_local: Vec<(Rect, String)> = Vec::new();
-    draw_edit(
-        rp,
-        t,
-        &mut rows,
-        area,
-        &mut caret,
-        focused,
-        pane_id,
-        &mut fields,
-        &mut edit_tabs_local,
-        show_ws,
-        &workspace,
-        env_override.as_deref(),
-        &mut vars_rows_local,
-        &mut params_rows_local,
-        &mut auth_rows_local,
-    );
 
-    // Section divider + Response panel. Design polish (#11): use a
-    // consistent inline "chip" title matching the app-wide
-    // `modal_panel` title-bar look (cyan bg + bg_dark fg + BOLD),
-    // instead of per-section yellow / orange bold text. Reads as
-    // the same design primitive as every other section title.
-    rows.push(Line::from(Span::raw("")));
-    rows.push(section_header_chip(" response ", t));
-    // Filter chip lives directly under the response header — appears
-    // whenever the filter is active OR focused (so users see the "/"
-    // hint even before typing). Empty + unfocused = hidden to keep
-    // the pane quiet on first render.
-    if !rp.filter.is_empty() || rp.filter_focused {
-        // Precompute matched/total for the hit-count chip so the
-        // filter row itself carries the feedback. Walks request
-        // headers + response headers + body lines. (#11 polish)
-        let hits = compute_filter_hits(rp);
-        rows.push(filter_row(&rp.filter, rp.filter_focused, hits, t));
-    }
-    rows.push(Line::from(Span::raw("")));
-    let wrap_width = if rp.body_wrap {
-        Some(area.width.saturating_sub(4).max(20))
-    } else {
-        None
-    };
-    draw_response(rp, t, &mut rows, wrap_width);
+    // ── Layout: split the pane into three bordered zones, top-down.
+    // Request  — form editor (URL/method + tabs + tab content)
+    // Response — status + body + assertions
+    // AI       — quick prompt line, always visible (Postman feel)
+    //
+    // AI is a fixed 3-row block at the bottom (2 border + 1 content).
+    // Request + Response split the rest 55/45 (favor the form so the
+    // user isn't staring at empty response chrome before firing).
+    // Below a minimum panel height the split collapses gracefully —
+    // Response gets what's left after AI, Request clips to zero, and
+    // we fall back to a compact rendering path via `min_height`.
+    let ai_height = 3u16.min(area.height);
+    let non_ai = area.height.saturating_sub(ai_height);
+    let request_height = ((non_ai as u32 * 55 / 100) as u16).max(6.min(non_ai));
+    let response_height = non_ai.saturating_sub(request_height);
 
-    // 2026-06-20 — AI section now PINNED to the bottom of the pane
-    // (poor man's independent scrolling). The Request + Response
-    // rows scroll within the top region; the AI header always
-    // stays visible at the bottom 2 rows so the affordance never
-    // hides itself. Saves a full per-section scroll refactor.
-    const AI_ROWS: u16 = 2; // separator + header line
-
-    // scroll — Response can be long; Edit is short. Scrollable
-    // viewport is everything EXCEPT the bottom AI strip.
-    let h = area.height.saturating_sub(AI_ROWS) as usize;
-    let max_scroll = rows.len().saturating_sub(h.min(rows.len()));
-    rp.scroll = rp.scroll.min(max_scroll);
-    let scroll = rp.scroll;
-    let view: Vec<Line> = rows.into_iter().skip(scroll).take(h).collect();
-    let upper = Rect {
+    let request_rect = Rect {
         x: area.x,
         y: area.y,
         width: area.width,
-        height: area.height.saturating_sub(AI_ROWS),
+        height: request_height,
     };
-    frame.render_widget(
-        Paragraph::new(view).style(Style::default().bg(t.bg_dark)),
-        upper,
-    );
-    // Pinned AI strip — drawn as a fresh 2-row Paragraph at the
-    // bottom. Click rect is registered against ai_strip.y.
-    if area.height >= AI_ROWS {
-        let ai_strip = Rect {
-            x: area.x,
-            y: area.y + area.height - AI_ROWS,
-            width: area.width,
-            height: AI_ROWS,
-        };
-        let ai_lines: Vec<Line> = vec![
-            // Row 0: blank (breathing room above the chip).
-            Line::from(Span::raw("")),
-            // Row 1: `ai` chip + hint — click rect below points here.
-            // Hint uses `hint_style()` (comment fg on the panel bg)
-            // so the underline / attention treatment doesn't compete
-            // with the cyan chip. Cleaner visual weight.
-            Line::from(vec![
-                section_header_chip(" ai ", t).spans[0].clone(),
-                Span::styled(
-                    "   click here to ask a custom question   ".to_string(),
-                    crate::ui::design_tokens::hint_style(),
-                ),
-                Span::styled(
-                    "· `a`  quick debug".to_string(),
-                    Style::default()
-                        .fg(t.comment)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::DIM),
-                ),
-            ]),
-        ];
-        frame.render_widget(
-            Paragraph::new(ai_lines).style(Style::default().bg(t.bg_dark)),
-            ai_strip,
+    let response_rect = Rect {
+        x: area.x,
+        y: area.y.saturating_add(request_height),
+        width: area.width,
+        height: response_height,
+    };
+    let ai_rect = Rect {
+        x: area.x,
+        y: area
+            .y
+            .saturating_add(request_height)
+            .saturating_add(response_height),
+        width: area.width,
+        height: ai_height,
+    };
+
+    // ── Zone 1: Request ─────────────────────────────────────────
+    let request_block =
+        crate::ui::design_tokens::modal_panel("Request").border_style(border_color(focused, t));
+    let request_inner = request_block.inner(request_rect);
+    frame.render_widget(request_block, request_rect);
+    let mut edit_rows: Vec<Line> = Vec::new();
+    if request_inner.width > 0 && request_inner.height > 0 {
+        draw_edit(
+            rp,
+            t,
+            &mut edit_rows,
+            request_inner,
+            &mut caret,
+            focused,
+            pane_id,
+            &mut fields,
+            &mut edit_tabs_local,
+            show_ws,
+            &workspace,
+            env_override.as_deref(),
+            &mut vars_rows_local,
+            &mut params_rows_local,
+            &mut auth_rows_local,
         );
-        // Header rect = the bottom row only.
-        app.rects.request_ai_section = Some(Rect {
-            x: ai_strip.x,
-            y: ai_strip.y + 1,
-            width: ai_strip.width,
-            height: 1,
-        });
+        // Edit content clips (no scroll for v1 — the Response zone
+        // is the main scrollable area; Edit fits by ratio).
+        let edit_view: Vec<Line> = edit_rows
+            .iter()
+            .take(request_inner.height as usize)
+            .cloned()
+            .collect();
+        frame.render_widget(
+            Paragraph::new(edit_view).style(Style::default().bg(t.bg_dark)),
+            request_inner,
+        );
+    }
+
+    // ── Zone 2: Response ─────────────────────────────────────────
+    let response_block =
+        crate::ui::design_tokens::modal_panel("Response").border_style(border_color(focused, t));
+    let response_inner = response_block.inner(response_rect);
+    frame.render_widget(response_block, response_rect);
+    let mut response_rows: Vec<Line> = Vec::new();
+    if response_inner.width > 0 && response_inner.height > 0 {
+        // Filter chip lives at the top of the Response zone — visible
+        // whenever the filter is active OR focused (so users see the
+        // "/" hint even before typing). Empty + unfocused = hidden.
+        if !rp.filter.is_empty() || rp.filter_focused {
+            let hits = compute_filter_hits(rp);
+            response_rows.push(filter_row(&rp.filter, rp.filter_focused, hits, t));
+        }
+        let wrap_width = if rp.body_wrap {
+            Some(response_inner.width.saturating_sub(2).max(20))
+        } else {
+            None
+        };
+        draw_response(rp, t, &mut response_rows, wrap_width);
+        // `rp.scroll` now applies to the Response zone only (was
+        // whole-pane scroll before the three-zone split). Clamp
+        // against Response content length.
+        let h = response_inner.height as usize;
+        let max_scroll = response_rows
+            .len()
+            .saturating_sub(h.min(response_rows.len()));
+        rp.scroll = rp.scroll.min(max_scroll);
+        let scroll = rp.scroll;
+        let response_view: Vec<Line> = response_rows.into_iter().skip(scroll).take(h).collect();
+        frame.render_widget(
+            Paragraph::new(response_view).style(Style::default().bg(t.bg_dark)),
+            response_inner,
+        );
+    }
+
+    // ── Zone 3: AI ─────────────────────────────────────────
+    let ai_block =
+        crate::ui::design_tokens::modal_panel("AI").border_style(border_color(focused, t));
+    let ai_inner = ai_block.inner(ai_rect);
+    frame.render_widget(ai_block, ai_rect);
+    if ai_inner.width > 0 && ai_inner.height > 0 {
+        let ai_line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            Span::styled(
+                "click here to ask a custom question".to_string(),
+                crate::ui::design_tokens::hint_style(),
+            ),
+            Span::styled(
+                "   \u{00B7} `a` quick debug".to_string(),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(vec![ai_line]).style(Style::default().bg(t.bg_dark)),
+            ai_inner,
+        );
+        app.rects.request_ai_section = Some(ai_inner);
     } else {
         app.rects.request_ai_section = None;
     }
+
+    // Register the whole pane area for wheel + fallback routing.
     app.rects.editor_panes.push((area, pane_id));
-    // Field rects were collected with `y` as a row index within `rows`
-    // (no scroll offset applied). Adjust by `scroll` + clip to area now
-    // that the final scroll value is known.
+
+    // ── Rect adjustment: edit_rows rects were collected with y = row
+    // index within `edit_rows` (0-based relative to request_inner).
+    // Translate to screen y = request_inner.y + row_index, clipped
+    // to request_inner.height so a click past the visible content
+    // doesn't fire.
+    let edit_h = request_inner.height as usize;
     for (mut r, pid, f) in fields.drain(..) {
-        let row_off = r.y; // row index within `rows`
-        if (row_off as usize) < scroll {
+        let row_off = r.y as usize;
+        if row_off >= edit_h {
             continue;
         }
-        let visible_off = row_off as usize - scroll;
-        if visible_off >= h {
-            continue;
-        }
-        r.y = area.y + visible_off as u16;
+        r.y = request_inner.y.saturating_add(row_off as u16);
         app.rects.request_fields.push((r, pid, f));
     }
-    // 2026-06-19 — api-workflow third hunt SEV-1: tab chip rects
-    // were registered with row-index y, but never adjusted for
-    // scroll. Clicks compared against screen coords never matched
-    // any chip. Apply the same scroll-offset translation as
-    // request_fields.
-    for (mut r, pid, t) in edit_tabs_local.drain(..) {
-        let row_off = r.y;
-        if (row_off as usize) < scroll {
+    for (mut r, pid, tab) in edit_tabs_local.drain(..) {
+        let row_off = r.y as usize;
+        if row_off >= edit_h {
             continue;
         }
-        let visible_off = row_off as usize - scroll;
-        if visible_off >= h {
-            continue;
-        }
-        r.y = area.y + visible_off as u16;
-        app.rects.request_edit_tabs.push((r, pid, t));
+        r.y = request_inner.y.saturating_add(row_off as u16);
+        app.rects.request_edit_tabs.push((r, pid, tab));
     }
-    // Vars-row rects → screen-y, push into App.rects.
     app.rects.request_vars_rows.clear();
     for (mut r, key) in vars_rows_local.drain(..) {
-        let row_off = r.y;
-        if (row_off as usize) < scroll {
+        let row_off = r.y as usize;
+        if row_off >= edit_h {
             continue;
         }
-        let visible_off = row_off as usize - scroll;
-        if visible_off >= h {
-            continue;
-        }
-        r.y = area.y + visible_off as u16;
+        r.y = request_inner.y.saturating_add(row_off as u16);
         app.rects.request_vars_rows.push((r, key));
     }
-    // Params-row rects → screen-y.
     app.rects.request_params_rows.clear();
     for (mut r, key) in params_rows_local.drain(..) {
-        let row_off = r.y;
-        if (row_off as usize) < scroll {
+        let row_off = r.y as usize;
+        if row_off >= edit_h {
             continue;
         }
-        let visible_off = row_off as usize - scroll;
-        if visible_off >= h {
-            continue;
-        }
-        r.y = area.y + visible_off as u16;
+        r.y = request_inner.y.saturating_add(row_off as u16);
         app.rects.request_params_rows.push((r, key));
     }
-    // Auth-row rects → screen-y.
     app.rects.request_auth_rows.clear();
     for (mut r, id) in auth_rows_local.drain(..) {
-        let row_off = r.y;
-        if (row_off as usize) < scroll {
+        let row_off = r.y as usize;
+        if row_off >= edit_h {
             continue;
         }
-        let visible_off = row_off as usize - scroll;
-        if visible_off >= h {
-            continue;
-        }
-        r.y = area.y + visible_off as u16;
+        r.y = request_inner.y.saturating_add(row_off as u16);
         app.rects.request_auth_rows.push((r, id));
     }
-    // (AI section rect registered when its pinned strip is drawn.)
 
-    // Adjust the caret for scroll + return it so the terminal cursor sits there.
+    // Caret — draw_edit reports y as a row index within edit_rows.
+    // Translate to screen y within request_inner, drop if clipped.
     caret.and_then(|(x, y)| {
-        let y_off = y.checked_sub(scroll as u16)?;
-        if y_off < area.height {
-            Some((x, area.y + y_off))
-        } else {
+        if (y as usize) >= edit_h {
             None
+        } else {
+            Some((x, request_inner.y.saturating_add(y)))
         }
     })
+}
+
+/// Focused Request panes get a cyan border, unfocused ones the
+/// standard `bg3` subtle gray — matches every other pane's focus
+/// treatment.
+fn border_color(focused: bool, t: theme::Theme) -> Style {
+    if focused {
+        Style::default().fg(t.blue).bg(t.bg_dark)
+    } else {
+        Style::default().fg(t.bg3).bg(t.bg_dark)
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
