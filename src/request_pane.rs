@@ -76,6 +76,15 @@ pub struct RequestPane {
     /// current Done against this snapshot. Cleared on a fresh
     /// :http.new or paste_curl that overwrites the request.
     pub prev_response: Option<Box<ResponseView>>,
+    /// Case-insensitive substring filter applied to header rows
+    /// (Edit-tab Headers list, request-summary headers, response
+    /// headers). Empty ⇒ show all. Set by `/` in the pane; matches
+    /// the sidebar-filter idiom used across Integrations / Agents /
+    /// Settings. (#11)
+    pub filter: String,
+    /// `/` in the pane focuses the filter input; typing appends;
+    /// Esc clears + unfocuses; Enter commits + unfocuses.
+    pub filter_focused: bool,
 }
 
 /// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
@@ -312,6 +321,8 @@ impl RequestPane {
             source_buffer: String::new(),
             source_cursor: 0,
             prev_response: None,
+            filter: String::new(),
+            filter_focused: false,
         }
     }
 

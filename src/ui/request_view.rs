@@ -72,6 +72,50 @@ fn header_row(key: &str, value: &str, t: theme::Theme) -> Line<'static> {
     ])
 }
 
+/// Case-insensitive substring match on either the key or the value.
+/// Empty filter always matches. Used to hide header rows that don't
+/// match the pane's `/` filter query (#11).
+fn header_matches_filter(key: &str, value: &str, q_lower: &str) -> bool {
+    if q_lower.is_empty() {
+        return true;
+    }
+    key.to_ascii_lowercase().contains(q_lower) || value.to_ascii_lowercase().contains(q_lower)
+}
+
+/// Filter chip row rendered at the top of the response section when
+/// the pane's `/` filter is active. Placeholder reads `/ filter` when
+/// unfocused, `type to filter…` when focused. `▏` cursor marks focus.
+/// Matches the sidebar-filter idiom across the app (#11).
+fn filter_row(filter: &str, focused: bool, t: theme::Theme) -> Line<'static> {
+    let display = if filter.is_empty() {
+        if focused {
+            "type to filter…".to_string()
+        } else {
+            "/ filter headers".to_string()
+        }
+    } else {
+        filter.to_string()
+    };
+    let fg = if !filter.is_empty() {
+        t.fg
+    } else if focused {
+        t.cyan
+    } else {
+        t.comment
+    };
+    let cursor = if focused { "▏" } else { "" };
+    let search_glyph = "\u{f002}";
+    Line::from(vec![
+        Span::styled("  ", Style::default().bg(t.bg_dark)),
+        Span::styled(
+            format!("{search_glyph} "),
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        ),
+        Span::styled(display, Style::default().fg(fg).bg(t.bg_dark)),
+        Span::styled(cursor, Style::default().fg(t.cyan).bg(t.bg_dark)),
+    ])
+}
+
 /// `+ <label>` action row — matches the "+ New note" / "+ New session"
 /// / "+ New request" chip idiom used across the activity-bar panels
 /// (Notes, Sessions, HTTP). Green fg + BOLD reads as "additive
@@ -179,6 +223,13 @@ pub fn draw(
     // the same design primitive as every other section title.
     rows.push(Line::from(Span::raw("")));
     rows.push(section_header_chip(" response ", t));
+    // Filter chip lives directly under the response header — appears
+    // whenever the filter is active OR focused (so users see the "/"
+    // hint even before typing). Empty + unfocused = hidden to keep
+    // the pane quiet on first render.
+    if !rp.filter.is_empty() || rp.filter_focused {
+        rows.push(filter_row(&rp.filter, rp.filter_focused, t));
+    }
     rows.push(Line::from(Span::raw("")));
     draw_response(rp, t, &mut rows);
 
@@ -1117,9 +1168,13 @@ fn draw_response(
     ]));
     // Request headers — color-coded (cyan key + comment `:` + fg
     // value) to match the Edit-tab Headers rendering. Same shape
-    // makes the two sections read as the same primitive.
+    // makes the two sections read as the same primitive. Skips
+    // rows that don't match the pane's `/` filter (#11).
+    let q_lower = rp.filter.trim().to_ascii_lowercase();
     for (k, v) in &rp.request.headers {
-        rows.push(header_row(k, v, t));
+        if header_matches_filter(k, v, &q_lower) {
+            rows.push(header_row(k, v, t));
+        }
     }
     if let Some(b) = &rp.request.body {
         rows.push(plain(String::new(), body_style));
@@ -1211,8 +1266,11 @@ fn draw_response(
             // Response headers use the same color-coded row as the
             // Edit-tab headers + request-summary headers — consistent
             // rendering across every place a header list shows up.
+            // Also honors the pane's `/` filter (#11).
             for (k, v) in &r.headers {
-                rows.push(header_row(k, v, t));
+                if header_matches_filter(k, v, &q_lower) {
+                    rows.push(header_row(k, v, t));
+                }
             }
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);

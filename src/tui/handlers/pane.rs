@@ -2539,8 +2539,31 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
             }
             return true;
         }
+        // Filter input has priority when focused — chars append to
+        // the filter, Backspace pops, Enter commits + unfocuses, Esc
+        // clears + unfocuses. Matches the sidebar-filter idiom (#11).
+        if rp.filter_focused {
+            match key.code {
+                KeyCode::Esc => {
+                    rp.filter.clear();
+                    rp.filter_focused = false;
+                }
+                KeyCode::Enter => rp.filter_focused = false,
+                KeyCode::Backspace => {
+                    rp.filter.pop();
+                }
+                KeyCode::Char(c) if !ctrl => rp.filter.push(c),
+                _ => {}
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Tab => rp.toggle_view(),
+            // `/` focuses the filter input — matches the
+            // Integrations / Agents / Settings / Cloud Agents idiom.
+            // Filter applies to header rows (Edit-tab Headers list,
+            // request-summary headers, response headers).
+            KeyCode::Char('/') if !ctrl => rp.filter_focused = true,
             KeyCode::Up | KeyCode::Char('k') => rp.scroll = rp.scroll.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => rp.scroll += 1,
             KeyCode::PageUp => rp.scroll = rp.scroll.saturating_sub(viewport),
