@@ -380,6 +380,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         crate::command::run("http.send", app);
         return;
     }
+    // Click on the "⎘ Save" button → save the active Request
+    // pane's fields to its source file, or open a Save-As prompt
+    // when no source file is set yet.
+    if let Some(r) = app.rects.request_save_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_save_or_prompt_save_as();
+        return;
+    }
     // Click on the "✕ Clear" button → reset the active Request
     // pane's fields to a blank template. Same code path as the
     // sidebar's `+ New request` chip; toasts a hint.

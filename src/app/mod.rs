@@ -1953,6 +1953,10 @@ pub struct PaneRects {
     /// `r` chord). Repainted every render so the button stays
     /// mouse-reachable regardless of scroll state.
     pub request_send_button: Option<Rect>,
+    /// Click rect over the "⎘ Save" sub-panel — writes the current
+    /// Request pane's fields back to its source file, or opens a
+    /// Save-As prompt if no source file is set.
+    pub request_save_button: Option<Rect>,
     /// Click rect over the "✕ Clear" sub-panel — resets the active
     /// Request pane's fields to a blank template. Same code path as
     /// the sidebar's `+ New request` chip.

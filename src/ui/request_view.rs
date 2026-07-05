@@ -416,18 +416,25 @@ pub fn draw(
     // colored chip). Sub-panels can sit flush against the parent's
     // top border without visual crowding.
     const TOP_PAD: u16 = 0;
-    // Right-side action boxes — Postman/Bruno idiom for firing and
-    // resetting the current request. Widths sized to fit each box's
-    // content plus 2-cell border chrome:
-    //   Send   = " ▶ Send "    (7 chars) + 2 border → 10 min, padded
-    //   Clear  = " ✕ Clear "   (8 chars) + 2 border → 11 min
+    // Right-side action boxes — Postman/Bruno idiom for firing,
+    // saving, and resetting the current request. Widths sized to
+    // fit each box's content plus 2-cell border chrome:
+    //   Send   = " ▶ Send "  → 10
+    //   Save   = " ⎘ Save "  → 10
+    //   Clear  = " ✕ Clear " → 11
     //
-    // Format lives INSIDE the Body tab now (right-aligned on the
-    // tab strip), so it only shows up when it's applicable.
+    // Format lives INSIDE the Body tab (right-aligned on the tab
+    // strip), so it only shows up when it's applicable.
     const SEND_BOX_WIDTH: u16 = 10;
+    const SAVE_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
     let show_sub_panels = request_inner.width
-        >= METHOD_BOX_WIDTH + MIN_URL_WIDTH + SEND_BOX_WIDTH + CLEAR_BOX_WIDTH + 2 * EDGE_PAD
+        >= METHOD_BOX_WIDTH
+            + MIN_URL_WIDTH
+            + SEND_BOX_WIDTH
+            + SAVE_BOX_WIDTH
+            + CLEAR_BOX_WIDTH
+            + 2 * EDGE_PAD
         && request_inner.height >= METHOD_URL_ROW_H + TOP_PAD + 3;
 
     let mut edit_rows: Vec<Line> = Vec::new();
@@ -438,9 +445,10 @@ pub fn draw(
     // these if we mixed them in.
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let mut send_button_rect: Option<Rect> = None;
+    let mut save_button_rect: Option<Rect> = None;
     let mut clear_button_rect: Option<Rect> = None;
     let tabs_rect = if show_sub_panels {
-        // Layout: [top-pad blank][pad][Method][URL][Send][Clear][pad]
+        // Layout: [top-pad][pad][Method][URL][Send][Save][Clear][pad]
         let row_y = request_inner.y.saturating_add(TOP_PAD);
         let method_rect = Rect {
             x: request_inner.x.saturating_add(EDGE_PAD),
@@ -454,6 +462,7 @@ pub fn draw(
             .saturating_sub(EDGE_PAD)
             .saturating_sub(METHOD_BOX_WIDTH)
             .saturating_sub(SEND_BOX_WIDTH)
+            .saturating_sub(SAVE_BOX_WIDTH)
             .saturating_sub(CLEAR_BOX_WIDTH)
             .saturating_sub(EDGE_PAD);
         let url_rect = Rect {
@@ -468,8 +477,14 @@ pub fn draw(
             width: SEND_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
-        let clear_rect = Rect {
+        let save_rect = Rect {
             x: send_rect.x.saturating_add(SEND_BOX_WIDTH),
+            y: row_y,
+            width: SAVE_BOX_WIDTH,
+            height: METHOD_URL_ROW_H,
+        };
+        let clear_rect = Rect {
+            x: save_rect.x.saturating_add(SAVE_BOX_WIDTH),
             y: row_y,
             width: CLEAR_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
@@ -481,6 +496,7 @@ pub fn draw(
             method_url_absolute.push((ur, EditField::Url));
         }
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
+        save_button_rect = draw_save_box(frame, rp, save_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
         // Tabs pick up IMMEDIATELY after the Method/URL bottom
         // border — no extra spacer between them.
@@ -651,6 +667,7 @@ pub fn draw(
         app.rects.request_fields.push((rect, pane_id, field));
     }
     app.rects.request_send_button = send_button_rect;
+    app.rects.request_save_button = save_button_rect;
     app.rects.request_clear_button = clear_button_rect;
     // request_format_button is now set inside draw_edit's Body
     // rendering path (right-aligned chip on the top-right of the
@@ -1056,6 +1073,47 @@ fn paint_body_format_chip(
         chip_rect,
     );
     Some(chip_rect)
+}
+
+/// Save sub-panel — click writes the current fields back to
+/// `source_path`. When `source_path` is None, opens a Save-As
+/// prompt. Rendered as a bold blue "⎘ Save" label. Dim when
+/// the pane has no URL yet (nothing meaningful to save).
+fn draw_save_box(
+    frame: &mut Frame,
+    rp: &crate::request_pane::RequestPane,
+    rect: Rect,
+    t: theme::Theme,
+) -> Option<Rect> {
+    let block = crate::ui::design_tokens::bordered_plain("");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width == 0 || inner.height == 0 {
+        return None;
+    }
+    let color = if rp.request.url.trim().is_empty() {
+        t.comment
+    } else {
+        t.blue
+    };
+    let text = " \u{2398} Save ";
+    let text_w = text.chars().count() as u16;
+    let mid_pad = inner.width.saturating_sub(text_w) / 2;
+    let content = Line::from(vec![
+        Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
+        Span::styled(
+            text.to_string(),
+            Style::default()
+                .fg(color)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
+        inner,
+    );
+    Some(inner)
 }
 
 /// Clear sub-panel — modal_panel titled "Clear" with a bold red-ish

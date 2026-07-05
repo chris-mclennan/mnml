@@ -434,6 +434,69 @@ impl App {
         }
     }
 
+    /// Save the active Request pane. If `source_path` is set, write
+    /// in place (`save_request_to_source`). Otherwise open a
+    /// Save-As prompt for the destination `.http` path. Bound to
+    /// the Save button in the Request pane's top row.
+    pub fn http_save_or_prompt_save_as(&mut self) {
+        let Some(cur) = self.active else { return };
+        let has_source = matches!(
+            self.panes.get(cur),
+            Some(Pane::Request(rp)) if rp.source_path.is_some()
+        );
+        if has_source {
+            self.save_request_to_source();
+        } else {
+            self.http_save_request_as_prompt();
+        }
+    }
+
+    /// Open a Save-As prompt for the active Request pane. The typed
+    /// path is passed to `http_save_request_as` on Enter.
+    pub fn http_save_request_as_prompt(&mut self) {
+        let has_request = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_request {
+            self.toast("save: no active Request pane");
+            return;
+        }
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::HttpSaveRequestAs,
+            "Save request to file:".to_string(),
+        ));
+    }
+
+    /// Accept handler for `PromptKind::HttpSaveRequestAs`. Assigns
+    /// the typed path to the active Request pane's `source_path`
+    /// (workspace-relative unless absolute) and writes the file via
+    /// `save_request_to_source`.
+    pub fn http_save_request_as(&mut self, path: &str) {
+        let path = path.trim();
+        if path.is_empty() {
+            self.toast("save: path can't be empty");
+            return;
+        }
+        let mut p = if path.starts_with('/') {
+            std::path::PathBuf::from(path)
+        } else {
+            self.workspace.join(path)
+        };
+        // Default extension to `.http` when the user typed a bare
+        // name — matches the sidebar convention.
+        if p.extension().is_none() {
+            p.set_extension("http");
+        }
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.source_path = Some(p.clone());
+        }
+        self.save_request_to_source();
+        // Refresh the sidebar file list so the new file appears.
+        self.http_panel_refresh();
+    }
+
     /// `http.save_response` — open a prompt for the destination
     /// path; on Enter, write the active Done response body there.
     pub fn http_save_response_prompt(&mut self) {

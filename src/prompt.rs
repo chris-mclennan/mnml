@@ -88,6 +88,9 @@ pub enum PromptKind {
     /// Accept ⇒ save the active Request pane's Done response body
     /// to the typed file path (workspace-relative or absolute).
     HttpSaveResponse,
+    /// Accept ⇒ save the active Request pane's current fields to
+    /// the typed .http path, set as source_path, and write.
+    HttpSaveRequestAs,
     /// Accept ⇒ replace the active Request pane's Authorization
     /// header with `Bearer <typed-token>`.
     HttpAuthBearer,
