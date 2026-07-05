@@ -1629,8 +1629,19 @@ fn draw_edit(
         // appears at the BOTTOM of the table with the caret in the
         // focused field. `+ Add row` chip below the table starts a
         // draft.
+        // Table sits 2 cells in from the left edge and caps at
+        // ~100 cells wide so the value column doesn't stretch to
+        // the pane edge (which pushed the ✕ far away from the
+        // actual value). Right-edge breathing room: at least 3
+        // cells so the ✕ never kisses the pane border.
+        const TABLE_MAX_W: u16 = 100;
+        const TABLE_RIGHT_PAD: u16 = 3;
         let table_x = area.x.saturating_add(2);
-        let table_w = area.width.saturating_sub(4).max(20);
+        let table_w = area
+            .width
+            .saturating_sub(2)
+            .saturating_sub(TABLE_RIGHT_PAD)
+            .clamp(20, TABLE_MAX_W);
         let x_col_w: u16 = 3;
         let inner_w = table_w.saturating_sub(x_col_w).saturating_sub(4);
         let name_w = (inner_w * 35 / 100).max(8);
