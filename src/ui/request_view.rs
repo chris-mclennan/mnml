@@ -2384,18 +2384,72 @@ fn draw_response(
                     return;
                 }
                 ResponseTab::Timeline => {
-                    // v1 placeholder — a full request timeline
-                    // (DNS/connect/TLS/send/receive) is a follow-up.
-                    // For now show the total elapsed as the one
-                    // number we do have.
-                    rows.push(plain(
-                        format!("  ⟳ total elapsed: {} ms", r.elapsed.as_millis()),
-                        Style::default().fg(t.fg).bg(t.bg_dark),
-                    ));
+                    // Per-phase timing bars. reqwest::blocking only
+                    // exposes two natural boundaries — `send()`
+                    // returning (DNS + connect + TLS + request-send
+                    // + response-headers all bundled as "wait") and
+                    // the body-read loop after ("receive"). Render
+                    // as horizontal bars scaled to the max of the
+                    // two phases so the ratio is obvious at a glance.
+                    let wait_ms = r.timing.wait.as_millis() as u64;
+                    let recv_ms = r.timing.receive.as_millis() as u64;
+                    let total_ms = r.elapsed.as_millis() as u64;
+                    let max = wait_ms.max(recv_ms).max(1);
+                    const BAR_W: u64 = 40;
+                    let make_bar = |ms: u64, color: ratatui::style::Color| {
+                        let filled = (ms * BAR_W / max) as usize;
+                        Line::from(vec![
+                            Span::styled("  ".to_string(), Style::default().bg(t.bg_dark)),
+                            Span::styled(
+                                "█".repeat(filled),
+                                Style::default().fg(color).bg(t.bg_dark),
+                            ),
+                            Span::styled(
+                                "░".repeat(BAR_W as usize - filled),
+                                Style::default().fg(t.bg3).bg(t.bg_dark),
+                            ),
+                            Span::styled(
+                                format!("  {ms} ms"),
+                                Style::default().fg(t.comment).bg(t.bg_dark),
+                            ),
+                        ])
+                    };
+                    rows.push(Line::from(vec![
+                        Span::styled(
+                            "  Wait     ".to_string(),
+                            Style::default()
+                                .fg(t.comment)
+                                .bg(t.bg_dark)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            "(connect + TLS + send + headers received)".to_string(),
+                            Style::default().fg(t.comment).bg(t.bg_dark),
+                        ),
+                    ]));
+                    rows.push(make_bar(wait_ms, t.blue));
+                    rows.push(plain(String::new(), body_style));
+                    rows.push(Line::from(vec![
+                        Span::styled(
+                            "  Receive  ".to_string(),
+                            Style::default()
+                                .fg(t.comment)
+                                .bg(t.bg_dark)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            "(body read)".to_string(),
+                            Style::default().fg(t.comment).bg(t.bg_dark),
+                        ),
+                    ]));
+                    rows.push(make_bar(recv_ms, t.green));
                     rows.push(plain(String::new(), body_style));
                     rows.push(plain(
-                        "  (per-phase timing is a follow-up)".to_string(),
-                        Style::default().fg(t.comment).bg(t.bg_dark),
+                        format!("  Total    {total_ms} ms"),
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(t.bg_dark)
+                            .add_modifier(Modifier::BOLD),
                     ));
                     return;
                 }

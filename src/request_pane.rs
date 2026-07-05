@@ -414,6 +414,10 @@ pub struct ResponseView {
     pub headers: Vec<(String, String)>,
     pub body: String,
     pub elapsed: Duration,
+    /// Per-phase timing carried through from `http::Response`.
+    /// Currently split into `wait` (send → headers received) and
+    /// `receive` (body read).
+    pub timing: crate::http::Timing,
     pub assertions: Vec<AssertionResult>,
     pub captures: Vec<(String, String)>,
     /// Result of validating the response body against a sibling

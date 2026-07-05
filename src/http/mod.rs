@@ -104,6 +104,24 @@ pub struct Response {
     pub headers: Vec<(String, String)>,
     pub body: String,
     pub elapsed: Duration,
+    /// Best-effort per-phase timing. reqwest::blocking exposes two
+    /// natural boundaries: `builder.send()` returning means DNS +
+    /// connect + TLS + request-send + response-headers are all done;
+    /// the body-read loop that follows measures the body-recv phase.
+    /// Everything before `send()` returns is bundled as
+    /// `wait` (waiting for the server to start responding); the
+    /// body-read time is `receive`. Total is `elapsed`.
+    pub timing: Timing,
+}
+
+/// Best-effort per-phase timings for a completed request. See
+/// `Response::timing`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Timing {
+    /// From `send()` invocation to headers received.
+    pub wait: Duration,
+    /// From headers-received to body-read completion.
+    pub receive: Duration,
 }
 
 impl Response {
@@ -149,6 +167,8 @@ pub fn send(req: &Request) -> Result<Response, String> {
 
     let start = Instant::now();
     let resp = builder.send().map_err(|e| transport_error(&e))?;
+    let wait = start.elapsed();
+    let recv_start = Instant::now();
     let status = resp.status().as_u16();
     let status_text = resp.status().canonical_reason().unwrap_or("").to_string();
     let headers = resp
@@ -182,6 +202,7 @@ pub fn send(req: &Request) -> Result<Response, String> {
         }
         s
     };
+    let receive = recv_start.elapsed();
     let elapsed = start.elapsed();
 
     Ok(Response {
@@ -190,6 +211,7 @@ pub fn send(req: &Request) -> Result<Response, String> {
         headers,
         body,
         elapsed,
+        timing: Timing { wait, receive },
     })
 }
 
