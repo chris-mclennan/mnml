@@ -589,4 +589,27 @@ impl App {
         }
         self.open_path(&path);
     }
+
+    /// Notes panel `+ New note` action — creates a numbered markdown
+    /// file under `<workspace>/.mnml/notes/` and opens it. Directory
+    /// is created on demand. (#8)
+    pub fn notes_panel_new_note(&mut self) {
+        let dir = crate::ui::notes_panel::notes_dir(&self.workspace);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toast(format!("notes: create dir failed: {e}"));
+            return;
+        }
+        let mut i = 1;
+        let mut path = dir.join("note-1.md");
+        while path.exists() {
+            i += 1;
+            path = dir.join(format!("note-{i}.md"));
+        }
+        let stub = format!("# Note {i}\n\n");
+        if let Err(e) = std::fs::write(&path, stub) {
+            self.toast(format!("notes: create failed: {e}"));
+            return;
+        }
+        self.open_path(&path);
+    }
 }

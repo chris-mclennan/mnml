@@ -1399,6 +1399,9 @@ pub enum ActivitySection {
     /// HTTP request workflow — `.http` / `.curl` file browser,
     /// recent requests, environment picker. (#10)
     Http,
+    /// Persistent scratch notes for the workspace. `.mnml/notes/*.md`.
+    /// v1 renders a flat list + `+ New note` (#8).
+    Notes,
     /// A manifest-registered Mount sibling — the u16 indexes
     /// into `App::mount_manifests`. Icon, color, tooltip, and
     /// binary come from the manifest. Manifest mounts render
@@ -1439,6 +1442,8 @@ impl ActivitySection {
             ),
             // nf-fa-bolt — HTTP / API workflow
             Self::Http => ("\u{F0E7}", "H", "HTTP", "view.activity_http"),
+            // nf-fa-sticky_note — persistent scratch notes
+            Self::Notes => ("\u{F249}", "N", "Notes", "view.activity_notes"),
             // Manifest mounts have per-entry metadata that lives
             // on `App::mount_manifests`; the activity-bar renderer
             // resolves it dynamically. This `meta()` arm is a
@@ -1459,6 +1464,7 @@ impl ActivitySection {
             Self::Agents,
             Self::CloudAgents,
             Self::Http,
+            Self::Notes,
         ]
     }
 
@@ -1477,6 +1483,7 @@ impl ActivitySection {
             Self::Agents => Some("agents".to_string()),
             Self::CloudAgents => Some("cloud_agents".to_string()),
             Self::Http => Some("http".to_string()),
+            Self::Notes => Some("notes".to_string()),
             Self::Mount(idx) => app.mount_manifests.get(*idx as usize).map(|m| m.id.clone()),
         }
     }
@@ -1765,6 +1772,11 @@ pub struct PaneRects {
     /// `ActivitySection::Http` panel `+ New request` row rect. Click →
     /// create a stub `.http` file and open it.
     pub http_panel_new_chip: Option<Rect>,
+    /// `ActivitySection::Notes` panel — one row per `.mnml/notes/*.md`.
+    /// Click → open the note in an editor pane. (#8)
+    pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
+    /// `ActivitySection::Notes` panel `+ New note` row rect.
+    pub notes_panel_new_chip: Option<Rect>,
     /// Click rect for the `+ New session` row at the bottom of
     /// the sessions panel. Click → spawns a Claude Code pane
     /// (most common case; a follow-up could open a picker).

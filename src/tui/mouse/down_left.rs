@@ -1621,6 +1621,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_path(&path);
         return;
     }
+    // Notes panel — file rows + `+ New note` chip (#8).
+    if let Some(r) = app.rects.notes_panel_new_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.notes_panel_new_note();
+        return;
+    }
+    if let Some((_, path)) = app
+        .rects
+        .notes_panel_files
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let path = path.clone();
+        app.open_path(&path);
+        return;
+    }
     // Agents rail panel — filter input, + New, and row
     // clicks.
     if let Some(r) = app.rects.agents_panel_filter_input

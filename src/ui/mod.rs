@@ -88,6 +88,7 @@ pub mod git_palette;
 pub mod http_panel;
 pub mod menu_bar;
 pub mod mount_view;
+pub mod notes_panel;
 pub mod prompt;
 pub mod pty_view;
 pub mod rename_preview_overlay;
@@ -534,6 +535,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
             crate::app::ActivitySection::Http => {
                 http_panel::draw(frame, app, content_area);
+            }
+            crate::app::ActivitySection::Notes => {
+                notes_panel::draw(frame, app, content_area);
             }
             crate::app::ActivitySection::Mount(idx) => {
                 // Rail content for a manifest-mounted sibling is
