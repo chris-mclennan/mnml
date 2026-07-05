@@ -318,21 +318,25 @@ fn draw_edit(
     let label_style = |is_focus: bool| {
         let mut st = Style::default().bg(t.bg_dark);
         if is_focus {
-            st = st.fg(t.yellow).add_modifier(Modifier::BOLD);
+            // Cyan matches the tab-strip active color + the section
+            // header chip, so every "this is the focused thing"
+            // signal in the pane speaks the same accent.
+            st = st.fg(t.cyan).add_modifier(Modifier::BOLD);
         } else {
             st = st.fg(t.comment);
         }
         st
     };
-    // Left-edge focus bar — bold yellow `▌` when focused (matches the diff
-    // swimlane style); subtle `bg2` block when not, so the column is
+    // Left-edge focus bar — bold cyan `▌` when focused (matches the
+    // menu-family focus indicator across settings + agents +
+    // integrations); subtle `bg3` block when not, so the column is
     // still visually present and easy to anchor on.
     let bar_span = |is_focus: bool| {
         if is_focus {
             Span::styled(
                 "▌ ".to_string(),
                 Style::default()
-                    .fg(t.yellow)
+                    .fg(t.cyan)
                     .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             )
@@ -409,39 +413,36 @@ fn draw_edit(
         *caret = Some((area.x + caret_col.min(area.width.saturating_sub(1)), y));
     }
 
-    // 2026-06-19 — tabbed Edit view per the rqst Postman-style
-    // layout. Tab strip sits between URL + the per-tab content.
-    // Tab clicks switch via App.rects.request_tabs.
+    // Tab strip (Params / Headers / Body / Auth / Vars / Source).
+    // Active tab uses the shared menu-family highlight (cyan bg +
+    // bg_dark fg + BOLD) — the same primitive as menu bar / context
+    // menu / settings row selection. Inactive tabs render as dim
+    // comment-fg text on the panel bg. Visual cue survives
+    // monochrome via BOLD on the active tab.
     {
         use crate::request_pane::EditTab;
         let strip_y = rows.len() as u16;
+        // Leading blank row so the strip has breathing room from
+        // the URL bar above.
+        rows.push(Line::from(Span::raw("")));
         let mut spans: Vec<Span> = Vec::new();
+        let strip_y = strip_y + 1;
         let mut col: u16 = 2;
+        // Leading pad column so the strip aligns with the URL row.
+        spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
         for tab in EditTab::ALL {
             let label = tab.label();
             let is_cur = rp.edit_tab == *tab;
-            // 2026-06-19 — keyboard hunt SEV-3: the prior cue was
-            // BG color only (`bg3` vs `bg_dark`), which flattens
-            // on themes with close BG steps + reads as identical
-            // to colorblind users. Active tab now renders with
-            // bracket markers + UNDERLINED + BOLD, so the cue
-            // survives in monochrome.
-            let (display, style) = if is_cur {
-                (
-                    format!("[{label}]"),
-                    Style::default()
-                        .fg(t.fg)
-                        .bg(t.bg3)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                )
+            let display = format!(" {label} ");
+            let style = if is_cur {
+                crate::ui::design_tokens::row_highlight_menu()
             } else {
-                (
-                    format!(" {label} "),
-                    Style::default().fg(t.comment).bg(t.bg_dark),
-                )
+                Style::default().fg(t.comment).bg(t.bg_dark)
             };
             let chip_w = display.chars().count() as u16;
             spans.push(Span::styled(display, style));
+            // 1-cell separator between chips — panel bg so the
+            // active chip's cyan doesn't smear into its neighbor.
             spans.push(Span::styled(
                 " ".to_string(),
                 Style::default().bg(t.bg_dark),
@@ -1040,19 +1041,35 @@ fn draw_response(
     let dim = Style::default().fg(t.comment).bg(t.bg_dark);
     let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
 
-    // ── request line + headers + body (read-only summary) ──
+    // ── request-line summary — mirrors the method-chip + URL row
+    // from the Edit section so the response is anchored to what
+    // was fired. Method uses the same color-per-verb scheme as the
+    // Edit chip. Arrow indicator drops to cyan (matches the pane's
+    // active-focus color, not the historical yellow "attention"
+    // color that read as a warning). ──
+    let method_upper = rp.request.method.to_uppercase();
+    let method_color = match method_upper.as_str() {
+        "GET" => t.green,
+        "POST" => t.orange,
+        "PUT" => t.blue,
+        "PATCH" => t.cyan,
+        "DELETE" => t.red,
+        "HEAD" => t.yellow,
+        "OPTIONS" => t.purple,
+        _ => t.fg,
+    };
     rows.push(Line::from(vec![
-        Span::styled("▶ ", Style::default().fg(t.yellow).bg(t.bg_dark)),
+        Span::styled("▶ ", Style::default().fg(t.cyan).bg(t.bg_dark)),
         Span::styled(
-            format!("{} ", rp.request.method),
+            format!(" {method_upper} "),
             Style::default()
-                .fg(t.green)
-                .bg(t.bg_dark)
+                .fg(t.bg_dark)
+                .bg(method_color)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            rp.request.url.clone(),
-            Style::default().fg(t.blue).bg(t.bg_dark),
+            format!("  {}", rp.request.url),
+            Style::default().fg(t.fg).bg(t.bg_dark),
         ),
     ]));
     for (k, v) in &rp.request.headers {
@@ -1072,10 +1089,13 @@ fn draw_response(
     // ── response ──
     match &rp.state {
         RunState::Sending => {
+            // Cyan matches the pane's focus family; the animated
+            // spinner sits inside a compact chip so it reads as an
+            // in-flight indicator, not a static label.
             rows.push(plain(
                 "  ⟳ sending…".to_string(),
                 Style::default()
-                    .fg(t.yellow)
+                    .fg(t.cyan)
                     .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             ));
