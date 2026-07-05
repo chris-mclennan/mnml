@@ -186,6 +186,11 @@ pub enum PickerKind {
     /// `id` = the header name. Accept ⇒ insert `<id>: ` at the
     /// active Request pane's Headers cursor.
     HttpHeader,
+    /// `id` = an env name (basename of a `.env` file, no extension).
+    /// Accept ⇒ set `App::http_env_override` so the picked env
+    /// resolves for the next `EnvSet::select` call. Populated from
+    /// `<workspace>/.mnml/env/*.env` + `<workspace>/.rqst/env/*.env`. (#11)
+    HttpEnv,
     /// `id` = the auth preset filename stem (no extension). Accept
     /// ⇒ read `.mnml/auth/<id>.txt`, set the active Request pane's
     /// Authorization header to its content.

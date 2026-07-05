@@ -306,6 +306,64 @@ impl App {
         }
     }
 
+    /// Open a picker of every `.env` file the workspace knows about
+    /// (both `.mnml/env/*.env` and `.rqst/env/*.env`). Accepting a
+    /// row sets `App::http_env_override` so subsequent
+    /// `EnvSet::select*` calls resolve against the picked env. (#11)
+    pub fn open_http_env_picker(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for sub in [".mnml", ".rqst"] {
+            let dir = self.workspace.join(sub).join("env");
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("env")
+                        && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    {
+                        seen.insert(stem.to_string());
+                    }
+                }
+            }
+        }
+        if seen.is_empty() {
+            self.toast("http: no `.env` files under `.mnml/env/` or `.rqst/env/`");
+            return;
+        }
+        let current = self.http_env_override.clone().or_else(|| {
+            std::env::var("MNML_ENV")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        });
+        let items: Vec<PickerItem> = seen
+            .into_iter()
+            .map(|name| {
+                let hint = if Some(&name) == current.as_ref() {
+                    "current".to_string()
+                } else {
+                    String::new()
+                };
+                PickerItem::new(name.clone(), name, hint)
+            })
+            .collect();
+        self.open_picker(Picker::new(PickerKind::HttpEnv, "Pick env", items));
+    }
+
+    /// Accept handler for `PickerKind::HttpEnv`. Stores the picked
+    /// env name on `App::http_env_override`.
+    pub fn accept_http_env(&mut self, name: &str) {
+        self.http_env_override = Some(name.to_string());
+        self.toast(format!("http env: {name}"));
+    }
+
+    /// Clear the runtime env override so `EnvSet::select` falls back
+    /// to `MNML_ENV` / config default again.
+    pub fn http_reset_env(&mut self) {
+        if self.http_env_override.take().is_some() {
+            self.toast("http env: reset to default");
+        }
+    }
+
     /// Dispatcher for Auth-tab row clicks. `id` matches the
     /// row's stable id stored in App.rects.request_auth_rows.
     pub fn http_auth_row_clicked(&mut self, id: &str) {
@@ -1248,7 +1306,7 @@ impl App {
         use crate::picker::{Picker, PickerItem, PickerKind};
         let env_name = crate::http::template::EnvSet::select_with_config_default(
             &self.workspace,
-            None,
+            self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         )
         .name()
@@ -1312,7 +1370,7 @@ impl App {
         }
         let env_name = crate::http::template::EnvSet::select_with_config_default(
             &self.workspace,
-            None,
+            self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         )
         .name()
@@ -1404,7 +1462,7 @@ impl App {
     fn write_env_var(&mut self, key: &str, value: &str) {
         let env_name = crate::http::template::EnvSet::select_with_config_default(
             &self.workspace,
-            None,
+            self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         )
         .name()
@@ -1593,7 +1651,7 @@ impl App {
         let script = http::script::parse(&text);
         let mut env = EnvSet::select_with_config_default(
             &self.workspace,
-            None,
+            self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         );
         http::script::apply_pre(&script, &mut request, &mut env);
@@ -2120,7 +2178,7 @@ impl App {
         let script = http::script::parse(&script_src);
         let mut env = EnvSet::select_with_config_default(
             &self.workspace,
-            None,
+            self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         );
         http::script::apply_pre(&script, &mut request, &mut env);
@@ -2774,7 +2832,7 @@ impl App {
         let script = http::script::parse(&script_src);
         let mut env = EnvSet::select_with_config_default(
             &self.workspace,
-            None,
+            self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         );
         http::script::apply_pre(&script, &mut request, &mut env);

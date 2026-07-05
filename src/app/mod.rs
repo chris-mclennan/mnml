@@ -3020,6 +3020,12 @@ pub struct App {
     /// `tick` drains this; the picker pops out of the loading
     /// state when the receiver delivers.
     pub scm_pr_pending: Option<std::sync::mpsc::Receiver<crate::scm::ScmPrCache>>,
+    /// Runtime `.env` selection override (#11). Takes precedence over
+    /// `MNML_ENV` in `EnvSet::select_with_config_default` when set.
+    /// Populated by the `http.pick_env` picker; cleared with
+    /// `http.reset_env` or a fresh session. Persists across sends
+    /// within a session so switching envs doesn't need shell dance.
+    pub http_env_override: Option<String>,
     /// Repos discovered inside the workspace. One entry per `.git/` found.
     /// `[]` when the workspace contains no repo. Always-1-entry for the
     /// single-repo case (workspace IS a repo). Multi-repo workspaces get
@@ -4208,6 +4214,7 @@ impl App {
             last_image_paints: Vec::new(),
             scm_pr_cache: None,
             scm_pr_pending: None,
+            http_env_override: None,
             repos,
             active_repo,
             git_section_expanded: git_section_expanded_default,

@@ -196,6 +196,7 @@ pub fn draw(
     // draw — both always draw.
     let show_ws = app.config.ui.show_whitespace;
     let workspace = app.workspace.clone();
+    let env_override = app.http_env_override.clone();
     let mut vars_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut params_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut auth_rows_local: Vec<(Rect, String)> = Vec::new();
@@ -211,6 +212,7 @@ pub fn draw(
         &mut edit_tabs_local,
         show_ws,
         &workspace,
+        env_override.as_deref(),
         &mut vars_rows_local,
         &mut params_rows_local,
         &mut auth_rows_local,
@@ -403,6 +405,7 @@ fn draw_edit(
     tabs: &mut Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
     show_ws: bool,
     workspace: &std::path::Path,
+    env_override: Option<&str>,
     vars_rows_local: &mut Vec<(Rect, String)>,
     params_rows_local: &mut Vec<(Rect, String)>,
     auth_rows_local: &mut Vec<(Rect, String)>,
@@ -898,7 +901,10 @@ fn draw_edit(
         // 2026-06-19 v2 — workspace plumbed; read both env files in
         // .rqst → .mnml order and last-wins on same key (matches
         // EnvSet::load precedence + the env editor picker).
-        let env_name = crate::http::template::EnvSet::select(workspace, None)
+        // Runtime override (via `:http.pick_env`) wins first — matches
+        // the precedence used at send time so what's shown in Vars is
+        // what the request will resolve against.
+        let env_name = crate::http::template::EnvSet::select(workspace, env_override)
             .name()
             .map(str::to_string)
             .unwrap_or_else(|| "dev".to_string());

@@ -3465,6 +3465,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_bench_active(10, 4),
         },
         Command {
+            id: "http.pick_env",
+            title: "HTTP: pick .env file (session override)",
+            group: "http",
+            keys: &[],
+            run: |app| app.open_http_env_picker(),
+        },
+        Command {
+            id: "http.reset_env",
+            title: "HTTP: reset .env override (fall back to MNML_ENV)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_reset_env(),
+        },
+        Command {
             id: "http.edit_env",
             title: "HTTP: structured editor for the active env file (.rqst/env/<name>.env)",
             group: "http",
