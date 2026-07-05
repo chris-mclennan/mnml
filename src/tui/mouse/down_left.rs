@@ -486,9 +486,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             app.active.and_then(|i| app.panes.get(i)),
             Some(crate::pane::Pane::Request(rp)) if rp.edit_tab == crate::request_pane::EditTab::Headers
         );
-        // `__COMMIT__` sentinel = click on the draft row's ✓ cell
-        // → commit + open a fresh draft row.
-        if key == "__COMMIT__" {
+        // Sentinel-key routing. The `\0` prefix can't appear in
+        // any HTTP header name or URL query key, so no user data
+        // collides:
+        //   `\0COMMIT`    — draft-row ✓ cell → commit + new row
+        //   `\0VAL<name>` — value cell     → start value edit
+        //   `\0NAME<name>` — name cell     → start rename edit
+        //   `\0DEL<name>`  — ✕ cell        → delete row
+        if key == "\0COMMIT" {
             if is_headers {
                 app.http_headers_add_commit(true);
             } else {
@@ -496,9 +501,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             }
             return;
         }
-        // `__VAL:<name>` = click on the value cell of an existing
-        // row → start in-place value edit.
-        if let Some(row_key) = key.strip_prefix("__VAL:") {
+        if let Some(row_key) = key.strip_prefix("\0VAL") {
             let kind = if is_headers {
                 crate::request_pane::KvEditKind::Headers
             } else {
@@ -507,9 +510,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             app.http_kv_edit_begin(kind, row_key.to_string());
             return;
         }
-        // `__NAME:<name>` = click on the name cell → start
-        // in-place rename edit.
-        if let Some(row_key) = key.strip_prefix("__NAME:") {
+        if let Some(row_key) = key.strip_prefix("\0NAME") {
             let kind = if is_headers {
                 crate::request_pane::KvEditKind::Headers
             } else {
@@ -518,8 +519,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             app.http_kv_edit_begin_name(kind, row_key.to_string());
             return;
         }
-        // `__DEL:<name>` = click on the ✕ cell → delete row.
-        if let Some(row_key) = key.strip_prefix("__DEL:") {
+        if let Some(row_key) = key.strip_prefix("\0DEL") {
             if is_headers {
                 app.http_headers_delete(row_key);
             } else {

@@ -265,7 +265,12 @@ pub(crate) enum KvTableKind {
 /// - data rows — full row width, keyed on the row's name (click
 ///   anywhere on the row → delete).
 /// - `+ Add row` — full area width, empty-string key.
-/// - `✓` draft cell — 3 cells, `"__COMMIT__"` sentinel key.
+/// - `✓` draft cell — 3 cells, `"\0COMMIT"` sentinel key.
+///
+/// Sentinels start with `\0` because HTTP header names + URL query
+/// keys forbid the null byte, so no user data can collide with the
+/// prefix. Was `__NAME:` / `__VAL:` etc. — a legitimately named
+/// `__COMMIT__` header would have collided.
 ///
 /// The `key_color_default` param lets Params (fg-BOLD) and Headers
 /// (cyan-BOLD) render their key columns in their preferred color
@@ -298,6 +303,10 @@ pub(crate) fn render_kv_table(
     let name_w = (inner_w * 35 / 100).max(8);
     let value_w = inner_w.saturating_sub(name_w);
 
+    // Field the row's fallback click focuses. Params rows map to
+    // `Url` because query params live in the URL — a click that
+    // misses the cell-level rects lands on the URL field, which
+    // is the natural edit target for anything param-related.
     let edit_field = match kind {
         KvTableKind::Params => EditField::Url,
         KvTableKind::Headers => EditField::Headers,
@@ -463,7 +472,7 @@ pub(crate) fn render_kv_table(
                 width: name_w,
                 height: 1,
             },
-            format!("__NAME:{k}"),
+            format!("\0NAME{k}"),
         ));
         params_rows_local.push((
             Rect {
@@ -472,7 +481,7 @@ pub(crate) fn render_kv_table(
                 width: value_w,
                 height: 1,
             },
-            format!("__VAL:{k}"),
+            format!("\0VAL{k}"),
         ));
         params_rows_local.push((
             Rect {
@@ -481,7 +490,7 @@ pub(crate) fn render_kv_table(
                 width: 3,
                 height: 1,
             },
-            format!("__DEL:{k}"),
+            format!("\0DEL{k}"),
         ));
         register(fields, row_y);
         if i + 1 < data.len() || draft.is_some() {
@@ -539,14 +548,17 @@ pub(crate) fn render_kv_table(
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ));
-        let check_x_off = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
+        // ✓ cell sits in the same X column as the data-row ✕ cell.
+        // Reuse `x_col_x_off` — the earlier hand-computed offset
+        // was 2 cells too far left, so the visible ✓ hit dead
+        // space and clicks 2 columns to its left fired commit.
         let check_rect = Rect {
-            x: area.x.saturating_add(check_x_off),
+            x: area.x.saturating_add(x_col_x_off),
             y: draft_y,
             width: 3,
             height: 1,
         };
-        params_rows_local.push((check_rect, "__COMMIT__".to_string()));
+        params_rows_local.push((check_rect, "\0COMMIT".to_string()));
     }
     rows.push(make_border('└', '┴', '┘', '─'));
 
