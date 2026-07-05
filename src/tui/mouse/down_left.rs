@@ -370,6 +370,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.ai_ask_about_request_prompt();
         return;
     }
+    // Click on the "▶ Send" button in the Request pane's top row
+    // → fires the request. Postman / Bruno idiom. Same effect as
+    // the `r` chord over the Request pane, and the http.send
+    // palette command.
+    if let Some(r) = app.rects.request_send_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        crate::command::run("http.send", app);
+        return;
+    }
     // Click on a Vars-tab row → open the env editor
     // directly. Empty key (the `+ Add` row) → add prompt;
     // non-empty key → edit prompt for that key.

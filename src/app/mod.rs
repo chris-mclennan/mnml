@@ -1948,6 +1948,11 @@ pub struct PaneRects {
     /// Click rect over the AI section header in the Request pane.
     /// Click → fire :http.ai_debug (same as the `a` keystroke).
     pub request_ai_section: Option<Rect>,
+    /// Click rect over the "▶ Send" sub-panel in the Request pane's
+    /// top row. Click → fire `http.send` on the pane (same as the
+    /// `r` chord). Repainted every render so the button stays
+    /// mouse-reachable regardless of scroll state.
+    pub request_send_button: Option<Rect>,
     /// Click rect for each row in the Auth tab. id values:
     /// `set_bearer` / `set_basic` / `set_api_key` / `apply_preset` /
     /// `save_preset` / `clear`. Cleared + repopulated each render.

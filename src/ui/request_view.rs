@@ -372,7 +372,11 @@ pub fn draw(
     // down off the parent Request block's top border so they read
     // as free-floating sub-panels.
     const TOP_PAD: u16 = 1;
-    let show_sub_panels = request_inner.width >= METHOD_BOX_WIDTH + MIN_URL_WIDTH + 2 * EDGE_PAD
+    // Send button on the right of the URL — Postman/Bruno idiom.
+    // Click fires `http.send`.
+    const SEND_BOX_WIDTH: u16 = 10;
+    let show_sub_panels = request_inner.width
+        >= METHOD_BOX_WIDTH + MIN_URL_WIDTH + SEND_BOX_WIDTH + 2 * EDGE_PAD
         && request_inner.height >= METHOD_URL_ROW_H + TOP_PAD + 3;
 
     let mut edit_rows: Vec<Line> = Vec::new();
@@ -382,8 +386,9 @@ pub fn draw(
     // its `fields` vec as row-index-y and would double-translate
     // these if we mixed them in.
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
+    let mut send_button_rect: Option<Rect> = None;
     let tabs_rect = if show_sub_panels {
-        // Layout: [top-pad blank row][pad][Method][URL][pad]
+        // Layout: [top-pad blank row][pad][Method][URL][Send][pad]
         let row_y = request_inner.y.saturating_add(TOP_PAD);
         let method_rect = Rect {
             x: request_inner.x.saturating_add(EDGE_PAD),
@@ -396,11 +401,18 @@ pub fn draw(
             .width
             .saturating_sub(EDGE_PAD)
             .saturating_sub(METHOD_BOX_WIDTH)
+            .saturating_sub(SEND_BOX_WIDTH)
             .saturating_sub(EDGE_PAD);
         let url_rect = Rect {
             x: url_x,
             y: row_y,
             width: url_width,
+            height: METHOD_URL_ROW_H,
+        };
+        let send_rect = Rect {
+            x: url_x.saturating_add(url_width),
+            y: row_y,
+            width: SEND_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
         if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
@@ -409,6 +421,7 @@ pub fn draw(
         if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret, t) {
             method_url_absolute.push((ur, EditField::Url));
         }
+        send_button_rect = draw_send_box(frame, rp, send_rect, t);
         // Tabs pick up IMMEDIATELY after the Method/URL bottom
         // border — no extra spacer between them.
         let used = TOP_PAD.saturating_add(METHOD_URL_ROW_H);
@@ -540,6 +553,7 @@ pub fn draw(
     for (rect, field) in method_url_absolute.drain(..) {
         app.rects.request_fields.push((rect, pane_id, field));
     }
+    app.rects.request_send_button = send_button_rect;
     for (mut r, pid, tab) in edit_tabs_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
@@ -600,6 +614,53 @@ pub fn draw(
 // modal_panel(title) now uses the design-token default border
 // (t.fg on t.bg_dark), matching the rest of the app's bordered
 // panels instead of a per-pane blue-on-focus override.
+
+/// Send sub-panel — modal_panel titled "Send" with a bold green
+/// "▶ Send" label inside. Click routes to the `http.send` palette
+/// command via the pane-level mouse handler (via
+/// `App::rects::request_send_button`). Returns the absolute-coord
+/// click rect for the whole box.
+fn draw_send_box(
+    frame: &mut Frame,
+    rp: &crate::request_pane::RequestPane,
+    rect: Rect,
+    t: theme::Theme,
+) -> Option<Rect> {
+    let block = crate::ui::design_tokens::modal_panel("Send");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width == 0 || inner.height == 0 {
+        return None;
+    }
+    // Green (▶ Send) when we have a URL to fire, dim (▶ Send) when
+    // the URL is empty so the button reads as "not ready" without
+    // being an error color. State-in-flight (Sending) gets the
+    // running-yellow spinner treatment.
+    let (glyph, color) = match &rp.state {
+        crate::request_pane::RunState::Sending => ("\u{27F3}", t.yellow), // ⟳
+        crate::request_pane::RunState::Streaming(_) => ("\u{25B6}", t.cyan),
+        _ if rp.request.url.trim().is_empty() => ("\u{25B6}", t.comment),
+        _ => ("\u{25B6}", t.green),
+    };
+    let text = format!(" {glyph} Send ");
+    let text_w = text.chars().count() as u16;
+    let mid_pad = inner.width.saturating_sub(text_w) / 2;
+    let content = Line::from(vec![
+        Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
+        Span::styled(
+            text,
+            Style::default()
+                .fg(color)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
+        inner,
+    );
+    Some(inner)
+}
 
 /// Method sub-panel — legend-outline modal_panel titled "Method" with
 /// the verb rendered as COLORED TEXT (not a colored bg chip) and a
@@ -959,6 +1020,15 @@ fn draw_edit(
             )]));
             register_field(fields, empty_y, EditField::Body);
         } else {
+            // JSON body: pre-compute tree-sitter colored spans per
+            // line so keys/strings/numbers/keywords are colored the
+            // same way as the response view's JSON body. Falls back
+            // to plain-fg on non-JSON.
+            let json_spans: Vec<Vec<crate::highlight::ColoredSpan>> = if detected == Some("JSON") {
+                crate::highlight::highlight_lines(body, "json")
+            } else {
+                Vec::new()
+            };
             for (i, line) in body.lines().enumerate() {
                 let row_y = rows.len() as u16;
                 // 2026-06-19 — keyboard hunt SEV-3 v2: when
@@ -971,10 +1041,24 @@ fn draw_edit(
                 } else {
                     line.to_string()
                 };
-                rows.push(Line::from(vec![Span::styled(
-                    format!("    {rendered}"),
-                    Style::default().fg(t.grey_fg).bg(t.bg_dark),
-                )]));
+                // JSON gets colored_line (per-token color); other
+                // content types keep the plain grey_fg rendering.
+                let content_line = if let Some(spans) = json_spans.get(i) {
+                    // Prefix 4 spaces of indent on `bg_dark`, then
+                    // the colored line's spans.
+                    let mut inner = colored_line(&rendered, spans, t.grey_fg, t);
+                    inner.spans.insert(
+                        0,
+                        Span::styled("    ".to_string(), Style::default().bg(t.bg_dark)),
+                    );
+                    inner
+                } else {
+                    Line::from(vec![Span::styled(
+                        format!("    {rendered}"),
+                        Style::default().fg(t.grey_fg).bg(t.bg_dark),
+                    )])
+                };
+                rows.push(content_line);
                 register_field(fields, row_y, EditField::Body);
                 if b_focus && focused && caret.is_none() {
                     let body_offset_of_line_start = nth_line_start(body, i);
