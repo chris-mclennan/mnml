@@ -542,8 +542,7 @@ pub fn draw(
     // `response_inner`; the actual response content flows below
     // starting at `content_inner`.
     let content_inner = if response_inner.height >= 2 {
-        app.rects.request_response_tabs =
-            paint_response_tab_strip(frame, rp.response_tab, response_inner, t);
+        app.rects.request_response_tabs = paint_response_tab_strip(frame, rp, response_inner, t);
         Rect {
             x: response_inner.x,
             y: response_inner.y.saturating_add(1),
@@ -770,14 +769,13 @@ fn response_status_title(
 }
 
 /// Response sub-tab strip — Bruno-style Body / Headers / Timeline
-/// / Tests row. Painted on the first row of `response_inner`;
-/// returns the click rects for each tab so the mouse handler can
-/// route clicks. Uses the same menu-family styling as the Request
-/// tab strip (row_highlight_menu for the active tab, `fg on bg2`
-/// chips for the inactive ones).
+/// / Tests row with an UNDERLINED active tab and plain-fg inactive
+/// tabs (no chip bg). A right-aligned `JSON ▼` chip shows the
+/// detected response content type. Returns the click rects for
+/// each tab.
 fn paint_response_tab_strip(
     frame: &mut Frame,
-    active: crate::request_pane::ResponseTab,
+    rp: &crate::request_pane::RequestPane,
     response_inner: Rect,
     t: theme::Theme,
 ) -> Vec<(Rect, crate::request_pane::ResponseTab)> {
@@ -785,6 +783,7 @@ fn paint_response_tab_strip(
     if response_inner.width == 0 || response_inner.height == 0 {
         return rects;
     }
+    let active = rp.response_tab;
     let strip_rect = Rect {
         x: response_inner.x,
         y: response_inner.y,
@@ -797,16 +796,22 @@ fn paint_response_tab_strip(
     for tab in crate::request_pane::ResponseTab::ALL {
         let label = tab.label();
         let is_cur = active == *tab;
-        let display = format!(" {label} ");
+        // Bruno-style tabs: active = fg BOLD UNDERLINED (no chip
+        // bg), inactive = comment fg (subtle nav-link look).
         let style = if is_cur {
-            crate::ui::design_tokens::row_highlight_menu()
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else {
-            Style::default().fg(t.fg).bg(t.bg2)
+            Style::default().fg(t.comment).bg(t.bg_dark)
         };
-        let chip_w = display.chars().count() as u16;
-        spans.push(Span::styled(display, style));
+        let chip_w = label.chars().count() as u16;
+        spans.push(Span::styled(label.to_string(), style));
+        // 2-cell gap between tabs so the underline of the active
+        // tab has visible breathing room.
         spans.push(Span::styled(
-            " ".to_string(),
+            "  ".to_string(),
             Style::default().bg(t.bg_dark),
         ));
         rects.push((
@@ -818,13 +823,84 @@ fn paint_response_tab_strip(
             },
             *tab,
         ));
-        col += chip_w + 1;
+        col += chip_w + 2;
     }
     frame.render_widget(
         Paragraph::new(vec![Line::from(spans)]).style(Style::default().bg(t.bg_dark)),
         strip_rect,
     );
+    // Right-aligned content-type chip — `JSON ▼` / `XML ▼` / etc.
+    // Reflects the detected type; click behavior (override) is a
+    // follow-up.
+    let type_label = detect_response_content_type(rp);
+    let chip_text = format!(" {type_label} \u{25BC} ");
+    let chip_w = chip_text.chars().count() as u16;
+    if strip_rect.width >= chip_w + 2 {
+        let chip_x = strip_rect
+            .x
+            .saturating_add(strip_rect.width)
+            .saturating_sub(chip_w)
+            .saturating_sub(1);
+        let chip_rect = Rect {
+            x: chip_x,
+            y: strip_rect.y,
+            width: chip_w,
+            height: 1,
+        };
+        let chip_line = Line::from(vec![Span::styled(
+            chip_text,
+            Style::default()
+                .fg(t.cyan)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        )]);
+        frame.render_widget(
+            Paragraph::new(vec![chip_line]).style(Style::default().bg(t.bg_dark)),
+            chip_rect,
+        );
+    }
     rects
+}
+
+/// Detect the response body's content type for the sub-tab strip's
+/// right-aligned chip. Prefers the `content-type` header when
+/// present, falls back to body-shape sniffing. Returns "—" when
+/// there's no response.
+fn detect_response_content_type(rp: &crate::request_pane::RequestPane) -> String {
+    let r = match &rp.state {
+        RunState::Done(r) => r,
+        RunState::Streaming(r) => r,
+        _ => return "\u{2014}".to_string(),
+    };
+    for (k, v) in &r.headers {
+        if k.eq_ignore_ascii_case("content-type") {
+            let vlow = v.to_ascii_lowercase();
+            if vlow.contains("json") {
+                return "JSON".to_string();
+            }
+            if vlow.contains("html") {
+                return "HTML".to_string();
+            }
+            if vlow.contains("xml") {
+                return "XML".to_string();
+            }
+            if vlow.contains("javascript") || vlow.contains("ecmascript") {
+                return "JS".to_string();
+            }
+            if vlow.contains("css") {
+                return "CSS".to_string();
+            }
+            if vlow.contains("plain") || vlow.contains("text/") {
+                return "TEXT".to_string();
+            }
+        }
+    }
+    let head = r.body.trim_start();
+    match head.chars().next() {
+        Some('{') | Some('[') => "JSON".to_string(),
+        Some('<') => "XML".to_string(),
+        _ => "TEXT".to_string(),
+    }
 }
 
 /// Split-orientation toggle chip — floats at the top-right of the
