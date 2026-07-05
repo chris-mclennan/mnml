@@ -197,7 +197,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             t.fg
         };
         let placeholder = if app.cloud_run_prompt_input.is_empty() {
-            "Type a prompt + Enter to fire…".to_string()
+            if focused {
+                "type a prompt + Enter to fire…".to_string()
+            } else {
+                "/ prompt".to_string()
+            }
         } else {
             app.cloud_run_prompt_input.clone()
         };

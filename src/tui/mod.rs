@@ -694,6 +694,22 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Cloud Agents quick-fire prompt — `/` to focus (matches the
+    // Integrations / Agents / Settings idiom), then chars append,
+    // Enter submits, Esc clears + unfocuses.
+    if !app.cloud_run_prompt_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::CloudAgents
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && let KeyCode::Char('/') = key.code
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        app.cloud_run_prompt_focused = true;
+        return;
+    }
     // Cloud Agents quick-fire prompt input (hybrid UX — daily-driver
     // path that uses the saved [cloud_run.defaults]).
     if app.cloud_run_prompt_focused {
