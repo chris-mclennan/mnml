@@ -225,6 +225,37 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
+    // Reclaim-slack pass (issue #3). When tabs on the right close, the
+    // logic above may leave `first_visible > 0` while the visible range
+    // no longer fills the strip. Walk LEFT while there's room, so
+    // closed-tabs space stops being wasted and hidden tabs come back
+    // into view automatically. Skipped while user_scroll_pinned so a
+    // deliberate ‹ scroll isn't undone.
+    if !user_scroll_pinned && app.bufferline_first_visible > 0 {
+        let mut used: u16 = 0;
+        for (i, &p) in visible
+            .iter()
+            .enumerate()
+            .skip(app.bufferline_first_visible)
+        {
+            let w = widths[p]
+                + if i > app.bufferline_first_visible {
+                    sep
+                } else {
+                    0
+                };
+            used = used.saturating_add(w);
+        }
+        while app.bufferline_first_visible > 0 {
+            let prev = app.bufferline_first_visible - 1;
+            let extra = widths[visible[prev]] + sep;
+            if used.saturating_add(extra) > inner_width {
+                break;
+            }
+            used = used.saturating_add(extra);
+            app.bufferline_first_visible = prev;
+        }
+    }
     let first_visible = app.bufferline_first_visible;
 
     let mut spans: Vec<Span> = Vec::new();
