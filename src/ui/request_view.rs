@@ -169,6 +169,63 @@ fn filter_row(
     Line::from(spans)
 }
 
+/// Convert a source line + tree-sitter colored spans into a ratatui
+/// `Line` with per-token coloring on `bg_dark`. Bytes not covered by
+/// any span render with the base `fg` color. Used to syntax-highlight
+/// JSON response bodies. (#11)
+fn colored_line(
+    src: &str,
+    spans: &[crate::highlight::ColoredSpan],
+    base_fg: ratatui::style::Color,
+    t: theme::Theme,
+) -> Line<'static> {
+    if spans.is_empty() {
+        return Line::from(Span::styled(
+            src.to_string(),
+            Style::default().fg(base_fg).bg(t.bg_dark),
+        ));
+    }
+    // Walk sorted spans and emit interleaved text — uncovered bytes
+    // in `base_fg`, covered runs in their span color. Robust against
+    // overlapping spans by ordering + skipping any span that ends
+    // before the current cursor.
+    let mut ordered: Vec<crate::highlight::ColoredSpan> = spans.to_vec();
+    ordered.sort_by_key(|(s, _, _)| *s);
+    let mut out: Vec<Span<'static>> = Vec::new();
+    let mut cursor = 0usize;
+    let bytes = src.as_bytes();
+    for (s, e, color) in ordered {
+        let s = s.min(bytes.len());
+        let e = e.min(bytes.len());
+        if e <= cursor {
+            continue;
+        }
+        if s > cursor {
+            // Emit uncovered chunk in the base fg.
+            let chunk = String::from_utf8_lossy(&bytes[cursor..s]).into_owned();
+            out.push(Span::styled(
+                chunk,
+                Style::default().fg(base_fg).bg(t.bg_dark),
+            ));
+        }
+        let start = s.max(cursor);
+        let chunk = String::from_utf8_lossy(&bytes[start..e]).into_owned();
+        out.push(Span::styled(
+            chunk,
+            Style::default().fg(color).bg(t.bg_dark),
+        ));
+        cursor = e;
+    }
+    if cursor < bytes.len() {
+        let tail = String::from_utf8_lossy(&bytes[cursor..]).into_owned();
+        out.push(Span::styled(
+            tail,
+            Style::default().fg(base_fg).bg(t.bg_dark),
+        ));
+    }
+    Line::from(out)
+}
+
 /// `+ <label>` action row — matches the "+ New note" / "+ New session"
 /// / "+ New request" chip idiom used across the activity-bar panels
 /// (Notes, Sessions, HTTP). Green fg + BOLD reads as "additive
@@ -1383,10 +1440,34 @@ fn draw_response(
             }
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);
+            // Detect JSON so we can run the tree-sitter highlighter
+            // over the body. Same predicate `pretty_body` uses so we
+            // don't disagree with the pretty-printing decision.
+            let is_json = r
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.contains("json"))
+                || {
+                    let b = pretty.trim_start();
+                    b.starts_with('{') || b.starts_with('[')
+                };
+            // Per-line tree-sitter spans. Empty when non-JSON so the
+            // body renders in the base body_style like before.
+            let json_spans: Vec<Vec<crate::highlight::ColoredSpan>> = if is_json {
+                crate::highlight::highlight_lines(&pretty, "json")
+            } else {
+                Vec::new()
+            };
+            let get_spans = |i: usize| -> &[crate::highlight::ColoredSpan] {
+                json_spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])
+            };
             // Optional word-wrap — soft-wraps each line at the pane
             // width so long JSON strings stay visible. `w` in Response
-            // view toggles. (#11)
-            let wrap_line =
+            // view toggles. Wrapped chunks all render in the same
+            // style since we can't easily reassemble spans across
+            // wrap boundaries; small trade-off vs. the visual win.
+            // (#11)
+            let wrap_plain =
                 |s: &str, out: &mut Vec<Line<'static>>, style: Style| match body_wrap_width {
                     Some(w) if s.chars().count() > w as usize => {
                         let chars: Vec<char> = s.chars().collect();
@@ -1401,8 +1482,13 @@ fn draw_response(
             // its neighbors do (±1 for context). Empty filter shows
             // every line. #11.
             if q_lower.is_empty() {
-                for l in pretty.lines() {
-                    wrap_line(l, rows, body_style);
+                for (i, l) in pretty.lines().enumerate() {
+                    let spans = get_spans(i);
+                    if body_wrap_width.is_none() && !spans.is_empty() {
+                        rows.push(colored_line(l, spans, t.fg, t));
+                    } else {
+                        wrap_plain(l, rows, body_style);
+                    }
                 }
             } else {
                 let lines: Vec<&str> = pretty.lines().collect();
@@ -1424,12 +1510,20 @@ fn draw_response(
                     }
                     // Highlight matching lines with a subtle bg tint
                     // so the match itself stands out from its context.
+                    // Skip syntax highlighting for matched lines — the
+                    // bg2 tint is the visual signal, and mixing tint +
+                    // color is noisy.
                     let style = if matches[i] {
                         Style::default().fg(t.fg).bg(t.bg2)
                     } else {
                         body_style
                     };
-                    wrap_line(l, rows, style);
+                    let spans = get_spans(i);
+                    if !matches[i] && body_wrap_width.is_none() && !spans.is_empty() {
+                        rows.push(colored_line(l, spans, t.fg, t));
+                    } else {
+                        wrap_plain(l, rows, style);
+                    }
                 }
                 if hits == 0 {
                     rows.push(plain(
