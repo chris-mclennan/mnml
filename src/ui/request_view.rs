@@ -867,21 +867,23 @@ fn draw_method_box(
     }
     let method = rp.request.method.to_uppercase();
     let m_color = method_color(&method, t);
-    // Content row: " GET     ▼ " — verb in verb-color BOLD on
-    // panel bg, dropdown arrow dim-comment on right.
-    let verb_width = method.chars().count() as u16;
+    // Content row: " [ GET ]   ▼ " — verb rendered as a solid
+    // colored CHIP (verb color as bg, bg_dark as text color) so it
+    // reads as a button. Dropdown arrow dim-comment on right.
+    let chip_text = format!(" {method} ");
+    let chip_width = chip_text.chars().count() as u16;
     let mid_pad = inner
         .width
         .saturating_sub(1) // leading pad
-        .saturating_sub(verb_width)
+        .saturating_sub(chip_width)
         .saturating_sub(2); // arrow + trailing pad
     let content = Line::from(vec![
         Span::styled(" ", Style::default().bg(t.bg_dark)),
         Span::styled(
-            method.clone(),
+            chip_text,
             Style::default()
-                .fg(m_color)
-                .bg(t.bg_dark)
+                .fg(t.bg_dark)
+                .bg(m_color)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),

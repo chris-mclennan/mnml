@@ -494,16 +494,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         if matches!(pane, Pane::Request(_))
             && let Some((verb, rest)) = split_http_verb(&name)
         {
+            // Solid-color verb chip: verb-color as bg, tab bg color
+            // as text, always BOLD. Reads as a button/badge. The
+            // chip's own leading/trailing spaces (` GET `) provide
+            // padding, so no separator span is needed — matches the
+            // precomputed label width `{name} ` where `name` has a
+            // double-space between verb and url.
             spans.push(Span::styled(
-                format!("{verb} "),
+                format!(" {verb} "),
                 Style::default()
-                    .fg(icon_color)
-                    .bg(bg)
-                    .add_modifier(if active {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
+                    .fg(bg)
+                    .bg(icon_color)
+                    .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(format!("{rest} "), name_style));
         } else {
