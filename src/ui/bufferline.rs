@@ -285,7 +285,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, tt.orange),
             Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, tt.orange),
             Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, tt.green),
-            Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, tt.yellow),
+            Pane::Request(_) => (if nerd { "\u{F1D8}" } else { "→" }, tt.blue),
             Pane::Pty(s) => {
                 // 2026-07-03 — sibling integrations that run as
                 // Pty panes (mnml-aws-amplify etc.) inherit their

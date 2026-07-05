@@ -3535,7 +3535,7 @@ fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui
         Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
         Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, theme::cur().orange),
         Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
-        Pane::Request(_) => (if nerd { "\u{f0a3e}" } else { "⚡" }, theme::cur().yellow),
+        Pane::Request(_) => (if nerd { "\u{F1D8}" } else { "→" }, theme::cur().blue),
         Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, theme::cur().teal),
         Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
         Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, theme::cur().green),

@@ -932,24 +932,28 @@ fn draw_edit(
                     k.clone(),
                 ));
                 register_tab_row(fields, row_y);
-                // Chevron marker signals the row is clickable, so
-                // Params / Vars / etc. lists read as interactive
-                // menus instead of static text. (#11 v10)
+                // Hover highlight — when the mouse is over this row,
+                // paint it with the shared menu-family highlight so
+                // it reads as the row that'll react to a click.
+                // (#11 v13)
+                let is_hover = rp.hover_params_key.as_deref() == Some(k.as_str());
+                let row_bg = if is_hover { t.cyan } else { t.bg_dark };
+                let key_fg = if is_hover { t.bg_dark } else { t.cyan };
+                let sep_fg = if is_hover { t.bg_dark } else { t.comment };
+                let val_fg = if is_hover { t.bg_dark } else { t.fg };
+                let chev_fg = if is_hover { t.bg_dark } else { t.comment };
                 rows.push(Line::from(vec![
-                    Span::styled("  ", body_style),
-                    Span::styled("› ", Style::default().fg(t.comment).bg(t.bg_dark)),
+                    Span::styled("  ", Style::default().bg(row_bg)),
+                    Span::styled("› ", Style::default().fg(chev_fg).bg(row_bg)),
                     Span::styled(
                         k.clone(),
                         Style::default()
-                            .fg(t.cyan)
-                            .bg(t.bg_dark)
+                            .fg(key_fg)
+                            .bg(row_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        " = ".to_string(),
-                        Style::default().fg(t.comment).bg(t.bg_dark),
-                    ),
-                    Span::styled(v.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
+                    Span::styled(" = ".to_string(), Style::default().fg(sep_fg).bg(row_bg)),
+                    Span::styled(v.clone(), Style::default().fg(val_fg).bg(row_bg)),
                 ]));
             }
             rows.push(Line::from(vec![Span::styled(
@@ -1012,18 +1016,24 @@ fn draw_edit(
             // Color: `clear` red (destructive), `save_preset` green,
             // others normal fg. Matches the app-wide semantic-color
             // convention.
-            let color = match *id {
+            let base_color = match *id {
                 "clear" => t.red,
                 "save_preset" => t.green,
                 _ => t.fg,
             };
+            // Hover highlight — same treatment as Params / Vars.
+            // Hovered row keeps its semantic color but paints on the
+            // cyan bg so users know which row will fire. (#11 v13)
+            let is_hover = rp.hover_auth_id.as_deref() == Some(*id);
+            let row_bg = if is_hover { t.cyan } else { t.bg_dark };
+            let text_fg = if is_hover { t.bg_dark } else { base_color };
             rows.push(Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled("  ", Style::default().bg(row_bg)),
                 Span::styled(
                     format!("{icon} {label}"),
                     Style::default()
-                        .fg(color)
-                        .bg(t.bg_dark)
+                        .fg(text_fg)
+                        .bg(row_bg)
                         .add_modifier(Modifier::BOLD),
                 ),
             ]));
@@ -1126,23 +1136,25 @@ fn draw_edit(
                 } else {
                     v.clone()
                 };
-                // Chevron marker signals the row is clickable — same
-                // affordance as Params. (#11 v10)
+                // Hover highlight — same treatment as Params. (#11 v13)
+                let is_hover = rp.hover_vars_key.as_deref() == Some(k.as_str());
+                let row_bg = if is_hover { t.cyan } else { t.bg_dark };
+                let key_fg = if is_hover { t.bg_dark } else { t.cyan };
+                let sep_fg = if is_hover { t.bg_dark } else { t.comment };
+                let val_fg = if is_hover { t.bg_dark } else { t.fg };
+                let chev_fg = if is_hover { t.bg_dark } else { t.comment };
                 rows.push(Line::from(vec![
-                    Span::styled("  ", body_style),
-                    Span::styled("› ", Style::default().fg(t.comment).bg(t.bg_dark)),
+                    Span::styled("  ", Style::default().bg(row_bg)),
+                    Span::styled("› ", Style::default().fg(chev_fg).bg(row_bg)),
                     Span::styled(
                         k.clone(),
                         Style::default()
-                            .fg(t.cyan)
-                            .bg(t.bg_dark)
+                            .fg(key_fg)
+                            .bg(row_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        " = ".to_string(),
-                        Style::default().fg(t.comment).bg(t.bg_dark),
-                    ),
-                    Span::styled(preview, Style::default().fg(t.fg).bg(t.bg_dark)),
+                    Span::styled(" = ".to_string(), Style::default().fg(sep_fg).bg(row_bg)),
+                    Span::styled(preview, Style::default().fg(val_fg).bg(row_bg)),
                 ]));
             }
         }

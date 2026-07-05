@@ -89,6 +89,16 @@ pub struct RequestPane {
     /// `wrap` chip in the response section header (or `w` in Response
     /// view). Off by default so JSON keeps its raw line breaks. (#11)
     pub body_wrap: bool,
+    /// Currently-hovered Params-row key. Set by the mouse-move
+    /// handler; the row-row renderer paints it with the shared
+    /// `row_highlight_menu` primitive so users see which row will
+    /// react to their click. (#11 v13)
+    pub hover_params_key: Option<String>,
+    /// Currently-hovered Vars-row key (same shape as
+    /// `hover_params_key`).
+    pub hover_vars_key: Option<String>,
+    /// Currently-hovered Auth-row id (same shape).
+    pub hover_auth_id: Option<String>,
 }
 
 /// The tabbed UI on the Edit view. `Tab` advances; `Shift+Tab`
@@ -328,6 +338,9 @@ impl RequestPane {
             filter: String::new(),
             filter_focused: false,
             body_wrap: false,
+            hover_params_key: None,
+            hover_vars_key: None,
+            hover_auth_id: None,
         }
     }
 

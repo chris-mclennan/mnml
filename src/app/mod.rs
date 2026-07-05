@@ -1445,7 +1445,9 @@ impl ActivitySection {
                 "view.activity_cloud_agents",
             ),
             // nf-fa-bolt — HTTP / API workflow
-            Self::Http => ("\u{F0E7}", "H", "HTTP", "view.activity_http"),
+            // nf-fa-paper_plane — blue paper airplane matches the
+            // "send a request" semantic better than the prior bolt.
+            Self::Http => ("\u{F1D8}", "H", "HTTP", "view.activity_http"),
             // nf-fa-sticky_note — persistent scratch notes
             Self::Notes => ("\u{F249}", "N", "Notes", "view.activity_notes"),
             // nf-fa-check_square — TODO markers across the workspace

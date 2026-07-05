@@ -86,10 +86,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .unwrap_or(path)
                 .to_string_lossy()
                 .into_owned();
+            // Blue paper airplane matches the "send" semantic of
+            // HTTP requests better than the prior bolt icon.
             let icon = if app.config.ui.ascii_icons {
-                "⚡"
+                "→"
             } else {
-                "\u{F0E7}"
+                "\u{F1D8}"
             };
             let row_rect = Rect {
                 x: area.x,
@@ -100,7 +102,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("  ", Style::default().bg(bg)),
-                    Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(bg)),
+                    Span::styled(format!("{icon} "), Style::default().fg(t.blue).bg(bg)),
                     Span::styled(rel, Style::default().fg(t.fg).bg(bg)),
                 ])),
                 row_rect,

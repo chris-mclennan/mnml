@@ -481,6 +481,37 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         {
             app.cmdline_popup_selected = idx;
         }
+        // Request-pane row hover — sync `hover_*` fields on the
+        // active Request pane so the renderer can highlight the
+        // row under the cursor (Params / Vars / Auth). Clears
+        // the highlight when the pointer leaves any row. (#11 v13)
+        {
+            let hp = app
+                .rects
+                .request_params_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, k)| k.clone());
+            let hv = app
+                .rects
+                .request_vars_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, k)| k.clone());
+            let ha = app
+                .rects
+                .request_auth_rows
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, k)| k.clone());
+            if let Some(cur) = app.active
+                && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
+            {
+                rp.hover_params_key = hp;
+                rp.hover_vars_key = hv;
+                rp.hover_auth_id = ha;
+            }
+        }
         // Track divider hover for the yellow drag-cue. Updated in lockstep
         // with chip hover; both are cleared on click / typing.
         let new_div = app.rects.split_dividers.iter().position(|d| {
