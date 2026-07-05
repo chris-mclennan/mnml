@@ -2361,6 +2361,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_workspace_picker(),
         },
         Command {
+            id: "view.manage_workspaces",
+            title: "Manage workspaces… (rename / reorder / group)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_workspaces_editor(),
+        },
+        Command {
             id: "view.add_workspace",
             title: "Add a workspace (runtime — not persisted)",
             group: "view",

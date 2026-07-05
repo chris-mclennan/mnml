@@ -31,10 +31,10 @@ fn edit_rect(parent: Rect, mode: &IntegrationEditMode) -> Rect {
     let width = 60.min(parent.width.saturating_sub(4));
     let height = (row_count as u16).min(parent.height.saturating_sub(4));
     let x = parent.x + (parent.width.saturating_sub(width)) / 2;
-    // Fixed top-anchor so the edit panel and the glyph builder overlay
-    // (which the user Enters into from here) both sit at the same
-    // vertical position — no visual jump when the panels swap.
-    let y = parent.y + parent.height / 6;
+    // Centered vertically — matches settings, help, and other panel
+    // overlays so the workspace-level "modals appear here" convention
+    // stays consistent across the app.
+    let y = parent.y + parent.height.saturating_sub(height) / 2;
     Rect {
         x,
         y,

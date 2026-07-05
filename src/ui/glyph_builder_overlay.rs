@@ -43,9 +43,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let width = 62.min(parent.width.saturating_sub(4));
     let height = 22.min(parent.height.saturating_sub(4));
     let x = parent.x + (parent.width.saturating_sub(width)) / 2;
-    // Same fixed top-anchor as integration_edit_overlay so switching
-    // between the two panels doesn't cause a vertical jump.
-    let y = parent.y + parent.height / 6;
+    // Centered vertically — matches integration_edit + settings +
+    // help so overlay position is consistent across the app.
+    let y = parent.y + parent.height.saturating_sub(height) / 2;
     let area = Rect {
         x,
         y,

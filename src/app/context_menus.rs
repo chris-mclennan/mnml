@@ -416,6 +416,10 @@ impl App {
                 MenuAction::Command("view.switch_workspace"),
             ),
             MenuItem::new("Add workspace…", MenuAction::Command("view.add_workspace")),
+            MenuItem::new(
+                "Manage workspaces…",
+                MenuAction::Command("view.manage_workspaces"),
+            ),
         ];
         // qa-feature 2026-07-01 — "Remove workspace" only when there's
         // at least one extra to fall back on. If we removed the sole
@@ -474,6 +478,10 @@ impl App {
         items.push(MenuItem::new(
             "Remove this workspace",
             MenuAction::Command("view.remove_workspace"),
+        ));
+        items.push(MenuItem::new(
+            "Manage workspaces…",
+            MenuAction::Command("view.manage_workspaces"),
         ));
         if let Some(p) = path {
             items.push(MenuItem::new(
@@ -673,6 +681,10 @@ impl App {
         items.push(MenuItem::new(
             "Add workspace…",
             MenuAction::Command("view.add_workspace"),
+        ));
+        items.push(MenuItem::new(
+            "Manage workspaces…",
+            MenuAction::Command("view.manage_workspaces"),
         ));
         items.push(MenuItem::new(
             "Refresh repos",

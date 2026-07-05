@@ -806,7 +806,11 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.bufferline_window_close
         && crate::app::dispatch::contains(r, x, y)
     {
-        app.close_active_pane();
+        // The × in the top-right cluster is a "close mnml" affordance
+        // (matches the tooltip). Was routing to close_active_pane which
+        // no-oped when nothing was open; users hovering "close mnml"
+        // and clicking got no response.
+        app.request_quit();
         return;
     }
     // Statusline branch chip → open the commit graph. Always-visible
