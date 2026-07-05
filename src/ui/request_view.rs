@@ -53,6 +53,25 @@ fn method_color(method: &str, t: theme::Theme) -> ratatui::style::Color {
     }
 }
 
+/// One-line HTTP header row rendered as `<key in cyan bold> : <value>`.
+/// Used everywhere a header list shows up (Edit-tab Headers section,
+/// request-line summary in the response panel, actual response
+/// headers) so the same styling reads across all three sites. (#11)
+fn header_row(key: &str, value: &str, t: theme::Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("  ", Style::default().bg(t.bg_dark)),
+        Span::styled(
+            key.to_string(),
+            Style::default()
+                .fg(t.cyan)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(": ", Style::default().fg(t.comment).bg(t.bg_dark)),
+        Span::styled(value.to_string(), Style::default().fg(t.fg).bg(t.bg_dark)),
+    ])
+}
+
 /// `+ <label>` action row — matches the "+ New note" / "+ New session"
 /// / "+ New request" chip idiom used across the activity-bar panels
 /// (Notes, Sessions, HTTP). Green fg + BOLD reads as "additive
@@ -1096,8 +1115,11 @@ fn draw_response(
             Style::default().fg(t.fg).bg(t.bg_dark),
         ),
     ]));
+    // Request headers — color-coded (cyan key + comment `:` + fg
+    // value) to match the Edit-tab Headers rendering. Same shape
+    // makes the two sections read as the same primitive.
     for (k, v) in &rp.request.headers {
-        rows.push(plain(format!("  {k}: {v}"), dim));
+        rows.push(header_row(k, v, t));
     }
     if let Some(b) = &rp.request.body {
         rows.push(plain(String::new(), body_style));
@@ -1186,8 +1208,11 @@ fn draw_response(
                     dim,
                 ),
             ]));
+            // Response headers use the same color-coded row as the
+            // Edit-tab headers + request-summary headers — consistent
+            // rendering across every place a header list shows up.
             for (k, v) in &r.headers {
-                rows.push(plain(format!("  {k}: {v}"), dim));
+                rows.push(header_row(k, v, t));
             }
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);
