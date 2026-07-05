@@ -1206,8 +1206,14 @@ fn draw_edit(
         }
     }
 
-    // Sending/Streaming/Done indicator (small).
-    rows.push(plain(String::new(), body_style));
+    // Sending/Streaming/Done indicator (small). Skip entirely
+    // when the pane is in the "not yet fired" placeholder state
+    // — a red ✗ on a brand new blank request reads as an error
+    // when nothing has actually failed. Real transport errors
+    // still render red.
+    if !matches!(&rp.state, RunState::Failed(e) if is_not_sent_placeholder(e)) {
+        rows.push(plain(String::new(), body_style));
+    }
     match &rp.state {
         RunState::Sending => rows.push(plain(
             "  ⟳ sending…".to_string(),
@@ -1217,15 +1223,24 @@ fn draw_edit(
             format!("  ▶ streaming · {} events received", r.sse_event_count),
             Style::default().fg(t.cyan).bg(t.bg_dark),
         )),
-        RunState::Failed(e) => rows.push(plain(
+        RunState::Failed(e) if !is_not_sent_placeholder(e) => rows.push(plain(
             format!("  ✗ last send: {e}"),
             Style::default().fg(t.red).bg(t.bg_dark),
         )),
+        RunState::Failed(_) => {}
         RunState::Done(r) => rows.push(plain(
             format!("  ✓ last: {} ({} ms)", r.status, r.elapsed.as_millis()),
             Style::default().fg(t.green).bg(t.bg_dark),
         )),
     }
+}
+
+/// True when a `Failed(msg)` state is the "not sent yet" placeholder
+/// (blank Request pane, before the user fires anything) rather than
+/// a real transport / assertion failure. Used by both the Request and
+/// Response sections to skip the red ✗ error style on a fresh pane.
+fn is_not_sent_placeholder(msg: &str) -> bool {
+    msg.contains("not sent")
 }
 
 /// Render a byte count as a 2-3 char human string. 999 → 999 B,
@@ -1306,49 +1321,15 @@ fn draw_response(
     let dim = Style::default().fg(t.comment).bg(t.bg_dark);
     let plain = |s: String, st: Style| Line::from(Span::styled(s, st));
 
-    // ── request-line summary — mirrors the method-chip + URL row
-    // from the Edit section so the response is anchored to what
-    // was fired. Method color routes through `method_color(...)` so
-    // both sites stay in sync when a new verb is added. Arrow
-    // indicator drops to cyan (matches the pane's active-focus
-    // color, not the historical yellow "attention" color that read
-    // as a warning). ──
-    let method_upper = rp.request.method.to_uppercase();
-    let m_color = method_color(&method_upper, t);
-    rows.push(Line::from(vec![
-        Span::styled("▶ ", Style::default().fg(t.cyan).bg(t.bg_dark)),
-        Span::styled(
-            format!(" {method_upper} "),
-            Style::default()
-                .fg(t.bg_dark)
-                .bg(m_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("  {}", rp.request.url),
-            Style::default().fg(t.fg).bg(t.bg_dark),
-        ),
-    ]));
-    // Request headers — color-coded (cyan key + comment `:` + fg
-    // value) to match the Edit-tab Headers rendering. Same shape
-    // makes the two sections read as the same primitive. Skips
-    // rows that don't match the pane's `/` filter (#11).
+    // The Response zone no longer echoes the request-line (▶ METHOD
+    // URL) at the top — the Request zone above already shows that
+    // exact info. Duplicating it read as a "here comes another
+    // request" line inside what should be a response-only section.
+    // Same reasoning skips the request-headers / request-body echo:
+    // that content is authoritative in the Request zone's Headers /
+    // Body tabs. Keep the `q_lower` filter binding — the
+    // response-header render below still uses it.
     let q_lower = rp.filter.trim().to_ascii_lowercase();
-    for (k, v) in &rp.request.headers {
-        if header_matches_filter(k, v, &q_lower) {
-            rows.push(header_row(k, v, t));
-        }
-    }
-    if let Some(b) = &rp.request.body {
-        rows.push(plain(String::new(), body_style));
-        for l in b.lines() {
-            rows.push(plain(
-                format!("  {l}"),
-                Style::default().fg(t.grey_fg).bg(t.bg_dark),
-            ));
-        }
-    }
-    rows.push(plain(String::new(), body_style));
 
     // ── response ──
     match &rp.state {
@@ -1378,6 +1359,15 @@ fn draw_response(
             for l in r.body.lines() {
                 rows.push(plain(l.to_string(), body_style));
             }
+        }
+        RunState::Failed(e) if is_not_sent_placeholder(e) => {
+            // Fresh Request pane — nothing has failed yet. Render
+            // as a subtle hint on comment fg, no ✗ glyph, so a
+            // blank pane doesn't LOOK like an error state.
+            rows.push(plain(
+                format!("  {e}"),
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            ));
         }
         RunState::Failed(e) => {
             rows.push(plain(

@@ -649,8 +649,7 @@ impl App {
             rp.view = ViewMode::Edit;
             rp.focus = EditField::Url;
             rp.edit_tab = EditTab::Body;
-            rp.state =
-                RunState::Failed("(not sent — type a URL, then press `r` to fire)".to_string());
+            rp.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
         }
     }
 

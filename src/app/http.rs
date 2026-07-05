@@ -3654,8 +3654,7 @@ impl App {
         let mut pane = RequestPane::new(None, request, crate::http::script::Script::default(), 0);
         pane.view = ViewMode::Edit;
         pane.focus = EditField::Url;
-        pane.state =
-            RunState::Failed("(not sent — type a URL, then press `r` to fire)".to_string());
+        pane.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
         let new_id = match self.active {
             Some(cur) => {
                 self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Request(pane))
