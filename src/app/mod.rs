@@ -1798,6 +1798,16 @@ pub struct PaneRects {
     /// `↓ Paste curl…` action-row rect (below files). Click → run
     /// `http.paste_curl` (turn clipboard curl into a scratch request).
     pub http_panel_discover_chip: Option<Rect>,
+    /// `Pane::HttpHome` dashboard row rects — `(rect, cache_index)`.
+    /// Populated by `http_home_view::draw`. Click → same handling as
+    /// the sidebar's recent/captured/files rows.
+    pub http_home_recent_rows: Vec<(Rect, usize)>,
+    pub http_home_captured_rows: Vec<(Rect, usize)>,
+    pub http_home_files_rows: Vec<(Rect, std::path::PathBuf)>,
+    /// `Pane::HttpHome` quick-action chip rects.
+    pub http_home_new_chip: Option<Rect>,
+    pub http_home_capture_chip: Option<Rect>,
+    pub http_home_paste_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel — one row per `.mnml/notes/*.md`.
     /// Click → open the note in an editor pane. (#8)
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
@@ -9223,6 +9233,7 @@ impl App {
             Pane::CloudAgentRun(p) => Some((format!("☁ {}", p.ticket), false)),
             Pane::NewCloudAgentWizard(_) => Some(("+ New Agent from PR".to_string(), false)),
             Pane::NewCloudRunWizard(_) => Some(("+ New Cloud Run".to_string(), false)),
+            Pane::HttpHome(p) => Some((p.tab_title(), false)),
         }
     }
 

@@ -469,7 +469,8 @@ fn draw_captured(
 
 /// Trim a URL to `host + path` (drop scheme + query + fragment) so
 /// sidebar rows stay one line. Mirrors the browser pane's convention.
-fn short_url(url: &str) -> String {
+/// Shared with `http_home_view` so both surfaces render the same way.
+pub(crate) fn short_url(url: &str) -> String {
     let s = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))

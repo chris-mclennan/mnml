@@ -139,6 +139,12 @@ pub enum Pane {
     /// Vercel/Cloudflare/Modal/etc). See
     /// `src/new_cloud_agent_wizard.rs`.
     NewCloudAgentWizard(crate::new_cloud_agent_wizard::NewCloudAgentWizardPane),
+    /// HTTP "hub" main pane — opened alongside the sectioned HTTP
+    /// sidebar when the user clicks the HTTP activity icon. Shows
+    /// quick actions + recent history + captured traffic + files
+    /// in one dashboard, all wired to the same `App::http_panel_*`
+    /// caches the sidebar reads. See `src/http_home.rs`.
+    HttpHome(crate::http_home::HttpHomePane),
 }
 
 /// State for [`Pane::SpendReport`]. Re-snapshots
@@ -641,6 +647,7 @@ impl Pane {
             Pane::CloudAgentRun(p) => format!("☁ {}", p.ticket),
             Pane::NewCloudAgentWizard(_) => "+ New Agent from PR".to_string(),
             Pane::NewCloudRunWizard(_) => "+ New Cloud Run".to_string(),
+            Pane::HttpHome(p) => p.tab_title(),
         }
     }
 
@@ -673,7 +680,8 @@ impl Pane {
             | Pane::Mount(_)
             | Pane::CloudAgentRun(_)
             | Pane::NewCloudAgentWizard(_)
-            | Pane::NewCloudRunWizard(_) => false,
+            | Pane::NewCloudRunWizard(_)
+            | Pane::HttpHome(_) => false,
         }
     }
 

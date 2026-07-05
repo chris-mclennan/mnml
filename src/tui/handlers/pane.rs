@@ -783,6 +783,16 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // HttpHome pane: r refresh caches, Esc/q → focus tree.
+    // Row navigation is a follow-up — click-to-open is the v1 flow.
+    if matches!(app.panes.get(i), Some(Pane::HttpHome(_))) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.focus_tree(),
+            KeyCode::Char('r') => app.http_panel_refresh(),
+            _ => {}
+        }
+        return;
+    }
     // SpendReport pane: j/k navigate, s cycles sort, r refresh, Esc/q closes.
     if matches!(app.panes.get(i), Some(Pane::SpendReport(_))) {
         match key.code {

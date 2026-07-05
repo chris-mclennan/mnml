@@ -938,6 +938,7 @@ impl App {
             Pane::CloudAgentRun(_) => (None, None),
             Pane::NewCloudAgentWizard(_) => (None, None),
             Pane::NewCloudRunWizard(_) => (None, None),
+            Pane::HttpHome(_) => (None, None),
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);
@@ -1752,6 +1753,12 @@ impl App {
             self.active_section == crate::app::ActivitySection::Search && !entering_search;
         let leaving_git = self.active_section == crate::app::ActivitySection::Git
             && section != crate::app::ActivitySection::Git;
+        // Track HTTP entry BEFORE we clobber `active_section` — the
+        // "open HttpHome on entry" hook needs to distinguish an
+        // idempotent re-click on an already-active HTTP icon (leave
+        // the main area alone) from a fresh entry.
+        let entering_http = self.active_section != crate::app::ActivitySection::Http
+            && section == crate::app::ActivitySection::Http;
         self.active_section = section;
         if entering_search {
             self.search_input_focused = true;
@@ -1776,6 +1783,27 @@ impl App {
             to_close.sort_unstable_by(|a, b| b.cmp(a));
             for pid in to_close {
                 self.force_close_pane(pid);
+            }
+        }
+        // Entering HTTP from another section → open the HttpHome
+        // dashboard so the activity icon is a "hub-and-nav" gesture
+        // (custom sidebar AND custom main pane), not just a sidebar
+        // swap. Guarded so an idempotent re-click on the already-
+        // active HTTP icon doesn't yank the user off whatever
+        // Request pane they were editing.
+        //
+        // If a Request pane is already active we skip — the user
+        // is presumably mid-edit and doesn't want a context
+        // switch. The sidebar's Files section is a click away
+        // from HttpHome for whenever they want the dashboard.
+        if entering_http {
+            let has_active_request = self
+                .active
+                .and_then(|i| self.panes.get(i))
+                .map(|p| matches!(p, crate::pane::Pane::Request(_)))
+                .unwrap_or(false);
+            if !has_active_request {
+                self.open_http_home();
             }
         }
     }

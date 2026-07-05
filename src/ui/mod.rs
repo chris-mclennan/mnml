@@ -85,6 +85,7 @@ pub mod agents_panel;
 pub mod cloud_agents_panel;
 pub mod dock;
 pub mod git_palette;
+pub mod http_home_view;
 pub mod http_panel;
 pub mod menu_bar;
 pub mod mount_view;
@@ -1636,6 +1637,7 @@ fn render_layout(
                 Some(crate::pane::Pane::CloudAgentRun(_)) => 38,
                 Some(crate::pane::Pane::NewCloudAgentWizard(_)) => 39,
                 Some(crate::pane::Pane::NewCloudRunWizard(_)) => 40,
+                Some(crate::pane::Pane::HttpHome(_)) => 41,
                 _ => 0,
             };
             match kind {
@@ -1697,6 +1699,10 @@ fn render_layout(
                 }
                 40 => {
                     new_cloud_run_wizard_view::draw(frame, app, *id, area, focused);
+                    None
+                }
+                41 => {
+                    http_home_view::draw(frame, app, *id, area, focused);
                     None
                 }
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
@@ -3557,6 +3563,7 @@ fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui
         Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
         Pane::NewCloudAgentWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green),
         Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
+        Pane::HttpHome(_) => (if nerd { "\u{F1D8}" } else { "→" }, theme::cur().blue),
     }
 }
 

@@ -1153,6 +1153,17 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 // Wizard pane content is short and fits a single
                 // page; no scroll affordance needed for v1.
             }
+            Some(Pane::HttpHome(p)) => {
+                // Scroll the dashboard body. Renderer clamps against
+                // the total row-count so we don't scroll past the
+                // last content row.
+                let n = delta.unsigned_abs() as u16;
+                if delta < 0 {
+                    p.scroll = p.scroll.saturating_sub(n);
+                } else {
+                    p.scroll = p.scroll.saturating_add(n);
+                }
+            }
             Some(Pane::CloudAgentRun(p)) => {
                 // Scroll the logs viewport. Negative delta = scroll up
                 // (older lines); positive = down. Crossing past the
