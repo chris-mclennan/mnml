@@ -634,10 +634,15 @@ impl App {
         }
         self.http_panel_refresh();
         self.open_path(&path);
-        // Fire the stub so the form-style Request pane opens. The
-        // send handler splits a fresh `Pane::Request` off the .http
-        // editor and starts the job — that pane IS the form-editor
-        // the user is looking for.
+        // Remember the editor's pane id BEFORE the split — after
+        // `send_request_from_active` runs, `self.active` points at
+        // the new Request pane and the editor sits in the other
+        // half of the split. We want the Request form to fill the
+        // whole main area, so we close the editor once the split
+        // has happened. The Request pane keeps `source_path`, so
+        // saves round-trip through the same file — the editor is
+        // just a scratch surface that the form-editor supersedes.
+        let editor_id = self.active;
         self.send_request_from_active();
         // Land on the Edit form first, not the "Sending…" response
         // placeholder. `send_request_from_active` leaves `view` at
@@ -647,6 +652,18 @@ impl App {
             && let Some(crate::pane::Pane::Request(rp)) = self.panes.get_mut(cur)
         {
             rp.view = crate::request_pane::ViewMode::Edit;
+        }
+        // Close the raw-file editor half of the split. Guarded so
+        // we never close the Request pane itself (the send may have
+        // failed early and left `active` pointing at the editor,
+        // in which case leave things alone). The Request pane's
+        // Source tab renders the same .http text if the user
+        // wants to see it.
+        if let (Some(eid), Some(cur)) = (editor_id, self.active)
+            && eid != cur
+            && matches!(self.panes.get(eid), Some(crate::pane::Pane::Editor(_)))
+        {
+            self.force_close_pane(eid);
         }
     }
 
