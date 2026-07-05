@@ -318,59 +318,74 @@ pub fn draw(
     let mut params_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut auth_rows_local: Vec<(Rect, String)> = Vec::new();
 
-    // ── Layout: split the pane into three bordered zones, top-down.
-    // Request  — form editor (URL/method + tabs + tab content)
-    // Response — status + body + assertions
-    // AI       — quick prompt line, always visible (Postman feel)
+    // ── Layout: full-width top strip (Method / URL / Send / Save /
+    // Clear) above two content zones (Request-tabs + Response) and
+    // a pinned AI strip at the bottom. Bruno-style — the URL bar
+    // spans the WHOLE pane width regardless of split orientation,
+    // instead of being squeezed into the Request block's left
+    // panel when Horizontal is selected.
     //
-    // AI is a fixed 3-row block at the bottom (2 border + 1 content).
-    // Above AI, Request + Response split by the pane's stored
-    // orientation:
-    //   Vertical (default): Request top ~55%, Response bottom ~45%.
-    //   Horizontal:         Request left  ~50%, Response right ~50%.
-    // AI always spans the full width at the bottom.
-    let ai_height = 3u16.min(area.height);
-    let non_ai = area.height.saturating_sub(ai_height);
+    // Row breakdown:
+    //   top_bar (3 rows) — Method / URL / Send / Save / Clear
+    //   Request + Response — split by orientation:
+    //     Vertical  : Request top ~55%, Response bottom ~45%
+    //     Horizontal: Request left ~50%, Response right ~50%
+    //   ai (3 rows, always full width, always at the bottom)
+    let top_bar_height = 3u16.min(area.height);
+    let ai_height = 3u16.min(area.height.saturating_sub(top_bar_height));
+    let middle_h = area
+        .height
+        .saturating_sub(top_bar_height)
+        .saturating_sub(ai_height);
+    let top_bar_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: top_bar_height,
+    };
     let ai_rect = Rect {
         x: area.x,
-        y: area.y.saturating_add(non_ai),
+        y: area
+            .y
+            .saturating_add(top_bar_height)
+            .saturating_add(middle_h),
         width: area.width,
         height: ai_height,
     };
     let (request_rect, response_rect) = match rp.split_orientation {
         crate::request_pane::SplitOrientation::Vertical => {
-            let request_height = ((non_ai as u32 * 55 / 100) as u16).max(6.min(non_ai));
-            let response_height = non_ai.saturating_sub(request_height);
+            let req_h = ((middle_h as u32 * 55 / 100) as u16).max(6.min(middle_h));
+            let res_h = middle_h.saturating_sub(req_h);
             (
                 Rect {
                     x: area.x,
-                    y: area.y,
+                    y: area.y.saturating_add(top_bar_height),
                     width: area.width,
-                    height: request_height,
+                    height: req_h,
                 },
                 Rect {
                     x: area.x,
-                    y: area.y.saturating_add(request_height),
+                    y: area.y.saturating_add(top_bar_height).saturating_add(req_h),
                     width: area.width,
-                    height: response_height,
+                    height: res_h,
                 },
             )
         }
         crate::request_pane::SplitOrientation::Horizontal => {
-            let request_width = area.width / 2;
-            let response_width = area.width.saturating_sub(request_width);
+            let req_w = area.width / 2;
+            let res_w = area.width.saturating_sub(req_w);
             (
                 Rect {
                     x: area.x,
-                    y: area.y,
-                    width: request_width,
-                    height: non_ai,
+                    y: area.y.saturating_add(top_bar_height),
+                    width: req_w,
+                    height: middle_h,
                 },
                 Rect {
-                    x: area.x.saturating_add(request_width),
-                    y: area.y,
-                    width: response_width,
-                    height: non_ai,
+                    x: area.x.saturating_add(req_w),
+                    y: area.y.saturating_add(top_bar_height),
+                    width: res_w,
+                    height: middle_h,
                 },
             )
         }
@@ -380,84 +395,42 @@ pub fn draw(
     // Fully-connected border — no "Request" title text on the top
     // border since the sub-panels (Method, URL, Send, Clear) label
     // themselves. Split-orientation chip still floats on the right.
-    let request_block = crate::ui::design_tokens::bordered_plain("");
-    let request_inner = request_block.inner(request_rect);
-    frame.render_widget(request_block, request_rect);
-    // Split-orientation toggle — floats at the top-right of the
-    // Request block's border row. `▤` = horizontal, `▥` = vertical
-    // (matches the mockup). Current orientation renders in cyan,
-    // the other in comment fg. Click cycles.
-    app.rects.request_split_toggle =
-        paint_split_toggle_chip(frame, rp.split_orientation, request_rect, t);
-
-    // Method + URL sub-panels sit at the TOP of the Request zone,
-    // side-by-side, each with its own legend outline. Method is
-    // fixed-width (space for the widest verb + " ▼ " dropdown
-    // affordance); URL takes the rest of the width out to the
-    // right edge. Under those two, the tabs + tab content flow
-    // (rendered by draw_edit into `tabs_rect`).
-    //
-    // Layout math:
-    //   method_url_row height = 3 (border top + content + border bottom)
-    //   method_rect   width  = METHOD_BOX_WIDTH
-    //   url_rect      width  = request_inner.width - method_rect.width
-    //
-    // If the pane is too narrow to fit both boxes side-by-side
-    // (< METHOD_BOX_WIDTH + MIN_URL_WIDTH), we fall back to the
-    // old single-row rendering path below (skips the sub-panels).
+    // ── Top bar (full width): Method / URL / Send / Save / Clear.
+    // Painted OUTSIDE the Request block so the URL bar spans the
+    // whole pane in both split orientations. The split-orientation
+    // toggle chip floats on the top-right of the top bar (was on
+    // the Request block's border in the earlier layout).
     const METHOD_BOX_WIDTH: u16 = 14;
     const MIN_URL_WIDTH: u16 = 20;
     const METHOD_URL_ROW_H: u16 = 3;
-    // 1-cell padding on the outer edges of the Method/URL row so
-    // the sub-panels don't kiss the parent Request block's border.
     const EDGE_PAD: u16 = 1;
-    // 2026-07-05 — dropped the 1-cell top pad above Method/URL now
-    // that the parent Request block uses plain-text titles (no
-    // colored chip). Sub-panels can sit flush against the parent's
-    // top border without visual crowding.
-    const TOP_PAD: u16 = 0;
-    // Right-side action boxes — Postman/Bruno idiom for firing,
-    // saving, and resetting the current request. Widths sized to
-    // fit each box's content plus 2-cell border chrome:
-    //   Send   = " ▶ Send "  → 10
-    //   Save   = " ⎘ Save "  → 10
-    //   Clear  = " ✕ Clear " → 11
-    //
-    // Format lives INSIDE the Body tab (right-aligned on the tab
-    // strip), so it only shows up when it's applicable.
     const SEND_BOX_WIDTH: u16 = 10;
     const SAVE_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
-    let show_sub_panels = request_inner.width
+    let show_sub_panels = top_bar_rect.width
         >= METHOD_BOX_WIDTH
             + MIN_URL_WIDTH
             + SEND_BOX_WIDTH
             + SAVE_BOX_WIDTH
             + CLEAR_BOX_WIDTH
             + 2 * EDGE_PAD
-        && request_inner.height >= METHOD_URL_ROW_H + TOP_PAD + 3;
+        && top_bar_rect.height >= METHOD_URL_ROW_H;
 
-    let mut edit_rows: Vec<Line> = Vec::new();
-    // Absolute-coord click rects for the Method + URL sub-panels.
-    // Registered directly into `app.rects.request_fields` below the
-    // tab-strip translation loop — the loop treats every entry in
-    // its `fields` vec as row-index-y and would double-translate
-    // these if we mixed them in.
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let mut send_button_rect: Option<Rect> = None;
     let mut save_button_rect: Option<Rect> = None;
     let mut clear_button_rect: Option<Rect> = None;
-    let tabs_rect = if show_sub_panels {
-        // Layout: [top-pad][pad][Method][URL][Send][Save][Clear][pad]
-        let row_y = request_inner.y.saturating_add(TOP_PAD);
+    if show_sub_panels {
+        // Layout across the top strip: [pad][Method][URL][Send][Save][Clear][pad]
+        let row_y = top_bar_rect.y;
         let method_rect = Rect {
-            x: request_inner.x.saturating_add(EDGE_PAD),
+            x: top_bar_rect.x.saturating_add(EDGE_PAD),
             y: row_y,
             width: METHOD_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
         let url_x = method_rect.x.saturating_add(METHOD_BOX_WIDTH);
-        let url_width = request_inner
+        let url_width = top_bar_rect
             .width
             .saturating_sub(EDGE_PAD)
             .saturating_sub(METHOD_BOX_WIDTH)
@@ -498,18 +471,23 @@ pub fn draw(
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
         save_button_rect = draw_save_box(frame, rp, save_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
-        // Tabs pick up IMMEDIATELY after the Method/URL bottom
-        // border — no extra spacer between them.
-        let used = TOP_PAD.saturating_add(METHOD_URL_ROW_H);
-        Rect {
-            x: request_inner.x,
-            y: request_inner.y.saturating_add(used),
-            width: request_inner.width,
-            height: request_inner.height.saturating_sub(used),
-        }
-    } else {
-        request_inner
-    };
+    }
+
+    // ── Zone 1: Request (tab strip + tab content). Method/URL now
+    // live in the top bar above; the Request block is just the
+    // edit form for the currently-selected tab.
+    let request_block = crate::ui::design_tokens::bordered_plain("");
+    let request_inner = request_block.inner(request_rect);
+    frame.render_widget(request_block, request_rect);
+    // Split-orientation chip floats on the top-right of the TOP
+    // BAR now (was on the Request block's border). Placement lands
+    // outside the Request block so it doesn't collide with the
+    // block's own top border when Request is narrow.
+    app.rects.request_split_toggle =
+        paint_split_toggle_chip(frame, rp.split_orientation, top_bar_rect, t);
+
+    let mut edit_rows: Vec<Line> = Vec::new();
+    let tabs_rect = request_inner;
 
     if tabs_rect.width > 0 && tabs_rect.height > 0 {
         draw_edit(
