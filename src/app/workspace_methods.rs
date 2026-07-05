@@ -607,9 +607,19 @@ impl App {
         self.focus = crate::app::Focus::Pane;
     }
 
-    /// HTTP panel `+ New request` action — creates `scratch.http` in
-    /// the workspace root (or a numbered variant if it exists) and
-    /// opens it in a Request pane. (#10)
+    /// HTTP panel `+ New request` action — creates a `scratch.http`
+    /// under the workspace root (numbered if a stub already exists),
+    /// opens the source in an Editor pane, then immediately fires
+    /// `http.send` so the form-style `Pane::Request` (method / URL /
+    /// Params / Body / Auth / Vars / Source tabs + response) appears
+    /// as the primary view. Force `ViewMode::Edit` on the new pane
+    /// so the user lands on the FORM (not the "sending…" placeholder)
+    /// even while the stub request is still in flight — they can
+    /// tweak fields immediately and hit `http.send` again to re-fire.
+    ///
+    /// The stub target is `httpbin.org/get` — a public sandbox that
+    /// returns quickly and safely, so the newborn pane has a real
+    /// response to show once it lands.
     pub fn http_panel_new_request(&mut self) {
         let stub = "### GET request example\nGET https://httpbin.org/get\n";
         let mut path = self.workspace.join("scratch.http");
@@ -624,6 +634,20 @@ impl App {
         }
         self.http_panel_refresh();
         self.open_path(&path);
+        // Fire the stub so the form-style Request pane opens. The
+        // send handler splits a fresh `Pane::Request` off the .http
+        // editor and starts the job — that pane IS the form-editor
+        // the user is looking for.
+        self.send_request_from_active();
+        // Land on the Edit form first, not the "Sending…" response
+        // placeholder. `send_request_from_active` leaves `view` at
+        // its default (`Response`); flip it so the user sees the
+        // method/URL/Params/Body tabs immediately.
+        if let Some(cur) = self.active
+            && let Some(crate::pane::Pane::Request(rp)) = self.panes.get_mut(cur)
+        {
+            rp.view = crate::request_pane::ViewMode::Edit;
+        }
     }
 
     /// Scan the workspace for TODO markers and repopulate
