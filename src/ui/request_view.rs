@@ -89,9 +89,9 @@ fn header_matches_filter(key: &str, value: &str, q_lower: &str) -> bool {
 fn filter_row(filter: &str, focused: bool, t: theme::Theme) -> Line<'static> {
     let display = if filter.is_empty() {
         if focused {
-            "type to filter…".to_string()
+            "type to filter headers + body…".to_string()
         } else {
-            "/ filter headers".to_string()
+            "/ filter response".to_string()
         }
     } else {
         filter.to_string()
@@ -1274,8 +1274,50 @@ fn draw_response(
             }
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);
-            for l in pretty.lines() {
-                rows.push(plain(l.to_string(), body_style));
+            // Body filter — same query as the header filter. A line
+            // shows if it contains the query (case-insensitive) OR
+            // its neighbors do (±1 for context). Empty filter shows
+            // every line. #11.
+            if q_lower.is_empty() {
+                for l in pretty.lines() {
+                    rows.push(plain(l.to_string(), body_style));
+                }
+            } else {
+                let lines: Vec<&str> = pretty.lines().collect();
+                let matches: Vec<bool> = lines
+                    .iter()
+                    .map(|l| l.to_ascii_lowercase().contains(&q_lower))
+                    .collect();
+                let hits = matches.iter().filter(|m| **m).count();
+                for (i, l) in lines.iter().enumerate() {
+                    // Show a matching line + its two neighbors on each
+                    // side, so JSON context stays readable.
+                    let show = matches[i]
+                        || (i > 0 && matches[i - 1])
+                        || (i > 1 && matches[i - 2])
+                        || (i + 1 < matches.len() && matches[i + 1])
+                        || (i + 2 < matches.len() && matches[i + 2]);
+                    if !show {
+                        continue;
+                    }
+                    // Highlight matching lines with a subtle bg tint
+                    // so the match itself stands out from its context.
+                    let style = if matches[i] {
+                        Style::default().fg(t.fg).bg(t.bg2)
+                    } else {
+                        body_style
+                    };
+                    rows.push(plain(l.to_string(), style));
+                }
+                if hits == 0 {
+                    rows.push(plain(
+                        format!("  (no lines match \"{}\")", rp.filter),
+                        Style::default()
+                            .fg(t.comment)
+                            .bg(t.bg_dark)
+                            .add_modifier(Modifier::DIM),
+                    ));
+                }
             }
             if !r.assertions.is_empty() {
                 rows.push(plain(String::new(), body_style));
