@@ -649,10 +649,28 @@ fn draw_url_box(
         return;
     }
     let url_text = rp.request.url.clone();
-    let content = Line::from(vec![
-        Span::styled(" ", Style::default().bg(t.bg_dark)),
-        Span::styled(url_text.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
-    ]);
+    // Placeholder shown when the URL is empty — subtle comment-fg
+    // hint that vanishes on the first keystroke. Matches Postman /
+    // Bruno / Insomnia convention (no scheme prefill, since that
+    // clobbers paste-from-devtools workflows). Focused pane skips
+    // the placeholder so the caret sits at column 0 on a clean box.
+    let content = if url_text.is_empty() && !(focused && rp.focus == EditField::Url) {
+        Line::from(vec![
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            Span::styled(
+                "Enter request URL".to_string(),
+                Style::default()
+                    .fg(t.comment)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ])
+    } else {
+        Line::from(vec![
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            Span::styled(url_text.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
+        ])
+    };
     frame.render_widget(
         Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
         inner,
