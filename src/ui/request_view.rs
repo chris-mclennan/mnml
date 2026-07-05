@@ -1591,6 +1591,11 @@ fn draw_edit(
                 Style::default().fg(t.comment).bg(t.bg_dark)
             };
             let draft_y = rows.len() as u16;
+            // ✓ turns green only when BOTH key and value have
+            // content — a dim comment ✓ before that reads as
+            // "not ready to submit yet".
+            let ready = !draft.key.trim().is_empty() && !draft.value.trim().is_empty();
+            let check_color = if ready { t.green } else { t.comment };
             rows.push(make_row(
                 key_display,
                 val_display,
@@ -1598,7 +1603,7 @@ fn draw_edit(
                 val_style,
                 " ✓ ",
                 Style::default()
-                    .fg(t.green)
+                    .fg(check_color)
                     .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             ));
@@ -1656,12 +1661,20 @@ fn draw_edit(
         let body = rp.request.body.as_deref().unwrap_or("");
         let detected = detect_body_kind(body);
         if body.is_empty() {
+            // Empty body: render a numbered "line 1" so the pane
+            // reads as a ready-to-type editor (not a status
+            // message). Caret sits at column 4 (after the ` 1 `
+            // gutter) when Body has focus so typing lands directly
+            // on that line.
             let empty_y = rows.len() as u16;
-            rows.push(Line::from(vec![Span::styled(
-                "    (empty)".to_string(),
-                dim,
-            )]));
+            rows.push(Line::from(vec![
+                Span::styled(" 1 ", Style::default().fg(t.comment).bg(t.bg_dark)),
+                Span::styled(String::new(), Style::default().bg(t.bg_dark)),
+            ]));
             register_field(fields, empty_y, EditField::Body);
+            if b_focus && focused && caret.is_none() {
+                *caret = Some((area.x + 3, empty_y));
+            }
         } else {
             // JSON body: pre-compute tree-sitter colored spans per
             // line so keys/strings/numbers/keywords are colored the
@@ -1955,6 +1968,11 @@ fn draw_edit(
                 Style::default().fg(t.comment).bg(t.bg_dark)
             };
             let draft_y = rows.len() as u16;
+            // ✓ turns green only when BOTH key and value have
+            // content — a dim comment ✓ before that reads as
+            // "not ready to submit yet".
+            let ready = !draft.key.trim().is_empty() && !draft.value.trim().is_empty();
+            let check_color = if ready { t.green } else { t.comment };
             rows.push(make_row(
                 key_display,
                 val_display,
@@ -1962,7 +1980,7 @@ fn draw_edit(
                 val_style,
                 " ✓ ",
                 Style::default()
-                    .fg(t.green)
+                    .fg(check_color)
                     .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             ));
