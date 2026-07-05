@@ -53,6 +53,24 @@ fn method_color(method: &str, t: theme::Theme) -> ratatui::style::Color {
     }
 }
 
+/// `+ <label>` action row — matches the "+ New note" / "+ New session"
+/// / "+ New request" chip idiom used across the activity-bar panels
+/// (Notes, Sessions, HTTP). Green fg + BOLD reads as "additive
+/// affordance" everywhere in the app. Extracted so Params / Vars /
+/// Auth-set rows all read the same. (#11)
+fn add_action_row(label: &str, t: theme::Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("  ", Style::default().bg(t.bg_dark)),
+        Span::styled(
+            format!("+ {label}"),
+            Style::default()
+                .fg(t.green)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
 pub fn draw(
     frame: &mut Frame,
     app: &mut App,
@@ -659,15 +677,12 @@ fn draw_edit(
                 .collect(),
             None => Vec::new(),
         };
-        // `+ Add new parameter…` row
+        // `+ Add new parameter…` action row — uses the shared
+        // add_action_row helper so this reads the same as `+ New
+        // request` / `+ New note` / `+ New session` chips across the
+        // activity-bar panels.
         let add_y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            "    + Add new parameter…".to_string(),
-            Style::default()
-                .fg(t.green)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-        )]));
+        rows.push(add_action_row("Add new parameter…", t));
         params_rows_local.push((
             Rect {
                 x: area.x,
@@ -757,30 +772,38 @@ fn draw_edit(
         register_tab_row(fields, summary_y);
         rows.push(plain(String::new(), body_style));
 
-        // Action rows.
-        let actions: &[(&str, &str)] = &[
-            ("set_bearer", "+ Set Bearer token…"),
-            ("set_basic", "+ Set Basic auth (user:pass)…"),
-            ("set_api_key", "+ Set X-Api-Key…"),
-            ("apply_preset", "↻ Apply saved preset…"),
-            ("save_preset", "💾 Save current as preset…"),
-            ("clear", "✗ Clear Authorization"),
+        // Action rows. Icons match the rest of the app's nerd-font
+        // vocabulary — `+` for additive actions, `⟳` for refresh
+        // (Nerd Font U+27F3), `×` for destructive. No emoji so the
+        // Auth section reads consistently with the rest of the pane.
+        let actions: &[(&str, &str, char)] = &[
+            ("set_bearer", "Set Bearer token…", '+'),
+            ("set_basic", "Set Basic auth (user:pass)…", '+'),
+            ("set_api_key", "Set X-Api-Key…", '+'),
+            ("apply_preset", "Apply saved preset…", '⟳'),
+            ("save_preset", "Save current as preset…", '⇓'),
+            ("clear", "Clear Authorization", '×'),
         ];
-        for (id, label) in actions {
+        for (id, label, icon) in actions {
             let row_y = rows.len() as u16;
-            // Color clear in red, save in green, others normal.
+            // Color: `clear` red (destructive), `save_preset` green,
+            // others normal fg. Matches the app-wide semantic-color
+            // convention.
             let color = match *id {
                 "clear" => t.red,
                 "save_preset" => t.green,
                 _ => t.fg,
             };
-            rows.push(Line::from(vec![Span::styled(
-                format!("    {label}"),
-                Style::default()
-                    .fg(color)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
-            )]));
+            rows.push(Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled(
+                    format!("{icon} {label}"),
+                    Style::default()
+                        .fg(color)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
             auth_rows_local.push((
                 Rect {
                     x: area.x,
@@ -839,14 +862,9 @@ fn draw_edit(
         // top, each existing var row clickable to edit. Both
         // register rects in App.rects.request_vars_rows; click
         // handler in tui.rs dispatches to the env editor.
+        // #11 — uses the shared add_action_row helper.
         let add_y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            "    + Add new variable…".to_string(),
-            Style::default()
-                .fg(t.green)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-        )]));
+        rows.push(add_action_row("Add new variable…", t));
         vars_rows_local.push((
             Rect {
                 x: area.x,
