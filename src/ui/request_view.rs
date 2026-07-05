@@ -286,8 +286,22 @@ pub fn draw(
         return None;
     };
 
-    // ── caret position to return (set when Edit-mode draws the focused field) ──
+    // ── caret position to return.
+    //
+    // Two sources can set it:
+    //   * `draw_url_box` writes ABSOLUTE screen coords for the URL
+    //     field's caret. Goes into `caret_abs`.
+    //   * `draw_edit` writes a ROW-INDEX y (0-based within the
+    //     tabs_rect content area) for Body/Headers/etc. fields.
+    //     Goes into `caret` and is translated later.
+    //
+    // Splitting the two slots avoids the earlier ambiguity where
+    // `y < edit_h` was used as a discriminator — URL box `inner.y`
+    // is an absolute screen coord that can numerically land in the
+    // row-index range (`0..edit_h`), which caused the URL caret to
+    // be re-translated and end up in empty space below Body.
     let mut caret: Option<(u16, u16)> = None;
+    let mut caret_abs: Option<(u16, u16)> = None;
 
     // Edit-tab chip rects — collected with `y` = row index within the
     // Request zone, translated to a screen-y after we know that
@@ -463,7 +477,7 @@ pub fn draw(
         if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
             method_url_absolute.push((mr, EditField::Method));
         }
-        if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret, t) {
+        if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret_abs, t) {
             method_url_absolute.push((ur, EditField::Url));
         }
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
@@ -678,22 +692,19 @@ pub fn draw(
     }
 
     // Caret — two sources can set it:
-    //   * `draw_url_box` writes ABSOLUTE (x, y) inside the URL
-    //     sub-panel's inner rect.
-    //   * `draw_edit` writes a row-index y (0-based within the
-    //     tabs_rect content) for any focused Body/Headers field.
+    //   * `caret_abs` — URL sub-panel's caret in absolute screen
+    //     coords (set by `draw_url_box`).
+    //   * `caret` — row-index y from `draw_edit` for Body/Headers/
+    //     etc. fields (translated below).
     //
-    // Distinguishing them: absolute y from draw_url_box is
-    // always `>= request_inner.y` (well past `edit_h`), while
-    // row-index y is `< edit_h`. Route accordingly.
+    // URL wins when both are set (matches the pane's default focus
+    // = URL). Row-index carets get translated against `tabs_rect`.
+    if caret_abs.is_some() {
+        return caret_abs;
+    }
     caret.map(|(x, y)| {
-        if (y as usize) < edit_h {
-            // Row-index — translate against tabs_rect origin.
-            (x, edit_origin_y.saturating_add(y))
-        } else {
-            // Already an absolute coord (URL box) — pass through.
-            (x, y)
-        }
+        let y = (y as usize).min(edit_h.saturating_sub(1)) as u16;
+        (x, edit_origin_y.saturating_add(y))
     })
 }
 
