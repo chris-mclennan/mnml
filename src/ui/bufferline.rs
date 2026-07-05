@@ -558,8 +558,17 @@ pub fn right_cluster_width(app: &App) -> u16 {
             w += 2;
         }
     }
-    // theme toggle pill + ` × ` window close
-    w += 4 + 3;
+    // theme toggle pill (only when [ui] theme_toggle is set) + ` × ` window close
+    if app
+        .config
+        .ui
+        .theme_toggle
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        w += 4;
+    }
+    w += 3;
     w
 }
 
@@ -589,10 +598,22 @@ pub fn pick_cluster_mode(
 /// mouse-user SEV-2 — width of the compact cluster (when the full
 /// cluster doesn't fit). Keeps the most-clicked chrome
 /// (+ new-tab, theme toggle, × window-close); drops TABS label
-/// and per-tab-page chips. Returns `(width, fits)`.
-pub fn compact_cluster_width() -> u16 {
-    // ` + ` (3) + theme toggle pill (4) + ` × ` (3)
-    3 + 4 + 3
+/// and per-tab-page chips. Theme toggle is elided when
+/// `[ui] theme_toggle` isn't set (no alt to swap to).
+pub fn compact_cluster_width(app: &App) -> u16 {
+    // ` + ` (3) + optional theme toggle pill (4) + ` × ` (3)
+    let theme_pill = if app
+        .config
+        .ui
+        .theme_toggle
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty())
+    {
+        4
+    } else {
+        0
+    };
+    3 + theme_pill + 3
 }
 
 /// User-forced cluster mode overrides. Threaded from `[ui]
@@ -621,6 +642,7 @@ impl ClusterModePref {
 /// `Expanded` forces full even if compact would also fit; `Compact`
 /// forces compact; `Auto` picks whichever survives the space check.
 pub fn pick_cluster_mode_tiered(
+    app: &App,
     area_x: u16,
     area_w: u16,
     palette_right_edge: u16,
@@ -629,7 +651,7 @@ pub fn pick_cluster_mode_tiered(
     pref: ClusterModePref,
 ) -> Option<(u16, bool)> {
     let full_fits = pick_cluster_mode(area_x, area_w, palette_right_edge, full_w, gap);
-    let compact_w = compact_cluster_width();
+    let compact_w = compact_cluster_width(app);
     let compact_left = area_x + area_w.saturating_sub(compact_w);
     let compact_fits = if compact_left >= palette_right_edge + gap {
         Some((compact_w, true))
@@ -773,8 +795,18 @@ pub fn paint_right_cluster(
             }
         }
     }
-    // Theme toggle pill.
-    {
+    // Theme toggle pill — only when the user has configured an
+    // alternate theme to toggle to. Without `[ui] theme_toggle`
+    // set, clicking the pill just toasts "configure this first",
+    // which is dead chrome. Users still reach the theme picker
+    // via `theme.pick` in the palette.
+    let show_theme_pill = app
+        .config
+        .ui
+        .theme_toggle
+        .as_deref()
+        .is_some_and(|s| !s.trim().is_empty());
+    if show_theme_pill {
         let on_alt = app
             .config
             .ui

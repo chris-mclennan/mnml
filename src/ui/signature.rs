@@ -56,7 +56,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect, cursor: Option<(u16, u16
     };
 
     frame.render_widget(Clear, area);
-    let block = crate::ui::design_tokens::popup_panel("signature");
+    let block = crate::ui::design_tokens::popup_menu("signature");
     frame.render_widget(block, area);
 
     let inner = Rect {
@@ -78,10 +78,10 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect, cursor: Option<(u16, u16
         let style = if in_active {
             Style::default()
                 .fg(t.yellow)
-                .bg(t.bg_darker)
+                .bg(t.bg2)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(t.fg).bg(t.bg_darker)
+            Style::default().fg(t.fg).bg(t.bg2)
         };
         spans.push(Span::styled(ch.to_string(), style));
     }
@@ -92,11 +92,11 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect, cursor: Option<(u16, u16
         // focus; without the hint, the cycle is invisible.
         lines.push(Line::from(Span::styled(
             format!(" {}/{} signatures · ↑↓", p.active + 1, p.signatures.len()),
-            Style::default().fg(t.comment).bg(t.bg_darker),
+            Style::default().fg(t.comment).bg(t.bg2),
         )));
     }
     frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(t.bg_darker)),
+        Paragraph::new(lines).style(Style::default().bg(t.bg2)),
         inner,
     );
 }

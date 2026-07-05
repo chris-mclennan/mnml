@@ -43,7 +43,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     };
 
     frame.render_widget(Clear, area);
-    let block = crate::ui::design_tokens::popup_panel("Unsaved changes");
+    let block = crate::ui::design_tokens::popup_menu("Unsaved changes");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height < 3 {
@@ -54,9 +54,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             msg,
-            Style::default()
-                .fg(theme::cur().fg)
-                .bg(theme::cur().bg_darker),
+            Style::default().fg(theme::cur().fg).bg(theme::cur().bg2),
         ))),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
@@ -64,14 +62,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let by = inner.y + inner.height - 1;
     let mut bx = inner.x + 1;
     for (i, (label, choice)) in buttons.iter().enumerate() {
-        // The default (first) button gets a brighter style.
+        // Default (first) button uses the shared menu-family highlight
+        // so this "commit action" reads as the same primitive as the
+        // quit dialog's default focus, menu-bar selection, etc.
         let style = if i == 0 {
-            Style::default()
-                .fg(theme::cur().bg_darker)
-                .bg(theme::cur().blue)
-                .add_modifier(Modifier::BOLD)
+            crate::ui::design_tokens::row_highlight_menu()
         } else {
-            Style::default().fg(theme::cur().fg).bg(theme::cur().bg2)
+            crate::ui::design_tokens::row_plain_menu()
         };
         let bw = label.chars().count() as u16;
         if bx + bw > inner.x + inner.width {

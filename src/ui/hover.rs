@@ -63,7 +63,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
     } else {
         " hover ".to_string()
     };
-    let block = crate::ui::design_tokens::popup_panel(title);
+    let block = crate::ui::design_tokens::popup_menu(title);
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -74,15 +74,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
         .iter()
         .skip(h.scroll)
         .take(inner.height as usize)
-        .map(|l| {
-            Line::from(Span::styled(
-                l.clone(),
-                Style::default().fg(t.fg).bg(t.bg_darker),
-            ))
-        })
+        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(t.fg).bg(t.bg2))))
         .collect();
     frame.render_widget(
-        Paragraph::new(view).style(Style::default().bg(t.bg_darker)),
+        Paragraph::new(view).style(Style::default().bg(t.bg2)),
         inner,
     );
 }

@@ -2463,6 +2463,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // new-tab stay reachable at narrow widths instead of vanishing.
     let cluster_pref = bufferline::ClusterModePref::parse(&app.config.ui.top_bar_cluster_mode);
     let cluster_mode = bufferline::pick_cluster_mode_tiered(
+        app,
         area.x,
         area.width,
         palette_right_edge,
@@ -3680,6 +3681,9 @@ mod palette_bar_tests {
         let d = tempfile::tempdir().unwrap();
         let ws = d.path().to_path_buf();
         let mut cfg = Config::default();
+        // Seed a `theme_toggle` so the theme-pill paints (it's now
+        // hidden when unconfigured — see the 2026-07-04 change).
+        cfg.ui.theme_toggle = Some("light".to_string());
         // Seed a launcher icon so we can verify launcher_icon_rects
         // gets populated (and survives the full draw).
         cfg.ui.launcher_icons.push(crate::config::LauncherIcon {
