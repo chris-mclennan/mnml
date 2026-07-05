@@ -61,6 +61,10 @@ fn escape_single(s: &str) -> String {
 
 /// Load every row from the capture log. Empty lines and rows that fail
 /// to parse are skipped silently (forward-compat with future fields).
+///
+/// Reads the whole file — fine for the `http.view_captured` picker
+/// (which wants the full log) but wasteful for the sidebar / home
+/// pane. Prefer [`load_tail`] there.
 pub fn load(path: &Path) -> Vec<CapturedRow> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
@@ -70,6 +74,29 @@ pub fn load(path: &Path) -> Vec<CapturedRow> {
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str::<CapturedRow>(l).ok())
         .collect()
+}
+
+/// Load the last `n` rows only (oldest-first, same ordering as
+/// [`load`]). Used by the sidebar + home pane where we only ever
+/// display the tail — reading the whole file (which can be
+/// hundreds of MB after a long proxy session) just to throw most
+/// of it away is wasteful.
+///
+/// Same reverse-lines-then-take pattern as `history::tail`.
+pub fn load_tail(path: &Path, n: usize) -> Vec<CapturedRow> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let mut out: Vec<CapturedRow> = text
+        .lines()
+        .rev()
+        .filter(|l| !l.trim().is_empty())
+        .take(n)
+        .filter_map(|l| serde_json::from_str::<CapturedRow>(l).ok())
+        .collect();
+    out.reverse();
+    out
 }
 
 #[cfg(test)]

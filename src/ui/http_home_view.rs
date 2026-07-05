@@ -78,12 +78,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
 
     // We render into a virtual y-coord starting at 0 (relative to
     // `inner.y`) and only paint rows in `[scroll, scroll + inner.height)`.
-    let bottom = inner.y + inner.height;
+    // Every rendered row goes through `screen_y` so a row that would
+    // land at `bottom` (the y-cell just past the last visible one) is
+    // dropped before it can register a rect outside `inner`.
     let mut y_virt: u16 = 0;
 
     // Quick actions row — three chips separated by "·".
-    if visible(y_virt, scroll, inner.height) {
-        let y = inner.y + (y_virt - scroll);
+    if let Some(y) = screen_y(inner, y_virt, scroll) {
         draw_quick_actions(frame, app, y, inner, ascii);
     }
     y_virt = y_virt.saturating_add(1);
@@ -91,8 +92,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     y_virt = y_virt.saturating_add(1);
 
     // Section: Recent.
-    if visible(y_virt, scroll, inner.height) {
-        let y = inner.y + (y_virt - scroll);
+    if let Some(y) = screen_y(inner, y_virt, scroll) {
         draw_section_label(frame, "Recent", y, inner);
     }
     y_virt = y_virt.saturating_add(1);
@@ -104,19 +104,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         .take(HOME_ROW_CAP)
         .collect();
     if taken.is_empty() {
-        if visible(y_virt, scroll, inner.height) {
-            let y = inner.y + (y_virt - scroll);
+        if let Some(y) = screen_y(inner, y_virt, scroll) {
             draw_empty(frame, "No history yet.", y, inner);
         }
         y_virt = y_virt.saturating_add(1);
     } else {
         for (cache_idx, entry) in taken {
-            if visible(y_virt, scroll, inner.height) {
-                let y = inner.y + (y_virt - scroll);
-                if y < bottom {
-                    let rect = draw_recent_row(frame, entry, y, inner);
-                    app.rects.http_home_recent_rows.push((rect, cache_idx));
-                }
+            if let Some(y) = screen_y(inner, y_virt, scroll) {
+                let rect = draw_recent_row(frame, entry, y, inner);
+                app.rects.http_home_recent_rows.push((rect, cache_idx));
             }
             y_virt = y_virt.saturating_add(1);
         }
@@ -124,8 +120,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     y_virt = y_virt.saturating_add(1);
 
     // Section: Captured.
-    if visible(y_virt, scroll, inner.height) {
-        let y = inner.y + (y_virt - scroll);
+    if let Some(y) = screen_y(inner, y_virt, scroll) {
         draw_section_label(frame, "Captured", y, inner);
     }
     y_virt = y_virt.saturating_add(1);
@@ -137,19 +132,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         .take(HOME_ROW_CAP)
         .collect();
     if cap_taken.is_empty() {
-        if visible(y_virt, scroll, inner.height) {
-            let y = inner.y + (y_virt - scroll);
+        if let Some(y) = screen_y(inner, y_virt, scroll) {
             draw_empty(frame, "Nothing captured yet.", y, inner);
         }
         y_virt = y_virt.saturating_add(1);
     } else {
         for (cache_idx, row) in cap_taken {
-            if visible(y_virt, scroll, inner.height) {
-                let y = inner.y + (y_virt - scroll);
-                if y < bottom {
-                    let rect = draw_captured_row(frame, row, y, inner);
-                    app.rects.http_home_captured_rows.push((rect, cache_idx));
-                }
+            if let Some(y) = screen_y(inner, y_virt, scroll) {
+                let rect = draw_captured_row(frame, row, y, inner);
+                app.rects.http_home_captured_rows.push((rect, cache_idx));
             }
             y_virt = y_virt.saturating_add(1);
         }
@@ -157,26 +148,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     y_virt = y_virt.saturating_add(1);
 
     // Section: Files.
-    if visible(y_virt, scroll, inner.height) {
-        let y = inner.y + (y_virt - scroll);
+    if let Some(y) = screen_y(inner, y_virt, scroll) {
         draw_section_label(frame, "Files", y, inner);
     }
     y_virt = y_virt.saturating_add(1);
     let files_snapshot = app.http_panel_files_cache.clone();
     let ws = app.workspace.clone();
     if files_snapshot.is_empty() {
-        if visible(y_virt, scroll, inner.height) {
-            let y = inner.y + (y_virt - scroll);
+        if let Some(y) = screen_y(inner, y_virt, scroll) {
             draw_empty(frame, "No .http / .curl files.", y, inner);
         }
     } else {
         for path in files_snapshot.iter().take(HOME_ROW_CAP) {
-            if visible(y_virt, scroll, inner.height) {
-                let y = inner.y + (y_virt - scroll);
-                if y < bottom {
-                    let rect = draw_file_row(frame, path, &ws, y, inner, ascii);
-                    app.rects.http_home_files_rows.push((rect, path.clone()));
-                }
+            if let Some(y) = screen_y(inner, y_virt, scroll) {
+                let rect = draw_file_row(frame, path, &ws, y, inner, ascii);
+                app.rects.http_home_files_rows.push((rect, path.clone()));
             }
             y_virt = y_virt.saturating_add(1);
         }
@@ -185,6 +171,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
 
 fn visible(y_virt: u16, scroll: u16, height: u16) -> bool {
     y_virt >= scroll && y_virt < scroll + height
+}
+
+/// Map a virtual `y_virt` (0 = first content row) into a screen y
+/// inside `inner`. Returns `None` if the row would fall outside
+/// `inner` — either scrolled off the top or below the last row.
+/// Every render site should use this instead of the raw
+/// `inner.y + (y_virt - scroll)` subtraction — the reviewer caught
+/// that the untyped math + `visible()` guard drift apart when
+/// `inner.height` and `bottom` compute rounding boundaries
+/// differently.
+fn screen_y(inner: Rect, y_virt: u16, scroll: u16) -> Option<u16> {
+    if !visible(y_virt, scroll, inner.height) {
+        return None;
+    }
+    let y = inner.y.saturating_add(y_virt.saturating_sub(scroll));
+    if y >= inner.y.saturating_add(inner.height) {
+        return None;
+    }
+    Some(y)
 }
 
 fn draw_quick_actions(frame: &mut Frame, app: &mut App, y: u16, inner: Rect, ascii: bool) {

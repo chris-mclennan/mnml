@@ -229,17 +229,27 @@ fn draw_section_header(
             + label.chars().count()
             + format!(" ({count})").chars().count();
         let chip_len = chip_text.chars().count() + 2;
-        if (used + chip_len + 2) < area.width as usize {
-            let pad = area.width as usize - used - chip_len - 1;
+        // Reviewer catch: the `pad` computation is `area.width - used - chip_len - 1`,
+        // which underflows on usize if the sidebar is resized narrower than the
+        // header + chip need. Compute defensively so a mid-drag narrow sidebar
+        // doesn't panic the render thread — just drops the chip in that frame.
+        let area_w = area.width as usize;
+        let need = used.saturating_add(chip_len).saturating_add(2);
+        if need < area_w {
+            let pad = area_w
+                .saturating_sub(used)
+                .saturating_sub(chip_len)
+                .saturating_sub(1);
             spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
             spans.push(Span::styled(
                 format!(" {chip_text} "),
                 Style::default().fg(t.cyan).bg(bg),
             ));
+            let chip_x = (used + pad) as u16;
             let chip_rect = Rect {
-                x: area.x + (used + pad) as u16,
+                x: area.x + chip_x,
                 y,
-                width: (chip_len as u16).min(area.width),
+                width: (chip_len as u16).min(area.width.saturating_sub(chip_x)),
                 height: 1,
             };
             app.rects.http_panel_capture_chip = Some(chip_rect);

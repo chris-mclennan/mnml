@@ -656,13 +656,13 @@ impl App {
         walk_for_http(&self.workspace, 0, &mut out);
         out.sort();
         self.http_panel_files_cache = out;
-        // Recent — last 10 from `.rqst/history.jsonl`. The tail is
-        // reversed at display time so most-recent-first.
-        self.http_panel_recent_cache = crate::http::history::tail(&self.workspace, 10);
-        // Captured — last 10 from `.rqst/captured/log.jsonl`. `load`
-        // returns oldest-first; we cap + reverse at render.
+        // Recent + Captured share a ceiling of 20 rows — the sidebar
+        // clips to 10 at display time, the home pane shows all 20.
+        // Both loaders cap at load time so a multi-GB capture / a
+        // never-rotated history.jsonl don't blow through allocator.
+        self.http_panel_recent_cache = crate::http::history::tail(&self.workspace, 20);
         let cap_path = crate::http::proxy::captured_log_path(&self.workspace);
-        self.http_panel_captured_cache = crate::http::captured::load(&cap_path);
+        self.http_panel_captured_cache = crate::http::captured::load_tail(&cap_path, 20);
         self.http_panel_scanned_once = true;
     }
 
