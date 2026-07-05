@@ -366,7 +366,10 @@ pub fn draw(
     const METHOD_BOX_WIDTH: u16 = 14;
     const MIN_URL_WIDTH: u16 = 20;
     const METHOD_URL_ROW_H: u16 = 3;
-    let show_sub_panels = request_inner.width >= METHOD_BOX_WIDTH + MIN_URL_WIDTH
+    // 1-cell padding on the outer edges of the Method/URL row so
+    // the sub-panels don't kiss the parent Request block's border.
+    const EDGE_PAD: u16 = 1;
+    let show_sub_panels = request_inner.width >= METHOD_BOX_WIDTH + MIN_URL_WIDTH + 2 * EDGE_PAD
         && request_inner.height >= METHOD_URL_ROW_H + 3;
 
     let mut edit_rows: Vec<Line> = Vec::new();
@@ -377,16 +380,23 @@ pub fn draw(
     // these if we mixed them in.
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let tabs_rect = if show_sub_panels {
+        // Layout across the top row: [pad][Method][URL][pad]
         let method_rect = Rect {
-            x: request_inner.x,
+            x: request_inner.x.saturating_add(EDGE_PAD),
             y: request_inner.y,
             width: METHOD_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
+        let url_x = method_rect.x.saturating_add(METHOD_BOX_WIDTH);
+        let url_width = request_inner
+            .width
+            .saturating_sub(EDGE_PAD)
+            .saturating_sub(METHOD_BOX_WIDTH)
+            .saturating_sub(EDGE_PAD);
         let url_rect = Rect {
-            x: request_inner.x.saturating_add(METHOD_BOX_WIDTH),
+            x: url_x,
             y: request_inner.y,
-            width: request_inner.width.saturating_sub(METHOD_BOX_WIDTH),
+            width: url_width,
             height: METHOD_URL_ROW_H,
         };
         if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
@@ -665,12 +675,13 @@ fn draw_url_box(
         return None;
     }
     let url_text = rp.request.url.clone();
-    // Placeholder shown when the URL is empty — subtle comment-fg
-    // hint that vanishes on the first keystroke. Matches Postman /
-    // Bruno / Insomnia convention (no scheme prefill, since that
-    // clobbers paste-from-devtools workflows). Focused pane skips
-    // the placeholder so the caret sits at column 0 on a clean box.
-    let content = if url_text.is_empty() && !(focused && rp.focus == EditField::Url) {
+    // Placeholder shown any time the URL is empty — even when the
+    // field has focus. Matches HTML input placeholder semantics
+    // (Postman/Bruno/Insomnia all keep the hint visible under the
+    // caret until the first keystroke). A new Request pane defaults
+    // focus to `EditField::Url`, so gating on `!focused` here would
+    // hide the hint entirely.
+    let content = if url_text.is_empty() {
         Line::from(vec![
             Span::styled(" ", Style::default().bg(t.bg_dark)),
             Span::styled(
