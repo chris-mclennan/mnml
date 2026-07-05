@@ -343,8 +343,7 @@ pub fn draw(
     };
 
     // ── Zone 1: Request ─────────────────────────────────────────
-    let request_block =
-        crate::ui::design_tokens::modal_panel("Request").border_style(border_color(focused, t));
+    let request_block = crate::ui::design_tokens::modal_panel("Request");
     let request_inner = request_block.inner(request_rect);
     frame.render_widget(request_block, request_rect);
 
@@ -369,8 +368,12 @@ pub fn draw(
     // 1-cell padding on the outer edges of the Method/URL row so
     // the sub-panels don't kiss the parent Request block's border.
     const EDGE_PAD: u16 = 1;
+    // 1-cell blank above the Method/URL row — pushes the outlines
+    // down off the parent Request block's top border so they read
+    // as free-floating sub-panels.
+    const TOP_PAD: u16 = 1;
     let show_sub_panels = request_inner.width >= METHOD_BOX_WIDTH + MIN_URL_WIDTH + 2 * EDGE_PAD
-        && request_inner.height >= METHOD_URL_ROW_H + 3;
+        && request_inner.height >= METHOD_URL_ROW_H + TOP_PAD + 3;
 
     let mut edit_rows: Vec<Line> = Vec::new();
     // Absolute-coord click rects for the Method + URL sub-panels.
@@ -380,10 +383,11 @@ pub fn draw(
     // these if we mixed them in.
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let tabs_rect = if show_sub_panels {
-        // Layout across the top row: [pad][Method][URL][pad]
+        // Layout: [top-pad blank row][pad][Method][URL][pad]
+        let row_y = request_inner.y.saturating_add(TOP_PAD);
         let method_rect = Rect {
             x: request_inner.x.saturating_add(EDGE_PAD),
-            y: request_inner.y,
+            y: row_y,
             width: METHOD_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
@@ -395,7 +399,7 @@ pub fn draw(
             .saturating_sub(EDGE_PAD);
         let url_rect = Rect {
             x: url_x,
-            y: request_inner.y,
+            y: row_y,
             width: url_width,
             height: METHOD_URL_ROW_H,
         };
@@ -405,11 +409,14 @@ pub fn draw(
         if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret, t) {
             method_url_absolute.push((ur, EditField::Url));
         }
+        // Tabs pick up IMMEDIATELY after the Method/URL bottom
+        // border — no extra spacer between them.
+        let used = TOP_PAD.saturating_add(METHOD_URL_ROW_H);
         Rect {
             x: request_inner.x,
-            y: request_inner.y.saturating_add(METHOD_URL_ROW_H),
+            y: request_inner.y.saturating_add(used),
             width: request_inner.width,
-            height: request_inner.height.saturating_sub(METHOD_URL_ROW_H),
+            height: request_inner.height.saturating_sub(used),
         }
     } else {
         request_inner
@@ -447,8 +454,7 @@ pub fn draw(
     }
 
     // ── Zone 2: Response ─────────────────────────────────────────
-    let response_block =
-        crate::ui::design_tokens::modal_panel("Response").border_style(border_color(focused, t));
+    let response_block = crate::ui::design_tokens::modal_panel("Response");
     let response_inner = response_block.inner(response_rect);
     frame.render_widget(response_block, response_rect);
     let mut response_rows: Vec<Line> = Vec::new();
@@ -483,8 +489,7 @@ pub fn draw(
     }
 
     // ── Zone 3: AI ─────────────────────────────────────────
-    let ai_block =
-        crate::ui::design_tokens::modal_panel("AI").border_style(border_color(focused, t));
+    let ai_block = crate::ui::design_tokens::modal_panel("AI");
     let ai_inner = ai_block.inner(ai_rect);
     frame.render_widget(ai_block, ai_rect);
     if ai_inner.width > 0 && ai_inner.height > 0 {
@@ -591,16 +596,10 @@ pub fn draw(
     })
 }
 
-/// Focused Request panes get a cyan border, unfocused ones the
-/// standard `bg3` subtle gray — matches every other pane's focus
-/// treatment.
-fn border_color(focused: bool, t: theme::Theme) -> Style {
-    if focused {
-        Style::default().fg(t.blue).bg(t.bg_dark)
-    } else {
-        Style::default().fg(t.bg3).bg(t.bg_dark)
-    }
-}
+// Border color override was removed 2026-07-05 — every
+// modal_panel(title) now uses the design-token default border
+// (t.fg on t.bg_dark), matching the rest of the app's bordered
+// panels instead of a per-pane blue-on-focus override.
 
 /// Method sub-panel — legend-outline modal_panel titled "Method" with
 /// the verb rendered as COLORED TEXT (not a colored bg chip) and a
@@ -615,11 +614,10 @@ fn draw_method_box(
     frame: &mut Frame,
     rp: &crate::request_pane::RequestPane,
     rect: Rect,
-    focused: bool,
+    _focused: bool,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let block =
-        crate::ui::design_tokens::modal_panel("Method").border_style(border_color(focused, t));
+    let block = crate::ui::design_tokens::modal_panel("Method");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
@@ -668,7 +666,7 @@ fn draw_url_box(
     caret: &mut Option<(u16, u16)>,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let block = crate::ui::design_tokens::modal_panel("URL").border_style(border_color(focused, t));
+    let block = crate::ui::design_tokens::modal_panel("URL");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
@@ -797,12 +795,12 @@ fn draw_edit(
     // read.
     {
         use crate::request_pane::EditTab;
+        // Tab strip renders at row 0 of `tabs_rect` — the leading
+        // blank spacer was removed 2026-07-05 so the tabs sit
+        // immediately under the Method/URL bottom border (user
+        // asked to remove the extra 1-cell gap).
         let strip_y = rows.len() as u16;
-        // Leading blank row so the strip has breathing room from
-        // the URL bar above.
-        rows.push(Line::from(Span::raw("")));
         let mut spans: Vec<Span> = Vec::new();
-        let strip_y = strip_y + 1;
         let mut col: u16 = 2;
         // Leading pad column so the strip aligns with the URL row.
         spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
