@@ -394,10 +394,11 @@ pub fn draw(
     // 1-cell padding on the outer edges of the Method/URL row so
     // the sub-panels don't kiss the parent Request block's border.
     const EDGE_PAD: u16 = 1;
-    // 1-cell blank above the Method/URL row — pushes the outlines
-    // down off the parent Request block's top border so they read
-    // as free-floating sub-panels.
-    const TOP_PAD: u16 = 1;
+    // 2026-07-05 — dropped the 1-cell top pad above Method/URL now
+    // that the parent Request block uses plain-text titles (no
+    // colored chip). Sub-panels can sit flush against the parent's
+    // top border without visual crowding.
+    const TOP_PAD: u16 = 0;
     // Right-side action boxes — Postman/Bruno idiom for firing and
     // resetting the current request. Widths sized to fit each box's
     // content plus 2-cell border chrome:

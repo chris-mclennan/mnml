@@ -628,12 +628,19 @@ impl RequestPane {
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| format!("{method}  new request"))
         };
+        // Tab markers: only signal states the user needs to know
+        // about at a glance. A clean 2xx Done state used to render
+        // a `⚡` but the Response block already shows the status
+        // chip — the tab marker was just visual noise. Now:
+        //   Sending  → "…" (in flight)
+        //   Streaming → "▶" (SSE open)
+        //   Failed assertions on Done → "✗"
+        //   Everything else → no marker.
         let marker = match &self.state {
             RunState::Sending => "…",
             RunState::Streaming(_) => "▶",
-            RunState::Failed(_) => "",
             RunState::Done(r) if r.assertions.iter().any(|a| !a.passed) => "✗",
-            RunState::Done(_) => "⚡",
+            _ => "",
         };
         if marker.is_empty() {
             base
