@@ -3708,6 +3708,125 @@ impl App {
         }
     }
 
+    /// Start an in-place value-cell edit on a KV table row. Sets
+    /// `rp.kv_edit` with the row's current value pre-loaded so
+    /// typing appends. Enter commits (via `http_kv_edit_commit`),
+    /// Esc cancels (via `http_kv_edit_cancel`).
+    pub fn http_kv_edit_begin(&mut self, kind: crate::request_pane::KvEditKind, key: String) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+            return;
+        };
+        let current_value = match kind {
+            crate::request_pane::KvEditKind::Params => {
+                let url = &rp.request.url;
+                let q = url.find('?').map(|i| &url[i + 1..]).unwrap_or("");
+                q.split('&')
+                    .find_map(|kv| {
+                        kv.split_once('=')
+                            .and_then(|(k, v)| (k == key).then(|| v.to_string()))
+                    })
+                    .unwrap_or_default()
+            }
+            crate::request_pane::KvEditKind::Headers => rp
+                .headers_buffer
+                .lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    (k.trim().eq_ignore_ascii_case(&key)).then(|| v.trim().to_string())
+                })
+                .unwrap_or_default(),
+        };
+        rp.kv_edit = Some(crate::request_pane::KvValueEdit {
+            kind,
+            original_key: key,
+            buffer: current_value.clone(),
+            cursor: current_value.len(),
+        });
+    }
+
+    /// Commit an in-place value-cell edit — replaces the row's
+    /// value with `kv_edit.buffer`. Clears `kv_edit`.
+    pub fn http_kv_edit_commit(&mut self) {
+        let Some(cur) = self.active else { return };
+        let edit = {
+            let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+                return;
+            };
+            rp.kv_edit.take()
+        };
+        let Some(edit) = edit else { return };
+        let new_value = edit.buffer.trim().to_string();
+        match edit.kind {
+            crate::request_pane::KvEditKind::Params => {
+                if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+                    let url = rp.request.url.clone();
+                    let (base, query_opt) = match url.find('?') {
+                        Some(i) => (&url[..i], Some(&url[i + 1..])),
+                        None => (url.as_str(), None),
+                    };
+                    let mut rewritten = base.to_string();
+                    let mut sep = '?';
+                    if let Some(q) = query_opt {
+                        for kv in q.split('&').filter(|s| !s.is_empty()) {
+                            let (k, v) = match kv.split_once('=') {
+                                Some(kv) => kv,
+                                None => (kv, ""),
+                            };
+                            let out_v = if k == edit.original_key {
+                                new_value.as_str()
+                            } else {
+                                v
+                            };
+                            rewritten.push(sep);
+                            rewritten.push_str(k);
+                            rewritten.push('=');
+                            rewritten.push_str(out_v);
+                            sep = '&';
+                        }
+                    }
+                    rp.request.url = rewritten;
+                    rp.url_cursor = rp.request.url.len();
+                }
+            }
+            crate::request_pane::KvEditKind::Headers => {
+                if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+                    let rewritten: Vec<String> = rp
+                        .headers_buffer
+                        .lines()
+                        .map(|l| match l.split_once(':') {
+                            Some((k, _)) if k.trim().eq_ignore_ascii_case(&edit.original_key) => {
+                                format!("{}: {}", k.trim(), new_value)
+                            }
+                            _ => l.to_string(),
+                        })
+                        .collect();
+                    rp.headers_buffer = rewritten.join("\n");
+                    if !rp.headers_buffer.is_empty() && !rp.headers_buffer.ends_with('\n') {
+                        rp.headers_buffer.push('\n');
+                    }
+                    rp.headers_cursor = rp.headers_buffer.len();
+                    rp.commit_headers();
+                }
+            }
+        }
+        self.toast(format!(
+            "{}: updated",
+            match edit.kind {
+                crate::request_pane::KvEditKind::Params => "params",
+                crate::request_pane::KvEditKind::Headers => "headers",
+            }
+        ));
+    }
+
+    /// Cancel an in-place value-cell edit — drops the buffer.
+    pub fn http_kv_edit_cancel(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.kv_edit = None;
+        }
+    }
+
     /// Delete a header row by name from the buffer. Mirrors
     /// `http_params_delete` — used by row-click on the Headers
     /// table (whole-row = delete for v1).

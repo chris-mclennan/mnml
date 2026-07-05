@@ -471,13 +471,32 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             Some(crate::pane::Pane::Request(rp)) if rp.edit_tab == crate::request_pane::EditTab::Headers
         );
         // `__COMMIT__` sentinel = click on the draft row's ✓ cell
-        // → commit + open a fresh draft row (same as pressing
-        // Enter). Same code path both tabs share.
+        // → commit + open a fresh draft row.
         if key == "__COMMIT__" {
             if is_headers {
                 app.http_headers_add_commit(true);
             } else {
                 app.http_params_add_commit(true);
+            }
+            return;
+        }
+        // `__VAL:<name>` = click on the value cell of an existing
+        // row → start in-place edit.
+        if let Some(row_key) = key.strip_prefix("__VAL:") {
+            let kind = if is_headers {
+                crate::request_pane::KvEditKind::Headers
+            } else {
+                crate::request_pane::KvEditKind::Params
+            };
+            app.http_kv_edit_begin(kind, row_key.to_string());
+            return;
+        }
+        // `__DEL:<name>` = click on the ✕ cell → delete row.
+        if let Some(row_key) = key.strip_prefix("__DEL:") {
+            if is_headers {
+                app.http_headers_delete(row_key);
+            } else {
+                app.http_params_delete(row_key);
             }
             return;
         }
@@ -488,6 +507,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 app.http_params_add();
             }
         } else if is_headers {
+            // Backwards-compat with whole-row rects registered
+            // outside render_kv_table (Vars tab still uses them).
             app.http_headers_delete(&key);
         } else {
             app.http_params_delete(&key);

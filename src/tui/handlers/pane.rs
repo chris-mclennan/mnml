@@ -2437,6 +2437,39 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         use crate::request_pane::ViewMode;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        // In-place value-cell edit on an existing KV row. Same
+        // Tab/Enter/Esc/text-input rhythm as the draft row, but
+        // there's no `key` field — Tab does nothing, Enter
+        // commits (replaces the row's value), Esc cancels.
+        if rp.view == ViewMode::Edit && rp.kv_edit.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    let _ = rp;
+                    app.http_kv_edit_cancel();
+                    return true;
+                }
+                KeyCode::Enter => {
+                    let _ = rp;
+                    app.http_kv_edit_commit();
+                    return true;
+                }
+                KeyCode::Backspace => {
+                    if let Some(e) = rp.kv_edit.as_mut() {
+                        e.buffer.pop();
+                        e.cursor = e.buffer.len();
+                    }
+                    return true;
+                }
+                KeyCode::Char(c) if !ctrl => {
+                    if let Some(e) = rp.kv_edit.as_mut() {
+                        e.buffer.push(c);
+                        e.cursor = e.buffer.len();
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
         // Inline KV draft (Params OR Headers). Same key handling
         // for both — dispatch by which is currently active.
         let params_active = rp.view == ViewMode::Edit && rp.params_add.is_some();

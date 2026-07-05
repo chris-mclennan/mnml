@@ -279,6 +279,7 @@ pub(crate) fn render_kv_table(
     dim: Style,
     data: &[(String, String)],
     draft: Option<&crate::request_pane::InlineKvDraft>,
+    kv_edit: Option<&crate::request_pane::KvValueEdit>,
     kind: KvTableKind,
     hover_key: Option<&str>,
     pane_id: PaneId,
@@ -286,7 +287,7 @@ pub(crate) fn render_kv_table(
 ) {
     const TABLE_MAX_W: u16 = 100;
     const TABLE_RIGHT_PAD: u16 = 3;
-    let table_x = area.x.saturating_add(2);
+    let _table_x = area.x.saturating_add(2);
     let table_w = area
         .width
         .saturating_sub(2)
@@ -385,6 +386,24 @@ pub(crate) fn render_kv_table(
     rows.push(make_border('├', '┼', '┤', '─'));
 
     // Data rows.
+    // Check whether this table's active kv_edit targets a row we're
+    // about to render — matched by (kind, original_key).
+    let edit_target = kv_edit.filter(|e| {
+        matches!(
+            (kind, e.kind),
+            (KvTableKind::Params, crate::request_pane::KvEditKind::Params)
+                | (
+                    KvTableKind::Headers,
+                    crate::request_pane::KvEditKind::Headers
+                )
+        )
+    });
+    // Column offsets used to build cell-level click rects.
+    // Row layout (from x = area.x): 2 pad + 1 border + 1 space +
+    // name_w + 1 pad + 1 space + 1 border + 1 space + value_w +
+    // 1 pad + 1 space + 1 border + 3 X + 1 border
+    let value_col_x_off: u16 = 2 + 1 + 1 + name_w + 1 + 1 + 1;
+    let x_col_x_off: u16 = value_col_x_off + value_w + 1 + 1 + 1;
     for (i, (k, v)) in data.iter().enumerate() {
         let is_hover = hover_key == Some(k.as_str());
         let key_style = if is_hover {
@@ -398,26 +417,52 @@ pub(crate) fn render_kv_table(
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD)
         };
-        let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
+        let is_editing = edit_target.map(|e| e.original_key == *k).unwrap_or(false);
+        let val_display = if is_editing {
+            let e = edit_target.unwrap();
+            format!("{}▏", e.buffer)
+        } else {
+            v.clone()
+        };
+        let val_style = if is_editing {
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.fg).bg(t.bg_dark)
+        };
         let x_style = Style::default().fg(t.red).bg(t.bg_dark);
         let row_y = rows.len() as u16;
         rows.push(make_row(
             k.clone(),
-            v.clone(),
+            val_display,
             key_style,
             val_style,
             " ✕ ",
             x_style,
         ));
-        let row_full_w = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1 + 3 + 1;
+        // Cell-level click rects. Order matters — value_cell FIRST,
+        // then x_cell, then the whole-row fallback (delete). The
+        // click handler `.find(...)` walks in order and takes the
+        // first hit.
         params_rows_local.push((
             Rect {
-                x: table_x,
+                x: area.x.saturating_add(value_col_x_off),
                 y: row_y,
-                width: row_full_w,
+                width: value_w,
                 height: 1,
             },
-            k.clone(),
+            format!("__VAL:{k}"),
+        ));
+        params_rows_local.push((
+            Rect {
+                x: area.x.saturating_add(x_col_x_off),
+                y: row_y,
+                width: 3,
+                height: 1,
+            },
+            format!("__DEL:{k}"),
         ));
         register(fields, row_y);
         if i + 1 < data.len() || draft.is_some() {
@@ -1696,6 +1741,7 @@ fn draw_edit(
             dim,
             &headers,
             rp.headers_add.as_ref(),
+            rp.kv_edit.as_ref(),
             KvTableKind::Headers,
             None,
             pane_id,
@@ -1847,6 +1893,7 @@ fn draw_edit(
             dim,
             &params,
             rp.params_add.as_ref(),
+            rp.kv_edit.as_ref(),
             KvTableKind::Params,
             rp.hover_params_key.as_deref(),
             pane_id,

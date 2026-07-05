@@ -120,6 +120,9 @@ pub struct RequestPane {
     /// Bruno-style key/value inline row. Enter commits (appends
     /// `Name: value\n` to `headers_buffer`); Esc cancels.
     pub headers_add: Option<InlineKvDraft>,
+    /// In-place value-cell edit on an existing Params or Headers
+    /// row. Populated when the user clicks a value cell.
+    pub kv_edit: Option<KvValueEdit>,
 }
 
 /// Draft state for an inline "add a new key/value pair" editor.
@@ -137,6 +140,31 @@ pub struct InlineKvDraft {
 
 /// Backwards-compat alias — old code called this `ParamsAddDraft`.
 pub type ParamsAddDraft = InlineKvDraft;
+
+/// State for in-place edit of an existing Params or Headers row's
+/// VALUE cell. Click a value cell → set this; type / backspace
+/// modifies `buffer`; Enter commits (replaces the value in the URL
+/// query string or `headers_buffer`); Esc cancels.
+#[derive(Debug, Clone)]
+pub struct KvValueEdit {
+    /// Which tab this edit belongs to. Guards the commit path so
+    /// a Params edit doesn't accidentally rewrite a header.
+    pub kind: KvEditKind,
+    /// Original key of the row — used to locate the entry to
+    /// replace when the user commits. If the row was deleted or
+    /// renamed under us, commit becomes a no-op.
+    pub original_key: String,
+    /// Current buffer contents. Renders as the value cell text.
+    pub buffer: String,
+    pub cursor: usize,
+}
+
+/// Which KV table an in-place edit targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KvEditKind {
+    Params,
+    Headers,
+}
 
 /// Two-way orientation for the Request/Response zones inside a
 /// single Request pane. Kept on the pane so orientation persists
@@ -441,6 +469,7 @@ impl RequestPane {
             response_tab: ResponseTab::Body,
             params_add: None,
             headers_add: None,
+            kv_edit: None,
         }
     }
 
