@@ -247,6 +247,270 @@ fn colored_line(
 /// (Notes, Sessions, HTTP). Green fg + BOLD reads as "additive
 /// affordance" everywhere in the app. Extracted so Params / Vars /
 /// Auth-set rows all read the same. (#11)
+/// Which HTTP-tab is calling `render_kv_table` — controls `EditField`
+/// registration and the hover-key lookup for the row-highlight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KvTableKind {
+    Params,
+    Headers,
+}
+
+/// Excel-cell key/value table shared by the Params and Headers tabs.
+///
+/// Renders top border → header row → data rows (each with row
+/// separator) → optional draft row → bottom border → `+ Add row`
+/// chip (when no draft) or a hint line (when drafting).
+///
+/// Registers click rects into `params_rows_local` for:
+/// - data rows — full row width, keyed on the row's name (click
+///   anywhere on the row → delete).
+/// - `+ Add row` — full area width, empty-string key.
+/// - `✓` draft cell — 3 cells, `"__COMMIT__"` sentinel key.
+///
+/// The `key_color_default` param lets Params (fg-BOLD) and Headers
+/// (cyan-BOLD) render their key columns in their preferred color
+/// without duplicating the rest of the 180-line render.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_kv_table(
+    rows: &mut Vec<Line<'static>>,
+    fields: &mut Vec<(Rect, PaneId, EditField)>,
+    area: Rect,
+    t: theme::Theme,
+    dim: Style,
+    data: &[(String, String)],
+    draft: Option<&crate::request_pane::InlineKvDraft>,
+    kind: KvTableKind,
+    hover_key: Option<&str>,
+    pane_id: PaneId,
+    params_rows_local: &mut Vec<(Rect, String)>,
+) {
+    const TABLE_MAX_W: u16 = 100;
+    const TABLE_RIGHT_PAD: u16 = 3;
+    let table_x = area.x.saturating_add(2);
+    let table_w = area
+        .width
+        .saturating_sub(2)
+        .saturating_sub(TABLE_RIGHT_PAD)
+        .clamp(20, TABLE_MAX_W);
+    let x_col_w: u16 = 3;
+    let inner_w = table_w.saturating_sub(x_col_w).saturating_sub(4);
+    let name_w = (inner_w * 35 / 100).max(8);
+    let value_w = inner_w.saturating_sub(name_w);
+
+    let edit_field = match kind {
+        KvTableKind::Params => EditField::Url,
+        KvTableKind::Headers => EditField::Headers,
+    };
+    let register = |fields: &mut Vec<(Rect, PaneId, EditField)>, row_y: u16| {
+        fields.push((
+            Rect {
+                x: area.x,
+                y: row_y,
+                width: area.width,
+                height: 1,
+            },
+            pane_id,
+            edit_field,
+        ));
+    };
+
+    let make_border = |left: char, sep: char, right: char, fill: char| -> Line<'static> {
+        let n_seg: String = std::iter::repeat_n(fill, (name_w + 2) as usize).collect();
+        let v_seg: String = std::iter::repeat_n(fill, (value_w + 2) as usize).collect();
+        let x_seg: String = std::iter::repeat_n(fill, x_col_w as usize).collect();
+        Line::from(vec![
+            Span::styled("  ", Style::default().bg(t.bg_dark)),
+            Span::styled(
+                format!("{}{}{}{}{}{}{}", left, n_seg, sep, v_seg, sep, x_seg, right),
+                Style::default().fg(t.bg3).bg(t.bg_dark),
+            ),
+        ])
+    };
+    let make_row = |key_text: String,
+                    val_text: String,
+                    key_style: Style,
+                    val_style: Style,
+                    x_glyph: &str,
+                    x_style: Style|
+     -> Line<'static> {
+        let mut key_s = key_text;
+        if key_s.chars().count() > name_w as usize {
+            let truncated: String = key_s.chars().take(name_w as usize).collect();
+            key_s = truncated;
+        }
+        let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
+        let mut val_s = val_text;
+        if val_s.chars().count() > value_w as usize {
+            let truncated: String = val_s.chars().take(value_w as usize).collect();
+            val_s = truncated;
+        }
+        let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
+        let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
+        Line::from(vec![
+            Span::styled("  ", Style::default().bg(t.bg_dark)),
+            border.clone(),
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            Span::styled(key_s, key_style),
+            Span::styled(" ".repeat(pad_k), Style::default().bg(t.bg_dark)),
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            border.clone(),
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            Span::styled(val_s, val_style),
+            Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
+            Span::styled(" ", Style::default().bg(t.bg_dark)),
+            border.clone(),
+            Span::styled(x_glyph.to_string(), x_style),
+            border,
+        ])
+    };
+    let key_color_default = match kind {
+        KvTableKind::Params => t.fg,
+        KvTableKind::Headers => t.cyan,
+    };
+
+    // Top border + header + header separator.
+    rows.push(make_border('┌', '┬', '┐', '─'));
+    let hdr_style = Style::default()
+        .fg(t.comment)
+        .bg(t.bg_dark)
+        .add_modifier(Modifier::BOLD);
+    rows.push(make_row(
+        "Name".to_string(),
+        "Value".to_string(),
+        hdr_style,
+        hdr_style,
+        "   ",
+        Style::default().bg(t.bg_dark),
+    ));
+    rows.push(make_border('├', '┼', '┤', '─'));
+
+    // Data rows.
+    for (i, (k, v)) in data.iter().enumerate() {
+        let is_hover = hover_key == Some(k.as_str());
+        let key_style = if is_hover {
+            Style::default()
+                .fg(t.cyan)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(key_color_default)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        };
+        let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
+        let x_style = Style::default().fg(t.red).bg(t.bg_dark);
+        let row_y = rows.len() as u16;
+        rows.push(make_row(
+            k.clone(),
+            v.clone(),
+            key_style,
+            val_style,
+            " ✕ ",
+            x_style,
+        ));
+        let row_full_w = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1 + 3 + 1;
+        params_rows_local.push((
+            Rect {
+                x: table_x,
+                y: row_y,
+                width: row_full_w,
+                height: 1,
+            },
+            k.clone(),
+        ));
+        register(fields, row_y);
+        if i + 1 < data.len() || draft.is_some() {
+            rows.push(make_border('├', '┼', '┤', '─'));
+        }
+    }
+
+    // Draft row.
+    if let Some(draft) = draft {
+        let key_display = if draft.key.is_empty() && !draft.on_value {
+            "▏".to_string()
+        } else if draft.key.is_empty() {
+            "(name)".to_string()
+        } else if !draft.on_value {
+            format!("{}▏", draft.key)
+        } else {
+            draft.key.clone()
+        };
+        let val_display = if draft.value.is_empty() && draft.on_value {
+            "▏".to_string()
+        } else if draft.value.is_empty() {
+            "(value)".to_string()
+        } else if draft.on_value {
+            format!("{}▏", draft.value)
+        } else {
+            draft.value.clone()
+        };
+        let key_style = if draft.on_value {
+            Style::default().fg(t.comment).bg(t.bg_dark)
+        } else {
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        };
+        let val_style = if draft.on_value {
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.comment).bg(t.bg_dark)
+        };
+        let draft_y = rows.len() as u16;
+        let ready = !draft.key.trim().is_empty() && !draft.value.trim().is_empty();
+        let check_color = if ready { t.green } else { t.comment };
+        rows.push(make_row(
+            key_display,
+            val_display,
+            key_style,
+            val_style,
+            " ✓ ",
+            Style::default()
+                .fg(check_color)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let check_x_off = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
+        let check_rect = Rect {
+            x: area.x.saturating_add(check_x_off),
+            y: draft_y,
+            width: 3,
+            height: 1,
+        };
+        params_rows_local.push((check_rect, "__COMMIT__".to_string()));
+    }
+    rows.push(make_border('└', '┴', '┘', '─'));
+
+    // `+ Add row` chip (idle) or hint line (drafting).
+    if draft.is_none() {
+        let add_y = rows.len() as u16;
+        rows.push(add_action_row("Add row", t));
+        params_rows_local.push((
+            Rect {
+                x: area.x,
+                y: add_y,
+                width: area.width,
+                height: 1,
+            },
+            String::new(),
+        ));
+        register(fields, add_y);
+    } else {
+        let hint_y = rows.len() as u16;
+        rows.push(Line::from(vec![Span::styled(
+            "    (Tab · `:`  ·  Enter → add + new row  ·  Shift+Enter → done  ·  Esc → cancel)"
+                .to_string(),
+            dim,
+        )]));
+        register(fields, hint_y);
+    }
+}
+
 fn add_action_row(label: &str, t: theme::Theme) -> Line<'static> {
     Line::from(vec![
         Span::styled("  ", Style::default().bg(t.bg_dark)),
@@ -1408,11 +1672,10 @@ fn draw_edit(
     let cur_tab = rp.edit_tab;
 
     if cur_tab == crate::request_pane::EditTab::Headers {
-        // Headers tab — same Excel-cell table as Params. Rows are
-        // parsed out of `headers_buffer` (skipping empty lines +
-        // comments). Inline `+ Add row` draft appends
-        // `Name: value\n` to the buffer + re-parses. Delete via
-        // row click. Whole-row hitbox (like Params).
+        // Headers tab — Excel-cell table shared with Params
+        // (`render_kv_table`). Rows come from parsing
+        // `headers_buffer`; the inline draft appends
+        // `Name: value\n` on commit + re-parses.
         let headers: Vec<(String, String)> = rp
             .headers_buffer
             .lines()
@@ -1425,205 +1688,19 @@ fn draw_edit(
                 Some((k.trim().to_string(), v.trim().to_string()))
             })
             .collect();
-        const TABLE_MAX_W: u16 = 100;
-        const TABLE_RIGHT_PAD: u16 = 3;
-        let table_x = area.x.saturating_add(2);
-        let table_w = area
-            .width
-            .saturating_sub(2)
-            .saturating_sub(TABLE_RIGHT_PAD)
-            .clamp(20, TABLE_MAX_W);
-        let x_col_w: u16 = 3;
-        let inner_w = table_w.saturating_sub(x_col_w).saturating_sub(4);
-        let name_w = (inner_w * 35 / 100).max(8);
-        let value_w = inner_w.saturating_sub(name_w);
-        let make_border = |left: char, sep: char, right: char, fill: char| -> Line<'static> {
-            let n_seg: String = std::iter::repeat_n(fill, (name_w + 2) as usize).collect();
-            let v_seg: String = std::iter::repeat_n(fill, (value_w + 2) as usize).collect();
-            let x_seg: String = std::iter::repeat_n(fill, x_col_w as usize).collect();
-            Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
-                Span::styled(
-                    format!("{}{}{}{}{}{}{}", left, n_seg, sep, v_seg, sep, x_seg, right),
-                    Style::default().fg(t.bg3).bg(t.bg_dark),
-                ),
-            ])
-        };
-        let make_row = |key_text: String,
-                        val_text: String,
-                        key_style: Style,
-                        val_style: Style,
-                        x_glyph: &str,
-                        x_style: Style|
-         -> Line<'static> {
-            let mut key_s = key_text;
-            if key_s.chars().count() > name_w as usize {
-                let truncated: String = key_s.chars().take(name_w as usize).collect();
-                key_s = truncated;
-            }
-            let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
-            let mut val_s = val_text;
-            if val_s.chars().count() > value_w as usize {
-                let truncated: String = val_s.chars().take(value_w as usize).collect();
-                val_s = truncated;
-            }
-            let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
-            let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
-            Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                Span::styled(key_s, key_style),
-                Span::styled(" ".repeat(pad_k), Style::default().bg(t.bg_dark)),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                Span::styled(val_s, val_style),
-                Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(x_glyph.to_string(), x_style),
-                border,
-            ])
-        };
-        rows.push(make_border('┌', '┬', '┐', '─'));
-        rows.push(make_row(
-            "Name".to_string(),
-            "Value".to_string(),
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-            "   ",
-            Style::default().bg(t.bg_dark),
-        ));
-        rows.push(make_border('├', '┼', '┤', '─'));
-        for (i, (k, v)) in headers.iter().enumerate() {
-            let key_style = Style::default()
-                .fg(t.cyan)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD);
-            let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
-            let x_style = Style::default().fg(t.red).bg(t.bg_dark);
-            let row_y = rows.len() as u16;
-            rows.push(make_row(
-                k.clone(),
-                v.clone(),
-                key_style,
-                val_style,
-                " ✕ ",
-                x_style,
-            ));
-            let row_full_w = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1 + 3 + 1;
-            params_rows_local.push((
-                Rect {
-                    x: table_x,
-                    y: row_y,
-                    width: row_full_w,
-                    height: 1,
-                },
-                k.clone(),
-            ));
-            register_field(fields, row_y, EditField::Headers);
-            if i + 1 < headers.len() || rp.headers_add.is_some() {
-                rows.push(make_border('├', '┼', '┤', '─'));
-            }
-        }
-        if let Some(draft) = &rp.headers_add {
-            let key_display = if draft.key.is_empty() && !draft.on_value {
-                "▏".to_string()
-            } else if draft.key.is_empty() {
-                "(name)".to_string()
-            } else if !draft.on_value {
-                format!("{}▏", draft.key)
-            } else {
-                draft.key.clone()
-            };
-            let val_display = if draft.value.is_empty() && draft.on_value {
-                "▏".to_string()
-            } else if draft.value.is_empty() {
-                "(value)".to_string()
-            } else if draft.on_value {
-                format!("{}▏", draft.value)
-            } else {
-                draft.value.clone()
-            };
-            let key_style = if draft.on_value {
-                Style::default().fg(t.comment).bg(t.bg_dark)
-            } else {
-                Style::default()
-                    .fg(t.yellow)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD)
-            };
-            let val_style = if draft.on_value {
-                Style::default()
-                    .fg(t.yellow)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(t.comment).bg(t.bg_dark)
-            };
-            let draft_y = rows.len() as u16;
-            // ✓ turns green only when BOTH key and value have
-            // content — a dim comment ✓ before that reads as
-            // "not ready to submit yet".
-            let ready = !draft.key.trim().is_empty() && !draft.value.trim().is_empty();
-            let check_color = if ready { t.green } else { t.comment };
-            rows.push(make_row(
-                key_display,
-                val_display,
-                key_style,
-                val_style,
-                " ✓ ",
-                Style::default()
-                    .fg(check_color)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            // ✓ column is 3 cells wide, starting at the column
-            // offset `8 + name_w + value_w` (relative to row start).
-            // Register the click rect so mouse users can commit
-            // without touching the keyboard.
-            let check_x_off = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
-            let check_rect = Rect {
-                x: area.x.saturating_add(check_x_off),
-                y: draft_y,
-                width: 3,
-                height: 1,
-            };
-            params_rows_local.push((check_rect, "__COMMIT__".to_string()));
-        }
-        rows.push(make_border('└', '┴', '┘', '─'));
-        if rp.headers_add.is_none() {
-            let add_y = rows.len() as u16;
-            rows.push(add_action_row("Add row", t));
-            // Use params_rows_local with empty key = "start
-            // headers add" — the click dispatcher checks current
-            // tab to route to http_headers_add vs http_params_add.
-            params_rows_local.push((
-                Rect {
-                    x: area.x,
-                    y: add_y,
-                    width: area.width,
-                    height: 1,
-                },
-                String::new(),
-            ));
-            register_field(fields, add_y, EditField::Headers);
-        } else {
-            let hint_y = rows.len() as u16;
-            rows.push(Line::from(vec![Span::styled(
-                "    (Tab · `:`  ·  Enter → add + new row  ·  Shift+Enter → done  ·  Esc → cancel)"
-                    .to_string(),
-                dim,
-            )]));
-            register_field(fields, hint_y, EditField::Headers);
-        }
+        render_kv_table(
+            rows,
+            fields,
+            area,
+            t,
+            dim,
+            &headers,
+            rp.headers_add.as_ref(),
+            KvTableKind::Headers,
+            None,
+            pane_id,
+            params_rows_local,
+        );
     } // end Headers tab
 
     if cur_tab == crate::request_pane::EditTab::Body {
@@ -1762,246 +1839,19 @@ fn draw_edit(
                 .collect(),
             None => Vec::new(),
         };
-        // Excel-cell table: Name | Value | X columns with box-
-        // drawing borders. Data rows separated by `├─┼─┼─┤` mid-
-        // lines. When the params-add draft is active, its row
-        // appears at the BOTTOM of the table with the caret in the
-        // focused field. `+ Add row` chip below the table starts a
-        // draft.
-        // Table sits 2 cells in from the left edge and caps at
-        // ~100 cells wide so the value column doesn't stretch to
-        // the pane edge (which pushed the ✕ far away from the
-        // actual value). Right-edge breathing room: at least 3
-        // cells so the ✕ never kisses the pane border.
-        const TABLE_MAX_W: u16 = 100;
-        const TABLE_RIGHT_PAD: u16 = 3;
-        let table_x = area.x.saturating_add(2);
-        let table_w = area
-            .width
-            .saturating_sub(2)
-            .saturating_sub(TABLE_RIGHT_PAD)
-            .clamp(20, TABLE_MAX_W);
-        let x_col_w: u16 = 3;
-        let inner_w = table_w.saturating_sub(x_col_w).saturating_sub(4);
-        let name_w = (inner_w * 35 / 100).max(8);
-        let value_w = inner_w.saturating_sub(name_w);
-        // Border helper — returns a Line for a horizontal rule row.
-        let make_border = |left: char, sep: char, right: char, fill: char| -> Line<'static> {
-            let n_seg: String = std::iter::repeat_n(fill, (name_w + 2) as usize).collect();
-            let v_seg: String = std::iter::repeat_n(fill, (value_w + 2) as usize).collect();
-            let x_seg: String = std::iter::repeat_n(fill, (x_col_w) as usize).collect();
-            let s = format!("{}{}{}{}{}{}{}", left, n_seg, sep, v_seg, sep, x_seg, right);
-            Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
-                Span::styled(s, Style::default().fg(t.bg3).bg(t.bg_dark)),
-            ])
-        };
-        // Row content helper — pads/clips key + value strings to
-        // column widths and renders with the passed styles.
-        let make_row = |key_text: String,
-                        val_text: String,
-                        key_style: Style,
-                        val_style: Style,
-                        x_glyph: &str,
-                        x_style: Style|
-         -> Line<'static> {
-            let mut key_s = key_text;
-            if key_s.chars().count() > name_w as usize {
-                let truncated: String = key_s.chars().take(name_w as usize).collect();
-                key_s = truncated;
-            }
-            let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
-            let mut val_s = val_text;
-            if val_s.chars().count() > value_w as usize {
-                let truncated: String = val_s.chars().take(value_w as usize).collect();
-                val_s = truncated;
-            }
-            let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
-            let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
-            Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                Span::styled(key_s, key_style),
-                Span::styled(" ".repeat(pad_k), Style::default().bg(t.bg_dark)),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                Span::styled(val_s, val_style),
-                Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(x_glyph.to_string(), x_style),
-                border,
-            ])
-        };
-        // Track x offset of the X column so we can register its
-        // click rect per data row.
-        let x_col_off: u16 = 2 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
-
-        // Top border.
-        rows.push(make_border('┌', '┬', '┐', '─'));
-        // Header row.
-        rows.push(make_row(
-            "Name".to_string(),
-            "Value".to_string(),
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-            "   ",
-            Style::default().bg(t.bg_dark),
-        ));
-        rows.push(make_border('├', '┼', '┤', '─'));
-
-        // Data rows for existing params.
-        for (i, (k, v)) in params.iter().enumerate() {
-            let is_hover = rp.hover_params_key.as_deref() == Some(k.as_str());
-            let key_style = if is_hover {
-                Style::default()
-                    .fg(t.cyan)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .fg(t.fg)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD)
-            };
-            let val_style = Style::default().fg(t.fg).bg(t.bg_dark);
-            let x_style = Style::default().fg(t.red).bg(t.bg_dark);
-            let row_y = rows.len() as u16;
-            rows.push(make_row(
-                k.clone(),
-                v.clone(),
-                key_style,
-                val_style,
-                " ✕ ",
-                x_style,
-            ));
-            // Click anywhere on the row → delete this param. The
-            // rect has to cover the FULL rendered row (left border
-            // through the ✕ cell to the right border); if it stops
-            // at the table_w boundary the ✕ column (which
-            // renders past that boundary) becomes unclickable.
-            // Rendered row width = 11 + name_w + value_w:
-            //   1 border + 2 pad + name_w + 2 pad + 1 border
-            //   + 2 pad + value_w + 2 pad + 1 border + 3 ✕ + 1 border
-            let row_full_w = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1 + 3 + 1;
-            params_rows_local.push((
-                Rect {
-                    x: table_x,
-                    y: row_y,
-                    width: row_full_w,
-                    height: 1,
-                },
-                k.clone(),
-            ));
-            register_tab_row(fields, row_y);
-            // Row separator between params (skipped after last).
-            if i + 1 < params.len() || rp.params_add.is_some() {
-                rows.push(make_border('├', '┼', '┤', '─'));
-            }
-            let _ = x_col_off; // reserved for future X-only click rect
-        }
-
-        // Draft row (if active).
-        if let Some(draft) = &rp.params_add {
-            let key_display = if draft.key.is_empty() && !draft.on_value {
-                "▏".to_string()
-            } else if draft.key.is_empty() {
-                "(name)".to_string()
-            } else if !draft.on_value {
-                format!("{}▏", draft.key)
-            } else {
-                draft.key.clone()
-            };
-            let val_display = if draft.value.is_empty() && draft.on_value {
-                "▏".to_string()
-            } else if draft.value.is_empty() {
-                "(value)".to_string()
-            } else if draft.on_value {
-                format!("{}▏", draft.value)
-            } else {
-                draft.value.clone()
-            };
-            let key_style = if draft.on_value {
-                Style::default().fg(t.comment).bg(t.bg_dark)
-            } else {
-                Style::default()
-                    .fg(t.yellow)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD)
-            };
-            let val_style = if draft.on_value {
-                Style::default()
-                    .fg(t.yellow)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(t.comment).bg(t.bg_dark)
-            };
-            let draft_y = rows.len() as u16;
-            // ✓ turns green only when BOTH key and value have
-            // content — a dim comment ✓ before that reads as
-            // "not ready to submit yet".
-            let ready = !draft.key.trim().is_empty() && !draft.value.trim().is_empty();
-            let check_color = if ready { t.green } else { t.comment };
-            rows.push(make_row(
-                key_display,
-                val_display,
-                key_style,
-                val_style,
-                " ✓ ",
-                Style::default()
-                    .fg(check_color)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            // ✓ column is 3 cells wide, starting at the column
-            // offset `8 + name_w + value_w` (relative to row start).
-            // Register the click rect so mouse users can commit
-            // without touching the keyboard.
-            let check_x_off = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1;
-            let check_rect = Rect {
-                x: area.x.saturating_add(check_x_off),
-                y: draft_y,
-                width: 3,
-                height: 1,
-            };
-            params_rows_local.push((check_rect, "__COMMIT__".to_string()));
-        }
-        // Bottom border.
-        rows.push(make_border('└', '┴', '┘', '─'));
-
-        // Trailing `+ Add row` chip (only when no draft is active
-        // — while drafting the table's last row IS the add row).
-        if rp.params_add.is_none() {
-            let add_y = rows.len() as u16;
-            rows.push(add_action_row("Add row", t));
-            params_rows_local.push((
-                Rect {
-                    x: area.x,
-                    y: add_y,
-                    width: area.width,
-                    height: 1,
-                },
-                String::new(),
-            ));
-            register_tab_row(fields, add_y);
-        } else {
-            let hint_y = rows.len() as u16;
-            rows.push(Line::from(vec![Span::styled(
-                "    (Tab · `:`  ·  Enter → add + new row  ·  Shift+Enter → done  ·  Esc → cancel)"
-                    .to_string(),
-                dim,
-            )]));
-            register_tab_row(fields, hint_y);
-        }
+        render_kv_table(
+            rows,
+            fields,
+            area,
+            t,
+            dim,
+            &params,
+            rp.params_add.as_ref(),
+            KvTableKind::Params,
+            rp.hover_params_key.as_deref(),
+            pane_id,
+            params_rows_local,
+        );
     }
 
     // ── Vars tab: read-only list of active env file's KEY=VALUE rows ──
