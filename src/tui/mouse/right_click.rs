@@ -242,10 +242,17 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 "Open new Claude Code session",
                 MenuAction::Command("ai.claude_code_new"),
             ),
-            MenuItem::new("Open Codex", MenuAction::Command("ai.codex")),
+            MenuItem::new(
+                "Open new Codex session",
+                MenuAction::Command("ai.codex_new"),
+            ),
             MenuItem::new(
                 "Toggle existing Claude pane",
                 MenuAction::Command("ai.claude_code"),
+            ),
+            MenuItem::new(
+                "Toggle existing Codex pane",
+                MenuAction::Command("ai.codex"),
             ),
         ];
         app.context_menu = Some(ContextMenu::new(
