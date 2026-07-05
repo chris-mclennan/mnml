@@ -346,6 +346,7 @@ pub fn root() -> &'static Leader {
                             ('m', cmd("ai.session_view", "mirror session")),
                             ('t', cmd("term.shell", "shell")),
                             ('c', cmd("ai.claude_code", "claude code")),
+                            ('n', cmd("ai.claude_code_new", "new claude session")),
                             ('C', cmd("ai.chat", "claude chat (context)")),
                             ('x', cmd("ai.codex", "codex")),
                             ('M', cmd("mixr.show", "mixr DJ")),

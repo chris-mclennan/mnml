@@ -109,14 +109,26 @@ impl App {
     /// prompt; Close → close that session.
     pub fn open_pty_tab_context_menu(&mut self, id: PaneId, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let is_claude = matches!(
+            self.panes.get(id),
+            Some(Pane::Pty(s)) if s.profile.session_id.is_some()
+                && s.profile.label.starts_with("claude")
+        );
         if !matches!(self.panes.get(id), Some(Pane::Pty(_))) {
             return;
         }
         let title = self.panes.get(id).map(Pane::title).unwrap_or_default();
-        let items = vec![
-            MenuItem::new("Rename…", MenuAction::RenameSession(id)),
-            MenuItem::new("Close", MenuAction::CloseTab(id)),
-        ];
+        let mut items = vec![MenuItem::new("Rename…", MenuAction::RenameSession(id))];
+        if is_claude {
+            // Multi-session workflow (#4) — "Fork" reads more clearly
+            // than "Open new Claude Code" for the case where you want
+            // a parallel thread from within an active Claude pane.
+            items.push(MenuItem::new(
+                "Fork new Claude session",
+                MenuAction::Command("ai.claude_code_new"),
+            ));
+        }
+        items.push(MenuItem::new("Close", MenuAction::CloseTab(id)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
