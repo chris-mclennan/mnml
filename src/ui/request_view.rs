@@ -1744,12 +1744,20 @@ fn draw_edit(
                 " ✕ ",
                 x_style,
             ));
-            // Whole row → hover / row-click; X cell → delete.
+            // Click anywhere on the row → delete this param. The
+            // rect has to cover the FULL rendered row (left border
+            // through the ✕ cell to the right border); if it stops
+            // at the table_w boundary the ✕ column (which
+            // renders past that boundary) becomes unclickable.
+            // Rendered row width = 11 + name_w + value_w:
+            //   1 border + 2 pad + name_w + 2 pad + 1 border
+            //   + 2 pad + value_w + 2 pad + 1 border + 3 ✕ + 1 border
+            let row_full_w = 1 + 1 + 1 + name_w + 1 + 1 + 1 + value_w + 1 + 1 + 3 + 1;
             params_rows_local.push((
                 Rect {
                     x: table_x,
                     y: row_y,
-                    width: table_w,
+                    width: row_full_w,
                     height: 1,
                 },
                 k.clone(),
