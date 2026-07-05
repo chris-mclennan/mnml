@@ -84,6 +84,39 @@ fn tab_labels(panes: &[Pane]) -> Vec<String> {
     titles
 }
 
+fn visible_tail_width(visible: &[usize], widths: &[u16], first_visible: usize, sep: u16) -> u16 {
+    let mut width = 0u16;
+    for vis_pos in first_visible..visible.len() {
+        width = width.saturating_add(widths[visible[vis_pos]]);
+        if vis_pos + 1 < visible.len() {
+            width = width.saturating_add(sep);
+        }
+    }
+    width
+}
+
+fn reclaim_tail_space(
+    visible: &[usize],
+    widths: &[u16],
+    inner_width: u16,
+    sep: u16,
+    first_visible: usize,
+) -> usize {
+    if visible.is_empty() {
+        return 0;
+    }
+
+    let mut first = first_visible.min(visible.len().saturating_sub(1));
+    while first > 0 && visible_tail_width(visible, widths, first, sep) < inner_width {
+        let candidate = first - 1;
+        if visible_tail_width(visible, widths, candidate, sep) > inner_width {
+            break;
+        }
+        first = candidate;
+    }
+    first
+}
+
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(
         Paragraph::new("").style(Style::default().bg(theme::cur().bg_darker)),
@@ -225,6 +258,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
+    app.bufferline_first_visible = reclaim_tail_space(
+        &visible,
+        &widths,
+        inner_width,
+        sep,
+        app.bufferline_first_visible,
+    );
     let first_visible = app.bufferline_first_visible;
 
     let mut spans: Vec<Span> = Vec::new();
@@ -957,6 +997,43 @@ mod tests {
         assert!(
             row.contains("beta.txt"),
             "tab strip missing beta.txt: {row:?}"
+        );
+    }
+
+    #[test]
+    fn draw_reclaims_left_tabs_when_tail_no_longer_fills_strip() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let d = tempfile::tempdir().unwrap();
+        let ws = d.path().to_path_buf();
+        for i in 0..8 {
+            fs::write(ws.join(format!("a{i}")), "tab\n").unwrap();
+        }
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        cfg.ui.ascii_icons = true;
+        let mut app = App::new(ws.clone(), cfg).unwrap();
+        for i in 0..8 {
+            app.open_path(&ws.join(format!("a{i}")));
+        }
+        app.reveal_pane(5);
+        app.bufferline_first_visible = 4;
+        app.bufferline_active_at_scroll = app.active;
+
+        app.force_close_pane(7);
+
+        let mut term = Terminal::new(TestBackend::new(50, 1)).unwrap();
+        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
+        let buf = term.backend().buffer();
+        let row: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
+        assert_eq!(
+            app.bufferline_first_visible, 3,
+            "tab strip should pull one hidden tab into freed tail space: {row:?}"
+        );
+        assert!(
+            row.contains("a3"),
+            "newly reclaimed left tab should render in the strip: {row:?}"
         );
     }
 
