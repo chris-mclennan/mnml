@@ -2449,14 +2449,20 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     app.http_paste_curl_to_active();
                     return true;
                 }
-                // Alt+F — pretty-print the Body (JSON reformat with
-                // indentation). Was Ctrl+Shift+F but the global
-                // `find.grep` keymap wins over pane-local handlers,
-                // so the chord opened workspace grep instead of
-                // formatting. Alt+F doesn't collide with any global
-                // and matches nothing else in the pane. No-op on
-                // non-JSON Body (toast explains).
-                KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::ALT) => {
+                // Shift+Alt+F — format the Body (JSON reformat with
+                // indentation). VS Code's format chord. Was Alt+F
+                // but that opens the File menu bar dropdown; was
+                // Ctrl+Shift+F before that but the global find.grep
+                // keymap wins over pane-local handlers. Shift+Alt+F
+                // doesn't collide with either. Users can also click
+                // the Format button in the top-row action strip.
+                // No-op on non-JSON Body (toast explains).
+                KeyCode::Char('F') if shift && key.modifiers.contains(KeyModifiers::ALT) => {
+                    let _ = rp;
+                    app.http_format_body();
+                    return true;
+                }
+                KeyCode::Char('f') if shift && key.modifiers.contains(KeyModifiers::ALT) => {
                     let _ = rp;
                     app.http_format_body();
                     return true;

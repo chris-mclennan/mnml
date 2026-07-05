@@ -1957,6 +1957,9 @@ pub struct PaneRects {
     /// Request pane's fields to a blank template. Same code path as
     /// the sidebar's `+ New request` chip.
     pub request_clear_button: Option<Rect>,
+    /// Click rect over the "{ } Format" sub-panel — pretty-prints
+    /// a JSON Body in place. Same as `Shift+Alt+F` chord.
+    pub request_format_button: Option<Rect>,
     /// Click rect for each row in the Auth tab. id values:
     /// `set_bearer` / `set_basic` / `set_api_key` / `apply_preset` /
     /// `save_preset` / `clear`. Cleared + repopulated each render.

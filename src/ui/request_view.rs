@@ -372,12 +372,22 @@ pub fn draw(
     // down off the parent Request block's top border so they read
     // as free-floating sub-panels.
     const TOP_PAD: u16 = 1;
-    // Right-side action boxes — Postman/Bruno idiom for firing +
-    // resetting the current request.
+    // Right-side action boxes — Postman/Bruno idiom for firing,
+    // resetting, and formatting the current request. Widths sized
+    // to fit each box's content plus 2-cell border chrome:
+    //   Send   = " ▶ Send "    (7 chars) + 2 border → 10 min, padded
+    //   Clear  = " ✕ Clear "   (8 chars) + 2 border → 11 min
+    //   Format = " { } Format " (10 chars) + 2 border → 12 min
     const SEND_BOX_WIDTH: u16 = 10;
-    const CLEAR_BOX_WIDTH: u16 = 9;
+    const CLEAR_BOX_WIDTH: u16 = 11;
+    const FORMAT_BOX_WIDTH: u16 = 12;
     let show_sub_panels = request_inner.width
-        >= METHOD_BOX_WIDTH + MIN_URL_WIDTH + SEND_BOX_WIDTH + CLEAR_BOX_WIDTH + 2 * EDGE_PAD
+        >= METHOD_BOX_WIDTH
+            + MIN_URL_WIDTH
+            + SEND_BOX_WIDTH
+            + CLEAR_BOX_WIDTH
+            + FORMAT_BOX_WIDTH
+            + 2 * EDGE_PAD
         && request_inner.height >= METHOD_URL_ROW_H + TOP_PAD + 3;
 
     let mut edit_rows: Vec<Line> = Vec::new();
@@ -389,8 +399,9 @@ pub fn draw(
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let mut send_button_rect: Option<Rect> = None;
     let mut clear_button_rect: Option<Rect> = None;
+    let mut format_button_rect: Option<Rect> = None;
     let tabs_rect = if show_sub_panels {
-        // Layout: [top-pad blank row][pad][Method][URL][Send][Clear][pad]
+        // Layout: [top-pad blank][pad][Method][URL][Send][Clear][Format][pad]
         let row_y = request_inner.y.saturating_add(TOP_PAD);
         let method_rect = Rect {
             x: request_inner.x.saturating_add(EDGE_PAD),
@@ -405,6 +416,7 @@ pub fn draw(
             .saturating_sub(METHOD_BOX_WIDTH)
             .saturating_sub(SEND_BOX_WIDTH)
             .saturating_sub(CLEAR_BOX_WIDTH)
+            .saturating_sub(FORMAT_BOX_WIDTH)
             .saturating_sub(EDGE_PAD);
         let url_rect = Rect {
             x: url_x,
@@ -424,6 +436,12 @@ pub fn draw(
             width: CLEAR_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
+        let format_rect = Rect {
+            x: clear_rect.x.saturating_add(CLEAR_BOX_WIDTH),
+            y: row_y,
+            width: FORMAT_BOX_WIDTH,
+            height: METHOD_URL_ROW_H,
+        };
         if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
             method_url_absolute.push((mr, EditField::Method));
         }
@@ -432,6 +450,7 @@ pub fn draw(
         }
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
+        format_button_rect = draw_format_box(frame, rp, format_rect, t);
         // Tabs pick up IMMEDIATELY after the Method/URL bottom
         // border — no extra spacer between them.
         let used = TOP_PAD.saturating_add(METHOD_URL_ROW_H);
@@ -576,6 +595,7 @@ pub fn draw(
     }
     app.rects.request_send_button = send_button_rect;
     app.rects.request_clear_button = clear_button_rect;
+    app.rects.request_format_button = format_button_rect;
     for (mut r, pid, tab) in edit_tabs_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
@@ -702,6 +722,45 @@ fn response_status_title(
             ])
         }
     }
+}
+
+/// Format sub-panel — modal_panel titled "Format" with a bold cyan
+/// "{ } Format" label. Only active on JSON bodies (grey when the
+/// body isn't JSON so the affordance reads as "not applicable"
+/// without disappearing). Click runs `http.format_body`.
+fn draw_format_box(
+    frame: &mut Frame,
+    rp: &crate::request_pane::RequestPane,
+    rect: Rect,
+    t: theme::Theme,
+) -> Option<Rect> {
+    let block = crate::ui::design_tokens::modal_panel("Format");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width == 0 || inner.height == 0 {
+        return None;
+    }
+    let body = rp.request.body.as_deref().unwrap_or("");
+    let is_json = matches!(detect_body_kind(body), Some("JSON"));
+    let color = if is_json { t.cyan } else { t.comment };
+    let text = " { } Format ";
+    let text_w = text.chars().count() as u16;
+    let mid_pad = inner.width.saturating_sub(text_w) / 2;
+    let content = Line::from(vec![
+        Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
+        Span::styled(
+            text.to_string(),
+            Style::default()
+                .fg(color)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
+        inner,
+    );
+    Some(inner)
 }
 
 /// Clear sub-panel — modal_panel titled "Clear" with a bold red-ish
@@ -1119,7 +1178,7 @@ fn draw_edit(
         let detected = detect_body_kind(body);
         let kind_label = if let Some(k) = detected {
             if k == "JSON" {
-                "  (JSON) — Alt+F prettifies".to_string()
+                "  (JSON) — click Format or Shift+Alt+F".to_string()
             } else {
                 format!("  ({k})")
             }
