@@ -538,16 +538,17 @@ pub fn draw(
     let response_inner = response_block.inner(response_rect);
     frame.render_widget(response_block, response_rect);
     // Response sub-tab strip — Bruno-style: Body / Headers /
-    // Timeline / Tests. Painted as an overlay on the first row of
-    // `response_inner`; the actual response content flows below
-    // starting at `content_inner`.
-    let content_inner = if response_inner.height >= 2 {
+    // Timeline / Tests. Two rows tall: row 0 is the labels + type
+    // chip, row 1 is the `─` underline bar under the active tab.
+    // The actual response content flows below starting at
+    // `content_inner`.
+    let content_inner = if response_inner.height >= 3 {
         app.rects.request_response_tabs = paint_response_tab_strip(frame, rp, response_inner, t);
         Rect {
             x: response_inner.x,
-            y: response_inner.y.saturating_add(1),
+            y: response_inner.y.saturating_add(2),
             width: response_inner.width,
-            height: response_inner.height.saturating_sub(1),
+            height: response_inner.height.saturating_sub(2),
         }
     } else {
         app.rects.request_response_tabs.clear();
@@ -780,37 +781,60 @@ fn paint_response_tab_strip(
     t: theme::Theme,
 ) -> Vec<(Rect, crate::request_pane::ResponseTab)> {
     let mut rects = Vec::new();
-    if response_inner.width == 0 || response_inner.height == 0 {
+    if response_inner.width == 0 || response_inner.height < 2 {
         return rects;
     }
     let active = rp.response_tab;
-    let strip_rect = Rect {
+    let label_rect = Rect {
         x: response_inner.x,
         y: response_inner.y,
         width: response_inner.width,
         height: 1,
     };
-    let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
+    let bar_rect = Rect {
+        x: response_inner.x,
+        y: response_inner.y.saturating_add(1),
+        width: response_inner.width,
+        height: 1,
+    };
+    let mut label_spans: Vec<Span> = Vec::new();
+    label_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
+    let mut bar_spans: Vec<Span> = Vec::new();
+    bar_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
     let mut col: u16 = 2;
     for tab in crate::request_pane::ResponseTab::ALL {
         let label = tab.label();
         let is_cur = active == *tab;
-        // Bruno-style tabs: active = fg BOLD UNDERLINED (no chip
-        // bg), inactive = comment fg (subtle nav-link look).
-        let style = if is_cur {
+        let label_style = if is_cur {
             Style::default()
                 .fg(t.fg)
                 .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(t.comment).bg(t.bg_dark)
         };
         let chip_w = label.chars().count() as u16;
-        spans.push(Span::styled(label.to_string(), style));
-        // 2-cell gap between tabs so the underline of the active
-        // tab has visible breathing room.
-        spans.push(Span::styled(
+        label_spans.push(Span::styled(label.to_string(), label_style));
+        label_spans.push(Span::styled(
+            "  ".to_string(),
+            Style::default().bg(t.bg_dark),
+        ));
+        // Underline bar row — `─` under the active tab, blanks
+        // under the inactive tabs. The bar renders on the SECOND
+        // row of the tab strip so it's visually detached from the
+        // label baseline (matches the mockup's
+        // `Response\n────────` look).
+        let bar_glyph = if is_cur { "\u{2500}" } else { " " };
+        let bar_style = if is_cur {
+            Style::default()
+                .fg(t.fg)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(t.bg_dark)
+        };
+        bar_spans.push(Span::styled(bar_glyph.repeat(chip_w as usize), bar_style));
+        bar_spans.push(Span::styled(
             "  ".to_string(),
             Style::default().bg(t.bg_dark),
         ));
@@ -826,24 +850,26 @@ fn paint_response_tab_strip(
         col += chip_w + 2;
     }
     frame.render_widget(
-        Paragraph::new(vec![Line::from(spans)]).style(Style::default().bg(t.bg_dark)),
-        strip_rect,
+        Paragraph::new(vec![Line::from(label_spans)]).style(Style::default().bg(t.bg_dark)),
+        label_rect,
     );
-    // Right-aligned content-type chip — `JSON ▼` / `XML ▼` / etc.
-    // Reflects the detected type; click behavior (override) is a
-    // follow-up.
+    frame.render_widget(
+        Paragraph::new(vec![Line::from(bar_spans)]).style(Style::default().bg(t.bg_dark)),
+        bar_rect,
+    );
+    // Right-aligned content-type chip on the labels row.
     let type_label = detect_response_content_type(rp);
     let chip_text = format!(" {type_label} \u{25BC} ");
     let chip_w = chip_text.chars().count() as u16;
-    if strip_rect.width >= chip_w + 2 {
-        let chip_x = strip_rect
+    if label_rect.width >= chip_w + 2 {
+        let chip_x = label_rect
             .x
-            .saturating_add(strip_rect.width)
+            .saturating_add(label_rect.width)
             .saturating_sub(chip_w)
             .saturating_sub(1);
         let chip_rect = Rect {
             x: chip_x,
-            y: strip_rect.y,
+            y: label_rect.y,
             width: chip_w,
             height: 1,
         };
