@@ -29,6 +29,10 @@ const MAX_WIDTH: u16 = 50;
 const RIGHT_MARGIN: u16 = 1;
 const BOTTOM_MARGIN: u16 = 2; // 1 statusline + 1 spacer
 const FADE_TAIL: Duration = Duration::from_millis(800);
+/// Max visible toasts. Beyond this we render a `+K more…` collapse
+/// chip in place of the oldest visible slot. Bounded so a burst of
+/// activity doesn't paint the whole pane column with toasts (issue #13).
+const MAX_VISIBLE_TOASTS: usize = 5;
 
 /// Braille-cycle spinner frames. Standard 8-phase pattern; each
 /// frame is one Nerd-Font-safe grapheme.
@@ -52,10 +56,24 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let mut y_bottom = area.y + area.height.saturating_sub(BOTTOM_MARGIN);
 
     // Ephemeral toasts (newest first — closest to statusline).
-    for entry in app.toast_stack.iter() {
+    // Cap the visible count; if there are more than MAX_VISIBLE_TOASTS,
+    // reserve the last visible slot for a "+K more…" chip so we never
+    // fully hide the older ones from the user's awareness.
+    let total = app.toast_stack.len();
+    let show_more_chip = total > MAX_VISIBLE_TOASTS;
+    let visible_take = if show_more_chip {
+        MAX_VISIBLE_TOASTS.saturating_sub(1)
+    } else {
+        MAX_VISIBLE_TOASTS
+    };
+    for entry in app.toast_stack.iter().take(visible_take) {
         if !draw_toast_box(frame, entry, &mut y_bottom, max_x_right, area, &t) {
             break;
         }
+    }
+    if show_more_chip {
+        let hidden = total.saturating_sub(visible_take);
+        draw_more_chip(frame, hidden, &mut y_bottom, max_x_right, area, &t);
     }
     // Persistent toasts (above the ephemeral stack).
     for entry in app.persistent_toasts.iter().rev() {
@@ -133,6 +151,58 @@ fn draw_toast_box(
     );
     *y_bottom = y;
     true
+}
+
+/// "+K more toasts…" collapse chip drawn above the visible stack
+/// when there are more toasts than [`MAX_VISIBLE_TOASTS`]. Same
+/// dimensions as a toast so the visual pattern is consistent.
+fn draw_more_chip(
+    frame: &mut Frame,
+    hidden: usize,
+    y_bottom: &mut u16,
+    max_x_right: u16,
+    area: Rect,
+    t: &crate::ui::theme::Theme,
+) {
+    let text = format!("+{hidden} more…");
+    let inner_w = text.chars().count() as u16 + 2;
+    let box_w = (inner_w + 2)
+        .min(MAX_WIDTH)
+        .min(area.width.saturating_sub(2));
+    let box_h: u16 = 3;
+    if *y_bottom < area.y + box_h {
+        return;
+    }
+    let y = *y_bottom - box_h;
+    let x = max_x_right.saturating_sub(box_w);
+    let rect = Rect {
+        x,
+        y,
+        width: box_w,
+        height: box_h,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t.comment).bg(t.bg_darker))
+        .style(Style::default().bg(t.bg_darker));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    let line = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            text,
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_darker)
+                .add_modifier(Modifier::DIM),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(t.bg_darker)),
+        inner,
+    );
+    *y_bottom = y;
 }
 
 /// Draw one progress item box just above `y_bottom`; updates
