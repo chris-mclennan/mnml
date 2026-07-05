@@ -52,6 +52,29 @@ pub fn modal_panel(title: impl AsRef<str>) -> Block<'static> {
     }
 }
 
+/// Bordered panel with a plain-text legend title — no colored chip,
+/// title reads as inline text along the top border. Used by the
+/// Request pane's stacked sub-panels (Request/Response/AI + Method/
+/// URL/Send/Clear/etc.) where the goal is a clean "loaded file"
+/// aesthetic, not the highlighted overlay look of `modal_panel`.
+pub fn bordered_plain(title: impl AsRef<str>) -> Block<'static> {
+    let t = theme::cur();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(t.bg3).bg(t.bg_dark))
+        .style(Style::default().fg(t.fg).bg(t.bg_dark));
+    let title = title.as_ref().trim();
+    if title.is_empty() {
+        block
+    } else {
+        block.title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(t.comment).bg(t.bg_dark),
+        ))
+    }
+}
+
 /// Menu-style chrome — for menu bar dropdowns, right-click context
 /// menus, and inline pickers where the visual weight should sit on
 /// the SELECTED ROW, not the frame. Square border, default fg color,

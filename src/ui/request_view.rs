@@ -343,7 +343,7 @@ pub fn draw(
     };
 
     // ── Zone 1: Request ─────────────────────────────────────────
-    let request_block = crate::ui::design_tokens::modal_panel("Request");
+    let request_block = crate::ui::design_tokens::bordered_plain("Request");
     let request_inner = request_block.inner(request_rect);
     frame.render_widget(request_block, request_rect);
 
@@ -496,7 +496,7 @@ pub fn draw(
     // Sending / Streaming / Failed states render their own subtle
     // status text; empty pane shows nothing.
     let response_block = {
-        let mut block = crate::ui::design_tokens::modal_panel("Response");
+        let mut block = crate::ui::design_tokens::bordered_plain("Response");
         if let Some(status_line) = response_status_title(rp, t) {
             block = block.title_top(ratatui::text::Line::from(status_line).right_aligned());
         }
@@ -536,7 +536,7 @@ pub fn draw(
     }
 
     // ── Zone 3: AI ─────────────────────────────────────────
-    let ai_block = crate::ui::design_tokens::modal_panel("AI");
+    let ai_block = crate::ui::design_tokens::bordered_plain("AI");
     let ai_inner = ai_block.inner(ai_rect);
     frame.render_widget(ai_block, ai_rect);
     if ai_inner.width > 0 && ai_inner.height > 0 {
@@ -779,7 +779,7 @@ fn paint_body_format_chip(
 /// non-destructive vs. the workspace (source_path is preserved
 /// only if it exists), and Recent has one-click restore.
 fn draw_clear_box(frame: &mut Frame, rect: Rect, t: theme::Theme) -> Option<Rect> {
-    let block = crate::ui::design_tokens::modal_panel("Clear");
+    let block = crate::ui::design_tokens::bordered_plain("Clear");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
@@ -816,7 +816,7 @@ fn draw_send_box(
     rect: Rect,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let block = crate::ui::design_tokens::modal_panel("Send");
+    let block = crate::ui::design_tokens::bordered_plain("Send");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
@@ -868,7 +868,7 @@ fn draw_method_box(
     _focused: bool,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let block = crate::ui::design_tokens::modal_panel("Method");
+    let block = crate::ui::design_tokens::bordered_plain("Method");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
@@ -919,7 +919,7 @@ fn draw_url_box(
     caret: &mut Option<(u16, u16)>,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let block = crate::ui::design_tokens::modal_panel("URL");
+    let block = crate::ui::design_tokens::bordered_plain("URL");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
