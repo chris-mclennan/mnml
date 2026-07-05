@@ -1402,6 +1402,10 @@ pub enum ActivitySection {
     /// Persistent scratch notes for the workspace. `.mnml/notes/*.md`.
     /// v1 renders a flat list + `+ New note` (#8).
     Notes,
+    /// TODO markers discovered across the workspace (source-comment
+    /// `TODO` / `FIXME` / `XXX` / `HACK` / `REVIEW`). v1 v scans on
+    /// section open, click a row to jump. (#9)
+    Todos,
     /// A manifest-registered Mount sibling — the u16 indexes
     /// into `App::mount_manifests`. Icon, color, tooltip, and
     /// binary come from the manifest. Manifest mounts render
@@ -1444,6 +1448,8 @@ impl ActivitySection {
             Self::Http => ("\u{F0E7}", "H", "HTTP", "view.activity_http"),
             // nf-fa-sticky_note — persistent scratch notes
             Self::Notes => ("\u{F249}", "N", "Notes", "view.activity_notes"),
+            // nf-fa-check_square — TODO markers across the workspace
+            Self::Todos => ("\u{F046}", "O", "TODOs", "view.activity_todos"),
             // Manifest mounts have per-entry metadata that lives
             // on `App::mount_manifests`; the activity-bar renderer
             // resolves it dynamically. This `meta()` arm is a
@@ -1465,6 +1471,7 @@ impl ActivitySection {
             Self::CloudAgents,
             Self::Http,
             Self::Notes,
+            Self::Todos,
         ]
     }
 
@@ -1484,6 +1491,7 @@ impl ActivitySection {
             Self::CloudAgents => Some("cloud_agents".to_string()),
             Self::Http => Some("http".to_string()),
             Self::Notes => Some("notes".to_string()),
+            Self::Todos => Some("todos".to_string()),
             Self::Mount(idx) => app.mount_manifests.get(*idx as usize).map(|m| m.id.clone()),
         }
     }
@@ -1777,6 +1785,11 @@ pub struct PaneRects {
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
     /// `ActivitySection::Notes` panel `+ New note` row rect.
     pub notes_panel_new_chip: Option<Rect>,
+    /// `ActivitySection::Todos` panel — one row per hit + the index
+    /// in `App::todos_hits`. Click → jump to file:line. (#9)
+    pub todos_panel_rows: Vec<(Rect, usize)>,
+    /// `ActivitySection::Todos` panel refresh chip rect.
+    pub todos_panel_refresh_chip: Option<Rect>,
     /// Click rect for the `+ New session` row at the bottom of
     /// the sessions panel. Click → spawns a Claude Code pane
     /// (most common case; a follow-up could open a picker).
@@ -2571,6 +2584,12 @@ pub struct App {
     /// active-repo machinery (git rail, switcher, status pane, etc.) works
     /// unchanged.
     pub extra_workspaces: Vec<ExtraWorkspace>,
+    /// Discovered TODO markers across the workspace. Populated by
+    /// `todos_panel_refresh`. (#9)
+    pub todos_hits: Vec<crate::ui::todos_panel::TodoHit>,
+    /// Set to true after the first `todos_panel_refresh` fires so
+    /// the panel doesn't re-scan on every draw.
+    pub todos_panel_scanned_once: bool,
     /// qa-feature 2026-07-01 — stable position for the primary
     /// in the unified workspace visual list (primary + extras
     /// share one position space). Starts at 0. Promoting an
@@ -4160,6 +4179,8 @@ impl App {
             // in `try_restore_session`.
             tree_root_expanded: true,
             extra_workspaces,
+            todos_hits: Vec::new(),
+            todos_panel_scanned_once: false,
             primary_position: 0,
             git_rail,
             image_protocol: crate::image::detect_protocol(),

@@ -2497,6 +2497,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.notes_panel_new_note(),
         },
         Command {
+            id: "view.activity_todos",
+            title: "Activity: show TODOs (TODO/FIXME/XXX/HACK/REVIEW markers)",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Todos),
+        },
+        Command {
+            id: "todos.refresh",
+            title: "TODOs: rescan the workspace",
+            group: "view",
+            keys: &[],
+            run: |app| app.todos_panel_refresh(),
+        },
+        Command {
             id: "cloud_agents.new_run",
             title: "Cloud agents: fire a new ECS run for a Jira ticket",
             group: "view",

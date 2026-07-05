@@ -590,6 +590,17 @@ impl App {
         self.open_path(&path);
     }
 
+    /// Scan the workspace for TODO markers and repopulate
+    /// `todos_hits`. Bounded walk (skips huge files, target,
+    /// node_modules, dotdirs) — under a second on typical
+    /// workspaces. (#9)
+    pub fn todos_panel_refresh(&mut self) {
+        let mut hits = Vec::new();
+        walk_for_todos(&self.workspace, 0, &mut hits);
+        hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
+        self.todos_hits = hits;
+    }
+
     /// Notes panel `+ New note` action — creates a numbered markdown
     /// file under `<workspace>/.mnml/notes/` and opens it. Directory
     /// is created on demand. (#8)
@@ -611,5 +622,60 @@ impl App {
             return;
         }
         self.open_path(&path);
+    }
+}
+
+fn walk_for_todos(
+    dir: &std::path::Path,
+    depth: u32,
+    out: &mut Vec<crate::ui::todos_panel::TodoHit>,
+) {
+    if depth > 6 || out.len() > 1000 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with('.')
+            || name_str == "target"
+            || name_str == "node_modules"
+            || name_str == "dist"
+            || name_str == "build"
+        {
+            continue;
+        }
+        if path.is_dir() {
+            walk_for_todos(&path, depth + 1, out);
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && matches!(
+                ext,
+                "rs" | "ts"
+                    | "tsx"
+                    | "js"
+                    | "jsx"
+                    | "py"
+                    | "go"
+                    | "java"
+                    | "kt"
+                    | "swift"
+                    | "cs"
+                    | "cpp"
+                    | "c"
+                    | "h"
+                    | "hpp"
+                    | "rb"
+                    | "sh"
+                    | "yml"
+                    | "yaml"
+                    | "toml"
+                    | "md"
+            )
+        {
+            out.extend(crate::ui::todos_panel::scan_file(&path));
+        }
     }
 }

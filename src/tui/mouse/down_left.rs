@@ -1638,6 +1638,27 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_path(&path);
         return;
     }
+    // TODOs panel — refresh chip + row click (#9).
+    if let Some(r) = app.rects.todos_panel_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.todos_panel_refresh();
+        return;
+    }
+    if let Some(&(_, idx)) = app
+        .rects
+        .todos_panel_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        if let Some(hit) = app.todos_hits.get(idx) {
+            let path = hit.path.clone();
+            let line = hit.line.to_string();
+            app.open_path(&path);
+            app.goto_line_str(&line);
+        }
+        return;
+    }
     // Agents rail panel — filter input, + New, and row
     // clicks.
     if let Some(r) = app.rects.agents_panel_filter_input
