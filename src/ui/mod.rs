@@ -85,6 +85,7 @@ pub mod agents_panel;
 pub mod cloud_agents_panel;
 pub mod dock;
 pub mod git_palette;
+pub mod http_panel;
 pub mod menu_bar;
 pub mod mount_view;
 pub mod prompt;
@@ -530,6 +531,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
             crate::app::ActivitySection::CloudAgents => {
                 cloud_agents_panel::draw(frame, app, content_area);
+            }
+            crate::app::ActivitySection::Http => {
+                http_panel::draw(frame, app, content_area);
             }
             crate::app::ActivitySection::Mount(idx) => {
                 // Rail content for a manifest-mounted sibling is

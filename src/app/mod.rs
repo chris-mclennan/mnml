@@ -1396,6 +1396,9 @@ pub enum ActivitySection {
     /// pty" action; they expose Copy runId / Open CloudWatch /
     /// Open PR instead.
     CloudAgents,
+    /// HTTP request workflow — `.http` / `.curl` file browser,
+    /// recent requests, environment picker. (#10)
+    Http,
     /// A manifest-registered Mount sibling — the u16 indexes
     /// into `App::mount_manifests`. Icon, color, tooltip, and
     /// binary come from the manifest. Manifest mounts render
@@ -1434,6 +1437,8 @@ impl ActivitySection {
                 "Cloud agents",
                 "view.activity_cloud_agents",
             ),
+            // nf-fa-bolt — HTTP / API workflow
+            Self::Http => ("\u{F0E7}", "H", "HTTP", "view.activity_http"),
             // Manifest mounts have per-entry metadata that lives
             // on `App::mount_manifests`; the activity-bar renderer
             // resolves it dynamically. This `meta()` arm is a
@@ -1453,6 +1458,7 @@ impl ActivitySection {
             Self::Sessions,
             Self::Agents,
             Self::CloudAgents,
+            Self::Http,
         ]
     }
 
@@ -1470,6 +1476,7 @@ impl ActivitySection {
             Self::Sessions => Some("sessions".to_string()),
             Self::Agents => Some("agents".to_string()),
             Self::CloudAgents => Some("cloud_agents".to_string()),
+            Self::Http => Some("http".to_string()),
             Self::Mount(idx) => app.mount_manifests.get(*idx as usize).map(|m| m.id.clone()),
         }
     }
@@ -1752,6 +1759,12 @@ pub struct PaneRects {
     /// `ActivitySection::Sessions` panel. Click → focus that
     /// Pty pane.
     pub session_tabs: Vec<(Rect, usize)>,
+    /// `ActivitySection::Http` panel — one row per `.http` / `.curl`
+    /// file. Click → open the file as a `Pane::Request`. (#10)
+    pub http_panel_files: Vec<(Rect, std::path::PathBuf)>,
+    /// `ActivitySection::Http` panel `+ New request` row rect. Click →
+    /// create a stub `.http` file and open it.
+    pub http_panel_new_chip: Option<Rect>,
     /// Click rect for the `+ New session` row at the bottom of
     /// the sessions panel. Click → spawns a Claude Code pane
     /// (most common case; a follow-up could open a picker).

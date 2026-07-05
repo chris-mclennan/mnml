@@ -571,4 +571,22 @@ impl App {
         items.push(MenuItem::new("Delete", MenuAction::WorkspaceDelete(idx)));
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
     }
+
+    /// HTTP panel `+ New request` action — creates `scratch.http` in
+    /// the workspace root (or a numbered variant if it exists) and
+    /// opens it in a Request pane. (#10)
+    pub fn http_panel_new_request(&mut self) {
+        let stub = "### GET request example\nGET https://httpbin.org/get\n";
+        let mut path = self.workspace.join("scratch.http");
+        let mut i = 1;
+        while path.exists() {
+            path = self.workspace.join(format!("scratch-{i}.http"));
+            i += 1;
+        }
+        if let Err(e) = std::fs::write(&path, stub) {
+            self.toast(format!("http: create failed: {e}"));
+            return;
+        }
+        self.open_path(&path);
+    }
 }

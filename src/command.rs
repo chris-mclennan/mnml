@@ -2476,6 +2476,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::CloudAgents),
         },
         Command {
+            id: "view.activity_http",
+            title: "Activity: show HTTP (.http files + recent requests)",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Http),
+        },
+        Command {
             id: "cloud_agents.new_run",
             title: "Cloud agents: fire a new ECS run for a Jira ticket",
             group: "view",

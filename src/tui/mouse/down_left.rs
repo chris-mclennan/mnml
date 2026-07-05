@@ -1604,6 +1604,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         crate::command::run("ai.claude_code", app);
         return;
     }
+    // HTTP panel — file rows + `+ New request` chip (#10).
+    if let Some(r) = app.rects.http_panel_new_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_panel_new_request();
+        return;
+    }
+    if let Some((_, path)) = app
+        .rects
+        .http_panel_files
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let path = path.clone();
+        app.open_path(&path);
+        return;
+    }
     // Agents rail panel — filter input, + New, and row
     // clicks.
     if let Some(r) = app.rects.agents_panel_filter_input
