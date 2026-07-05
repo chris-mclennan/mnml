@@ -177,6 +177,29 @@ impl App {
     }
 
     /// Right-click in the file tree on `path` (at screen cell `anchor`).
+    /// Right-click a row inside an extra-workspace section. Resolves
+    /// the row's path/is_dir from that workspace's own tree and hands
+    /// off to `open_tree_context_menu` (which uses the primary workspace
+    /// only for the "Copy path" relative-path display — actions themselves
+    /// operate on absolute paths, so they work either way).
+    pub fn open_extra_workspace_tree_row_context_menu(
+        &mut self,
+        ws_idx: usize,
+        row_idx: usize,
+        anchor: (u16, u16),
+    ) {
+        let Some(ws) = self.extra_workspaces.get(ws_idx) else {
+            return;
+        };
+        let rows = ws.tree.visible_rows();
+        let Some(row) = rows.get(row_idx) else {
+            return;
+        };
+        let path = row.path.clone();
+        let is_dir = row.is_dir;
+        self.open_tree_context_menu(path, is_dir, anchor);
+    }
+
     pub fn open_tree_context_menu(&mut self, path: PathBuf, is_dir: bool, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let name = path

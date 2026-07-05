@@ -385,6 +385,19 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         }
         return;
     }
+    // Right-click on an EXTRA workspace's file rows — was primary-only
+    // until now, which read as broken (the primary tree ate the whole
+    // right-click "space" but any secondary repo's rows had no menu).
+    if let Some(&(tr, ws_idx, scroll)) = app
+        .rects
+        .extra_workspace_bodies
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let row_idx = (y - tr.y) as usize + scroll;
+        app.open_extra_workspace_tree_row_context_menu(ws_idx, row_idx, (x, y));
+        return;
+    }
     // Right-click on a GIT-section row → per-row context menu.
     if let Some(&(_, hit)) = app
         .rects
