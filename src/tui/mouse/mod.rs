@@ -483,9 +483,22 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         // Request-pane row hover — sync `hover_*` fields on the
         // active Request pane so the renderer can highlight the
-        // row under the cursor (Params / Vars / Auth). Clears
-        // the highlight when the pointer leaves any row. (#11 v13)
+        // row under the cursor (Params / Vars / Auth). Two passes:
+        // first UNCONDITIONALLY clear every Request pane in
+        // `app.panes` so a split with a Request pane that just
+        // lost focus doesn't retain a phantom highlight (reviewer
+        // catch — the guard on `app.active` alone would leave
+        // stale state on inactive Request panes). Then set the
+        // hovered keys on the active pane if it's a Request.
+        // (#11 v13)
         {
+            for pane in app.panes.iter_mut() {
+                if let crate::pane::Pane::Request(rp) = pane {
+                    rp.hover_params_key = None;
+                    rp.hover_vars_key = None;
+                    rp.hover_auth_id = None;
+                }
+            }
             let hp = app
                 .rects
                 .request_params_rows
