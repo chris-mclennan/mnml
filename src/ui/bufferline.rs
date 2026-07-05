@@ -303,10 +303,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, tt.orange),
             Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, tt.green),
             Pane::Request(r) => {
-                // Per-verb color so the tab icon reads as a method
-                // chip (GET green, POST orange, PUT blue, PATCH cyan,
-                // DELETE red, HEAD yellow, OPTIONS purple). Falls
-                // back to blue for unknown verbs.
+                // No icon glyph — the colored METHOD prefix in the
+                // label (rendered below via `split_http_verb`) IS
+                // the icon. Showing the paper-airplane glyph next
+                // to a green "GET" was doubling up. Returns an
+                // empty string; the label-render path checks for
+                // Request panes and skips the icon span entirely.
                 let m = r.request.method.to_uppercase();
                 let color = match m.as_str() {
                     "GET" => tt.green,
@@ -318,7 +320,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     "OPTIONS" => tt.purple,
                     _ => tt.blue,
                 };
-                (if nerd { "\u{F1D8}" } else { "→" }, color)
+                ("", color)
             }
             Pane::Pty(s) => {
                 // 2026-07-03 — sibling integrations that run as
@@ -400,7 +402,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // render path was fixed to match. Two is the balance point
         // for the wide nf-oct-terminal glyph vs the rest of the
         // icon set.
-        let label = if diag.is_empty() {
+        //
+        // Request panes skip the icon slot entirely — the colored
+        // METHOD prefix in the label already reads as the icon,
+        // so we drop the leading " {glyph}  " and use a single
+        // space of left padding instead.
+        let skip_icon = matches!(pane, Pane::Request(_));
+        let label = if skip_icon {
+            if diag.is_empty() {
+                format!(" {name} {badge} ")
+            } else {
+                format!(" {name} {diag} {badge} ")
+            }
+        } else if diag.is_empty() {
             format!(" {glyph}  {name} {badge} ")
         } else {
             format!(" {glyph}  {name} {diag} {badge} ")
@@ -461,15 +475,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // wide-cell Nerd Font terminal glyph visually kissed
         // the label. Match the 3-space padding used in the
         // width string so hitboxes + visuals stay aligned.
-        spans.push(Span::styled(
-            format!(" {glyph}  "),
-            Style::default().fg(icon_color).bg(bg),
-        ));
+        // Icon span — skipped for Request panes (their METHOD
+        // prefix serves as the icon). One space of left padding
+        // in its place so the label doesn't crowd the tab edge.
+        if skip_icon {
+            spans.push(Span::styled(" ", Style::default().bg(bg)));
+        } else {
+            spans.push(Span::styled(
+                format!(" {glyph}  "),
+                Style::default().fg(icon_color).bg(bg),
+            ));
+        }
         // Bruno-style verb prefix: if this is a Request pane and
         // the title starts with a known HTTP verb, split the label
-        // so the verb renders in its own color (matching the icon)
-        // and the URL/name renders in regular fg. Other panes keep
-        // the single-color label.
+        // so the verb renders in its method color and the URL/name
+        // renders in regular fg. Other panes keep the single-color
+        // label.
         if matches!(pane, Pane::Request(_))
             && let Some((verb, rest)) = split_http_verb(&name)
         {
