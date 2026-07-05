@@ -295,6 +295,11 @@ pub enum HoverChip {
     /// The window-level close (top-right of the bufferline strip).
     /// Closes the whole mnml process via `app.quit`.
     BufferlineWindowClose,
+    /// A session-tab in the Sessions activity panel — Pty (Claude Code /
+    /// Codex / shell) session. Tooltip shows a preview of the last few
+    /// messages for Claude sessions; falls back to profile info for
+    /// shells / Codex. (#12)
+    SessionsTab(crate::layout::PaneId),
     /// Activity bar icon (left rail). Tooltip names the section.
     /// vscode-mouse-2026-06-10 SEV-3 #2.
     ActivityBarIcon(crate::app::ActivitySection),

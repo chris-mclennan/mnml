@@ -981,6 +981,80 @@ fn home_projects_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".claude/projects"))
 }
 
+/// One-line summary of the last user prompt + assistant response in a
+/// Claude session's transcript, or `None` when the file can't be read
+/// / doesn't exist. Reads at most the last ~32 KB of the JSONL so this
+/// is cheap enough to call on hover (#12).
+pub fn preview_last_messages(session_id: &str, workspace: &std::path::Path) -> Option<String> {
+    let root = home_projects_dir()?;
+    // Anthropic encodes the workspace path as `-Users-...-...` — same
+    // idempotent form the dashboard uses via `-` for every path
+    // separator. Match that here.
+    let encoded = workspace
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "-");
+    let candidate = root.join(&encoded).join(format!("{session_id}.jsonl"));
+    let bytes = std::fs::metadata(&candidate).ok().map(|m| m.len())?;
+    let start = bytes.saturating_sub(32 * 1024);
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(&candidate).ok()?;
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::with_capacity(32 * 1024);
+    f.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    // Walk lines backward and extract the most recent user + assistant
+    // text spans. Each line is one JSONL event.
+    let mut last_user: Option<String> = None;
+    let mut last_asst: Option<String> = None;
+    for line in text.lines().rev() {
+        if !line.starts_with('{') {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let role = v
+            .get("message")
+            .and_then(|m| m.get("role"))
+            .and_then(|r| r.as_str());
+        let content = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .or_else(|| {
+                v.get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|x| x.get("text"))
+                    .and_then(|t| t.as_str())
+            });
+        let Some(c) = content else { continue };
+        let snippet: String = c.trim().chars().take(80).collect();
+        match role {
+            Some("user") if last_user.is_none() => last_user = Some(snippet),
+            Some("assistant") if last_asst.is_none() => last_asst = Some(snippet),
+            _ => {}
+        }
+        if last_user.is_some() && last_asst.is_some() {
+            break;
+        }
+    }
+    let mut parts = Vec::new();
+    if let Some(u) = last_user {
+        parts.push(format!("you: {u}"));
+    }
+    if let Some(a) = last_asst {
+        parts.push(format!("claude: {a}"));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
+}
+
 /// Decode a `-Users-foo-Projects-bar`-style directory name into
 /// the last component (`bar`) for display purposes. Not invertible
 /// with literal dashes in path segments; the dashboard accepts that

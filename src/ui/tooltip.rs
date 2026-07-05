@@ -687,6 +687,32 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 ),
             ))
         }
+        HoverChip::SessionsTab(pid) => {
+            let rect = app
+                .rects
+                .session_tabs
+                .iter()
+                .find(|(_, p)| *p == pid)
+                .map(|(r, _)| *r)?;
+            use crate::pane::Pane;
+            let (title, sub) = match app.panes.get(pid) {
+                Some(Pane::Pty(s)) => {
+                    let profile_label = s.profile.label.clone();
+                    let title = format!("{profile_label} — session");
+                    // Claude sessions: try to show the last user + assistant
+                    // exchange snippet. Falls back gracefully if the
+                    // transcript can't be read (fresh session, missing
+                    // file, malformed JSONL).
+                    let preview = s.profile.session_id.as_deref().and_then(|sid| {
+                        crate::claude_agents::preview_last_messages(sid, &app.workspace)
+                    });
+                    (title, preview.or(Some("click: focus session".into())))
+                }
+                Some(p) => (p.title(), Some("click: focus session".into())),
+                None => ("session".into(), None),
+            };
+            Some((rect, title, sub))
+        }
         HoverChip::BufferlineTab(pid) => {
             let rect = app
                 .rects
