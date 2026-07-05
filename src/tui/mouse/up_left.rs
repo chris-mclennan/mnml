@@ -167,7 +167,21 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
         let empty_editor = app.rects.pane_bodies.is_empty() && tree_rect.is_none();
         if (over_body || empty_editor) && !src_is_dir {
             app.tree_drag = None;
-            app.drop_tree_file_on_pane(src_path, x, y);
+            if armed {
+                // Actual drag-and-drop: create / place in a split.
+                app.drop_tree_file_on_pane(src_path, x, y);
+            } else {
+                // Plain click that happens to land on a pane body —
+                // (a fast double-click may bounce out of the tree row).
+                // Treat as an open, not a drop. Preserves layout when
+                // the file is already open in a split (issue #1).
+                let permanent = matches!(app.last_click, Some((_, _, _, c)) if c >= 2);
+                if permanent {
+                    app.open_path(&src_path);
+                } else {
+                    app.open_path_preview(&src_path);
+                }
+            }
         } else if let Some(tr) = tree_rect {
             let idx = (y - tr.y) as usize + app.rects.tree_scroll;
             let target = (idx < app.tree.visible_rows().len()).then_some(idx);
