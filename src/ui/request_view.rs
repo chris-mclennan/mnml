@@ -824,7 +824,10 @@ fn paint_response_tab_strip(
         // row of the tab strip so it's visually detached from the
         // label baseline (matches the mockup's
         // `Response\n────────` look).
-        let bar_glyph = if is_cur { "\u{2500}" } else { " " };
+        // `━` (U+2501, box-drawings-heavy-horizontal) — thicker
+        // stroke than `─` so the active-tab bar reads as a bold
+        // indicator, not a subtle underline.
+        let bar_glyph = if is_cur { "\u{2501}" } else { " " };
         let bar_style = if is_cur {
             Style::default()
                 .fg(t.fg)
@@ -1309,58 +1312,69 @@ fn draw_edit(
     let _ = caret;
 
     // Tab strip (Body / Headers / Params / Auth / Vars / Source).
-    // Menu-bar aesthetic: active tab = cyan bg + bg_dark fg + BOLD
-    // (`row_highlight_menu` — the exact primitive the menu-bar
-    // dropdowns use for their selected row). Inactive tabs = fg on
-    // `bg2` — the darker "chip" bg the menu bar's inactive items
-    // sit on — so all tabs read as discrete clickable chips on the
-    // panel's `bg_dark`, not floating text. 1-cell `bg_dark` gap
-    // between chips reinforces the "these are separate buttons"
-    // read.
+    // Bruno-style: 2 rows tall — row 0 = labels (active = fg BOLD,
+    // inactive = comment fg, no chip bg), row 1 = `━` bar under
+    // the active tab. Matches the Response sub-tab strip so both
+    // sides read as the same primitive.
     {
         use crate::request_pane::EditTab;
-        // Tab strip renders at row 0 of `tabs_rect` — the leading
-        // blank spacer was removed 2026-07-05 so the tabs sit
-        // immediately under the Method/URL bottom border (user
-        // asked to remove the extra 1-cell gap).
-        let strip_y = rows.len() as u16;
-        let mut spans: Vec<Span> = Vec::new();
+        let label_y = rows.len() as u16;
+        let bar_y = label_y + 1;
+        let mut label_spans: Vec<Span> = Vec::new();
+        let mut bar_spans: Vec<Span> = Vec::new();
         let mut col: u16 = 2;
-        // Leading pad column so the strip aligns with the URL row.
-        spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
+        label_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
+        bar_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
         for tab in EditTab::ALL {
             let label = tab.label();
             let is_cur = rp.edit_tab == *tab;
-            let display = format!(" {label} ");
-            let style = if is_cur {
-                crate::ui::design_tokens::row_highlight_menu()
+            let label_style = if is_cur {
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                // Menu-bar-style inactive chip: fg on bg2 (chip bg),
-                // not comment-fg on bg_dark. Reads as a button, not
-                // dim text.
-                Style::default().fg(t.fg).bg(t.bg2)
+                Style::default().fg(t.comment).bg(t.bg_dark)
             };
-            let chip_w = display.chars().count() as u16;
-            spans.push(Span::styled(display, style));
-            // 1-cell separator between chips — panel bg so the
-            // active chip's cyan doesn't smear into its neighbor.
-            spans.push(Span::styled(
-                " ".to_string(),
+            let chip_w = label.chars().count() as u16;
+            label_spans.push(Span::styled(label.to_string(), label_style));
+            // 2-cell gap between labels (breathing room for the
+            // underline bar).
+            label_spans.push(Span::styled(
+                "  ".to_string(),
+                Style::default().bg(t.bg_dark),
+            ));
+            // Underline bar row — `━` under active, blank under
+            // inactive. Same heavy stroke as the Response strip.
+            let bar_glyph = if is_cur { "\u{2501}" } else { " " };
+            let bar_style = if is_cur {
+                Style::default()
+                    .fg(t.fg)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().bg(t.bg_dark)
+            };
+            bar_spans.push(Span::styled(bar_glyph.repeat(chip_w as usize), bar_style));
+            bar_spans.push(Span::styled(
+                "  ".to_string(),
                 Style::default().bg(t.bg_dark),
             ));
             tabs.push((
                 Rect {
                     x: area.x + col,
-                    y: strip_y,
+                    y: label_y,
                     width: chip_w,
                     height: 1,
                 },
                 pane_id,
                 *tab,
             ));
-            col += chip_w + 1;
+            col += chip_w + 2;
         }
-        rows.push(Line::from(spans));
+        rows.push(Line::from(label_spans));
+        rows.push(Line::from(bar_spans));
+        let _ = bar_y;
     }
 
     // ── Per-tab content ───────────────────────────────────────────────
