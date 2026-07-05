@@ -489,7 +489,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             return;
         }
         // `__VAL:<name>` = click on the value cell of an existing
-        // row → start in-place edit.
+        // row → start in-place value edit.
         if let Some(row_key) = key.strip_prefix("__VAL:") {
             let kind = if is_headers {
                 crate::request_pane::KvEditKind::Headers
@@ -497,6 +497,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 crate::request_pane::KvEditKind::Params
             };
             app.http_kv_edit_begin(kind, row_key.to_string());
+            return;
+        }
+        // `__NAME:<name>` = click on the name cell → start
+        // in-place rename edit.
+        if let Some(row_key) = key.strip_prefix("__NAME:") {
+            let kind = if is_headers {
+                crate::request_pane::KvEditKind::Headers
+            } else {
+                crate::request_pane::KvEditKind::Params
+            };
+            app.http_kv_edit_begin_name(kind, row_key.to_string());
             return;
         }
         // `__DEL:<name>` = click on the ✕ cell → delete row.

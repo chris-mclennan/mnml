@@ -402,11 +402,25 @@ pub(crate) fn render_kv_table(
     // Row layout (from x = area.x): 2 pad + 1 border + 1 space +
     // name_w + 1 pad + 1 space + 1 border + 1 space + value_w +
     // 1 pad + 1 space + 1 border + 3 X + 1 border
+    let name_col_x_off: u16 = 2 + 1 + 1;
     let value_col_x_off: u16 = 2 + 1 + 1 + name_w + 1 + 1 + 1;
     let x_col_x_off: u16 = value_col_x_off + value_w + 1 + 1 + 1;
     for (i, (k, v)) in data.iter().enumerate() {
         let is_hover = hover_key == Some(k.as_str());
-        let key_style = if is_hover {
+        let row_is_editing = edit_target.map(|e| e.original_key == *k).unwrap_or(false);
+        let editing_name = row_is_editing && edit_target.map(|e| e.editing_name).unwrap_or(false);
+        let editing_value = row_is_editing && !editing_name;
+        let name_display = if editing_name {
+            format!("{}▏", edit_target.unwrap().buffer)
+        } else {
+            k.clone()
+        };
+        let key_style = if editing_name {
+            Style::default()
+                .fg(t.yellow)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD)
+        } else if is_hover {
             Style::default()
                 .fg(t.cyan)
                 .bg(t.bg_dark)
@@ -417,14 +431,12 @@ pub(crate) fn render_kv_table(
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD)
         };
-        let is_editing = edit_target.map(|e| e.original_key == *k).unwrap_or(false);
-        let val_display = if is_editing {
-            let e = edit_target.unwrap();
-            format!("{}▏", e.buffer)
+        let val_display = if editing_value {
+            format!("{}▏", edit_target.unwrap().buffer)
         } else {
             v.clone()
         };
-        let val_style = if is_editing {
+        let val_style = if editing_value {
             Style::default()
                 .fg(t.yellow)
                 .bg(t.bg_dark)
@@ -435,17 +447,24 @@ pub(crate) fn render_kv_table(
         let x_style = Style::default().fg(t.red).bg(t.bg_dark);
         let row_y = rows.len() as u16;
         rows.push(make_row(
-            k.clone(),
+            name_display,
             val_display,
             key_style,
             val_style,
             " ✕ ",
             x_style,
         ));
-        // Cell-level click rects. Order matters — value_cell FIRST,
-        // then x_cell, then the whole-row fallback (delete). The
-        // click handler `.find(...)` walks in order and takes the
-        // first hit.
+        // Cell-level click rects: name cell → rename edit,
+        // value cell → value edit, X cell → delete.
+        params_rows_local.push((
+            Rect {
+                x: area.x.saturating_add(name_col_x_off),
+                y: row_y,
+                width: name_w,
+                height: 1,
+            },
+            format!("__NAME:{k}"),
+        ));
         params_rows_local.push((
             Rect {
                 x: area.x.saturating_add(value_col_x_off),

@@ -142,21 +142,25 @@ pub struct InlineKvDraft {
 pub type ParamsAddDraft = InlineKvDraft;
 
 /// State for in-place edit of an existing Params or Headers row's
-/// VALUE cell. Click a value cell → set this; type / backspace
-/// modifies `buffer`; Enter commits (replaces the value in the URL
-/// query string or `headers_buffer`); Esc cancels.
+/// name OR value cell. Click a cell → set this; type / backspace
+/// modifies `buffer`; Enter commits; Esc cancels.
 #[derive(Debug, Clone)]
 pub struct KvValueEdit {
     /// Which tab this edit belongs to. Guards the commit path so
     /// a Params edit doesn't accidentally rewrite a header.
     pub kind: KvEditKind,
     /// Original key of the row — used to locate the entry to
-    /// replace when the user commits. If the row was deleted or
+    /// update when the user commits. If the row was deleted or
     /// renamed under us, commit becomes a no-op.
     pub original_key: String,
-    /// Current buffer contents. Renders as the value cell text.
+    /// Current buffer contents. Renders as the edited cell text.
     pub buffer: String,
     pub cursor: usize,
+    /// Which cell of the row is being edited. `false` = value cell
+    /// (default when clicking the value column). `true` = name cell
+    /// — commit renames the key, preserving the row's position and
+    /// current value.
+    pub editing_name: bool,
 }
 
 /// Which KV table an in-place edit targets.

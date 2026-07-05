@@ -3767,40 +3767,63 @@ impl App {
         }
     }
 
-    /// Start an in-place value-cell edit on a KV table row. Sets
+    /// Start an in-place value-cell edit on a KV row. Sets
     /// `rp.kv_edit` with the row's current value pre-loaded so
-    /// typing appends. Enter commits (via `http_kv_edit_commit`),
-    /// Esc cancels (via `http_kv_edit_cancel`).
+    /// typing appends. Enter commits, Esc cancels.
     pub fn http_kv_edit_begin(&mut self, kind: crate::request_pane::KvEditKind, key: String) {
+        self.http_kv_edit_begin_cell(kind, key, false);
+    }
+
+    /// Start an in-place NAME-cell edit on a KV row — same idea as
+    /// `http_kv_edit_begin` but commits rename the key (preserving
+    /// the row's value + position). The `editing_name` flag on
+    /// `KvValueEdit` routes the commit path.
+    pub fn http_kv_edit_begin_name(&mut self, kind: crate::request_pane::KvEditKind, key: String) {
+        self.http_kv_edit_begin_cell(kind, key, true);
+    }
+
+    fn http_kv_edit_begin_cell(
+        &mut self,
+        kind: crate::request_pane::KvEditKind,
+        key: String,
+        editing_name: bool,
+    ) {
         let Some(cur) = self.active else { return };
         let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
             return;
         };
-        let current_value = match kind {
-            crate::request_pane::KvEditKind::Params => {
-                let url = &rp.request.url;
-                let q = url.find('?').map(|i| &url[i + 1..]).unwrap_or("");
-                q.split('&')
-                    .find_map(|kv| {
-                        kv.split_once('=')
-                            .and_then(|(k, v)| (k == key).then(|| v.to_string()))
+        let seed = if editing_name {
+            // Pre-load with the current name so the user can edit
+            // it in place.
+            key.clone()
+        } else {
+            match kind {
+                crate::request_pane::KvEditKind::Params => {
+                    let url = &rp.request.url;
+                    let q = url.find('?').map(|i| &url[i + 1..]).unwrap_or("");
+                    q.split('&')
+                        .find_map(|kv| {
+                            kv.split_once('=')
+                                .and_then(|(k, v)| (k == key).then(|| v.to_string()))
+                        })
+                        .unwrap_or_default()
+                }
+                crate::request_pane::KvEditKind::Headers => rp
+                    .headers_buffer
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        (k.trim().eq_ignore_ascii_case(&key)).then(|| v.trim().to_string())
                     })
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
             }
-            crate::request_pane::KvEditKind::Headers => rp
-                .headers_buffer
-                .lines()
-                .find_map(|l| {
-                    let (k, v) = l.split_once(':')?;
-                    (k.trim().eq_ignore_ascii_case(&key)).then(|| v.trim().to_string())
-                })
-                .unwrap_or_default(),
         };
         rp.kv_edit = Some(crate::request_pane::KvValueEdit {
             kind,
             original_key: key,
-            buffer: current_value.clone(),
-            cursor: current_value.len(),
+            buffer: seed.clone(),
+            cursor: seed.len(),
+            editing_name,
         });
     }
 
@@ -3815,7 +3838,11 @@ impl App {
             rp.kv_edit.take()
         };
         let Some(edit) = edit else { return };
-        let new_value = edit.buffer.trim().to_string();
+        let new_buffer = edit.buffer.trim().to_string();
+        if edit.editing_name && new_buffer.is_empty() {
+            self.toast("kv: name can't be empty");
+            return;
+        }
         match edit.kind {
             crate::request_pane::KvEditKind::Params => {
                 if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
@@ -3832,13 +3859,17 @@ impl App {
                                 Some(kv) => kv,
                                 None => (kv, ""),
                             };
-                            let out_v = if k == edit.original_key {
-                                new_value.as_str()
+                            let (out_k, out_v) = if k == edit.original_key {
+                                if edit.editing_name {
+                                    (new_buffer.as_str(), v)
+                                } else {
+                                    (k, new_buffer.as_str())
+                                }
                             } else {
-                                v
+                                (k, v)
                             };
                             rewritten.push(sep);
-                            rewritten.push_str(k);
+                            rewritten.push_str(out_k);
                             rewritten.push('=');
                             rewritten.push_str(out_v);
                             sep = '&';
@@ -3854,8 +3885,12 @@ impl App {
                         .headers_buffer
                         .lines()
                         .map(|l| match l.split_once(':') {
-                            Some((k, _)) if k.trim().eq_ignore_ascii_case(&edit.original_key) => {
-                                format!("{}: {}", k.trim(), new_value)
+                            Some((k, v)) if k.trim().eq_ignore_ascii_case(&edit.original_key) => {
+                                if edit.editing_name {
+                                    format!("{}: {}", new_buffer, v.trim())
+                                } else {
+                                    format!("{}: {}", k.trim(), new_buffer)
+                                }
                             }
                             _ => l.to_string(),
                         })
