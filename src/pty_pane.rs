@@ -582,19 +582,37 @@ pub fn sgr_mouse_mod_bits(mods: ratatui::crossterm::event::KeyModifiers) -> u32 
 
 /// Build a flat [`RenderGrid`] from a terminal + render state. Contains all of
 /// libghostty's lending-iterator + FFI-lifetime handling in one place (shared
+/// Convert a `ratatui::style::Color` to a libghostty `RgbColor`.
+/// mnml themes are always RGB in practice; non-RGB variants fall
+/// back to a sensible default (white for fg-ish, black for bg-ish).
+fn theme_color_to_rgb(c: ratatui::style::Color) -> RgbColor {
+    if let ratatui::style::Color::Rgb(r, g, b) = c {
+        RgbColor { r, g, b }
+    } else {
+        RgbColor {
+            r: 0xff,
+            g: 0xff,
+            b: 0xff,
+        }
+    }
+}
+
 /// by [`PtySession::render_grid`] and the unit tests).
 fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> RenderGrid {
     let cols = term.cols().unwrap_or(0);
+    // Pull defaults from the active mnml theme so uncolored terminal
+    // text blends with the editor color scheme instead of the
+    // libghostty white-on-black default (#17). Falls back to
+    // white-on-black when the theme's fg/bg aren't RGB (shouldn't
+    // happen — theme palette is always RGB — but safe).
+    let t = crate::ui::theme::cur();
+    let (default_fg, default_bg) = (theme_color_to_rgb(t.fg), theme_color_to_rgb(t.bg_dark));
     let mut grid = RenderGrid {
         rows: 0,
         cols,
         cells: Vec::new(),
-        default_fg: RgbColor {
-            r: 0xff,
-            g: 0xff,
-            b: 0xff,
-        },
-        default_bg: RgbColor { r: 0, g: 0, b: 0 },
+        default_fg,
+        default_bg,
         cursor: None,
     };
 
