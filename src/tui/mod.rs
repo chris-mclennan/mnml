@@ -283,11 +283,14 @@ fn try_open_dragged_path(app: &mut App, text: &str) -> bool {
 }
 
 /// Minimal `%XX` decoder — covers the URL-encoded drag-and-drop
-/// case without pulling in a URL crate. Malformed sequences pass
-/// through as-is so we never lose data.
+/// case without pulling in a URL crate. Accumulates the decoded
+/// BYTE stream and converts to UTF-8 at the end so multibyte
+/// sequences like `%C3%A9` reassemble as `é` instead of two Latin-1
+/// scalars (`Ã©`). Malformed UTF-8 falls through via `from_utf8_lossy`
+/// rather than erroring.
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
-    let mut out = String::with_capacity(bytes.len());
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%'
@@ -299,14 +302,14 @@ fn percent_decode(s: &str) -> String {
                 16,
             )
         {
-            out.push(v as char);
+            out.push(v);
             i += 3;
             continue;
         }
-        out.push(bytes[i] as char);
+        out.push(bytes[i]);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 // ─── key dispatch (shared with headless/IPC) ────────────────────────
