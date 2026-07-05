@@ -1030,37 +1030,17 @@ impl Default for Config {
                         in_palette_bar: false,
                         manifest_can_override: true,
                     },
-                    IntegrationIcon {
-                        id: "http".to_string(),
-                        // `\u{F1D8}` (nf-fa-paper_plane) is in every
-                        // Nerd Font variant — was using `\u{F1D8B}`
-                        // (nf-md-send) which is only in newer MDI
-                        // ranges and missing from some standard Nerd
-                        // Font Mono builds (renders as tofu / ?).
-                        glyph: "\u{F1D8}".to_string(),
-                        fallback: "→".to_string(),
-                        command: "http.send".to_string(),
-                        color: "blue".to_string(),
-                        tooltip: Some("HTTP: send active request".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        // Postman-style "new request" chip — matches
-                        // the palette-bar's add-integration `+`
-                        // (\u{F0415} nf-md-plus) so the two `+`-style
-                        // chips read as one family at a glance.
-                        id: "http_new".to_string(),
-                        glyph: "\u{F0415}".to_string(),
-                        fallback: "+".to_string(),
-                        command: "http.new".to_string(),
-                        color: "green".to_string(),
-                        tooltip: Some("HTTP: new blank request".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        manifest_can_override: true,
-                    },
+                    // HTTP is built-in (activity section + sidebar +
+                    // HttpHome dashboard + Pane::Request + capture /
+                    // history / mocks / chains / sources / discover),
+                    // not a sibling integration. The old `http` +
+                    // `http_new` IntegrationIcon entries lived here
+                    // as opt-in palette-bar chips before the HTTP
+                    // section shipped; removed 2026-07-05 to stop
+                    // presenting core surface as an integration.
+                    // Users who had them enabled fall back to the
+                    // HTTP activity icon + :http.send / :http.new
+                    // palette commands — no data loss.
                     IntegrationIcon {
                         id: "codebuild".to_string(),
                         glyph: "\u{F0492}".to_string(), // nf-md-hammer-wrench
