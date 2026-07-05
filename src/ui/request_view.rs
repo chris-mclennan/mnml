@@ -372,22 +372,18 @@ pub fn draw(
     // down off the parent Request block's top border so they read
     // as free-floating sub-panels.
     const TOP_PAD: u16 = 1;
-    // Right-side action boxes — Postman/Bruno idiom for firing,
-    // resetting, and formatting the current request. Widths sized
-    // to fit each box's content plus 2-cell border chrome:
+    // Right-side action boxes — Postman/Bruno idiom for firing and
+    // resetting the current request. Widths sized to fit each box's
+    // content plus 2-cell border chrome:
     //   Send   = " ▶ Send "    (7 chars) + 2 border → 10 min, padded
     //   Clear  = " ✕ Clear "   (8 chars) + 2 border → 11 min
-    //   Format = " { } Format " (10 chars) + 2 border → 12 min
+    //
+    // Format lives INSIDE the Body tab now (right-aligned on the
+    // tab strip), so it only shows up when it's applicable.
     const SEND_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
-    const FORMAT_BOX_WIDTH: u16 = 12;
     let show_sub_panels = request_inner.width
-        >= METHOD_BOX_WIDTH
-            + MIN_URL_WIDTH
-            + SEND_BOX_WIDTH
-            + CLEAR_BOX_WIDTH
-            + FORMAT_BOX_WIDTH
-            + 2 * EDGE_PAD
+        >= METHOD_BOX_WIDTH + MIN_URL_WIDTH + SEND_BOX_WIDTH + CLEAR_BOX_WIDTH + 2 * EDGE_PAD
         && request_inner.height >= METHOD_URL_ROW_H + TOP_PAD + 3;
 
     let mut edit_rows: Vec<Line> = Vec::new();
@@ -399,9 +395,8 @@ pub fn draw(
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let mut send_button_rect: Option<Rect> = None;
     let mut clear_button_rect: Option<Rect> = None;
-    let mut format_button_rect: Option<Rect> = None;
     let tabs_rect = if show_sub_panels {
-        // Layout: [top-pad blank][pad][Method][URL][Send][Clear][Format][pad]
+        // Layout: [top-pad blank][pad][Method][URL][Send][Clear][pad]
         let row_y = request_inner.y.saturating_add(TOP_PAD);
         let method_rect = Rect {
             x: request_inner.x.saturating_add(EDGE_PAD),
@@ -416,7 +411,6 @@ pub fn draw(
             .saturating_sub(METHOD_BOX_WIDTH)
             .saturating_sub(SEND_BOX_WIDTH)
             .saturating_sub(CLEAR_BOX_WIDTH)
-            .saturating_sub(FORMAT_BOX_WIDTH)
             .saturating_sub(EDGE_PAD);
         let url_rect = Rect {
             x: url_x,
@@ -436,12 +430,6 @@ pub fn draw(
             width: CLEAR_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
-        let format_rect = Rect {
-            x: clear_rect.x.saturating_add(CLEAR_BOX_WIDTH),
-            y: row_y,
-            width: FORMAT_BOX_WIDTH,
-            height: METHOD_URL_ROW_H,
-        };
         if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
             method_url_absolute.push((mr, EditField::Method));
         }
@@ -450,7 +438,6 @@ pub fn draw(
         }
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
-        format_button_rect = draw_format_box(frame, rp, format_rect, t);
         // Tabs pick up IMMEDIATELY after the Method/URL bottom
         // border — no extra spacer between them.
         let used = TOP_PAD.saturating_add(METHOD_URL_ROW_H);
@@ -493,6 +480,13 @@ pub fn draw(
             Paragraph::new(edit_view).style(Style::default().bg(t.bg_dark)),
             tabs_rect,
         );
+        // Format chip — top-right of the Body tab area. Only shown
+        // when the current tab is Body AND detected content is
+        // JSON. Painted as an overlay AFTER the tab strip so it
+        // sits on the same row (the top of tabs_rect).
+        app.rects.request_format_button = paint_body_format_chip(frame, rp, tabs_rect, t);
+    } else {
+        app.rects.request_format_button = None;
     }
 
     // ── Zone 2: Response ─────────────────────────────────────────
@@ -595,7 +589,9 @@ pub fn draw(
     }
     app.rects.request_send_button = send_button_rect;
     app.rects.request_clear_button = clear_button_rect;
-    app.rects.request_format_button = format_button_rect;
+    // request_format_button is now set inside draw_edit's Body
+    // rendering path (right-aligned chip on the top-right of the
+    // body area, visible only when the body is JSON).
     for (mut r, pid, tab) in edit_tabs_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
@@ -724,43 +720,56 @@ fn response_status_title(
     }
 }
 
-/// Format sub-panel — modal_panel titled "Format" with a bold cyan
-/// "{ } Format" label. Only active on JSON bodies (grey when the
-/// body isn't JSON so the affordance reads as "not applicable"
-/// without disappearing). Click runs `http.format_body`.
-fn draw_format_box(
+/// Body tab's Format chip — floats at the top-right of `tabs_rect`
+/// (same row as the tab strip). Rendered only when the current
+/// Edit-tab is Body AND the body is detected as JSON. Reads as
+/// `[ { } Format ]` on the panel bg, cyan text so it stands out
+/// from the tab strip's chips (which use the row-highlight cyan bg).
+/// Returns the absolute-coord click rect for the pane-level
+/// mouse handler.
+fn paint_body_format_chip(
     frame: &mut Frame,
     rp: &crate::request_pane::RequestPane,
-    rect: Rect,
+    tabs_rect: Rect,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let block = crate::ui::design_tokens::modal_panel("Format");
-    let inner = block.inner(rect);
-    frame.render_widget(block, rect);
-    if inner.width == 0 || inner.height == 0 {
+    if rp.edit_tab != crate::request_pane::EditTab::Body {
         return None;
     }
     let body = rp.request.body.as_deref().unwrap_or("");
-    let is_json = matches!(detect_body_kind(body), Some("JSON"));
-    let color = if is_json { t.cyan } else { t.comment };
-    let text = " { } Format ";
-    let text_w = text.chars().count() as u16;
-    let mid_pad = inner.width.saturating_sub(text_w) / 2;
-    let content = Line::from(vec![
-        Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
-        Span::styled(
-            text.to_string(),
-            Style::default()
-                .fg(color)
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]);
+    if !matches!(detect_body_kind(body), Some("JSON")) {
+        return None;
+    }
+    let chip_text = " { } Format ";
+    let chip_w = chip_text.chars().count() as u16;
+    if tabs_rect.width < chip_w + 2 || tabs_rect.height == 0 {
+        return None;
+    }
+    // Right-aligned on the tab-strip row (row 0 of tabs_rect).
+    let chip_x = tabs_rect
+        .x
+        .saturating_add(tabs_rect.width)
+        .saturating_sub(chip_w)
+        .saturating_sub(1); // 1-cell right pad
+    let chip_y = tabs_rect.y;
+    let chip_rect = Rect {
+        x: chip_x,
+        y: chip_y,
+        width: chip_w,
+        height: 1,
+    };
+    let line = Line::from(vec![Span::styled(
+        chip_text.to_string(),
+        Style::default()
+            .fg(t.cyan)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD),
+    )]);
     frame.render_widget(
-        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
-        inner,
+        Paragraph::new(vec![line]).style(Style::default().bg(t.bg_dark)),
+        chip_rect,
     );
-    Some(inner)
+    Some(chip_rect)
 }
 
 /// Clear sub-panel — modal_panel titled "Clear" with a bold red-ish
@@ -1170,35 +1179,17 @@ fn draw_edit(
     } // end Headers tab
 
     if cur_tab == crate::request_pane::EditTab::Body {
-        // Body
+        // Body — no header/label row. The tab strip above already
+        // says "Body"; the body content starts at the first line
+        // right below it, matching Bruno/Postman's "the body IS
+        // the pane" idiom.
+        //
+        // Format chip lives at the top-right of the body area for
+        // JSON bodies — see the block below where we register
+        // `request_format_button`.
         let b_focus = rp.focus == EditField::Body;
-        let body_label_y = rows.len() as u16;
         let body = rp.request.body.as_deref().unwrap_or("");
-        // 2026-06-20 — detect content type from body shape so the
-        // user sees what mnml thinks the body is. JSON / XML /
-        // form-encoded / plain.
         let detected = detect_body_kind(body);
-        let kind_label = if let Some(k) = detected {
-            if k == "JSON" {
-                "  (JSON) — click Format or Shift+Alt+F".to_string()
-            } else {
-                format!("  ({k})")
-            }
-        } else {
-            String::new()
-        };
-        rows.push(Line::from(vec![
-            bar_span(b_focus),
-            Span::styled("Body".to_string(), label_style(b_focus)),
-            Span::styled(
-                kind_label,
-                Style::default()
-                    .fg(t.comment)
-                    .bg(t.bg_dark)
-                    .add_modifier(Modifier::DIM),
-            ),
-        ]));
-        register_field(fields, body_label_y, EditField::Body);
         if body.is_empty() {
             let empty_y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
@@ -1216,8 +1207,19 @@ fn draw_edit(
             } else {
                 Vec::new()
             };
+            // Line-number gutter — mirrors the Response body's
+            // treatment so both read as "loaded file" views.
+            let total_lines = body.lines().count().max(1);
+            let gutter_w = total_lines.to_string().len();
+            let gutter = |n: usize, t: theme::Theme| {
+                Span::styled(
+                    format!(" {:>width$} ", n, width = gutter_w),
+                    Style::default().fg(t.comment).bg(t.bg_dark),
+                )
+            };
             for (i, line) in body.lines().enumerate() {
                 let row_y = rows.len() as u16;
+                let n = i + 1;
                 // 2026-06-19 — keyboard hunt SEV-3 v2: when
                 // [ui] show_whitespace is on, render `\t` as `→` and
                 // leading spaces as `·` (matching the editor view) so
@@ -1231,19 +1233,14 @@ fn draw_edit(
                 // JSON gets colored_line (per-token color); other
                 // content types keep the plain grey_fg rendering.
                 let content_line = if let Some(spans) = json_spans.get(i) {
-                    // Prefix 4 spaces of indent on `bg_dark`, then
-                    // the colored line's spans.
                     let mut inner = colored_line(&rendered, spans, t.grey_fg, t);
-                    inner.spans.insert(
-                        0,
-                        Span::styled("    ".to_string(), Style::default().bg(t.bg_dark)),
-                    );
+                    inner.spans.insert(0, gutter(n, t));
                     inner
                 } else {
-                    Line::from(vec![Span::styled(
-                        format!("    {rendered}"),
-                        Style::default().fg(t.grey_fg).bg(t.bg_dark),
-                    )])
+                    Line::from(vec![
+                        gutter(n, t),
+                        Span::styled(rendered, Style::default().fg(t.grey_fg).bg(t.bg_dark)),
+                    ])
                 };
                 rows.push(content_line);
                 register_field(fields, row_y, EditField::Body);
@@ -1258,7 +1255,8 @@ fn draw_edit(
                             .chars()
                             .count() as u16;
                         let y = (rows.len() - 1) as u16;
-                        let prefix_cols = 4u16;
+                        // Caret sits after the gutter: " NN " = gutter_w + 2 cols.
+                        let prefix_cols = (gutter_w as u16).saturating_add(2);
                         *caret = Some((area.x + prefix_cols + col_in_line, y));
                     }
                 }
@@ -1267,7 +1265,8 @@ fn draw_edit(
             if b_focus && focused && caret.is_none() && body.ends_with('\n') {
                 let y = rows.len() as u16;
                 rows.push(plain(String::new(), body_style));
-                *caret = Some((area.x + 4, y));
+                let prefix_cols = (gutter_w as u16).saturating_add(2);
+                *caret = Some((area.x + prefix_cols, y));
             }
         }
     } // end Body tab
