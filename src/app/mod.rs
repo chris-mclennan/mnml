@@ -1964,6 +1964,9 @@ pub struct PaneRects {
     /// Click rect over the "{ } Format" sub-panel — pretty-prints
     /// a JSON Body in place. Same as `Shift+Alt+F` chord.
     pub request_format_button: Option<Rect>,
+    /// Click rect over the "</> Code" sub-panel — opens the
+    /// Generate Code picker.
+    pub request_code_button: Option<Rect>,
     /// Click rect over the split-orientation toggle chip on the
     /// Request block's top border. Click cycles Vertical <->
     /// Horizontal split. Same as `Ctrl+\` chord.

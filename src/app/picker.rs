@@ -757,6 +757,10 @@ impl App {
                 let name = item.id.clone();
                 self.accept_http_header(&name);
             }
+            PickerKind::HttpGenerateCode => {
+                let id = item.id.clone();
+                self.accept_http_generate_code(&id);
+            }
             PickerKind::HttpEnv => {
                 let name = item.id.clone();
                 self.accept_http_env(&name);

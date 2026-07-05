@@ -735,6 +735,120 @@ impl RequestPane {
         }
         out
     }
+
+    /// Python (using the `requests` library).
+    pub fn as_python(&self) -> String {
+        let mut out = String::from("import requests\n\n");
+        let mut headers_str = String::from("headers = {\n");
+        for (k, v) in &self.request.headers {
+            headers_str.push_str(&format!("    {:?}: {:?},\n", k, v));
+        }
+        headers_str.push_str("}\n\n");
+        out.push_str(&headers_str);
+        let m = self.request.method.to_lowercase();
+        match &self.request.body {
+            Some(body) if !body.is_empty() => {
+                out.push_str(&format!("data = {body:?}\n\n"));
+                out.push_str(&format!(
+                    "response = requests.{m}({url:?}, headers=headers, data=data)\n",
+                    url = self.request.url,
+                ));
+            }
+            _ => {
+                out.push_str(&format!(
+                    "response = requests.{m}({url:?}, headers=headers)\n",
+                    url = self.request.url,
+                ));
+            }
+        }
+        out.push_str("print(response.status_code)\nprint(response.text)\n");
+        out
+    }
+
+    /// JavaScript (`fetch` API).
+    pub fn as_js_fetch(&self) -> String {
+        let mut out = format!(
+            "const response = await fetch({url:?}, {{\n  method: {m:?},\n",
+            url = self.request.url,
+            m = self.request.method,
+        );
+        out.push_str("  headers: {\n");
+        for (k, v) in &self.request.headers {
+            out.push_str(&format!("    {k:?}: {v:?},\n"));
+        }
+        out.push_str("  },\n");
+        if let Some(body) = &self.request.body
+            && !body.is_empty()
+        {
+            out.push_str(&format!("  body: {body:?},\n"));
+        }
+        out.push_str(
+            "});\nconst data = await response.text();\nconsole.log(response.status, data);\n",
+        );
+        out
+    }
+
+    /// Go (net/http).
+    pub fn as_go(&self) -> String {
+        let mut out = String::from(
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"strings\"\n)\n\nfunc main() {\n",
+        );
+        let body_expr = if let Some(b) = &self.request.body {
+            format!("strings.NewReader({b:?})")
+        } else {
+            "nil".to_string()
+        };
+        out.push_str(&format!(
+            "\treq, err := http.NewRequest({m:?}, {url:?}, {body})\n\tif err != nil {{ panic(err) }}\n",
+            m = self.request.method,
+            url = self.request.url,
+            body = body_expr,
+        ));
+        for (k, v) in &self.request.headers {
+            out.push_str(&format!("\treq.Header.Set({k:?}, {v:?})\n"));
+        }
+        out.push_str(
+            "\tresp, err := http.DefaultClient.Do(req)\n\tif err != nil {{ panic(err) }}\n\tdefer resp.Body.Close()\n\tbody, _ := io.ReadAll(resp.Body)\n\tfmt.Println(resp.Status)\n\tfmt.Println(string(body))\n}\n",
+        );
+        out
+    }
+
+    /// wget one-liner.
+    pub fn as_wget(&self) -> String {
+        let mut out = format!(
+            "wget --method={} '{}'",
+            self.request.method, self.request.url
+        );
+        for (k, v) in &self.request.headers {
+            out.push_str(&format!(
+                " \\\n  --header='{}: {}'",
+                k,
+                v.replace('\'', "'\\''"),
+            ));
+        }
+        if let Some(body) = &self.request.body {
+            out.push_str(&format!(
+                " \\\n  --body-data='{}'",
+                body.replace('\'', "'\\''"),
+            ));
+        }
+        out
+    }
+
+    /// HTTPie one-liner.
+    pub fn as_httpie(&self) -> String {
+        let mut out = format!("http {} '{}'", self.request.method, self.request.url);
+        for (k, v) in &self.request.headers {
+            out.push_str(&format!(" '{}:{}'", k, v));
+        }
+        if let Some(body) = &self.request.body
+            && !body.is_empty()
+        {
+            let escaped = body.replace('\'', "'\\''");
+            out.push_str(&format!(" <<< '{escaped}'"));
+        }
+        out
+    }
 }
 
 #[cfg(test)]

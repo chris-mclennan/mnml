@@ -284,6 +284,63 @@ impl App {
         ));
     }
 
+    /// `http.generate_code` — open a picker over supported
+    /// languages (curl / Python requests / JS fetch / Go / wget /
+    /// HTTPie). On accept, render the active Request pane as
+    /// source code in that language, copy to the system clipboard,
+    /// and toast. Bruno-style Generate Code affordance.
+    pub fn http_generate_code_prompt(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let has_req = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_req {
+            self.toast("generate: no active Request pane");
+            return;
+        }
+        let items: Vec<PickerItem> = [
+            ("curl", "cURL", "shell one-liner"),
+            ("python", "Python", "requests library"),
+            ("js", "JavaScript", "fetch API"),
+            ("go", "Go", "net/http"),
+            ("wget", "wget", "shell one-liner"),
+            ("httpie", "HTTPie", "shell one-liner"),
+        ]
+        .iter()
+        .map(|(id, name, hint)| PickerItem::new(id.to_string(), name.to_string(), hint.to_string()))
+        .collect();
+        self.open_picker(Picker::new(
+            PickerKind::HttpGenerateCode,
+            "Generate code as:",
+            items,
+        ));
+    }
+
+    /// Accept handler for `PickerKind::HttpGenerateCode` — renders
+    /// the active Request pane in the picked language and copies to
+    /// the clipboard.
+    pub fn accept_http_generate_code(&mut self, lang_id: &str) {
+        let Some(cur) = self.active else { return };
+        let snippet = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match lang_id {
+                "curl" => rp.as_curl(),
+                "python" => rp.as_python(),
+                "js" => rp.as_js_fetch(),
+                "go" => rp.as_go(),
+                "wget" => rp.as_wget(),
+                "httpie" => rp.as_httpie(),
+                _ => {
+                    self.toast(format!("generate: unknown language `{lang_id}`"));
+                    return;
+                }
+            },
+            _ => return,
+        };
+        self.clipboard.set(snippet, false);
+        self.toast(format!("copied as {lang_id}"));
+    }
+
     /// Accept handler for `PickerKind::HttpHeader`. Inserts
     /// `<name>: ` at the Headers cursor (or appends as a new
     /// line if there's existing content).

@@ -716,12 +716,14 @@ pub fn draw(
     const SEND_BOX_WIDTH: u16 = 10;
     const SAVE_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
+    const CODE_BOX_WIDTH: u16 = 10;
     let show_sub_panels = top_bar_rect.width
         >= METHOD_BOX_WIDTH
             + MIN_URL_WIDTH
             + SEND_BOX_WIDTH
             + SAVE_BOX_WIDTH
             + CLEAR_BOX_WIDTH
+            + CODE_BOX_WIDTH
             + 2 * EDGE_PAD
         && top_bar_rect.height >= METHOD_URL_ROW_H;
 
@@ -729,8 +731,10 @@ pub fn draw(
     let mut send_button_rect: Option<Rect> = None;
     let mut save_button_rect: Option<Rect> = None;
     let mut clear_button_rect: Option<Rect> = None;
+    let mut code_button_rect: Option<Rect> = None;
     if show_sub_panels {
-        // Layout across the top strip: [pad][Method][URL][Send][Save][Clear][pad]
+        // Layout across the top strip:
+        //   [pad][Method][URL][Send][Save][Clear][Code][pad]
         let row_y = top_bar_rect.y;
         let method_rect = Rect {
             x: top_bar_rect.x.saturating_add(EDGE_PAD),
@@ -746,6 +750,7 @@ pub fn draw(
             .saturating_sub(SEND_BOX_WIDTH)
             .saturating_sub(SAVE_BOX_WIDTH)
             .saturating_sub(CLEAR_BOX_WIDTH)
+            .saturating_sub(CODE_BOX_WIDTH)
             .saturating_sub(EDGE_PAD);
         let url_rect = Rect {
             x: url_x,
@@ -771,6 +776,12 @@ pub fn draw(
             width: CLEAR_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
         };
+        let code_rect = Rect {
+            x: clear_rect.x.saturating_add(CLEAR_BOX_WIDTH),
+            y: row_y,
+            width: CODE_BOX_WIDTH,
+            height: METHOD_URL_ROW_H,
+        };
         if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
             method_url_absolute.push((mr, EditField::Method));
         }
@@ -780,6 +791,7 @@ pub fn draw(
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
         save_button_rect = draw_save_box(frame, rp, save_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
+        code_button_rect = draw_code_box(frame, code_rect, t);
     }
 
     // ── Zone 1: Request (tab strip + tab content). Method/URL now
@@ -956,6 +968,7 @@ pub fn draw(
     app.rects.request_send_button = send_button_rect;
     app.rects.request_save_button = save_button_rect;
     app.rects.request_clear_button = clear_button_rect;
+    app.rects.request_code_button = code_button_rect;
     // request_format_button is now set inside draw_edit's Body
     // rendering path (right-aligned chip on the top-right of the
     // body area, visible only when the body is JSON).
@@ -1425,6 +1438,36 @@ fn draw_clear_box(frame: &mut Frame, rect: Rect, t: theme::Theme) -> Option<Rect
             text.to_string(),
             Style::default()
                 .fg(t.orange)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
+        inner,
+    );
+    Some(inner)
+}
+
+/// Code sub-panel — Bruno-style `</>` "Generate Code" button.
+/// Click opens a language picker (curl / Python / JS / Go / wget /
+/// HTTPie) and copies the rendered snippet to the clipboard.
+fn draw_code_box(frame: &mut Frame, rect: Rect, t: theme::Theme) -> Option<Rect> {
+    let block = crate::ui::design_tokens::bordered_plain("");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width == 0 || inner.height == 0 {
+        return None;
+    }
+    let text = " </> Code ";
+    let text_w = text.chars().count() as u16;
+    let mid_pad = inner.width.saturating_sub(text_w) / 2;
+    let content = Line::from(vec![
+        Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
+        Span::styled(
+            text.to_string(),
+            Style::default()
+                .fg(t.purple)
                 .bg(t.bg_dark)
                 .add_modifier(Modifier::BOLD),
         ),

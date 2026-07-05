@@ -186,6 +186,12 @@ pub enum PickerKind {
     /// `id` = the header name. Accept ⇒ insert `<id>: ` at the
     /// active Request pane's Headers cursor.
     HttpHeader,
+    /// `id` = a language id (`curl`, `python`, `js`, `go`, `wget`,
+    /// `httpie`). Accept ⇒ render the active Request pane's
+    /// request as source code in that language, copy to the
+    /// system clipboard, and toast. Bruno-style "Generate Code"
+    /// affordance.
+    HttpGenerateCode,
     /// `id` = an env name (basename of a `.env` file, no extension).
     /// Accept ⇒ set `App::http_env_override` so the picked env
     /// resolves for the next `EnvSet::select` call. Populated from
