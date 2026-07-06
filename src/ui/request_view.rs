@@ -1462,8 +1462,13 @@ fn paint_split_toggle_chip(
     request_rect: Rect,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let chip_text = "[ ▥ ▤ ]";
-    let chip_w = chip_text.chars().count() as u16;
+    // Layout: `[▥ ▤]` (5 chars). The old `[ ▥ ▤ ]` (7 chars)
+    // rendered with visibly asymmetric inner gutters — `▥` and
+    // `▤` have different left/right sidebearings in most Nerd
+    // Fonts, so a symmetric space on each side visually collapses
+    // one and inflates the other. Pinning the icons directly to
+    // the brackets removes the asymmetry.
+    let chip_w: u16 = 5;
     if request_rect.width < chip_w + 4 || request_rect.height == 0 {
         return None;
     }
@@ -1487,7 +1492,7 @@ fn paint_split_toggle_chip(
     let inactive_style = Style::default().fg(t.comment).bg(t.bg_dark);
     let bracket = Style::default().fg(t.bg3).bg(t.bg_dark);
     let line = Line::from(vec![
-        Span::styled("[ ", bracket),
+        Span::styled("[", bracket),
         Span::styled(
             "▥",
             if vert_active {
@@ -1505,7 +1510,7 @@ fn paint_split_toggle_chip(
                 inactive_style
             },
         ),
-        Span::styled(" ]", bracket),
+        Span::styled("]", bracket),
     ]);
     frame.render_widget(
         Paragraph::new(vec![line]).style(Style::default().bg(t.bg_dark)),
