@@ -26,6 +26,12 @@ pub enum GitRailHit {
     Worktree(usize),
     /// Index into `GitRail::pulls`.
     Pull(usize),
+    /// #polish 2026-07-06 — index into `GitRail::stashes`. Rendered
+    /// under a `stashes` sub-label below worktrees.
+    Stash(usize),
+    /// #polish 2026-07-06 — index into `GitRail::tags`. Rendered
+    /// under a `tags` sub-label below stashes.
+    Tag(usize),
     /// The `+ N more` / `show less` toggle row at the end of the
     /// branches sub-section — flips `App.git_branches_expanded`.
     /// No payload: it's a singleton row, not a selectable entry.
@@ -138,7 +144,11 @@ impl GitRail {
     /// Total interactive (selectable) rows: branches + worktrees + pulls.
     /// Sub-section labels don't count.
     pub fn row_count(&self) -> usize {
-        self.branches.len() + self.worktrees.len() + self.pulls.len()
+        self.branches.len()
+            + self.worktrees.len()
+            + self.pulls.len()
+            + self.stashes.len()
+            + self.tags.len()
     }
     pub fn is_empty(&self) -> bool {
         self.row_count() == 0
@@ -159,12 +169,18 @@ impl GitRail {
     pub fn selected(&self) -> Option<GitRailHit> {
         let nb = self.branches.len();
         let nw = self.worktrees.len();
+        let np = self.pulls.len();
+        let ns = self.stashes.len();
         if self.cursor < nb {
             Some(GitRailHit::Branch(self.cursor))
         } else if self.cursor < nb + nw {
             Some(GitRailHit::Worktree(self.cursor - nb))
-        } else if self.cursor < nb + nw + self.pulls.len() {
+        } else if self.cursor < nb + nw + np {
             Some(GitRailHit::Pull(self.cursor - nb - nw))
+        } else if self.cursor < nb + nw + np + ns {
+            Some(GitRailHit::Stash(self.cursor - nb - nw - np))
+        } else if self.cursor < nb + nw + np + ns + self.tags.len() {
+            Some(GitRailHit::Tag(self.cursor - nb - nw - np - ns))
         } else {
             None
         }
@@ -176,10 +192,14 @@ impl GitRail {
     pub fn focus(&mut self, hit: GitRailHit) {
         let nb = self.branches.len();
         let nw = self.worktrees.len();
+        let np = self.pulls.len();
+        let ns = self.stashes.len();
         let idx = match hit {
             GitRailHit::Branch(i) => i.min(nb.saturating_sub(1)),
             GitRailHit::Worktree(i) => nb + i.min(nw.saturating_sub(1)),
-            GitRailHit::Pull(i) => nb + nw + i.min(self.pulls.len().saturating_sub(1)),
+            GitRailHit::Pull(i) => nb + nw + i.min(np.saturating_sub(1)),
+            GitRailHit::Stash(i) => nb + nw + np + i.min(ns.saturating_sub(1)),
+            GitRailHit::Tag(i) => nb + nw + np + ns + i.min(self.tags.len().saturating_sub(1)),
             // ToggleBranches isn't a selectable row — caller should
             // intercept before reaching here, but if it gets through
             // (e.g. via a future code path), leave cursor untouched.

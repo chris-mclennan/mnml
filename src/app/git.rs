@@ -2894,6 +2894,38 @@ impl App {
                 ];
                 ContextMenu::new(title, anchor, items)
             }
+            crate::git::rail::GitRailHit::Stash(i) => {
+                let Some(s) = self.git_rail.stashes.get(i) else {
+                    return;
+                };
+                let id = s.id.clone();
+                let title = Some(format!("{} — {}", s.id, s.summary));
+                let items = vec![
+                    MenuItem::new("Pop", MenuAction::GitStashPop(id.clone())),
+                    MenuItem::new("Apply (keep)", MenuAction::GitStashApply(id.clone())),
+                    MenuItem::new(format!("Drop {id}…"), MenuAction::GitStashDrop(id.clone())),
+                    MenuItem::new(format!("Copy id ({id})"), MenuAction::CopyText(id)),
+                ];
+                ContextMenu::new(title, anchor, items)
+            }
+            crate::git::rail::GitRailHit::Tag(i) => {
+                let Some(name) = self.git_rail.tags.get(i).cloned() else {
+                    return;
+                };
+                let title = Some(name.clone());
+                let items = vec![
+                    MenuItem::new(
+                        format!("Checkout {name}"),
+                        MenuAction::GitCheckoutBranch(name.clone()),
+                    ),
+                    MenuItem::new(
+                        format!("Copy name ({name})"),
+                        MenuAction::CopyText(name.clone()),
+                    ),
+                    MenuItem::new(format!("Delete {name}…"), MenuAction::GitTagDelete(name)),
+                ];
+                ContextMenu::new(title, anchor, items)
+            }
             // Right-clicking the `+ N more` toggle has no useful menu —
             // bail.
             crate::git::rail::GitRailHit::ToggleBranches => return,
@@ -3076,6 +3108,20 @@ impl App {
                 let url = p.web_url.clone();
                 open_url_external(&url);
                 self.toast(format!("opened {} in browser", p.number_label));
+            }
+            crate::git::rail::GitRailHit::Stash(i) => {
+                let Some(s) = self.git_rail.stashes.get(i) else {
+                    return;
+                };
+                // Default click on a stash row shows a summary toast;
+                // right-click has Pop / Apply / Drop.
+                self.toast(format!("{} — right-click for actions", s.id));
+            }
+            crate::git::rail::GitRailHit::Tag(i) => {
+                let Some(name) = self.git_rail.tags.get(i).cloned() else {
+                    return;
+                };
+                self.git_checkout_named(&name);
             }
             crate::git::rail::GitRailHit::ToggleBranches => {
                 // Keyboard Enter on the toggle row — same behavior as

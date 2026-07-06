@@ -820,6 +820,12 @@ fn compute_git_section_height(app: &App) -> u16 {
     if !app.git_rail.worktrees.is_empty() {
         h = h.saturating_add(1 + app.git_rail.worktrees.len() as u16);
     }
+    if !app.git_rail.stashes.is_empty() {
+        h = h.saturating_add(1 + app.git_rail.stashes.len() as u16);
+    }
+    if !app.git_rail.tags.is_empty() {
+        h = h.saturating_add(1 + app.git_rail.tags.len() as u16);
+    }
     // Clamp at a sane upper bound so a 50-branch repo can't eat the
     // whole rail — the actual rail-height cap is applied by the caller.
     h.min(40)
@@ -1753,6 +1759,101 @@ fn draw_git_section(
                     height: 1,
                 },
                 GitRailHit::Pull(i),
+            ));
+            row_y += 1;
+        }
+    }
+
+    // #polish 2026-07-06 — stashes + tags sub-sections. Both were
+    // palette-only before, hidden from mouse-first users. Rendered
+    // in the same shape as branches/worktrees.
+    let nb_and_nw = nb + app.git_rail.worktrees.len();
+    let npulls = app.git_rail.pulls.len();
+
+    // ── stashes sub-section ──
+    if !app.git_rail.stashes.is_empty() && ((row_y - start_y) as usize) < avail {
+        push_sublabel(&mut lines, "stashes", width, rail_bg);
+        row_y += 1;
+        for (i, st) in app.git_rail.stashes.iter().enumerate() {
+            if (row_y - start_y) as usize >= avail {
+                break;
+            }
+            let row_idx = nb_and_nw + npulls + i;
+            let is_cur_row = row_idx == cursor_row;
+            let bg = row_bg(is_cur_row, focused, rail_bg);
+            // Short label — `stash@{0} summary…`
+            let label = format!("{} {}", st.id, st.summary);
+            let prefix = format!("{INDENT}\u{1FAA3} "); // 🪣 stash bucket
+            let ascii_prefix = format!("{INDENT}s ");
+            let prefix_str = if _nerd {
+                prefix.as_str()
+            } else {
+                ascii_prefix.as_str()
+            };
+            let max_label = width.saturating_sub(prefix_str.chars().count());
+            let label_disp = truncate_chars(&label, max_label);
+            let used = prefix_str.chars().count() + label_disp.chars().count();
+            let pad = width.saturating_sub(used);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    prefix_str.to_string(),
+                    Style::default().fg(theme::cur().purple).bg(bg),
+                ),
+                Span::styled(label_disp, Style::default().fg(theme::cur().fg).bg(bg)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+            ]));
+            app.rects.git_rail_rows.push((
+                Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                },
+                GitRailHit::Stash(i),
+            ));
+            row_y += 1;
+        }
+    }
+
+    // ── tags sub-section ──
+    let nstashes = app.git_rail.stashes.len();
+    if !app.git_rail.tags.is_empty() && ((row_y - start_y) as usize) < avail {
+        push_sublabel(&mut lines, "tags", width, rail_bg);
+        row_y += 1;
+        for (i, name) in app.git_rail.tags.iter().enumerate() {
+            if (row_y - start_y) as usize >= avail {
+                break;
+            }
+            let row_idx = nb_and_nw + npulls + nstashes + i;
+            let is_cur_row = row_idx == cursor_row;
+            let bg = row_bg(is_cur_row, focused, rail_bg);
+            let prefix = format!("{INDENT}\u{F02B2} "); // nerd-md-tag
+            let ascii_prefix = format!("{INDENT}# ");
+            let prefix_str = if _nerd {
+                prefix.as_str()
+            } else {
+                ascii_prefix.as_str()
+            };
+            let max_label = width.saturating_sub(prefix_str.chars().count());
+            let name_disp = truncate_chars(name, max_label);
+            let used = prefix_str.chars().count() + name_disp.chars().count();
+            let pad = width.saturating_sub(used);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    prefix_str.to_string(),
+                    Style::default().fg(theme::cur().cyan).bg(bg),
+                ),
+                Span::styled(name_disp, Style::default().fg(theme::cur().fg).bg(bg)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+            ]));
+            app.rects.git_rail_rows.push((
+                Rect {
+                    x: area.x,
+                    y: row_y,
+                    width: area.width,
+                    height: 1,
+                },
+                GitRailHit::Tag(i),
             ));
             row_y += 1;
         }
