@@ -814,13 +814,24 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     // through open buffers (Chrome / Firefox tab-strip convention).
     // Checked first so the strip's overlap with pane rects doesn't
     // let editor scroll steal the notch. Bounded to prev/next per
-    // notch — no multi-step jump.
-    if app
+    // notch — no multi-step jump. Also applies over the overflow
+    // arrow zones so the user can wheel there without missing.
+    let on_bufferline_zone = app
         .rects
         .bufferline_tabs
         .iter()
         .any(|(r, _)| contains(*r, x, y))
-    {
+        || app
+            .rects
+            .bufferline_overflow_left
+            .map(|r| contains(r, x, y))
+            .unwrap_or(false)
+        || app
+            .rects
+            .bufferline_overflow_right
+            .map(|r| contains(r, x, y))
+            .unwrap_or(false);
+    if on_bufferline_zone {
         if delta < 0 {
             app.prev_buffer();
         } else {

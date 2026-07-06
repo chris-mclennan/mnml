@@ -869,6 +869,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // #polish 2026-07-06 — middle-click on a tab-page chip
+    // closes that tab page (parity with tab middle-click).
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle))
+        && let Some(&(_, idx)) = app
+            .rects
+            .bufferline_tab_page_chips
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.tab_close_at(idx);
+        return;
+    }
     // #polish 2026-07-06 — middle-click on a right-panel tab
     // closes it (parity with bufferline). Looks up the pane id
     // for the specific tab index the click hit; falls back

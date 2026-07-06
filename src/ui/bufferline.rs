@@ -873,11 +873,12 @@ pub fn paint_right_cluster(
         for i in 0..app.layouts.len() {
             let active = i == app.active_layout;
             let dirty = app.tab_has_dirty_buffer(i);
-            let label = if dirty {
-                format!(" \u{25CF}{} ", i + 1)
-            } else {
-                format!(" {} ", i + 1)
-            };
+            // #polish 2026-07-06 — reserve 1 cell for the dirty
+            // marker regardless of state so chip widths stay
+            // stable. Was: dirty added `●` prefix inline, shifting
+            // sibling chips 1 cell every time the marker flipped.
+            let marker = if dirty { "\u{25CF}" } else { " " };
+            let label = format!(" {marker}{} ", i + 1);
             let label_w = label.chars().count() as u16;
             let (chip_fg, chip_bg) = if active {
                 (t.bg_darker, t.blue)
