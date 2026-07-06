@@ -898,6 +898,36 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                         );
                     }
                 }
+                // #polish 2026-07-06 — `+` chip at the end of the
+                // tab strip (just before ×), matching bufferline
+                // parity. Only paints when there's at least 1 cell
+                // of room past the tabs before the × slot.
+                let close_x = rpa.x + rpa.width.saturating_sub(2);
+                if x + 3 <= close_x {
+                    let plus_rect = Rect {
+                        x,
+                        y: rpa.y,
+                        width: 3,
+                        height: 1,
+                    };
+                    let glyph = if app.config.ui.ascii_icons {
+                        " + "
+                    } else {
+                        " \u{F0415} "
+                    };
+                    frame.render_widget(
+                        ratatui::widgets::Paragraph::new(glyph).style(
+                            Style::default()
+                                .fg(t.green)
+                                .bg(t.bg_dark)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        plus_rect,
+                    );
+                    app.rects.right_panel_new_button = Some(plus_rect);
+                } else {
+                    app.rects.right_panel_new_button = None;
+                }
                 // `×` close button on the rightmost cell.
                 // design-critic 2026-06-28 #2: when the active tab
                 // is the rightmost chip, the bg2 bridge ties × to

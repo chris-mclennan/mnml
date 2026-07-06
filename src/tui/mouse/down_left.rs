@@ -46,6 +46,34 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.commit_pending_undo();
         return;
     }
+    // #polish 2026-07-06 — click on the `· <repo-name>` chip in
+    // the GIT rail header opens the repo switcher picker.
+    if let Some(r) = app.rects.git_repo_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        crate::command::run("git.switch_repo", app);
+        return;
+    }
+    // #polish 2026-07-06 — click the right-panel `+` chip opens
+    // a small menu with the 5 panel kinds.
+    if let Some(r) = app.rects.right_panel_new_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Outline", MenuAction::Command("outline.show")),
+            MenuItem::new("Problems", MenuAction::Command("lsp.diagnostics")),
+            MenuItem::new("AI chat", MenuAction::Command("ai.chat")),
+            MenuItem::new("Grep", MenuAction::Command("find.grep")),
+            MenuItem::new("Tests", MenuAction::Command("test.run")),
+        ];
+        app.context_menu = Some(ContextMenu::new(
+            Some("Add panel".to_string()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
     // Grab the rail's right-edge resize handle first — its grip
     // band shares the rail's rightmost column with the file-tree
     // scrollbar, so the (specific, ~4-row) resize zone must win

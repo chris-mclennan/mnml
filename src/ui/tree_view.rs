@@ -270,6 +270,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let pad_between = width.saturating_sub(header_used + chips_used);
 
     app.rects.rail_git_header_buttons.clear();
+    // #polish 2026-07-06 — register a click rect for the
+    // `· <repo-name>` chip so users can click it to open the
+    // repo switcher instead of digging into the palette.
+    app.rects.git_repo_chip = None;
+    if !multi_repo_chip.is_empty() {
+        let chip_start = area.x + chev_str.chars().count() as u16 + 3; // 3 = "GIT"
+        app.rects.git_repo_chip = Some(Rect {
+            x: chip_start,
+            y: git_header_y,
+            width: multi_repo_chip.chars().count() as u16,
+            height: 1,
+        });
+    }
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(3 + chip_count);
     spans.push(Span::styled(
         chev_str,

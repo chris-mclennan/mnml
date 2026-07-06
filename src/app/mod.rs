@@ -1626,6 +1626,15 @@ pub struct PaneRects {
     /// The `> GIT` section header row in the rail (when the rail's visible).
     /// Click → `App::toggle_git_section_expanded`.
     pub git_section_toggle: Option<Rect>,
+    /// #polish 2026-07-06 — clickable `· <repo>` chip inside
+    /// the GIT header when the workspace has multiple repos.
+    /// Left-click opens the repo switcher. `None` in the single-
+    /// repo case.
+    pub git_repo_chip: Option<Rect>,
+    /// #polish 2026-07-06 — `+` chip at the end of the right-panel
+    /// tab strip. Click opens a context menu with the 5 panel
+    /// kinds (Outline / Problems / AI chat / Grep / Tests).
+    pub right_panel_new_button: Option<Rect>,
     /// `(rect, ws_idx, scroll)` per extra-workspace section's body — the rect
     /// is the file-list area, ws_idx is the index into `App.extra_workspaces`,
     /// scroll is the tree's scroll offset at render time so a click can be
