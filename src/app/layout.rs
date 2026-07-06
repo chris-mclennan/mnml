@@ -903,11 +903,27 @@ impl App {
                 .enumerate()
                 .any(|(i, pane)| i != id && matches!(pane, Pane::Editor(b) if b.is_at(&p)));
             if !still_open {
-                self.closed_buffers.push((p, cur, scroll));
+                self.closed_buffers.push((p.clone(), cur, scroll));
                 if self.closed_buffers.len() > CLOSED_BUFFERS_MAX {
                     let drop = self.closed_buffers.len() - CLOSED_BUFFERS_MAX;
                     self.closed_buffers.drain(..drop);
                 }
+                // #20 — surface the reopen affordance as an undo
+                // chip so users see it without having to know the
+                // `buffer.reopen` command exists.
+                let label = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|s| format!("closed {s}"))
+                    .unwrap_or_else(|| "closed buffer".to_string());
+                self.set_pending_undo(
+                    label,
+                    crate::app::UndoAction::ReopenClosedBuffer {
+                        path: p,
+                        cursor: cur,
+                        scroll,
+                    },
+                );
             }
         }
         let (discarded, closed_path) = match &self.panes[id] {

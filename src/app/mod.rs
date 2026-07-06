@@ -2622,6 +2622,13 @@ pub enum UndoAction {
     /// Put the workspace `captured/log.jsonl` bytes back.
     /// Captured on `http_panel_clear_captured`.
     RestoreCapturedFile { bytes: Vec<u8> },
+    /// Reopen a closed buffer at the given path + cursor + scroll.
+    /// Cursor stored as a raw byte offset (Editor's native form).
+    ReopenClosedBuffer {
+        path: std::path::PathBuf,
+        cursor: usize,
+        scroll: usize,
+    },
 }
 
 /// TTL for the undo affordance. Longer than [`TOAST_TTL`] because
@@ -11086,6 +11093,20 @@ impl App {
                     }
                     Err(e) => self.toast(format!("undo: {e}")),
                 }
+            }
+            UndoAction::ReopenClosedBuffer {
+                path,
+                cursor,
+                scroll,
+            } => {
+                self.open_path(&path);
+                if let Some(id) = self.active
+                    && let Some(Pane::Editor(b)) = self.panes.get_mut(id)
+                {
+                    b.editor.set_cursor_byte(cursor);
+                    b.scroll = scroll;
+                }
+                self.toast("buffer restored");
             }
             UndoAction::RestoreCapturedFile { bytes } => {
                 let path = crate::http::proxy::captured_log_path(&self.workspace);
