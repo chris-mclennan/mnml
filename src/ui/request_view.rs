@@ -777,9 +777,14 @@ pub fn draw(
     const SAVE_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
     const CODE_BOX_WIDTH: u16 = 12;
+    // Env chip — sits between URL and Send. Fixed 14 cells so a
+    // short env name (`staging`, `dev`, `prod`) fits with the
+    // leading `env: ` label + trailing `▾` chevron.
+    const ENV_BOX_WIDTH: u16 = 14;
     let show_sub_panels = top_bar_rect.width
         >= METHOD_BOX_WIDTH
             + MIN_URL_WIDTH
+            + ENV_BOX_WIDTH
             + SEND_BOX_WIDTH
             + SAVE_BOX_WIDTH
             + CLEAR_BOX_WIDTH
@@ -792,9 +797,10 @@ pub fn draw(
     let mut save_button_rect: Option<Rect> = None;
     let mut clear_button_rect: Option<Rect> = None;
     let mut code_button_rect: Option<Rect> = None;
+    let mut env_button_rect: Option<Rect> = None;
     if show_sub_panels {
         // Layout across the top strip:
-        //   [pad][Method][URL][Send][Save][Clear][Code][pad]
+        //   [pad][Method][URL][Env][Send][Save][Clear][Code][pad]
         let row_y = top_bar_rect.y;
         let method_rect = Rect {
             x: top_bar_rect.x.saturating_add(EDGE_PAD),
@@ -807,6 +813,7 @@ pub fn draw(
             .width
             .saturating_sub(EDGE_PAD)
             .saturating_sub(METHOD_BOX_WIDTH)
+            .saturating_sub(ENV_BOX_WIDTH)
             .saturating_sub(SEND_BOX_WIDTH)
             .saturating_sub(SAVE_BOX_WIDTH)
             .saturating_sub(CLEAR_BOX_WIDTH)
@@ -818,8 +825,14 @@ pub fn draw(
             width: url_width,
             height: METHOD_URL_ROW_H,
         };
-        let send_rect = Rect {
+        let env_rect = Rect {
             x: url_x.saturating_add(url_width),
+            y: row_y,
+            width: ENV_BOX_WIDTH,
+            height: METHOD_URL_ROW_H,
+        };
+        let send_rect = Rect {
+            x: env_rect.x.saturating_add(ENV_BOX_WIDTH),
             y: row_y,
             width: SEND_BOX_WIDTH,
             height: METHOD_URL_ROW_H,
@@ -848,6 +861,7 @@ pub fn draw(
         if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret_abs, t) {
             method_url_absolute.push((ur, EditField::Url));
         }
+        env_button_rect = draw_env_box(frame, env_rect, &workspace, env_override.as_deref(), t);
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
         save_button_rect = draw_save_box(frame, rp, save_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
@@ -1044,6 +1058,7 @@ pub fn draw(
     app.rects.request_save_button = save_button_rect;
     app.rects.request_clear_button = clear_button_rect;
     app.rects.request_code_button = code_button_rect;
+    app.rects.request_env_button = env_button_rect;
     // request_format_button is now set inside draw_edit's Body
     // rendering path (right-aligned chip on the top-right of the
     // body area, visible only when the body is JSON).
@@ -1571,6 +1586,63 @@ fn draw_save_box(
         Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
         Span::styled(
             text.to_string(),
+            Style::default()
+                .fg(color)
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),
+        inner,
+    );
+    Some(inner)
+}
+
+/// Env sub-panel — modal_panel titled "Env" with the active env
+/// name + a ▾ chevron so the box reads as a dropdown affordance.
+/// Left-click → env picker (`open_http_env_picker`); right-click
+/// opens a small context menu. Cyan when a per-pane override is
+/// active, dim when no env is available at all, normal fg otherwise.
+fn draw_env_box(
+    frame: &mut Frame,
+    rect: Rect,
+    workspace: &std::path::Path,
+    env_override: Option<&str>,
+    t: theme::Theme,
+) -> Option<Rect> {
+    let block = crate::ui::design_tokens::bordered_plain("Env");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    if inner.width == 0 || inner.height == 0 {
+        return None;
+    }
+    let env_name = crate::http::template::EnvSet::select(workspace, env_override)
+        .name()
+        .map(str::to_string);
+    let has_override = env_override.is_some();
+    let (label, color) = match env_name {
+        Some(n) if has_override => (n, t.cyan),
+        Some(n) => (n, t.fg),
+        None => ("none".to_string(), t.comment),
+    };
+    // Truncate at 6 chars + ellipsis so a long env name stays
+    // within the fixed chip width. Room budget: `NAME ▾ ` (7 cells)
+    // inside a 14-wide inner (12 minus border).
+    let short = if label.chars().count() > 6 {
+        let mut s: String = label.chars().take(5).collect();
+        s.push('\u{2026}');
+        s
+    } else {
+        label
+    };
+    let text = format!(" {short} \u{25BE} ");
+    let text_w = text.chars().count() as u16;
+    let mid_pad = inner.width.saturating_sub(text_w) / 2;
+    let content = Line::from(vec![
+        Span::styled(" ".repeat(mid_pad as usize), Style::default().bg(t.bg_dark)),
+        Span::styled(
+            text,
             Style::default()
                 .fg(color)
                 .bg(t.bg_dark)

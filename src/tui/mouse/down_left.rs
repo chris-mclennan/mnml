@@ -426,6 +426,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_generate_code_prompt();
         return;
     }
+    // Click on the Env chip → open the env picker.
+    if let Some(r) = app.rects.request_env_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_http_env_picker();
+        return;
+    }
     // Click on the "JSON ▼" content-type chip → open the
     // response-format override picker.
     if let Some(r) = app.rects.request_response_type_chip

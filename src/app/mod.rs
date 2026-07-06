@@ -1984,6 +1984,10 @@ pub struct PaneRects {
     /// Click rect over the "</> Code" sub-panel — opens the
     /// Generate Code picker.
     pub request_code_button: Option<Rect>,
+    /// Env chip on the Request pane top bar (between URL and Send).
+    /// Left-click → env picker. Right-click → env context menu
+    /// (switch / edit / new / clear override).
+    pub request_env_button: Option<Rect>,
     /// Click rect over the "JSON ▼" content-type chip on the
     /// Response tab strip. Click → opens the response-format
     /// override picker.

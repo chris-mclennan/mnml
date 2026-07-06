@@ -137,6 +137,26 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // Right-click on the Request pane's Env chip — quick switch /
+    // edit / clear-override menu.
+    if let Some(r) = app.rects.request_env_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let has_override = app.http_env_override.is_some();
+        let mut items = vec![
+            MenuItem::new("Switch env…", MenuAction::Command("http.pick_env")),
+            MenuItem::new("Edit env file", MenuAction::Command("http.edit_env")),
+        ];
+        if has_override {
+            items.push(MenuItem::new(
+                "Clear override",
+                MenuAction::Command("http.reset_env"),
+            ));
+        }
+        app.context_menu = Some(ContextMenu::new(Some("Env".to_string()), (x, y), items));
+        return;
+    }
     // Right-click on an HTTP-sidebar file row — Open / Reveal /
     // Delete / Copy path. Fixes the 9-scratch-file cleanup pain
     // from the mouse audit (was left-click-only = open, no way to
