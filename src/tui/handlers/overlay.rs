@@ -315,6 +315,33 @@ fn run_quit_button(app: &mut App, code: u8) {
     }
 }
 
+/// #20 Pattern B — confirm-modal key routing. Handled before
+/// the regular prompt path in dispatch_key.
+pub(crate) fn handle_confirm_modal_key(app: &mut App, key: KeyEvent) {
+    let Some(c) = app.pending_confirm.as_mut() else {
+        return;
+    };
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+            app.dismiss_pending_confirm();
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            app.commit_pending_confirm();
+        }
+        KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+            c.focused = 1 - c.focused;
+        }
+        KeyCode::Enter => {
+            if c.focused == 1 {
+                app.commit_pending_confirm();
+            } else {
+                app.dismiss_pending_confirm();
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let Some(p) = app.prompt.as_mut() else { return };

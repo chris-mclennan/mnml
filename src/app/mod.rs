@@ -1998,6 +1998,10 @@ pub struct PaneRects {
     /// #20 — click rect for the pending-undo chip. Registered by
     /// the toast_stack renderer when `App.pending_undo` is Some.
     pub pending_undo_chip: Option<Rect>,
+    /// #20 Pattern B — Cancel + Confirm button rects on the
+    /// pending-confirm modal.
+    pub confirm_modal_cancel: Option<Rect>,
+    pub confirm_modal_confirm: Option<Rect>,
     /// Click rect over the "JSON ▼" content-type chip on the
     /// Response tab strip. Click → opens the response-format
     /// override picker.
@@ -2624,6 +2628,37 @@ pub enum UndoAction {
 /// the user needs to see the toast, register what happened, and
 /// decide to undo — 3 seconds is too short.
 pub const UNDO_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// #20 Pattern B — a confirm-before-destroy modal. Anchored to
+/// the screen center; blocks all other input until dismissed.
+/// Buttons: [Cancel] / [Confirm]. Default focus is Cancel.
+/// Y/y fires Confirm, N/n / Esc fires Cancel, Enter fires the
+/// focused button.
+#[derive(Debug, Clone)]
+pub struct PendingConfirm {
+    /// Short title shown in the modal's border.
+    pub title: String,
+    /// Body message — usually one sentence, wraps to two lines
+    /// max.
+    pub message: String,
+    /// Label of the destructive button (typically "Delete" or
+    /// "Overwrite"). Rendered in red.
+    pub confirm_label: String,
+    /// Which button is focused (0 = Cancel, 1 = Confirm).
+    /// Default focus lands on Cancel (safer choice).
+    pub focused: u8,
+    /// The action to run on Confirm.
+    pub action: ConfirmAction,
+}
+
+/// #20 Pattern B — actions the confirm modal can fire.
+#[derive(Debug, Clone)]
+pub enum ConfirmAction {
+    /// Overwrite the active Request pane with parsed clipboard
+    /// curl. Runs `http_paste_curl_from_text` with the stashed
+    /// text.
+    OverwriteRequestPane { raw: String },
+}
 
 /// One toast in either `toast_stack` (ephemeral, TTL-expiring) or
 /// `persistent_toasts` (pinned until `toast_dismiss`).
@@ -3260,6 +3295,10 @@ pub struct App {
     /// a Vars row, consumed by the `http.delete_env_key`
     /// command.
     pub pending_env_key_delete: Option<String>,
+    /// #20 Pattern B — active confirm-before-destroy modal.
+    /// While `Some`, all other input is blocked and the modal
+    /// paints on top of everything else.
+    pub pending_confirm: Option<PendingConfirm>,
     /// #25 — background-prefetched Claude Agents rows. Populated by
     /// a startup worker thread; `open_claude_agents_pane` reads from
     /// here when set to avoid the ~1-3s sync JSONL walk on the UI
@@ -4445,6 +4484,7 @@ impl App {
             toast_stack: std::collections::VecDeque::new(),
             pending_undo: None,
             pending_env_key_delete: None,
+            pending_confirm: None,
             claude_agents_prefetch: {
                 let cache: std::sync::Arc<
                     std::sync::Mutex<Option<Vec<crate::claude_agents::AgentRow>>>,
@@ -11090,6 +11130,26 @@ impl App {
                 self.toast(format!("restored workspace: {name}"));
             }
         }
+    }
+
+    /// #20 Pattern B — commit the pending confirm modal (user
+    /// pressed Y / Enter on the Confirm button / clicked the
+    /// Confirm chip). Fires the stashed action + clears the slot.
+    pub fn commit_pending_confirm(&mut self) {
+        let Some(c) = self.pending_confirm.take() else {
+            return;
+        };
+        match c.action {
+            ConfirmAction::OverwriteRequestPane { raw } => {
+                self.http_paste_curl_from_text(&raw);
+            }
+        }
+    }
+
+    /// #20 Pattern B — dismiss the pending confirm modal (user
+    /// pressed Esc / N / clicked Cancel).
+    pub fn dismiss_pending_confirm(&mut self) {
+        self.pending_confirm = None;
     }
 
     /// #20 — expire the undo slot when it's older than [`UNDO_TTL`].

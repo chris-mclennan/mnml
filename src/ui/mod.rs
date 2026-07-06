@@ -45,6 +45,7 @@ pub mod close_prompt;
 pub mod cmdline_bar;
 pub mod cmdline_history_view;
 pub mod cmdline_popup_view;
+pub mod confirm_modal;
 pub mod peek_overlay_view;
 pub mod ws_view;
 // codebuilds_view moved to mnml-aws-codebuild.
@@ -1456,6 +1457,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         prompt::draw(frame, app, area);
     } else {
         app.rects.prompt_caret = None;
+    }
+    // #20 Pattern B — confirm modal paints ABOVE prompts + context
+    // menus. Blocks input in the tui loop.
+    if app.pending_confirm.is_some() {
+        confirm_modal::draw(frame, app, area);
+    } else {
+        app.rects.confirm_modal_cancel = None;
+        app.rects.confirm_modal_confirm = None;
     }
     if app.context_menu.is_some() {
         context_menu::draw(frame, app, area);

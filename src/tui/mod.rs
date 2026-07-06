@@ -1138,6 +1138,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_settings_overlay_key(app, key);
         return;
     }
+    // #20 Pattern B — a pending confirm modal wins over everything
+    // else. Blocks all input until dismissed (Esc / N) or fired
+    // (Enter / Y).
+    if app.pending_confirm.is_some() {
+        crate::tui::handlers::overlay::handle_confirm_modal_key(app, key);
+        return;
+    }
     // An open picker / palette overlay steals all keys until it's
     // dismissed. Checked BEFORE the integration-edit panel so Ctrl+G
     // from inside the edit panel (which opens the glyph picker on

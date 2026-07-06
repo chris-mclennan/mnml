@@ -18,6 +18,25 @@ use crate::command;
 use crate::pane::Pane;
 
 pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
+    // #20 Pattern B — confirm modal takes priority over every
+    // other click when it's up.
+    if app.pending_confirm.is_some() {
+        if let Some(r) = app.rects.confirm_modal_cancel
+            && crate::app::dispatch::contains(r, x, y)
+        {
+            app.dismiss_pending_confirm();
+            return;
+        }
+        if let Some(r) = app.rects.confirm_modal_confirm
+            && crate::app::dispatch::contains(r, x, y)
+        {
+            app.commit_pending_confirm();
+            return;
+        }
+        // Click outside modal — swallow the click so users don't
+        // accidentally trigger stuff underneath.
+        return;
+    }
     // #20 — undo chip wins the click over almost anything else so
     // it's easy to hit. Only anchored while `pending_undo` is set,
     // so no ordinary flow is stolen from.

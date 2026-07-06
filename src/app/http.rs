@@ -3341,6 +3341,33 @@ impl App {
             self.toast("http.paste_curl: clipboard is empty");
             return;
         }
+        // #20 Pattern B — if the active Request pane has non-empty
+        // URL / body / headers, pop the confirm modal before we
+        // clobber user work. Simple guard: any non-blank field
+        // means "not fresh".
+        let dirty = self
+            .active
+            .and_then(|i| self.panes.get(i))
+            .and_then(|p| match p {
+                Pane::Request(rp) => Some(rp),
+                _ => None,
+            })
+            .is_some_and(|rp| {
+                !rp.request.url.trim().is_empty()
+                    || !rp.request.body.as_deref().unwrap_or("").trim().is_empty()
+                    || !rp.request.headers.is_empty()
+            });
+        if dirty {
+            self.pending_confirm = Some(crate::app::PendingConfirm {
+                title: "Overwrite request?".to_string(),
+                message: "The active request has unsaved edits. Pasting will replace them."
+                    .to_string(),
+                confirm_label: "Overwrite".to_string(),
+                focused: 0,
+                action: crate::app::ConfirmAction::OverwriteRequestPane { raw },
+            });
+            return;
+        }
         self.http_paste_curl_from_text(&raw);
     }
 
