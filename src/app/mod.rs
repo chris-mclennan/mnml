@@ -3219,6 +3219,14 @@ pub struct App {
     /// one at a time so we don't grow an undo history stack — the
     /// user's mental model is "I just did that thing, take it back."
     pub pending_undo: Option<PendingUndo>,
+    /// #25 — background-prefetched Claude Agents rows. Populated by
+    /// a startup worker thread; `open_claude_agents_pane` reads from
+    /// here when set to avoid the ~1-3s sync JSONL walk on the UI
+    /// thread. `None` = still loading; `Some(rows)` = ready to use.
+    /// Shared behind a Mutex so both the prefetch worker and the
+    /// main loop can touch it without racing.
+    pub claude_agents_prefetch:
+        std::sync::Arc<std::sync::Mutex<Option<Vec<crate::claude_agents::AgentRow>>>>,
     /// Pinned toasts — stay on screen until an explicit dismiss by
     /// id. Rendered above the ephemeral stack. Errors here get a
     /// red border; info/warn use the standard comment border.
@@ -4384,6 +4392,19 @@ impl App {
             toast: None,
             toast_stack: std::collections::VecDeque::new(),
             pending_undo: None,
+            claude_agents_prefetch: {
+                let cache: std::sync::Arc<
+                    std::sync::Mutex<Option<Vec<crate::claude_agents::AgentRow>>>,
+                > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                let handle = cache.clone();
+                std::thread::spawn(move || {
+                    let rows = crate::claude_agents::prefetch_rows();
+                    if let Ok(mut guard) = handle.lock() {
+                        *guard = Some(rows);
+                    }
+                });
+                cache
+            },
             persistent_toasts: Vec::new(),
             progress_items: Vec::new(),
             dynamic_segments: Vec::new(),

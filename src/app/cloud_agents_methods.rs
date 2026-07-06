@@ -943,9 +943,23 @@ impl App {
             self.reveal_pane(id);
             return;
         }
-        let pane = Pane::ClaudeAgents(crate::claude_agents::ClaudeAgentsPane::build_anchored(
-            anchor,
-        ));
+        // #25 — use the background prefetch cache if the worker has
+        // finished; falls back to a synchronous build otherwise
+        // (fresh-launch case where the pane opens before the
+        // prefetch thread lands its rows).
+        let cached_rows = self
+            .claude_agents_prefetch
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take());
+        let pane = match cached_rows {
+            Some(rows) => Pane::ClaudeAgents(
+                crate::claude_agents::ClaudeAgentsPane::build_anchored_from_rows(anchor, rows),
+            ),
+            None => Pane::ClaudeAgents(crate::claude_agents::ClaudeAgentsPane::build_anchored(
+                anchor,
+            )),
+        };
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);

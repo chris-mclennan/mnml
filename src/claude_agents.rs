@@ -389,15 +389,16 @@ impl ClaudeAgentsPane {
     /// workspace-only filter has something to compare cwds
     /// against.
     pub fn build_anchored(anchor: PathBuf) -> Self {
-        let claude_pids = scan_running_pids(AgentSource::Claude);
-        let codex_pids = scan_running_pids(AgentSource::Codex);
-        let mut rows = collect_rows(&claude_pids);
-        rows.extend(collect_codex_rows(&codex_pids));
-        rows.sort_by(|a, b| {
-            state_rank(a.state)
-                .cmp(&state_rank(b.state))
-                .then_with(|| b.last_activity.cmp(&a.last_activity))
-        });
+        let rows = prefetch_rows();
+        Self::build_anchored_from_rows(anchor, rows)
+    }
+
+    /// #25 — same shape as `build_anchored` but skips the sync
+    /// pid-scan / row-collect since the caller already has fresh
+    /// rows (via `prefetch_rows` on a background thread). Only
+    /// the cheap in-memory steps (merge_lifetime_totals +
+    /// recompute_token_rates) run on the UI thread here.
+    pub fn build_anchored_from_rows(anchor: PathBuf, rows: Vec<AgentRow>) -> Self {
         let mut pane = ClaudeAgentsPane::empty_with_rows(rows);
         pane.anchor_workspace = anchor;
         pane.merge_lifetime_totals();
@@ -1073,6 +1074,23 @@ fn decode_workspace_label(encoded: &str) -> String {
 /// parser still handles them fast, but a 500 MB file is almost
 /// always the active session being written this very second — we
 /// pick those up anyway because their mtime is fresh).
+/// #25 — public helper for background prefetch. Does the full
+/// synchronous scan (pids + JSONL walk + sort) but nothing that
+/// touches App / pane state, so it's safe to call from a worker
+/// thread. Returns the sorted `Vec<AgentRow>` the pane wraps.
+pub fn prefetch_rows() -> Vec<AgentRow> {
+    let claude_pids = scan_running_pids(AgentSource::Claude);
+    let codex_pids = scan_running_pids(AgentSource::Codex);
+    let mut rows = collect_rows(&claude_pids);
+    rows.extend(collect_codex_rows(&codex_pids));
+    rows.sort_by(|a, b| {
+        state_rank(a.state)
+            .cmp(&state_rank(b.state))
+            .then_with(|| b.last_activity.cmp(&a.last_activity))
+    });
+    rows
+}
+
 fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     let Some(root) = home_projects_dir() else {
         return Vec::new();
