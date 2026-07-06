@@ -706,6 +706,13 @@ struct SavedSession {
     /// workspace moves). Skipped when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     http_panel_collections_collapsed: Vec<String>,
+    /// #25 v4 — last-used age filter on the Agents dashboard.
+    /// Applied to any newly-built ClaudeAgents pane. `None` = use
+    /// the launch default (Week). Stored as a lowercase enum
+    /// string so future variants can slot in without breaking
+    /// old session.json files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claude_agents_age_filter: Option<String>,
     /// `:rename`'d Claude session names, keyed by Claude `--session-id`.
     /// Ptys themselves don't survive a relaunch, but resuming a saved
     /// Claude session (`ai.session_picker`) re-applies its name.
@@ -3324,6 +3331,10 @@ pub struct App {
     /// set; falls back to sync scan otherwise.
     pub sessions_prefetch:
         std::sync::Arc<std::sync::Mutex<Option<Vec<crate::ai::transcript::PastSession>>>>,
+    /// #25 v4 — last-used age filter for the Claude Agents
+    /// dashboard. Persists across sessions; applied to any newly-
+    /// built ClaudeAgents pane. Default: Week (7d).
+    pub claude_agents_last_age_filter: crate::claude_agents::AgeFilter,
     /// Pinned toasts — stay on screen until an explicit dismiss by
     /// id. Rendered above the ephemeral stack. Errors here get a
     /// red border; info/warn use the standard comment border.
@@ -4510,6 +4521,7 @@ impl App {
                 });
                 cache
             },
+            claude_agents_last_age_filter: crate::claude_agents::AgeFilter::default(),
             sessions_prefetch: {
                 let cache: std::sync::Arc<
                     std::sync::Mutex<Option<Vec<crate::ai::transcript::PastSession>>>,

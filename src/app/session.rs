@@ -132,6 +132,12 @@ impl App {
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
             clock_show_utc: Some(self.clock_show_utc),
+            claude_agents_age_filter: Some(match self.claude_agents_last_age_filter {
+                crate::claude_agents::AgeFilter::Today => "today".to_string(),
+                crate::claude_agents::AgeFilter::Week => "week".to_string(),
+                crate::claude_agents::AgeFilter::Month => "month".to_string(),
+                crate::claude_agents::AgeFilter::All => "all".to_string(),
+            }),
             http_panel_collections_collapsed: {
                 let coll_root = self.workspace.join(".mnml").join("collections");
                 self.http_panel_collections_collapsed_dirs
@@ -496,6 +502,15 @@ impl App {
         }
         if let Some(v) = saved.clock_show_utc {
             self.clock_show_utc = v;
+        }
+        if let Some(s) = saved.claude_agents_age_filter.as_deref() {
+            self.claude_agents_last_age_filter = match s {
+                "today" => crate::claude_agents::AgeFilter::Today,
+                "week" => crate::claude_agents::AgeFilter::Week,
+                "month" => crate::claude_agents::AgeFilter::Month,
+                "all" => crate::claude_agents::AgeFilter::All,
+                _ => crate::claude_agents::AgeFilter::default(),
+            };
         }
         // #22 v3 — restore collapsed COLLECTIONS dirs (relative
         // paths resolved against the current workspace's

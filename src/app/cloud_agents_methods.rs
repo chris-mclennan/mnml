@@ -952,14 +952,16 @@ impl App {
             .lock()
             .ok()
             .and_then(|mut g| g.take());
-        let pane = match cached_rows {
-            Some(rows) => Pane::ClaudeAgents(
-                crate::claude_agents::ClaudeAgentsPane::build_anchored_from_rows(anchor, rows),
-            ),
-            None => Pane::ClaudeAgents(crate::claude_agents::ClaudeAgentsPane::build_anchored(
-                anchor,
-            )),
+        let mut built = match cached_rows {
+            Some(rows) => {
+                crate::claude_agents::ClaudeAgentsPane::build_anchored_from_rows(anchor, rows)
+            }
+            None => crate::claude_agents::ClaudeAgentsPane::build_anchored(anchor),
         };
+        // #25 v4 — apply the persisted age filter so it survives
+        // pane rebuilds + relaunches.
+        built.age_filter = self.claude_agents_last_age_filter;
+        let pane = Pane::ClaudeAgents(built);
         match self.active {
             Some(cur) => {
                 let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
@@ -1008,15 +1010,17 @@ impl App {
     /// Agents pane. Order: Today → 7d → 30d → All → Today.
     pub fn claude_agents_cycle_age(&mut self) {
         let Some(i) = self.active else { return };
-        let label = if let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
+        let new_filter = if let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
             p.age_filter = p.age_filter.cycle();
             p.selected = 0;
-            Some(p.age_filter.label())
+            Some(p.age_filter)
         } else {
             None
         };
-        if let Some(l) = label {
-            self.toast(format!("age filter: {l}"));
+        if let Some(f) = new_filter {
+            // Persist across pane rebuilds + sessions.
+            self.claude_agents_last_age_filter = f;
+            self.toast(format!("age filter: {}", f.label()));
         }
     }
 
