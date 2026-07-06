@@ -90,6 +90,7 @@ export default defineConfig({
             { label: 'Bridge & Mount (sibling integration)', slug: 'manual/bridge-mount' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'Editing', slug: 'manual/editing' },
+            { label: 'Statusline, gutter & F1 help', slug: 'manual/statusline-chrome' },
             { label: 'Dock widgets', slug: 'manual/dock-widgets' },
             { label: 'Coming from NvChad', slug: 'manual/coming-from-nvchad' },
             { label: 'Coming from VS Code', slug: 'manual/coming-from-vscode' },

@@ -267,6 +267,10 @@ Cursor on `(` / `)` / `[` / `]` / `{` / `}` lights up its match in the statuslin
 - LSP-suggested folds: when the LSP returns folding ranges, they show as fold markers in the gutter; click or `za` to toggle.
 - Indent folds: fall-back fold strategy for languages without LSP fold support — folds at indent boundaries.
 
+Folds **persist across buffer close and reopen**, and across mnml restarts. Every time you toggle a fold (or fire `zM` / `zR`), mnml mirrors the buffer's live fold ranges into a workspace-scoped map keyed by file path. Close the buffer with `:bd`, reopen it later with `:e` — the folds come back. Restart mnml — the folds come back too, restored from `<workspace>/.mnml/session.json`.
+
+The map is capped at 200 files with soft-eviction (oldest entries drop when the cap is hit); files with no active folds get their entry removed so a "cleared everything" state doesn't linger and re-apply on next open. If you want to force a clean slate on a file: `zR` (unfold all) then close the buffer — the empty-fold entry gets pruned.
+
 ### `.editorconfig`
 
 mnml reads `.editorconfig` files and applies them as per-buffer settings — `indent_style`, `indent_size`, `tab_width`, `end_of_line`, `insert_final_newline`, `trim_trailing_whitespace`. Closer-to-file wins (root `.editorconfig` is overridden by a nested one).
