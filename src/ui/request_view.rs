@@ -861,7 +861,14 @@ pub fn draw(
         if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret_abs, t) {
             method_url_absolute.push((ur, EditField::Url));
         }
-        env_button_rect = draw_env_box(frame, env_rect, &workspace, env_override.as_deref(), t);
+        env_button_rect = draw_env_box(
+            frame,
+            env_rect,
+            &workspace,
+            env_override.as_deref(),
+            &rp.request.url,
+            t,
+        );
         send_button_rect = draw_send_box(frame, rp, send_rect, t);
         save_button_rect = draw_save_box(frame, rp, save_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
@@ -1609,6 +1616,7 @@ fn draw_env_box(
     rect: Rect,
     workspace: &std::path::Path,
     env_override: Option<&str>,
+    url: &str,
     t: theme::Theme,
 ) -> Option<Rect> {
     let block = crate::ui::design_tokens::bordered_plain("Env");
@@ -1617,11 +1625,16 @@ fn draw_env_box(
     if inner.width == 0 || inner.height == 0 {
         return None;
     }
-    let env_name = crate::http::template::EnvSet::select(workspace, env_override)
-        .name()
-        .map(str::to_string);
+    let envset = crate::http::template::EnvSet::select(workspace, env_override);
+    let env_name = envset.name().map(str::to_string);
     let has_override = env_override.is_some();
+    // #24 v2 — detect unresolved `{{VAR}}` refs in the URL to
+    // decide whether the chip should carry a warning color.
+    // Only checks vars against the currently-loaded EnvSet; if
+    // ANY referenced var is missing, the chip turns yellow.
+    let has_unresolved = has_unresolved_var(url, &envset);
     let (label, color) = match env_name {
+        _ if has_unresolved => (env_name.unwrap_or_else(|| "none".to_string()), t.yellow),
         Some(n) if has_override => (n, t.cyan),
         Some(n) => (n, t.fg),
         None => ("none".to_string(), t.comment),
@@ -1654,6 +1667,13 @@ fn draw_env_box(
         inner,
     );
     Some(inner)
+}
+
+/// #24 v2 — thin wrapper around `template::unresolved` for the
+/// env chip's warning-color check. Returns true when the URL
+/// references any `{{VAR}}` that's missing from `envset`.
+fn has_unresolved_var(text: &str, envset: &crate::http::template::EnvSet) -> bool {
+    !crate::http::template::unresolved(text, envset).is_empty()
 }
 
 /// Clear sub-panel — modal_panel titled "Clear" with a bold red-ish
