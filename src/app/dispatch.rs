@@ -309,6 +309,22 @@ pub(crate) fn click_to_file_pos(
 /// Used by the hover-tooltip system; right-click + left-click handlers do their
 /// own per-chip rect checks since they need to act, not just identify.
 pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
+    // #polish 2026-07-06 — gutter sign-column marks (git change,
+    // diagnostic, breakpoint, DAP arrow). Checked FIRST so a mark in
+    // an editor pane wins over the coarser editor-pane hover
+    // arm below.
+    if let Some(&(_, pane_id, line_no, kind)) = app
+        .rects
+        .gutter_marks
+        .iter()
+        .find(|(r, _, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::GutterMark {
+            pane_id,
+            line_no,
+            kind,
+        });
+    }
     // 2026-06-21 — Claude Agents dashboard topbar chips: each
     // chip rect is registered with its TopbarChipKind so the
     // tooltip can explain what it cycles + the keyboard chord.

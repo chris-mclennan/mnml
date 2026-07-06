@@ -1001,5 +1001,89 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some(orient_desc.into()),
             ))
         }
+        HoverChip::GutterMark {
+            pane_id,
+            line_no,
+            kind,
+        } => {
+            let &(rect, _, _, _) = app
+                .rects
+                .gutter_marks
+                .iter()
+                .find(|(_, pid, ln, k)| *pid == pane_id && *ln == line_no && *k == kind)?;
+            let (primary, secondary) = match kind {
+                crate::GutterMarkKind::DapArrow => (
+                    format!("▶ debugger paused at line {}", line_no + 1),
+                    Some("continue / step to advance".into()),
+                ),
+                crate::GutterMarkKind::ConditionalBreakpoint => (
+                    format!("◆ conditional breakpoint (line {})", line_no + 1),
+                    Some("click gutter: toggle · right-click: edit condition".into()),
+                ),
+                crate::GutterMarkKind::Breakpoint => (
+                    format!("● breakpoint (line {})", line_no + 1),
+                    Some("click gutter to toggle".into()),
+                ),
+                crate::GutterMarkKind::Diagnostic(sev) => {
+                    // Aggregate every diagnostic touching this line so the
+                    // tooltip shows the actual message, not just the color.
+                    // (Multiple diagnostics on one line get joined.)
+                    let msgs: Vec<String> = app
+                        .panes
+                        .get(pane_id)
+                        .and_then(|p| match p {
+                            crate::pane::Pane::Editor(b) => Some(b),
+                            _ => None,
+                        })
+                        .map(|b| {
+                            b.all_diagnostics()
+                                .filter(|d| {
+                                    (d.range.start.line as usize) <= line_no
+                                        && line_no <= (d.range.end.line as usize)
+                                })
+                                .map(|d| d.message.lines().next().unwrap_or("").to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let sev_word = match sev {
+                        crate::lsp::Severity::Error => "error",
+                        crate::lsp::Severity::Warning => "warning",
+                        crate::lsp::Severity::Info => "info",
+                        crate::lsp::Severity::Hint => "hint",
+                    };
+                    let primary = if let Some(first) = msgs.first() {
+                        // Truncate long messages so the tooltip stays compact.
+                        let clipped: String = first.chars().take(80).collect();
+                        let elided = if first.chars().count() > 80 {
+                            "…"
+                        } else {
+                            ""
+                        };
+                        format!("● {sev_word}: {clipped}{elided}")
+                    } else {
+                        format!("● {sev_word} on line {}", line_no + 1)
+                    };
+                    let secondary = if msgs.len() > 1 {
+                        Some(format!("+{} more on this line", msgs.len() - 1))
+                    } else {
+                        None
+                    };
+                    (primary, secondary)
+                }
+                crate::GutterMarkKind::GitChange(kind) => {
+                    let (glyph, word) = match kind {
+                        crate::git::diff::SignKind::Added => ("▎", "added"),
+                        crate::git::diff::SignKind::Modified => ("▎", "modified"),
+                        crate::git::diff::SignKind::Removed => ("▎", "removed nearby"),
+                    };
+                    (
+                        format!("{glyph} git: {word} (line {})", line_no + 1),
+                        Some("] c / [ c jumps hunks".into()),
+                    )
+                }
+            };
+            Some((rect, primary, secondary))
+        }
     }
 }

@@ -389,6 +389,11 @@ pub fn draw_pane(
     // the `buf` borrow ends. Lets the click handler dispatch the lens'
     // `workspace/executeCommand`.
     let mut lens_chip_rects: Vec<(u16, usize, usize, usize)> = Vec::new();
+    // Per-row gutter mark hits — `(visual_row, line_no, kind)`.
+    // Pushed onto `app.rects.gutter_marks` after the borrow ends so
+    // the hover-tooltip layer can point-in-rect the sign column.
+    // Continuation rows + blank sign cells are skipped.
+    let mut gutter_mark_rows: Vec<(u16, usize, crate::GutterMarkKind)> = Vec::new();
     // Build the per-visual-row plan: each entry is (line_no, char_start,
     // is_continuation). With wrap off, every file-line takes exactly one
     // visual row; with wrap on, long lines emit multiple rows where each
@@ -525,25 +530,35 @@ pub fn draw_pane(
         });
         let lo_diag = diag_sev
             .filter(|s| matches!(s, crate::lsp::Severity::Info | crate::lsp::Severity::Hint));
+        let mut mark_kind: Option<crate::GutterMarkKind> = None;
         let sign_span = if is_continuation {
             Span::styled(" ", Style::default().bg(base_bg))
         } else if has_arrow {
+            mark_kind = Some(crate::GutterMarkKind::DapArrow);
             Span::styled("▶", Style::default().fg(theme::cur().yellow).bg(base_bg))
         } else if has_cond_bp {
             // Conditional breakpoints render as a diamond so the user
             // can see at a glance which stops are gated by a condition.
+            mark_kind = Some(crate::GutterMarkKind::ConditionalBreakpoint);
             Span::styled("◆", Style::default().fg(theme::cur().red).bg(base_bg))
         } else if has_bp {
+            mark_kind = Some(crate::GutterMarkKind::Breakpoint);
             Span::styled("●", Style::default().fg(theme::cur().red).bg(base_bg))
         } else if let Some(s) = hi_diag {
+            mark_kind = Some(crate::GutterMarkKind::Diagnostic(s));
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
         } else if let Some(k) = sign {
+            mark_kind = Some(crate::GutterMarkKind::GitChange(k));
             Span::styled("▎", Style::default().fg(sign_color(k)).bg(base_bg))
         } else if let Some(s) = lo_diag {
+            mark_kind = Some(crate::GutterMarkKind::Diagnostic(s));
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
         } else {
             Span::styled(" ", Style::default().bg(base_bg))
         };
+        if let Some(k) = mark_kind {
+            gutter_mark_rows.push((r as u16, line_no, k));
+        }
 
         // Word-match ranges (in char cols) on this line, converted from the
         // pre-computed buffer-wide byte ranges. Same shape as the find-match
@@ -1259,6 +1274,21 @@ pub fn draw_pane(
             },
             pane_id,
             line_no,
+        ));
+    }
+    // Per-render gutter mark rects (sign column). One 1×1 cell per
+    // painted mark; hover picks the tooltip via `HoverChip::GutterMark`.
+    for (visual_row, line_no, kind) in gutter_mark_rows {
+        app.rects.gutter_marks.push((
+            Rect {
+                x: area.x,
+                y: area.y + visual_row,
+                width: 1,
+                height: 1,
+            },
+            pane_id,
+            line_no,
+            kind,
         ));
     }
     // Per-render code-lens chip rects — clicked to fire the lens command.

@@ -2227,6 +2227,14 @@ pub struct PaneRects {
     /// chip — click on one to unfold that block. Cleared + rebuilt per
     /// editor render.
     pub fold_chips: Vec<(Rect, PaneId, usize)>,
+    /// #polish 2026-07-06 — per-cell rect for every glyph rendered into
+    /// the gutter's sign column (git change marks, LSP + linter
+    /// diagnostic dots, breakpoint dots, DAP execution arrow). Hover
+    /// picks up which mark you're over and the tooltip explains the
+    /// glyph without needing the sidebar / diagnostics pane open.
+    /// Cleared + rebuilt per editor render. Line numbers themselves
+    /// are NOT hoverable (nothing to explain).
+    pub gutter_marks: Vec<(Rect, PaneId, usize, crate::GutterMarkKind)>,
     /// `(chip_rect, pane_id, lens_index)` per rendered `⚡ <title>` code
     /// lens chip — click on one to fire its `workspace/executeCommand`.
     /// `lens_index` is the index into `Buffer.code_lenses`. Cleared +

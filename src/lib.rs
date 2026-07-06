@@ -428,6 +428,33 @@ pub enum HoverChip {
     /// File / Edit / Selection / …). Tooltip explains the
     /// click behavior + Alt+<letter> accelerator.
     MenuBarWord(usize),
+    /// #polish 2026-07-06 — hover on a mark rendered in the
+    /// gutter's sign column (git change / diagnostic dot /
+    /// breakpoint / DAP arrow). `line_no` is the file-line the
+    /// mark represents; `kind` drives the tooltip label.
+    GutterMark {
+        pane_id: crate::layout::PaneId,
+        line_no: usize,
+        kind: GutterMarkKind,
+    },
+}
+
+/// What was painted in the gutter sign column for a given line —
+/// drives the tooltip's copy. Ordering matches the sign-column
+/// priority in `editor_view` (DapArrow wins, then breakpoints,
+/// then diagnostics, then git marks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GutterMarkKind {
+    /// `▶` — DAP is stopped on this line.
+    DapArrow,
+    /// `◆` — breakpoint with a condition.
+    ConditionalBreakpoint,
+    /// `●` (red) — plain breakpoint.
+    Breakpoint,
+    /// `●` colored by severity (red / yellow / cyan / grey).
+    Diagnostic(crate::lsp::Severity),
+    /// `▎` (green / blue / red) — git added / modified / removed.
+    GitChange(crate::git::diff::SignKind),
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept
