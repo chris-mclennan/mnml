@@ -95,6 +95,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         y += 2;
     } else {
+        // #polish 2026-07-06 — right-aligned age column. Users
+        // reported it was hard to find "the note I edited yesterday"
+        // among many notes — surfacing mtime does that at a glance.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
         for path in files.iter().take(area.height.saturating_sub(4) as usize) {
             if y >= area.y + area.height {
                 break;
@@ -109,6 +116,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 "\u{F249}"
             };
+            // Age string from file mtime — falls back to empty on
+            // any I/O error (rare; usually missing metadata).
+            let age_str: String = std::fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| {
+                    let secs = now.saturating_sub(d.as_secs() as i64);
+                    crate::ui::git_graph_view::humanize_age(secs)
+                })
+                .unwrap_or_default();
+            let name_width = (area.width as usize)
+                .saturating_sub(4)
+                .saturating_sub(age_str.chars().count())
+                .saturating_sub(1);
+            let name_clipped: String = name.chars().take(name_width).collect();
+            let name_padded = format!("{name_clipped:<width$}", width = name_width);
             let row_rect = Rect {
                 x: area.x,
                 y,
@@ -119,7 +143,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 Paragraph::new(Line::from(vec![
                     Span::styled("  ", Style::default().bg(bg)),
                     Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(bg)),
-                    Span::styled(name, Style::default().fg(t.fg).bg(bg)),
+                    Span::styled(name_padded, Style::default().fg(t.fg).bg(bg)),
+                    Span::styled(format!(" {age_str}"), Style::default().fg(t.comment).bg(bg)),
                 ])),
                 row_rect,
             );

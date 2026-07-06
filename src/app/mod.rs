@@ -667,6 +667,11 @@ struct SavedSession {
     /// Was the `> GIT` section in the rail expanded?
     #[serde(default, skip_serializing_if = "Option::is_none")]
     git_section_expanded: Option<bool>,
+    /// #polish 2026-07-06 — was the `> INTEGRATIONS` section in
+    /// the rail expanded? `None` = fall back to the config's
+    /// `[ui] integrations_section_default_expanded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    integration_section_expanded: Option<bool>,
     /// Directories the user had expanded in the file tree. `None` (an older
     /// session.json without the field) ⇒ keep the default first-level expand.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -99,6 +99,7 @@ impl App {
                 Some(self.right_panel_active_idx)
             },
             git_section_expanded: Some(self.git_section_expanded),
+            integration_section_expanded: Some(self.integration_section_expanded),
             tree_expanded_dirs: Some(
                 self.tree
                     .expanded_dirs()
@@ -445,6 +446,9 @@ impl App {
         }
         if let Some(v) = saved.tree_width {
             self.tree_width = v.clamp(8, 200);
+        }
+        if let Some(v) = saved.integration_section_expanded {
+            self.integration_section_expanded = v;
         }
         if let Some(v) = saved.git_section_expanded {
             self.git_section_expanded = v;
