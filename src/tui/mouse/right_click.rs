@@ -296,6 +296,56 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
     }
+    // #22 v4 — right-click on a Collections file row.
+    if let Some(path) = app
+        .rects
+        .http_panel_collection_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, p)| p.clone())
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "request".to_string());
+        let rel = crate::app::rel_path(&app.workspace, &path);
+        let items = vec![
+            MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
+            MenuItem::new("Delete…", MenuAction::Delete(path)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
+    // #22 v4 — right-click on a Collections folder row.
+    if let Some(dir) = app
+        .rects
+        .http_panel_collection_folder_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, d)| d.clone())
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = dir
+            .file_name()
+            .map(|s| format!("{}/", s.to_string_lossy()))
+            .unwrap_or_else(|| "collection".to_string());
+        let rel = crate::app::rel_path(&app.workspace, &dir);
+        let items = vec![
+            MenuItem::new("New request…", MenuAction::NewFile(dir.clone())),
+            MenuItem::new("New sub-collection…", MenuAction::NewFolder(dir.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(dir.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Rename…", MenuAction::Rename(dir.clone())),
+            MenuItem::new("Delete collection…", MenuAction::Delete(dir)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
     // Right-click on MOCKS row — Replay / Open / Reveal / Delete.
     if let Some(path) = app
         .rects
