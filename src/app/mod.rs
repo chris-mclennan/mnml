@@ -132,6 +132,11 @@ const BROWSER_URL_HISTORY_MAX: usize = 100;
 /// they've dropped off `recent_files`.
 const FILE_CURSORS_MAX: usize = 200;
 
+/// Cap on `App::file_folds`. Same shape as `FILE_CURSORS_MAX` — folds
+/// survive buffer close so `open_path` can re-hydrate them later, but
+/// the map has to bound at some point.
+const FILE_FOLDS_MAX: usize = 200;
+
 /// Cap on each nav stack — deep enough to cover a few investigation chains,
 /// shallow enough that the old end is never load-bearing.
 const NAV_STACK_MAX: usize = 50;
@@ -3177,6 +3182,13 @@ pub struct App {
     /// or saved, restored when the file is re-opened later. Persisted in
     /// session.json so it survives restarts. Capped at `FILE_CURSORS_MAX`.
     pub file_cursors: std::collections::HashMap<PathBuf, (usize, usize)>,
+    /// #polish 2026-07-06 — cross-buffer fold persistence. Keyed by path,
+    /// value is a list of `(start_row, end_row)` pairs mirroring
+    /// `Buffer.folds`. Updated on every `toggle_fold_at_cursor` /
+    /// `unfold_all_in_active` and on buffer close; hydrated back into
+    /// `Buffer.folds` on open. Persisted in session.json. Capped at
+    /// `FILE_FOLDS_MAX`.
+    pub file_folds: std::collections::HashMap<PathBuf, Vec<(usize, usize)>>,
     /// Vim "global" marks (uppercase `A`-`Z`) — cross-file bookmarks. Keyed
     /// by letter; value is `(path, row, col)`. Set by `m<Letter>` on any
     /// buffer; jumped by `'<Letter>` / `` `<Letter>`` from anywhere (opens
@@ -4434,6 +4446,7 @@ impl App {
             is_replaying_dot: false,
             last_substitute: None,
             file_cursors: std::collections::HashMap::new(),
+            file_folds: std::collections::HashMap::new(),
             global_marks: std::collections::HashMap::new(),
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
@@ -6057,6 +6070,26 @@ impl App {
         }
     }
 
+    /// Remember `path`'s current fold ranges so a future `open_path` can
+    /// restore them. Empty `folds` REMOVES the entry — otherwise cleared
+    /// folds would linger and re-apply on next open, which is astonishing.
+    /// Bounded by `FILE_FOLDS_MAX` with the same soft-cap eviction shape
+    /// as `note_file_cursor`.
+    pub(crate) fn note_file_folds(&mut self, path: &Path, folds: Vec<(usize, usize)>) {
+        if folds.is_empty() {
+            self.file_folds.remove(path);
+            return;
+        }
+        self.file_folds.insert(path.to_path_buf(), folds);
+        while self.file_folds.len() > FILE_FOLDS_MAX {
+            if let Some(k) = self.file_folds.keys().next().cloned() {
+                self.file_folds.remove(&k);
+            } else {
+                break;
+            }
+        }
+    }
+
     /// Push `path` to the front of `recent_files` (de-duped), capping at
     /// [`RECENT_FILES_MAX`]. Paths outside the workspace are kept too so the
     /// list survives editing scratch files / temp dirs.
@@ -6737,6 +6770,14 @@ impl App {
                     let (row, col) = byte_to_row_col(buf.editor.text(), cursor_byte);
                     buf.editor.place_cursor(row, col);
                     buf.scroll = scroll;
+                }
+                if let Some(folds) = self.file_folds.get(&path) {
+                    let line_count = buf.editor.line_count();
+                    for &(start, end) in folds {
+                        if end >= start && start < line_count && end < line_count {
+                            buf.folds.insert(start, end);
+                        }
+                    }
                 }
                 let undo_path = crate::editor::undo_path_for(&self.workspace, &path);
                 crate::editor::load_history_from(&mut buf.editor, &undo_path);
@@ -8440,9 +8481,16 @@ impl App {
             let end = b.folds.get(&s).copied().unwrap_or(s);
             cur_row >= s && cur_row <= end
         }) {
+            let mut synced: Option<(PathBuf, Vec<(usize, usize)>)> = None;
             if let Some(b) = self.active_editor_mut() {
                 b.folds.remove(&owner);
+                if let Some(p) = b.path.clone() {
+                    synced = Some((p, b.folds.iter().map(|(&s, &e)| (s, e)).collect()));
+                }
                 self.toast(format!("unfolded line {}", owner + 1));
+            }
+            if let Some((p, folds)) = synced {
+                self.note_file_folds(&p, folds);
             }
             return;
         }
@@ -8465,20 +8513,35 @@ impl App {
             self.toast("nothing to fold here");
             return;
         };
+        let mut synced: Option<(PathBuf, Vec<(usize, usize)>)> = None;
         if let Some(b) = self.active_editor_mut() {
             b.folds.insert(start, end);
+            if let Some(p) = b.path.clone() {
+                synced = Some((p, b.folds.iter().map(|(&s, &e)| (s, e)).collect()));
+            }
             self.toast(format!("folded {} lines", end - start));
+        }
+        if let Some((p, folds)) = synced {
+            self.note_file_folds(&p, folds);
         }
     }
 
     /// `editor.unfold_all` — drop every fold from the active buffer.
     pub fn unfold_all_in_active(&mut self) {
+        let mut synced: Option<PathBuf> = None;
+        let mut n = 0usize;
         if let Some(b) = self.active_editor_mut() {
-            let n = b.folds.len();
+            n = b.folds.len();
             b.folds.clear();
-            if n > 0 {
-                self.toast(format!("unfolded {n} fold(s)"));
+            if let Some(p) = b.path.clone() {
+                synced = Some(p);
             }
+        }
+        if n > 0 {
+            self.toast(format!("unfolded {n} fold(s)"));
+        }
+        if let Some(p) = synced {
+            self.note_file_folds(&p, Vec::new());
         }
     }
 
@@ -12521,6 +12584,48 @@ mod tests {
         );
         assert!(app.nav_forward.is_empty());
         assert_eq!(app.nav_back.len(), 1);
+    }
+
+    #[test]
+    fn folds_persist_across_buffer_close_and_reopen() {
+        // #polish 2026-07-06 — fold state should survive `close_active_pane`.
+        // Was: closing a buffer dropped `Buffer.folds` on the floor; reopen
+        // came back with the file unfolded.
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("code.rs");
+        fs::write(
+            &path,
+            "fn a() {\n    line2\n    line3\n    line4\n}\nfn b() {}\n",
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        let path = path.canonicalize().unwrap();
+        app.open_path(&path);
+        // Inject a fold (skip toggle_fold_at_cursor bracket search — the
+        // point of the test is the persistence path, not the fold picker).
+        if let Some(b) = app.active_editor_mut() {
+            b.folds.insert(0, 4);
+        }
+        // Sync via toggle path so file_folds picks it up. Alternative:
+        // call note_file_folds directly.
+        let synced_folds: Vec<(usize, usize)> = app
+            .active_editor()
+            .unwrap()
+            .folds
+            .iter()
+            .map(|(&s, &e)| (s, e))
+            .collect();
+        app.note_file_folds(&path, synced_folds);
+        // Close → file_folds must retain the fold.
+        app.close_active_pane();
+        assert!(app.file_folds.contains_key(&path));
+        assert_eq!(app.file_folds[&path], vec![(0usize, 4usize)]);
+        // Re-open → the fold is back on the buffer.
+        app.open_path(&path);
+        let b = app.active_editor().unwrap();
+        assert_eq!(b.folds.get(&0).copied(), Some(4));
     }
 
     #[test]

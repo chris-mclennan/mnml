@@ -399,6 +399,17 @@ impl App {
                     buf.editor.place_cursor(row, col);
                     buf.scroll = scroll;
                 }
+                // #polish 2026-07-06 — restore folds captured last close.
+                // Out-of-range pairs get dropped (file may have shrunk
+                // between sessions or since the last close).
+                if let Some(folds) = self.file_folds.get(&path) {
+                    let line_count = buf.editor.line_count();
+                    for &(start, end) in folds {
+                        if end >= start && start < line_count && end < line_count {
+                            buf.folds.insert(start, end);
+                        }
+                    }
+                }
                 // Persistent undo — restore the editor's undo+redo stacks if
                 // a matching `<workspace>/.mnml/undo/<hash>.json` exists. The
                 // helper bails when the file's hash has drifted (file changed
@@ -924,7 +935,9 @@ impl App {
         {
             let cur = b.editor.cursor();
             let scroll = b.scroll;
+            let folds: Vec<(usize, usize)> = b.folds.iter().map(|(&s, &e)| (s, e)).collect();
             self.note_file_cursor(&p, cur, scroll);
+            self.note_file_folds(&p, folds);
             // Push onto the recently-closed stack so `buffer.reopen` can
             // bring it back. Skip if the file's still open in another pane
             // (closing one of several views of the same file isn't "closed").

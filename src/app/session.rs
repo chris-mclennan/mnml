@@ -205,19 +205,36 @@ impl App {
                     col: *col,
                 })
                 .collect(),
-            folds: self
-                .panes
-                .iter()
-                .filter_map(|p| match p {
-                    Pane::Editor(b) if !b.folds.is_empty() => {
-                        b.path.as_ref().map(|path| SavedFolds {
-                            path: path.to_string_lossy().into_owned(),
-                            folds: b.folds.iter().map(|(&s, &e)| (s, e)).collect(),
-                        })
+            folds: {
+                // Live panes take precedence — a currently-open buffer's
+                // in-memory folds are fresher than whatever was last
+                // captured on close in `file_folds`. Everything else in
+                // `file_folds` (folds of buffers already closed this
+                // session, or hydrated from a previous session) fills in.
+                let mut merged: std::collections::HashMap<PathBuf, Vec<(usize, usize)>> =
+                    self.file_folds.clone();
+                for p in &self.panes {
+                    if let Pane::Editor(b) = p
+                        && let Some(path) = &b.path
+                    {
+                        if b.folds.is_empty() {
+                            merged.remove(path);
+                        } else {
+                            merged.insert(
+                                path.clone(),
+                                b.folds.iter().map(|(&s, &e)| (s, e)).collect(),
+                            );
+                        }
                     }
-                    _ => None,
-                })
-                .collect(),
+                }
+                merged
+                    .into_iter()
+                    .map(|(path, folds)| SavedFolds {
+                        path: path.to_string_lossy().into_owned(),
+                        folds,
+                    })
+                    .collect()
+            },
             nav_back: self
                 .nav_back
                 .iter()
@@ -582,12 +599,15 @@ impl App {
                     .insert(gm.letter, (PathBuf::from(gm.path), gm.row, gm.col));
             }
         }
-        // Restore folds onto any buffer whose path matches a saved entry.
+        // Restore folds onto any buffer whose path matches a saved entry,
+        // AND hydrate `file_folds` so files opened later this session
+        // (that were closed at save time) get their folds back too.
         // Out-of-range pairs (start >= line_count, or end < start) get
         // dropped silently — likely stale because the file was edited
         // externally.
         for sf in saved.folds {
             let target = PathBuf::from(&sf.path);
+            self.file_folds.insert(target.clone(), sf.folds.clone());
             for p in self.panes.iter_mut() {
                 if let Pane::Editor(b) = p
                     && b.path.as_deref() == Some(target.as_path())
