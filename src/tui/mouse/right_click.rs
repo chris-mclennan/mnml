@@ -185,6 +185,120 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
     }
+    // Right-click on RECENT row — open, copy curl, delete entry.
+    if let Some(idx) = app
+        .rects
+        .http_panel_recent_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, i)| *i)
+    {
+        if let Some(entry) = app.http_panel_recent_cache.get(idx).cloned() {
+            use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+            let (curl, method, url) = crate::http::history::entry_to_curl(&entry);
+            let title = format!("{method} {}", &url[..40.min(url.len())]);
+            let items = vec![
+                MenuItem::new("Open as scratch", MenuAction::CopyPath(curl.clone())),
+                MenuItem::new("Yank curl", MenuAction::CopyPath(curl)),
+                MenuItem::new("Yank URL", MenuAction::CopyPath(url)),
+            ];
+            app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        }
+        return;
+    }
+    // Right-click on CAPTURED row — open as curl / copy curl / copy URL.
+    if let Some(idx) = app
+        .rects
+        .http_panel_captured_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, i)| *i)
+    {
+        if let Some(row) = app.http_panel_captured_cache.get(idx).cloned() {
+            use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+            let curl = row.to_curl();
+            let title = format!("{} {}", row.method, &row.url[..40.min(row.url.len())]);
+            let items = vec![
+                MenuItem::new("Open as scratch", MenuAction::CopyPath(curl.clone())),
+                MenuItem::new("Yank curl", MenuAction::CopyPath(curl)),
+                MenuItem::new("Yank URL", MenuAction::CopyPath(row.url)),
+            ];
+            app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        }
+        return;
+    }
+    // Right-click on ENVS row — quick actions for that env file.
+    if let Some(name) = app
+        .rects
+        .http_panel_env_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, n)| n.clone())
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let env_file = app
+            .workspace
+            .join(".mnml")
+            .join("env")
+            .join(format!("{name}.env"));
+        let rel = crate::app::rel_path(&app.workspace, &env_file);
+        let items = vec![
+            MenuItem::new("Set active", MenuAction::Command("http.pick_env")),
+            MenuItem::new("Open file", MenuAction::OpenPath(env_file.clone())),
+            MenuItem::new("Yank name", MenuAction::CopyPath(name.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(name), (x, y), items));
+        return;
+    }
+    // Right-click on CHAINS row — Run / Open / Reveal / Delete.
+    if let Some(path) = app
+        .rects
+        .http_panel_chain_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, p)| p.clone())
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "chain".to_string());
+        let rel = crate::app::rel_path(&app.workspace, &path);
+        let items = vec![
+            MenuItem::new("Run chain", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open file", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Delete…", MenuAction::Delete(path)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
+    // Right-click on MOCKS row — Replay / Open / Reveal / Delete.
+    if let Some(path) = app
+        .rects
+        .http_panel_mock_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, p)| p.clone())
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "mock".to_string());
+        let rel = crate::app::rel_path(&app.workspace, &path);
+        let items = vec![
+            MenuItem::new("Replay mock", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open file", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Delete…", MenuAction::Delete(path)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
     // Right-click on a statusline chip — context menus for the four
     // clickable chips (branch / workspace / mode / clock).
     if let Some(r) = app.rects.statusline_branch_chip
