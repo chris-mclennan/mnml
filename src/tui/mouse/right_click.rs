@@ -137,6 +137,40 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // #polish 2026-07-06 — right-click on the Cloud Agents view
+    // chip → density menu (both options + toggle for consistency).
+    if let Some(r) = app.rects.cloud_agents_view_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let cur = app.cloud_agents_view;
+        let compact_label = if cur == crate::app::CloudAgentsView::Compact {
+            "✓ Compact"
+        } else {
+            "  Compact"
+        };
+        let standard_label = if cur == crate::app::CloudAgentsView::Standard {
+            "✓ Standard"
+        } else {
+            "  Standard"
+        };
+        let items = vec![
+            MenuItem::new(
+                compact_label,
+                MenuAction::Command("cloud_agents.view_compact"),
+            ),
+            MenuItem::new(
+                standard_label,
+                MenuAction::Command("cloud_agents.view_standard"),
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(
+            Some("Row density".to_string()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
     // #polish 2026-07-06 — right-click on a Notes-panel file row.
     if let Some(path) = app
         .rects

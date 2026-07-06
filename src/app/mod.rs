@@ -7053,6 +7053,18 @@ impl App {
         ));
     }
 
+    /// #polish 2026-07-06 — set the density directly (used by
+    /// the view chip's right-click menu). Same reset-scroll
+    /// treatment as toggle.
+    pub fn cloud_agents_set_view(&mut self, view: CloudAgentsView) {
+        if self.cloud_agents_view == view {
+            return;
+        }
+        self.cloud_agents_view = view;
+        self.cloud_agents_scroll = 0;
+        self.toast(format!("cloud agents view → {}", view.label()));
+    }
+
     pub fn refresh_agents_panel_if_due(&mut self) {
         // 30s — the rail is a heads-up display, not a live tail.
         // The full Pane::ClaudeAgents has its own faster refresh

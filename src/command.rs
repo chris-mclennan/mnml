@@ -3997,6 +3997,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_copy_response_headers(),
         },
         Command {
+            id: "cloud_agents.view_compact",
+            title: "Cloud Agents: compact row density",
+            group: "cloud_agents",
+            keys: &[],
+            run: |app| app.cloud_agents_set_view(crate::app::CloudAgentsView::Compact),
+        },
+        Command {
+            id: "cloud_agents.view_standard",
+            title: "Cloud Agents: standard row density",
+            group: "cloud_agents",
+            keys: &[],
+            run: |app| app.cloud_agents_set_view(crate::app::CloudAgentsView::Standard),
+        },
+        Command {
             id: "http.save",
             title: "HTTP: save request (Save-As if new)",
             group: "http",
