@@ -916,6 +916,13 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: open a new HTTP request".into(),
             None,
         )),
+        HoverChip::ScrollbarThumb => {
+            // Anchor: any scrollbar rect will do — pick the one
+            // the cursor actually sits on. Falls back to None
+            // when no scrollbar rendered this frame (rare race).
+            let rect = app.rects.scrollbars.first().map(|h| h.area)?;
+            Some((rect, "click: jump to that row · drag: scroll".into(), None))
+        }
         HoverChip::PendingUndoChip => {
             let rect = app.rects.pending_undo_chip?;
             let action_hint = app

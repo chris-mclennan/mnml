@@ -530,11 +530,13 @@ fn compute_integration_section_height(app: &App, rail_width: usize) -> u16 {
         // section entirely. With detection in place we want users to
         // see "INTEGRATIONS" so the `+` button discovery flow is
         // discoverable from an empty rail.)
-        return if app.config.ui.integration_icons.is_empty() {
-            0
-        } else {
-            1
-        };
+        if app.config.ui.integration_icons.is_empty() {
+            return 0;
+        }
+        // #polish 2026-07-06 — reserve a hint row when the section is
+        // configured but has no detected integrations. Users see WHY
+        // it's empty instead of a mysterious silent header.
+        return 2;
     }
     if !app.integration_section_expanded {
         // Compact: header + 1 row of icons packed horizontally. Each
@@ -627,6 +629,32 @@ fn draw_integration_section(
         let visible = visible_integration_indices(app);
         let n = visible.len();
         if n == 0 {
+            // #polish 2026-07-06 — expanded-empty hint row (paints
+            // when there ARE configured integrations but none of
+            // their binaries detected on PATH). Explains why the
+            // section reads empty.
+            if start_y + 1 < max_y {
+                let hint_rect = Rect {
+                    x: area.x,
+                    y: start_y + 1,
+                    width: area.width,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled("  ", Style::default().bg(rail_bg)),
+                        Span::styled(
+                            "no binaries on PATH",
+                            Style::default()
+                                .fg(t.comment)
+                                .bg(rail_bg)
+                                .add_modifier(Modifier::DIM),
+                        ),
+                    ]))
+                    .style(Style::default().bg(rail_bg)),
+                    hint_rect,
+                );
+            }
             return;
         }
         const CHIP_W: usize = 4;
@@ -852,19 +880,24 @@ fn draw_primary_workspace_section(
         width: ws_name.chars().count() as u16,
         height: 1,
     });
+    // #polish 2026-07-06 — italicize the workspace name when
+    // hidden files are visible, so users see the mode at a
+    // glance. Bold + italic combined stays legible; italic alone
+    // would fight the bold weight the header uses.
+    let mut name_style = Style::default()
+        .fg(theme::cur().green)
+        .bg(rail_bg)
+        .add_modifier(Modifier::BOLD);
+    if app.tree.show_hidden {
+        name_style = name_style.add_modifier(Modifier::ITALIC);
+    }
     let mut spans = vec![
         Span::styled(
             chev_str,
             Style::default().fg(theme::cur().comment).bg(rail_bg),
         ),
         Span::styled("● ", Style::default().fg(theme::cur().green).bg(rail_bg)),
-        Span::styled(
-            ws_name.clone(),
-            Style::default()
-                .fg(theme::cur().green)
-                .bg(rail_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(ws_name.clone(), name_style),
     ];
     spans.extend(chip_spans);
     frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);

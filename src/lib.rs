@@ -414,6 +414,10 @@ pub enum HoverChip {
     /// open). Tooltip distinguishes it from the far-right `+`
     /// new-tab-page button.
     BufferlineNewRequest,
+    /// #polish 2026-07-06 — hover on any scrollbar. Tooltip
+    /// explains the click / drag behavior once (users often
+    /// don't know the whole track is clickable).
+    ScrollbarThumb,
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept

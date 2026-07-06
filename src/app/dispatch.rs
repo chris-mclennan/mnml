@@ -428,6 +428,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::BufferlineNewRequest);
     }
+    // #polish 2026-07-06 — scrollbar hover. Any scrollbar
+    // matches; the tooltip is the same for all of them.
+    if app.rects.scrollbars.iter().any(|h| contains(h.area, x, y)) {
+        return Some(crate::HoverChip::ScrollbarThumb);
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {
