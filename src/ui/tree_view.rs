@@ -1043,6 +1043,16 @@ fn draw_workspace_files(
         } else {
             git_files.get(&row.path).copied()
         };
+        // #polish 2026-07-06 — dirty-in-editor detection. Walks
+        // panes for an Editor buffer whose path matches this row
+        // and has unsaved changes. When true, the badge letter
+        // gets replaced with `●` (dot) so users see it needs a
+        // save. Same signal VS Code shows on tree rows.
+        let is_dirty_in_editor = !row.is_dir
+            && app.panes.iter().any(|p| match p {
+                crate::pane::Pane::Editor(b) => b.dirty && b.path.as_ref() == Some(&row.path),
+                _ => false,
+            });
         let name_color = if is_repo_row {
             theme::cur().yellow
         } else if row.is_dir {
@@ -1084,12 +1094,20 @@ fn draw_workspace_files(
         };
         // Right-aligned 1-char git-state badge (vim-fugitive style): M / A / ? / !.
         // Reserves 2 trailing cells (`<letter> `) when there's a state to show.
-        let (badge, badge_color) = match git_state {
-            Some(FileState::Modified) => ("M", theme::cur().yellow),
-            Some(FileState::Staged) => ("A", theme::cur().green),
-            Some(FileState::Untracked) => ("?", theme::cur().green),
-            Some(FileState::Conflicted) => ("!", theme::cur().red),
-            None => ("", theme::cur().fg),
+        // #polish 2026-07-06 — dirty-in-editor wins over git state.
+        // A `●` badge means "unsaved edits in mnml"; git badges
+        // reflect on-disk state which the editor will change on
+        // save. Users care more about the pending save first.
+        let (badge, badge_color) = if is_dirty_in_editor {
+            ("●", theme::cur().orange)
+        } else {
+            match git_state {
+                Some(FileState::Modified) => ("M", theme::cur().yellow),
+                Some(FileState::Staged) => ("A", theme::cur().green),
+                Some(FileState::Untracked) => ("?", theme::cur().green),
+                Some(FileState::Conflicted) => ("!", theme::cur().red),
+                None => ("", theme::cur().fg),
+            }
         };
         let badge_width = if badge.is_empty() { 0 } else { 2 };
         // Repo dirs get a leading `● ` (active) or `○ ` (non-active) marker
