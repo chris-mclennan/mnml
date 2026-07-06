@@ -2242,6 +2242,11 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // is fixed-width regardless of repo name). Truncate long names
     // with `…` so the chip never overflows.
     const CHIP_LABEL_W: usize = 24;
+    // #polish 2026-07-06 — track the actual visible label
+    // width (before padding) so the click rect can shrink to
+    // it. Was: whole 24-cell chip fired the picker, including
+    // whitespace to the right of a short name.
+    let workspace_label_visible_chars = workspace_label_raw.chars().count().min(CHIP_LABEL_W);
     let workspace_label = if workspace_label_raw.chars().count() > CHIP_LABEL_W {
         let mut s: String = workspace_label_raw.chars().take(CHIP_LABEL_W - 1).collect();
         s.push('…');
@@ -2408,7 +2413,20 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         ratatui::widgets::Paragraph::new(chip_text).style(Style::default().fg(t.comment).bg(t.bg2)),
         chip_rect,
     );
-    app.rects.palette_search_chip = Some(chip_rect);
+    // #polish 2026-07-06 — click rect only spans the actual visible
+    // label (magnifier + spacing + name), NOT the trailing padding.
+    // Was: chip fires the picker even when clicking blank cells to
+    // the right of a short workspace name; misleading hit zone.
+    // Layout: `"  {magnify}  {label}  "` = 2 + 1 + 2 + N + 2 cells,
+    // with N = visible label chars.
+    let hit_w = (2 + 1 + 2 + workspace_label_visible_chars + 2) as u16;
+    let hit_rect = Rect {
+        x,
+        y,
+        width: hit_w.min(chip_w),
+        height: 1,
+    };
+    app.rects.palette_search_chip = Some(hit_rect);
     x += chip_w;
 
     // Dropdown chevron — visually glued to the chip's right edge but

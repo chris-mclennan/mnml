@@ -437,11 +437,26 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         }
         HoverChip::PaletteBackButton => {
             let rect = app.rects.palette_back_button?;
-            Some((rect, "previous buffer".to_string(), None))
+            let n = app.panes.len();
+            // #polish 2026-07-06 — hint at what "back" cycles through
+            // (previous open buffer in MRU order) + note when there's
+            // nothing to cycle to.
+            let primary = if n <= 1 {
+                "no other buffers".to_string()
+            } else {
+                format!("prev buffer (MRU) · {n} open")
+            };
+            Some((rect, primary, None))
         }
         HoverChip::PaletteForwardButton => {
             let rect = app.rects.palette_forward_button?;
-            Some((rect, "next buffer".to_string(), None))
+            let n = app.panes.len();
+            let primary = if n <= 1 {
+                "no other buffers".to_string()
+            } else {
+                format!("next buffer (MRU) · {n} open")
+            };
+            Some((rect, primary, None))
         }
         HoverChip::PaletteSearchChip => {
             let rect = app.rects.palette_search_chip?;
