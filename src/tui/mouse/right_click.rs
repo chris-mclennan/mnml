@@ -319,6 +319,30 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_mode_context_menu((x, y));
         return;
     }
+    // #21 v2 — right-click coverage for the remaining statusline
+    // chips (WRAP / LSP / Test). Small menus that surface the
+    // underlying palette commands so users can discover config
+    // knobs without dropping to `:`.
+    if let Some(r) = app.rects.statusline_lsp_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![MenuItem::new("Status", MenuAction::Command("LspStatus"))];
+        app.context_menu = Some(ContextMenu::new(Some("LSP".to_string()), (x, y), items));
+        return;
+    }
+    if let Some(r) = app.rects.statusline_test_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Run all", MenuAction::Command("test.run_all")),
+            MenuItem::new("Run file", MenuAction::Command("test.run_file")),
+            MenuItem::new("Run at cursor", MenuAction::Command("test.run_at_cursor")),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Tests".to_string()), (x, y), items));
+        return;
+    }
     if let Some(r) = app.rects.statusline_clock_chip
         && crate::app::dispatch::contains(r, x, y)
     {
