@@ -144,6 +144,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let path_padded = format!("{:<width$}", path_str, width = max_path);
         let group_str = w.group.clone().unwrap_or_default();
         let group_padded = format!("{:<width$}", group_str, width = max_group);
+        // #polish — colorize the group column so scanning a long
+        // list of workspaces reads faster. Selected rows keep the
+        // inverted-selection fg; unselected rows pick a color from
+        // the group name (stable hash).
+        let group_fg = if is_sel {
+            t.bg
+        } else if group_str.is_empty() {
+            t.comment
+        } else {
+            group_color_for(&group_str, t)
+        };
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(dot_glyph, Style::default().fg(dot_fg).bg(bg)),
@@ -157,7 +168,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .bg(bg),
             ),
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(group_padded, Style::default().fg(fg).bg(bg)),
+            Span::styled(
+                group_padded,
+                Style::default()
+                    .fg(group_fg)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
         let row_rect = Rect {
             x: inner.x,
@@ -233,5 +250,24 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 height: 1,
             },
         );
+    }
+}
+
+/// #polish — deterministic color mapping for group names. Same
+/// group name always gets the same color slot; different names
+/// spread across the theme's accent palette (7 slots).
+fn group_color_for(name: &str, t: crate::ui::theme::Theme) -> ratatui::style::Color {
+    let mut hash: u32 = 5381;
+    for b in name.bytes() {
+        hash = hash.wrapping_mul(33).wrapping_add(b as u32);
+    }
+    match hash % 7 {
+        0 => t.cyan,
+        1 => t.blue,
+        2 => t.green,
+        3 => t.yellow,
+        4 => t.orange,
+        5 => t.purple,
+        _ => t.red,
     }
 }
