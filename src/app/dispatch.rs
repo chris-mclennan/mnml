@@ -810,6 +810,24 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     if delta == 0 {
         return;
     }
+    // #polish 2026-07-06 — wheel over the bufferline strip cycles
+    // through open buffers (Chrome / Firefox tab-strip convention).
+    // Checked first so the strip's overlap with pane rects doesn't
+    // let editor scroll steal the notch. Bounded to prev/next per
+    // notch — no multi-step jump.
+    if app
+        .rects
+        .bufferline_tabs
+        .iter()
+        .any(|(r, _)| contains(*r, x, y))
+    {
+        if delta < 0 {
+            app.prev_buffer();
+        } else {
+            app.next_buffer();
+        }
+        return;
+    }
     // Wheel over the agents rail panel → scroll its content list. Checked
     // first + gated on the active section so the (stale) tree rect, which
     // overlaps the same rail region, can't shadow it. The render clamps the
