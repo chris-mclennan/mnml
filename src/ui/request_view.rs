@@ -2278,19 +2278,9 @@ fn draw_edit(
     }
 
     if cur_tab == crate::request_pane::EditTab::Vars {
-        let hint_y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            "    Active env vars — edit with :http.edit_env".to_string(),
-            dim,
-        )]));
-        register_tab_row(fields, hint_y);
-        rows.push(plain(String::new(), body_style));
-        // 2026-06-19 v2 — workspace plumbed; read both env files in
-        // .rqst → .mnml order and last-wins on same key (matches
-        // EnvSet::load precedence + the env editor picker).
-        // Runtime override (via `:http.pick_env`) wins first — matches
-        // the precedence used at send time so what's shown in Vars is
-        // what the request will resolve against.
+        // Read active env's vars. Runtime override wins first; then
+        // .rqst → .mnml order with last-wins on same key. Matches
+        // EnvSet::load precedence exactly.
         let env_name = crate::http::template::EnvSet::select(workspace, env_override)
             .name()
             .map(str::to_string)
@@ -2314,18 +2304,115 @@ fn draw_edit(
                 }
             }
         }
+        // Header line: env name + hint (edit lives in the palette
+        // for v1; the whole-table inline-edit is #23 follow-up).
         let name_y = rows.len() as u16;
-        rows.push(Line::from(vec![Span::styled(
-            format!("    env: {env_name}.env"),
-            Style::default().fg(t.cyan).bg(t.bg_dark),
-        )]));
+        rows.push(Line::from(vec![
+            Span::styled("    env: ", dim),
+            Span::styled(
+                format!("{env_name}.env"),
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("   · click a row to edit · :http.edit_env", dim),
+        ]));
         register_tab_row(fields, name_y);
         rows.push(plain(String::new(), body_style));
-        // 2026-06-20 polish — `+ Add new variable…` row at the
-        // top, each existing var row clickable to edit. Both
-        // register rects in App.rects.request_vars_rows; click
-        // handler in tui.rs dispatches to the env editor.
-        // #11 — uses the shared add_action_row helper.
+
+        // Same table-shape constants as render_kv_table — keeps the
+        // visual language identical to Params / Headers.
+        const TABLE_MAX_W: u16 = 100;
+        const TABLE_RIGHT_PAD: u16 = 3;
+        let table_w = area
+            .width
+            .saturating_sub(2)
+            .saturating_sub(TABLE_RIGHT_PAD)
+            .clamp(20, TABLE_MAX_W);
+        let inner_w = table_w.saturating_sub(4);
+        let name_w = (inner_w * 35 / 100).max(8);
+        let value_w = inner_w.saturating_sub(name_w);
+        let make_border = |left: char, sep: char, right: char, fill: char| -> Line<'static> {
+            let n_seg: String = std::iter::repeat_n(fill, (name_w + 2) as usize).collect();
+            let v_seg: String = std::iter::repeat_n(fill, (value_w + 2) as usize).collect();
+            Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled(
+                    format!("{}{}{}{}{}", left, n_seg, sep, v_seg, right),
+                    Style::default().fg(t.bg3).bg(t.bg_dark),
+                ),
+            ])
+        };
+        let make_row = |key_text: String,
+                        val_text: String,
+                        key_style: Style,
+                        val_style: Style|
+         -> Line<'static> {
+            let key_s: String = key_text.chars().take(name_w as usize).collect();
+            let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
+            let val_s: String = val_text.chars().take(value_w as usize).collect();
+            let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
+            let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
+            Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                Span::styled(key_s, key_style),
+                Span::styled(" ".repeat(pad_k), Style::default().bg(t.bg_dark)),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                border.clone(),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                Span::styled(val_s, val_style),
+                Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
+                Span::styled(" ", Style::default().bg(t.bg_dark)),
+                border,
+            ])
+        };
+
+        // Top border + header + separator.
+        rows.push(make_border('┌', '┬', '┐', '─'));
+        let hdr_style = Style::default()
+            .fg(t.comment)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD);
+        rows.push(make_row(
+            "Name".to_string(),
+            "Value".to_string(),
+            hdr_style,
+            hdr_style,
+        ));
+        rows.push(make_border('├', '┼', '┤', '─'));
+
+        // Whether a row exists to protect against tricky rendering
+        // when there are 0 vars.
+        let any_rows = !by_key.is_empty();
+        for (k, v) in &by_key {
+            let y = rows.len() as u16;
+            vars_rows_local.push((
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+                k.clone(),
+            ));
+            register_tab_row(fields, y);
+            let is_hover = rp.hover_vars_key.as_deref() == Some(k.as_str());
+            let key_style = Style::default()
+                .fg(if is_hover { t.yellow } else { t.cyan })
+                .bg(t.bg_dark)
+                .add_modifier(Modifier::BOLD);
+            let val_style = Style::default()
+                .fg(if is_hover { t.yellow } else { t.fg })
+                .bg(t.bg_dark);
+            rows.push(make_row(k.clone(), v.clone(), key_style, val_style));
+        }
+        rows.push(make_border('└', '┴', '┘', '─'));
+
+        // `+ Add new variable…` row below the table — matches the
+        // Params / Headers add-row treatment.
         let add_y = rows.len() as u16;
         rows.push(add_action_row("Add new variable…", t));
         vars_rows_local.push((
@@ -2335,55 +2422,17 @@ fn draw_edit(
                 width: area.width,
                 height: 1,
             },
-            String::new(), // empty = add row
+            String::new(),
         ));
         register_tab_row(fields, add_y);
-        if by_key.is_empty() {
+
+        if !any_rows {
             let y = rows.len() as u16;
             rows.push(Line::from(vec![Span::styled(
                 "    (no env vars yet — click + Add or :http.edit_env)".to_string(),
                 dim,
             )]));
             register_tab_row(fields, y);
-        } else {
-            for (k, v) in &by_key {
-                let y = rows.len() as u16;
-                vars_rows_local.push((
-                    Rect {
-                        x: area.x,
-                        y,
-                        width: area.width,
-                        height: 1,
-                    },
-                    k.clone(),
-                ));
-                register_tab_row(fields, y);
-                let preview = if v.len() > 56 {
-                    format!("{}…", &v[..54])
-                } else {
-                    v.clone()
-                };
-                // Hover highlight — same treatment as Params. (#11 v13)
-                let is_hover = rp.hover_vars_key.as_deref() == Some(k.as_str());
-                let row_bg = if is_hover { t.cyan } else { t.bg_dark };
-                let key_fg = if is_hover { t.bg_dark } else { t.cyan };
-                let sep_fg = if is_hover { t.bg_dark } else { t.comment };
-                let val_fg = if is_hover { t.bg_dark } else { t.fg };
-                let chev_fg = if is_hover { t.bg_dark } else { t.comment };
-                rows.push(Line::from(vec![
-                    Span::styled("  ", Style::default().bg(row_bg)),
-                    Span::styled("› ", Style::default().fg(chev_fg).bg(row_bg)),
-                    Span::styled(
-                        k.clone(),
-                        Style::default()
-                            .fg(key_fg)
-                            .bg(row_bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(" = ".to_string(), Style::default().fg(sep_fg).bg(row_bg)),
-                    Span::styled(preview, Style::default().fg(val_fg).bg(row_bg)),
-                ]));
-            }
         }
     }
 
