@@ -1825,6 +1825,16 @@ fn draw_empty_workspace_state(frame: &mut Frame, app: &mut App, inner: Rect) {
             Some("view.add_workspace"),
             t.fg,
         ),
+        (
+            "▸ Switch workspace…".to_string(),
+            Some("view.switch_workspace"),
+            t.fg,
+        ),
+        (
+            "▸ Manage workspaces…".to_string(),
+            Some("view.manage_workspaces"),
+            t.fg,
+        ),
     ];
     if let Some(dw) = &app.config.default_workspace
         && dw != &app.workspace
