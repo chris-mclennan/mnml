@@ -1933,8 +1933,6 @@ pub struct PaneRects {
     /// `(rect, row_idx)` per row in the Cloud Agents panel.
     /// Click → copy runId + toast; right-click → context menu.
     pub cloud_agents_rows: Vec<(Rect, usize)>,
-    /// The scrollable content area of the cloud panel.
-    pub cloud_agents_area: Option<Rect>,
     /// Click rect for the filter input at the top of the cloud panel.
     pub cloud_agents_filter_input: Option<Rect>,
     /// Click rect for the "compact / standard" density chip in the
@@ -2404,9 +2402,6 @@ pub struct PaneRects {
     /// column (or sets it as the sort key if it wasn't).
     pub spend_headers: Vec<(Rect, usize, crate::pane::SpendSortKey)>,
     /// The picker overlay's outer box (when open) and `(rect, filtered-index)` per visible row.
-    /// Inner rect of the glyph builder's live-preview area. Sixel
-    /// bytes get painted here at frame end by the render loop.
-    pub glyph_builder_preview: Option<Rect>,
     pub picker_box: Option<Rect>,
     pub picker_items: Vec<(Rect, usize)>,
     /// On-screen cell where the picker's query caret should sit (when open).
@@ -10573,16 +10568,6 @@ impl App {
         self.open_path(&path);
     }
 
-    /// Harpoon: clear slot N (1-based). Used by the menu picker's accept
-    /// path when the user is asked to free a slot.
-    pub fn harpoon_clear(&mut self, slot1: usize) {
-        if !(1..=9).contains(&slot1) {
-            return;
-        }
-        self.harpoon[slot1 - 1] = None;
-        self.toast(format!("harpoon: slot {slot1} cleared"));
-    }
-
     /// Harpoon: open a picker over the occupied slots. Accept ⇒ jump to
     /// that slot's pinned file. Toasts if every slot is empty.
     pub fn harpoon_open_menu(&mut self) {
@@ -11569,14 +11554,6 @@ impl App {
         }
     }
 
-    /// Convenience — level=Info.
-    pub fn toast_info(&mut self, msg: impl Into<String>) {
-        self.toast_leveled(msg, ToastLevel::Info);
-    }
-    /// Convenience — level=Warn (renders same as Info per current design).
-    pub fn toast_warn(&mut self, msg: impl Into<String>) {
-        self.toast_leveled(msg, ToastLevel::Warn);
-    }
     /// Convenience — level=Error (renders with red border).
     pub fn toast_error(&mut self, msg: impl Into<String>) {
         self.toast_leveled(msg, ToastLevel::Error);

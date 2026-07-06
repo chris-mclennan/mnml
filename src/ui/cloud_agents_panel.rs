@@ -609,10 +609,4 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     app.rects.cloud_agents_rows = click_targets;
-    app.rects.cloud_agents_area = Some(Rect {
-        x: area.x,
-        y: content_top,
-        width: area.width,
-        height: visible_h as u16,
-    });
 }

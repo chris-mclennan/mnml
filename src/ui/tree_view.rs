@@ -526,45 +526,6 @@ fn visible_integration_indices(app: &App) -> Vec<usize> {
         .collect()
 }
 
-/// Height the INTEGRATIONS section wants when pinned above GIT. Counts
-/// 1 row for the header + `ceil(N / icons_per_row)` rows for the grid
-/// (where `icons_per_row` is derived from `rail_w / chip_w`). Returns
-/// 1 (just the header) when there are no installed integrations — the
-/// header stays visible so the user can still see the section + the
-/// future `+` button (the misleading "Jira is configured" state when
-/// it's just a default is gone).
-#[allow(dead_code)] // qa-feature 2026-06-30 — INTEGRATIONS section removed
-// from file browser, retained for the integrations activity-bar panel.
-fn compute_integration_section_height(app: &App, rail_width: usize) -> u16 {
-    let n = visible_integration_indices(app).len();
-    if n == 0 {
-        // Header-only — keeps the section's identity visible even when
-        // nothing is installed yet. (Used to return 0, which hid the
-        // section entirely. With detection in place we want users to
-        // see "INTEGRATIONS" so the `+` button discovery flow is
-        // discoverable from an empty rail.)
-        if app.config.ui.integration_icons.is_empty() {
-            return 0;
-        }
-        // #polish 2026-07-06 — reserve a hint row when the section is
-        // configured but has no detected integrations. Users see WHY
-        // it's empty instead of a mysterious silent header.
-        return 2;
-    }
-    if !app.integration_section_expanded {
-        // Compact: header + 1 row of icons packed horizontally. Each
-        // chip is 4 cells (` g  ` or ` g ` for the 2-cell-wide
-        // Claude/Codex variants — see render). Multiple rows if the
-        // icons don't all fit in one rail width.
-        const CHIP_W: usize = 4;
-        let per_row = (rail_width / CHIP_W).max(1);
-        let rows = n.div_ceil(per_row);
-        return (1 + rows) as u16;
-    }
-    // Expanded: one icon per row (icon + name). Header + N rows.
-    (1 + n) as u16
-}
-
 /// Render the INTEGRATIONS section: a `> INTEGRATIONS` header (using
 /// the same chevron + label pattern as GIT) followed by a grid of
 /// plain-glyph icons. Each icon row is `chip_w` cells per slot; no
@@ -794,54 +755,6 @@ fn draw_integration_section(
         // icon fires the integration's command.
         app.rects.integration_icon_rects.push((row_rect, *i));
     }
-}
-
-/// Rough estimate of the height GIT wants when pinned to the bottom of
-/// the rail. Counts: 1 row for the header, then (if expanded) a
-/// sub-label + the branch rows + a sub-label + the worktree rows.
-/// Caller clamps against a per-rail maximum so a long branch list
-/// can't push the workspace tree out entirely.
-#[allow(dead_code)] // qa-feature 2026-06-30 — GIT section removed from
-// file browser, retained for potential reuse.
-fn compute_git_section_height(app: &App) -> u16 {
-    if !app.git_section_expanded {
-        return 1;
-    }
-    let mut h: u16 = 1; // header
-    if !app.git_rail.branches.is_empty() {
-        let total = app.git_rail.branches.len();
-        // Match the renderer's collapse logic: cap when not expanded,
-        // add 1 for the `+ N more` toggle row when applicable, add 1
-        // for the current-branch force-show (already counted if cap
-        // covers it; +1 max).
-        let shown = if app.git_branches_expanded {
-            total
-        } else {
-            total.min(BRANCH_LIST_CAP)
-        };
-        let toggle_row = if total > BRANCH_LIST_CAP { 1 } else { 0 };
-        let current_outside_cap = if !app.git_branches_expanded && total > BRANCH_LIST_CAP {
-            // +1 for the force-shown current branch, only when it'd
-            // actually be hidden by the cap. Cheap upper-bound: assume
-            // it falls outside and reserve the row.
-            1
-        } else {
-            0
-        };
-        h = h.saturating_add(1 + (shown + toggle_row + current_outside_cap) as u16);
-    }
-    if !app.git_rail.worktrees.is_empty() {
-        h = h.saturating_add(1 + app.git_rail.worktrees.len() as u16);
-    }
-    if !app.git_rail.stashes.is_empty() {
-        h = h.saturating_add(1 + app.git_rail.stashes.len() as u16);
-    }
-    if !app.git_rail.tags.is_empty() {
-        h = h.saturating_add(1 + app.git_rail.tags.len() as u16);
-    }
-    // Clamp at a sane upper bound so a 50-branch repo can't eat the
-    // whole rail — the actual rail-height cap is applied by the caller.
-    h.min(40)
 }
 
 fn section_chev(expanded: bool, nerd: bool) -> &'static str {

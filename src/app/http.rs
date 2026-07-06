@@ -1661,13 +1661,6 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
     }
 
-    /// Deprecated alias — kept while existing callers migrate. New
-    /// callers should use [`Self::open_request_field_context_menu`]
-    /// with the actual field.
-    pub fn open_request_url_context_menu(&mut self, anchor: (u16, u16)) {
-        self.open_request_field_context_menu(crate::request_pane::EditField::Url, anchor);
-    }
-
     /// `y` in the browser pane's network panel — copy the selected request as a
     /// curl command to the clipboard.
     pub fn copy_net_entry_curl(&mut self) {
