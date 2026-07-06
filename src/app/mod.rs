@@ -11178,6 +11178,35 @@ impl App {
         self.pending_confirm = None;
     }
 
+    /// #25 v3 — idle refresh of the Claude Agents prefetch cache.
+    /// Every 60 seconds re-runs the background scan so an open
+    /// Agents dashboard picks up fresh sessions without the user
+    /// pressing `r`. Cheap: only spawns a thread; the main loop
+    /// picks up results whenever the pane next renders.
+    pub fn tick_claude_agents_prefetch(&mut self) {
+        static LAST_TICK: std::sync::OnceLock<std::sync::Mutex<Option<std::time::Instant>>> =
+            std::sync::OnceLock::new();
+        let mutex = LAST_TICK.get_or_init(|| std::sync::Mutex::new(None));
+        let Ok(mut last) = mutex.lock() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        let due = last
+            .map(|t| now.duration_since(t) >= std::time::Duration::from_secs(60))
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        *last = Some(now);
+        let handle = self.claude_agents_prefetch.clone();
+        std::thread::spawn(move || {
+            let rows = crate::claude_agents::prefetch_rows();
+            if let Ok(mut guard) = handle.lock() {
+                *guard = Some(rows);
+            }
+        });
+    }
+
     /// #20 — expire the undo slot when it's older than [`UNDO_TTL`].
     /// Called from the main loop's tick alongside toast_stack aging.
     pub fn tick_pending_undo(&mut self) {
@@ -11606,6 +11635,7 @@ impl App {
         }
         self.expire_progress_items();
         self.tick_pending_undo();
+        self.tick_claude_agents_prefetch();
     }
 
     /// Lines of viewport drift before [`Self::refresh_scroll_semantic_tokens`]
