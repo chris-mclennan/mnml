@@ -460,18 +460,34 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(c) => {
                 let low = c.to_ascii_lowercase();
                 // Hotkey: first alpha of primary label matches primary,
-                // 'c'/'n' → cancel, 'y' → primary.
-                let (primary_label, _) = crate::ui::prompt::confirm_labels(&p.kind).unwrap();
-                let primary_hk = primary_label
-                    .chars()
-                    .find(|c| c.is_ascii_alphabetic())
-                    .map(|c| c.to_ascii_lowercase());
+                // first alpha of cancel label matches cancel, `y`
+                // always primary, `n` always cancel. Reading BOTH
+                // labels dynamically fixes the design-critic 2026-07-06
+                // finding — `AiToolConfirm`'s cancel label is "Deny"
+                // (not "Cancel"), so `d` is the correct hotkey there;
+                // hardcoding `c`/`n` made the underline dead.
+                let (primary_label, cancel_label) =
+                    crate::ui::prompt::confirm_labels(&p.kind).unwrap();
+                let first_alpha = |s: &str| {
+                    s.chars()
+                        .find(|c| c.is_ascii_alphabetic())
+                        .map(|c| c.to_ascii_lowercase())
+                };
+                let primary_hk = first_alpha(primary_label);
+                let cancel_hk = first_alpha(cancel_label);
                 let hit_primary = matches!(primary_hk, Some(pk) if pk == low) || low == 'y';
-                let hit_cancel = low == 'c' || low == 'n';
-                if hit_primary {
-                    app.run_confirm_button(true);
-                } else if hit_cancel {
+                let hit_cancel =
+                    matches!(cancel_hk, Some(ck) if ck == low) || low == 'c' || low == 'n';
+                // Primary and cancel could collide (unlikely — e.g.
+                // both "Continue" and "Cancel" start with `c`). Prefer
+                // cancel in that case; safer default for a destructive
+                // action. AiToolConfirm's `d` (Deny) doesn't collide
+                // with `a` (Allow), so this only bites theoretical
+                // future dialogs.
+                if hit_cancel {
                     app.run_confirm_button(false);
+                } else if hit_primary {
+                    app.run_confirm_button(true);
                 }
                 return;
             }

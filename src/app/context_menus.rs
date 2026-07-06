@@ -639,7 +639,19 @@ impl App {
             ),
             _ => (format!("line {}", row + 1), false, false),
         };
+        // vscode-mouse 2026-07-06 r2 SEV-2 — clipboard / undo ops
+        // used to be missing from the editor right-click menu. VS
+        // Code migrants land on this menu after making a selection
+        // and expect Cut / Copy / Paste on top. Cut/Copy commands
+        // handle the "no selection → operate on current line" case
+        // at run-time.
         let mut items = vec![
+            MenuItem::new("Cut", MenuAction::Command("editor.cut")),
+            MenuItem::new("Copy", MenuAction::Command("editor.copy")),
+            MenuItem::new("Paste", MenuAction::Command("editor.paste")),
+            MenuItem::new("Undo", MenuAction::Command("editor.undo")),
+            MenuItem::new("Redo", MenuAction::Command("editor.redo")),
+            MenuItem::new("Select all", MenuAction::Command("editor.select_all")),
             MenuItem::new(
                 "Go to definition",
                 MenuAction::Command("lsp.goto_definition"),

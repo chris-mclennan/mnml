@@ -335,6 +335,94 @@ fn builtin_commands() -> Vec<Command> {
                 }
             },
         },
+        // vscode-mouse 2026-07-06 r2 SEV-2 — editor right-click had
+        // NO clipboard ops. Register the five basics as palette
+        // commands so the context menu (and any future palette
+        // search) can reach them uniformly.
+        Command {
+            id: "editor.undo",
+            title: "Undo (Ctrl+Z)",
+            group: "editor",
+            keys: &[],
+            run: |app| {
+                if let Some(b) = app.active_editor_mut() {
+                    let _ = b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::Undo],
+                        &mut crate::clipboard::Clipboard::new(),
+                        0,
+                    );
+                }
+            },
+        },
+        Command {
+            id: "editor.cut",
+            title: "Cut (Ctrl+X) — selection or current line",
+            group: "editor",
+            keys: &[],
+            run: |app| {
+                let ops = match app.active_editor() {
+                    Some(b) if b.editor.has_selection() => {
+                        vec![crate::edit_op::EditOp::CutSelection]
+                    }
+                    Some(_) => vec![
+                        crate::edit_op::EditOp::YankLine,
+                        crate::edit_op::EditOp::DeleteLine,
+                    ],
+                    None => return,
+                };
+                if let Some(b) = app.active_editor_mut() {
+                    let _ = b.apply_edit_ops(ops, &mut crate::clipboard::Clipboard::new(), 0);
+                }
+            },
+        },
+        Command {
+            id: "editor.copy",
+            title: "Copy (Ctrl+C) — selection or current line",
+            group: "editor",
+            keys: &[],
+            run: |app| {
+                let ops = match app.active_editor() {
+                    Some(b) if b.editor.has_selection() => {
+                        vec![crate::edit_op::EditOp::YankSelection]
+                    }
+                    Some(_) => vec![crate::edit_op::EditOp::YankLine],
+                    None => return,
+                };
+                if let Some(b) = app.active_editor_mut() {
+                    let _ = b.apply_edit_ops(ops, &mut crate::clipboard::Clipboard::new(), 0);
+                }
+            },
+        },
+        Command {
+            id: "editor.paste",
+            title: "Paste (Ctrl+V)",
+            group: "editor",
+            keys: &[],
+            run: |app| {
+                if let Some(b) = app.active_editor_mut() {
+                    let _ = b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::Paste],
+                        &mut crate::clipboard::Clipboard::new(),
+                        0,
+                    );
+                }
+            },
+        },
+        Command {
+            id: "editor.select_all",
+            title: "Select all (Ctrl+A)",
+            group: "editor",
+            keys: &[],
+            run: |app| {
+                if let Some(b) = app.active_editor_mut() {
+                    let _ = b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::SelectAll],
+                        &mut crate::clipboard::Clipboard::new(),
+                        0,
+                    );
+                }
+            },
+        },
         Command {
             id: "view.redraw",
             title: "Force a full redraw (clears the terminal)",
@@ -3589,6 +3677,16 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_http_chain_picker(),
         },
         Command {
+            id: "http.new_env",
+            title: "HTTP: create a new .env in .mnml/env/",
+            group: "http",
+            // Mirror of `+ New env` in the HTTP sidebar — prompts for
+            // a name, creates the file, switches the active env, and
+            // opens it in the editor. design-critic 2026-07-06 r2.
+            keys: &[],
+            run: |app| app.http_new_env_prompt(),
+        },
+        Command {
             id: "http.new_chain",
             title: "HTTP: create a new .chain.json in .mnml/chains/",
             group: "http",
@@ -4778,7 +4876,11 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "task.run",
             title: "Tasks: run a configured task in a terminal pane",
-            group: "ai",
+            // design-critic 2026-07-06 r2 — was "ai", the only ai-*
+            // outlier that spawns a Pty. Every other Pty command
+            // (`term.*`) lives in "term"; move here for consistent
+            // help-overlay grouping.
+            group: "term",
             keys: &[],
             run: |app| app.open_task_picker(),
         },

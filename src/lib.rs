@@ -282,6 +282,10 @@ pub enum HoverChip {
     /// the mouse-hunt finding "bufferline + new-tab has no tooltip"
     /// (2026-06-07 chrome hunt #288).
     BufferlineNewTab,
+    /// #polish 2026-07-06 r2 — hover on the `TABS N` chip at the
+    /// top-right of the bufferline. Tooltip explains that click
+    /// switches tab-pages / creates a new one.
+    BufferlineTabsLabel,
     /// The bufferline `●━` theme-toggle pill (handle-left / handle-
     /// right depending on whether `theme_toggle` is at the primary
     /// or secondary theme).

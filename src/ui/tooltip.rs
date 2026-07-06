@@ -695,6 +695,22 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: open a new scratch buffer".into()),
             ))
         }
+        HoverChip::BufferlineTabsLabel => {
+            let rect = app.rects.bufferline_tabs_label?;
+            let n = app.layouts.len();
+            let dirty = app.dirty_buffer_names().len();
+            let primary = if n <= 1 {
+                "single tab page".to_string()
+            } else {
+                format!("{n} tab pages")
+            };
+            let secondary = if dirty > 0 {
+                format!("click: switch tab page · ● = {dirty} dirty buffer(s)")
+            } else {
+                "click: switch tab page · right-click: menu".to_string()
+            };
+            Some((rect, primary, Some(secondary)))
+        }
         HoverChip::BufferlineThemeToggle => {
             let rect = app.rects.bufferline_theme_toggle?;
             let cur = app.config.ui.theme.as_str();

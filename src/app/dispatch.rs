@@ -788,6 +788,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::BufferlineNewTab);
     }
+    if let Some(r) = app.rects.bufferline_tabs_label
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::BufferlineTabsLabel);
+    }
     if let Some(r) = app.rects.bufferline_theme_toggle
         && contains(r, x, y)
     {

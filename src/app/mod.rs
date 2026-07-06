@@ -97,12 +97,16 @@ const KEYS_STANDARD_STUB: &str = r#"
 # registered command. `"none"` / `"unbound"` removes a default.
 
 [keys.standard]
-# example: rebind Save to also fire format-on-save
-# "ctrl+s" = "file.save"
-# example: add F5 → run the build task
-# "f5" = "task.build"
-# example: remove the default Ctrl+, binding
-# "ctrl+," = "unbound"
+# examples: rebind chords in modeless / VS Code-style editing.
+# EditOp actions: select_all, undo, redo, paste, cut_selection,
+# yank_selection, yank_line, delete_line, duplicate_line,
+# toggle_line_comment, move_word_left/right, move_line_up/down,
+# move_line_start/end, page_up/down, insert_newline, etc.
+# App action: "save". Special: "none" / "unbound" removes the default.
+#
+# "ctrl+shift+k" = "delete_line"
+# "ctrl+enter" = "move_line_end; insert_newline"   # composite: sequence
+# "ctrl+p" = "unbound"
 "#;
 
 /// How long the F1 overlay's "flash these rects" highlight stays painted
