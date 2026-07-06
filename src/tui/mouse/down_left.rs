@@ -1932,7 +1932,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_replay_mock_from_path(&path);
         return;
     }
-    // #22 — Collections row → open the file as a Request pane.
+    // #22 — Collections file row → open the file as a Request pane.
     if let Some((_, path)) = app
         .rects
         .http_panel_collection_rows
@@ -1941,6 +1941,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .cloned()
     {
         app.open_path(&path);
+        return;
+    }
+    // #22 v2 — Collections folder row → toggle expand/collapse.
+    if let Some((_, dir)) = app
+        .rects
+        .http_panel_collection_folder_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        if !app.http_panel_collections_collapsed_dirs.remove(&dir) {
+            app.http_panel_collections_collapsed_dirs.insert(dir);
+        }
         return;
     }
     // `↓ Import…` → open the import picker (Postman / HAR).

@@ -92,6 +92,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_chain_rows.clear();
     app.rects.http_panel_mock_rows.clear();
     app.rects.http_panel_collection_rows.clear();
+    app.rects.http_panel_collection_folder_rows.clear();
     app.rects.http_panel_import_chip = None;
 
     let files_len = app.http_panel_files_cache.len();
@@ -870,10 +871,11 @@ fn draw_mocks(
     y
 }
 
-/// #22 v1 — COLLECTIONS section body. Renders each request file
-/// under `.mnml/collections/` as its relative path so folder
-/// hierarchy shows through (e.g. `auth/login.http`). Click →
-/// open the file as a Request pane.
+/// #22 v2 — COLLECTIONS section body. Renders as an expandable
+/// tree: folder rows show `▸ auth/` / `▾ auth/` chevrons, files
+/// nest under their parent folder with a leading `·` indent per
+/// depth level. Left-click a folder row → toggle collapse.
+/// Left-click a file row → open as Request pane.
 fn draw_collections(
     frame: &mut Frame,
     app: &mut App,
@@ -906,33 +908,128 @@ fn draw_collections(
         return y;
     }
     let coll_root = app.workspace.join(".mnml").join("collections");
-    for path in files.iter().take(SECTION_ROW_CAP) {
-        if y >= bottom {
+    // Build tree: walk each file's parent chain, register unique
+    // dirs, emit rows in depth-first sorted order.
+    let mut dir_children: std::collections::BTreeMap<std::path::PathBuf, Vec<std::path::PathBuf>> =
+        std::collections::BTreeMap::new();
+    let mut dir_subdirs: std::collections::BTreeMap<
+        std::path::PathBuf,
+        std::collections::BTreeSet<std::path::PathBuf>,
+    > = std::collections::BTreeMap::new();
+    for path in &files {
+        let mut ancestor = path.parent().unwrap_or(&coll_root).to_path_buf();
+        dir_children
+            .entry(ancestor.clone())
+            .or_default()
+            .push(path.clone());
+        while ancestor != coll_root {
+            let parent = ancestor.parent().unwrap_or(&coll_root).to_path_buf();
+            dir_subdirs
+                .entry(parent.clone())
+                .or_default()
+                .insert(ancestor.clone());
+            if parent == coll_root {
+                break;
+            }
+            ancestor = parent;
+        }
+    }
+    // Walk from root, emitting rows.
+    let mut stack: Vec<(std::path::PathBuf, u16)> = vec![(coll_root.clone(), 0)];
+    let mut visited: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
+    // Emit in a controlled loop; cap total rows to SECTION_ROW_CAP * 3
+    // since the tree has folders + files interleaved.
+    let cap = SECTION_ROW_CAP * 3;
+    let mut emitted = 0usize;
+    while let Some((dir, depth)) = stack.pop() {
+        if !visited.insert(dir.clone()) {
+            continue;
+        }
+        if emitted >= cap || y >= bottom {
             break;
         }
-        let rel = path
-            .strip_prefix(&coll_root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned();
-        let row_rect = Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled("\u{f15c} ", Style::default().fg(t.blue).bg(bg)),
-                Span::styled(rel, Style::default().fg(t.fg).bg(bg)),
-            ])),
-            row_rect,
-        );
-        app.rects
-            .http_panel_collection_rows
-            .push((row_rect, path.clone()));
-        y += 1;
+        // Emit folder row (skip the root — its label is the section header).
+        if dir != coll_root {
+            let collapsed = app.http_panel_collections_collapsed_dirs.contains(&dir);
+            let chev = if collapsed { "\u{25B8}" } else { "\u{25BE}" };
+            let indent = "  ".repeat((depth.saturating_sub(1)) as usize);
+            let name = dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let row_rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(format!("   {indent}"), Style::default().bg(bg)),
+                    Span::styled(format!("{chev} "), Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(
+                        format!("\u{f07b} {name}/"),
+                        Style::default()
+                            .fg(t.yellow)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ])),
+                row_rect,
+            );
+            app.rects
+                .http_panel_collection_folder_rows
+                .push((row_rect, dir.clone()));
+            y += 1;
+            emitted += 1;
+            if collapsed || y >= bottom {
+                continue;
+            }
+        }
+        // Push subdirs onto stack (reverse for DFS order-preservation).
+        if let Some(subs) = dir_subdirs.get(&dir) {
+            let mut items: Vec<_> = subs.iter().cloned().collect();
+            items.reverse();
+            for sub in items {
+                stack.push((sub, depth + 1));
+            }
+        }
+        // Emit files in this dir.
+        if let Some(kids) = dir_children.get(&dir) {
+            for path in kids {
+                if emitted >= cap || y >= bottom {
+                    break;
+                }
+                let file_depth = if dir == coll_root { 0 } else { depth };
+                let indent = "  ".repeat(file_depth as usize);
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                let row_rect = Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(format!("     {indent}"), Style::default().bg(bg)),
+                        Span::styled("\u{f15c} ", Style::default().fg(t.blue).bg(bg)),
+                        Span::styled(name, Style::default().fg(t.fg).bg(bg)),
+                    ])),
+                    row_rect,
+                );
+                app.rects
+                    .http_panel_collection_rows
+                    .push((row_rect, path.clone()));
+                y += 1;
+                emitted += 1;
+            }
+        }
     }
     y
 }

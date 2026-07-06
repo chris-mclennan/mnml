@@ -1826,6 +1826,9 @@ pub struct PaneRects {
     /// open the request file. Populated by `http_panel_refresh`
     /// walking `.mnml/collections/**/*.http`.
     pub http_panel_collection_rows: Vec<(Rect, std::path::PathBuf)>,
+    /// #22 v2 — folder-row rects in the COLLECTIONS tree. Click
+    /// toggles `http_panel_collections_collapsed_dirs`.
+    pub http_panel_collection_folder_rows: Vec<(Rect, std::path::PathBuf)>,
     /// `↓ Import…` bottom-action chip. Click → open the import
     /// picker (Postman collection / HAR).
     pub http_panel_import_chip: Option<Rect>,
@@ -2768,6 +2771,11 @@ pub struct App {
     /// the renderer prints each as its relative path under
     /// `collections/` so folder structure shows through.
     pub http_panel_collections_cache: Vec<std::path::PathBuf>,
+    /// #22 v2 — set of collection folder paths (absolute) that
+    /// are currently *collapsed* in the sidebar tree. Default
+    /// state: everything expanded. Persists across activity-
+    /// section toggles within a session; not written to disk.
+    pub http_panel_collections_collapsed_dirs: std::collections::HashSet<std::path::PathBuf>,
     /// Collapse state for the sectioned HTTP sidebar. Indices:
     /// `0=Files 1=Recent 2=Captured 3=Envs 4=Chains 5=Mocks 6=Collections`.
     /// Persists across activity-section toggles within a session;
@@ -4405,6 +4413,7 @@ impl App {
             http_panel_envs_cache: Vec::new(),
             http_panel_chains_cache: Vec::new(),
             http_panel_collections_cache: Vec::new(),
+            http_panel_collections_collapsed_dirs: std::collections::HashSet::new(),
             http_panel_mocks_cache: Vec::new(),
             http_panel_section_collapsed: [false; 7],
             notes_panel_files_cache: Vec::new(),
