@@ -242,8 +242,61 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .activity_bar_icons
                 .iter()
                 .find(|(_, s)| *s == section)?;
-            let (_, _, label, _) = section.meta();
-            Some((rect, label.to_string(), None))
+            // #polish 2026-07-06 — enrich the single-word label
+            // with a click hint + description of what the section
+            // shows. Users hover to LEARN, not just to confirm
+            // the name — the extra context closes the loop.
+            use crate::app::ActivitySection;
+            let (primary, secondary): (&str, Option<&str>) = match section {
+                ActivitySection::Explorer => (
+                    "click: Files rail",
+                    Some("workspace file tree · new file / folder"),
+                ),
+                ActivitySection::Search => {
+                    ("click: Search rail", Some("ripgrep across the workspace"))
+                }
+                ActivitySection::Git => (
+                    "click: Git graph",
+                    Some("commits · branches · worktrees · stash"),
+                ),
+                ActivitySection::Debug => (
+                    "click: Debug rail",
+                    Some("breakpoints · watches · call stack"),
+                ),
+                ActivitySection::Integrations => (
+                    "click: Integrations rail",
+                    Some("browser / mixr / sibling tools · + to add"),
+                ),
+                ActivitySection::Sessions => (
+                    "click: Sessions rail",
+                    Some("Claude / Codex / shell sessions"),
+                ),
+                ActivitySection::Agents => (
+                    "click: Agents rail",
+                    Some("running Claude Code + Codex sessions"),
+                ),
+                ActivitySection::CloudAgents => (
+                    "click: Cloud Agents rail",
+                    Some("ECS runner + Anthropic managed sessions"),
+                ),
+                ActivitySection::Http => (
+                    "click: HTTP rail",
+                    Some("requests · recent · captured · envs · collections"),
+                ),
+                ActivitySection::Notes => (
+                    "click: Notes rail",
+                    Some(".mnml/notes/*.md persistent scratch"),
+                ),
+                ActivitySection::Todos => (
+                    "click: TODOs rail",
+                    Some("TODO / FIXME / XXX / HACK / REVIEW hits"),
+                ),
+                ActivitySection::Mount(_) => {
+                    let (_, _, label, _) = section.meta();
+                    return Some((rect, label.to_string(), None));
+                }
+            };
+            Some((rect, primary.to_string(), secondary.map(String::from)))
         }
         HoverChip::GitGraphCommitMsg {
             pane_id,

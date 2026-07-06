@@ -137,6 +137,70 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // #polish 2026-07-06 — right-click on an activity-bar icon
+    // opens a small menu with "Show / Focus this rail" (mirrors
+    // left-click) + convenient jumps. Users familiar with VS
+    // Code will recognize the pattern.
+    if let Some(&(_, section)) = app
+        .rects
+        .activity_bar_icons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let (_, _, label, cmd_id) = section.meta();
+        // Section-specific quick actions in addition to the
+        // basic show/focus.
+        let mut items: Vec<MenuItem> = Vec::new();
+        items.push(MenuItem::new(
+            format!("Show {label}"),
+            MenuAction::Command(cmd_id),
+        ));
+        use crate::app::ActivitySection;
+        match section {
+            ActivitySection::Explorer => {
+                items.push(MenuItem::new(
+                    "Reveal active file",
+                    MenuAction::Command("view.reveal_active"),
+                ));
+                items.push(MenuItem::new(
+                    "Refresh tree",
+                    MenuAction::Command("tree.refresh"),
+                ));
+            }
+            ActivitySection::Http => {
+                items.push(MenuItem::new(
+                    "+ New request",
+                    MenuAction::Command("http.new"),
+                ));
+                items.push(MenuItem::new(
+                    "Paste curl from clipboard",
+                    MenuAction::Command("http.paste_curl"),
+                ));
+            }
+            ActivitySection::Notes => {
+                items.push(MenuItem::new(
+                    "+ New note",
+                    MenuAction::Command("notes.new"),
+                ));
+            }
+            ActivitySection::Todos => {
+                items.push(MenuItem::new(
+                    "Rescan",
+                    MenuAction::Command("todos.refresh"),
+                ));
+            }
+            ActivitySection::Agents => {
+                items.push(MenuItem::new(
+                    "Open dashboard",
+                    MenuAction::Command("ai.dashboard"),
+                ));
+            }
+            _ => {}
+        }
+        app.context_menu = Some(ContextMenu::new(Some(label.to_string()), (x, y), items));
+        return;
+    }
     // #21 v6 — right-click on a response tab (Body / Headers /
     // Timeline / Tests) opens a small menu of tab-scoped actions.
     if let Some(tab) = app
