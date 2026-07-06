@@ -317,6 +317,36 @@ impl App {
         ));
     }
 
+    /// Copy the active Request pane's Done response body to the
+    /// system clipboard. No-op + toast when there's no response.
+    /// Same shape as `http.copy_curl` but for the response side.
+    pub fn http_copy_response_body(&mut self) {
+        let Some(cur) = self.active else { return };
+        let body = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                crate::request_pane::RunState::Done(r) => r.body.clone(),
+                crate::request_pane::RunState::Streaming(r) => r.body.clone(),
+                _ => {
+                    self.toast("copy: no response body yet");
+                    return;
+                }
+            },
+            _ => return,
+        };
+        self.clipboard.set(body, false);
+        self.toast("response body copied");
+    }
+
+    /// Toggle the Response body's wrap mode. Same as the `w` chord
+    /// over a Request pane in Response view; exposed as a chip on
+    /// the Response tab strip so mouse users can find it.
+    pub fn http_toggle_response_wrap(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.body_wrap = !rp.body_wrap;
+        }
+    }
+
     /// Open a picker for the Response body's render format.
     pub fn http_response_format_prompt(&mut self) {
         use crate::picker::{Picker, PickerItem, PickerKind};

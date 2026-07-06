@@ -904,9 +904,20 @@ pub fn draw(
     // `content_inner`.
     let content_inner = if response_inner.height >= 3 {
         let mut type_chip: Option<Rect> = None;
-        app.rects.request_response_tabs =
-            paint_response_tab_strip(frame, rp, response_inner, t, &mut type_chip);
+        let mut copy_chip: Option<Rect> = None;
+        let mut wrap_chip: Option<Rect> = None;
+        app.rects.request_response_tabs = paint_response_tab_strip(
+            frame,
+            rp,
+            response_inner,
+            t,
+            &mut type_chip,
+            &mut copy_chip,
+            &mut wrap_chip,
+        );
         app.rects.request_response_type_chip = type_chip;
+        app.rects.request_response_copy_chip = copy_chip;
+        app.rects.request_response_wrap_chip = wrap_chip;
         Rect {
             x: response_inner.x,
             y: response_inner.y.saturating_add(2),
@@ -1136,14 +1147,19 @@ fn response_status_title(
 /// tabs (no chip bg). A right-aligned `JSON ▼` chip shows the
 /// detected response content type. Returns the click rects for
 /// each tab.
+#[allow(clippy::too_many_arguments)]
 fn paint_response_tab_strip(
     frame: &mut Frame,
     rp: &crate::request_pane::RequestPane,
     response_inner: Rect,
     t: theme::Theme,
     type_chip_out: &mut Option<Rect>,
+    copy_chip_out: &mut Option<Rect>,
+    wrap_chip_out: &mut Option<Rect>,
 ) -> Vec<(Rect, crate::request_pane::ResponseTab)> {
     *type_chip_out = None;
+    *copy_chip_out = None;
+    *wrap_chip_out = None;
     let mut rects = Vec::new();
     if response_inner.width == 0 || response_inner.height < 2 {
         return rects;
@@ -1244,36 +1260,89 @@ fn paint_response_tab_strip(
     // the *effective* format (override if set, else auto-detect).
     // Click routes to `http_response_format_prompt` via
     // `App::rects::request_response_type_chip`.
+    // Right-aligned chips, laid out from right to left:
+    //   type chip ("JSON ▼") — always shown
+    //   copy chip ("copy")   — always shown; toasts on empty body
+    //   wrap chip ("wrap")   — always shown; on = cyan, off = dim
+    //
+    // Each chip is painted with a per-slot right-x that tracks how
+    // much space the ones to its right already consumed.
     let type_label = effective_response_type_label(rp);
-    let chip_text = format!(" {type_label} \u{25BC} ");
-    let chip_w = chip_text.chars().count() as u16;
-    let mut chip_rect_out: Option<Rect> = None;
-    if label_rect.width >= chip_w + 2 {
-        let chip_x = label_rect
-            .x
-            .saturating_add(label_rect.width)
-            .saturating_sub(chip_w)
-            .saturating_sub(1);
+    let type_text = format!(" {type_label} \u{25BC} ");
+    let type_w = type_text.chars().count() as u16;
+    let copy_text = " copy ".to_string();
+    let copy_w = copy_text.chars().count() as u16;
+    let wrap_text = " wrap ".to_string();
+    let wrap_w = wrap_text.chars().count() as u16;
+
+    let mut right_edge = label_rect
+        .x
+        .saturating_add(label_rect.width)
+        .saturating_sub(1);
+    if label_rect.width >= type_w + 2 {
+        let chip_x = right_edge.saturating_sub(type_w);
         let chip_rect = Rect {
             x: chip_x,
             y: label_rect.y,
-            width: chip_w,
+            width: type_w,
             height: 1,
         };
-        chip_rect_out = Some(chip_rect);
-        let chip_line = Line::from(vec![Span::styled(
-            chip_text,
+        *type_chip_out = Some(chip_rect);
+        frame.render_widget(
+            Paragraph::new(vec![Line::from(vec![Span::styled(
+                type_text,
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD),
+            )])])
+            .style(Style::default().bg(t.bg_dark)),
+            chip_rect,
+        );
+        right_edge = chip_x.saturating_sub(1);
+    }
+    if right_edge > label_rect.x + copy_w + 2 {
+        let chip_x = right_edge.saturating_sub(copy_w);
+        let chip_rect = Rect {
+            x: chip_x,
+            y: label_rect.y,
+            width: copy_w,
+            height: 1,
+        };
+        *copy_chip_out = Some(chip_rect);
+        frame.render_widget(
+            Paragraph::new(vec![Line::from(vec![Span::styled(
+                copy_text,
+                Style::default().fg(t.comment).bg(t.bg_dark),
+            )])])
+            .style(Style::default().bg(t.bg_dark)),
+            chip_rect,
+        );
+        right_edge = chip_x.saturating_sub(1);
+    }
+    if right_edge > label_rect.x + wrap_w + 2 {
+        let chip_x = right_edge.saturating_sub(wrap_w);
+        let chip_rect = Rect {
+            x: chip_x,
+            y: label_rect.y,
+            width: wrap_w,
+            height: 1,
+        };
+        *wrap_chip_out = Some(chip_rect);
+        let wrap_style = if rp.body_wrap {
             Style::default()
                 .fg(t.cyan)
                 .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD),
-        )]);
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.comment).bg(t.bg_dark)
+        };
         frame.render_widget(
-            Paragraph::new(vec![chip_line]).style(Style::default().bg(t.bg_dark)),
+            Paragraph::new(vec![Line::from(vec![Span::styled(wrap_text, wrap_style)])])
+                .style(Style::default().bg(t.bg_dark)),
             chip_rect,
         );
     }
-    *type_chip_out = chip_rect_out;
     rects
 }
 

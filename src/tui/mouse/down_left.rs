@@ -424,6 +424,20 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_response_format_prompt();
         return;
     }
+    // Click on the "copy" chip → copy the response body.
+    if let Some(r) = app.rects.request_response_copy_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_copy_response_body();
+        return;
+    }
+    // Click on the "wrap" chip → toggle body wrap.
+    if let Some(r) = app.rects.request_response_wrap_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_toggle_response_wrap();
+        return;
+    }
     // Click on the split-orientation toggle chip → cycle
     // Vertical <-> Horizontal for the active Request pane. Same
     // as `Ctrl+\` chord.

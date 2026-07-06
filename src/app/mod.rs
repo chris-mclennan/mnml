@@ -1961,6 +1961,12 @@ pub struct PaneRects {
     /// Response tab strip. Click → opens the response-format
     /// override picker.
     pub request_response_type_chip: Option<Rect>,
+    /// Click rect over the "copy" chip on the Response tab strip —
+    /// copies the current response body to the system clipboard.
+    pub request_response_copy_chip: Option<Rect>,
+    /// Click rect over the "wrap" chip on the Response tab strip —
+    /// toggles `rp.body_wrap`.
+    pub request_response_wrap_chip: Option<Rect>,
     /// Click rect over the split-orientation toggle chip on the
     /// Request block's top border. Click cycles Vertical <->
     /// Horizontal split. Same as `Ctrl+\` chord.
