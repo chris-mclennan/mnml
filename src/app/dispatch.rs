@@ -371,6 +371,32 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineAutosave);
     }
+    // #polish 2026-07-06 — new left-lane statusline chips.
+    if let Some(r) = app.rects.statusline_file_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineFile);
+    }
+    if let Some(r) = app.rects.statusline_diagnostics_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineDiagnostics);
+    }
+    if let Some(r) = app.rects.statusline_symbol_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineSymbol);
+    }
+    if let Some(r) = app.rects.statusline_pr_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslinePr);
+    }
+    if let Some(r) = app.rects.statusline_language_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineLanguage);
+    }
     // #21 v5 — Request pane top-bar chip hover detection.
     if let Some(r) = app.rects.request_method_button
         && contains(r, x, y)

@@ -428,6 +428,22 @@ pub enum HoverChip {
     /// File / Edit / Selection / …). Tooltip explains the
     /// click behavior + Alt+<letter> accelerator.
     MenuBarWord(usize),
+    /// #polish 2026-07-06 — file-name chip on the statusline
+    /// (glyph + display_name + dirty marker). Tooltip shows
+    /// full absolute path + dirty state; click reveals in tree.
+    StatuslineFile,
+    /// #polish 2026-07-06 — diagnostics summary chip (spans
+    /// err + warn segs). Tooltip breaks down counts.
+    StatuslineDiagnostics,
+    /// #polish 2026-07-06 — language / filetype chip.
+    /// Tooltip names the ext; click opens language picker.
+    StatuslineLanguage,
+    /// #polish 2026-07-06 — enclosing-symbol crumb chip.
+    /// Tooltip shows the untruncated symbol name.
+    StatuslineSymbol,
+    /// #polish 2026-07-06 — active-branch PR badge (`BB#42`).
+    /// Tooltip shows PR title; click opens the PR in browser.
+    StatuslinePr,
     /// #polish 2026-07-06 — hover on a mark rendered in the
     /// gutter's sign column (git change / diagnostic dot /
     /// breakpoint / DAP arrow). `line_no` is the file-line the

@@ -2097,6 +2097,25 @@ pub struct PaneRects {
     pub statusline_filesize_chip: Option<Rect>,
     /// `Ln N/M Col K` chip — click opens the goto-line prompt.
     pub statusline_lncol_chip: Option<Rect>,
+    /// #polish 2026-07-06 — file-name chip on the statusline left lane
+    /// (glyph + display_name + dirty marker). Click reveals the file
+    /// in the tree; tooltip shows the full absolute path.
+    pub statusline_file_chip: Option<Rect>,
+    /// #polish 2026-07-06 — LSP diagnostics summary chip (` E / ⚠ W`).
+    /// Spans both err and warn segments (they render adjacent) so the
+    /// click zone is one wide chip, not two. Click opens the
+    /// diagnostics list; tooltip breaks down counts.
+    pub statusline_diagnostics_chip: Option<Rect>,
+    /// #polish 2026-07-06 — language chip (`  rs`). Click opens the
+    /// language / filetype picker; tooltip names the ext / language.
+    pub statusline_language_chip: Option<Rect>,
+    /// #polish 2026-07-06 — enclosing-symbol chip (` › fn foo`).
+    /// Click opens the outline pane; tooltip shows the untruncated
+    /// symbol name.
+    pub statusline_symbol_chip: Option<Rect>,
+    /// #polish 2026-07-06 — active-PR badge (`  BB#42`). Click opens
+    /// the PR in the browser; tooltip shows the title + host.
+    pub statusline_pr_chip: Option<Rect>,
     /// Chips on the `> GIT` rail header (Fetch / Pull / Push / Commit /
     /// Stage all / Graph) — one-click access to common ops.
     pub rail_git_header_buttons: Vec<(Rect, crate::GitRailHeaderAction)>,

@@ -236,8 +236,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Index of the git-branch chip in `left` once pushed — used after
     // render_left to register a clickable rect that fires `git.graph`.
     let mut branch_seg_idx: Option<usize> = None;
+    // #polish 2026-07-06 — new statusline chips: PR badge, file
+    // (name + glyph), diagnostics (err + warn), symbol crumb, language.
+    let mut pr_seg_idx: Option<usize> = None;
+    let mut file_glyph_idx: Option<usize> = None;
+    let mut file_name_idx: Option<usize> = None;
+    let mut diag_err_idx: Option<usize> = None;
+    let mut diag_warn_idx: Option<usize> = None;
+    let mut symbol_seg_idx: Option<usize> = None;
     app.rects.statusline_branch_chip = None;
     app.rects.statusline_mode_chip = None;
+    app.rects.statusline_file_chip = None;
+    app.rects.statusline_diagnostics_chip = None;
+    app.rects.statusline_language_chip = None;
+    app.rects.statusline_symbol_chip = None;
+    app.rects.statusline_pr_chip = None;
     // Mode chip is the first 1 (ASCII / non-vim) or 2 (vim + nerd) segs in
     // `left`. Capture the seg span so we can register a click rect that
     // spans both halves of the split-mode chip.
@@ -314,6 +327,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // have at most one PR per branch.
     if let Some(pr) = app.git_rail.pulls.iter().find(|p| p.is_current_branch) {
         let chip = format!("  {}{} ", pr.host_tag, pr.number_label);
+        pr_seg_idx = Some(left.len());
         left.push(Seg::new(chip, theme::cur().purple, theme::cur().bg2));
     }
     // file segment: icon (its devicon color) + name + dirty marker, both on STATUSLINE bg.
@@ -321,8 +335,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         Some(b) => {
             let p = b.path.clone().unwrap_or_else(|| b.display_name().into());
             let (glyph, gc) = icons::for_path(&p, false, false, nerd);
+            file_glyph_idx = Some(left.len());
             left.push(Seg::new(format!(" {glyph} "), gc, theme::cur().statusline));
             let name = format!("{}{} ", b.display_name(), if b.dirty { " ●" } else { "" });
+            file_name_idx = Some(left.len());
             left.push(Seg::new(name, theme::cur().fg, theme::cur().statusline));
             // LSP + linter diagnostics count (errors then warnings), if any.
             let (errs, warns) =
@@ -333,6 +349,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                         _ => (e, w),
                     });
             if errs > 0 {
+                diag_err_idx = Some(left.len());
                 left.push(Seg::new(
                     format!("  {errs} "),
                     theme::cur().red,
@@ -340,6 +357,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 ));
             }
             if warns > 0 {
+                diag_warn_idx = Some(left.len());
                 left.push(Seg::new(
                     format!(" ⚠ {warns} "),
                     theme::cur().yellow,
@@ -355,6 +373,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 let row = b.editor.row_col().0 as u32;
                 if let Some(s) = symbols.iter().rev().find(|s| s.line <= row) {
                     let label: String = s.name.chars().take(40).collect();
+                    symbol_seg_idx = Some(left.len());
                     left.push(Seg::new(
                         format!(" › {label} "),
                         theme::cur().purple,
@@ -732,6 +751,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .active_editor()
         .and_then(|b| b.language_ext.clone())
         .unwrap_or_else(|| "—".to_string());
+    let language_seg_idx: Option<usize> = Some(right.len());
     right.push(
         Seg::new(
             format!("  {lang} "),
@@ -844,6 +864,59 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         });
     }
+    // #polish 2026-07-06 — register the new left-lane chip rects.
+    // Helper: single-seg → left-lane screen rect.
+    let left_to_rect = |idx_opt: Option<usize>, rects: &[(usize, usize)]| -> Option<Rect> {
+        let idx = idx_opt?;
+        let &(start, w) = rects.get(idx)?;
+        if w == 0 || (start + w) as u16 > area.width {
+            return None;
+        }
+        Some(Rect {
+            x: area.x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        })
+    };
+    // File chip spans the glyph seg + name seg (rendered adjacent). Combine
+    // them into one click zone so the pointer can land anywhere on the
+    // file line.
+    if let (Some(g_idx), Some(n_idx)) = (file_glyph_idx, file_name_idx)
+        && let (Some(&(g_start, _)), Some(&(n_start, n_w))) =
+            (left_rects.get(g_idx), left_rects.get(n_idx))
+    {
+        let total_w = (n_start + n_w).saturating_sub(g_start);
+        if total_w > 0 && (g_start + total_w) as u16 <= area.width {
+            app.rects.statusline_file_chip = Some(Rect {
+                x: area.x + g_start as u16,
+                y: area.y,
+                width: total_w as u16,
+                height: 1,
+            });
+        }
+    }
+    // Diagnostics chip spans the err seg + warn seg (either or both may
+    // be absent). Uses whichever end-points are available.
+    let diag_first = diag_err_idx.or(diag_warn_idx);
+    let diag_last = diag_warn_idx.or(diag_err_idx);
+    if let (Some(first), Some(last)) = (diag_first, diag_last)
+        && let (Some(&(first_start, _)), Some(&(last_start, last_w))) =
+            (left_rects.get(first), left_rects.get(last))
+    {
+        let total_w = (last_start + last_w).saturating_sub(first_start);
+        if total_w > 0 && (first_start + total_w) as u16 <= area.width {
+            app.rects.statusline_diagnostics_chip = Some(Rect {
+                x: area.x + first_start as u16,
+                y: area.y,
+                width: total_w as u16,
+                height: 1,
+            });
+        }
+    }
+    app.rects.statusline_symbol_chip = left_to_rect(symbol_seg_idx, &left_rects);
+    app.rects.statusline_pr_chip = left_to_rect(pr_seg_idx, &left_rects);
+    app.rects.statusline_language_chip = to_rect(language_seg_idx, &right_rects);
     // Register the mode chip — combined rect spanning the 1 or 2 segs that
     // make it up (vim + nerd splits into glyph + label; otherwise single).
     if mode_seg_end > mode_seg_start

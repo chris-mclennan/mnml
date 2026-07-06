@@ -1001,6 +1001,105 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some(orient_desc.into()),
             ))
         }
+        HoverChip::StatuslineFile => {
+            let rect = app.rects.statusline_file_chip?;
+            let b = app.active_editor()?;
+            let path = b
+                .path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| b.display_name().to_string());
+            let dirty = if b.dirty { " · unsaved" } else { "" };
+            Some((
+                rect,
+                format!("{path}{dirty}"),
+                Some("click: reveal in tree · right-click: buffer menu".into()),
+            ))
+        }
+        HoverChip::StatuslineDiagnostics => {
+            let rect = app.rects.statusline_diagnostics_chip?;
+            let b = app.active_editor()?;
+            let (errs, warns) =
+                b.all_diagnostics()
+                    .fold((0u32, 0u32), |(e, w), d| match d.severity {
+                        crate::lsp::Severity::Error => (e + 1, w),
+                        crate::lsp::Severity::Warning => (e, w + 1),
+                        _ => (e, w),
+                    });
+            let mut parts: Vec<String> = Vec::new();
+            if errs > 0 {
+                parts.push(format!("{errs} error{}", if errs == 1 { "" } else { "s" }));
+            }
+            if warns > 0 {
+                parts.push(format!(
+                    "{warns} warning{}",
+                    if warns == 1 { "" } else { "s" }
+                ));
+            }
+            let primary = if parts.is_empty() {
+                "no diagnostics".to_string()
+            } else {
+                parts.join(" · ")
+            };
+            Some((rect, primary, Some("click: open diagnostics panel".into())))
+        }
+        HoverChip::StatuslineSymbol => {
+            let rect = app.rects.statusline_symbol_chip?;
+            let b = app.active_editor()?;
+            let symbol = b
+                .language_ext
+                .as_deref()
+                .and_then(|ext| {
+                    let symbols = crate::regex_outline::extract_symbols(b.editor.text(), ext);
+                    let row = b.editor.row_col().0 as u32;
+                    symbols
+                        .iter()
+                        .rev()
+                        .find(|s| s.line <= row)
+                        .map(|s| s.name.clone())
+                })
+                .unwrap_or_default();
+            Some((
+                rect,
+                if symbol.is_empty() {
+                    "current symbol".to_string()
+                } else {
+                    format!("symbol: {symbol}")
+                },
+                Some("click: open outline".into()),
+            ))
+        }
+        HoverChip::StatuslinePr => {
+            let rect = app.rects.statusline_pr_chip?;
+            let pr = app.git_rail.pulls.iter().find(|p| p.is_current_branch)?;
+            let title: String = pr.title.chars().take(60).collect();
+            let elided = if pr.title.chars().count() > 60 {
+                "…"
+            } else {
+                ""
+            };
+            Some((
+                rect,
+                format!("{}{} — {title}{elided}", pr.host_tag, pr.number_label),
+                Some("click: open PR in browser".into()),
+            ))
+        }
+        HoverChip::StatuslineLanguage => {
+            let rect = app.rects.statusline_language_chip?;
+            let lang = app
+                .active_editor()
+                .and_then(|b| b.language_ext.clone())
+                .unwrap_or_else(|| "—".to_string());
+            Some((
+                rect,
+                if lang == "—" {
+                    "no language".to_string()
+                } else {
+                    format!("language: {lang}")
+                },
+                Some("detected from file extension".into()),
+            ))
+        }
         HoverChip::GutterMark {
             pane_id,
             line_no,

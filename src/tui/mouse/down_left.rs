@@ -1315,6 +1315,55 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         let _ = crate::command::run("editor.goto_line", app);
         return;
     }
+    // #polish 2026-07-06 — file chip → reveal active buffer in tree.
+    if let Some(r) = app.rects.statusline_file_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let _ = crate::command::run("view.reveal_active", app);
+        return;
+    }
+    // #polish 2026-07-06 — diagnostics chip → open diagnostics panel.
+    if let Some(r) = app.rects.statusline_diagnostics_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let _ = crate::command::run("lsp.diagnostics", app);
+        return;
+    }
+    // #polish 2026-07-06 — symbol crumb → open outline pane.
+    if let Some(r) = app.rects.statusline_symbol_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let _ = crate::command::run("outline.show", app);
+        return;
+    }
+    // #polish 2026-07-06 — PR badge → open web URL.
+    if let Some(r) = app.rects.statusline_pr_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        if let Some(pr) = app
+            .git_rail
+            .pulls
+            .iter()
+            .find(|p| p.is_current_branch)
+            .cloned()
+        {
+            crate::app::open_url_external(&pr.web_url);
+            app.toast(format!("opened {}{}", pr.host_tag, pr.number_label));
+        }
+        return;
+    }
+    // #polish 2026-07-06 — language chip → toast the detected
+    // language + hint the editorconfig / extension source.
+    if let Some(r) = app.rects.statusline_language_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let lang = app
+            .active_editor()
+            .and_then(|b| b.language_ext.clone())
+            .unwrap_or_else(|| "—".to_string());
+        app.toast(format!("language: {lang} (via file extension)"));
+        return;
+    }
     // Activity bar (the 4-cell vscode-style strip on the far
     // left of the rail). Click an icon → switch the active
     // section. Checked before the tree-icon row + workspace
