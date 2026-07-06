@@ -869,6 +869,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // #polish 2026-07-06 — middle-click on a right-panel tab
+    // closes it (parity with bufferline). Looks up the pane id
+    // for the specific tab index the click hit; falls back
+    // silently when the panel state has shifted mid-frame.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle))
+        && let Some(&(_, tab_idx)) = app
+            .rects
+            .right_panel_tabs
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        if let Some(&pid) = app.right_panel_panes.get(tab_idx) {
+            app.close_pane(pid);
+        }
+        return;
+    }
+
     // #21 — middle-click on file-ish rows opens the file in a new
     // split (VS Code Cmd+click convention). Applies uniformly to
     // every list of paths across the app so users don't have to

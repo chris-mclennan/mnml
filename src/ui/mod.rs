@@ -1046,37 +1046,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 height: hint_height.min(rpa.height.saturating_sub(2)),
             };
             use ratatui::text::{Line, Span};
+            // #polish 2026-07-06 — friendlier empty state. Was 5
+            // raw `:cmd` lines (unfriendly); now human labels
+            // with the palette command as an inline dim hint.
+            let hint_style = Style::default().fg(t.comment).bg(t.bg_darker);
+            let label_style = Style::default().fg(t.fg).bg(t.bg_darker);
+            let make_row = |label: &str, cmd: &str| -> Line<'static> {
+                Line::from(vec![
+                    Span::styled(label.to_string(), label_style),
+                    Span::styled(format!("  {cmd}"), hint_style.add_modifier(Modifier::DIM)),
+                ])
+            };
             let lines = vec![
-                Line::from(Span::styled(
-                    "Nothing here yet.",
-                    Style::default().fg(t.comment).bg(t.bg_darker),
-                )),
+                Line::from(Span::styled("Add a panel:", hint_style)),
                 Line::from(""),
-                Line::from(Span::styled(
-                    ":outline.show",
-                    Style::default().fg(t.fg).bg(t.bg_darker),
-                )),
-                Line::from(Span::styled(
-                    ":lsp.diagnostics",
-                    Style::default().fg(t.fg).bg(t.bg_darker),
-                )),
-                Line::from(Span::styled(
-                    ":ai.chat",
-                    Style::default().fg(t.fg).bg(t.bg_darker),
-                )),
-                Line::from(Span::styled(
-                    ":find.grep",
-                    Style::default().fg(t.fg).bg(t.bg_darker),
-                )),
-                Line::from(Span::styled(
-                    ":test.run",
-                    Style::default().fg(t.fg).bg(t.bg_darker),
-                )),
+                make_row("▸ Outline", ":outline.show"),
+                make_row("▸ Problems", ":lsp.diagnostics"),
+                make_row("▸ AI chat", ":ai.chat"),
+                make_row("▸ Grep", ":find.grep"),
+                make_row("▸ Tests", ":test.run"),
                 Line::from(""),
-                Line::from(Span::styled(
-                    "Hide: Ctrl+Shift+B or :set norp",
-                    Style::default().fg(t.comment).bg(t.bg_darker),
-                )),
+                Line::from(Span::styled("Hide: Ctrl+Shift+B", hint_style)),
             ];
             // render-reviewer 3rd 2026-06-29 SEV-2 W-2: disable
             // wrapping. At rpa.width 16–18 the "Nothing here yet."
