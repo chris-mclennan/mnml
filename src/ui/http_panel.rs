@@ -29,9 +29,9 @@ use ratatui::{
 use crate::app::App;
 use crate::ui::theme;
 
-/// Names + collapse-index for the three sections. Indexes match
+/// Names + collapse-index for the sidebar sections. Indexes match
 /// `App::http_panel_section_collapsed`.
-const SECTIONS: [(u8, &str); 3] = [(0, "FILES"), (1, "RECENT"), (2, "CAPTURED")];
+const SECTIONS: [(u8, &str); 4] = [(0, "FILES"), (1, "RECENT"), (2, "CAPTURED"), (3, "ENVS")];
 
 /// Max body rows per section. Anything past this is truncated; the
 /// palette (`http.history`, `http.view_captured`) is the full-list
@@ -77,9 +77,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if !app.http_panel_scanned_once {
         app.http_panel_refresh();
     }
+    app.rects.http_panel_env_rows.clear();
+    app.rects.http_panel_env_new_chip = None;
+
     let files_len = app.http_panel_files_cache.len();
     let recent_len = app.http_panel_recent_cache.len();
     let captured_len = app.http_panel_captured_cache.len();
+    let envs_len = app.http_panel_envs_cache.len();
     let ascii = app.config.ui.ascii_icons;
 
     let mut y = area.y + 2;
@@ -124,6 +128,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     if !app.http_panel_section_collapsed[2] {
         y = draw_captured(frame, app, y, area, bg);
+        if y >= bottom {
+            return;
+        }
+    }
+    y += 1;
+
+    // Section 4 — ENVS.
+    if y >= bottom {
+        return;
+    }
+    y = draw_section_header(frame, app, y, area, bg, ascii, 3, envs_len);
+    if y >= bottom {
+        return;
+    }
+    if !app.http_panel_section_collapsed[3] {
+        y = draw_envs(frame, app, y, area, bg);
         if y >= bottom {
             return;
         }
@@ -472,6 +492,103 @@ fn draw_captured(
             row_rect,
         );
         app.rects.http_panel_captured_rows.push((row_rect, idx));
+        y += 1;
+    }
+    y
+}
+
+/// ENVS body — one row per env file under `.mnml/env/` +
+/// `.rqst/env/`. The currently-active env (either the runtime
+/// override or `$MNML_ENV`) renders with a `●` marker; others
+/// with `○`. Click a row → set as active. `+ New env` chip at
+/// the bottom → prompt for a new env name and create the file.
+fn draw_envs(
+    frame: &mut Frame,
+    app: &mut App,
+    mut y: u16,
+    area: Rect,
+    bg: ratatui::style::Color,
+) -> u16 {
+    let t = theme::cur();
+    let bottom = area.y + area.height;
+    let envs = app.http_panel_envs_cache.clone();
+    let current = app.http_env_override.clone().or_else(|| {
+        std::env::var("MNML_ENV")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+    });
+    if envs.is_empty() {
+        if y < bottom {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled("No env files yet.", Style::default().fg(t.comment).bg(bg)),
+                ])),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            y += 1;
+        }
+    } else {
+        for name in envs.iter().take(SECTION_ROW_CAP) {
+            if y >= bottom {
+                break;
+            }
+            let is_current = Some(name) == current.as_ref();
+            let marker = if is_current { "●" } else { "○" };
+            let marker_fg = if is_current { t.green } else { t.comment };
+            let name_style = if is_current {
+                Style::default()
+                    .fg(t.fg)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(t.fg).bg(bg)
+            };
+            let row_rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled(format!("{marker} "), Style::default().fg(marker_fg).bg(bg)),
+                    Span::styled(name.clone(), name_style),
+                ])),
+                row_rect,
+            );
+            app.rects.http_panel_env_rows.push((row_rect, name.clone()));
+            y += 1;
+        }
+    }
+    // `+ New env` action row at the bottom of the section.
+    if y < bottom {
+        let new_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled(
+                    "+ New env",
+                    Style::default()
+                        .fg(t.green)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])),
+            new_rect,
+        );
+        app.rects.http_panel_env_new_chip = Some(new_rect);
         y += 1;
     }
     y

@@ -1798,6 +1798,12 @@ pub struct PaneRects {
     /// `↓ Paste curl…` action-row rect (below files). Click → run
     /// `http.paste_curl` (turn clipboard curl into a scratch request).
     pub http_panel_discover_chip: Option<Rect>,
+    /// Env-row rects — `(rect, env_name)`. Click → set as active
+    /// env (writes `App::http_env_override`).
+    pub http_panel_env_rows: Vec<(Rect, String)>,
+    /// `+ New env` action-row rect (inside the Envs section).
+    /// Click → open the env-name prompt to create a new `.env`.
+    pub http_panel_env_new_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel — one row per `.mnml/notes/*.md`.
     /// Click → open the note in an editor pane. (#8)
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
@@ -2664,11 +2670,16 @@ pub struct App {
     /// Same refresh cadence as recent; drives the sidebar's
     /// `Captured` section + row-click → re-fire scratch.
     pub http_panel_captured_cache: Vec<crate::http::captured::CapturedRow>,
+    /// Cached list of env names (basenames without `.env` extension)
+    /// found under `.mnml/env/` + `.rqst/env/`. Refreshed by
+    /// `http_panel_refresh` alongside the other caches.
+    pub http_panel_envs_cache: Vec<String>,
     /// Collapse state for the sectioned HTTP sidebar. Indices:
-    /// `0 = Files`, `1 = Recent`, `2 = Captured`. Persists across
-    /// activity-section toggles within a session; not saved to disk
-    /// (v1 — a follow-up can plumb into `session.json`).
-    pub http_panel_section_collapsed: [bool; 3],
+    /// `0 = Files`, `1 = Recent`, `2 = Captured`, `3 = Envs`.
+    /// Persists across activity-section toggles within a session;
+    /// not saved to disk (v1 — a follow-up can plumb into
+    /// `session.json`).
+    pub http_panel_section_collapsed: [bool; 4],
     /// Cached notes file list for the Notes activity panel (#8).
     /// Same lazy pattern as `http_panel_files_cache`.
     pub notes_panel_files_cache: Vec<std::path::PathBuf>,
@@ -4274,7 +4285,8 @@ impl App {
             http_panel_scanned_once: false,
             http_panel_recent_cache: Vec::new(),
             http_panel_captured_cache: Vec::new(),
-            http_panel_section_collapsed: [false; 3],
+            http_panel_envs_cache: Vec::new(),
+            http_panel_section_collapsed: [false; 4],
             notes_panel_files_cache: Vec::new(),
             notes_panel_scanned_once: false,
             primary_position: 0,

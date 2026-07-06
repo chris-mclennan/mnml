@@ -655,6 +655,24 @@ impl App {
         self.http_panel_recent_cache = crate::http::history::tail(&self.workspace, 20);
         let cap_path = crate::http::proxy::captured_log_path(&self.workspace);
         self.http_panel_captured_cache = crate::http::captured::load_tail(&cap_path, 20);
+        // Env cache — walks both `.mnml/env/` and `.rqst/env/`,
+        // dedupes by basename, sorted alphabetically. Same shape
+        // as `open_http_env_picker`.
+        let mut envs = std::collections::BTreeSet::new();
+        for sub in [".mnml", ".rqst"] {
+            let dir = self.workspace.join(sub).join("env");
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("env")
+                        && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                    {
+                        envs.insert(stem.to_string());
+                    }
+                }
+            }
+        }
+        self.http_panel_envs_cache = envs.into_iter().collect();
         self.http_panel_scanned_once = true;
     }
 

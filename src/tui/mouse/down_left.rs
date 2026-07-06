@@ -1835,6 +1835,24 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // ENVS section — env-row click switches active env; new chip
+    // opens the create-env prompt.
+    if let Some((_, name)) = app
+        .rects
+        .http_panel_env_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        app.accept_http_env(&name);
+        return;
+    }
+    if let Some(r) = app.rects.http_panel_env_new_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_new_env_prompt();
+        return;
+    }
     // Notes panel — file rows + `+ New note` chip (#8).
     if let Some(r) = app.rects.notes_panel_new_chip
         && crate::app::dispatch::contains(r, x, y)

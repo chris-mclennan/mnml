@@ -488,6 +488,51 @@ impl App {
         self.toast(format!("http env: {name}"));
     }
 
+    /// `+ New env` chip in the sidebar → prompt for a name.
+    pub fn http_new_env_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::HttpNewEnv,
+            "New env name (creates .mnml/env/<name>.env):".to_string(),
+        ));
+    }
+
+    /// Accept handler — creates `.mnml/env/<name>.env`, sets it as
+    /// the active env, refreshes the sidebar cache, and opens the
+    /// file in an editor pane so the user can add vars.
+    pub fn http_new_env_create(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.toast("env: name can't be empty");
+            return;
+        }
+        if name.contains(['/', '\\']) {
+            self.toast("env: name can't contain path separators");
+            return;
+        }
+        let dir = self.workspace.join(".mnml").join("env");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toast(format!("env: create dir failed: {e}"));
+            return;
+        }
+        let path = dir.join(format!("{name}.env"));
+        if path.exists() {
+            // Don't clobber — just switch to it.
+            self.http_env_override = Some(name.to_string());
+            self.http_panel_refresh();
+            self.toast(format!("env: switched to existing {name}"));
+            return;
+        }
+        let stub = format!("# {name} env — one KEY=VALUE per line\n");
+        if let Err(e) = std::fs::write(&path, stub) {
+            self.toast(format!("env: write failed: {e}"));
+            return;
+        }
+        self.http_env_override = Some(name.to_string());
+        self.http_panel_refresh();
+        self.open_path(&path);
+        self.toast(format!("env: created + switched to {name}"));
+    }
+
     /// Clear the runtime env override so `EnvSet::select` falls back
     /// to `MNML_ENV` / config default again.
     pub fn http_reset_env(&mut self) {

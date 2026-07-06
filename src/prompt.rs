@@ -91,6 +91,9 @@ pub enum PromptKind {
     /// Accept ⇒ save the active Request pane's current fields to
     /// the typed .http path, set as source_path, and write.
     HttpSaveRequestAs,
+    /// Accept ⇒ create a new empty `.env` file at
+    /// `.mnml/env/<typed>.env` and set it as the active env.
+    HttpNewEnv,
     /// Accept ⇒ replace the active Request pane's Authorization
     /// header with `Bearer <typed-token>`.
     HttpAuthBearer,
