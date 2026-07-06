@@ -522,7 +522,10 @@ fn draw_recent(
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled("No history yet.", Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(
+                        "No requests yet — sent requests land here.",
+                        Style::default().fg(t.comment).bg(bg),
+                    ),
                 ])),
                 Rect {
                     x: area.x,
@@ -602,7 +605,7 @@ fn draw_captured(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
                     Span::styled(
-                        "Nothing captured yet.",
+                        "Nothing captured — click ⟳ capture with a browser pane focused.",
                         Style::default().fg(t.comment).bg(bg),
                     ),
                 ])),
