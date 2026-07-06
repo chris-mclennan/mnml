@@ -608,14 +608,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
             rp.view = crate::request_pane::ViewMode::Edit;
             rp.focus = field;
-            // 2026-06-20 — Method chip click opens a
-            // verb-picker context menu (one entry per
-            // HTTP verb). Click an item → method set.
-            // Width ≤ 12 disambiguates the chip rect from
-            // the wider headers/body rows.
-            let chip_clicked =
-                matches!(field, crate::request_pane::EditField::Method) && rect.width <= 12;
-            if chip_clicked {
+            // Method box click opens the verb-picker context
+            // menu (GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS →
+            // click one to set). No width guard needed anymore —
+            // Method has its own bordered sub-panel (width 14)
+            // and can't be confused with a headers or body row
+            // click.
+            if matches!(field, crate::request_pane::EditField::Method) {
                 let _ = rp;
                 app.open_method_dropdown((x, y));
                 return;
