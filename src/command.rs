@@ -3479,6 +3479,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_reset_env(),
         },
         Command {
+            id: "http.delete_env_key",
+            title: "HTTP: delete env var (from active .env)",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                if let Some(key) = app.pending_env_key_delete.take() {
+                    app.http_delete_env_key(&key);
+                }
+            },
+        },
+        Command {
             id: "http.edit_env",
             title: "HTTP: structured editor for the active env file (.rqst/env/<name>.env)",
             group: "http",

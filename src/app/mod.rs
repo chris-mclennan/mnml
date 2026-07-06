@@ -3255,6 +3255,11 @@ pub struct App {
     /// one at a time so we don't grow an undo history stack — the
     /// user's mental model is "I just did that thing, take it back."
     pub pending_undo: Option<PendingUndo>,
+    /// #23 v2 — stashed env-var key for the pending Delete
+    /// context-menu action. Set by the right-click handler on
+    /// a Vars row, consumed by the `http.delete_env_key`
+    /// command.
+    pub pending_env_key_delete: Option<String>,
     /// #25 — background-prefetched Claude Agents rows. Populated by
     /// a startup worker thread; `open_claude_agents_pane` reads from
     /// here when set to avoid the ~1-3s sync JSONL walk on the UI
@@ -4439,6 +4444,7 @@ impl App {
             toast: None,
             toast_stack: std::collections::VecDeque::new(),
             pending_undo: None,
+            pending_env_key_delete: None,
             claude_agents_prefetch: {
                 let cache: std::sync::Arc<
                     std::sync::Mutex<Option<Vec<crate::claude_agents::AgentRow>>>,

@@ -137,6 +137,27 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // #23 v2 — right-click on a Vars-tab row → Edit / Copy / Delete
+    // shortcut menu (bypasses the two-step prompt for delete).
+    if let Some(key) = app
+        .rects
+        .request_vars_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, k)| k.clone())
+    {
+        if !key.is_empty() {
+            use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+            let items = vec![
+                MenuItem::new("Edit…", MenuAction::CopyPath(format!("edit:{key}"))),
+                MenuItem::new("Yank name", MenuAction::CopyPath(key.clone())),
+                MenuItem::new("Delete…", MenuAction::Command("http.delete_env_key")),
+            ];
+            app.pending_env_key_delete = Some(key.clone());
+            app.context_menu = Some(ContextMenu::new(Some(key), (x, y), items));
+        }
+        return;
+    }
     // Right-click on the Request pane's Env chip — quick switch /
     // edit / clear-override menu.
     if let Some(r) = app.rects.request_env_button

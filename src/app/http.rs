@@ -1749,6 +1749,65 @@ impl App {
         }
     }
 
+    /// #23 v2 — delete a var from the active env file. Same
+    /// precedence rules as `write_env_var`: mnml/env wins when
+    /// both files exist. Silent no-op when the key isn't
+    /// present in either file.
+    pub fn http_delete_env_key(&mut self, key: &str) {
+        let env_name = crate::http::template::EnvSet::select_with_config_default(
+            &self.workspace,
+            self.http_env_override.as_deref(),
+            self.config.http.default_env.as_deref(),
+        )
+        .name()
+        .map(str::to_string)
+        .unwrap_or_else(|| "dev".to_string());
+        let mnml_path = self
+            .workspace
+            .join(".mnml")
+            .join("env")
+            .join(format!("{env_name}.env"));
+        let rqst_path = self
+            .workspace
+            .join(".rqst")
+            .join("env")
+            .join(format!("{env_name}.env"));
+        let mut hit = None;
+        for candidate in [&mnml_path, &rqst_path] {
+            if file_contains_env_key(candidate, key) {
+                hit = Some(candidate.clone());
+                break;
+            }
+        }
+        let Some(env_path) = hit else {
+            self.toast(format!("env: {key} not found"));
+            return;
+        };
+        let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+        let updated: String = existing
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    return true;
+                }
+                trimmed
+                    .split_once('=')
+                    .map(|(k, _)| k.trim() != key)
+                    .unwrap_or(true)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut updated = updated;
+        if !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        match std::fs::write(&env_path, updated) {
+            Ok(()) => self.toast(format!("deleted {key} from {}", env_path.display())),
+            Err(e) => self.toast(format!("env: write {}: {e}", env_path.display())),
+        }
+    }
+
     /// `http.next_block` — move the cursor to the `###` line of
     /// the next block in a multi-block `.http` / `.rest` file. If
     /// the cursor is at/past the last block, wrap to the first.
