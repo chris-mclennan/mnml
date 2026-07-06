@@ -1804,6 +1804,15 @@ pub struct PaneRects {
     /// `+ New env` action-row rect (inside the Envs section).
     /// Click → open the env-name prompt to create a new `.env`.
     pub http_panel_env_new_chip: Option<Rect>,
+    /// Chain-row rects — `(rect, chain_path)`. Click → run that
+    /// chain (calls `http_chain_run_path`).
+    pub http_panel_chain_rows: Vec<(Rect, std::path::PathBuf)>,
+    /// Mock-row rects — `(rect, mock_path)`. Click → replay the
+    /// mock into a Request pane (`http_replay_mock_from_path`).
+    pub http_panel_mock_rows: Vec<(Rect, std::path::PathBuf)>,
+    /// `↓ Import…` bottom-action chip. Click → open the import
+    /// picker (Postman collection / HAR).
+    pub http_panel_import_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel — one row per `.mnml/notes/*.md`.
     /// Click → open the note in an editor pane. (#8)
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
@@ -2674,12 +2683,18 @@ pub struct App {
     /// found under `.mnml/env/` + `.rqst/env/`. Refreshed by
     /// `http_panel_refresh` alongside the other caches.
     pub http_panel_envs_cache: Vec<String>,
+    /// Cached list of `.chain.json` paths under `.mnml/chains/`.
+    pub http_panel_chains_cache: Vec<std::path::PathBuf>,
+    /// Cached list of `.mock.json` paths anywhere under the
+    /// workspace. Bounded by the same walk that populates the
+    /// FILES cache — cheap on typical projects.
+    pub http_panel_mocks_cache: Vec<std::path::PathBuf>,
     /// Collapse state for the sectioned HTTP sidebar. Indices:
-    /// `0 = Files`, `1 = Recent`, `2 = Captured`, `3 = Envs`.
+    /// `0=Files 1=Recent 2=Captured 3=Envs 4=Chains 5=Mocks`.
     /// Persists across activity-section toggles within a session;
     /// not saved to disk (v1 — a follow-up can plumb into
     /// `session.json`).
-    pub http_panel_section_collapsed: [bool; 4],
+    pub http_panel_section_collapsed: [bool; 6],
     /// Cached notes file list for the Notes activity panel (#8).
     /// Same lazy pattern as `http_panel_files_cache`.
     pub notes_panel_files_cache: Vec<std::path::PathBuf>,
@@ -4286,7 +4301,9 @@ impl App {
             http_panel_recent_cache: Vec::new(),
             http_panel_captured_cache: Vec::new(),
             http_panel_envs_cache: Vec::new(),
-            http_panel_section_collapsed: [false; 4],
+            http_panel_chains_cache: Vec::new(),
+            http_panel_mocks_cache: Vec::new(),
+            http_panel_section_collapsed: [false; 6],
             notes_panel_files_cache: Vec::new(),
             notes_panel_scanned_once: false,
             primary_position: 0,

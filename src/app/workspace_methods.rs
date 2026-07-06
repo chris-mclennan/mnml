@@ -673,6 +673,58 @@ impl App {
             }
         }
         self.http_panel_envs_cache = envs.into_iter().collect();
+        // Chains — flat scan of `.mnml/chains/*.chain.json`. Small
+        // dir; cheap.
+        let chains_dir = self.workspace.join(".mnml").join("chains");
+        let mut chains: Vec<std::path::PathBuf> = std::fs::read_dir(&chains_dir)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| {
+                        p.file_name()
+                            .and_then(|s| s.to_str())
+                            .is_some_and(|n| n.ends_with(".chain.json"))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        chains.sort();
+        self.http_panel_chains_cache = chains;
+        // Mocks — collect all `*.mock.json` picked up by the http
+        // file walk. Cheap: the walk already produced the list and
+        // we just filter it. Mocks live as siblings of the source
+        // files they mock, so the walk covers them.
+        let mut mocks: Vec<std::path::PathBuf> = self
+            .http_panel_files_cache
+            .iter()
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|n| n.ends_with(".mock.json"))
+            })
+            .cloned()
+            .collect();
+        // The main file walk may not include `.mock.json` today
+        // (it filters to source extensions). Do a shallow walk of
+        // `.rqst/mocks` and `.mnml/mocks` as a fallback for
+        // captured-response mocks.
+        for sub in [".rqst", ".mnml"] {
+            let dir = self.workspace.join(sub).join("mocks");
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for entry in rd.flatten() {
+                    let p = entry.path();
+                    if p.file_name()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|n| n.ends_with(".mock.json"))
+                    {
+                        mocks.push(p);
+                    }
+                }
+            }
+        }
+        mocks.sort();
+        mocks.dedup();
+        self.http_panel_mocks_cache = mocks;
         self.http_panel_scanned_once = true;
     }
 

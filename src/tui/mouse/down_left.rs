@@ -1853,6 +1853,35 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_new_env_prompt();
         return;
     }
+    // CHAINS row → run that chain.
+    if let Some((_, path)) = app
+        .rects
+        .http_panel_chain_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        app.http_chain_run_path(path);
+        return;
+    }
+    // MOCKS row → replay that mock into the active Request pane.
+    if let Some((_, path)) = app
+        .rects
+        .http_panel_mock_rows
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        app.http_replay_mock_from_path(&path);
+        return;
+    }
+    // `↓ Import…` → open the import picker (Postman / HAR).
+    if let Some(r) = app.rects.http_panel_import_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_import_prompt();
+        return;
+    }
     // Notes panel — file rows + `+ New note` chip (#8).
     if let Some(r) = app.rects.notes_panel_new_chip
         && crate::app::dispatch::contains(r, x, y)

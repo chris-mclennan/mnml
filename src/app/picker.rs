@@ -777,6 +777,10 @@ impl App {
                 let path = std::path::PathBuf::from(item.id.clone());
                 self.http_chain_run_path(path);
             }
+            PickerKind::HttpImport => {
+                let id = item.id.clone();
+                self.accept_http_import(&id);
+            }
             PickerKind::GitDeleteBranch => {
                 self.git_delete_branch_confirm(item.id.clone());
             }

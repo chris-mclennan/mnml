@@ -31,7 +31,14 @@ use crate::ui::theme;
 
 /// Names + collapse-index for the sidebar sections. Indexes match
 /// `App::http_panel_section_collapsed`.
-const SECTIONS: [(u8, &str); 4] = [(0, "FILES"), (1, "RECENT"), (2, "CAPTURED"), (3, "ENVS")];
+const SECTIONS: [(u8, &str); 6] = [
+    (0, "FILES"),
+    (1, "RECENT"),
+    (2, "CAPTURED"),
+    (3, "ENVS"),
+    (4, "CHAINS"),
+    (5, "MOCKS"),
+];
 
 /// Max body rows per section. Anything past this is truncated; the
 /// palette (`http.history`, `http.view_captured`) is the full-list
@@ -79,11 +86,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     app.rects.http_panel_env_rows.clear();
     app.rects.http_panel_env_new_chip = None;
+    app.rects.http_panel_chain_rows.clear();
+    app.rects.http_panel_mock_rows.clear();
+    app.rects.http_panel_import_chip = None;
 
     let files_len = app.http_panel_files_cache.len();
     let recent_len = app.http_panel_recent_cache.len();
     let captured_len = app.http_panel_captured_cache.len();
     let envs_len = app.http_panel_envs_cache.len();
+    let chains_len = app.http_panel_chains_cache.len();
+    let mocks_len = app.http_panel_mocks_cache.len();
     let ascii = app.config.ui.ascii_icons;
 
     let mut y = area.y + 2;
@@ -150,6 +162,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     y += 1;
 
+    // Section 5 — CHAINS.
+    if y >= bottom {
+        return;
+    }
+    y = draw_section_header(frame, app, y, area, bg, ascii, 4, chains_len);
+    if y >= bottom {
+        return;
+    }
+    if !app.http_panel_section_collapsed[4] {
+        y = draw_chains(frame, app, y, area, bg);
+        if y >= bottom {
+            return;
+        }
+    }
+    y += 1;
+
+    // Section 6 — MOCKS.
+    if y >= bottom {
+        return;
+    }
+    y = draw_section_header(frame, app, y, area, bg, ascii, 5, mocks_len);
+    if y >= bottom {
+        return;
+    }
+    if !app.http_panel_section_collapsed[5] {
+        y = draw_mocks(frame, app, y, area, bg);
+        if y >= bottom {
+            return;
+        }
+    }
+    y += 1;
+
     // Bottom action row — always visible, pinned at whatever y we've
     // reached. If the sections filled the whole panel we still tried
     // to reserve a row via the section renderers' clip-checks.
@@ -195,6 +239,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             disc_rect,
         );
         app.rects.http_panel_discover_chip = Some(disc_rect);
+        y += 1;
+    }
+    if y < bottom {
+        let imp_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        let arrow = if ascii { "v" } else { "\u{2193}" };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(
+                    format!("{arrow} Import\u{2026}"),
+                    Style::default().fg(t.cyan).bg(bg),
+                ),
+            ])),
+            imp_rect,
+        );
+        app.rects.http_panel_import_chip = Some(imp_rect);
     }
 }
 
@@ -589,6 +654,132 @@ fn draw_envs(
             new_rect,
         );
         app.rects.http_panel_env_new_chip = Some(new_rect);
+        y += 1;
+    }
+    y
+}
+
+/// CHAINS body — one row per `.chain.json` under `.mnml/chains/`.
+/// Click a row → run that chain.
+fn draw_chains(
+    frame: &mut Frame,
+    app: &mut App,
+    mut y: u16,
+    area: Rect,
+    bg: ratatui::style::Color,
+) -> u16 {
+    let t = theme::cur();
+    let bottom = area.y + area.height;
+    let chains = app.http_panel_chains_cache.clone();
+    if chains.is_empty() {
+        if y < bottom {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled("No chains yet.", Style::default().fg(t.comment).bg(bg)),
+                ])),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            y += 1;
+        }
+        return y;
+    }
+    for path in chains.iter().take(SECTION_ROW_CAP) {
+        if y >= bottom {
+            break;
+        }
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?")
+            .trim_end_matches(".chain.json")
+            .to_string();
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("\u{f085} ", Style::default().fg(t.cyan).bg(bg)),
+                Span::styled(name, Style::default().fg(t.fg).bg(bg)),
+            ])),
+            row_rect,
+        );
+        app.rects
+            .http_panel_chain_rows
+            .push((row_rect, path.clone()));
+        y += 1;
+    }
+    y
+}
+
+/// MOCKS body — one row per `.mock.json` picked up under the
+/// workspace (sibling of `.http`/`.curl` files, or under
+/// `.mnml/mocks` / `.rqst/mocks`). Click a row → replay that mock
+/// into the active Request pane.
+fn draw_mocks(
+    frame: &mut Frame,
+    app: &mut App,
+    mut y: u16,
+    area: Rect,
+    bg: ratatui::style::Color,
+) -> u16 {
+    let t = theme::cur();
+    let bottom = area.y + area.height;
+    let mocks = app.http_panel_mocks_cache.clone();
+    if mocks.is_empty() {
+        if y < bottom {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled("No mocks yet.", Style::default().fg(t.comment).bg(bg)),
+                ])),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            y += 1;
+        }
+        return y;
+    }
+    for path in mocks.iter().take(SECTION_ROW_CAP) {
+        if y >= bottom {
+            break;
+        }
+        let rel = path
+            .strip_prefix(&app.workspace)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+        let short = rel.trim_end_matches(".mock.json").to_string();
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("\u{f0c0} ", Style::default().fg(t.orange).bg(bg)),
+                Span::styled(short, Style::default().fg(t.fg).bg(bg)),
+            ])),
+            row_rect,
+        );
+        app.rects
+            .http_panel_mock_rows
+            .push((row_rect, path.clone()));
         y += 1;
     }
     y

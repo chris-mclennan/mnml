@@ -253,6 +253,11 @@ pub enum PickerKind {
     /// or `"new"`. Accept dispatches to the icon picker, glyph
     /// builder (edit-existing), or glyph builder (fresh).
     GlyphAction,
+    /// `id` = a supported import format (`"postman"` / `"har"`).
+    /// Accept ⇒ dispatch to the matching
+    /// `http_import_*_from_clipboard`. Opened by the
+    /// `↓ Import…` chip at the bottom of the HTTP sidebar.
+    HttpImport,
 }
 
 #[derive(Debug, Clone)]

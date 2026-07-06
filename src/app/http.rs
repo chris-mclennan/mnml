@@ -2340,6 +2340,77 @@ impl App {
         self.toast(format!("replayed mock ({})", mock_path.display()));
     }
 
+    /// Sidebar-triggered mock replay — replay `path` directly (skips
+    /// the sibling-path lookup that `http_replay_active_request_from_mock`
+    /// does). Opens a fresh Request pane if none is active.
+    pub fn http_replay_mock_from_path(&mut self, path: &std::path::Path) {
+        let mock = match crate::http::mock::load(path) {
+            Ok(m) => m,
+            Err(e) => {
+                self.toast(format!("replay_mock: {e}"));
+                return;
+            }
+        };
+        let has_request = matches!(
+            self.active.and_then(|i| self.panes.get(i)),
+            Some(Pane::Request(_))
+        );
+        if !has_request {
+            self.open_new_request_pane();
+        }
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            rp.state =
+                crate::request_pane::RunState::Done(Box::new(crate::request_pane::ResponseView {
+                    status: mock.status,
+                    status_text: mock.status_text,
+                    headers: mock.headers,
+                    body: mock.body,
+                    elapsed: std::time::Duration::ZERO,
+                    timing: crate::http::Timing::default(),
+                    assertions: Vec::new(),
+                    captures: Vec::new(),
+                    schema_result: None,
+                    sse_event_count: 0,
+                }));
+            rp.view = crate::request_pane::ViewMode::Response;
+        }
+        self.toast(format!(
+            "replayed mock: {}",
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("(mock)")
+        ));
+    }
+
+    /// `↓ Import…` sidebar chip → picker over supported import
+    /// formats. Accept fires the matching import path.
+    pub fn http_import_prompt(&mut self) {
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let items = vec![
+            PickerItem::new(
+                "postman".to_string(),
+                "Postman collection".to_string(),
+                "from clipboard (JSON)".to_string(),
+            ),
+            PickerItem::new(
+                "har".to_string(),
+                "HAR file".to_string(),
+                "from clipboard (Chrome/Firefox network export)".to_string(),
+            ),
+        ];
+        self.open_picker(Picker::new(PickerKind::HttpImport, "Import from:", items));
+    }
+
+    /// Accept handler for `PickerKind::HttpImport`.
+    pub fn accept_http_import(&mut self, kind_id: &str) {
+        match kind_id {
+            "postman" => self.http_import_postman_from_clipboard(),
+            "har" => self.http_import_har_from_clipboard(),
+            _ => {}
+        }
+    }
+
     /// Parse the active editor as an HTTP request, expanding env
     /// vars from `.mnml/env/$MNML_ENV` (or `.rqst/env/`). Returns
     /// `None` when there's no active editor, it isn't a recognized
