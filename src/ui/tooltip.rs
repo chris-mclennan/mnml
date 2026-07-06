@@ -858,6 +858,11 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: prettify JSON body".into(),
             Some("dim when the body isn't JSON".into()),
         )),
+        HoverChip::BufferlineNewRequest => Some((
+            app.rects.bufferline_new_request_button?,
+            "click: open a new HTTP request".into(),
+            None,
+        )),
         HoverChip::PendingUndoChip => {
             let rect = app.rects.pending_undo_chip?;
             let action_hint = app

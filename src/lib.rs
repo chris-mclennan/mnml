@@ -409,6 +409,11 @@ pub enum HoverChip {
     /// #21 v9 — hover on the pending-undo chip. Tooltip explains
     /// the keyboard shortcut + shows what will be undone.
     PendingUndoChip,
+    /// #21 v10 — hover on the inline `+` new-request chip on the
+    /// bufferline (visible when at least one Request pane is
+    /// open). Tooltip distinguishes it from the far-right `+`
+    /// new-tab-page button.
+    BufferlineNewRequest,
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept
