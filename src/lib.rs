@@ -418,6 +418,12 @@ pub enum HoverChip {
     /// explains the click / drag behavior once (users often
     /// don't know the whole track is clickable).
     ScrollbarThumb,
+    /// #polish 2026-07-06 — hover on the right-panel resize
+    /// grip. Explains drag-to-resize + double-click-to-reset.
+    RightPanelGrip,
+    /// #polish 2026-07-06 — hover on the tree rail resize
+    /// grip. Same treatment.
+    TreeRailGrip,
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept

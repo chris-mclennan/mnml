@@ -433,6 +433,16 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     if app.rects.scrollbars.iter().any(|h| contains(h.area, x, y)) {
         return Some(crate::HoverChip::ScrollbarThumb);
     }
+    if let Some(r) = app.rects.right_panel_edge
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RightPanelGrip);
+    }
+    if let Some(r) = app.rects.tree_edge
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::TreeRailGrip);
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {

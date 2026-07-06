@@ -923,6 +923,22 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let rect = app.rects.scrollbars.first().map(|h| h.area)?;
             Some((rect, "click: jump to that row · drag: scroll".into(), None))
         }
+        HoverChip::RightPanelGrip => {
+            let rect = app.rects.right_panel_edge?;
+            Some((
+                rect,
+                "drag: resize · double-click: reset width".into(),
+                None,
+            ))
+        }
+        HoverChip::TreeRailGrip => {
+            let rect = app.rects.tree_edge?;
+            Some((
+                rect,
+                "drag: resize · double-click: reset width".into(),
+                None,
+            ))
+        }
         HoverChip::PendingUndoChip => {
             let rect = app.rects.pending_undo_chip?;
             let action_hint = app

@@ -50,6 +50,34 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // band shares the rail's rightmost column with the file-tree
     // scrollbar, so the (specific, ~4-row) resize zone must win
     // there before the (full-height) scrollbar claims the click.
+    // #polish 2026-07-06 — double-click on a rail edge resets
+    // the width to the config default before drag-detection
+    // consumes the click. Same VS Code / Chrome tab-strip
+    // convention: click-drag to resize, double-click to reset.
+    let is_double_click = {
+        let now = std::time::Instant::now();
+        matches!(app.last_click, Some((t, lx, ly, count))
+            if count >= 1
+                && (x as i32 - lx as i32).abs() <= 1
+                && (y as i32 - ly as i32).abs() <= 1
+                && now.duration_since(t) < std::time::Duration::from_millis(500))
+    };
+    if is_double_click
+        && let Some(r) = app.rects.tree_edge
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.tree_width = app.config.ui.tree_width;
+        app.toast("tree width reset");
+        return;
+    }
+    if is_double_click
+        && let Some(r) = app.rects.right_panel_edge
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.right_panel_width = app.config.ui.right_panel_width;
+        app.toast("right panel width reset");
+        return;
+    }
     if app.begin_tree_edge_drag(x, y) {
         return;
     }
