@@ -1741,13 +1741,15 @@ fn draw_send_box(
     // routes to `http.abort` instead of `http.send`. Other states
     // show ▶ Send with per-state color: cyan while Streaming, dim
     // when URL is empty ("not ready"), green when ready to fire.
-    let (glyph, label, color) = match &rp.state {
-        crate::request_pane::RunState::Sending => ("\u{27F3}", "Abort", t.yellow),
-        crate::request_pane::RunState::Streaming(_) => ("\u{25B6}", "Send", t.cyan),
-        _ if rp.request.url.trim().is_empty() => ("\u{25B6}", "Send", t.comment),
-        _ => ("\u{25B6}", "Send", t.green),
+    // #polish — `⟳` (U+27F3) needs an extra space; ▶ (U+25B6)
+    // renders fine with a single space. Encode the gap per glyph.
+    let (glyph, gap, label, color) = match &rp.state {
+        crate::request_pane::RunState::Sending => ("\u{27F3}", "  ", "Abort", t.yellow),
+        crate::request_pane::RunState::Streaming(_) => ("\u{25B6}", " ", "Send", t.cyan),
+        _ if rp.request.url.trim().is_empty() => ("\u{25B6}", " ", "Send", t.comment),
+        _ => ("\u{25B6}", " ", "Send", t.green),
     };
-    let text = format!(" {glyph} {label} ");
+    let text = format!(" {glyph}{gap}{label} ");
     let text_w = text.chars().count() as u16;
     let mid_pad = inner.width.saturating_sub(text_w) / 2;
     let content = Line::from(vec![
@@ -2501,7 +2503,7 @@ fn draw_edit(
     }
     match &rp.state {
         RunState::Sending => rows.push(plain(
-            "  ⟳ sending…".to_string(),
+            "  ⟳  sending…".to_string(),
             Style::default().fg(t.yellow).bg(t.bg_dark),
         )),
         RunState::Streaming(r) => rows.push(plain(
@@ -2622,7 +2624,7 @@ fn draw_response(
             // spinner sits inside a compact chip so it reads as an
             // in-flight indicator, not a static label.
             rows.push(plain(
-                "  ⟳ sending…".to_string(),
+                "  ⟳  sending…".to_string(),
                 Style::default()
                     .fg(t.cyan)
                     .bg(t.bg_dark)

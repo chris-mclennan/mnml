@@ -102,7 +102,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let inflight_text = if inflight.is_empty() {
         String::new()
     } else {
-        format!("⟳ {} running…", inflight.join(", "))
+        format!("⟳  {} running…", inflight.join(", "))
     };
 
     let mut spans: Vec<Span<'static>> = Vec::new();

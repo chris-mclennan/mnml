@@ -69,7 +69,7 @@ pub fn draw(
 
     match &ai.state {
         AiState::Asking => rows.push(Line::from(Span::styled(
-            "  ⟳ thinking… (claude -p)".to_string(),
+            "  ⟳  thinking… (claude -p)".to_string(),
             Style::default()
                 .fg(t.yellow)
                 .bg(t.bg_dark)

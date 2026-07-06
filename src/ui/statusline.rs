@@ -578,7 +578,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     {
         let label: String = title.chars().take(28).collect();
         right.push(Seg::new(
-            format!(" ⟳ {label} "),
+            format!(" ⟳  {label} "),
             theme::cur().bg_darker,
             theme::cur().cyan,
         ));

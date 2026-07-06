@@ -68,7 +68,7 @@ pub fn draw(
     match &tp.state {
         TestsState::Running => {
             rows.push(Line::from(Span::styled(
-                "  ⟳ running…",
+                "  ⟳  running…",
                 Style::default()
                     .fg(t.yellow)
                     .bg(t.bg_dark)
