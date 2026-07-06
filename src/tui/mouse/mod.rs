@@ -795,6 +795,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // #polish 2026-07-06 — delete-confirm overlay: only its buttons
+    // respond. Same shape as QuitConfirm above.
+    if app
+        .prompt
+        .as_ref()
+        .is_some_and(|p| matches!(p.kind, crate::prompt::PromptKind::DeleteConfirm))
+    {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind
+            && let Some(&(_, code)) = app
+                .rects
+                .delete_prompt_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.prompt = None;
+            app.run_delete_button(code);
+        }
+        return;
+    }
     // The text-input prompt is modal — swallow mouse events while it's open.
     if app.prompt.is_some() {
         return;

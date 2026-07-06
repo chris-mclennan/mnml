@@ -388,6 +388,49 @@ pub(crate) fn handle_confirm_modal_key(app: &mut App, key: KeyEvent) {
 pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let Some(p) = app.prompt.as_mut() else { return };
+    // #polish 2026-07-06 — DeleteConfirm — button dialog. Same
+    // shape as QuitConfirm: Left/Right cycle, Enter fires focused
+    // button, hotkeys D/C, Esc cancels.
+    if matches!(p.kind, crate::prompt::PromptKind::DeleteConfirm) {
+        let buttons = crate::ui::prompt::delete_buttons();
+        let n = buttons.len();
+        match key.code {
+            KeyCode::Esc => {
+                app.prompt = None;
+                app.run_delete_button(crate::ui::prompt::DELETE_BTN_CANCEL);
+                return;
+            }
+            KeyCode::Left | KeyCode::BackTab => {
+                p.cursor = (p.cursor + n - 1) % n;
+                return;
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                p.cursor = (p.cursor + 1) % n;
+                return;
+            }
+            KeyCode::Enter => {
+                let selected = p.cursor.min(buttons.len() - 1);
+                let code = buttons[selected].1;
+                app.prompt = None;
+                app.run_delete_button(code);
+                return;
+            }
+            KeyCode::Char(c) => {
+                let low = c.to_ascii_lowercase();
+                let hit = match low {
+                    'd' | 'y' => Some(crate::ui::prompt::DELETE_BTN_DELETE),
+                    'c' | 'n' => Some(crate::ui::prompt::DELETE_BTN_CANCEL),
+                    _ => None,
+                };
+                if let Some(code) = hit {
+                    app.prompt = None;
+                    app.run_delete_button(code);
+                }
+                return;
+            }
+            _ => return,
+        }
+    }
     // Quit confirm — button dialog. Left/Right cycle, Enter fires
     // the focused button, S/Q/C are hotkeys, Esc cancels.
     if matches!(p.kind, crate::prompt::PromptKind::QuitConfirm) {

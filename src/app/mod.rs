@@ -2416,6 +2416,12 @@ pub struct PaneRects {
     /// `(rect, code)` per button in the quit-confirm overlay. Codes are
     /// the `QUIT_BTN_*` constants in `ui::prompt`.
     pub quit_prompt_buttons: Vec<(Rect, u8)>,
+    /// #polish 2026-07-06 — `(rect, code)` per button in the
+    /// delete-confirm dialog. Codes are `DELETE_BTN_*` constants in
+    /// `ui::prompt`. Replaces the type-the-filename text-input flow
+    /// with a two-button `[ Delete ] [ Cancel ]` yes/no matching the
+    /// quit-confirm shape.
+    pub delete_prompt_buttons: Vec<(Rect, u8)>,
     /// On-screen cell where the text-input prompt's caret should sit (when open).
     pub prompt_caret: Option<(u16, u16)>,
     /// The context-menu overlay's outer box (when open) and `(rect, item-index)` per row.
@@ -5311,18 +5317,16 @@ impl App {
         self.toast(format!("created {}/", rel_path(&self.workspace, &target)));
     }
 
-    /// Open the FS delete prompt — captures `path`. The user must type the
-    /// entry's filename to confirm; anything else is a no-op (the prompt just
-    /// closes). Cheap two-step guard rather than a yes/no modal.
+    /// Open the FS delete prompt — captures `path`. Renders as a
+    /// two-button `[ Delete ] [ Cancel ]` confirm dialog (Cancel is
+    /// the default focus for safety). Was: text-input asking the
+    /// user to type the filename verbatim; user feedback 2026-07-06
+    /// flagged the pattern as goofy compared to the quit dialog.
     pub fn open_fs_delete_prompt(&mut self, path: PathBuf) {
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
         self.pending_fs_action = Some(FsAction::Delete { path: path.clone() });
         // #20 v4 — surface the recursive-delete case explicitly.
         // Also count how many entries would be removed so the user
-        // sees the blast radius before typing the name.
+        // sees the blast radius before confirming.
         let is_dir = path.is_dir();
         let rel = rel_path(&self.workspace, &path);
         let title = if is_dir {
@@ -5332,28 +5336,41 @@ impl App {
             } else {
                 format!("{count} entr{}", if count == 1 { "y" } else { "ies" })
             };
-            format!("Recursively delete {rel} ({count_hint}) — type '{name}' to confirm")
+            format!("Delete {rel} recursively? ({count_hint})")
         } else {
-            format!("Delete {rel} — type '{name}' to confirm")
+            format!("Delete {rel}?")
         };
-        self.prompt = Some(crate::prompt::Prompt::new(
-            crate::prompt::PromptKind::DeleteConfirm,
-            title,
-        ));
+        let mut prompt =
+            crate::prompt::Prompt::new(crate::prompt::PromptKind::DeleteConfirm, title);
+        // Focus Cancel by default (index 1) — safety first for a
+        // destructive action.
+        prompt.cursor = 1;
+        self.prompt = Some(prompt);
     }
 
-    /// Execute the delete *iff* `typed` matches `path`'s filename exactly.
-    /// Removes any open editor buffer for the file; for a directory, removes
-    /// every editor buffer under it. `rm` for a file, `rm -rf` for a dir.
-    pub fn confirm_delete_fs_entry(&mut self, path: &Path, typed: &str) {
-        let want = path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if typed.trim() != want {
-            self.toast("delete cancelled (name didn't match)");
-            return;
+    /// Dispatch handler for the DeleteConfirm button dialog. Delete
+    /// = execute, Cancel = drop the pending FsAction.
+    pub fn run_delete_button(&mut self, code: u8) {
+        match code {
+            crate::ui::prompt::DELETE_BTN_DELETE => {
+                if let Some(FsAction::Delete { path }) = self.pending_fs_action.take() {
+                    self.execute_delete_fs_entry(&path);
+                }
+            }
+            crate::ui::prompt::DELETE_BTN_CANCEL => {
+                self.pending_fs_action = None;
+                self.toast("delete cancelled");
+            }
+            _ => {}
         }
+    }
+
+    /// Execute the delete unconditionally — the caller (button
+    /// dialog / test) is responsible for the confirmation gate.
+    /// Removes any open editor buffer for the file; for a directory,
+    /// removes every editor buffer under it. `rm` for a file,
+    /// `rm -rf` for a dir.
+    pub fn execute_delete_fs_entry(&mut self, path: &Path) {
         let is_dir = path.is_dir();
         let res = if is_dir {
             std::fs::remove_dir_all(path)
@@ -12825,18 +12842,20 @@ mod tests {
     }
 
     #[test]
-    fn fs_delete_requires_exact_filename_match() {
+    fn fs_delete_via_button_dialog_closes_buffer_and_trims_recents() {
+        // Was `fs_delete_requires_exact_filename_match`. Since the
+        // 2026-07-06 polish switched delete from a type-the-name
+        // text prompt to a `[ Delete ] [ Cancel ]` button dialog,
+        // the confirmation gate lives at the button layer — the
+        // App fn itself just executes. Cancel doesn't call through
+        // at all (`run_delete_button` drops the FsAction).
         let (_d, mut app) = app_with_files();
         let p = app.workspace.join("a.txt");
-        // Wrong typed name ⇒ file untouched.
-        app.confirm_delete_fs_entry(&p, "b.txt");
         assert!(p.exists());
-        // Correct ⇒ deleted, recent_files cleaned up.
         app.open_path(&p);
-        app.confirm_delete_fs_entry(&p, "a.txt");
+        app.execute_delete_fs_entry(&p);
         assert!(!p.exists());
         assert!(!app.recent_files.iter().any(|q| q == &p));
-        // Pane for the deleted file is gone.
         assert!(!app.panes.iter().any(|pane| matches!(
             pane,
             Pane::Editor(b) if b.is_at(&p)

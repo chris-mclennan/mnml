@@ -1740,10 +1740,11 @@ impl App {
                 }
             }
             crate::prompt::PromptKind::DeleteConfirm => {
-                let typed = p.input.clone();
-                if let Some(FsAction::Delete { path }) = self.pending_fs_action.take() {
-                    self.confirm_delete_fs_entry(&path, &typed);
-                }
+                // No-op: DeleteConfirm now routes through the button
+                // handler (`run_delete_button`) in the prompt-key
+                // dispatcher. Kept as an arm so future accidental
+                // Enter routing lands here silently rather than
+                // crashing.
             }
             crate::prompt::PromptKind::GitDeleteBranch => {
                 self.confirm_delete_branch(p.input.clone());
