@@ -1310,9 +1310,9 @@ impl App {
         self.prompt = None;
         self.pending_rename = None;
         self.pending_fs_action = None;
-        self.pending_delete_branch = None;
-        self.pending_worktree_remove = None;
         self.pending_branch_source = None;
+        self.pending_branch_delete = None;
+        self.pending_worktree_path = None;
         self.pending_install_family_id = None;
         self.pending_install_after_action = None;
         // render-reviewer #9 — pending_tool_install stash followed
@@ -1751,12 +1751,6 @@ impl App {
                 // dispatcher. Kept as an arm so future accidental
                 // Enter routing lands here silently rather than
                 // crashing.
-            }
-            crate::prompt::PromptKind::GitDeleteBranch => {
-                self.confirm_delete_branch(p.input.clone());
-            }
-            crate::prompt::PromptKind::GitWorktreeRemove => {
-                self.confirm_worktree_remove(p.input.clone());
             }
             crate::prompt::PromptKind::GitStashDrop => {
                 self.confirm_stash_drop(p.input.clone());

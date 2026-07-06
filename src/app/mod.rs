@@ -4031,12 +4031,6 @@ pub struct App {
     /// `None` ⇒ branch from HEAD (the bare `git.new_branch` command); `Some` ⇒
     /// branch from this ref (the git-rail's "New branch from here…" menu).
     pending_branch_source: Option<String>,
-    /// Branch name awaiting the "type the name to confirm" prompt that the
-    /// git-rail's branch right-click menu opens (→ `git branch -D`).
-    pending_delete_branch: Option<String>,
-    /// `(path, basename)` of a worktree awaiting the same kind of confirm
-    /// prompt (→ `git worktree remove`).
-    pending_worktree_remove: Option<(PathBuf, String)>,
     /// `(stash_ref, label)` of a stash awaiting a "type 'drop' to
     /// confirm" prompt. Set when the user picks a stash from the
     /// stash drop picker; cleared on accept or cancel.
@@ -4729,8 +4723,6 @@ impl App {
             find_history: Vec::new(),
             find_history_cursor: 0,
             pending_branch_source: None,
-            pending_delete_branch: None,
-            pending_worktree_remove: None,
             pending_stash_drop: None,
             pending_tag_delete: None,
             pending_discard_hunk: None,
@@ -5386,13 +5378,7 @@ impl App {
         }
         let synth = if primary {
             match kind {
-                GitDeleteBranch => self.pending_delete_branch.clone().unwrap_or_default(),
                 GitDeleteBranchConfirm => "delete".into(),
-                GitWorktreeRemove => self
-                    .pending_worktree_remove
-                    .as_ref()
-                    .map(|(_, n)| n.clone())
-                    .unwrap_or_default(),
                 WorktreeRemoveConfirm => "remove".into(),
                 GitStashDrop => "drop".into(),
                 GitTagDelete => self.pending_tag_delete.clone().unwrap_or_default(),

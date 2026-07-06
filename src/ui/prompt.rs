@@ -339,8 +339,8 @@ fn draw_quit_confirm(frame: &mut Frame, app: &mut App, screen: Rect) {
 pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str, &'static str)> {
     use crate::prompt::PromptKind::*;
     Some(match kind {
-        GitDeleteBranch | GitDeleteBranchConfirm => ("  Delete  ", " Cancel "),
-        GitWorktreeRemove | WorktreeRemoveConfirm => ("  Remove  ", " Cancel "),
+        GitDeleteBranchConfirm => ("  Delete  ", " Cancel "),
+        WorktreeRemoveConfirm => ("  Remove  ", " Cancel "),
         GitStashDrop => ("  Drop  ", " Cancel "),
         GitTagDelete => ("  Delete  ", " Cancel "),
         DiffDiscardHunk | GitDiscardFile => ("  Discard  ", " Cancel "),

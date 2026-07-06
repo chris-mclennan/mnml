@@ -3195,32 +3195,19 @@ impl App {
     /// Right-click context-menu action: prompt to confirm, then `git branch -D`.
     pub fn git_delete_branch_prompt(&mut self, name: String) {
         use crate::prompt::{Prompt, PromptKind};
+        // Consolidated 2026-07-06 — was two duplicate PromptKind
+        // variants (`GitDeleteBranch` for menu route with sync
+        // `crate::git::branch::delete_branch`, `GitDeleteBranchConfirm`
+        // for picker route with async `git_delete_branch_apply`).
+        // Now both routes fire the async path.
+        self.pending_branch_delete = Some(name.clone());
         let mut p = Prompt::seeded(
-            PromptKind::GitDeleteBranch,
+            PromptKind::GitDeleteBranchConfirm,
             format!("Delete branch `{name}`?"),
             "",
         );
         p.cursor = 1;
         self.prompt = Some(p);
-        self.pending_delete_branch = Some(name);
-    }
-
-    /// Accept handler for the `PromptKind::GitDeleteBranch` confirm prompt.
-    pub fn confirm_delete_branch(&mut self, typed: String) {
-        let Some(name) = self.pending_delete_branch.take() else {
-            return;
-        };
-        if typed.trim() != name {
-            self.toast("branch delete cancelled (name didn't match)");
-            return;
-        }
-        match crate::git::branch::delete_branch(self.active_repo_path(), &name) {
-            Ok(()) => {
-                self.toast(format!("deleted branch {name}"));
-                self.after_git_change();
-            }
-            Err(e) => self.toast(format!("branch delete: {e}")),
-        }
     }
 
     /// Accept handler for `PromptKind::GitStashDrop` — require the
@@ -3241,6 +3228,12 @@ impl App {
     }
 
     /// Right-click context-menu action: confirm + `git worktree remove`.
+    ///
+    /// Consolidated 2026-07-06 — was two duplicate PromptKind
+    /// variants (`GitWorktreeRemove` menu route with sync
+    /// `crate::git::branch::worktree_remove`; `WorktreeRemoveConfirm`
+    /// picker route with async `git_worktree_remove_apply`). Now
+    /// both routes fire the async path.
     pub fn git_worktree_remove_prompt(&mut self, path: PathBuf) {
         use crate::prompt::{Prompt, PromptKind};
         let name = path
@@ -3248,32 +3241,14 @@ impl App {
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
+        self.pending_worktree_path = Some(path);
         let mut p = Prompt::seeded(
-            PromptKind::GitWorktreeRemove,
+            PromptKind::WorktreeRemoveConfirm,
             format!("Remove worktree `{name}`?"),
             "",
         );
         p.cursor = 1;
         self.prompt = Some(p);
-        self.pending_worktree_remove = Some((path, name));
-    }
-
-    /// Accept handler for `PromptKind::GitWorktreeRemove`.
-    pub fn confirm_worktree_remove(&mut self, typed: String) {
-        let Some((path, name)) = self.pending_worktree_remove.take() else {
-            return;
-        };
-        if typed.trim() != name {
-            self.toast("worktree remove cancelled (name didn't match)");
-            return;
-        }
-        match crate::git::branch::worktree_remove(self.active_repo_path(), &path) {
-            Ok(()) => {
-                self.toast(format!("removed worktree {name}"));
-                self.after_git_change();
-            }
-            Err(e) => self.toast(format!("worktree remove: {e}")),
-        }
     }
 }
 
