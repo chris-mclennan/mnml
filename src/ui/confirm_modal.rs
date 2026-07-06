@@ -27,7 +27,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let cancel_w = cancel_label.chars().count() as u16;
     let confirm_w = confirm_label.chars().count() as u16;
     let msg_w = c.message.chars().count() as u16;
-    let hint = " Y = confirm · N = cancel · Tab cycles focus";
+    let hint = " Y = confirm · N = cancel · Tab = cycle · Space/Enter = fire focus";
     let hint_w = hint.chars().count() as u16;
     let inner_w = msg_w
         .max(hint_w)

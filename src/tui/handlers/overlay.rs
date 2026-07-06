@@ -331,7 +331,7 @@ pub(crate) fn handle_confirm_modal_key(app: &mut App, key: KeyEvent) {
         KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
             c.focused = 1 - c.focused;
         }
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char(' ') => {
             if c.focused == 1 {
                 app.commit_pending_confirm();
             } else {
