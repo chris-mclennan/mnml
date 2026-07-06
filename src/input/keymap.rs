@@ -405,7 +405,7 @@ fn key_code(token: &str) -> Option<KeyCode> {
         "tab" => KeyCode::Tab,
         "backtab" => KeyCode::BackTab,
         "esc" | "escape" => KeyCode::Esc,
-        "space" => KeyCode::Char(' '),
+        "space" | "leader" => KeyCode::Char(' '),
         "backspace" | "bs" => KeyCode::Backspace,
         "delete" | "del" => KeyCode::Delete,
         "insert" | "ins" => KeyCode::Insert,
@@ -458,6 +458,21 @@ mod tests {
         );
         assert_eq!(parse_key_spec("a").unwrap().code, KeyCode::Char('a'));
         assert!(parse_key_spec("nope-not-a-key").is_none());
+    }
+
+    #[test]
+    fn leader_alias_maps_to_space() {
+        // #polish 2026-07-06 — from nvchad-user audit. `leader` is the
+        // vim canonical name for the leader chord; every doc / test
+        // says `<leader>ff` — IPC parser must accept it as an alias
+        // for space so agent-driven .test scripts translate 1:1.
+        assert_eq!(parse_key_spec("leader").unwrap().code, KeyCode::Char(' '));
+        // Modifier + leader also parses (unusual but no reason to
+        // reject).
+        assert_eq!(
+            parse_key_spec("ctrl+leader").unwrap().code,
+            KeyCode::Char(' ')
+        );
     }
 
     #[test]

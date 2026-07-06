@@ -8541,8 +8541,17 @@ impl App {
             return;
         }
         // Find the smallest enclosing pair across the three bracket kinds.
+        // Candidates come from two sources:
+        //   (a) `enclosing_bracket_pair` — the fold CONTAINING the cursor.
+        //   (b) An unmatched opener on the CURSOR'S OWN LINE (e.g., cursor
+        //       on `if x > 0 {` folds that block, not the outer `fn`). Real
+        //       vim's `za` picks the fold that *starts* on the header row
+        //       when the cursor sits on it, not the parent. Regression
+        //       fixed 2026-07-06 from nvchad-user audit.
         let pairs = [('{', '}'), ('[', ']'), ('(', ')')];
         let mut best: Option<(usize, usize)> = None;
+        let text = b.editor.text().to_string();
+        let (ls, le) = b.editor.line_byte_range(cur_row);
         for &(open, close) in &pairs {
             if let Some((o, c)) = b.editor.enclosing_bracket_pair(open, close) {
                 let lo_line = b.editor.line_at_byte(o);
@@ -8551,6 +8560,41 @@ impl App {
                     let span = hi_line - lo_line;
                     if best.is_none_or(|(s, e)| (e - s) > span) {
                         best = Some((lo_line, hi_line));
+                    }
+                }
+            }
+            // Line-scan: last unmatched `open` on the current line, if any.
+            let mut open_pos: Option<usize> = None;
+            for (i, ch) in text[ls..le].char_indices() {
+                if ch == open {
+                    open_pos = Some(ls + i);
+                } else if ch == close && open_pos.is_some() {
+                    open_pos = None;
+                }
+            }
+            if let Some(open_byte) = open_pos {
+                // Walk forward with a depth counter to find the matching close.
+                let mut depth: usize = 1;
+                let mut close_byte: Option<usize> = None;
+                for (i, ch) in text[open_byte + 1..].char_indices() {
+                    if ch == open {
+                        depth += 1;
+                    } else if ch == close {
+                        depth -= 1;
+                        if depth == 0 {
+                            close_byte = Some(open_byte + 1 + i);
+                            break;
+                        }
+                    }
+                }
+                if let Some(c) = close_byte {
+                    let lo_line = b.editor.line_at_byte(open_byte);
+                    let hi_line = b.editor.line_at_byte(c);
+                    if hi_line > lo_line {
+                        let span = hi_line - lo_line;
+                        if best.is_none_or(|(s, e)| (e - s) > span) {
+                            best = Some((lo_line, hi_line));
+                        }
                     }
                 }
             }
@@ -12630,6 +12674,59 @@ mod tests {
         );
         assert!(app.nav_forward.is_empty());
         assert_eq!(app.nav_back.len(), 1);
+    }
+
+    #[test]
+    fn za_on_header_line_folds_the_starting_block_not_the_parent() {
+        // #polish 2026-07-06 — nvchad-user SEV-2. Cursor on `if x > 0 {`
+        // (line 3) must fold lines 3..7, not the outer `fn main() {}`.
+        // Before the fix, `enclosing_bracket_pair` walked backward past
+        // the `{` on the current line and hit the `fn` header instead.
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("code.rs");
+        let src = "fn main() {\n    let x = 1;\n    if x > 0 {\n        println!(\"positive\");\n        for i in 0..10 {\n            println!(\"{}\", i);\n        }\n    }\n}\n";
+        fs::write(&path, src).unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_path(&path);
+        if let Some(b) = app.active_editor_mut() {
+            // Place cursor on line 3 (0-indexed 2), col 4 — the `i` of `if`.
+            b.editor.place_cursor(2, 4);
+        }
+        app.toggle_fold_at_cursor();
+        let b = app.active_editor().unwrap();
+        assert_eq!(
+            b.folds.get(&2).copied(),
+            Some(7),
+            "expected fold of if-block (rows 2..=7), got folds: {:?}",
+            b.folds
+        );
+        // Outer fn block is NOT folded — only the smallest applicable.
+        assert!(!b.folds.contains_key(&0));
+    }
+
+    #[test]
+    fn za_on_inner_line_still_folds_smallest_block() {
+        // Guard against regression: with cursor INSIDE the if body (line
+        // 4 = println!), we should still get the if-block fold via the
+        // enclosing-pair path — the line-scan branch adds NEW candidates
+        // without swallowing the old one.
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("code.rs");
+        let src = "fn main() {\n    let x = 1;\n    if x > 0 {\n        println!(\"positive\");\n    }\n}\n";
+        fs::write(&path, src).unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_path(&path);
+        if let Some(b) = app.active_editor_mut() {
+            b.editor.place_cursor(3, 8);
+        }
+        app.toggle_fold_at_cursor();
+        let b = app.active_editor().unwrap();
+        // if-block is rows 2..=4 (line 3 open, line 5 close, 0-indexed).
+        assert_eq!(b.folds.get(&2).copied(), Some(4));
     }
 
     #[test]
