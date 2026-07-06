@@ -452,9 +452,26 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         return;
     }
     // #21 v2 — right-click coverage for the remaining statusline
-    // chips (WRAP / LSP / Test). Small menus that surface the
-    // underlying palette commands so users can discover config
-    // knobs without dropping to `:`.
+    // chips (WRAP / LSP / Autosave / Test). Small menus that
+    // surface the underlying palette commands so users can
+    // discover config knobs without dropping to `:`.
+    if let Some(r) = app.rects.statusline_wrap_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let cur = app.config.ui.wrap;
+        let label = if cur { "Disable wrap" } else { "Enable wrap" };
+        let items = vec![MenuItem::new(
+            label,
+            MenuAction::Command("view.toggle_wrap"),
+        )];
+        app.context_menu = Some(ContextMenu::new(Some("Wrap".to_string()), (x, y), items));
+        return;
+    }
+    // Autosave chip — no menu; the existing left-click already
+    // toasts the current interval + how to change it. Adding a
+    // right-click menu for "change interval" would just repeat
+    // that toast (no dedicated command yet). Left-click is fine.
     if let Some(r) = app.rects.statusline_lsp_chip
         && crate::app::dispatch::contains(r, x, y)
     {
