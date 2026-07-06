@@ -397,7 +397,7 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
                 app.prompt = None;
-                app.run_delete_button(crate::ui::prompt::DELETE_BTN_CANCEL);
+                app.run_delete_button(crate::ui::prompt::CONFIRM_BTN_CANCEL);
                 return;
             }
             KeyCode::Left | KeyCode::BackTab => {
@@ -418,8 +418,8 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char(c) => {
                 let low = c.to_ascii_lowercase();
                 let hit = match low {
-                    'd' | 'y' => Some(crate::ui::prompt::DELETE_BTN_DELETE),
-                    'c' | 'n' => Some(crate::ui::prompt::DELETE_BTN_CANCEL),
+                    'd' | 'y' => Some(crate::ui::prompt::CONFIRM_BTN_PRIMARY),
+                    'c' | 'n' => Some(crate::ui::prompt::CONFIRM_BTN_CANCEL),
                     _ => None,
                 };
                 if let Some(code) = hit {

@@ -2416,12 +2416,14 @@ pub struct PaneRects {
     /// `(rect, code)` per button in the quit-confirm overlay. Codes are
     /// the `QUIT_BTN_*` constants in `ui::prompt`.
     pub quit_prompt_buttons: Vec<(Rect, u8)>,
-    /// #polish 2026-07-06 — `(rect, code)` per button in the
-    /// delete-confirm dialog. Codes are `DELETE_BTN_*` constants in
-    /// `ui::prompt`. Replaces the type-the-filename text-input flow
-    /// with a two-button `[ Delete ] [ Cancel ]` yes/no matching the
-    /// quit-confirm shape.
-    pub delete_prompt_buttons: Vec<(Rect, u8)>,
+    /// #polish 2026-07-06 — `(rect, code)` per button in any generic
+    /// confirm dialog: DeleteConfirm, GitStashDrop, ClaudeKillConfirm,
+    /// GitMergeConfirm, AiToolConfirm, etc. Codes are `CONFIRM_BTN_*`
+    /// constants in `ui::prompt`. Only one confirm dialog is open at
+    /// a time so a single Vec is enough. QuitConfirm has its own
+    /// dedicated `quit_prompt_buttons` because it has 3-4 buttons
+    /// with quit-specific action codes.
+    pub confirm_dialog_buttons: Vec<(Rect, u8)>,
     /// On-screen cell where the text-input prompt's caret should sit (when open).
     pub prompt_caret: Option<(u16, u16)>,
     /// The context-menu overlay's outer box (when open) and `(rect, item-index)` per row.
@@ -5426,12 +5428,12 @@ impl App {
     /// = execute, Cancel = drop the pending FsAction.
     pub fn run_delete_button(&mut self, code: u8) {
         match code {
-            crate::ui::prompt::DELETE_BTN_DELETE => {
+            crate::ui::prompt::CONFIRM_BTN_PRIMARY => {
                 if let Some(FsAction::Delete { path }) = self.pending_fs_action.take() {
                     self.execute_delete_fs_entry(&path);
                 }
             }
-            crate::ui::prompt::DELETE_BTN_CANCEL => {
+            crate::ui::prompt::CONFIRM_BTN_CANCEL => {
                 self.pending_fs_action = None;
                 self.toast("delete cancelled");
             }

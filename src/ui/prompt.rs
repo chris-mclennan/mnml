@@ -204,16 +204,16 @@ pub const QUIT_BTN_QUIT_CLEAN: u8 = 3;
 /// Delete-confirm buttons. Order matches the Vec returned by
 /// `delete_buttons`; the u8 payload is what `App::run_delete_button`
 /// dispatches on.
-pub const DELETE_BTN_DELETE: u8 = 0;
-pub const DELETE_BTN_CANCEL: u8 = 1;
+pub const CONFIRM_BTN_PRIMARY: u8 = 0;
+pub const CONFIRM_BTN_CANCEL: u8 = 1;
 
 /// Two-button set for the delete-confirm dialog. Returns
 /// `(label, action_code, hotkey_char_idx)` per button. Cancel is the
 /// default focus (safety first) — see `open_fs_delete_prompt`.
 pub fn delete_buttons() -> Vec<(&'static str, u8, usize)> {
     vec![
-        ("  Delete  ", DELETE_BTN_DELETE, 2),
-        (" Cancel ", DELETE_BTN_CANCEL, 1),
+        ("  Delete  ", CONFIRM_BTN_PRIMARY, 2),
+        (" Cancel ", CONFIRM_BTN_CANCEL, 1),
     ]
 }
 
@@ -368,8 +368,8 @@ pub fn confirm_buttons(kind: &crate::prompt::PromptKind) -> Option<Vec<(&'static
             .unwrap_or(0)
     };
     Some(vec![
-        (primary, DELETE_BTN_DELETE, hk(primary)),
-        (cancel, DELETE_BTN_CANCEL, hk(cancel)),
+        (primary, CONFIRM_BTN_PRIMARY, hk(primary)),
+        (cancel, CONFIRM_BTN_CANCEL, hk(cancel)),
     ])
 }
 
@@ -422,7 +422,7 @@ fn draw_delete_confirm(frame: &mut Frame, app: &mut App, screen: Rect) {
         .map(|(l, _, _)| l.chars().count() as u16 + 1)
         .sum();
     let mut bx = inner.x + inner.width.saturating_sub(total_bw);
-    app.rects.delete_prompt_buttons.clear();
+    app.rects.confirm_dialog_buttons.clear();
     for (i, (label, code, hk_idx)) in buttons.iter().enumerate() {
         let focused = i == selected;
         let style = if focused {
@@ -452,7 +452,7 @@ fn draw_delete_confirm(frame: &mut Frame, app: &mut App, screen: Rect) {
         ));
         let rect = Rect::new(bx, by, bw, 1);
         frame.render_widget(Paragraph::new(Line::from(spans)), rect);
-        app.rects.delete_prompt_buttons.push((rect, *code));
+        app.rects.confirm_dialog_buttons.push((rect, *code));
         bx += bw + 1;
     }
 }
@@ -506,7 +506,7 @@ fn draw_generic_confirm(
         .map(|(l, _, _)| l.chars().count() as u16 + 1)
         .sum();
     let mut bx = inner.x + inner.width.saturating_sub(total_bw);
-    app.rects.delete_prompt_buttons.clear();
+    app.rects.confirm_dialog_buttons.clear();
     for (i, (label, code, hk_idx)) in buttons.iter().enumerate() {
         let focused = i == selected;
         let style = if focused {
@@ -536,7 +536,7 @@ fn draw_generic_confirm(
         ));
         let rect = Rect::new(bx, by, bw, 1);
         frame.render_widget(Paragraph::new(Line::from(spans)), rect);
-        app.rects.delete_prompt_buttons.push((rect, *code));
+        app.rects.confirm_dialog_buttons.push((rect, *code));
         bx += bw + 1;
     }
 }

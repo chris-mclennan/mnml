@@ -3231,7 +3231,7 @@ impl App {
             return;
         };
         if typed.trim() != "drop" {
-            self.toast("stash drop cancelled (type 'drop' to confirm)");
+            self.toast("stash drop cancelled");
             return;
         }
         match crate::git::stash::drop_stash(self.active_repo_path(), &stash_ref) {

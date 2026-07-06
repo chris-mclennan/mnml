@@ -805,7 +805,7 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if let MouseEventKind::Down(MouseButton::Left) = m.kind
             && let Some(&(_, code)) = app
                 .rects
-                .delete_prompt_buttons
+                .confirm_dialog_buttons
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         {
@@ -826,12 +826,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if let MouseEventKind::Down(MouseButton::Left) = m.kind
             && let Some(&(_, code)) = app
                 .rects
-                .delete_prompt_buttons
+                .confirm_dialog_buttons
                 .iter()
                 .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         {
-            // code == DELETE_BTN_DELETE (0) = primary; anything else = cancel.
-            let primary = code == crate::ui::prompt::DELETE_BTN_DELETE;
+            // code == CONFIRM_BTN_PRIMARY (0) = primary; anything else = cancel.
+            let primary = code == crate::ui::prompt::CONFIRM_BTN_PRIMARY;
             app.run_confirm_button(primary);
         }
         return;

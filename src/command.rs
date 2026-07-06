@@ -3589,6 +3589,26 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_http_chain_picker(),
         },
         Command {
+            id: "http.new_chain",
+            title: "HTTP: create a new .chain.json in .mnml/chains/",
+            group: "http",
+            // Mirror of `+ New chain` in the HTTP sidebar — prompts
+            // for a name, creates the file with a login → whoami
+            // starter template, opens it in the editor.
+            keys: &[],
+            run: |app| app.http_new_chain_prompt(),
+        },
+        Command {
+            id: "http.new_collection",
+            title: "HTTP: create a new request collection under .mnml/collections/",
+            group: "http",
+            // Mirror of `+ New collection` in the HTTP sidebar —
+            // prompts for a name, creates a folder + starter
+            // requests.http with `### list` / `### create` blocks.
+            keys: &[],
+            run: |app| app.http_new_collection_prompt(),
+        },
+        Command {
             id: "http.ai_build",
             title: "HTTP: build a request from a natural-language description (Claude)",
             group: "http",

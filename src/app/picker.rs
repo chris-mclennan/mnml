@@ -1724,7 +1724,7 @@ impl App {
                 } else {
                     self.pending_kill_pid = None;
                     self.pending_kill_batch.clear();
-                    self.toast("kill cancelled (type 'kill' to confirm)");
+                    self.toast("kill cancelled");
                 }
             }
             crate::prompt::PromptKind::NewFile => {
