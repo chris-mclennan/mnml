@@ -137,6 +137,31 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // #polish 2026-07-06 — right-click on a Notes-panel file row.
+    if let Some(path) = app
+        .rects
+        .notes_panel_files
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, p)| p.clone())
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let rel = crate::app::rel_path(&app.workspace, &path);
+        let title = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "note".to_string());
+        let items = vec![
+            MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
+            MenuItem::new("Delete…", MenuAction::Delete(path)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
     // #polish 2026-07-06 — right-click on an activity-bar icon
     // opens a small menu with "Show / Focus this rail" (mirrors
     // left-click) + convenient jumps. Users familiar with VS

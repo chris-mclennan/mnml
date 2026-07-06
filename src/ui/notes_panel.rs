@@ -59,10 +59,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if files.is_empty() {
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled("No notes yet.", Style::default().fg(t.comment).bg(bg)),
+            Span::styled(
+                "No notes yet — click + New note below.",
+                Style::default().fg(t.comment).bg(bg),
+            ),
         ]);
         frame.render_widget(
             Paragraph::new(empty),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        y += 1;
+        let hint = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(
+                "Stored under .mnml/notes/*.md",
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(hint),
             Rect {
                 x: area.x,
                 y,

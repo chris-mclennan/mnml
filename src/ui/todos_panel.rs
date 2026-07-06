@@ -80,8 +80,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Paragraph::new(Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
                 Span::styled(
-                    "No markers found. `todos.refresh` to rescan.",
+                    "No markers found — click ⟳ Rescan below.",
                     Style::default().fg(t.comment).bg(bg),
+                ),
+            ])),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        y += 1;
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(
+                    "Scans for TODO / FIXME / XXX / HACK / REVIEW.",
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
                 ),
             ])),
             Rect {
