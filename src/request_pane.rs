@@ -173,6 +173,10 @@ pub struct KvValueEdit {
 pub enum KvEditKind {
     Params,
     Headers,
+    /// #23 v3 — env var cell edit. Commit path writes back to
+    /// the active .env file via `App::write_env_var` (or the
+    /// delete path when `buffer.is_empty()` for a name edit).
+    Vars,
 }
 
 /// Manual override for how the Response body renders in the Body

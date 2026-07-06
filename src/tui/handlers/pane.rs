@@ -2440,7 +2440,10 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     app.http_kv_edit_cancel();
                     return true;
                 }
-                KeyCode::Enter => {
+                // Enter + Tab both commit. Tab is the spreadsheet-
+                // native gesture and lets keyboard users chain
+                // edits by clicking the next cell.
+                KeyCode::Enter | KeyCode::Tab => {
                     let _ = rp;
                     app.http_kv_edit_commit();
                     return true;

@@ -253,6 +253,10 @@ fn colored_line(
 pub(crate) enum KvTableKind {
     Params,
     Headers,
+    /// #23 v3 — env var table (Vars tab). Rows come from the
+    /// active .env file; commits write back through
+    /// `write_env_var` / `http_delete_env_key`.
+    Vars,
 }
 
 /// Excel-cell key/value table shared by the Params and Headers tabs.
@@ -310,6 +314,10 @@ pub(crate) fn render_kv_table(
     let edit_field = match kind {
         KvTableKind::Params => EditField::Url,
         KvTableKind::Headers => EditField::Headers,
+        // Vars rows are file-backed; there's no in-pane edit
+        // field. Fall back to Url so the tab-cycle stays valid
+        // (any click that misses cell rects doesn't panic).
+        KvTableKind::Vars => EditField::Url,
     };
     let register = |fields: &mut Vec<(Rect, PaneId, EditField)>, row_y: u16| {
         fields.push((
@@ -376,6 +384,7 @@ pub(crate) fn render_kv_table(
     let key_color_default = match kind {
         KvTableKind::Params => t.fg,
         KvTableKind::Headers => t.cyan,
+        KvTableKind::Vars => t.cyan,
     };
 
     // Top border + header + header separator.
@@ -405,6 +414,7 @@ pub(crate) fn render_kv_table(
                     KvTableKind::Headers,
                     crate::request_pane::KvEditKind::Headers
                 )
+                | (KvTableKind::Vars, crate::request_pane::KvEditKind::Vars)
         )
     });
     // Column offsets used to build cell-level click rects.
@@ -2339,8 +2349,7 @@ fn draw_edit(
                 }
             }
         }
-        // Header line: env name + hint (edit lives in the palette
-        // for v1; the whole-table inline-edit is #23 follow-up).
+        // Header line: env name + hint (v3 supports cell inline edit).
         let name_y = rows.len() as u16;
         rows.push(Line::from(vec![
             Span::styled("    env: ", dim),
@@ -2351,124 +2360,32 @@ fn draw_edit(
                     .bg(t.bg_dark)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("   · click a row to edit · :http.edit_env", dim),
+            Span::styled("   · click cell to edit · Tab commits · Esc cancels", dim),
         ]));
         register_tab_row(fields, name_y);
         rows.push(plain(String::new(), body_style));
 
-        // Same table-shape constants as render_kv_table — keeps the
-        // visual language identical to Params / Headers.
-        const TABLE_MAX_W: u16 = 100;
-        const TABLE_RIGHT_PAD: u16 = 3;
-        let table_w = area
-            .width
-            .saturating_sub(2)
-            .saturating_sub(TABLE_RIGHT_PAD)
-            .clamp(20, TABLE_MAX_W);
-        let inner_w = table_w.saturating_sub(4);
-        let name_w = (inner_w * 35 / 100).max(8);
-        let value_w = inner_w.saturating_sub(name_w);
-        let make_border = |left: char, sep: char, right: char, fill: char| -> Line<'static> {
-            let n_seg: String = std::iter::repeat_n(fill, (name_w + 2) as usize).collect();
-            let v_seg: String = std::iter::repeat_n(fill, (value_w + 2) as usize).collect();
-            Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
-                Span::styled(
-                    format!("{}{}{}{}{}", left, n_seg, sep, v_seg, right),
-                    Style::default().fg(t.bg3).bg(t.bg_dark),
-                ),
-            ])
-        };
-        let make_row = |key_text: String,
-                        val_text: String,
-                        key_style: Style,
-                        val_style: Style|
-         -> Line<'static> {
-            let key_s: String = key_text.chars().take(name_w as usize).collect();
-            let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
-            let val_s: String = val_text.chars().take(value_w as usize).collect();
-            let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
-            let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
-            Line::from(vec![
-                Span::styled("  ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                Span::styled(key_s, key_style),
-                Span::styled(" ".repeat(pad_k), Style::default().bg(t.bg_dark)),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                border.clone(),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                Span::styled(val_s, val_style),
-                Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
-                Span::styled(" ", Style::default().bg(t.bg_dark)),
-                border,
-            ])
-        };
-
-        // Top border + header + separator.
-        rows.push(make_border('┌', '┬', '┐', '─'));
-        let hdr_style = Style::default()
-            .fg(t.comment)
-            .bg(t.bg_dark)
-            .add_modifier(Modifier::BOLD);
-        rows.push(make_row(
-            "Name".to_string(),
-            "Value".to_string(),
-            hdr_style,
-            hdr_style,
-        ));
-        rows.push(make_border('├', '┼', '┤', '─'));
-
-        // Whether a row exists to protect against tricky rendering
-        // when there are 0 vars.
-        let any_rows = !by_key.is_empty();
-        for (k, v) in &by_key {
-            let y = rows.len() as u16;
-            vars_rows_local.push((
-                Rect {
-                    x: area.x,
-                    y,
-                    width: area.width,
-                    height: 1,
-                },
-                k.clone(),
-            ));
-            register_tab_row(fields, y);
-            let is_hover = rp.hover_vars_key.as_deref() == Some(k.as_str());
-            let key_style = Style::default()
-                .fg(if is_hover { t.yellow } else { t.cyan })
-                .bg(t.bg_dark)
-                .add_modifier(Modifier::BOLD);
-            let val_style = Style::default()
-                .fg(if is_hover { t.yellow } else { t.fg })
-                .bg(t.bg_dark);
-            rows.push(make_row(k.clone(), v.clone(), key_style, val_style));
-        }
-        rows.push(make_border('└', '┴', '┘', '─'));
-
-        // `+ Add new variable…` row below the table — matches the
-        // Params / Headers add-row treatment.
-        let add_y = rows.len() as u16;
-        rows.push(add_action_row("Add new variable…", t));
-        vars_rows_local.push((
-            Rect {
-                x: area.x,
-                y: add_y,
-                width: area.width,
-                height: 1,
-            },
-            String::new(),
-        ));
-        register_tab_row(fields, add_y);
-
-        if !any_rows {
-            let y = rows.len() as u16;
-            rows.push(Line::from(vec![Span::styled(
-                "    (no env vars yet — click + Add or :http.edit_env)".to_string(),
-                dim,
-            )]));
-            register_tab_row(fields, y);
-        }
+        // #23 v3 — Vars now uses the shared render_kv_table helper
+        // (same table shape as Params / Headers), with a Vars-scoped
+        // KvEditKind so cell edits commit through
+        // `App::commit_vars_kv_edit` (writes back to .env). No
+        // draft-add row for Vars in v3 — the `+ Add new variable…`
+        // action row below still opens the palette prompt.
+        let data: Vec<(String, String)> = by_key.into_iter().collect();
+        render_kv_table(
+            rows,
+            fields,
+            area,
+            t,
+            dim,
+            &data,
+            None, // no draft/add-row support for Vars in v3
+            rp.kv_edit.as_ref(),
+            KvTableKind::Vars,
+            rp.hover_vars_key.as_deref(),
+            pane_id,
+            vars_rows_local,
+        );
     }
 
     // ── Source tab: paste/type raw curl / .http source here, run

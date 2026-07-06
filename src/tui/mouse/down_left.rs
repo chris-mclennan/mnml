@@ -532,9 +532,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
-    // Click on a Vars-tab row → open the env editor
-    // directly. Empty key (the `+ Add` row) → add prompt;
-    // non-empty key → edit prompt for that key.
+    // Click on a Vars-tab row → cell-level routing (#23 v3).
+    // Sentinel keys work the same as Params / Headers:
+    //   `\0VAL<key>`  → start inline value edit
+    //   `\0NAME<key>` → start inline rename
+    //   `\0DEL<key>`  → delete env var
+    //   `\0COMMIT`    → no-op for Vars (no draft-add row)
+    //   ""            → add-row (falls through to palette prompt)
+    //   any other     → whole-row click (falls through to palette prompt)
     if let Some((_, key)) = app
         .rects
         .request_vars_rows
@@ -542,6 +547,21 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         .cloned()
     {
+        if key == "\0COMMIT" {
+            return;
+        }
+        if let Some(row_key) = key.strip_prefix("\0VAL") {
+            app.http_kv_edit_begin(crate::request_pane::KvEditKind::Vars, row_key.to_string());
+            return;
+        }
+        if let Some(row_key) = key.strip_prefix("\0NAME") {
+            app.http_kv_edit_begin_name(crate::request_pane::KvEditKind::Vars, row_key.to_string());
+            return;
+        }
+        if let Some(row_key) = key.strip_prefix("\0DEL") {
+            app.http_delete_env_key(row_key);
+            return;
+        }
         if key.is_empty() {
             app.accept_env_vars("+add");
         } else {

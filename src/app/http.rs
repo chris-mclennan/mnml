@@ -4118,6 +4118,17 @@ impl App {
                         (k.trim().eq_ignore_ascii_case(&key)).then(|| v.trim().to_string())
                     })
                     .unwrap_or_default(),
+                // #23 v3 — read from the active env file. Values
+                // are already loaded into the Vars-tab render via
+                // `EnvSet` but that's captured in the ui layer.
+                // Re-read here so the seed is authoritative.
+                crate::request_pane::KvEditKind::Vars => {
+                    let envset = crate::http::template::EnvSet::select(
+                        &self.workspace,
+                        self.http_env_override.as_deref(),
+                    );
+                    envset.lookup(&key).unwrap_or_default()
+                }
             }
         };
         rp.kv_edit = Some(crate::request_pane::KvValueEdit {
@@ -4205,12 +4216,32 @@ impl App {
                     rp.commit_headers();
                 }
             }
+            crate::request_pane::KvEditKind::Vars => {
+                // #23 v3 — env var commit. Name-cell edit means
+                // rename: delete old key, upsert new key with the
+                // original value. Value-cell edit: upsert the key
+                // with the new value.
+                if edit.editing_name {
+                    // Look up current value first so we can
+                    // preserve it under the new name.
+                    let envset = crate::http::template::EnvSet::select(
+                        &self.workspace,
+                        self.http_env_override.as_deref(),
+                    );
+                    let current_val = envset.lookup(&edit.original_key).unwrap_or_default();
+                    self.http_delete_env_key(&edit.original_key);
+                    self.write_env_var(&new_buffer, &current_val);
+                } else {
+                    self.write_env_var(&edit.original_key, &new_buffer);
+                }
+            }
         }
         self.toast(format!(
             "{}: updated",
             match edit.kind {
                 crate::request_pane::KvEditKind::Params => "params",
                 crate::request_pane::KvEditKind::Headers => "headers",
+                crate::request_pane::KvEditKind::Vars => "vars",
             }
         ));
     }
