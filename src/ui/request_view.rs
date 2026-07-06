@@ -766,7 +766,13 @@ pub fn draw(
     const METHOD_BOX_WIDTH: u16 = 14;
     const MIN_URL_WIDTH: u16 = 20;
     const METHOD_URL_ROW_H: u16 = 3;
-    const EDGE_PAD: u16 = 1;
+    // 2026-07-05: was `1` — the Method box's left border was
+    // painted 1 cell right of the Request block's outer corner,
+    // so the vertical rule from the block below didn't line up
+    // with anything in the top bar. Zero the pad so the top-bar
+    // boxes edge-to-edge match the block below. Right edge
+    // (Code box) inherits the same treatment.
+    const EDGE_PAD: u16 = 0;
     const SEND_BOX_WIDTH: u16 = 10;
     const SAVE_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
@@ -854,12 +860,13 @@ pub fn draw(
     let request_block = crate::ui::design_tokens::bordered_plain("");
     let request_inner = request_block.inner(request_rect);
     frame.render_widget(request_block, request_rect);
-    // Split-orientation chip floats on the top-right of the TOP
-    // BAR now (was on the Request block's border). Placement lands
-    // outside the Request block so it doesn't collide with the
-    // block's own top border when Request is narrow.
+    // Split-orientation chip floats on the top-right of the Request
+    // block's top border row (NOT the top bar — the top bar's
+    // right end now hosts the Code chip and would collide). The
+    // Request block's border row is a stable painted row we can
+    // safely overwrite the rightmost few cells of.
     app.rects.request_split_toggle =
-        paint_split_toggle_chip(frame, rp.split_orientation, top_bar_rect, t);
+        paint_split_toggle_chip(frame, rp.split_orientation, request_rect, t);
 
     let mut edit_rows: Vec<Line> = Vec::new();
     let tabs_rect = request_inner;
