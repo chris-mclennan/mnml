@@ -49,6 +49,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         .as_ref()
         .map(|s| s.collapsed.clone())
         .unwrap_or_default();
+    // #polish 2026-07-06 — filter state.
+    let query = app
+        .help_overlay
+        .as_ref()
+        .map(|s| s.query.clone())
+        .unwrap_or_default();
+    let filter_focused = app
+        .help_overlay
+        .as_ref()
+        .map(|s| s.filter_focused)
+        .unwrap_or(false);
+    let query_lc = query.to_ascii_lowercase();
     app.rects.help_section_headers.clear();
 
     // Compute key-column width — wide enough for the widest chord
@@ -94,15 +106,49 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let mut header_names: Vec<Option<String>> = Vec::with_capacity(rows.len());
     let mut current_section: Option<String> = None;
     let mut section_collapsed = false;
+    // #polish 2026-07-06 — with a live query, collect matching
+    // binding rows per section first so we can skip sections
+    // that have no matches (a bare header row alone is noise).
+    let mut kept_per_section: std::collections::HashMap<String, Vec<&HelpRow>> =
+        std::collections::HashMap::new();
+    if !query_lc.is_empty() {
+        let mut cur: Option<&str> = None;
+        for row in &rows {
+            match row {
+                HelpRow::Section(name) => cur = Some(*name),
+                HelpRow::Binding { keys, title } => {
+                    let hay = format!("{keys} {title}").to_ascii_lowercase();
+                    if hay.contains(&query_lc)
+                        && let Some(sec) = cur
+                    {
+                        kept_per_section
+                            .entry(sec.to_string())
+                            .or_default()
+                            .push(row);
+                    }
+                }
+            }
+        }
+    }
     for row in &rows {
         match row {
             HelpRow::Section(name) => {
                 current_section = Some(name.to_string());
                 section_collapsed = collapsed.contains(*name);
+                // Filter mode: skip sections with no matches; ignore
+                // the collapsed flag so users see all hits at once.
+                if !query_lc.is_empty() {
+                    if !kept_per_section.contains_key(*name) {
+                        continue;
+                    }
+                    section_collapsed = false;
+                }
                 let chev = if section_collapsed { "▸" } else { "▾" };
-                let count = section_counts.get(*name).copied().unwrap_or(0);
-                // Show `(N)` on every header so users see counts
-                // whether the section is expanded or collapsed.
+                let count = if query_lc.is_empty() {
+                    section_counts.get(*name).copied().unwrap_or(0)
+                } else {
+                    kept_per_section.get(*name).map(|v| v.len()).unwrap_or(0)
+                };
                 let text = format!("{chev} ── {name} ── ({count})");
                 lines.push(Line::from(Span::styled(
                     text,
@@ -116,6 +162,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 if section_collapsed {
                     continue;
                 }
+                // In filter mode: only render rows that survived the
+                // per-section keep list. Everything above ensures the
+                // section header itself is present.
+                if !query_lc.is_empty() {
+                    let hay = format!("{keys} {title}").to_ascii_lowercase();
+                    if !hay.contains(&query_lc) {
+                        continue;
+                    }
+                }
                 let kc = if keys.is_empty() { "·" } else { keys.as_str() };
                 let pad = key_col_w.saturating_sub(kc.chars().count());
                 lines.push(Line::from(vec![
@@ -127,16 +182,50 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             }
         }
     }
+    // Filter-mode empty state.
+    if !query_lc.is_empty() && kept_per_section.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("  no bindings match \"{query}\""),
+            Style::default().fg(t.comment).add_modifier(Modifier::DIM),
+        )));
+        header_names.push(None);
+    }
     let _ = current_section;
 
-    // Scroll-window: reserve 1 row for the hint bar.
-    let body_h = (inner.height as usize).saturating_sub(1);
+    // #polish 2026-07-06 — filter input row at the top. Always
+    // renders (empty state hints at `/` to focus). Cursor is
+    // NOT painted here (we don't have caret plumbing for the
+    // overlay); users see the query text and know they can type.
+    let filter_prompt = if filter_focused {
+        format!(" /{query}")
+    } else if query.is_empty() {
+        " / filter…".to_string()
+    } else {
+        format!(" filter: {query}   (/ to edit)")
+    };
+    let filter_style = if filter_focused {
+        Style::default().fg(t.yellow).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.comment).add_modifier(Modifier::DIM)
+    };
+    let filter_rect = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(filter_prompt, filter_style)),
+        filter_rect,
+    );
+    // Scroll-window: reserve 1 row for the filter + 1 for the hint bar.
+    let body_h = (inner.height as usize).saturating_sub(2);
     let max_scroll = lines.len().saturating_sub(body_h);
     let scroll = scroll.min(max_scroll);
     let window: Vec<Line<'static>> = lines.iter().skip(scroll).take(body_h).cloned().collect();
     let body_rect = Rect {
         x: inner.x,
-        y: inner.y,
+        y: inner.y + 1,
         width: inner.width,
         height: body_h as u16,
     };
@@ -147,7 +236,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         if let Some(name) = header_name {
             let row_rect = Rect {
                 x: inner.x,
-                y: inner.y + visible_idx as u16,
+                y: inner.y + 1 + visible_idx as u16,
                 width: inner.width,
                 height: 1,
             };
@@ -157,8 +246,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         }
     }
 
-    let hint =
-        "↑↓ / j k scroll · PageUp/Down faster · click section ▾/▸ to collapse · Esc / F1 close";
+    let hint = if filter_focused {
+        "typing… · Enter/Esc leave input · Backspace edit"
+    } else {
+        "/ filter · j/k scroll · PageUp/Down faster · c/e collapse/expand · Esc close"
+    };
     let hint_rect = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(1),

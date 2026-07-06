@@ -13,6 +13,43 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::app::App;
 
 pub(crate) fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
+    // #polish 2026-07-06 — filter-input mode. `/` enters; typed
+    // chars append; Backspace removes; Enter or Esc leaves the
+    // input focused-out (query stays). Esc a second time closes
+    // the overlay.
+    let filter_focused = app
+        .help_overlay
+        .as_ref()
+        .map(|s| s.filter_focused)
+        .unwrap_or(false);
+    if filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                if let Some(state) = app.help_overlay.as_mut() {
+                    state.filter_focused = false;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(state) = app.help_overlay.as_mut() {
+                    state.filter_focused = false;
+                }
+            }
+            KeyCode::Backspace => {
+                if let Some(state) = app.help_overlay.as_mut() {
+                    state.query.pop();
+                    state.scroll = 0;
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Some(state) = app.help_overlay.as_mut() {
+                    state.query.push(c);
+                    state.scroll = 0;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
     match key.code {
         KeyCode::Esc | KeyCode::F(1) => app.close_help_overlay(),
         KeyCode::Up | KeyCode::Char('k') => app.help_scroll(-1),
@@ -21,6 +58,12 @@ pub(crate) fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
         KeyCode::PageDown => app.help_scroll(10),
         KeyCode::Home => app.help_scroll(-1_000_000),
         KeyCode::End => app.help_scroll(1_000_000),
+        // `/` focuses the filter input.
+        KeyCode::Char('/') => {
+            if let Some(state) = app.help_overlay.as_mut() {
+                state.filter_focused = true;
+            }
+        }
         // `c` collapses ALL sections; `e` expands all. Quick way
         // to scan or focus.
         KeyCode::Char('c') => {

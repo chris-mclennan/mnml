@@ -22,6 +22,13 @@ pub struct HelpOverlayState {
     /// Section names currently collapsed (don't render their
     /// binding rows). Default: empty = all expanded. Per-session.
     pub collapsed: std::collections::HashSet<String>,
+    /// #polish 2026-07-06 — case-insensitive substring filter over
+    /// binding titles + chord strings + section names. Empty ⇒ show
+    /// everything.
+    pub query: String,
+    /// `/` in the overlay focuses the input; typing appends; Esc
+    /// clears + unfocuses. Mirrors the picker/settings filter idiom.
+    pub filter_focused: bool,
 }
 
 /// One row in the help overlay — either a section header or a binding.
