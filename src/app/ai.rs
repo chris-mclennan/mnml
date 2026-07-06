@@ -1247,7 +1247,15 @@ impl App {
     /// for revisiting prior conversations without spinning up a new
     /// pty.
     pub fn open_ai_session_picker(&mut self) {
-        let sessions = crate::ai::transcript::list_sessions(&self.workspace);
+        // #25 v2 — try the background prefetch cache first; fall
+        // back to sync if the worker hasn't landed yet or the
+        // cache was consumed.
+        let sessions = self
+            .sessions_prefetch
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take())
+            .unwrap_or_else(|| crate::ai::transcript::list_sessions(&self.workspace));
         if sessions.is_empty() {
             self.toast("no Claude sessions found for this workspace");
             return;

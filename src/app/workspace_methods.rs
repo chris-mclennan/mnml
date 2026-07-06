@@ -784,11 +784,22 @@ impl App {
     /// Truncate the captured-traffic log for this workspace. Fires
     /// from the CAPTURED section header's `✕` chip. Silent no-op
     /// when the file doesn't exist (nothing to clear).
+    /// Snapshots the file into `pending_undo` so the user can bring
+    /// the traffic back (#20).
     pub fn http_panel_clear_captured(&mut self) {
         let cap_path = crate::http::proxy::captured_log_path(&self.workspace);
         if cap_path.exists() {
+            let snapshot = std::fs::read(&cap_path).unwrap_or_default();
             match std::fs::write(&cap_path, "") {
-                Ok(_) => self.toast("captured traffic cleared"),
+                Ok(_) => {
+                    if !snapshot.is_empty() {
+                        self.set_pending_undo(
+                            "cleared captured traffic".to_string(),
+                            crate::app::UndoAction::RestoreCapturedFile { bytes: snapshot },
+                        );
+                    }
+                    self.toast("captured traffic cleared");
+                }
                 Err(e) => self.toast(format!("clear captured: {e}")),
             }
         }
@@ -801,11 +812,21 @@ impl App {
     /// (`~/.local/state/mnml/history.jsonl`) — that's cross-workspace
     /// and clearing it would surprise other workspaces sharing the
     /// mirror. To wipe the global one too, add a modifier + prompt.
+    /// Snapshots the file into `pending_undo` (#20).
     pub fn http_panel_clear_recent(&mut self) {
         let hist_path = self.workspace.join(".rqst").join("history.jsonl");
         if hist_path.exists() {
+            let snapshot = std::fs::read(&hist_path).unwrap_or_default();
             match std::fs::write(&hist_path, "") {
-                Ok(_) => self.toast("request history cleared"),
+                Ok(_) => {
+                    if !snapshot.is_empty() {
+                        self.set_pending_undo(
+                            "cleared request history".to_string(),
+                            crate::app::UndoAction::RestoreHistoryFile { bytes: snapshot },
+                        );
+                    }
+                    self.toast("request history cleared");
+                }
                 Err(e) => self.toast(format!("clear recent: {e}")),
             }
         }

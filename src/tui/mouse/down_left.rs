@@ -414,8 +414,28 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_clear_button
         && crate::app::dispatch::contains(r, x, y)
     {
-        app.http_panel_new_request();
-        app.toast("cleared — Recent list → row restores");
+        // #20 v2 — snapshot the pane before clearing so `↶ Undo`
+        // can restore the URL / body / headers / etc. Skips the
+        // snapshot when the active pane isn't a Request (no-op
+        // clear anyway).
+        if let Some(cur) = app.active
+            && let Some(crate::pane::Pane::Request(rp)) = app.panes.get(cur)
+        {
+            let action = crate::app::UndoAction::RestoreRequestPane {
+                pane_id: cur,
+                method: rp.request.method.clone(),
+                url: rp.request.url.clone(),
+                body: rp.request.body.clone(),
+                headers_buffer: rp.headers_buffer.clone(),
+                source_buffer: rp.source_buffer.clone(),
+            };
+            app.http_panel_new_request();
+            app.set_pending_undo("cleared request".to_string(), action);
+            app.toast("cleared");
+        } else {
+            app.http_panel_new_request();
+            app.toast("cleared");
+        }
         return;
     }
     // Click on the "{ } Format" button → prettify the JSON body

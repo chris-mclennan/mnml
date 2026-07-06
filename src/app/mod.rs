@@ -2596,6 +2596,25 @@ pub enum UndoAction {
         config: crate::config::WorkspaceConfig,
         position: usize,
     },
+    /// Put a cleared Request pane's fields back. Captures only
+    /// the user-visible / user-editable state (URL, method,
+    /// body, headers, source buffer) — everything else on the
+    /// pane (state machine, cursors, hover keys) resets fresh
+    /// on restore.
+    RestoreRequestPane {
+        pane_id: crate::layout::PaneId,
+        method: String,
+        url: String,
+        body: Option<String>,
+        headers_buffer: String,
+        source_buffer: String,
+    },
+    /// Put the workspace `history.jsonl` bytes back. Captured
+    /// on `http_panel_clear_recent`.
+    RestoreHistoryFile { bytes: Vec<u8> },
+    /// Put the workspace `captured/log.jsonl` bytes back.
+    /// Captured on `http_panel_clear_captured`.
+    RestoreCapturedFile { bytes: Vec<u8> },
 }
 
 /// TTL for the undo affordance. Longer than [`TOAST_TTL`] because
@@ -3236,6 +3255,11 @@ pub struct App {
     /// main loop can touch it without racing.
     pub claude_agents_prefetch:
         std::sync::Arc<std::sync::Mutex<Option<Vec<crate::claude_agents::AgentRow>>>>,
+    /// #25 v2 — background-prefetched Claude sessions for this
+    /// workspace. `open_ai_session_picker` reads from here when
+    /// set; falls back to sync scan otherwise.
+    pub sessions_prefetch:
+        std::sync::Arc<std::sync::Mutex<Option<Vec<crate::ai::transcript::PastSession>>>>,
     /// Pinned toasts — stay on screen until an explicit dismiss by
     /// id. Rendered above the ephemeral stack. Errors here get a
     /// red border; info/warn use the standard comment border.
@@ -4220,6 +4244,10 @@ impl App {
         } else {
             crate::integration_manifest::load_all(&workspace)
         };
+        // #25 v2 — clone for background sessions prefetch worker
+        // before the outer `workspace` gets moved into the App
+        // struct below.
+        let workspace_for_sessions_prefetch = workspace.clone();
         Ok(App {
             workspace,
             config,
@@ -4409,6 +4437,20 @@ impl App {
                 let handle = cache.clone();
                 std::thread::spawn(move || {
                     let rows = crate::claude_agents::prefetch_rows();
+                    if let Ok(mut guard) = handle.lock() {
+                        *guard = Some(rows);
+                    }
+                });
+                cache
+            },
+            sessions_prefetch: {
+                let cache: std::sync::Arc<
+                    std::sync::Mutex<Option<Vec<crate::ai::transcript::PastSession>>>,
+                > = std::sync::Arc::new(std::sync::Mutex::new(None));
+                let handle = cache.clone();
+                let ws = workspace_for_sessions_prefetch;
+                std::thread::spawn(move || {
+                    let rows = crate::ai::transcript::list_sessions(&ws);
                     if let Ok(mut guard) = handle.lock() {
                         *guard = Some(rows);
                     }
@@ -10958,6 +11000,51 @@ impl App {
             return;
         };
         match u.action {
+            UndoAction::RestoreRequestPane {
+                pane_id,
+                method,
+                url,
+                body,
+                headers_buffer,
+                source_buffer,
+            } => {
+                if let Some(Pane::Request(rp)) = self.panes.get_mut(pane_id) {
+                    rp.request.method = method;
+                    rp.request.url = url;
+                    rp.request.body = body;
+                    rp.headers_buffer = headers_buffer;
+                    rp.source_buffer = source_buffer;
+                    self.toast("request restored");
+                } else {
+                    self.toast("undo: pane no longer exists");
+                }
+            }
+            UndoAction::RestoreHistoryFile { bytes } => {
+                let path = self.workspace.join(".rqst").join("history.jsonl");
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&path, &bytes) {
+                    Ok(_) => {
+                        self.http_panel_refresh();
+                        self.toast("recent history restored");
+                    }
+                    Err(e) => self.toast(format!("undo: {e}")),
+                }
+            }
+            UndoAction::RestoreCapturedFile { bytes } => {
+                let path = crate::http::proxy::captured_log_path(&self.workspace);
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&path, &bytes) {
+                    Ok(_) => {
+                        self.http_panel_refresh();
+                        self.toast("captured traffic restored");
+                    }
+                    Err(e) => self.toast(format!("undo: {e}")),
+                }
+            }
             UndoAction::RestoreWorkspace { config, position } => {
                 let name = config.name.clone();
                 let insert_at = position.min(self.config.workspaces.len());
