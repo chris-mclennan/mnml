@@ -2058,7 +2058,7 @@ fn draw_edit(
                 if t.is_empty() || t.starts_with('#') {
                     return None;
                 }
-                let (k, v) = t.split_once(':')?;
+                let (k, v) = crate::request_pane::split_header_line(t)?;
                 Some((k.trim().to_string(), v.trim().to_string()))
             })
             .collect();

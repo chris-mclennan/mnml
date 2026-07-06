@@ -21,6 +21,29 @@ pub struct WsSendOutput {
     pub elapsed_ms: u128,
 }
 
+/// #polish 2026-07-06 — env-name resolver used by every write path.
+/// Returns `(name, is_fallback)`. `is_fallback = true` when nothing
+/// (env override, config default, `.rqst/config`) picked a name and
+/// we defaulted to `"dev"`. Callers use the flag to surface a one-
+/// shot toast so the user sees WHY their var landed in `dev.env`
+/// instead of the file they were expecting.
+fn resolve_env_name_with_fallback(
+    workspace: &std::path::Path,
+    override_: Option<&str>,
+    config_default: Option<&str>,
+) -> (String, bool) {
+    match crate::http::template::EnvSet::select_with_config_default(
+        workspace,
+        override_,
+        config_default,
+    )
+    .name()
+    {
+        Some(n) => (n.to_string(), false),
+        None => ("dev".to_string(), true),
+    }
+}
+
 /// Run `websocat --exit-on-eof -n1 <url>` with `message` written to
 /// stdin. Polls for child exit up to `timeout_ms`; kills + reports
 /// "timeout" on overrun. Called from a worker thread.
@@ -1569,14 +1592,15 @@ impl App {
     /// Phase 3 polish of the rqst→mnml port-back.
     pub fn http_edit_env_open(&mut self) {
         use crate::picker::{Picker, PickerItem, PickerKind};
-        let env_name = crate::http::template::EnvSet::select_with_config_default(
+        // Read-path: no toast on the fallback — it'd fire on every
+        // picker open. The write paths (write_env_var /
+        // http_delete_env_key) do toast so the user sees where their
+        // change landed.
+        let (env_name, _) = resolve_env_name_with_fallback(
             &self.workspace,
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
-        )
-        .name()
-        .map(str::to_string)
-        .unwrap_or_else(|| "dev".to_string());
+        );
         // 2026-06-19 — api-workflow-user SEV-3: read BOTH .rqst/
         // and .mnml/ env files so keys exclusive to .mnml/ surface
         // in the picker. `.mnml/` wins same-key (matches EnvSet::
@@ -1633,14 +1657,13 @@ impl App {
             ));
             return;
         }
-        let env_name = crate::http::template::EnvSet::select_with_config_default(
+        // Read-path (seed the edit-value prompt): silence the
+        // fallback toast to avoid firing on every prompt-open.
+        let (env_name, _) = resolve_env_name_with_fallback(
             &self.workspace,
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
-        )
-        .name()
-        .map(str::to_string)
-        .unwrap_or_else(|| "dev".to_string());
+        );
         // 2026-06-19 — api-workflow third hunt SEV-2: previously
         // seeded the prompt from a hardcoded `.rqst/env/` path, so
         // a key whose `.mnml/` value was shown in the picker would
@@ -1725,14 +1748,14 @@ impl App {
     /// contains the key; new keys go to `.mnml/` (the preferred
     /// mnml-native location).
     fn write_env_var(&mut self, key: &str, value: &str) {
-        let env_name = crate::http::template::EnvSet::select_with_config_default(
+        let (env_name, is_fallback) = resolve_env_name_with_fallback(
             &self.workspace,
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
-        )
-        .name()
-        .map(str::to_string)
-        .unwrap_or_else(|| "dev".to_string());
+        );
+        if is_fallback {
+            self.toast("env: no active env — using dev.env (set `[http] default_env` or MNML_ENV)");
+        }
         let mnml_path = self
             .workspace
             .join(".mnml")
@@ -1779,14 +1802,14 @@ impl App {
     /// both files exist. Silent no-op when the key isn't
     /// present in either file.
     pub fn http_delete_env_key(&mut self, key: &str) {
-        let env_name = crate::http::template::EnvSet::select_with_config_default(
+        let (env_name, is_fallback) = resolve_env_name_with_fallback(
             &self.workspace,
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
-        )
-        .name()
-        .map(str::to_string)
-        .unwrap_or_else(|| "dev".to_string());
+        );
+        if is_fallback {
+            self.toast("env: no active env — using dev.env (set `[http] default_env` or MNML_ENV)");
+        }
         let mnml_path = self
             .workspace
             .join(".mnml")
@@ -1958,6 +1981,15 @@ impl App {
     /// `LookupItem` picker with parsed list rows.
     pub fn accept_lookup_file(&mut self, file_path: &std::path::Path) {
         use crate::http::{self, template::EnvSet};
+        // #polish 2026-07-06 — double-fire guard. Was: a second
+        // `:http.lookup` accept while the first was still in-flight
+        // overwrote `lookup_fire_rx` and dropped the first result
+        // silently. Matches the guard shape used by `http.bench` /
+        // `http.sync`.
+        if self.lookup_fire_rx.is_some() {
+            self.toast("lookup: another lookup is still in-flight");
+            return;
+        }
         let text = match std::fs::read_to_string(file_path) {
             Ok(t) => t,
             Err(e) => {
@@ -3190,17 +3222,24 @@ impl App {
                 let (slice, block_name) = if starts.is_empty() {
                     (text.clone(), None)
                 } else {
-                    let block_start = starts
-                        .iter()
-                        .rev()
-                        .find(|&&s| s <= cursor_row)
-                        .copied()
-                        .unwrap_or(starts[0]);
-                    let block_end = starts
-                        .iter()
-                        .find(|&&s| s > block_start)
-                        .map(|&n| n - 1)
-                        .unwrap_or(lines.len().saturating_sub(1));
+                    // #polish 2026-07-06 — cursor BEFORE the first
+                    // `###` = leading unnamed block. Was:
+                    // `unwrap_or(starts[0])` fell through to the
+                    // first NAMED block instead, silently firing the
+                    // wrong request. Now: leading region starts at
+                    // line 0 and runs up to `starts[0] - 1`.
+                    let block_start = starts.iter().rev().find(|&&s| s <= cursor_row).copied();
+                    let (block_start, block_end) = match block_start {
+                        Some(s) => {
+                            let end = starts
+                                .iter()
+                                .find(|&&n| n > s)
+                                .map(|&n| n - 1)
+                                .unwrap_or(lines.len().saturating_sub(1));
+                            (s, end)
+                        }
+                        None => (0, starts[0].saturating_sub(1)),
+                    };
                     let name = if lines
                         .get(block_start)
                         .is_some_and(|l| l.trim_start().starts_with("###"))
@@ -4114,7 +4153,7 @@ impl App {
                     .headers_buffer
                     .lines()
                     .find_map(|l| {
-                        let (k, v) = l.split_once(':')?;
+                        let (k, v) = crate::request_pane::split_header_line(l)?;
                         (k.trim().eq_ignore_ascii_case(&key)).then(|| v.trim().to_string())
                     })
                     .unwrap_or_default(),
@@ -4197,7 +4236,7 @@ impl App {
                     let rewritten: Vec<String> = rp
                         .headers_buffer
                         .lines()
-                        .map(|l| match l.split_once(':') {
+                        .map(|l| match crate::request_pane::split_header_line(l) {
                             Some((k, v)) if k.trim().eq_ignore_ascii_case(&edit.original_key) => {
                                 if edit.editing_name {
                                     format!("{}: {}", new_buffer, v.trim())

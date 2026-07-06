@@ -370,7 +370,7 @@ pub fn parse_headers_text(text: &str) -> Vec<(String, String)> {
             if l.is_empty() || l.starts_with('#') {
                 return None;
             }
-            let (k, v) = l.split_once(':')?;
+            let (k, v) = split_header_line(l)?;
             let k = k.trim();
             let v = v.trim();
             if k.is_empty() {
@@ -380,6 +380,20 @@ pub fn parse_headers_text(text: &str) -> Vec<(String, String)> {
             }
         })
         .collect()
+}
+
+/// Split a `Header-Name: value` line on the FIRST `:` only. Using
+/// `split_once(':')` would truncate values that themselves contain a
+/// colon (`X-Redirect-To: https://host/path`, RFC3339 timestamps,
+/// etc.) — silently dropping everything past the first colon in the
+/// value. Returns `None` when no `:` is present.
+///
+/// #polish 2026-07-06 — was `split_once(':')` at four sites (this
+/// parser + the Headers KV table render + the kv-edit prefill +
+/// the kv-edit commit rewrite).
+pub fn split_header_line(l: &str) -> Option<(&str, &str)> {
+    let i = l.find(':')?;
+    Some((&l[..i], &l[i + 1..]))
 }
 
 /// The standard HTTP verbs the Method field cycles through. `Space` advances
@@ -899,6 +913,30 @@ mod tests {
             Script::default(),
             1,
         )
+    }
+
+    #[test]
+    fn split_header_line_preserves_colons_in_value() {
+        // Regression for #polish 2026-07-06 — `split_once(':')` used
+        // to truncate values at the first colon, silently dropping
+        // URL schemes / timestamps.
+        let (k, v) = split_header_line("X-Redirect-To: https://host/path").unwrap();
+        assert_eq!(k, "X-Redirect-To");
+        assert_eq!(v, " https://host/path");
+        let (k, v) = split_header_line("Timestamp: 2024-01-01T12:00:00Z").unwrap();
+        assert_eq!(k, "Timestamp");
+        assert_eq!(v, " 2024-01-01T12:00:00Z");
+    }
+
+    #[test]
+    fn parse_headers_text_preserves_colons_in_value() {
+        // End-to-end via the parser callers actually use.
+        let rows = parse_headers_text(
+            "Content-Type: application/json\nX-Redirect-To: https://host:443/path\n",
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].0, "X-Redirect-To");
+        assert_eq!(rows[1].1, "https://host:443/path");
     }
 
     #[test]
