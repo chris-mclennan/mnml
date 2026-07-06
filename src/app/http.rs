@@ -21,6 +21,40 @@ pub struct WsSendOutput {
     pub elapsed_ms: u128,
 }
 
+/// Select which `.curl` block the cursor is over.
+///
+/// Returns `(block_start, block_end)` — inclusive file-line
+/// bounds — or `(0, lines.len() - 1)` when the file has no `###`
+/// separators (i.e. a single-block .curl).
+///
+/// Bug fixed 2026-07-06: cursor BEFORE the first `###` was
+/// dispatching the first NAMED block, not the leading unnamed
+/// content. The leading region now maps to (0, starts[0] - 1).
+///
+/// Public-in-module for unit-testing the bounds-picking logic
+/// in isolation from IO / `App`.
+fn curl_block_bounds(lines: &[&str], cursor_row: usize) -> (usize, usize) {
+    let starts: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| l.trim_start().starts_with("###").then_some(i))
+        .collect();
+    if starts.is_empty() {
+        return (0, lines.len().saturating_sub(1));
+    }
+    match starts.iter().rev().find(|&&s| s <= cursor_row).copied() {
+        Some(s) => {
+            let end = starts
+                .iter()
+                .find(|&&n| n > s)
+                .map(|&n| n - 1)
+                .unwrap_or(lines.len().saturating_sub(1));
+            (s, end)
+        }
+        None => (0, starts[0].saturating_sub(1)),
+    }
+}
+
 /// #polish 2026-07-06 — env-name resolver used by every write path.
 /// Returns `(name, is_fallback)`. `is_fallback = true` when nothing
 /// (env override, config default, `.rqst/config`) picked a name and
@@ -3214,32 +3248,11 @@ impl App {
                 (b.request.clone(), src, block_name)
             } else {
                 // .curl (and other): scan ### directly.
-                let starts: Vec<usize> = lines
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, l)| l.trim_start().starts_with("###").then_some(i))
-                    .collect();
-                let (slice, block_name) = if starts.is_empty() {
+                let has_separators = lines.iter().any(|l| l.trim_start().starts_with("###"));
+                let (slice, block_name) = if !has_separators {
                     (text.clone(), None)
                 } else {
-                    // #polish 2026-07-06 — cursor BEFORE the first
-                    // `###` = leading unnamed block. Was:
-                    // `unwrap_or(starts[0])` fell through to the
-                    // first NAMED block instead, silently firing the
-                    // wrong request. Now: leading region starts at
-                    // line 0 and runs up to `starts[0] - 1`.
-                    let block_start = starts.iter().rev().find(|&&s| s <= cursor_row).copied();
-                    let (block_start, block_end) = match block_start {
-                        Some(s) => {
-                            let end = starts
-                                .iter()
-                                .find(|&&n| n > s)
-                                .map(|&n| n - 1)
-                                .unwrap_or(lines.len().saturating_sub(1));
-                            (s, end)
-                        }
-                        None => (0, starts[0].saturating_sub(1)),
-                    };
+                    let (block_start, block_end) = curl_block_bounds(&lines, cursor_row);
                     let name = if lines
                         .get(block_start)
                         .is_some_and(|l| l.trim_start().starts_with("###"))
@@ -4961,6 +4974,55 @@ impl App {
 #[cfg(test)]
 mod http_tests {
     use super::*;
+
+    #[test]
+    fn curl_block_bounds_no_separators_returns_whole_file() {
+        // Single-block .curl — no `###` at all. Any cursor row →
+        // (0, last).
+        let lines = vec!["curl 'https://x/a'", "  -H 'X: 1'", ""];
+        assert_eq!(curl_block_bounds(&lines, 0), (0, 2));
+        assert_eq!(curl_block_bounds(&lines, 1), (0, 2));
+        assert_eq!(curl_block_bounds(&lines, 99), (0, 2));
+    }
+
+    #[test]
+    fn curl_block_bounds_cursor_on_a_named_block() {
+        // Cursor on line 4 (inside second block) → (3, 5).
+        let lines = vec![
+            "### first",          // 0
+            "curl 'https://x/1'", // 1
+            "",                   // 2
+            "### second",         // 3
+            "curl 'https://x/2'", // 4
+            "  -H 'X: 1'",        // 5
+        ];
+        assert_eq!(curl_block_bounds(&lines, 4), (3, 5));
+        // Cursor on the header line itself — same block.
+        assert_eq!(curl_block_bounds(&lines, 3), (3, 5));
+        // First block — cursor on line 1 → (0, 2).
+        assert_eq!(curl_block_bounds(&lines, 1), (0, 2));
+    }
+
+    #[test]
+    fn curl_block_bounds_cursor_before_first_separator_hits_leading_block() {
+        // Regression for #polish 2026-07-06 — leading unnamed
+        // block was silently firing the FIRST NAMED block. Now
+        // the leading region (lines 0..=2) is its own block
+        // when the cursor sits in it.
+        let lines = vec![
+            "curl 'https://leading/'", // 0  ← leading unnamed block
+            "  -H 'X: 1'",             // 1
+            "",                        // 2
+            "### named-first",         // 3
+            "curl 'https://x/1'",      // 4
+        ];
+        // Cursor on the leading content — MUST land on (0, 2), not (3, 4).
+        assert_eq!(curl_block_bounds(&lines, 0), (0, 2));
+        assert_eq!(curl_block_bounds(&lines, 1), (0, 2));
+        assert_eq!(curl_block_bounds(&lines, 2), (0, 2));
+        // Cursor on the named block header — that block wins.
+        assert_eq!(curl_block_bounds(&lines, 3), (3, 4));
+    }
 
     #[test]
     fn request_pane_save_writes_curl_back_to_source() {
