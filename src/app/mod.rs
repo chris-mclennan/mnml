@@ -1988,6 +1988,9 @@ pub struct PaneRects {
     /// Left-click → env picker. Right-click → env context menu
     /// (switch / edit / new / clear override).
     pub request_env_button: Option<Rect>,
+    /// #20 — click rect for the pending-undo chip. Registered by
+    /// the toast_stack renderer when `App.pending_undo` is Some.
+    pub pending_undo_chip: Option<Rect>,
     /// Click rect over the "JSON ▼" content-type chip on the
     /// Response tab strip. Click → opens the response-format
     /// override picker.
@@ -2563,6 +2566,38 @@ pub enum ToastLevel {
     Warn,
     Error,
 }
+
+/// #20 — an undo affordance attached to a destructive toast.
+/// Rendered as a `↶ Undo` chip; click or the `u` key while the
+/// undo is live fires the [`UndoAction`]. Expires after
+/// [`UNDO_TTL`] whether the user acts on it or not.
+#[derive(Debug, Clone)]
+pub struct PendingUndo {
+    /// Short label for the chip (e.g. `"removed workspace mnml"`).
+    /// Rendered next to the `↶ Undo` chip so the user knows what
+    /// they're undoing without reading the toast above.
+    pub label: String,
+    pub action: UndoAction,
+    pub created_at: Instant,
+}
+
+/// #20 — actions the undo slot can fire. New variants land here
+/// as we retrofit more destructive surfaces.
+#[derive(Debug, Clone)]
+pub enum UndoAction {
+    /// Put a removed workspace config entry back where it was
+    /// (both `App.config.workspaces` at the given index AND the
+    /// on-disk global config).
+    RestoreWorkspace {
+        config: crate::config::WorkspaceConfig,
+        position: usize,
+    },
+}
+
+/// TTL for the undo affordance. Longer than [`TOAST_TTL`] because
+/// the user needs to see the toast, register what happened, and
+/// decide to undo — 3 seconds is too short.
+pub const UNDO_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// One toast in either `toast_stack` (ephemeral, TTL-expiring) or
 /// `persistent_toasts` (pinned until `toast_dismiss`).
@@ -3178,6 +3213,12 @@ pub struct App {
     /// rapid-fire toasts ("staged hunk", "saved", "git refreshed") don't
     /// clobber each other. nvim-notify-style stacked notifications.
     pub toast_stack: std::collections::VecDeque<ToastEntry>,
+    /// #20 v1 — a single-slot undo chip that appears beside the most
+    /// recent destructive toast. Cleared on undo, on expiry
+    /// (`UNDO_TTL`), or when a new destructive action fires. Only
+    /// one at a time so we don't grow an undo history stack — the
+    /// user's mental model is "I just did that thing, take it back."
+    pub pending_undo: Option<PendingUndo>,
     /// Pinned toasts — stay on screen until an explicit dismiss by
     /// id. Rendered above the ephemeral stack. Errors here get a
     /// red border; info/warn use the standard comment border.
@@ -4342,6 +4383,7 @@ impl App {
             git,
             toast: None,
             toast_stack: std::collections::VecDeque::new(),
+            pending_undo: None,
             persistent_toasts: Vec::new(),
             progress_items: Vec::new(),
             dynamic_segments: Vec::new(),
@@ -10866,6 +10908,67 @@ impl App {
         self.toast_leveled(msg, ToastLevel::Info);
     }
 
+    /// #20 — set the undo slot alongside a fresh toast. Displaces
+    /// whatever undo was pending before (single-slot design).
+    pub fn set_pending_undo(&mut self, label: impl Into<String>, action: UndoAction) {
+        self.pending_undo = Some(PendingUndo {
+            label: label.into(),
+            action,
+            created_at: Instant::now(),
+        });
+    }
+
+    /// #20 — fire the pending undo action (if any) and clear the
+    /// slot. No-op when nothing's pending. Called from the click
+    /// handler on the `↶ Undo` chip and from the `u` key when the
+    /// undo is live.
+    pub fn commit_pending_undo(&mut self) {
+        let Some(u) = self.pending_undo.take() else {
+            return;
+        };
+        match u.action {
+            UndoAction::RestoreWorkspace { config, position } => {
+                let name = config.name.clone();
+                let insert_at = position.min(self.config.workspaces.len());
+                self.config.workspaces.insert(insert_at, config.clone());
+                if let Err(e) = crate::config::persist_workspaces_to_global(&self.config.workspaces)
+                {
+                    self.toast(format!("undo: {e}"));
+                    return;
+                }
+                // Also restore the extra_workspaces runtime entry so
+                // the tree section reappears without a relaunch.
+                if let Ok(root) = std::fs::canonicalize(&config.path)
+                    && root != self.workspace
+                    && !self.extra_workspaces.iter().any(|w| w.root == root)
+                {
+                    let tree = crate::tree::Tree::open(&root);
+                    let mut found = crate::git::repos::discover_repos(&root);
+                    let pos = self.next_free_workspace_position();
+                    self.extra_workspaces.push(ExtraWorkspace {
+                        name: name.clone(),
+                        root,
+                        tree,
+                        expanded: false,
+                        position: pos,
+                    });
+                    self.repos.append(&mut found);
+                }
+                self.toast(format!("restored workspace: {name}"));
+            }
+        }
+    }
+
+    /// #20 — expire the undo slot when it's older than [`UNDO_TTL`].
+    /// Called from the main loop's tick alongside toast_stack aging.
+    pub fn tick_pending_undo(&mut self) {
+        if let Some(u) = &self.pending_undo
+            && u.created_at.elapsed() > UNDO_TTL
+        {
+            self.pending_undo = None;
+        }
+    }
+
     /// Level-tagged toast. Info + warn render with the standard
     /// comment-color border; error renders red. All toasts also
     /// land in `message_log` (recoverable via `:messages`).
@@ -11283,6 +11386,7 @@ impl App {
             self.toast_stack.pop_back();
         }
         self.expire_progress_items();
+        self.tick_pending_undo();
     }
 
     /// Lines of viewport drift before [`Self::refresh_scroll_semantic_tokens`]

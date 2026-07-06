@@ -22,7 +22,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-use crate::app::{App, ProgressItem, ProgressStatus, ToastEntry, ToastLevel};
+use crate::app::{App, PendingUndo, ProgressItem, ProgressStatus, ToastEntry, ToastLevel};
 use crate::ui::theme;
 
 const MAX_WIDTH: u16 = 50;
@@ -40,11 +40,12 @@ const SPINNER_FRAMES: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "�
 /// How long one spinner frame stays on screen before advancing.
 const SPINNER_FRAME_MS: u128 = 100;
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let has_persistent = !app.persistent_toasts.is_empty();
     let has_stack = app.toast_stack.len() > 1;
     let has_progress = !app.progress_items.is_empty();
-    if !has_persistent && !has_stack && !has_progress {
+    let has_undo = app.pending_undo.is_some();
+    if !has_persistent && !has_stack && !has_progress && !has_undo {
         return;
     }
     let area = frame.area();
@@ -54,6 +55,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let t = theme::cur();
     let max_x_right = area.x + area.width.saturating_sub(RIGHT_MARGIN);
     let mut y_bottom = area.y + area.height.saturating_sub(BOTTOM_MARGIN);
+
+    // #20 — pending undo chip sits closest to the statusline
+    // (right below the toast stack). Painted first so it's the
+    // most visible affordance right after the destructive action.
+    app.rects.pending_undo_chip = None;
+    if let Some(u) = app.pending_undo.clone()
+        && let Some(chip_rect) = draw_undo_chip(frame, &u, &mut y_bottom, max_x_right, area, &t)
+    {
+        app.rects.pending_undo_chip = Some(chip_rect);
+    }
 
     // Ephemeral toasts (newest first — closest to statusline).
     // Cap the visible count; if there are more than MAX_VISIBLE_TOASTS,
@@ -203,6 +214,64 @@ fn draw_more_chip(
         inner,
     );
     *y_bottom = y;
+}
+
+/// #20 — the undo chip. Anchored just above the statusline,
+/// paints a compact box: `<label> · ↶ Undo`. Returns the click
+/// rect so mouse routing can dispatch to `commit_pending_undo`.
+fn draw_undo_chip(
+    frame: &mut Frame,
+    u: &PendingUndo,
+    y_bottom: &mut u16,
+    max_x_right: u16,
+    area: Rect,
+    t: &crate::ui::theme::Theme,
+) -> Option<Rect> {
+    let label: String = u.label.chars().take(MAX_WIDTH as usize - 12).collect();
+    let suffix = "  \u{21B6} Undo ";
+    let inner_text = format!(" {label}{suffix}");
+    let inner_w = inner_text.chars().count() as u16;
+    let box_w = (inner_w + 2)
+        .min(MAX_WIDTH)
+        .min(area.width.saturating_sub(2));
+    let box_h: u16 = 3;
+    if *y_bottom < area.y + box_h {
+        return None;
+    }
+    let y = *y_bottom - box_h;
+    let x = max_x_right.saturating_sub(box_w);
+    let rect = Rect {
+        x,
+        y,
+        width: box_w,
+        height: box_h,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(t.cyan).bg(t.bg_darker))
+        .style(Style::default().bg(t.bg_darker));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    let line = Line::from(vec![
+        Span::styled(
+            format!(" {label} "),
+            Style::default().fg(t.fg).bg(t.bg_darker),
+        ),
+        Span::styled(
+            "· \u{21B6} Undo ",
+            Style::default()
+                .fg(t.cyan)
+                .bg(t.bg_darker)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(t.bg_darker)),
+        inner,
+    );
+    *y_bottom = y;
+    Some(rect)
 }
 
 /// Draw one progress item box just above `y_bottom`; updates

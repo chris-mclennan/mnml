@@ -280,7 +280,7 @@ impl App {
 
     /// Smallest positive integer not already in use by
     /// `primary_position` or any extra's `.position`.
-    fn next_free_workspace_position(&self) -> usize {
+    pub(crate) fn next_free_workspace_position(&self) -> usize {
         let mut used: std::collections::HashSet<usize> =
             self.extra_workspaces.iter().map(|w| w.position).collect();
         used.insert(self.primary_position);
@@ -351,18 +351,31 @@ impl App {
         // no-op when the entry isn't in the config (a workspace
         // added via `:view.add_workspace` and never persisted).
         let removed_root = removed.root.clone();
-        let before = self.config.workspaces.len();
-        self.config.workspaces.retain(|w| {
+        let cfg_position = self.config.workspaces.iter().position(|w| {
             std::fs::canonicalize(&w.path)
-                .map(|p| p != removed_root)
-                .unwrap_or(true)
+                .map(|p| p == removed_root)
+                .unwrap_or(false)
         });
-        if self.config.workspaces.len() != before
+        let restored_config = cfg_position.map(|i| self.config.workspaces.remove(i));
+        if restored_config.is_some()
             && let Err(e) = crate::config::persist_workspaces_to_global(&self.config.workspaces)
         {
             self.toast(format!("save workspaces: {e}"));
         }
-        self.toast(format!("workspace removed: {}", removed.name));
+        // #20 — offer undo for the removal. Captures both the
+        // config entry and its index so the restore path can put
+        // it back exactly where the user had it.
+        let name = removed.name.clone();
+        if let (Some(cfg), Some(pos)) = (restored_config, cfg_position) {
+            self.set_pending_undo(
+                format!("removed workspace {name}"),
+                crate::app::UndoAction::RestoreWorkspace {
+                    config: cfg,
+                    position: pos,
+                },
+            );
+        }
+        self.toast(format!("workspace removed: {name}"));
     }
 
     /// Picker accept handler for [`PickerKind::Workspaces`]. Expands the
@@ -448,17 +461,27 @@ impl App {
     }
 
     /// Remove the workspace at `idx`. Persists immediately.
+    /// Offers undo via `pending_undo` (#20).
     pub fn workspaces_editor_delete(&mut self, idx: usize) {
         if idx >= self.config.workspaces.len() {
             return;
         }
-        let name = self.config.workspaces[idx].name.clone();
-        self.config.workspaces.remove(idx);
+        let removed = self.config.workspaces.remove(idx);
+        let name = removed.name.clone();
         if self.workspaces_editor_selected >= self.config.workspaces.len() {
             self.workspaces_editor_selected = self.config.workspaces.len().saturating_sub(1);
         }
         match crate::config::persist_workspaces_to_global(&self.config.workspaces) {
-            Ok(_) => self.toast(format!("removed workspace {name}")),
+            Ok(_) => {
+                self.set_pending_undo(
+                    format!("removed workspace {name}"),
+                    crate::app::UndoAction::RestoreWorkspace {
+                        config: removed,
+                        position: idx,
+                    },
+                );
+                self.toast(format!("removed workspace {name}"));
+            }
             Err(e) => self.toast(format!("save workspaces: {e}")),
         }
     }

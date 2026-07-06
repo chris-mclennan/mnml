@@ -18,6 +18,15 @@ use crate::command;
 use crate::pane::Pane;
 
 pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
+    // #20 — undo chip wins the click over almost anything else so
+    // it's easy to hit. Only anchored while `pending_undo` is set,
+    // so no ordinary flow is stolen from.
+    if let Some(r) = app.rects.pending_undo_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.commit_pending_undo();
+        return;
+    }
     // Grab the rail's right-edge resize handle first — its grip
     // band shares the rail's rightmost column with the file-tree
     // scrollbar, so the (specific, ~4-row) resize zone must win
