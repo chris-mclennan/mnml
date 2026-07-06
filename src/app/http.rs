@@ -4416,24 +4416,23 @@ impl App {
         pane.view = ViewMode::Edit;
         pane.focus = EditField::Url;
         pane.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
-        let new_id = match self.active {
-            Some(cur) => {
-                self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, Pane::Request(pane))
-            }
-            None => {
-                self.panes.push(Pane::Request(pane));
-                let new_id = self.panes.len() - 1;
-                // 2026-06-19 — api-workflow third hunt caught SEV-1:
-                // the earlier path forgot to seed the layout tree
-                // (still `Layout::Empty`), so the new pane was
-                // tracked in panes[] + active but rendered nothing.
-                // Mirror what every other empty-state landing path
-                // does (e.g. `open_path` at mod.rs:5247).
-                *self.layout_mut() = crate::layout::Layout::leaf(new_id);
-                new_id
-            }
-        };
-        self.active = Some(new_id);
+        // #polish 2026-07-06 — was calling \`split_leaf_with\` which
+        // opened the new request as a vertical split BELOW the
+        // existing pane. Users expected a new TAB in the same
+        // strip (VS Code / browser convention). Now:
+        //   * push the pane into `self.panes`
+        //   * route through `reveal_pane`, which adds it to the
+        //     active leaf's tabs and makes it the active tab
+        //   * fall back to seeding `Layout::leaf` when the layout
+        //     was Empty (fresh workspace)
+        self.panes.push(Pane::Request(pane));
+        let new_id = self.panes.len() - 1;
+        if self.active.is_some() {
+            self.reveal_pane(new_id);
+        } else {
+            *self.layout_mut() = crate::layout::Layout::leaf(new_id);
+            self.active = Some(new_id);
+        }
         self.focus = Focus::Pane;
         self.toast("new request — Tab cycles fields, `r` fires");
     }
