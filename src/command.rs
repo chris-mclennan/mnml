@@ -3990,6 +3990,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_active_curl(),
         },
         Command {
+            id: "http.save",
+            title: "HTTP: save request (Save-As if new)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_save_or_prompt_save_as(),
+        },
+        Command {
+            id: "http.generate_code",
+            title: "HTTP: generate code snippet from the active request",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_generate_code_prompt(),
+        },
+        Command {
             id: "http.toggle_view",
             title: "HTTP: toggle Request pane between Edit ⇄ Response",
             group: "http",

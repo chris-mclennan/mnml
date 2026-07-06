@@ -137,6 +137,67 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // #21 v3 — right-click on Send / Save / Clear / Code chips
+    // opens a small kebab-menu that surfaces the useful adjacent
+    // actions (fire options for Send, save-as / open source for
+    // Save, copy-as for Code).
+    if let Some(r) = app.rects.request_send_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Send", MenuAction::Command("http.send")),
+            MenuItem::new("Abort in-flight", MenuAction::Command("http.abort")),
+            MenuItem::new(
+                "Diff last two responses",
+                MenuAction::Command("http.diff_last_two"),
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Send".to_string()), (x, y), items));
+        return;
+    }
+    if let Some(r) = app.rects.request_save_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Save request", MenuAction::Command("http.save")),
+            MenuItem::new(
+                "Save response as mock",
+                MenuAction::Command("http.save_mock"),
+            ),
+            MenuItem::new(
+                "Save response to file…",
+                MenuAction::Command("http.save_response"),
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Save".to_string()), (x, y), items));
+        return;
+    }
+    // (Code chip menu references `http.generate_code`, which was
+    // just added above alongside `http.save`.)
+    if let Some(r) = app.rects.request_clear_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![MenuItem::new(
+            "Clear request",
+            MenuAction::Command("http.new"),
+        )];
+        app.context_menu = Some(ContextMenu::new(Some("Clear".to_string()), (x, y), items));
+        return;
+    }
+    if let Some(r) = app.rects.request_code_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Copy as curl", MenuAction::Command("http.copy_curl")),
+            MenuItem::new("Generate code…", MenuAction::Command("http.generate_code")),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Code".to_string()), (x, y), items));
+        return;
+    }
     // #23 v2 — right-click on a Vars-tab row → Edit / Copy / Delete
     // shortcut menu (bypasses the two-step prompt for delete).
     if let Some(key) = app
