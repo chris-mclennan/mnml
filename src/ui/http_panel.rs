@@ -58,6 +58,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_section_headers.clear();
     app.rects.http_panel_new_chip = None;
     app.rects.http_panel_capture_chip = None;
+    app.rects.http_panel_captured_clear_chip = None;
+    app.rects.http_panel_recent_clear_chip = None;
     app.rects.http_panel_discover_chip = None;
 
     // Top header — matches the other activity panels' idiom.
@@ -294,50 +296,110 @@ fn draw_section_header(
     let mut spans = vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(chev, Style::default().fg(t.comment).bg(bg)),
-        Span::styled(
-            label,
-            Style::default()
-                .fg(t.fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(count_str, Style::default().fg(t.comment).bg(bg)),
     ];
-    // CAPTURED gets a right-aligned "⟳ capture" chip that runs
-    // `http.capture_now` on click.
-    if section == 2 {
-        let chip_text = if ascii { "capture" } else { "\u{27F3} capture" };
-        // Pad so the chip aligns to the right edge (approximate — full
-        // right-align would need width math on the label above).
+    // CAPTURED — prefix with a browser glyph since these come from
+    // the browser pane's network log. Ascii mode falls back to no
+    // glyph (label alone reads fine).
+    let mut label_prefix = String::new();
+    if section == 2 && !ascii {
+        label_prefix = "\u{F0239}  ".to_string(); // Nerd Font web
+    }
+    spans.push(Span::styled(
+        format!("{label_prefix}{label}"),
+        Style::default()
+            .fg(t.fg)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(
+        count_str,
+        Style::default().fg(t.comment).bg(bg),
+    ));
+    // CAPTURED gets two right-aligned chips: "⟳ capture" (start
+    // capture) + "✕ clear" (truncate captured.jsonl). RECENT gets
+    // one: "✕ clear" (truncate history.jsonl).
+    let (capture_chip_text, clear_chip_text) = if ascii {
+        (Some("capture"), Some("clear"))
+    } else {
+        (Some("\u{27F3}  capture"), Some("\u{2715} clear"))
+    };
+    let has_capture_chip = section == 2;
+    let has_clear_chip = section == 1 || section == 2;
+    if has_capture_chip || has_clear_chip {
+        // Base "used" width: leading pad + chevron + optional glyph
+        // prefix + label + count.
         let used = 1
             + chev.chars().count()
+            + label_prefix.chars().count()
             + label.chars().count()
             + format!(" ({count})").chars().count();
-        let chip_len = chip_text.chars().count() + 2;
-        // Reviewer catch: the `pad` computation is `area.width - used - chip_len - 1`,
-        // which underflows on usize if the sidebar is resized narrower than the
-        // header + chip need. Compute defensively so a mid-drag narrow sidebar
-        // doesn't panic the render thread — just drops the chip in that frame.
+        let cap_len = if has_capture_chip {
+            capture_chip_text
+                .map(|s| s.chars().count() + 2)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let clr_len = if has_clear_chip {
+            clear_chip_text.map(|s| s.chars().count() + 2).unwrap_or(0)
+        } else {
+            0
+        };
+        let chip_gap = if has_capture_chip && has_clear_chip {
+            1
+        } else {
+            0
+        };
         let area_w = area.width as usize;
-        let need = used.saturating_add(chip_len).saturating_add(2);
+        let need = used
+            .saturating_add(cap_len)
+            .saturating_add(clr_len)
+            .saturating_add(chip_gap)
+            .saturating_add(2);
         if need < area_w {
             let pad = area_w
                 .saturating_sub(used)
-                .saturating_sub(chip_len)
+                .saturating_sub(cap_len)
+                .saturating_sub(clr_len)
+                .saturating_sub(chip_gap)
                 .saturating_sub(1);
             spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
-            spans.push(Span::styled(
-                format!(" {chip_text} "),
-                Style::default().fg(t.cyan).bg(bg),
-            ));
-            let chip_x = (used + pad) as u16;
-            let chip_rect = Rect {
-                x: area.x + chip_x,
-                y,
-                width: (chip_len as u16).min(area.width.saturating_sub(chip_x)),
-                height: 1,
-            };
-            app.rects.http_panel_capture_chip = Some(chip_rect);
+            let mut chip_x = (used + pad) as u16;
+            if has_capture_chip && let Some(text) = capture_chip_text {
+                spans.push(Span::styled(
+                    format!(" {text} "),
+                    Style::default().fg(t.cyan).bg(bg),
+                ));
+                let chip_rect = Rect {
+                    x: area.x + chip_x,
+                    y,
+                    width: (cap_len as u16).min(area.width.saturating_sub(chip_x)),
+                    height: 1,
+                };
+                app.rects.http_panel_capture_chip = Some(chip_rect);
+                chip_x += cap_len as u16;
+                if chip_gap > 0 {
+                    spans.push(Span::styled(" ", Style::default().bg(bg)));
+                    chip_x += chip_gap as u16;
+                }
+            }
+            if has_clear_chip && let Some(text) = clear_chip_text {
+                spans.push(Span::styled(
+                    format!(" {text} "),
+                    Style::default().fg(t.red).bg(bg),
+                ));
+                let chip_rect = Rect {
+                    x: area.x + chip_x,
+                    y,
+                    width: (clr_len as u16).min(area.width.saturating_sub(chip_x)),
+                    height: 1,
+                };
+                if section == 1 {
+                    app.rects.http_panel_recent_clear_chip = Some(chip_rect);
+                } else {
+                    app.rects.http_panel_captured_clear_chip = Some(chip_rect);
+                }
+            }
         }
     }
     let hdr_rect = Rect {

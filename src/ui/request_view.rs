@@ -2146,15 +2146,20 @@ fn draw_edit(
         // vocabulary — `+` for additive actions, `⟳` for refresh
         // (Nerd Font U+27F3), `×` for destructive. No emoji so the
         // Auth section reads consistently with the rest of the pane.
-        let actions: &[(&str, &str, char)] = &[
-            ("set_bearer", "Set Bearer token…", '+'),
-            ("set_basic", "Set Basic auth (user:pass)…", '+'),
-            ("set_api_key", "Set X-Api-Key…", '+'),
-            ("apply_preset", "Apply saved preset…", '⟳'),
-            ("save_preset", "Save current as preset…", '⇓'),
-            ("clear", "Clear Authorization", '×'),
+        // Some glyphs (⟳, ⇓, ×) render tight against the following
+        // char in Nerd Font / CoreText combos — the ⟳ especially
+        // eats its right sidebearing. Encode each row as `(icon,
+        // space, label)` so we can bump the gap on those glyphs
+        // without unbalancing the `+` rows.
+        let actions: &[(&str, &str, &str, char)] = &[
+            ("set_bearer", " ", "Set Bearer token…", '+'),
+            ("set_basic", " ", "Set Basic auth (user:pass)…", '+'),
+            ("set_api_key", " ", "Set X-Api-Key…", '+'),
+            ("apply_preset", "  ", "Apply saved preset…", '⟳'),
+            ("save_preset", " ", "Save current as preset…", '⇓'),
+            ("clear", " ", "Clear Authorization", '×'),
         ];
-        for (id, label, icon) in actions {
+        for (id, gap, label, icon) in actions {
             let row_y = rows.len() as u16;
             // Color: `clear` red (destructive), `save_preset` green,
             // others normal fg. Matches the app-wide semantic-color
@@ -2173,7 +2178,7 @@ fn draw_edit(
             rows.push(Line::from(vec![
                 Span::styled("  ", Style::default().bg(row_bg)),
                 Span::styled(
-                    format!("{icon} {label}"),
+                    format!("{icon}{gap}{label}"),
                     Style::default()
                         .fg(text_fg)
                         .bg(row_bg)

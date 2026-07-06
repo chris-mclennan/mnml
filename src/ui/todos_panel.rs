@@ -156,7 +156,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Paragraph::new(Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
                 Span::styled(
-                    "⟳ Rescan",
+                    // `⟳` eats its right sidebearing in Nerd Font +
+                    // CoreText; a 2-space gap keeps it visually
+                    // matched to other action rows in the app.
+                    "⟳  Rescan",
                     Style::default()
                         .fg(t.cyan)
                         .bg(bg)

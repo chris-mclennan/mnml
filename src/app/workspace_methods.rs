@@ -747,6 +747,37 @@ impl App {
         self.http_panel_scanned_once = true;
     }
 
+    /// Truncate the captured-traffic log for this workspace. Fires
+    /// from the CAPTURED section header's `✕` chip. Silent no-op
+    /// when the file doesn't exist (nothing to clear).
+    pub fn http_panel_clear_captured(&mut self) {
+        let cap_path = crate::http::proxy::captured_log_path(&self.workspace);
+        if cap_path.exists() {
+            match std::fs::write(&cap_path, "") {
+                Ok(_) => self.toast("captured traffic cleared"),
+                Err(e) => self.toast(format!("clear captured: {e}")),
+            }
+        }
+        self.http_panel_captured_cache.clear();
+    }
+
+    /// Truncate the workspace-local request history (`.rqst/history.jsonl`).
+    /// Fires from the RECENT section header's `✕` chip. Silent no-op
+    /// when the file doesn't exist. Does NOT touch the global mirror
+    /// (`~/.local/state/mnml/history.jsonl`) — that's cross-workspace
+    /// and clearing it would surprise other workspaces sharing the
+    /// mirror. To wipe the global one too, add a modifier + prompt.
+    pub fn http_panel_clear_recent(&mut self) {
+        let hist_path = self.workspace.join(".rqst").join("history.jsonl");
+        if hist_path.exists() {
+            match std::fs::write(&hist_path, "") {
+                Ok(_) => self.toast("request history cleared"),
+                Err(e) => self.toast(format!("clear recent: {e}")),
+            }
+        }
+        self.http_panel_recent_cache.clear();
+    }
+
     /// Refresh the Notes panel file cache. Same lazy pattern as the
     /// HTTP one. (#8)
     pub fn notes_panel_refresh(&mut self) {

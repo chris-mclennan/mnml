@@ -1785,6 +1785,18 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         crate::command::run("http.capture_now", app);
         return;
     }
+    if let Some(r) = app.rects.http_panel_captured_clear_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_panel_clear_captured();
+        return;
+    }
+    if let Some(r) = app.rects.http_panel_recent_clear_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_panel_clear_recent();
+        return;
+    }
     if let Some(r) = app.rects.http_panel_discover_chip
         && crate::app::dispatch::contains(r, x, y)
     {

@@ -1801,6 +1801,12 @@ pub struct PaneRects {
     /// `⟳ Start capture` action-row rect (inside the Captured
     /// section header). Click → run `http.capture_now`.
     pub http_panel_capture_chip: Option<Rect>,
+    /// `✕ clear` chip inside the CAPTURED section header. Click →
+    /// truncate the captured-traffic log.
+    pub http_panel_captured_clear_chip: Option<Rect>,
+    /// `✕ clear` chip inside the RECENT section header. Click →
+    /// truncate the workspace-local history.jsonl.
+    pub http_panel_recent_clear_chip: Option<Rect>,
     /// `↓ Paste curl…` action-row rect (below files). Click → run
     /// `http.paste_curl` (turn clipboard curl into a scratch request).
     pub http_panel_discover_chip: Option<Rect>,
