@@ -1,0 +1,23 @@
+# Regression: pytest.run RECOGNIZES a requirements.txt-only project as a
+# valid Python project (matches pyright's LSP root_markers).
+#
+# History: 2026-06-28 3rd multilang-dev-user pass found that pytest.run
+# was toasting "no pyproject.toml / setup.py / test files" on a project
+# with requirements.txt (and pyright happily attaching) — contradictory
+# signals to the user. Fixed by adding requirements.txt to the detect
+# set in src/app/playwright.rs::run_pytest.
+#
+# This fixture locks the fix: with only requirements.txt + a test file,
+# pytest.run should NOT emit the "no manifest" toast.
+
+shell echo 'flask==3.0.0\npytest==8.0.0' > requirements.txt
+shell mkdir -p src
+shell echo 'def main(): pass' > src/app.py
+shell mkdir -p tests
+shell echo 'def test_it(): assert True' > tests/test_app.py
+
+command pytest.run
+wait 50
+# The "no pyproject / setup.py / requirements.txt / test files" toast
+# must NOT appear — requirements.txt + tests/test_*.py is enough.
+expect screen lacks "no pyproject.toml"
