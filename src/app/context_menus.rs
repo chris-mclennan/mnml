@@ -519,6 +519,15 @@ impl App {
             "Expand this section",
             MenuAction::SwitchToExtraWorkspace(ws_idx + 1),
         ));
+        // #polish 2026-07-06 — reorder without opening Manage.
+        items.push(MenuItem::new(
+            "Move up",
+            MenuAction::ExtraWorkspaceMoveUp(ws_idx),
+        ));
+        items.push(MenuItem::new(
+            "Move down",
+            MenuAction::ExtraWorkspaceMoveDown(ws_idx),
+        ));
         items.push(MenuItem::new(
             "Switch workspace…",
             MenuAction::Command("view.switch_workspace"),
@@ -1111,6 +1120,8 @@ impl App {
             WorkspaceDelete(idx) => self.workspaces_editor_delete(idx),
             WorkspaceMoveUp(idx) => self.workspaces_editor_move_up(idx),
             WorkspaceMoveDown(idx) => self.workspaces_editor_move_down(idx),
+            ExtraWorkspaceMoveUp(ws_idx) => self.move_extra_workspace(ws_idx, -1),
+            ExtraWorkspaceMoveDown(ws_idx) => self.move_extra_workspace(ws_idx, 1),
             SwitchToExtraWorkspace(idx) => self.switch_workspace(idx),
             PreviewMarkdown(path) => self.open_md_preview_for_path(path, self.active, true),
             OpenUrl(url) => {

@@ -129,6 +129,13 @@ pub enum MenuAction {
     WorkspaceMoveUp(usize),
     /// Workspaces editor — swap with the row below.
     WorkspaceMoveDown(usize),
+    /// #polish 2026-07-06 — rail-level reorder for an extra
+    /// workspace. Swaps its rail slot with the adjacent extra
+    /// (up if the payload is Up, down if Down) and persists to
+    /// `[[workspaces]]`. Accessible from the extra-workspace
+    /// header right-click without opening Manage.
+    ExtraWorkspaceMoveUp(usize),
+    ExtraWorkspaceMoveDown(usize),
     /// Switch to the workspace at the given 1-based index — 0 is
     /// the primary; 1.. map to entries in `[[workspaces]]`. Used
     /// by the "Set as current" right-click on an extra workspace

@@ -460,6 +460,80 @@ impl App {
         }
     }
 
+    /// #polish 2026-07-06 — reorder an extra workspace up (or down)
+    /// by swapping its `.position` with the adjacent extra. Persists
+    /// the swap to `[[workspaces]]` in the global config so the
+    /// ordering survives a relaunch. `direction = -1` means "up",
+    /// `+1` means "down". No-op when the target is the primary or
+    /// there's nothing to swap with.
+    pub fn move_extra_workspace(&mut self, ws_idx: usize, direction: i32) {
+        if ws_idx >= self.extra_workspaces.len() {
+            return;
+        }
+        let src_pos = self.extra_workspaces[ws_idx].position;
+        // Find the extra with the "adjacent" position — nearest
+        // position value in the requested direction that isn't the
+        // primary's slot. Skips the primary so extras only swap
+        // with extras.
+        let mut best: Option<usize> = None;
+        let mut best_pos: usize = 0;
+        for (i, w) in self.extra_workspaces.iter().enumerate() {
+            if i == ws_idx {
+                continue;
+            }
+            let adjacent = if direction < 0 {
+                w.position < src_pos && best.map(|_| w.position > best_pos).unwrap_or(true)
+            } else {
+                w.position > src_pos && best.map(|_| w.position < best_pos).unwrap_or(true)
+            };
+            if adjacent {
+                best = Some(i);
+                best_pos = w.position;
+            }
+        }
+        let Some(other_idx) = best else {
+            self.toast(if direction < 0 {
+                "already at the top"
+            } else {
+                "already at the bottom"
+            });
+            return;
+        };
+        // Swap positions in the runtime rail.
+        let a = self.extra_workspaces[ws_idx].position;
+        let b = self.extra_workspaces[other_idx].position;
+        self.extra_workspaces[ws_idx].position = b;
+        self.extra_workspaces[other_idx].position = a;
+        // Also swap the corresponding config entries so a relaunch
+        // uses the same order. Match by canonical path.
+        let (src_root, dst_root) = (
+            self.extra_workspaces[ws_idx].root.clone(),
+            self.extra_workspaces[other_idx].root.clone(),
+        );
+        let src_cfg = self.config.workspaces.iter().position(|w| {
+            std::fs::canonicalize(&w.path)
+                .map(|p| p == src_root)
+                .unwrap_or(false)
+        });
+        let dst_cfg = self.config.workspaces.iter().position(|w| {
+            std::fs::canonicalize(&w.path)
+                .map(|p| p == dst_root)
+                .unwrap_or(false)
+        });
+        if let (Some(s), Some(d)) = (src_cfg, dst_cfg) {
+            self.config.workspaces.swap(s, d);
+            if let Err(e) = crate::config::persist_workspaces_to_global(&self.config.workspaces) {
+                self.toast(format!("save workspaces: {e}"));
+                return;
+            }
+        }
+        let name = self.extra_workspaces[ws_idx].name.clone();
+        self.toast(format!(
+            "moved {name} {}",
+            if direction < 0 { "up" } else { "down" }
+        ));
+    }
+
     /// Remove the workspace at `idx`. Persists immediately.
     /// Offers undo via `pending_undo` (#20).
     pub fn workspaces_editor_delete(&mut self, idx: usize) {
