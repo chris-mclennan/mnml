@@ -607,6 +607,37 @@ impl App {
         if source_dirty {
             self.toast("split: source has unsaved edits — the new pane reads from disk (Ctrl+S to keep them in sync)");
         }
+        // #polish 2026-07-06 — when the source is a Request pane,
+        // the new split should also be a Request pane (a fresh
+        // blank one). Was: fell through to a scratch editor
+        // buffer, which the user reported as unexpected (image
+        // showed a `[scratch]` panel next to a live request).
+        // Mirrors the shape of `open_new_request_pane` (in
+        // src/app/http.rs) — same URL-focused Edit mode + "not
+        // sent yet" hint.
+        if matches!(self.panes.get(cur), Some(Pane::Request(_))) {
+            let request = crate::http::Request {
+                method: "GET".to_string(),
+                url: String::new(),
+                headers: Vec::new(),
+                body: None,
+            };
+            let mut rp = crate::request_pane::RequestPane::new(
+                None,
+                request,
+                crate::http::script::Script::default(),
+                0,
+            );
+            rp.view = crate::request_pane::ViewMode::Edit;
+            rp.focus = crate::request_pane::EditField::Url;
+            rp.state = crate::request_pane::RunState::Failed(
+                "not sent yet · press `r` to fire".to_string(),
+            );
+            let new_id = self.split_leaf_with(cur, dir, Pane::Request(rp));
+            self.active = Some(new_id);
+            self.focus = Focus::Pane;
+            return;
+        }
         let path = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => b.path.clone(),
             Some(Pane::MdPreview(p)) => Some(p.path.clone()),
