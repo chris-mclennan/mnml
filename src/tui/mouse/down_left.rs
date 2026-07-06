@@ -2068,6 +2068,20 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_new_env_prompt();
         return;
     }
+    // #polish 2026-07-06 — `+ New chain` / `+ New collection` chips
+    // mirror the `+ New env` idiom for creation from the sidebar.
+    if let Some(r) = app.rects.http_panel_chain_new_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_new_chain_prompt();
+        return;
+    }
+    if let Some(r) = app.rects.http_panel_collection_new_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_new_collection_prompt();
+        return;
+    }
     // CHAINS row → run that chain.
     if let Some((_, path)) = app
         .rects

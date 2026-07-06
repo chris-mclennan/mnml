@@ -1856,6 +1856,13 @@ pub struct PaneRects {
     /// `+ New env` action-row rect (inside the Envs section).
     /// Click → open the env-name prompt to create a new `.env`.
     pub http_panel_env_new_chip: Option<Rect>,
+    /// #polish 2026-07-06 — `+ New chain` action-row rect inside
+    /// the CHAINS section. Click → open the chain-name prompt.
+    pub http_panel_chain_new_chip: Option<Rect>,
+    /// #polish 2026-07-06 — `+ New collection` action-row rect
+    /// inside the COLLECTIONS section. Click → open the
+    /// collection-name prompt.
+    pub http_panel_collection_new_chip: Option<Rect>,
     /// Chain-row rects — `(rect, chain_path)`. Click → run that
     /// chain (calls `http_chain_run_path`).
     pub http_panel_chain_rows: Vec<(Rect, std::path::PathBuf)>,

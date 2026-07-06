@@ -1608,6 +1608,14 @@ impl App {
                 let name = p.input.clone();
                 self.http_new_env_create(&name);
             }
+            crate::prompt::PromptKind::HttpNewChain => {
+                let name = p.input.clone();
+                self.http_new_chain_create(&name);
+            }
+            crate::prompt::PromptKind::HttpNewCollection => {
+                let name = p.input.clone();
+                self.http_new_collection_create(&name);
+            }
             crate::prompt::PromptKind::HttpAuthBearer => {
                 let tok = p.input.clone();
                 self.http_auth_set("Authorization", &format!("Bearer {tok}"));

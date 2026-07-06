@@ -615,6 +615,94 @@ impl App {
         self.toast(format!("env: created + switched to {name}"));
     }
 
+    /// `+ New chain` chip in the sidebar → prompt for a name.
+    pub fn http_new_chain_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::HttpNewChain,
+            "New chain name (creates .mnml/chains/<name>.chain.json):".to_string(),
+        ));
+    }
+
+    /// Accept handler — creates `.mnml/chains/<name>.chain.json` with a
+    /// starter template (see `crate::http::chain` for the schema),
+    /// refreshes the sidebar cache, and opens it in an editor pane so
+    /// the user can fill in steps.
+    pub fn http_new_chain_create(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.toast("chain: name can't be empty");
+            return;
+        }
+        if name.contains(['/', '\\']) {
+            self.toast("chain: name can't contain path separators");
+            return;
+        }
+        let dir = self.workspace.join(".mnml").join("chains");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toast(format!("chain: create dir failed: {e}"));
+            return;
+        }
+        let path = dir.join(format!("{name}.chain.json"));
+        if path.exists() {
+            self.toast(format!("chain: {name}.chain.json already exists"));
+            self.open_path(&path);
+            return;
+        }
+        // Two-step template: fire one GET, capture something, fire a
+        // POST with the captured value. Users can adapt.
+        let stub = format!(
+            "{{\n  \"name\": \"{name}\",\n  \"steps\": [\n    {{\n      \"name\": \"login\",\n      \"request\": {{\n        \"method\": \"POST\",\n        \"url\": \"https://example.test/login\",\n        \"headers\": {{ \"Content-Type\": \"application/json\" }},\n        \"body\": \"{{\\\"user\\\":\\\"alice\\\",\\\"pass\\\":\\\"...\\\"}}\"\n      }},\n      \"capture\": {{ \"token\": \"$.access_token\" }}\n    }},\n    {{\n      \"name\": \"whoami\",\n      \"request\": {{\n        \"method\": \"GET\",\n        \"url\": \"https://example.test/me\",\n        \"headers\": {{ \"Authorization\": \"Bearer {{{{token}}}}\" }}\n      }}\n    }}\n  ]\n}}\n"
+        );
+        if let Err(e) = std::fs::write(&path, stub) {
+            self.toast(format!("chain: write failed: {e}"));
+            return;
+        }
+        self.http_panel_refresh();
+        self.open_path(&path);
+        self.toast(format!("chain: created {name}.chain.json"));
+    }
+
+    /// `+ New collection` chip in the sidebar → prompt for a name.
+    pub fn http_new_collection_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::HttpNewCollection,
+            "New collection name (creates .mnml/collections/<name>/):".to_string(),
+        ));
+    }
+
+    /// Accept handler — creates `.mnml/collections/<name>/` with a
+    /// starter `.http` file, refreshes the sidebar cache, and opens
+    /// the starter file so the user can populate it.
+    pub fn http_new_collection_create(&mut self, name: &str) {
+        let name = name.trim();
+        if name.is_empty() {
+            self.toast("collection: name can't be empty");
+            return;
+        }
+        if name.contains(['/', '\\']) {
+            self.toast("collection: name can't contain path separators");
+            return;
+        }
+        let dir = self.workspace.join(".mnml").join("collections").join(name);
+        if dir.exists() {
+            self.toast(format!("collection: {name}/ already exists"));
+            return;
+        }
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toast(format!("collection: create dir failed: {e}"));
+            return;
+        }
+        let starter = dir.join("requests.http");
+        let stub = "### list\nGET https://example.test/items\n\n### create\nPOST https://example.test/items\nContent-Type: application/json\n\n{\"name\": \"new\"}\n";
+        if let Err(e) = std::fs::write(&starter, stub) {
+            self.toast(format!("collection: write failed: {e}"));
+            return;
+        }
+        self.http_panel_refresh();
+        self.open_path(&starter);
+        self.toast(format!("collection: created {name}/"));
+    }
+
     /// Clear the runtime env override so `EnvSet::select` falls back
     /// to `MNML_ENV` / config default again.
     pub fn http_reset_env(&mut self) {

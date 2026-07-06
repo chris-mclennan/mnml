@@ -90,9 +90,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_env_rows.clear();
     app.rects.http_panel_env_new_chip = None;
     app.rects.http_panel_chain_rows.clear();
+    app.rects.http_panel_chain_new_chip = None;
     app.rects.http_panel_mock_rows.clear();
     app.rects.http_panel_collection_rows.clear();
     app.rects.http_panel_collection_folder_rows.clear();
+    app.rects.http_panel_collection_new_chip = None;
     app.rects.http_panel_import_chip = None;
 
     let files_len = app.http_panel_files_cache.len();
@@ -760,23 +762,20 @@ fn draw_chains(
     let t = theme::cur();
     let bottom = area.y + area.height;
     let chains = app.http_panel_chains_cache.clone();
-    if chains.is_empty() {
-        if y < bottom {
-            frame.render_widget(
-                Paragraph::new(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled("No chains yet.", Style::default().fg(t.comment).bg(bg)),
-                ])),
-                Rect {
-                    x: area.x,
-                    y,
-                    width: area.width,
-                    height: 1,
-                },
-            );
-            y += 1;
-        }
-        return y;
+    if chains.is_empty() && y < bottom {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("No chains yet.", Style::default().fg(t.comment).bg(bg)),
+            ])),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        y += 1;
     }
     for path in chains.iter().take(SECTION_ROW_CAP) {
         if y >= bottom {
@@ -807,6 +806,31 @@ fn draw_chains(
             .push((row_rect, path.clone()));
         y += 1;
     }
+    // `+ New chain` action row — mirrors the ENVS section idiom so
+    // creating a chain is discoverable without palette hunting.
+    if y < bottom {
+        let new_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled(
+                    "+ New chain",
+                    Style::default()
+                        .fg(t.green)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])),
+            new_rect,
+        );
+        app.rects.http_panel_chain_new_chip = Some(new_rect);
+        y += 1;
+    }
     y
 }
 
@@ -829,7 +853,10 @@ fn draw_mocks(
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
-                    Span::styled("No mocks yet.", Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(
+                        "No mocks — `:http.save_mock` on a response.",
+                        Style::default().fg(t.comment).bg(bg),
+                    ),
                 ])),
                 Rect {
                     x: area.x,
@@ -889,23 +916,44 @@ fn draw_collections(
     let t = theme::cur();
     let bottom = area.y + area.height;
     let files = app.http_panel_collections_cache.clone();
-    if files.is_empty() {
+    let empty = files.is_empty();
+    if empty && y < bottom {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("No collections yet.", Style::default().fg(t.comment).bg(bg)),
+            ])),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        y += 1;
+    }
+    if empty {
         if y < bottom {
+            let new_rect = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
                     Span::styled(
-                        "No collections. Add files under .mnml/collections/",
-                        Style::default().fg(t.comment).bg(bg),
+                        "+ New collection",
+                        Style::default()
+                            .fg(t.green)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
                     ),
                 ])),
-                Rect {
-                    x: area.x,
-                    y,
-                    width: area.width,
-                    height: 1,
-                },
+                new_rect,
             );
+            app.rects.http_panel_collection_new_chip = Some(new_rect);
             y += 1;
         }
         return y;
@@ -1033,6 +1081,29 @@ fn draw_collections(
                 emitted += 1;
             }
         }
+    }
+    if y < bottom {
+        let new_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled(
+                    "+ New collection",
+                    Style::default()
+                        .fg(t.green)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])),
+            new_rect,
+        );
+        app.rects.http_panel_collection_new_chip = Some(new_rect);
+        y += 1;
     }
     y
 }

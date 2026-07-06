@@ -94,6 +94,14 @@ pub enum PromptKind {
     /// Accept ⇒ create a new empty `.env` file at
     /// `.mnml/env/<typed>.env` and set it as the active env.
     HttpNewEnv,
+    /// Accept ⇒ create a new `.chain.json` file at
+    /// `.mnml/chains/<typed>.chain.json` with a starter template
+    /// and open it in an editor pane.
+    HttpNewChain,
+    /// Accept ⇒ create a new collection folder at
+    /// `.mnml/collections/<typed>/` with a starter `.http` file
+    /// and open that file in an editor pane.
+    HttpNewCollection,
     /// Accept ⇒ replace the active Request pane's Authorization
     /// header with `Bearer <typed-token>`.
     HttpAuthBearer,
