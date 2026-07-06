@@ -31,13 +31,14 @@ use crate::ui::theme;
 
 /// Names + collapse-index for the sidebar sections. Indexes match
 /// `App::http_panel_section_collapsed`.
-const SECTIONS: [(u8, &str); 6] = [
+const SECTIONS: [(u8, &str); 7] = [
     (0, "FILES"),
     (1, "RECENT"),
     (2, "CAPTURED"),
     (3, "ENVS"),
     (4, "CHAINS"),
     (5, "MOCKS"),
+    (6, "COLLECTIONS"),
 ];
 
 /// Max body rows per section. Anything past this is truncated; the
@@ -90,6 +91,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_env_new_chip = None;
     app.rects.http_panel_chain_rows.clear();
     app.rects.http_panel_mock_rows.clear();
+    app.rects.http_panel_collection_rows.clear();
     app.rects.http_panel_import_chip = None;
 
     let files_len = app.http_panel_files_cache.len();
@@ -190,6 +192,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     if !app.http_panel_section_collapsed[5] {
         y = draw_mocks(frame, app, y, area, bg);
+        if y >= bottom {
+            return;
+        }
+    }
+    y += 1;
+
+    // Section 7 — COLLECTIONS.
+    let collections_len = app.http_panel_collections_cache.len();
+    if y >= bottom {
+        return;
+    }
+    y = draw_section_header(frame, app, y, area, bg, ascii, 6, collections_len);
+    if y >= bottom {
+        return;
+    }
+    if !app.http_panel_section_collapsed[6] {
+        y = draw_collections(frame, app, y, area, bg);
         if y >= bottom {
             return;
         }
@@ -845,6 +864,73 @@ fn draw_mocks(
         );
         app.rects
             .http_panel_mock_rows
+            .push((row_rect, path.clone()));
+        y += 1;
+    }
+    y
+}
+
+/// #22 v1 — COLLECTIONS section body. Renders each request file
+/// under `.mnml/collections/` as its relative path so folder
+/// hierarchy shows through (e.g. `auth/login.http`). Click →
+/// open the file as a Request pane.
+fn draw_collections(
+    frame: &mut Frame,
+    app: &mut App,
+    mut y: u16,
+    area: Rect,
+    bg: ratatui::style::Color,
+) -> u16 {
+    let t = theme::cur();
+    let bottom = area.y + area.height;
+    let files = app.http_panel_collections_cache.clone();
+    if files.is_empty() {
+        if y < bottom {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled(
+                        "No collections. Add files under .mnml/collections/",
+                        Style::default().fg(t.comment).bg(bg),
+                    ),
+                ])),
+                Rect {
+                    x: area.x,
+                    y,
+                    width: area.width,
+                    height: 1,
+                },
+            );
+            y += 1;
+        }
+        return y;
+    }
+    let coll_root = app.workspace.join(".mnml").join("collections");
+    for path in files.iter().take(SECTION_ROW_CAP) {
+        if y >= bottom {
+            break;
+        }
+        let rel = path
+            .strip_prefix(&coll_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned();
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled("\u{f15c} ", Style::default().fg(t.blue).bg(bg)),
+                Span::styled(rel, Style::default().fg(t.fg).bg(bg)),
+            ])),
+            row_rect,
+        );
+        app.rects
+            .http_panel_collection_rows
             .push((row_rect, path.clone()));
         y += 1;
     }

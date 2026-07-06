@@ -767,6 +767,17 @@ impl App {
         mocks.sort();
         mocks.dedup();
         self.http_panel_mocks_cache = mocks;
+        // #22 — Collections cache. Walk `.mnml/collections/` for
+        // `.http` / `.curl` / `.rest` files; keep the full path
+        // so the renderer can print each as its relative path
+        // under `collections/`.
+        let mut collections = Vec::new();
+        let coll_root = self.workspace.join(".mnml").join("collections");
+        if coll_root.exists() {
+            walk_collections(&coll_root, &mut collections);
+            collections.sort();
+        }
+        self.http_panel_collections_cache = collections;
         self.http_panel_scanned_once = true;
     }
 
@@ -848,6 +859,28 @@ impl App {
         }
         self.notes_panel_refresh();
         self.open_path(&path);
+    }
+}
+
+/// #22 — walker for `.mnml/collections/`. Recurses through
+/// subdirs (a collection is a folder) and collects `.http` /
+/// `.curl` / `.rest` request files. Unlike `walk_for_http`,
+/// this one doesn't skip hidden dirs — the whole tree lives
+/// under `.mnml/`, so hidden-dot filtering would trip on the
+/// parent path itself.
+fn walk_collections(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_collections(&path, out);
+        } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+            && (ext == "http" || ext == "curl" || ext == "rest")
+        {
+            out.push(path);
+        }
     }
 }
 

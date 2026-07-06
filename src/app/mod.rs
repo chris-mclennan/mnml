@@ -1822,6 +1822,10 @@ pub struct PaneRects {
     /// Mock-row rects — `(rect, mock_path)`. Click → replay the
     /// mock into a Request pane (`http_replay_mock_from_path`).
     pub http_panel_mock_rows: Vec<(Rect, std::path::PathBuf)>,
+    /// #22 v1 — Collections row rects. `(rect, path)`. Click →
+    /// open the request file. Populated by `http_panel_refresh`
+    /// walking `.mnml/collections/**/*.http`.
+    pub http_panel_collection_rows: Vec<(Rect, std::path::PathBuf)>,
     /// `↓ Import…` bottom-action chip. Click → open the import
     /// picker (Postman collection / HAR).
     pub http_panel_import_chip: Option<Rect>,
@@ -2740,12 +2744,17 @@ pub struct App {
     /// workspace. Bounded by the same walk that populates the
     /// FILES cache — cheap on typical projects.
     pub http_panel_mocks_cache: Vec<std::path::PathBuf>,
+    /// #22 — cached list of request files under `.mnml/collections/`.
+    /// The directory hierarchy is retained by keeping full paths;
+    /// the renderer prints each as its relative path under
+    /// `collections/` so folder structure shows through.
+    pub http_panel_collections_cache: Vec<std::path::PathBuf>,
     /// Collapse state for the sectioned HTTP sidebar. Indices:
-    /// `0=Files 1=Recent 2=Captured 3=Envs 4=Chains 5=Mocks`.
+    /// `0=Files 1=Recent 2=Captured 3=Envs 4=Chains 5=Mocks 6=Collections`.
     /// Persists across activity-section toggles within a session;
     /// not saved to disk (v1 — a follow-up can plumb into
     /// `session.json`).
-    pub http_panel_section_collapsed: [bool; 6],
+    pub http_panel_section_collapsed: [bool; 7],
     /// Cached notes file list for the Notes activity panel (#8).
     /// Same lazy pattern as `http_panel_files_cache`.
     pub notes_panel_files_cache: Vec<std::path::PathBuf>,
@@ -4367,8 +4376,9 @@ impl App {
             http_panel_captured_cache: Vec::new(),
             http_panel_envs_cache: Vec::new(),
             http_panel_chains_cache: Vec::new(),
+            http_panel_collections_cache: Vec::new(),
             http_panel_mocks_cache: Vec::new(),
-            http_panel_section_collapsed: [false; 6],
+            http_panel_section_collapsed: [false; 7],
             notes_panel_files_cache: Vec::new(),
             notes_panel_scanned_once: false,
             primary_position: 0,
