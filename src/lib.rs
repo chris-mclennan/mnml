@@ -400,6 +400,12 @@ pub enum HoverChip {
     /// chip on a Request pane. Tooltip names the current
     /// orientation + the alternative.
     RequestSplitToggle,
+    /// #21 v8 — hover on the response bar's `copy` chip.
+    RequestResponseCopy,
+    /// #21 v8 — hover on the response bar's `wrap` chip.
+    RequestResponseWrap,
+    /// #21 v8 — hover on the response bar's `{ } Format` chip.
+    RequestResponseFormat,
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept

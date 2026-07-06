@@ -403,6 +403,21 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::RequestSplitToggle);
     }
+    if let Some(r) = app.rects.request_response_copy_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestResponseCopy);
+    }
+    if let Some(r) = app.rects.request_response_wrap_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestResponseWrap);
+    }
+    if let Some(r) = app.rects.request_format_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestResponseFormat);
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {

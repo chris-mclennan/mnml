@@ -843,6 +843,21 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, primary.into(), secondary.map(|s| s.into())))
         }
+        HoverChip::RequestResponseCopy => Some((
+            app.rects.request_response_copy_chip?,
+            "click: copy response body to clipboard".into(),
+            None,
+        )),
+        HoverChip::RequestResponseWrap => Some((
+            app.rects.request_response_wrap_chip?,
+            "click: toggle body line wrap".into(),
+            None,
+        )),
+        HoverChip::RequestResponseFormat => Some((
+            app.rects.request_format_button?,
+            "click: prettify JSON body".into(),
+            Some("dim when the body isn't JSON".into()),
+        )),
         HoverChip::RequestSplitToggle => {
             let rect = app.rects.request_split_toggle?;
             let orient_desc = match app.active.and_then(|i| app.panes.get(i)) {
