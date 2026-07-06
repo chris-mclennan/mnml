@@ -1161,13 +1161,28 @@ fn paint_response_tab_strip(
         width: response_inner.width,
         height: 1,
     };
+    // Response-header count for the "Headers" tab label — matches
+    // Bruno's "Headers 24" affordance. Only shown when there's a
+    // Done response with headers; otherwise the label stays bare.
+    let header_count: Option<usize> = match &rp.state {
+        RunState::Done(r) if !r.headers.is_empty() => Some(r.headers.len()),
+        _ => None,
+    };
     let mut label_spans: Vec<Span> = Vec::new();
     label_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
     let mut bar_spans: Vec<Span> = Vec::new();
     bar_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
     let mut col: u16 = 2;
     for tab in crate::request_pane::ResponseTab::ALL {
-        let label = tab.label();
+        let base = tab.label();
+        // Append " N" to the Headers label when we know the count.
+        let label = if matches!(tab, crate::request_pane::ResponseTab::Headers)
+            && let Some(n) = header_count
+        {
+            format!("{base} {n}")
+        } else {
+            base.to_string()
+        };
         let is_cur = active == *tab;
         let label_style = if is_cur {
             Style::default()
@@ -1178,7 +1193,7 @@ fn paint_response_tab_strip(
             Style::default().fg(t.comment).bg(t.bg_dark)
         };
         let chip_w = label.chars().count() as u16;
-        label_spans.push(Span::styled(label.to_string(), label_style));
+        label_spans.push(Span::styled(label.clone(), label_style));
         label_spans.push(Span::styled(
             "  ".to_string(),
             Style::default().bg(t.bg_dark),
@@ -2541,32 +2556,42 @@ fn draw_response(
             // starting fresh at row 0 (no header echo).
             rows.push(plain(String::new(), body_style));
             let pretty = pretty_body(&r.body, &r.headers);
-            // JSON highlighting decision — the override wins over
-            // detect. Only `Json` and `Auto+detect-as-JSON` render
-            // as JSON; every other format (Text / Xml / Html) skips
-            // the highlighter.
+            // Pick the syntax-highlighter language. Override wins
+            // over auto-detect. XML aliases to HTML (same grammar).
+            // Text = no highlight.
             use crate::request_pane::ResponseBodyFormat;
-            let is_json = match rp.response_body_format {
-                ResponseBodyFormat::Json => true,
-                ResponseBodyFormat::Text | ResponseBodyFormat::Xml | ResponseBodyFormat::Html => {
-                    false
-                }
+            let highlight_lang: Option<&'static str> = match rp.response_body_format {
+                ResponseBodyFormat::Json => Some("json"),
+                ResponseBodyFormat::Xml | ResponseBodyFormat::Html => Some("html"),
+                ResponseBodyFormat::Text => None,
                 ResponseBodyFormat::Auto => {
-                    r.headers
+                    let ct = r
+                        .headers
                         .iter()
-                        .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.contains("json"))
-                        || {
-                            let b = pretty.trim_start();
-                            b.starts_with('{') || b.starts_with('[')
+                        .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                        .map(|(_, v)| v.to_ascii_lowercase())
+                        .unwrap_or_default();
+                    if ct.contains("json") {
+                        Some("json")
+                    } else if ct.contains("html") || ct.contains("xml") {
+                        Some("html")
+                    } else {
+                        let b = pretty.trim_start();
+                        if b.starts_with('{') || b.starts_with('[') {
+                            Some("json")
+                        } else if b.starts_with('<') {
+                            Some("html")
+                        } else {
+                            None
                         }
+                    }
                 }
             };
-            // Per-line tree-sitter spans. Empty when non-JSON so the
-            // body renders in the base body_style like before.
-            let json_spans: Vec<Vec<crate::highlight::ColoredSpan>> = if is_json {
-                crate::highlight::highlight_lines(&pretty, "json")
-            } else {
-                Vec::new()
+            // Per-line tree-sitter spans. Empty when no highlighter
+            // was picked — body renders in the plain body_style then.
+            let json_spans: Vec<Vec<crate::highlight::ColoredSpan>> = match highlight_lang {
+                Some(lang) => crate::highlight::highlight_lines(&pretty, lang),
+                None => Vec::new(),
             };
             let get_spans = |i: usize| -> &[crate::highlight::ColoredSpan] {
                 json_spans.get(i).map(|v| v.as_slice()).unwrap_or(&[])
