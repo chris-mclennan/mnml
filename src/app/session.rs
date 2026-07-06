@@ -101,6 +101,11 @@ impl App {
             git_section_expanded: Some(self.git_section_expanded),
             integration_section_expanded: Some(self.integration_section_expanded),
             git_branches_expanded: Some(self.git_branches_expanded),
+            last_grep_query: if self.last_grep_query.is_empty() {
+                None
+            } else {
+                Some(self.last_grep_query.clone())
+            },
             tree_expanded_dirs: Some(
                 self.tree
                     .expanded_dirs()
@@ -453,6 +458,9 @@ impl App {
         }
         if let Some(v) = saved.git_branches_expanded {
             self.git_branches_expanded = v;
+        }
+        if let Some(v) = saved.last_grep_query {
+            self.last_grep_query = v;
         }
         if let Some(v) = saved.git_section_expanded {
             self.git_section_expanded = v;

@@ -676,6 +676,11 @@ struct SavedSession {
     /// expanded in the git rail? `None` = default false (collapsed).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     git_branches_expanded: Option<bool>,
+    /// #polish 2026-07-06 — last workspace-grep query the user
+    /// ran. `open_grep_prompt` seeds with this when nothing is
+    /// selected in the active editor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_grep_query: Option<String>,
     /// Directories the user had expanded in the file tree. `None` (an older
     /// session.json without the field) ⇒ keep the default first-level expand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3349,6 +3354,9 @@ pub struct App {
     /// dashboard. Persists across sessions; applied to any newly-
     /// built ClaudeAgents pane. Default: Week (7d).
     pub claude_agents_last_age_filter: crate::claude_agents::AgeFilter,
+    /// #polish 2026-07-06 — last workspace-grep query the user
+    /// ran. Persists across launches via `SavedSession`.
+    pub last_grep_query: String,
     /// Pinned toasts — stay on screen until an explicit dismiss by
     /// id. Rendered above the ephemeral stack. Errors here get a
     /// red border; info/warn use the standard comment border.
@@ -4536,6 +4544,7 @@ impl App {
                 cache
             },
             claude_agents_last_age_filter: crate::claude_agents::AgeFilter::default(),
+            last_grep_query: String::new(),
             sessions_prefetch: {
                 let cache: std::sync::Arc<
                     std::sync::Mutex<Option<Vec<crate::ai::transcript::PastSession>>>,

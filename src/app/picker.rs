@@ -1556,6 +1556,8 @@ impl App {
             }
             crate::prompt::PromptKind::Grep => {
                 let q = p.input.clone();
+                // #polish 2026-07-06 — remember for next launch.
+                self.last_grep_query = q.clone();
                 self.run_workspace_grep(q);
             }
             crate::prompt::PromptKind::GrepReplace => {

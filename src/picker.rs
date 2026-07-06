@@ -359,6 +359,11 @@ impl Picker {
     pub fn len(&self) -> usize {
         self.filtered.len()
     }
+    /// #polish 2026-07-06 — total item count before filtering.
+    /// Used for the "N of M" counter in the picker chrome.
+    pub fn total_len(&self) -> usize {
+        self.items.len()
+    }
     pub fn is_empty(&self) -> bool {
         self.filtered.is_empty()
     }

@@ -2973,8 +2973,24 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), tab_row);
     let active_tab = app.integrations_panel_tab;
-    let installed_label = " Installed ";
-    let marketplace_label = " Marketplace ";
+    // #polish 2026-07-06 — tab labels carry counts so users see
+    // how many entries are in each pool without switching tabs.
+    let installed_count = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .filter(|ic| ic.enabled)
+        .count();
+    let marketplace_count = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .filter(|ic| !ic.enabled)
+        .count();
+    let installed_label = format!(" Installed ({installed_count}) ");
+    let marketplace_label = format!(" Marketplace ({marketplace_count}) ");
     let installed_w = installed_label.chars().count() as u16;
     let marketplace_w = marketplace_label.chars().count() as u16;
     let installed_rect = Rect {

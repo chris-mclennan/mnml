@@ -74,8 +74,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     // ── query line ──
     // Title moved to the block's title bar; the query row is just
     // the input + item count.
+    // #polish 2026-07-06 — counter shows N of M when a filter is
+    // narrowing the list; bare N when nothing's filtered.
     let count = picker.len();
-    let counter = format!(" {count} ");
+    let total = picker.total_len();
+    let counter = if picker.query.is_empty() || count == total {
+        format!(" {count} ")
+    } else {
+        format!(" {count} of {total} ")
+    };
     let prompt = format!("  {}", picker.query);
     let avail = query_area.width as usize;
     let pad = avail.saturating_sub(counter.chars().count() + prompt.chars().count());

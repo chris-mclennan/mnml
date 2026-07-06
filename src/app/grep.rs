@@ -105,6 +105,10 @@ impl App {
 
     /// `find.grep` (palette) — prompt for a query and grep the workspace.
     pub fn open_grep_prompt(&mut self) {
+        // #polish 2026-07-06 — seed order:
+        //   1. Current editor selection (immediate context wins)
+        //   2. Last grep query (remembered across sessions)
+        //   3. Empty
         let seed = match self.active.and_then(|i| self.panes.get(i)) {
             Some(Pane::Editor(b)) if b.editor.has_selection() => b
                 .editor
@@ -113,7 +117,7 @@ impl App {
                 .next()
                 .unwrap_or("")
                 .to_string(),
-            _ => String::new(),
+            _ => self.last_grep_query.clone(),
         };
         self.prompt = Some(crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::Grep,
