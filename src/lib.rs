@@ -391,6 +391,23 @@ pub enum HoverChip {
         pane_id: usize,
         commit_idx: usize,
     },
+    /// #21 v5 — hover on one of the Request pane's top-bar
+    /// chips (Method / Env / Send / Save / Clear / Code).
+    /// Tooltip explains what the click does + notes right-
+    /// click for the kebab menu.
+    RequestTopBarChip(RequestTopBarChip),
+}
+
+/// Which top-bar chip on the Request pane was hovered. Kept
+/// isolated from `HoverChip` for easier future extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestTopBarChip {
+    Method,
+    Env,
+    Send,
+    Save,
+    Clear,
+    Code,
 }
 
 /// Which Agents-panel header chip a `HoverChip::AgentsPanelChip`

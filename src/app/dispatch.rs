@@ -355,6 +355,49 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineAutosave);
     }
+    // #21 v5 — Request pane top-bar chip hover detection.
+    if let Some(r) = app.rects.request_method_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestTopBarChip(
+            crate::RequestTopBarChip::Method,
+        ));
+    }
+    if let Some(r) = app.rects.request_env_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestTopBarChip(
+            crate::RequestTopBarChip::Env,
+        ));
+    }
+    if let Some(r) = app.rects.request_send_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestTopBarChip(
+            crate::RequestTopBarChip::Send,
+        ));
+    }
+    if let Some(r) = app.rects.request_save_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestTopBarChip(
+            crate::RequestTopBarChip::Save,
+        ));
+    }
+    if let Some(r) = app.rects.request_clear_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestTopBarChip(
+            crate::RequestTopBarChip::Clear,
+        ));
+    }
+    if let Some(r) = app.rects.request_code_button
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestTopBarChip(
+            crate::RequestTopBarChip::Code,
+        ));
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {

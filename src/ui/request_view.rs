@@ -857,6 +857,7 @@ pub fn draw(
         };
         if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
             method_url_absolute.push((mr, EditField::Method));
+            app.rects.request_method_button = Some(mr);
         }
         if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret_abs, t) {
             method_url_absolute.push((ur, EditField::Url));

@@ -807,5 +807,41 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, label.into(), None))
         }
+        HoverChip::RequestTopBarChip(kind) => {
+            use crate::RequestTopBarChip;
+            let (rect, primary, secondary) = match kind {
+                RequestTopBarChip::Method => (
+                    app.rects.request_method_button?,
+                    "click: pick HTTP verb (GET / POST / …)",
+                    None,
+                ),
+                RequestTopBarChip::Env => (
+                    app.rects.request_env_button?,
+                    "click: switch active .env",
+                    Some("right-click: switch / edit / clear override"),
+                ),
+                RequestTopBarChip::Send => (
+                    app.rects.request_send_button?,
+                    "click: send request (or abort while in-flight)",
+                    Some("right-click: send / abort / diff last two"),
+                ),
+                RequestTopBarChip::Save => (
+                    app.rects.request_save_button?,
+                    "click: save request (Save-As if new)",
+                    Some("right-click: save / save mock / save response"),
+                ),
+                RequestTopBarChip::Clear => (
+                    app.rects.request_clear_button?,
+                    "click: clear the request fields",
+                    None,
+                ),
+                RequestTopBarChip::Code => (
+                    app.rects.request_code_button?,
+                    "click: generate code snippet (curl / py / js / …)",
+                    Some("right-click: copy curl / open picker"),
+                ),
+            };
+            Some((rect, primary.into(), secondary.map(|s| s.into())))
+        }
     }
 }

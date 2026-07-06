@@ -2007,6 +2007,11 @@ pub struct PaneRects {
     /// Left-click → env picker. Right-click → env context menu
     /// (switch / edit / new / clear override).
     pub request_env_button: Option<Rect>,
+    /// #21 v5 — Method chip on the Request pane top bar.
+    /// Duplicates the same rect stored in `request_fields` with
+    /// `EditField::Method` so tooltip lookup can pull it directly
+    /// without walking the vec.
+    pub request_method_button: Option<Rect>,
     /// #20 — click rect for the pending-undo chip. Registered by
     /// the toast_stack renderer when `App.pending_undo` is Some.
     pub pending_undo_chip: Option<Rect>,
