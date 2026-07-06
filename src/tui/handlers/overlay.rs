@@ -431,6 +431,53 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             _ => return,
         }
     }
+    // #polish 2026-07-06 — every other destructive confirm
+    // (git delete branch / stash drop / worktree remove / tag
+    // delete / hunk discard / claude kill / merge / rebase).
+    // Same shape as DeleteConfirm above; per-kind label + magic
+    // input come from `confirm_buttons` + `run_confirm_button`.
+    if let Some(buttons) = crate::ui::prompt::confirm_buttons(&p.kind) {
+        let n = buttons.len();
+        match key.code {
+            KeyCode::Esc => {
+                app.run_confirm_button(false);
+                return;
+            }
+            KeyCode::Left | KeyCode::BackTab => {
+                p.cursor = (p.cursor + n - 1) % n;
+                return;
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                p.cursor = (p.cursor + 1) % n;
+                return;
+            }
+            KeyCode::Enter => {
+                let selected = p.cursor.min(n - 1);
+                let primary = selected == 0;
+                app.run_confirm_button(primary);
+                return;
+            }
+            KeyCode::Char(c) => {
+                let low = c.to_ascii_lowercase();
+                // Hotkey: first alpha of primary label matches primary,
+                // 'c'/'n' → cancel, 'y' → primary.
+                let (primary_label, _) = crate::ui::prompt::confirm_labels(&p.kind).unwrap();
+                let primary_hk = primary_label
+                    .chars()
+                    .find(|c| c.is_ascii_alphabetic())
+                    .map(|c| c.to_ascii_lowercase());
+                let hit_primary = matches!(primary_hk, Some(pk) if pk == low) || low == 'y';
+                let hit_cancel = low == 'c' || low == 'n';
+                if hit_primary {
+                    app.run_confirm_button(true);
+                } else if hit_cancel {
+                    app.run_confirm_button(false);
+                }
+                return;
+            }
+            _ => return,
+        }
+    }
     // Quit confirm — button dialog. Left/Right cycle, Enter fires
     // the focused button, S/Q/C are hotkeys, Esc cancels.
     if matches!(p.kind, crate::prompt::PromptKind::QuitConfirm) {

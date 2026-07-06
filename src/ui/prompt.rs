@@ -35,6 +35,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         draw_delete_confirm(frame, app, screen);
         return;
     }
+    // The same button-dialog pattern for every other destructive
+    // confirm: git delete branch / stash drop / worktree remove /
+    // tag delete / discard hunk / claude kill / merge / rebase.
+    if let Some(buttons) = confirm_buttons(&p.kind) {
+        draw_generic_confirm(frame, app, screen, buttons);
+        return;
+    }
     let title = format!(" {} ", p.title);
     let input = p.input.clone();
     let caret_col = p.caret_col();
@@ -321,6 +328,48 @@ fn draw_quit_confirm(frame: &mut Frame, app: &mut App, screen: Rect) {
     }
 }
 
+/// #polish 2026-07-06 — for any destructive confirm-style PromptKind
+/// (git delete branch / stash drop / worktree remove / tag delete /
+/// hunk discard / claude kill / merge / rebase), return the
+/// `[ primary_label, cancel_label ]` pair for a two-button dialog.
+/// Returns `None` for other kinds (regular text-input prompts).
+///
+/// Rendering + key/mouse dispatch checks this table to decide
+/// whether to draw the standard input field or a button dialog.
+pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str, &'static str)> {
+    use crate::prompt::PromptKind::*;
+    Some(match kind {
+        GitDeleteBranch | GitDeleteBranchConfirm => ("  Delete  ", " Cancel "),
+        GitWorktreeRemove | WorktreeRemoveConfirm => ("  Remove  ", " Cancel "),
+        GitStashDrop => ("  Drop  ", " Cancel "),
+        GitTagDelete => ("  Delete  ", " Cancel "),
+        DiffDiscardHunk | GitDiscardFile => ("  Discard  ", " Cancel "),
+        ClaudeKillConfirm => ("  Kill  ", " Cancel "),
+        GitMergeConfirm => ("  Merge  ", " Cancel "),
+        GitRebaseConfirm => ("  Rebase  ", " Cancel "),
+        _ => return None,
+    })
+}
+
+/// Buttons for a generic confirm dialog — matches the shape of
+/// `quit_buttons` / `delete_buttons`. Underscored hotkey char is
+/// the third field (`d` for Delete, `c` for Cancel, etc.).
+pub fn confirm_buttons(kind: &crate::prompt::PromptKind) -> Option<Vec<(&'static str, u8, usize)>> {
+    let (primary, cancel) = confirm_labels(kind)?;
+    // Hotkey index — pick the first alpha char in each label.
+    let hk = |label: &str| {
+        label
+            .char_indices()
+            .find(|(_, c)| c.is_ascii_alphabetic())
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    };
+    Some(vec![
+        (primary, DELETE_BTN_DELETE, hk(primary)),
+        (cancel, DELETE_BTN_CANCEL, hk(cancel)),
+    ])
+}
+
 /// #polish 2026-07-06 — DeleteConfirm dialog. Two buttons
 /// `[ Delete ] [ Cancel ]`; Cancel is the default focus. The title
 /// text is the full "Delete <rel> (N entries)" string prepared by
@@ -364,6 +413,90 @@ fn draw_delete_confirm(frame: &mut Frame, app: &mut App, screen: Rect) {
     );
 
     // Last inner row: right-aligned buttons.
+    let by = inner.y + inner.height - 1;
+    let total_bw: u16 = buttons
+        .iter()
+        .map(|(l, _, _)| l.chars().count() as u16 + 1)
+        .sum();
+    let mut bx = inner.x + inner.width.saturating_sub(total_bw);
+    app.rects.delete_prompt_buttons.clear();
+    for (i, (label, code, hk_idx)) in buttons.iter().enumerate() {
+        let focused = i == selected;
+        let style = if focused {
+            crate::ui::design_tokens::row_highlight_menu()
+        } else {
+            crate::ui::design_tokens::row_plain_menu()
+        };
+        let bw = label.chars().count() as u16;
+        if bx + bw > inner.x + inner.width {
+            break;
+        }
+        let chars: Vec<char> = label.chars().collect();
+        let mut spans: Vec<Span> = Vec::new();
+        spans.push(Span::styled(
+            chars[..*hk_idx].iter().collect::<String>(),
+            style,
+        ));
+        if let Some(&hk) = chars.get(*hk_idx) {
+            spans.push(Span::styled(
+                hk.to_string(),
+                style.add_modifier(Modifier::UNDERLINED),
+            ));
+        }
+        spans.push(Span::styled(
+            chars[(hk_idx + 1)..].iter().collect::<String>(),
+            style,
+        ));
+        let rect = Rect::new(bx, by, bw, 1);
+        frame.render_widget(Paragraph::new(Line::from(spans)), rect);
+        app.rects.delete_prompt_buttons.push((rect, *code));
+        bx += bw + 1;
+    }
+}
+
+/// Generic two-button confirm dialog — used by every destructive
+/// PromptKind whose accept handler used to gate on a "type X to
+/// confirm" magic string. The primary button label + hotkey come
+/// from `confirm_buttons(kind)`; the title text is
+/// `Prompt.title` (already set by the opening code).
+fn draw_generic_confirm(
+    frame: &mut Frame,
+    app: &mut App,
+    screen: Rect,
+    buttons: Vec<(&'static str, u8, usize)>,
+) {
+    let Some(p) = &app.prompt else { return };
+    let selected = p.cursor.min(buttons.len().saturating_sub(1));
+    let title = p.title.clone();
+
+    let buttons_w: usize = buttons.iter().map(|(l, _, _)| l.chars().count() + 1).sum();
+    let inner_w = title.chars().count().max(buttons_w + 2).max(40);
+    let w = (inner_w as u16 + 2).min(screen.width.saturating_sub(2));
+    let h = 5u16.min(screen.height.saturating_sub(2));
+    let area = Rect {
+        x: screen.x + (screen.width.saturating_sub(w)) / 2,
+        y: screen.y + (screen.height.saturating_sub(h)) / 3,
+        width: w,
+        height: h,
+    };
+    frame.render_widget(Clear, area);
+    let block = crate::ui::design_tokens::popup_menu(" Confirm ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.width == 0 || inner.height < 2 {
+        return;
+    }
+    let msg_padded = format!(
+        " {title:<width$}",
+        width = (inner.width as usize).saturating_sub(1)
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            msg_padded,
+            Style::default().fg(theme::cur().fg).bg(theme::cur().bg2),
+        ))),
+        Rect::new(inner.x, inner.y, inner.width, 1),
+    );
     let by = inner.y + inner.height - 1;
     let total_bw: u16 = buttons
         .iter()

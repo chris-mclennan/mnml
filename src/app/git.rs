@@ -1134,14 +1134,11 @@ impl App {
         // confirm" prompt instead of firing immediately.
         if matches!(action, crate::DiffHunkAction::Discard) {
             self.pending_discard_hunk = Some((pid, hunk_index));
-            let title = format!(
-                "Discard hunk in {} — type 'discard' to confirm",
-                hunk.file_rel
-            );
-            self.prompt = Some(crate::prompt::Prompt::new(
-                crate::prompt::PromptKind::DiffDiscardHunk,
-                title,
-            ));
+            let title = format!("Discard hunk in {}?", hunk.file_rel);
+            let mut p =
+                crate::prompt::Prompt::new(crate::prompt::PromptKind::DiffDiscardHunk, title);
+            p.cursor = 1;
+            self.prompt = Some(p);
             return;
         }
         let workspace = self.active_repo_path().to_path_buf();
@@ -2251,10 +2248,12 @@ impl App {
     /// the user picks a branch.
     pub fn git_delete_branch_confirm(&mut self, name: String) {
         self.pending_branch_delete = Some(name.clone());
-        self.prompt = Some(crate::prompt::Prompt::new(
+        let mut p = crate::prompt::Prompt::new(
             crate::prompt::PromptKind::GitDeleteBranchConfirm,
-            format!("type 'delete' to force-delete branch {name}"),
-        ));
+            format!("Force-delete branch `{name}`?"),
+        );
+        p.cursor = 1;
+        self.prompt = Some(p);
     }
 
     /// Fire `git branch -D <name>` once the confirm prompt is accepted.
@@ -3023,11 +3022,13 @@ impl App {
     /// confirm gate — type `drop` to commit.
     pub fn git_stash_drop_prompt(&mut self, stash_ref: &str) {
         use crate::prompt::{Prompt, PromptKind};
-        self.prompt = Some(Prompt::seeded(
+        let mut p = Prompt::seeded(
             PromptKind::GitStashDrop,
-            format!("Type 'drop' to drop {stash_ref}"),
+            format!("Drop stash {stash_ref}?"),
             "",
-        ));
+        );
+        p.cursor = 1;
+        self.prompt = Some(p);
         self.pending_stash_drop = Some((stash_ref.to_string(), stash_ref.to_string()));
     }
 
@@ -3035,11 +3036,13 @@ impl App {
     /// tag name to commit. Same shape as `git_delete_branch_prompt`.
     pub fn git_tag_delete_prompt(&mut self, name: &str) {
         use crate::prompt::{Prompt, PromptKind};
-        self.prompt = Some(Prompt::seeded(
+        let mut p = Prompt::seeded(
             PromptKind::GitTagDelete,
-            format!("Type {name:?} to delete this tag"),
+            format!("Delete tag `{name}`?"),
             "",
-        ));
+        );
+        p.cursor = 1;
+        self.prompt = Some(p);
         self.pending_tag_delete = Some(name.to_string());
     }
 
@@ -3192,11 +3195,13 @@ impl App {
     /// Right-click context-menu action: prompt to confirm, then `git branch -D`.
     pub fn git_delete_branch_prompt(&mut self, name: String) {
         use crate::prompt::{Prompt, PromptKind};
-        self.prompt = Some(Prompt::seeded(
+        let mut p = Prompt::seeded(
             PromptKind::GitDeleteBranch,
-            format!("Type {name:?} to delete this branch"),
+            format!("Delete branch `{name}`?"),
             "",
-        ));
+        );
+        p.cursor = 1;
+        self.prompt = Some(p);
         self.pending_delete_branch = Some(name);
     }
 
@@ -3243,11 +3248,13 @@ impl App {
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
-        self.prompt = Some(Prompt::seeded(
+        let mut p = Prompt::seeded(
             PromptKind::GitWorktreeRemove,
-            format!("Type {name:?} to remove this worktree"),
+            format!("Remove worktree `{name}`?"),
             "",
-        ));
+        );
+        p.cursor = 1;
+        self.prompt = Some(p);
         self.pending_worktree_remove = Some((path, name));
     }
 

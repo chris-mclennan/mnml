@@ -814,6 +814,28 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         }
         return;
     }
+    // #polish 2026-07-06 — every other destructive confirm dialog
+    // (git delete branch / stash drop / worktree remove / tag
+    // delete / hunk discard / claude kill / merge / rebase). Same
+    // click-target vec as DeleteConfirm.
+    if app
+        .prompt
+        .as_ref()
+        .is_some_and(|p| crate::ui::prompt::confirm_labels(&p.kind).is_some())
+    {
+        if let MouseEventKind::Down(MouseButton::Left) = m.kind
+            && let Some(&(_, code)) = app
+                .rects
+                .delete_prompt_buttons
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            // code == DELETE_BTN_DELETE (0) = primary; anything else = cancel.
+            let primary = code == crate::ui::prompt::DELETE_BTN_DELETE;
+            app.run_confirm_button(primary);
+        }
+        return;
+    }
     // The text-input prompt is modal — swallow mouse events while it's open.
     if app.prompt.is_some() {
         return;

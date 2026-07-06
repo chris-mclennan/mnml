@@ -5161,11 +5161,10 @@ impl App {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| rel.to_string_lossy().into_owned());
         self.pending_discard_file = Some(rel);
-        let title = format!("Discard changes to {basename} — type filename to confirm");
-        self.prompt = Some(crate::prompt::Prompt::new(
-            crate::prompt::PromptKind::GitDiscardFile,
-            title,
-        ));
+        let title = format!("Discard uncommitted changes to `{basename}`?");
+        let mut p = crate::prompt::Prompt::new(crate::prompt::PromptKind::GitDiscardFile, title);
+        p.cursor = 1;
+        self.prompt = Some(p);
     }
 
     /// Accept handler for [`PromptKind::GitDiscardFile`]. Requires the
@@ -5346,6 +5345,55 @@ impl App {
         // destructive action.
         prompt.cursor = 1;
         self.prompt = Some(prompt);
+    }
+
+    /// Dispatch handler for the generic destructive confirm-button
+    /// dialogs (git delete branch / stash drop / worktree remove /
+    /// tag delete / hunk discard / claude kill / merge / rebase).
+    ///
+    /// Rather than have N specialized `run_*_button` methods, this
+    /// synthesizes the "magic string" each kind's accept handler
+    /// expected (dynamic for `<name>`-style, static for `"drop"` /
+    /// `"kill"` / etc.), writes it into `Prompt.input`, then calls
+    /// the shared `accept_prompt` path. On cancel it writes an empty
+    /// string so the else-branch fires and each kind's cancel logic
+    /// runs unchanged.
+    pub fn run_confirm_button(&mut self, primary: bool) {
+        use crate::prompt::PromptKind::*;
+        let Some(kind) = self.prompt.as_ref().map(|p| p.kind) else {
+            return;
+        };
+        let synth = if primary {
+            match kind {
+                GitDeleteBranch => self.pending_delete_branch.clone().unwrap_or_default(),
+                GitDeleteBranchConfirm => "delete".into(),
+                GitWorktreeRemove => self
+                    .pending_worktree_remove
+                    .as_ref()
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_default(),
+                WorktreeRemoveConfirm => "remove".into(),
+                GitStashDrop => "drop".into(),
+                GitTagDelete => self.pending_tag_delete.clone().unwrap_or_default(),
+                DiffDiscardHunk => "discard".into(),
+                GitDiscardFile => self
+                    .pending_discard_file
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                ClaudeKillConfirm => "kill".into(),
+                GitMergeConfirm => "merge".into(),
+                GitRebaseConfirm => "rebase".into(),
+                _ => return,
+            }
+        } else {
+            String::new()
+        };
+        if let Some(p) = self.prompt.as_mut() {
+            p.input = synth;
+        }
+        self.prompt_accept();
     }
 
     /// Dispatch handler for the DeleteConfirm button dialog. Delete

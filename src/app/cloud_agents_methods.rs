@@ -1307,17 +1307,19 @@ impl App {
                     self.pending_kill_pid = None;
                     let n = batch.len();
                     let prompt_text = if n == total_selected {
-                        format!("type 'kill' to SIGTERM {n} selected session(s)")
+                        format!("SIGTERM {n} selected session(s)?")
                     } else {
                         let skipped = total_selected - n;
                         format!(
-                            "type 'kill' to SIGTERM {n} of {total_selected} selected ({skipped} ended, skipped)"
+                            "SIGTERM {n} of {total_selected} selected? ({skipped} already ended, skipped)"
                         )
                     };
-                    self.prompt = Some(crate::prompt::Prompt::new(
+                    let mut p = crate::prompt::Prompt::new(
                         crate::prompt::PromptKind::ClaudeKillConfirm,
                         prompt_text,
-                    ));
+                    );
+                    p.cursor = 1;
+                    self.prompt = Some(p);
                     return;
                 }
                 let Some(pid) = row.pid else {
@@ -1327,13 +1329,15 @@ impl App {
                 let sid = row.session_id.clone();
                 let workspace = row.workspace.clone();
                 self.pending_kill_pid = Some(pid);
-                self.prompt = Some(crate::prompt::Prompt::new(
+                let mut p = crate::prompt::Prompt::new(
                     crate::prompt::PromptKind::ClaudeKillConfirm,
                     format!(
-                        "type 'kill' to SIGTERM PID {pid} ({workspace} · {})",
+                        "SIGTERM PID {pid}? ({workspace} · {})",
                         sid.chars().take(8).collect::<String>()
                     ),
-                ));
+                );
+                p.cursor = 1;
+                self.prompt = Some(p);
             }
             ClaudeAgentsAction::ExportMarkdown => {
                 match crate::claude_agents::export_transcript_as_markdown(row) {

@@ -793,17 +793,21 @@ impl App {
                 // do gate. Now mirrors those: stash the branch
                 // name + open a confirm prompt typed-`merge`.
                 self.pending_merge_source = Some(item.id.clone());
-                self.prompt = Some(crate::prompt::Prompt::new(
+                let mut p = crate::prompt::Prompt::new(
                     crate::prompt::PromptKind::GitMergeConfirm,
-                    format!("type 'merge' to merge {} into current", item.id),
-                ));
+                    format!("Merge `{}` into current?", item.id),
+                );
+                p.cursor = 1;
+                self.prompt = Some(p);
             }
             PickerKind::GitRebaseOnto => {
                 self.pending_rebase_onto = Some(item.id.clone());
-                self.prompt = Some(crate::prompt::Prompt::new(
+                let mut p = crate::prompt::Prompt::new(
                     crate::prompt::PromptKind::GitRebaseConfirm,
-                    format!("type 'rebase' to rebase current onto {}", item.id),
-                ));
+                    format!("Rebase current onto `{}`?", item.id),
+                );
+                p.cursor = 1;
+                self.prompt = Some(p);
             }
             PickerKind::GitWorktreeOpen => {
                 self.git_open_worktree(std::path::PathBuf::from(item.id.clone()));
@@ -811,10 +815,12 @@ impl App {
             PickerKind::GitWorktreeRemove => {
                 let path = std::path::PathBuf::from(item.id.clone());
                 self.pending_worktree_path = Some(path.clone());
-                self.prompt = Some(crate::prompt::Prompt::new(
+                let mut p = crate::prompt::Prompt::new(
                     crate::prompt::PromptKind::WorktreeRemoveConfirm,
-                    format!("type 'remove' to drop worktree {}", path.display()),
-                ));
+                    format!("Remove worktree {}?", path.display()),
+                );
+                p.cursor = 1;
+                self.prompt = Some(p);
             }
             PickerKind::GoRunCmd => {
                 let app = item.id.clone();
