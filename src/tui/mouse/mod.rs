@@ -869,6 +869,77 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // #21 — middle-click on file-ish rows opens the file in a new
+    // split (VS Code Cmd+click convention). Applies uniformly to
+    // every list of paths across the app so users don't have to
+    // remember which surface supports it.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle)) {
+        // Tree files. Tree uses a single scrollable rect
+        // (`tree_toggle` covers the body) + `tree_scroll` offset.
+        if let Some(tr) = app.rects.tree_toggle
+            && crate::app::dispatch::contains(tr, x, y)
+        {
+            let idx = (y - tr.y) as usize + app.rects.tree_scroll;
+            let rows = app.tree.visible_rows();
+            if let Some(row) = rows.get(idx)
+                && !row.is_dir
+            {
+                let path = row.path.clone();
+                app.split_active(crate::layout::SplitDir::Horizontal);
+                app.open_path(&path);
+            }
+            return;
+        }
+        // HTTP sidebar file rows.
+        if let Some(path) = app
+            .rects
+            .http_panel_files
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|(_, p)| p.clone())
+        {
+            app.split_active(crate::layout::SplitDir::Horizontal);
+            app.open_path(&path);
+            return;
+        }
+        // HTTP chain rows — middle-click opens the file (Left click runs).
+        if let Some(path) = app
+            .rects
+            .http_panel_chain_rows
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|(_, p)| p.clone())
+        {
+            app.split_active(crate::layout::SplitDir::Horizontal);
+            app.open_path(&path);
+            return;
+        }
+        // HTTP mock rows — same treatment.
+        if let Some(path) = app
+            .rects
+            .http_panel_mock_rows
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|(_, p)| p.clone())
+        {
+            app.split_active(crate::layout::SplitDir::Horizontal);
+            app.open_path(&path);
+            return;
+        }
+        // Notes panel file rows.
+        if let Some(path) = app
+            .rects
+            .notes_panel_files
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|(_, p)| p.clone())
+        {
+            app.split_active(crate::layout::SplitDir::Horizontal);
+            app.open_path(&path);
+            return;
+        }
+    }
+
     // Dashboard (splash) recent-file click — only fires when Layout::Empty so
     // we don't shadow editor clicks. Routes through `open_path`, which sets
     // up the editor pane + LSP + tree state.
