@@ -86,11 +86,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         let is_collapsed = p.collapsed.contains(&sec.group);
         // Section header — `── group ──` styled. Collapsed sections
         // show a `▸` indicator instead of the row count.
+        // #polish 2026-07-06 — collapsed sections now show the
+        // hidden row count so users preview what's inside without
+        // expanding.
         let header = if is_collapsed {
             Line::from(vec![
                 Span::styled("▸ ", dim),
                 Span::styled(sec.group.clone(), header_style),
-                Span::styled(" (collapsed)", dim),
+                Span::styled(format!(" ({} · collapsed)", sec.rows.len()), dim),
             ])
         } else {
             Line::from(vec![

@@ -448,9 +448,18 @@ pub fn draw_pane(
             theme::cur().bg_dark
         };
         let num_gutter = if is_continuation {
-            // Continuation rows of a wrapped line — blank gutter so the
-            // user can tell it's the same file line as the row above.
-            format!("{} ", " ".repeat(num_w))
+            // Continuation rows of a wrapped line — show `↪` glyph
+            // (or `~` in ASCII mode) so users can tell it's the
+            // same file line as the row above, not a separate line.
+            // #polish 2026-07-06 — was blank; visually indistinct
+            // from a real short line above it.
+            let glyph = if app.config.ui.ascii_icons {
+                "~"
+            } else {
+                "\u{21AA}"
+            };
+            let pad = num_w.saturating_sub(1);
+            format!("{}{glyph} ", " ".repeat(pad))
         } else if blame_on {
             match buf.blame.as_ref().and_then(|v| v.get(line_no)) {
                 Some(bl) => format!("{} ", bl.label(num_w)),

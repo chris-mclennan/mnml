@@ -626,16 +626,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     // (Tab-page indicators live in the bufferline's right cluster — see
     // `src/ui/bufferline.rs`. No statusline chip needed.)
-    // Autosave indicator — `[AS Ns]` chip when `[editor] autosave_secs > 0`.
+    // Autosave indicator — chip when `[editor] autosave_secs > 0`.
     // Lets the user see at a glance that idle saves are armed.
+    // #polish 2026-07-06 — was `AS 5s` (unclear abbreviation);
+    // now uses a disk glyph so the semantic is visual, not
+    // dependent on knowing the two-letter code.
     let autosave = app.config.editor.autosave_secs;
     if autosave > 0 {
         autosave_seg_idx = Some(right.len());
-        right.push(Seg::new(
-            format!(" AS {autosave}s "),
-            theme::cur().bg_darker,
-            theme::cur().green,
-        ));
+        let label = if nerd {
+            format!(" \u{F0193} {autosave}s ")
+        } else {
+            format!(" save {autosave}s ")
+        };
+        right.push(Seg::new(label, theme::cur().bg_darker, theme::cur().green));
     }
     if let Some(b) = app.active_editor() {
         let (row, col) = b.editor.row_col();

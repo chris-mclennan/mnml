@@ -64,6 +64,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         .unwrap_or(8)
         .clamp(8, 20);
 
+    // #polish 2026-07-06 — pre-count bindings per section so
+    // collapsed headers can show `(N)` instead of just the name.
+    // First pass builds the map; second pass renders using it.
+    let mut section_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    {
+        let mut cur: Option<String> = None;
+        for row in &rows {
+            match row {
+                HelpRow::Section(name) => {
+                    cur = Some(name.to_string());
+                    section_counts.entry(name.to_string()).or_insert(0);
+                }
+                HelpRow::Binding { .. } => {
+                    if let Some(n) = cur.as_ref() {
+                        *section_counts.entry(n.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
     // Two-pass build so we can drop binding rows for collapsed
     // sections AND track which section each line corresponds to
     // (for click hit-testing).
@@ -79,8 +100,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 current_section = Some(name.to_string());
                 section_collapsed = collapsed.contains(*name);
                 let chev = if section_collapsed { "▸" } else { "▾" };
+                let count = section_counts.get(*name).copied().unwrap_or(0);
+                // Show `(N)` on every header so users see counts
+                // whether the section is expanded or collapsed.
+                let text = format!("{chev} ── {name} ── ({count})");
                 lines.push(Line::from(Span::styled(
-                    format!("{chev} ── {name} ──"),
+                    text,
                     Style::default()
                         .fg(t.comment)
                         .add_modifier(Modifier::BOLD | Modifier::DIM),
