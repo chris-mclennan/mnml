@@ -418,6 +418,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::RequestResponseFormat);
     }
+    if let Some(r) = app.rects.pending_undo_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PendingUndoChip);
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {

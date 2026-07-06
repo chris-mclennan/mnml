@@ -858,6 +858,23 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: prettify JSON body".into(),
             Some("dim when the body isn't JSON".into()),
         )),
+        HoverChip::PendingUndoChip => {
+            let rect = app.rects.pending_undo_chip?;
+            let action_hint = app
+                .pending_undo
+                .as_ref()
+                .map(|u| format!("undoes: {}", u.label))
+                .unwrap_or_default();
+            Some((
+                rect,
+                "click: undo the last destructive action (⇧⌃Z)".into(),
+                if action_hint.is_empty() {
+                    None
+                } else {
+                    Some(action_hint)
+                },
+            ))
+        }
         HoverChip::RequestSplitToggle => {
             let rect = app.rects.request_split_toggle?;
             let orient_desc = match app.active.and_then(|i| app.panes.get(i)) {

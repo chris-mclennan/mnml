@@ -406,6 +406,9 @@ pub enum HoverChip {
     RequestResponseWrap,
     /// #21 v8 — hover on the response bar's `{ } Format` chip.
     RequestResponseFormat,
+    /// #21 v9 — hover on the pending-undo chip. Tooltip explains
+    /// the keyboard shortcut + shows what will be undone.
+    PendingUndoChip,
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept
