@@ -1214,6 +1214,56 @@ pub fn rects_dump_json(app: &App) -> String {
     one!("statusline_mode_chip", app.rects.statusline_mode_chip);
     one!("statusline_clock_chip", app.rects.statusline_clock_chip);
     one!("statusline_mixr_chip", app.rects.statusline_mixr_chip);
+    // vscode-user-mouse audit 2026-07-06 SEV-3 — the chip polish
+    // rounds added 17 new statusline rects that the click / hover
+    // handlers use, but the IPC publisher stopped at
+    // `statusline_mixr_chip` (above). Headless audits could not
+    // deterministically hover / click them without string-searching
+    // `screen.txt`, and had to guess at column positions. Publish
+    // all of them so future audits can drive each chip precisely.
+    one!(
+        "statusline_mixr_play_chip",
+        app.rects.statusline_mixr_play_chip
+    );
+    one!(
+        "statusline_mixr_ffwd_chip",
+        app.rects.statusline_mixr_ffwd_chip
+    );
+    one!("statusline_lsp_chip", app.rects.statusline_lsp_chip);
+    one!("statusline_wrap_chip", app.rects.statusline_wrap_chip);
+    one!(
+        "statusline_autosave_chip",
+        app.rects.statusline_autosave_chip
+    );
+    one!(
+        "statusline_filesize_chip",
+        app.rects.statusline_filesize_chip
+    );
+    one!("statusline_lncol_chip", app.rects.statusline_lncol_chip);
+    one!("statusline_test_chip", app.rects.statusline_test_chip);
+    one!("statusline_file_chip", app.rects.statusline_file_chip);
+    one!(
+        "statusline_diagnostics_chip",
+        app.rects.statusline_diagnostics_chip
+    );
+    one!(
+        "statusline_language_chip",
+        app.rects.statusline_language_chip
+    );
+    one!("statusline_symbol_chip", app.rects.statusline_symbol_chip);
+    one!("statusline_pr_chip", app.rects.statusline_pr_chip);
+    one!("statusline_macro_chip", app.rects.statusline_macro_chip);
+    one!("statusline_find_chip", app.rects.statusline_find_chip);
+    one!("statusline_sel_chip", app.rects.statusline_sel_chip);
+    one!(
+        "statusline_progress_chip",
+        app.rects.statusline_progress_chip
+    );
+    one!(
+        "statusline_bg_tasks_chip",
+        app.rects.statusline_bg_tasks_chip
+    );
+    one!("statusline_ai_chip", app.rects.statusline_ai_chip);
     one!("activity_bar_gear", app.rects.activity_bar_gear);
     one!("cmdline_bar", app.rects.cmdline_bar);
     // vscode-user-mouse / vscode-user SEV-3 — the new palette-bar
