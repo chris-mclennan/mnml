@@ -443,6 +443,14 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::TreeRailGrip);
     }
+    if let Some(&(_, idx)) = app
+        .rects
+        .menu_bar_words
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::MenuBarWord(idx));
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {

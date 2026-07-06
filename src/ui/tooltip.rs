@@ -939,6 +939,19 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 None,
             ))
         }
+        HoverChip::MenuBarWord(idx) => {
+            let &(rect, _) = app.rects.menu_bar_words.iter().find(|(_, i)| *i == idx)?;
+            let menus = crate::menu_bar::bar();
+            let menu = menus.get(idx)?;
+            let label_trim = menu.label.trim();
+            // Alt accelerator letter (first ASCII alpha character).
+            let accel = label_trim
+                .chars()
+                .find(|c| c.is_ascii_alphabetic())
+                .map(|c| c.to_ascii_uppercase());
+            let secondary = accel.map(|c| format!("Alt+{c}"));
+            Some((rect, "click: open menu".into(), secondary))
+        }
         HoverChip::PendingUndoChip => {
             let rect = app.rects.pending_undo_chip?;
             let action_hint = app

@@ -424,6 +424,10 @@ pub enum HoverChip {
     /// #polish 2026-07-06 — hover on the tree rail resize
     /// grip. Same treatment.
     TreeRailGrip,
+    /// #polish 2026-07-06 — hover on a menu bar word (mnml /
+    /// File / Edit / Selection / …). Tooltip explains the
+    /// click behavior + Alt+<letter> accelerator.
+    MenuBarWord(usize),
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept

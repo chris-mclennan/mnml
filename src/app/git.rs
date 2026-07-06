@@ -2873,6 +2873,9 @@ impl App {
                         "Copy path",
                         MenuAction::CopyPath(path.to_string_lossy().into_owned()),
                     ),
+                    // #polish 2026-07-06 — quick "new worktree" from
+                    // this worktree's slot. Fires the palette prompt.
+                    MenuItem::new("New worktree…", MenuAction::Command("git.worktree_add")),
                 ];
                 if !is_cur {
                     items.push(MenuItem::new(
@@ -2888,10 +2891,23 @@ impl App {
                 };
                 let url = p.web_url.clone();
                 let title = Some(format!("{} {} — {}", p.host_tag, p.number_label, p.title));
-                let items = vec![
+                let mut items = vec![
                     MenuItem::new("Open in browser", MenuAction::OpenUrl(url.clone())),
                     MenuItem::new("Copy URL", MenuAction::CopyText(url)),
                 ];
+                // #polish 2026-07-06 — check-out the source branch of
+                // the PR + copy its name. Only offered when the PR
+                // carries a source_branch (some hosts omit it).
+                if let Some(src) = p.source_branch.clone() {
+                    items.push(MenuItem::new(
+                        format!("Checkout branch ({src})"),
+                        MenuAction::GitCheckoutBranch(src.clone()),
+                    ));
+                    items.push(MenuItem::new(
+                        format!("Copy branch name ({src})"),
+                        MenuAction::CopyText(src),
+                    ));
+                }
                 ContextMenu::new(title, anchor, items)
             }
             crate::git::rail::GitRailHit::Stash(i) => {
