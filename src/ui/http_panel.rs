@@ -302,7 +302,11 @@ fn draw_section_header(
     // glyph (label alone reads fine).
     let mut label_prefix = String::new();
     if section == 2 && !ascii {
-        label_prefix = "\u{F0239}  ".to_string(); // Nerd Font web
+        // Codicon browser — same glyph as the palette-bar's
+        // browser-integration chip (`browser.open`). Was Nerd
+        // Font firefox (\u{F0239}) which shows a Firefox logo
+        // and reads inconsistent with the rest of the app.
+        label_prefix = "\u{EB01}  ".to_string();
     }
     spans.push(Span::styled(
         format!("{label_prefix}{label}"),
