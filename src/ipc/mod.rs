@@ -1327,6 +1327,38 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, idx) in &app.rects.settings_rows {
         push_rect(&mut out, &mut first, &format!("settings_row:{idx}"), *r);
     }
+    // code-reviewer 2026-07-06 — publish click rects for every button
+    // dialog (Quit, DeleteConfirm, and the 12 generic confirms —
+    // GitStashDrop / ClaudeKillConfirm / GitMergeConfirm / …) so
+    // headless / IPC-driven tests can drive them. Same class of gap
+    // as the `settings_*` / `bufferline_overflow_*` / `right_panel_empty_*`
+    // fixes above. `close_prompt_buttons` (unsaved-changes overlay)
+    // included in the same batch — it predates this session but was
+    // in the same never-published state.
+    for (r, code) in &app.rects.quit_prompt_buttons {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("quit_prompt_button:{code}"),
+            *r,
+        );
+    }
+    for (r, code) in &app.rects.confirm_dialog_buttons {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("confirm_dialog_button:{code}"),
+            *r,
+        );
+    }
+    for (r, code) in &app.rects.close_prompt_buttons {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("close_prompt_button:{code}"),
+            *r,
+        );
+    }
     for (r, _) in &app.rects.bufferline_tab_close {
         push_rect(&mut out, &mut first, "bufferline_tab_close", *r);
     }

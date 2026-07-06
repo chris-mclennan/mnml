@@ -683,6 +683,13 @@ impl App {
             self.toast("collection: name can't contain path separators");
             return;
         }
+        // Guard path-traversal — `.` / `..` join into the parent dir
+        // (writing the starter file to `.mnml/` alongside `ipc/`,
+        // `chains/`, etc.). code-reviewer 2026-07-06.
+        if name == "." || name == ".." {
+            self.toast("collection: name can't be '.' or '..'");
+            return;
+        }
         let dir = self.workspace.join(".mnml").join("collections").join(name);
         if dir.exists() {
             self.toast(format!("collection: {name}/ already exists"));

@@ -167,7 +167,7 @@ impl App {
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.workspace.clone());
-        let pkg = find_manifest_dir(&start_dir, &["package.json"]);
+        let pkg = find_manifest_dir(&start_dir, &["package.json"], &self.workspace);
         if pkg.is_none() {
             self.toast("npm.run_script: no package.json found");
             return;
@@ -193,7 +193,7 @@ impl App {
     /// `cmd/<app>/main.go` rather than the module root; the bare
     /// `:go.run` (hardcoded `.`) is wrong for those.
     pub fn open_go_run_path_prompt(&mut self) {
-        if find_manifest_dir(&self.workspace, &["go.mod"]).is_none() {
+        if find_manifest_dir(&self.workspace, &["go.mod"], &self.workspace).is_none() {
             self.toast("go.run_path: no go.mod found");
             return;
         }
@@ -229,7 +229,7 @@ impl App {
                 .and_then(|p| p.parent())
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| self.workspace.clone());
-            if let Some(pkg_dir) = find_manifest_dir(&start_dir, &["package.json"])
+            if let Some(pkg_dir) = find_manifest_dir(&start_dir, &["package.json"], &self.workspace)
                 && let Ok(contents) = std::fs::read_to_string(pkg_dir.join("package.json"))
                 && let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents)
                 && let Some(scripts) = json.get("scripts").and_then(|s| s.as_object())
@@ -264,6 +264,7 @@ impl App {
         let root = find_manifest_dir(
             &self.workspace,
             &["pyproject.toml", "setup.py", "requirements.txt"],
+            &self.workspace,
         )
         .unwrap_or_else(|| self.workspace.clone());
         let has_pyproject = root.join("pyproject.toml").exists();
@@ -335,7 +336,11 @@ impl App {
     ///     picker over them. Accept fires `go run ./cmd/<pick>`.
     pub fn run_go_subcommand(&mut self, subcmd: &str) {
         if subcmd == "run ." {
-            let root = crate::app::playwright::find_manifest_dir(&self.workspace, &["go.mod"]);
+            let root = crate::app::playwright::find_manifest_dir(
+                &self.workspace,
+                &["go.mod"],
+                &self.workspace,
+            );
             if let Some(root) = root {
                 let cmd_dir = root.join("cmd");
                 let entries: Vec<std::path::PathBuf> = std::fs::read_dir(&cmd_dir)
@@ -420,8 +425,8 @@ impl App {
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| self.workspace.clone());
-        let root =
-            find_manifest_dir(&start_dir, &[manifest]).unwrap_or_else(|| self.workspace.clone());
+        let root = find_manifest_dir(&start_dir, &[manifest], &self.workspace)
+            .unwrap_or_else(|| self.workspace.clone());
         if !root.join(manifest).exists() {
             self.toast(format!(
                 "{bin}.{slug}: no {manifest} found in {} or any parent",
@@ -666,12 +671,22 @@ impl App {
 }
 
 /// Walk up from `start` until we find a directory containing any
-/// of `manifests`. Returns the matching directory or `None`. Used
-/// by the npm/pytest/cargo/go runners to handle monorepo subdirs
-/// the way the tools themselves do (2026-06-21 SEV-2 fix).
+/// of `manifests`, stopping at `workspace` (inclusive) so we never
+/// pick up a `package.json` / `go.mod` / `pyproject.toml` from
+/// outside the folder the user actually opened. Returns the
+/// matching directory or `None`.
+///
+/// Used by the npm/pytest/cargo/go runners to handle monorepo
+/// subdirs the way the tools themselves do (2026-06-21 SEV-2
+/// fix). The workspace boundary was added 2026-07-06 after
+/// multilang-dev-user SEV-2 flagged that a workspace with no
+/// inner manifest but a stray ancestor manifest (e.g. `~/package.json`,
+/// a sibling scratch project) would silently escape and run the
+/// command in the wrong directory.
 pub fn find_manifest_dir(
     start: &std::path::Path,
     manifests: &[&str],
+    workspace: &std::path::Path,
 ) -> Option<std::path::PathBuf> {
     let mut cur = start.to_path_buf();
     loop {
@@ -680,8 +695,53 @@ pub fn find_manifest_dir(
                 return Some(cur);
             }
         }
+        // Stop AT the workspace root — searching one level deeper
+        // than the opened folder would be a footgun.
+        if cur == workspace {
+            return None;
+        }
         if !cur.pop() {
             return None;
         }
+    }
+}
+
+#[cfg(test)]
+mod playwright_tests {
+    use super::*;
+
+    #[test]
+    fn find_manifest_dir_stops_at_workspace_root() {
+        // Regression for multilang-dev-user 2026-07-06 SEV-2 —
+        // `find_manifest_dir` used to walk the FULL path to `/`,
+        // silently picking up a `~/package.json` or a sibling
+        // scratch project's manifest and running commands there.
+        // Now it stops at the workspace boundary.
+        let outer = tempfile::tempdir().unwrap();
+        let ws = outer.path().join("workspace");
+        let sub = ws.join("subdir");
+        std::fs::create_dir_all(&sub).unwrap();
+        // Manifest at the OUTER level (outside the workspace).
+        std::fs::write(outer.path().join("package.json"), "{}").unwrap();
+        // Without a boundary the walk would find `outer/package.json`.
+        assert!(find_manifest_dir(&sub, &["package.json"], &ws).is_none());
+        // With a manifest INSIDE the workspace, the walk still finds it.
+        std::fs::write(ws.join("package.json"), "{}").unwrap();
+        assert_eq!(
+            find_manifest_dir(&sub, &["package.json"], &ws).as_deref(),
+            Some(ws.as_path())
+        );
+    }
+
+    #[test]
+    fn find_manifest_dir_finds_workspace_root_manifest() {
+        // Start point == workspace root — should still find a
+        // manifest sitting right there.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("go.mod"), "module x").unwrap();
+        assert_eq!(
+            find_manifest_dir(d.path(), &["go.mod"], d.path()).as_deref(),
+            Some(d.path())
+        );
     }
 }
