@@ -517,6 +517,21 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    // #20 v5 — Ctrl+Shift+Z as a global keyboard shortcut for the
+    // pending-undo chip. Consumed before overlay routing so it
+    // works even when a picker / prompt is open (undo of the last
+    // destructive action shouldn't require dismissing the overlay
+    // above it first). Only fires when there IS a pending_undo,
+    // so this key stays free for other flows otherwise.
+    if key.code == KeyCode::Char('Z')
+        && key
+            .modifiers
+            .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        && app.pending_undo.is_some()
+    {
+        app.commit_pending_undo();
+        return;
+    }
     // Zen-mode escape hatch: when zen is on and no overlay is
     // claiming Esc, treat Esc as "exit zen" so the user is never
     // trapped. Overlays (picker / prompt / which-key) get first

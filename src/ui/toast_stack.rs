@@ -227,8 +227,8 @@ fn draw_undo_chip(
     area: Rect,
     t: &crate::ui::theme::Theme,
 ) -> Option<Rect> {
-    let label: String = u.label.chars().take(MAX_WIDTH as usize - 12).collect();
-    let suffix = "  \u{21B6} Undo ";
+    let label: String = u.label.chars().take(MAX_WIDTH as usize - 20).collect();
+    let suffix = "  \u{21B6} Undo (⇧⌃Z) ";
     let inner_text = format!(" {label}{suffix}");
     let inner_w = inner_text.chars().count() as u16;
     let box_w = (inner_w + 2)
@@ -264,6 +264,13 @@ fn draw_undo_chip(
                 .fg(t.cyan)
                 .bg(t.bg_darker)
                 .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "(⇧⌃Z) ",
+            Style::default()
+                .fg(t.comment)
+                .bg(t.bg_darker)
+                .add_modifier(Modifier::DIM),
         ),
     ]);
     frame.render_widget(
