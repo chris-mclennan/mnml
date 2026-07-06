@@ -1105,6 +1105,8 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             // motion); moved to capital W so vim users can still
             // press `w` without altering the workspace filter.
             KeyCode::Char('W') => app.claude_agents_toggle_workspace_only(),
+            // #25 v4 — `A` cycles the age filter (Today / 7d / 30d / All).
+            KeyCode::Char('A') => app.claude_agents_cycle_age(),
             KeyCode::Char('s') => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     p.cycle_sort();

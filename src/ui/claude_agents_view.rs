@@ -51,6 +51,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         None => "",
     };
     let ws_chip = if p.workspace_only { " · this-ws" } else { "" };
+    // #25 v4 — age-window chip. Shown on ALL views (filter mode
+    // too, since narrowing by age is meaningful during search).
+    let age_label = p.age_filter.label();
+    let age_chip = if !matches!(p.age_filter, crate::claude_agents::AgeFilter::Week) {
+        format!(" · {age_label}")
+    } else {
+        String::new()
+    };
     let count_chip = if p.any_filter_active() {
         format!(" · {}/{}", p.visible_indices().len(), p.rows.len())
     } else {
@@ -78,14 +86,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         // during filter (the user is narrowing — knowing what other
         // filters are stacked is the point). Now they all stay.
         format!(
-            " Claude Agents · filter: {}{state_chip}{source_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · / edit · ? help ",
+            " Claude Agents · filter: {}{state_chip}{source_chip}{ws_chip}{age_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · / edit · ? help ",
             p.query,
             p.sort_by.label(),
             group_label,
         )
     } else {
         format!(
-            " Claude Agents{source_chip}{state_chip}{ws_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · j/k gg G · / · W ws · > src · s sort · ^G grp · ? help ",
+            " Claude Agents{source_chip}{state_chip}{ws_chip}{age_chip}{pause_chip}{multi}{count_chip} · sort:{} · group:{} · j/k gg G · / · W ws · > src · s sort · ^G grp · ? help ",
             p.sort_by.label(),
             group_label,
         )

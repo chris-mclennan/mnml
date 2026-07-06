@@ -241,6 +241,45 @@ impl DetailView {
     }
 }
 
+/// #25 v4 — age-window filter for the row list. Values in
+/// seconds so the compare against `last_activity` is direct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgeFilter {
+    Today,
+    #[default]
+    Week,
+    Month,
+    All,
+}
+
+impl AgeFilter {
+    pub fn label(&self) -> &'static str {
+        match self {
+            AgeFilter::Today => "Today",
+            AgeFilter::Week => "7d",
+            AgeFilter::Month => "30d",
+            AgeFilter::All => "All",
+        }
+    }
+    /// Maximum age in seconds. `None` = no limit.
+    pub fn max_age_secs(&self) -> Option<u64> {
+        match self {
+            AgeFilter::Today => Some(24 * 3600),
+            AgeFilter::Week => Some(7 * 24 * 3600),
+            AgeFilter::Month => Some(30 * 24 * 3600),
+            AgeFilter::All => None,
+        }
+    }
+    pub fn cycle(&self) -> Self {
+        match self {
+            AgeFilter::Today => AgeFilter::Week,
+            AgeFilter::Week => AgeFilter::Month,
+            AgeFilter::Month => AgeFilter::All,
+            AgeFilter::All => AgeFilter::Today,
+        }
+    }
+}
+
 pub struct ClaudeAgentsPane {
     pub rows: Vec<AgentRow>,
     pub selected: usize,
@@ -275,6 +314,10 @@ pub struct ClaudeAgentsPane {
     /// "what's running in THIS project" when several projects
     /// have active CC sessions side by side.
     pub workspace_only: bool,
+    /// #25 v4 — narrow the row list by row age. Compared against
+    /// `last_activity`. Default: `AgeFilter::All` (no narrowing).
+    /// Cycled by the `[7d ▾]` chip in the pane header.
+    pub age_filter: AgeFilter,
     /// The workspace path the pane was opened in — used by
     /// `workspace_only`. Set by `App::open_claude_agents_pane`.
     pub anchor_workspace: PathBuf,
@@ -420,6 +463,7 @@ impl ClaudeAgentsPane {
             state_filter: None,
             source_filter: None,
             workspace_only: false,
+            age_filter: AgeFilter::default(),
             anchor_workspace: PathBuf::new(),
             sort_by: SortBy::StateActivity,
             show_help: false,
@@ -826,6 +870,20 @@ impl ClaudeAgentsPane {
                         .map(|c| std::path::Path::new(c).starts_with(&self.anchor_workspace))
                         .unwrap_or(false);
                     if !cwd_ok {
+                        return false;
+                    }
+                }
+                // #25 v4 — age-window filter. Rows with no
+                // last-activity timestamp bypass the filter (rare;
+                // usually fresh un-tailed sessions).
+                if let Some(max_age) = self.age_filter.max_age_secs()
+                    && let Some(la) = r.last_activity
+                {
+                    let age = std::time::SystemTime::now()
+                        .duration_since(la)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    if age > max_age {
                         return false;
                     }
                 }

@@ -1004,6 +1004,22 @@ impl App {
         }
     }
 
+    /// #25 v4 — cycle the age filter on the active Claude
+    /// Agents pane. Order: Today → 7d → 30d → All → Today.
+    pub fn claude_agents_cycle_age(&mut self) {
+        let Some(i) = self.active else { return };
+        let label = if let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
+            p.age_filter = p.age_filter.cycle();
+            p.selected = 0;
+            Some(p.age_filter.label())
+        } else {
+            None
+        };
+        if let Some(l) = label {
+            self.toast(format!("age filter: {l}"));
+        }
+    }
+
     pub fn claude_agents_clear_filters(&mut self) {
         let Some(i) = self.active else { return };
         if let Some(Pane::ClaudeAgents(p)) = self.panes.get_mut(i) {
