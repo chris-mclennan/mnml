@@ -2817,19 +2817,38 @@ impl App {
                     Some(name.clone())
                 };
                 let items = if b.is_current {
-                    vec![MenuItem::new(
-                        "New branch from here…",
-                        MenuAction::GitNewBranchFrom(name),
-                    )]
+                    // On the current branch — no checkout, no merge-into-self,
+                    // no delete. Just new-branch-from-here + copy name.
+                    vec![
+                        MenuItem::new(
+                            "New branch from here…",
+                            MenuAction::GitNewBranchFrom(name.clone()),
+                        ),
+                        MenuItem::new(format!("Copy name ({name})"), MenuAction::CopyPath(name)),
+                    ]
                 } else {
+                    // Non-current branch — full set: checkout, merge, rebase,
+                    // new-from, copy, delete.
                     vec![
                         MenuItem::new(
                             format!("Checkout {name}"),
                             MenuAction::GitCheckoutBranch(name.clone()),
                         ),
                         MenuItem::new(
+                            format!("Merge {name} into current"),
+                            MenuAction::GitMergeBranchInto(name.clone()),
+                        ),
+                        MenuItem::new(
+                            format!("Rebase current onto {name}"),
+                            MenuAction::GitRebaseCurrentOnto(name.clone()),
+                        ),
+                        MenuItem::new(
                             "New branch from here…",
                             MenuAction::GitNewBranchFrom(name.clone()),
+                        ),
+                        MenuItem::new(
+                            format!("Copy name ({name})"),
+                            MenuAction::CopyPath(name.clone()),
                         ),
                         MenuItem::new(format!("Delete {name}…"), MenuAction::GitDeleteBranch(name)),
                     ]
@@ -3270,21 +3289,31 @@ mod git_tests {
         ];
         app.git_rail.current_branch = Some("main".into());
 
-        // Right-click the *current* branch ⇒ only "New branch from here…".
+        // Right-click the *current* branch ⇒ New branch from here + Copy name.
         app.open_git_rail_context_menu(crate::git::rail::GitRailHit::Branch(0), (0, 0));
         let m = app.context_menu.as_ref().unwrap();
-        assert_eq!(m.items.len(), 1);
+        assert_eq!(m.items.len(), 2);
         assert!(matches!(m.items[0].action, MenuAction::GitNewBranchFrom(_)));
+        assert!(matches!(m.items[1].action, MenuAction::CopyPath(_)));
 
-        // Right-click a non-current branch ⇒ Checkout / New / Delete.
+        // Right-click a non-current branch ⇒ 6-item menu:
+        // Checkout / Merge into / Rebase onto / New from / Copy name / Delete.
         app.open_git_rail_context_menu(crate::git::rail::GitRailHit::Branch(1), (0, 0));
         let m = app.context_menu.as_ref().unwrap();
-        assert_eq!(m.items.len(), 3);
+        assert_eq!(m.items.len(), 6);
         assert!(matches!(
             m.items[0].action,
             MenuAction::GitCheckoutBranch(ref n) if n == "topic"
         ));
-        assert!(matches!(m.items[2].action, MenuAction::GitDeleteBranch(_)));
+        assert!(matches!(
+            m.items[1].action,
+            MenuAction::GitMergeBranchInto(ref n) if n == "topic"
+        ));
+        assert!(matches!(
+            m.items[2].action,
+            MenuAction::GitRebaseCurrentOnto(ref n) if n == "topic"
+        ));
+        assert!(matches!(m.items[5].action, MenuAction::GitDeleteBranch(_)));
     }
 
     #[test]

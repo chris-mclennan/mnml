@@ -1102,6 +1102,8 @@ impl App {
             Rename(path) => self.open_fs_rename_prompt(path),
             Delete(path) => self.open_fs_delete_prompt(path),
             GitCheckoutBranch(name) => self.git_checkout_named(&name),
+            GitMergeBranchInto(name) => self.git_merge_branch(name),
+            GitRebaseCurrentOnto(name) => self.git_rebase_onto(name),
             GitNewBranchFrom(name) => self.git_new_branch_from(name),
             GitDeleteBranch(name) => self.git_delete_branch_prompt(name),
             GitWorktreeShell(path) => self.open_worktree_shell(&path.to_string_lossy()),

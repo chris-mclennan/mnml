@@ -137,6 +137,25 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // #polish 2026-07-06 — right-click on the GIT rail header
+    // opens a small menu with Refresh / Collapse-section /
+    // Fetch quick actions.
+    if let Some(r) = app.rects.git_section_toggle
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Fetch", MenuAction::Command("git.fetch")),
+            MenuItem::new("Pull", MenuAction::Command("git.pull")),
+            MenuItem::new("Open graph", MenuAction::Command("git.graph")),
+        ];
+        app.context_menu = Some(ContextMenu::new(
+            Some("Git rail".to_string()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
     // #polish 2026-07-06 — right-click on the Cloud Agents view
     // chip → density menu (both options + toggle for consistency).
     if let Some(r) = app.rects.cloud_agents_view_chip

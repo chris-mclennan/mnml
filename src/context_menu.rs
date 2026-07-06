@@ -86,6 +86,12 @@ pub enum MenuAction {
     Delete(PathBuf),
     /// Git rail — checkout an existing local branch.
     GitCheckoutBranch(String),
+    /// #polish 2026-07-06 — merge the named branch into the
+    /// current branch. Uses the existing GitJob::Merge job.
+    GitMergeBranchInto(String),
+    /// #polish 2026-07-06 — rebase the current branch onto the
+    /// named branch. Uses the existing GitJob::Rebase job.
+    GitRebaseCurrentOnto(String),
     /// Git rail — prompt for a new branch name (off the named base; first cut
     /// just branches off `HEAD`).
     GitNewBranchFrom(String),

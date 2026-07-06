@@ -100,6 +100,7 @@ impl App {
             },
             git_section_expanded: Some(self.git_section_expanded),
             integration_section_expanded: Some(self.integration_section_expanded),
+            git_branches_expanded: Some(self.git_branches_expanded),
             tree_expanded_dirs: Some(
                 self.tree
                     .expanded_dirs()
@@ -449,6 +450,9 @@ impl App {
         }
         if let Some(v) = saved.integration_section_expanded {
             self.integration_section_expanded = v;
+        }
+        if let Some(v) = saved.git_branches_expanded {
+            self.git_branches_expanded = v;
         }
         if let Some(v) = saved.git_section_expanded {
             self.git_section_expanded = v;

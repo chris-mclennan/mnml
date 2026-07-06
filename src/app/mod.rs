@@ -672,6 +672,10 @@ struct SavedSession {
     /// `[ui] integrations_section_default_expanded`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     integration_section_expanded: Option<bool>,
+    /// #polish 2026-07-06 — was the `+ N more branches` toggle
+    /// expanded in the git rail? `None` = default false (collapsed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    git_branches_expanded: Option<bool>,
     /// Directories the user had expanded in the file tree. `None` (an older
     /// session.json without the field) ⇒ keep the default first-level expand.
     #[serde(default, skip_serializing_if = "Option::is_none")]
