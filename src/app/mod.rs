@@ -701,6 +701,11 @@ struct SavedSession {
     /// field) ⇒ default to local time on launch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     clock_show_utc: Option<bool>,
+    /// #22 v3 — collapsed COLLECTIONS dirs (paths relative to
+    /// `.mnml/collections/`, since absolute paths change if the
+    /// workspace moves). Skipped when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    http_panel_collections_collapsed: Vec<String>,
     /// `:rename`'d Claude session names, keyed by Claude `--session-id`.
     /// Ptys themselves don't survive a relaunch, but resuming a saved
     /// Claude session (`ai.session_picker`) re-applies its name.

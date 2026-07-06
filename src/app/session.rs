@@ -132,6 +132,14 @@ impl App {
             theme: Some(crate::ui::theme::cur().name.to_string()),
             wrap: Some(self.config.ui.wrap),
             clock_show_utc: Some(self.clock_show_utc),
+            http_panel_collections_collapsed: {
+                let coll_root = self.workspace.join(".mnml").join("collections");
+                self.http_panel_collections_collapsed_dirs
+                    .iter()
+                    .filter_map(|p| p.strip_prefix(&coll_root).ok())
+                    .map(|rel| rel.to_string_lossy().into_owned())
+                    .collect()
+            },
             dock_widgets: self.dock_widgets.clone(),
             dock_widget_next_id: if self.dock_widget_next_id > 0 {
                 Some(self.dock_widget_next_id)
@@ -488,6 +496,17 @@ impl App {
         }
         if let Some(v) = saved.clock_show_utc {
             self.clock_show_utc = v;
+        }
+        // #22 v3 — restore collapsed COLLECTIONS dirs (relative
+        // paths resolved against the current workspace's
+        // `.mnml/collections/`).
+        if !saved.http_panel_collections_collapsed.is_empty() {
+            let coll_root = self.workspace.join(".mnml").join("collections");
+            self.http_panel_collections_collapsed_dirs = saved
+                .http_panel_collections_collapsed
+                .iter()
+                .map(|rel| coll_root.join(rel))
+                .collect();
         }
         self.saved_pty_session_names = saved.pty_session_names.into_iter().collect();
         // Restore the dock widgets verbatim — they own their
