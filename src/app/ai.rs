@@ -1695,11 +1695,14 @@ impl App {
             // waiting for the user to approve a write. Open the prompt.
             if let AiMsg::ConfirmTool { summary } = &msg {
                 self.pending_tool_confirm = Some(job_id);
-                self.prompt = Some(crate::prompt::Prompt::seeded(
+                let mut p = crate::prompt::Prompt::new(
                     crate::prompt::PromptKind::AiToolConfirm,
-                    format!("AI wants to {summary} — Enter: allow · Esc: deny"),
-                    String::new(),
-                ));
+                    format!("AI wants to {summary}"),
+                );
+                // Default to Deny — safety-first for arbitrary AI tool
+                // invocation. User must explicitly Allow.
+                p.cursor = 1;
+                self.prompt = Some(p);
                 continue;
             }
             // Job finished — drop its confirm channel.

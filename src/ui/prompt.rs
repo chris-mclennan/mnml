@@ -347,6 +347,9 @@ pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str,
         ClaudeKillConfirm => ("  Kill  ", " Cancel "),
         GitMergeConfirm => ("  Merge  ", " Cancel "),
         GitRebaseConfirm => ("  Rebase  ", " Cancel "),
+        TreeMoveConfirm => ("  Move  ", " Cancel "),
+        AiToolConfirm => ("  Allow  ", " Deny "),
+        ToolInstallConfirm | SiblingInstallConfirm => ("  Install  ", " Cancel "),
         _ => return None,
     })
 }

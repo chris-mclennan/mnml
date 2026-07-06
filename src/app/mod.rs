@@ -5063,11 +5063,14 @@ impl App {
             .to_string_lossy()
             .into_owned();
         self.pending_tree_move = Some((drag.src_path.clone(), dest.clone()));
-        let prompt = crate::prompt::Prompt::seeded(
+        let mut prompt = crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::TreeMoveConfirm,
-            format!("Move to {dest_rel}? (Enter to confirm, Esc to cancel)"),
+            format!("Move to {dest_rel}?"),
             String::new(),
         );
+        // Focus Move (primary) by default — user just performed the
+        // drag, so the affirmative answer is what they meant.
+        prompt.cursor = 0;
         self.prompt = Some(prompt);
     }
 
@@ -5363,6 +5366,27 @@ impl App {
         let Some(kind) = self.prompt.as_ref().map(|p| p.kind) else {
             return;
         };
+        // Kinds where the accept handler doesn't check `Prompt.input`
+        // at all (pure yes/no dispatch) get a direct routing rather
+        // than a synthesized-input pass through `prompt_accept`.
+        match kind {
+            TreeMoveConfirm => {
+                self.prompt = None;
+                if primary {
+                    self.accept_tree_move();
+                } else {
+                    self.pending_tree_move = None;
+                    self.toast("move cancelled");
+                }
+                return;
+            }
+            AiToolConfirm => {
+                self.prompt = None;
+                self.resolve_tool_confirm(primary);
+                return;
+            }
+            _ => {}
+        }
         let synth = if primary {
             match kind {
                 GitDeleteBranch => self.pending_delete_branch.clone().unwrap_or_default(),
@@ -5385,6 +5409,8 @@ impl App {
                 ClaudeKillConfirm => "kill".into(),
                 GitMergeConfirm => "merge".into(),
                 GitRebaseConfirm => "rebase".into(),
+                // Both install-confirm handlers just check `input.starts_with('y')`.
+                ToolInstallConfirm | SiblingInstallConfirm => "y".into(),
                 _ => return,
             }
         } else {
@@ -7705,11 +7731,14 @@ impl App {
             return;
         }
         self.pending_tool_install = Some((tool.id.to_string(), install_cmd.clone()));
-        self.prompt = Some(crate::prompt::Prompt::seeded(
+        let mut prompt = crate::prompt::Prompt::new(
             crate::prompt::PromptKind::ToolInstallConfirm,
-            format!("{} — install via `{install_cmd}`? [y/N]", tool.label),
-            "y",
-        ));
+            format!("Install {} via `{install_cmd}`?", tool.label),
+        );
+        // User invoked the tool that isn't installed — the affirmative
+        // answer is the intent. Focus Install.
+        prompt.cursor = 0;
+        self.prompt = Some(prompt);
     }
 
     /// Accept handler for `PromptKind::ToolInstallConfirm` — fired
@@ -7765,7 +7794,7 @@ impl App {
     // ─── AI: `claude -p` one-shots ──────────────────────────────────
     /// Relay the user's `AiToolConfirm` answer to the blocked agent
     /// worker through its confirm channel.
-    fn resolve_tool_confirm(&mut self, approved: bool) {
+    pub(crate) fn resolve_tool_confirm(&mut self, approved: bool) {
         if let Some(job_id) = self.pending_tool_confirm.take()
             && let Some(tx) = self.ai_confirm_senders.get(&job_id)
         {

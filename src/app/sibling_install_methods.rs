@@ -203,13 +203,14 @@ impl App {
         let Some(sibling) = crate::sibling_install::lookup(family_id) else {
             return;
         };
-        let title = format!("{} not installed. Install via cargo? (y/n)", sibling.binary);
+        let title = format!("Install `{}` via cargo?", sibling.binary);
         self.pending_install_family_id = Some(family_id.to_string());
         self.pending_install_after_action = post_action;
-        self.prompt = Some(crate::prompt::Prompt::new(
-            crate::prompt::PromptKind::SiblingInstallConfirm,
-            title,
-        ));
+        let mut p =
+            crate::prompt::Prompt::new(crate::prompt::PromptKind::SiblingInstallConfirm, title);
+        // User was reaching for the sibling — focus Install.
+        p.cursor = 0;
+        self.prompt = Some(p);
     }
 
     /// Accept handler for the SiblingInstallConfirm prompt. The
