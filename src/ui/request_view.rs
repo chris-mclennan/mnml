@@ -704,7 +704,14 @@ pub fn draw(
     };
     let (request_rect, response_rect) = match rp.split_orientation {
         crate::request_pane::SplitOrientation::Vertical => {
-            let req_h = ((middle_h as u32 * 55 / 100) as u16).max(6.min(middle_h));
+            // #polish 2026-07-06 — even 50/50 split. Was 55/45
+            // biased toward Request; user reported Request looked
+            // taller than Response and wanted a centered
+            // division. `middle_h / 2` puts the divider on the
+            // exact center row; any odd remainder goes to the
+            // Response half (matches horizontal split's rounding
+            // behavior for consistency).
+            let req_h = (middle_h / 2).max(6.min(middle_h));
             let res_h = middle_h.saturating_sub(req_h);
             (
                 Rect {
