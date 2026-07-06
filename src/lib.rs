@@ -444,6 +444,24 @@ pub enum HoverChip {
     /// #polish 2026-07-06 — active-branch PR badge (`BB#42`).
     /// Tooltip shows PR title; click opens the PR in browser.
     StatuslinePr,
+    /// #polish 2026-07-06 — macro-recording chip (`● rec @<reg>`).
+    /// Tooltip names the register; click stops recording.
+    StatuslineMacroRec,
+    /// #polish 2026-07-06 — active-find chip (` /q N/M `).
+    /// Tooltip shows the full query; click reopens find prompt.
+    StatuslineFind,
+    /// #polish 2026-07-06 — selection-size chip (` Sel N `).
+    /// Tooltip only.
+    StatuslineSel,
+    /// #polish 2026-07-06 — LSP `$/progress` chip. Tooltip
+    /// shows the untruncated title.
+    StatuslineProgress,
+    /// #polish 2026-07-06 — background-tasks spinner chip.
+    /// Tooltip lists what's running.
+    StatuslineBgTasks,
+    /// #polish 2026-07-06 — inline-suggestion in-flight chip.
+    /// Tooltip only.
+    StatuslineAi,
     /// #polish 2026-07-06 — hover on a mark rendered in the
     /// gutter's sign column (git change / diagnostic dot /
     /// breakpoint / DAP arrow). `line_no` is the file-line the

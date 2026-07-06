@@ -397,6 +397,36 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineLanguage);
     }
+    if let Some(r) = app.rects.statusline_macro_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineMacroRec);
+    }
+    if let Some(r) = app.rects.statusline_find_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineFind);
+    }
+    if let Some(r) = app.rects.statusline_sel_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineSel);
+    }
+    if let Some(r) = app.rects.statusline_progress_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineProgress);
+    }
+    if let Some(r) = app.rects.statusline_bg_tasks_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineBgTasks);
+    }
+    if let Some(r) = app.rects.statusline_ai_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineAi);
+    }
     // #21 v5 — Request pane top-bar chip hover detection.
     if let Some(r) = app.rects.request_method_button
         && contains(r, x, y)

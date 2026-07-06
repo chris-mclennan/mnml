@@ -1352,6 +1352,20 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // #polish 2026-07-06 — macro rec chip → stop recording.
+    if let Some(r) = app.rects.statusline_macro_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let _ = crate::command::run("vim.macro_toggle", app);
+        return;
+    }
+    // #polish 2026-07-06 — find chip → reopen find prompt.
+    if let Some(r) = app.rects.statusline_find_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let _ = crate::command::run("find.find", app);
+        return;
+    }
     // #polish 2026-07-06 — language chip → toast the detected
     // language + hint the editorconfig / extension source.
     if let Some(r) = app.rects.statusline_language_chip

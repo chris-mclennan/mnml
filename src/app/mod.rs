@@ -2116,6 +2116,25 @@ pub struct PaneRects {
     /// #polish 2026-07-06 — active-PR badge (`  BB#42`). Click opens
     /// the PR in the browser; tooltip shows the title + host.
     pub statusline_pr_chip: Option<Rect>,
+    /// #polish 2026-07-06 — `● rec @<reg>` macro-recording chip.
+    /// Click stops recording (vim `q` toggle).
+    pub statusline_macro_chip: Option<Rect>,
+    /// #polish 2026-07-06 — active-find chip (` /query N/M `).
+    /// Click reopens the find prompt so the user can edit the query
+    /// or advance a match.
+    pub statusline_find_chip: Option<Rect>,
+    /// #polish 2026-07-06 — selection-size chip (` Sel N `). Hover
+    /// tooltip only; no click target.
+    pub statusline_sel_chip: Option<Rect>,
+    /// #polish 2026-07-06 — LSP `$/progress` busy chip
+    /// (`⟳ <title>`). Hover tooltip shows the untruncated title.
+    pub statusline_progress_chip: Option<Rect>,
+    /// #polish 2026-07-06 — unified background-tasks spinner chip
+    /// (`⠋ N`). Hover tooltip shows the count breakdown.
+    pub statusline_bg_tasks_chip: Option<Rect>,
+    /// #polish 2026-07-06 — inline-suggestion in-flight chip
+    /// (`✦ AI`). Hover tooltip only.
+    pub statusline_ai_chip: Option<Rect>,
     /// Chips on the `> GIT` rail header (Fetch / Pull / Push / Commit /
     /// Stage all / Graph) — one-click access to common ops.
     pub rail_git_header_buttons: Vec<(Rect, crate::GitRailHeaderAction)>,

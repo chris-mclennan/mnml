@@ -244,6 +244,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut diag_err_idx: Option<usize> = None;
     let mut diag_warn_idx: Option<usize> = None;
     let mut symbol_seg_idx: Option<usize> = None;
+    let mut macro_seg_idx: Option<usize> = None;
+    let mut find_seg_idx: Option<usize> = None;
+    let mut sel_seg_idx: Option<usize> = None;
+    let mut progress_seg_idx: Option<usize> = None;
+    let mut bg_tasks_seg_idx: Option<usize> = None;
+    let mut ai_seg_idx: Option<usize> = None;
     app.rects.statusline_branch_chip = None;
     app.rects.statusline_mode_chip = None;
     app.rects.statusline_file_chip = None;
@@ -251,6 +257,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.statusline_language_chip = None;
     app.rects.statusline_symbol_chip = None;
     app.rects.statusline_pr_chip = None;
+    app.rects.statusline_macro_chip = None;
+    app.rects.statusline_find_chip = None;
+    app.rects.statusline_sel_chip = None;
+    app.rects.statusline_progress_chip = None;
+    app.rects.statusline_bg_tasks_chip = None;
+    app.rects.statusline_ai_chip = None;
     // Mode chip is the first 1 (ASCII / non-vim) or 2 (vim + nerd) segs in
     // `left`. Capture the seg span so we can register a click rect that
     // spans both halves of the split-mode chip.
@@ -385,6 +397,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             // the bottom row when `q<reg>` is active. We chip it onto the
             // statusline left side so it's visible across all panes.
             if let crate::app::MacroState::Recording { register, .. } = &app.macro_state {
+                macro_seg_idx = Some(left.len());
                 left.push(Seg::new(
                     format!(" ● rec @{register} "),
                     theme::cur().bg_darker,
@@ -405,6 +418,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     ""
                 };
+                find_seg_idx = Some(left.len());
                 left.push(Seg::new(
                     format!(" /{q}{ellip} {cur}/{m} "),
                     theme::cur().bg_darker,
@@ -596,6 +610,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         && !title.is_empty()
     {
         let label: String = title.chars().take(28).collect();
+        progress_seg_idx = Some(right.len());
         right.push(Seg::new(
             format!(" ⟳  {label} "),
             theme::cur().bg_darker,
@@ -616,6 +631,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
         let idx = (ms / 100) as usize % frames.len();
         let spin = frames[idx];
+        bg_tasks_seg_idx = Some(right.len());
         right.push(Seg::new(
             format!(" {spin} {bg_n} "),
             theme::cur().bg_darker,
@@ -626,6 +642,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // ghost-text round-trip is ~0.5–1.5s, so this tells the user a
     // completion is coming (vs the editor just sitting idle).
     if app.ai_suggestion_in_flight() {
+        ai_seg_idx = Some(right.len());
         right.push(Seg::new(
             " \u{F0E2D} AI ".to_string(),
             theme::cur().bg_darker,
@@ -685,6 +702,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // their newlines).
         if b.editor.has_selection() {
             let n = b.editor.selected_text().chars().count();
+            sel_seg_idx = Some(right.len());
             right.push(Seg::new(
                 format!(" Sel {n} "),
                 theme::cur().bg_darker,
@@ -916,7 +934,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     app.rects.statusline_symbol_chip = left_to_rect(symbol_seg_idx, &left_rects);
     app.rects.statusline_pr_chip = left_to_rect(pr_seg_idx, &left_rects);
+    app.rects.statusline_macro_chip = left_to_rect(macro_seg_idx, &left_rects);
+    app.rects.statusline_find_chip = left_to_rect(find_seg_idx, &left_rects);
     app.rects.statusline_language_chip = to_rect(language_seg_idx, &right_rects);
+    app.rects.statusline_sel_chip = to_rect(sel_seg_idx, &right_rects);
+    app.rects.statusline_progress_chip = to_rect(progress_seg_idx, &right_rects);
+    app.rects.statusline_bg_tasks_chip = to_rect(bg_tasks_seg_idx, &right_rects);
+    app.rects.statusline_ai_chip = to_rect(ai_seg_idx, &right_rects);
     // Register the mode chip — combined rect spanning the 1 or 2 segs that
     // make it up (vim + nerd splits into glyph + label; otherwise single).
     if mode_seg_end > mode_seg_start

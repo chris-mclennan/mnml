@@ -1084,6 +1084,74 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: open PR in browser".into()),
             ))
         }
+        HoverChip::StatuslineMacroRec => {
+            let rect = app.rects.statusline_macro_chip?;
+            let reg = match &app.macro_state {
+                crate::app::MacroState::Recording { register, .. } => *register,
+                _ => return None,
+            };
+            Some((
+                rect,
+                format!("recording macro @{reg}"),
+                Some("click: stop recording (q)".into()),
+            ))
+        }
+        HoverChip::StatuslineFind => {
+            let rect = app.rects.statusline_find_chip?;
+            let b = app.active_editor()?;
+            let f = b.find.as_ref()?;
+            let cur = f.current.map(|i| i + 1).unwrap_or(0);
+            let m = f.matches.len();
+            Some((
+                rect,
+                format!("find: {}  ({}/{})", f.query, cur, m),
+                Some("click: reopen find prompt · n/N: next/prev".into()),
+            ))
+        }
+        HoverChip::StatuslineSel => {
+            let rect = app.rects.statusline_sel_chip?;
+            let b = app.active_editor()?;
+            let text = b.editor.selected_text();
+            let chars = text.chars().count();
+            let bytes = text.len();
+            let lines = text.matches('\n').count() + 1;
+            Some((
+                rect,
+                format!("{chars} chars · {bytes} bytes · {lines} lines"),
+                None,
+            ))
+        }
+        HoverChip::StatuslineProgress => {
+            let rect = app.rects.statusline_progress_chip?;
+            let title = app
+                .lsp_progress
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_default();
+            Some((
+                rect,
+                if title.is_empty() {
+                    "LSP task".to_string()
+                } else {
+                    format!("LSP: {title}")
+                },
+                Some("$/progress notification".into()),
+            ))
+        }
+        HoverChip::StatuslineBgTasks => {
+            let rect = app.rects.statusline_bg_tasks_chip?;
+            let n = app.background_task_count();
+            Some((rect, format!("{n} background tasks running"), None))
+        }
+        HoverChip::StatuslineAi => {
+            let rect = app.rects.statusline_ai_chip?;
+            Some((
+                rect,
+                "waiting for AI completion".to_string(),
+                Some("inline suggestion in flight".into()),
+            ))
+        }
         HoverChip::StatuslineLanguage => {
             let rect = app.rects.statusline_language_chip?;
             let lang = app
