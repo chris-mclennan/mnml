@@ -3990,6 +3990,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_active_curl(),
         },
         Command {
+            id: "http.copy_response_headers",
+            title: "HTTP: copy the response headers",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_copy_response_headers(),
+        },
+        Command {
             id: "http.save",
             title: "HTTP: save request (Save-As if new)",
             group: "http",

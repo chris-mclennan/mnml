@@ -137,6 +137,48 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // #21 v6 — right-click on a response tab (Body / Headers /
+    // Timeline / Tests) opens a small menu of tab-scoped actions.
+    if let Some(tab) = app
+        .rects
+        .request_response_tabs
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, t)| *t)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        use crate::request_pane::ResponseTab;
+        let (title, items) = match tab {
+            ResponseTab::Body => (
+                "Response Body",
+                vec![
+                    MenuItem::new("Copy body", MenuAction::Command("http.copy_response_body")),
+                    MenuItem::new("Format JSON", MenuAction::Command("http.format_body")),
+                    MenuItem::new("Save to file…", MenuAction::Command("http.save_response")),
+                ],
+            ),
+            ResponseTab::Headers => (
+                "Response Headers",
+                vec![MenuItem::new(
+                    "Copy headers",
+                    MenuAction::Command("http.copy_response_headers"),
+                )],
+            ),
+            ResponseTab::Timeline => (
+                "Response Timeline",
+                vec![MenuItem::new(
+                    "Diff last two responses",
+                    MenuAction::Command("http.diff_last_two"),
+                )],
+            ),
+            ResponseTab::Tests => (
+                "Response Tests",
+                vec![MenuItem::new("Re-run", MenuAction::Command("http.send"))],
+            ),
+        };
+        app.context_menu = Some(ContextMenu::new(Some(title.to_string()), (x, y), items));
+        return;
+    }
     // #21 v3 — right-click on Send / Save / Clear / Code chips
     // opens a small kebab-menu that surfaces the useful adjacent
     // actions (fire options for Send, save-as / open source for

@@ -337,6 +337,31 @@ impl App {
         self.toast("response body copied");
     }
 
+    /// Copy the active Request pane's response headers to the
+    /// clipboard, one per line as `Name: value`. Same shape as
+    /// `http_copy_response_body` but for the header pane.
+    pub fn http_copy_response_headers(&mut self) {
+        let Some(cur) = self.active else { return };
+        let headers = match self.panes.get(cur) {
+            Some(Pane::Request(rp)) => match &rp.state {
+                crate::request_pane::RunState::Done(r) => r.headers.clone(),
+                crate::request_pane::RunState::Streaming(r) => r.headers.clone(),
+                _ => {
+                    self.toast("copy: no response yet");
+                    return;
+                }
+            },
+            _ => return,
+        };
+        let text: String = headers
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.clipboard.set(text, false);
+        self.toast(format!("{} headers copied", headers.len()));
+    }
+
     /// Toggle the Response body's wrap mode. Same as the `w` chord
     /// over a Request pane in Response view; exposed as a chip on
     /// the Response tab strip so mouse users can find it.
