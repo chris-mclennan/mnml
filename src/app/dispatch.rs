@@ -398,6 +398,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
             crate::RequestTopBarChip::Code,
         ));
     }
+    if let Some(r) = app.rects.request_split_toggle
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestSplitToggle);
+    }
     if let Some(r) = app.rects.statusline_filesize_chip
         && contains(r, x, y)
     {

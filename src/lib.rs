@@ -396,6 +396,10 @@ pub enum HoverChip {
     /// Tooltip explains what the click does + notes right-
     /// click for the kebab menu.
     RequestTopBarChip(RequestTopBarChip),
+    /// #21 v7 — hover on the `[▥ ▤]` split-orientation toggle
+    /// chip on a Request pane. Tooltip names the current
+    /// orientation + the alternative.
+    RequestSplitToggle,
 }
 
 /// Which top-bar chip on the Request pane was hovered. Kept
