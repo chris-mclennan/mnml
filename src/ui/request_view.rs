@@ -1634,17 +1634,18 @@ fn draw_send_box(
     if inner.width == 0 || inner.height == 0 {
         return None;
     }
-    // Green (▶ Send) when we have a URL to fire, dim (▶ Send) when
-    // the URL is empty so the button reads as "not ready" without
-    // being an error color. State-in-flight (Sending) gets the
-    // running-yellow spinner treatment.
-    let (glyph, color) = match &rp.state {
-        crate::request_pane::RunState::Sending => ("\u{27F3}", t.yellow), // ⟳
-        crate::request_pane::RunState::Streaming(_) => ("\u{25B6}", t.cyan),
-        _ if rp.request.url.trim().is_empty() => ("\u{25B6}", t.comment),
-        _ => ("\u{25B6}", t.green),
+    // Sending → the button flips to "⟳ Abort" (yellow) so users
+    // have a mouse-reachable cancel affordance. Click during Sending
+    // routes to `http.abort` instead of `http.send`. Other states
+    // show ▶ Send with per-state color: cyan while Streaming, dim
+    // when URL is empty ("not ready"), green when ready to fire.
+    let (glyph, label, color) = match &rp.state {
+        crate::request_pane::RunState::Sending => ("\u{27F3}", "Abort", t.yellow),
+        crate::request_pane::RunState::Streaming(_) => ("\u{25B6}", "Send", t.cyan),
+        _ if rp.request.url.trim().is_empty() => ("\u{25B6}", "Send", t.comment),
+        _ => ("\u{25B6}", "Send", t.green),
     };
-    let text = format!(" {glyph} Send ");
+    let text = format!(" {glyph} {label} ");
     let text_w = text.chars().count() as u16;
     let mid_pad = inner.width.saturating_sub(text_w) / 2;
     let content = Line::from(vec![

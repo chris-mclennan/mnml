@@ -371,13 +371,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // Click on the "▶ Send" button in the Request pane's top row
-    // → fires the request. Postman / Bruno idiom. Same effect as
-    // the `r` chord over the Request pane, and the http.send
-    // palette command.
+    // → fires the request. During Sending the button flips to
+    // "⟳ Abort" (see `draw_send_box`) and the click routes to
+    // `http.abort` instead. Same effect as the `r` chord over the
+    // Request pane and the `http.send` / `http.abort` commands.
     if let Some(r) = app.rects.request_send_button
         && crate::app::dispatch::contains(r, x, y)
     {
-        crate::command::run("http.send", app);
+        let is_sending = matches!(
+            app.active.and_then(|i| app.panes.get(i)),
+            Some(crate::pane::Pane::Request(rp))
+                if matches!(rp.state, crate::request_pane::RunState::Sending)
+        );
+        if is_sending {
+            crate::command::run("http.abort", app);
+        } else {
+            crate::command::run("http.send", app);
+        }
         return;
     }
     // Click on the "⎘ Save" button → save the active Request
