@@ -168,10 +168,14 @@ impl App {
     /// browser panes can coexist; each gets its own CDP worker + (in
     /// `workspace` / `shared` modes) a per-pane sibling profile dir.
     pub fn open_browser_prompt(&mut self) {
-        self.prompt = Some(crate::prompt::Prompt::seeded(
+        // Empty seed — the prompt UI paints a dimmed "https://example.com"
+        // placeholder that clears on the first keystroke, mirroring
+        // browser address bars (Chrome / Safari / Firefox all do this).
+        // Was previously seeded with "https://" which read as a stuck
+        // string the user had to backspace or ignore.
+        self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::BrowserUrl,
             "Open URL in Chrome",
-            "https://",
         ));
     }
 

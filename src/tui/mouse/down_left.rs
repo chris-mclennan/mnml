@@ -830,6 +830,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.tab_new(None);
         return;
     }
+    // Inline `+` new-request chip — sits just past the last tab in
+    // the bufferline. Only rendered when at least one Request pane
+    // is already open (see `paint` in bufferline.rs).
+    if let Some(r) = app.rects.bufferline_new_request_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_new_request_pane();
+        return;
+    }
     if let Some(&(_, idx)) = app
         .rects
         .bufferline_tab_page_close

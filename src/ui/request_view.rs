@@ -671,15 +671,24 @@ pub fn draw(
     //     Vertical  : Request top ~55%, Response bottom ~45%
     //     Horizontal: Request left ~50%, Response right ~50%
     //   ai (3 rows, always full width, always at the bottom)
-    let top_bar_height = 3u16.min(area.height);
-    let ai_height = 3u16.min(area.height.saturating_sub(top_bar_height));
+    // Top pad: a blank row above the Method/URL top bar. Cheap
+    // separation between the pane's tab strip and the URL row —
+    // the top bar looked squashed against the tab strip without it.
+    let top_pad = if area.height >= 8 { 1u16 } else { 0u16 };
+    let top_bar_height = 3u16.min(area.height.saturating_sub(top_pad));
+    let ai_height = 3u16.min(
+        area.height
+            .saturating_sub(top_pad)
+            .saturating_sub(top_bar_height),
+    );
     let middle_h = area
         .height
+        .saturating_sub(top_pad)
         .saturating_sub(top_bar_height)
         .saturating_sub(ai_height);
     let top_bar_rect = Rect {
         x: area.x,
-        y: area.y,
+        y: area.y.saturating_add(top_pad),
         width: area.width,
         height: top_bar_height,
     };
@@ -687,6 +696,7 @@ pub fn draw(
         x: area.x,
         y: area
             .y
+            .saturating_add(top_pad)
             .saturating_add(top_bar_height)
             .saturating_add(middle_h),
         width: area.width,
@@ -699,13 +709,20 @@ pub fn draw(
             (
                 Rect {
                     x: area.x,
-                    y: area.y.saturating_add(top_bar_height),
+                    y: area
+                        .y
+                        .saturating_add(top_pad)
+                        .saturating_add(top_bar_height),
                     width: area.width,
                     height: req_h,
                 },
                 Rect {
                     x: area.x,
-                    y: area.y.saturating_add(top_bar_height).saturating_add(req_h),
+                    y: area
+                        .y
+                        .saturating_add(top_pad)
+                        .saturating_add(top_bar_height)
+                        .saturating_add(req_h),
                     width: area.width,
                     height: res_h,
                 },
@@ -717,13 +734,19 @@ pub fn draw(
             (
                 Rect {
                     x: area.x,
-                    y: area.y.saturating_add(top_bar_height),
+                    y: area
+                        .y
+                        .saturating_add(top_pad)
+                        .saturating_add(top_bar_height),
                     width: req_w,
                     height: middle_h,
                 },
                 Rect {
                     x: area.x.saturating_add(req_w),
-                    y: area.y.saturating_add(top_bar_height),
+                    y: area
+                        .y
+                        .saturating_add(top_pad)
+                        .saturating_add(top_bar_height),
                     width: res_w,
                     height: middle_h,
                 },
@@ -747,7 +770,7 @@ pub fn draw(
     const SEND_BOX_WIDTH: u16 = 10;
     const SAVE_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
-    const CODE_BOX_WIDTH: u16 = 10;
+    const CODE_BOX_WIDTH: u16 = 12;
     let show_sub_panels = top_bar_rect.width
         >= METHOD_BOX_WIDTH
             + MIN_URL_WIDTH
@@ -1523,7 +1546,7 @@ fn draw_save_box(
     rect: Rect,
     t: theme::Theme,
 ) -> Option<Rect> {
-    let block = crate::ui::design_tokens::bordered_plain("");
+    let block = crate::ui::design_tokens::bordered_plain("Save");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
@@ -1591,7 +1614,7 @@ fn draw_clear_box(frame: &mut Frame, rect: Rect, t: theme::Theme) -> Option<Rect
 /// Click opens a language picker (curl / Python / JS / Go / wget /
 /// HTTPie) and copies the rendered snippet to the clipboard.
 fn draw_code_box(frame: &mut Frame, rect: Rect, t: theme::Theme) -> Option<Rect> {
-    let block = crate::ui::design_tokens::bordered_plain("");
+    let block = crate::ui::design_tokens::bordered_plain("Code");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {

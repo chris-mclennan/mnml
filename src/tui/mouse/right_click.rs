@@ -137,6 +137,34 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_dashboard_file_context_menu(path, (x, y));
         return;
     }
+    // Right-click on an HTTP-sidebar file row — Open / Reveal /
+    // Delete / Copy path. Fixes the 9-scratch-file cleanup pain
+    // from the mouse audit (was left-click-only = open, no way to
+    // delete without dropping to the tree).
+    if let Some(path) = app
+        .rects
+        .http_panel_files
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, p)| p.clone())
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let rel = crate::app::rel_path(&app.workspace, &path);
+        let title = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| rel.clone());
+        let items = vec![
+            MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
+            MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
+            MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
+            MenuItem::new("Delete…", MenuAction::Delete(path)),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
+        return;
+    }
     // Right-click on a statusline chip — context menus for the four
     // clickable chips (branch / workspace / mode / clock).
     if let Some(r) = app.rects.statusline_branch_chip

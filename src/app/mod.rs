@@ -1623,6 +1623,12 @@ pub struct PaneRects {
     /// `TABS` label, per-tabpage chip, per-tabpage close `⊗`, theme toggle,
     /// window close `×`. Cleared + repopulated per bufferline render.
     pub bufferline_new_tab_button: Option<Rect>,
+    /// Inline `+` chip that appears just after the last tab when at
+    /// least one Request pane exists — click opens a fresh new
+    /// Request pane. Mirrors browser tab-strip `+` semantics; the
+    /// far-right `bufferline_new_tab_button` still creates a new
+    /// tab-page (window / split), not a request.
+    pub bufferline_new_request_button: Option<Rect>,
     pub bufferline_tab_page_chips: Vec<(Rect, usize)>,
     /// The ` TABS ` label rect — right-click here opens the cluster
     /// mode chooser (Expanded / Compact / Auto).

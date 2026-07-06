@@ -343,6 +343,25 @@ impl App {
         } else if self.active_repo >= self.repos.len() {
             self.active_repo = self.repos.len().saturating_sub(1);
         }
+        // Persist the removal to `[[workspaces]]` in the global
+        // config — WITHOUT this the entry sticks around and the
+        // startup path re-adds it on the next launch, which reads
+        // as a bug ("I removed it, why is it back?"). Match by
+        // canonical path so name-only edits still resolve. Silent
+        // no-op when the entry isn't in the config (a workspace
+        // added via `:view.add_workspace` and never persisted).
+        let removed_root = removed.root.clone();
+        let before = self.config.workspaces.len();
+        self.config.workspaces.retain(|w| {
+            std::fs::canonicalize(&w.path)
+                .map(|p| p != removed_root)
+                .unwrap_or(true)
+        });
+        if self.config.workspaces.len() != before
+            && let Err(e) = crate::config::persist_workspaces_to_global(&self.config.workspaces)
+        {
+            self.toast(format!("save workspaces: {e}"));
+        }
         self.toast(format!("workspace removed: {}", removed.name));
     }
 

@@ -581,6 +581,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ));
         x += hint.chars().count() as u16;
     }
+    // Inline `+` chip just past the last tab — mirrors browser tab
+    // strips (Chrome / Firefox / Safari). Appears only when at
+    // least one Request pane exists so we don't clutter the strip
+    // when there's nothing to add-more-of. Clicking it opens a
+    // fresh Request pane. The far-right `bufferline_new_tab_button`
+    // still exists and creates a new tab-page (window / split).
+    let any_request_pane = app.panes.iter().any(|p| matches!(p, Pane::Request(_)));
+    if any_request_pane && x + 3 <= inner_right {
+        let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
+        spans.push(Span::styled(
+            format!(" {plus_glyph} "),
+            Style::default()
+                .fg(theme::cur().green)
+                .bg(theme::cur().bg_darker)
+                .add_modifier(Modifier::BOLD),
+        ));
+        app.rects.bufferline_new_request_button = Some(Rect {
+            x,
+            y: area.y,
+            width: 3,
+            height: 1,
+        });
+        x += 3;
+    }
     // Are there tabs past the right edge? (Either we broke out of the render
     // loop, or there are tabs after the last one we drew that we never reached.)
     let more_right = overflow_right || (last_drawn + 1 < visible.len());
@@ -789,6 +813,7 @@ pub fn paint_right_cluster(
     // clicks at cells we're no longer painting. (launcher_icon_rects
     // clear lives in ui::draw entry now — see api-workflow-user F2.)
     app.rects.bufferline_new_tab_button = None;
+    app.rects.bufferline_new_request_button = None;
     app.rects.bufferline_tab_page_chips.clear();
     app.rects.bufferline_tab_page_close.clear();
     app.rects.bufferline_tabs_label = None;

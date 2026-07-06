@@ -66,12 +66,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     let chars: Vec<char> = input.chars().collect();
     let start = caret_col.saturating_sub(avail.saturating_sub(1));
     let shown: String = chars.iter().skip(start).take(avail).collect();
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
+    // Placeholder shown when the input is empty — dimmed hint that
+    // clears on the first keystroke. Mirrors browser address-bar
+    // + Bruno URL-field semantics. Kind-driven so different prompts
+    // can carry different hints without special-casing at the callsite.
+    let placeholder_span = if input.is_empty() {
+        placeholder_for(&p.kind).map(|hint| {
+            Span::styled(
+                hint,
+                Style::default()
+                    .fg(theme::cur().comment)
+                    .bg(theme::cur().bg2)
+                    .add_modifier(Modifier::ITALIC),
+            )
+        })
+    } else {
+        None
+    };
+    let line = if let Some(ph) = placeholder_span {
+        Line::from(vec![ph])
+    } else {
+        Line::from(Span::styled(
             shown,
             Style::default().fg(theme::cur().fg).bg(theme::cur().bg2),
-        )))
-        .style(Style::default().bg(theme::cur().bg2)),
+        ))
+    };
+    frame.render_widget(
+        Paragraph::new(line).style(Style::default().bg(theme::cur().bg2)),
         Rect::new(inner.x + pad, field_y, inner.width.saturating_sub(pad), 1),
     );
 
@@ -272,6 +293,16 @@ fn draw_quit_confirm(frame: &mut Frame, app: &mut App, screen: Rect) {
         frame.render_widget(Paragraph::new(Line::from(spans)), rect);
         app.rects.quit_prompt_buttons.push((rect, *code));
         bx += bw + 1;
+    }
+}
+
+/// Dimmed placeholder hint for empty prompt inputs. Mirrors browser
+/// address-bar + Bruno URL-field semantics — clears on first keystroke.
+fn placeholder_for(kind: &crate::prompt::PromptKind) -> Option<&'static str> {
+    use crate::prompt::PromptKind::*;
+    match kind {
+        BrowserUrl => Some("https://example.com"),
+        _ => None,
     }
 }
 

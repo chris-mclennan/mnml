@@ -66,31 +66,22 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, area);
 
     let mut y = inner.y;
+    let name_padded_hdr = format!("{:<width$}", "Name", width = max_label);
+    let path_padded_hdr = format!("{:<width$}", "Path", width = max_path);
+    let hdr_style = Style::default()
+        .fg(t.comment)
+        .bg(t.bg2)
+        .add_modifier(Modifier::BOLD);
     let header = Line::from(vec![
-        Span::styled(
-            "  Name",
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg2)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  Path",
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg2)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "  Group",
-            Style::default()
-                .fg(t.comment)
-                .bg(t.bg2)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("   ", Style::default().bg(t.bg2)),
+        Span::styled(name_padded_hdr, hdr_style),
+        Span::styled("  ", Style::default().bg(t.bg2)),
+        Span::styled(path_padded_hdr, hdr_style),
+        Span::styled("  ", Style::default().bg(t.bg2)),
+        Span::styled("Group", hdr_style),
     ]);
     frame.render_widget(
-        Paragraph::new(header),
+        Paragraph::new(header).style(Style::default().bg(t.bg2)),
         Rect {
             x: inner.x,
             y,
@@ -118,6 +109,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     let sel = app.workspaces_editor_selected;
+    // Which workspaces are currently loaded? Primary + extras. Compare
+    // by canonicalized path so we don't miss ones opened via a symlink.
+    let loaded_paths: std::collections::HashSet<std::path::PathBuf> = {
+        let mut s = std::collections::HashSet::new();
+        s.insert(std::fs::canonicalize(&app.workspace).unwrap_or_else(|_| app.workspace.clone()));
+        for ws in &app.extra_workspaces {
+            s.insert(std::fs::canonicalize(&ws.root).unwrap_or_else(|_| ws.root.clone()));
+        }
+        s
+    };
     for (i, w) in app.config.workspaces.iter().enumerate() {
         if y >= inner.y + inner.height {
             break;
@@ -125,12 +126,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let is_sel = i == sel;
         let bg = if is_sel { t.cyan } else { t.bg2 };
         let fg = if is_sel { t.bg } else { t.fg };
+        let is_open = loaded_paths
+            .contains(&std::fs::canonicalize(&w.path).unwrap_or_else(|_| w.path.clone()));
+        // `●` for open, `○` for available-but-not-loaded — same
+        // visual language as the tree section headers so users
+        // can tell at a glance which ones are currently mounted.
+        let dot_glyph = if is_open { "●" } else { "○" };
+        let dot_fg = if is_sel {
+            t.bg
+        } else if is_open {
+            t.green
+        } else {
+            t.comment
+        };
         let name_padded = format!("{:<width$}", w.name, width = max_label);
         let path_str = w.path.to_string_lossy();
         let path_padded = format!("{:<width$}", path_str, width = max_path);
         let group_str = w.group.clone().unwrap_or_default();
+        let group_padded = format!("{:<width$}", group_str, width = max_group);
         let line = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(dot_glyph, Style::default().fg(dot_fg).bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
             Span::styled(name_padded, Style::default().fg(fg).bg(bg)),
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(
@@ -140,7 +157,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .bg(bg),
             ),
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(group_str, Style::default().fg(fg).bg(bg)),
+            Span::styled(group_padded, Style::default().fg(fg).bg(bg)),
         ]);
         let row_rect = Rect {
             x: inner.x,
@@ -148,7 +165,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             width: inner.width.saturating_sub(3),
             height: 1,
         };
-        frame.render_widget(Paragraph::new(line), row_rect);
+        // Paragraph style sets the bg of untouched cells — without
+        // this the row past the group column paints black (raw
+        // terminal bg). Was the "black next to work/persona" bug.
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(bg)),
+            row_rect,
+        );
         // Kebab cell at the right edge of the row.
         let kebab_rect = Rect {
             x: inner.x + inner.width - 2,
@@ -160,7 +183,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Paragraph::new(Line::from(Span::styled(
                 "⋮",
                 Style::default().fg(fg).bg(bg),
-            ))),
+            )))
+            .style(Style::default().bg(bg)),
             kebab_rect,
         );
         app.rects.workspaces_editor_rows.push((row_rect, i as i32));
@@ -186,7 +210,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             width: inner.width,
             height: 1,
         };
-        frame.render_widget(Paragraph::new(line), row_rect);
+        frame.render_widget(
+            Paragraph::new(line).style(Style::default().bg(bg)),
+            row_rect,
+        );
         app.rects.workspaces_editor_rows.push((row_rect, -1));
         y += 1;
     }
