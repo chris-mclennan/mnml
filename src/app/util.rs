@@ -84,6 +84,35 @@ pub(crate) fn rel_path(workspace: &Path, p: &Path) -> String {
         .into_owned()
 }
 
+/// #20 v4 — count directory entries recursively, capped at `max`
+/// so a huge tree doesn't stall the delete prompt. Returns the
+/// running total; when the cap is hit, the caller should show
+/// `>= max entries` instead of the exact number.
+pub(crate) fn walk_entry_count(dir: &Path, depth: u32, max: usize) -> usize {
+    if depth > 8 {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0usize;
+    for entry in entries.flatten() {
+        total += 1;
+        if total >= max {
+            return max;
+        }
+        let p = entry.path();
+        if p.is_dir() {
+            let sub = walk_entry_count(&p, depth + 1, max - total);
+            total += sub;
+            if total >= max {
+                return max;
+            }
+        }
+    }
+    total
+}
+
 /// Walk `text` and return every `(row, col_chars, len_chars)` for a
 /// whole-word occurrence of `word`. Char columns (not byte) so the
 /// renderer's per-cell painter can align without re-decoding UTF-8.

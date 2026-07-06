@@ -5210,10 +5210,22 @@ impl App {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         self.pending_fs_action = Some(FsAction::Delete { path: path.clone() });
-        let title = format!(
-            "Delete {} — type '{name}' to confirm",
-            rel_path(&self.workspace, &path)
-        );
+        // #20 v4 — surface the recursive-delete case explicitly.
+        // Also count how many entries would be removed so the user
+        // sees the blast radius before typing the name.
+        let is_dir = path.is_dir();
+        let rel = rel_path(&self.workspace, &path);
+        let title = if is_dir {
+            let count = walk_entry_count(&path, 0, 500);
+            let count_hint = if count >= 500 {
+                "500+ entries".to_string()
+            } else {
+                format!("{count} entr{}", if count == 1 { "y" } else { "ies" })
+            };
+            format!("Recursively delete {rel} ({count_hint}) — type '{name}' to confirm")
+        } else {
+            format!("Delete {rel} — type '{name}' to confirm")
+        };
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::DeleteConfirm,
             title,
