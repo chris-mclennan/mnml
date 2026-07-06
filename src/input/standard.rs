@@ -4,32 +4,177 @@
 //! the line; Ctrl+S saves; Esc clears a selection (then falls through so the
 //! tree gets focus).
 //!
-//! TODO(P3): make the bindings data-driven from `[keys.standard]` config — for
-//! now it's a hardcoded match. The `[keys.*]` resolver lands alongside the vim
-//! handler since both need the same `KeySpec`→action machinery.
+//! `[keys.standard]` config overlays: any entry there is checked FIRST, so a
+//! user can rebind chords or unbind them entirely without touching the code.
+//! Context-sensitive behaviors (smart Ctrl+C, Shift+arrow selection extend,
+//! Tab-with-selection = Indent, Esc-with-selection = Clear) stay hardcoded —
+//! they can't be expressed as a static chord → op mapping. Overrides for those
+//! chords still work; the hardcoded smart behavior is only the fallback.
+
+use std::collections::HashMap;
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::Config;
 use crate::edit_op::EditOp;
+use crate::input::keymap::{Chord, parse_key_spec};
 use crate::input::{AppCommand, EditCtx, EditingMode, InputHandler, InputResult};
+
+/// What a `[keys.standard]` entry can bind a chord to. Constructed by parsing
+/// the config value string via `StandardAction::parse`.
+#[derive(Debug, Clone)]
+enum StandardAction {
+    /// Fire one EditOp.
+    Op(EditOp),
+    /// Fire an ordered sequence of EditOps.
+    Ops(Vec<EditOp>),
+    /// Escalate to an App-level command (`Save`).
+    App(AppCommand),
+    /// Explicit unbind — the chord is silently ignored, no fallback to
+    /// the hardcoded logic. Config value `"none"` / `"unbound"` / `""`.
+    Unbound,
+}
+
+impl StandardAction {
+    /// Vocabulary the config accepts. Case-insensitive. Composite / smart
+    /// actions (Ctrl+C context-sensitive yank, Tab-with-selection Indent)
+    /// aren't in the vocabulary — they can only be OVERRIDDEN, not
+    /// invoked by name.
+    fn parse(s: &str) -> Option<StandardAction> {
+        use EditOp::*;
+        let t = s.trim().to_ascii_lowercase();
+        // Composite: `"move_line_end; insert_newline"` produces an ordered
+        // sequence. Lets users configure `ctrl+enter` = open-new-line-below
+        // (VS Code's Ctrl+Enter behavior) without a special action name.
+        if t.contains(';') {
+            let mut ops: Vec<EditOp> = Vec::new();
+            for part in t.split(';') {
+                match StandardAction::parse(part)? {
+                    StandardAction::Op(op) => ops.push(op),
+                    _ => return None,
+                }
+            }
+            return Some(if ops.len() == 1 {
+                StandardAction::Op(ops.remove(0))
+            } else {
+                StandardAction::Ops(ops)
+            });
+        }
+        Some(match t.as_str() {
+            "" | "none" | "unbound" => StandardAction::Unbound,
+            "app.save" | "save" => StandardAction::App(AppCommand::Save),
+            "select_all" => StandardAction::Op(SelectAll),
+            "select_word" => StandardAction::Op(SelectWord),
+            "select_line_to_end" => StandardAction::Op(SelectLineToEnd),
+            "select_clear" => StandardAction::Op(SelectClear),
+            "yank_selection" => StandardAction::Op(YankSelection),
+            "yank_line" => StandardAction::Op(YankLine),
+            "cut_selection" => StandardAction::Op(CutSelection),
+            "paste" => StandardAction::Op(Paste),
+            "undo" => StandardAction::Op(Undo),
+            "redo" => StandardAction::Op(Redo),
+            "delete_line" => StandardAction::Op(DeleteLine),
+            "duplicate_line" => StandardAction::Op(DuplicateLine),
+            "toggle_line_comment" => StandardAction::Op(ToggleLineComment),
+            "indent" => StandardAction::Op(Indent),
+            "outdent" => StandardAction::Op(Outdent),
+            "backspace" => StandardAction::Op(Backspace),
+            "delete_forward" => StandardAction::Op(DeleteForward),
+            "delete_word_left" => StandardAction::Op(DeleteWordLeft),
+            "delete_word_right" => StandardAction::Op(DeleteWordRight),
+            "move_left" => StandardAction::Op(MoveLeft),
+            "move_right" => StandardAction::Op(MoveRight),
+            "move_up" => StandardAction::Op(MoveUp),
+            "move_down" => StandardAction::Op(MoveDown),
+            "move_word_left" => StandardAction::Op(MoveWordLeft),
+            "move_word_right" => StandardAction::Op(MoveWordRight),
+            "move_line_up" => StandardAction::Op(MoveLineUp),
+            "move_line_down" => StandardAction::Op(MoveLineDown),
+            "move_line_start" => StandardAction::Op(MoveLineStart),
+            "move_line_end" => StandardAction::Op(MoveLineEnd),
+            "move_buffer_start" => StandardAction::Op(MoveBufferStart),
+            "move_buffer_end" => StandardAction::Op(MoveBufferEnd),
+            "page_up" => StandardAction::Op(PageUp),
+            "page_down" => StandardAction::Op(PageDown),
+            "insert_newline" => StandardAction::Op(InsertNewline),
+            _ => return None,
+        })
+    }
+}
 
 #[derive(Debug)]
 pub struct StandardInputHandler {
     tab_width: usize,
+    /// `[keys.standard]` overrides — user rebindings. Consulted BEFORE
+    /// the hardcoded logic so users can remap or unbind any chord.
+    /// Parsed once at construction. Empty when no config entries exist.
+    overrides: HashMap<Chord, StandardAction>,
 }
 
 impl StandardInputHandler {
     pub fn new(cfg: &Config) -> Self {
+        // Merge `[keys.global]` + `[keys.standard]` in that order so a
+        // standard-specific override wins. Same precedence as the
+        // app-level `Keymap::build`.
+        let mut overrides: HashMap<Chord, StandardAction> = HashMap::new();
+        for section in ["global", "standard"] {
+            let Some(entries) = cfg.keys.get(section) else {
+                continue;
+            };
+            for (spec, action) in entries {
+                let Some(ev) = parse_key_spec(spec) else {
+                    eprintln!("mnml: [keys.{section}] `{spec}` doesn't parse as a chord — ignored",);
+                    continue;
+                };
+                let Some(parsed) = StandardAction::parse(action) else {
+                    // Unknown action names go to the app-level Keymap,
+                    // not here. Skip silently so app.* commands don't
+                    // trigger a warning.
+                    continue;
+                };
+                overrides.insert(Chord::of(&ev), parsed);
+            }
+        }
         StandardInputHandler {
             tab_width: cfg.editor.tab_width.max(1),
+            overrides,
         }
+    }
+
+    /// Look up a chord in the config overrides. Returns:
+    /// - `Some(InputResult::…)` — fire the override (may be Ignored if unbound).
+    /// - `None` — no override registered; caller falls through to hardcoded logic.
+    fn override_lookup(&self, key: &KeyEvent) -> Option<InputResult> {
+        let chord = Chord::of(key);
+        Some(match self.overrides.get(&chord)? {
+            StandardAction::Op(op) => InputResult::Ops(vec![op.clone()]),
+            StandardAction::Ops(ops) => InputResult::Ops(ops.clone()),
+            StandardAction::App(cmd) => InputResult::App(cmd.clone()),
+            StandardAction::Unbound => InputResult::Ignored,
+        })
     }
 }
 
 impl InputHandler for StandardInputHandler {
     fn handle_key(&mut self, key: KeyEvent, ctx: &EditCtx) -> InputResult {
         use EditOp::*;
+
+        // Config-driven overrides win over the hardcoded logic. Any chord
+        // registered in `[keys.global]` or `[keys.standard]` fires the
+        // configured action (or `Ignored` when unbound), so users can
+        // rebind chords WITHOUT touching source. Plain typed characters
+        // (no modifiers) bypass the override table so a stray
+        // `"a" = "cut_selection"` in the config doesn't turn a-key into
+        // a cut — chords the override table handles are the ones with
+        // at least one modifier or a named key.
+        let is_plain_typed = matches!(key.code, KeyCode::Char(_))
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.contains(KeyModifiers::ALT)
+            && !key.modifiers.contains(KeyModifiers::SUPER);
+        if !is_plain_typed && let Some(result) = self.override_lookup(&key) {
+            return result;
+        }
+
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -424,6 +569,112 @@ mod tests {
             ops(h().handle_key(
                 key(
                     KeyCode::Char('d'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                &ctx(false)
+            )),
+            vec![EditOp::DuplicateLine]
+        );
+    }
+
+    // ── [keys.standard] config overrides ──────────────────────────
+
+    fn cfg_with_binding(spec: &str, action: &str) -> Config {
+        let mut cfg = Config::default();
+        let mut section = std::collections::BTreeMap::new();
+        section.insert(spec.to_string(), action.to_string());
+        cfg.keys.insert("standard".to_string(), section);
+        cfg
+    }
+
+    #[test]
+    fn config_override_replaces_a_default_chord() {
+        // Rebind Ctrl+A from SelectAll to Undo — deliberately weird so
+        // the test proves the override wins.
+        let cfg = cfg_with_binding("ctrl+a", "undo");
+        let mut h = StandardInputHandler::new(&cfg);
+        assert_eq!(
+            ops(h.handle_key(key(KeyCode::Char('a'), KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::Undo]
+        );
+    }
+
+    #[test]
+    fn config_override_none_unbinds_a_chord() {
+        let cfg = cfg_with_binding("ctrl+z", "none");
+        let mut h = StandardInputHandler::new(&cfg);
+        assert!(matches!(
+            h.handle_key(key(KeyCode::Char('z'), KeyModifiers::CONTROL), &ctx(false)),
+            InputResult::Ignored
+        ));
+    }
+
+    #[test]
+    fn config_override_supports_composite_sequences() {
+        // VS Code's `ctrl+enter` = "move to line end, then insert newline".
+        let cfg = cfg_with_binding("ctrl+enter", "move_line_end; insert_newline");
+        let mut h = StandardInputHandler::new(&cfg);
+        assert_eq!(
+            ops(h.handle_key(key(KeyCode::Enter, KeyModifiers::CONTROL), &ctx(false))),
+            vec![EditOp::MoveLineEnd, EditOp::InsertNewline]
+        );
+    }
+
+    #[test]
+    fn config_override_leaves_plain_typing_untouched() {
+        // Even if the user tries to bind `a` to something, plain
+        // character keys should still insert their literal char.
+        let cfg = cfg_with_binding("a", "undo");
+        let mut h = StandardInputHandler::new(&cfg);
+        assert_eq!(
+            ops(h.handle_key(key(KeyCode::Char('a'), KeyModifiers::NONE), &ctx(false))),
+            vec![EditOp::InsertChar('a')]
+        );
+    }
+
+    #[test]
+    fn config_override_can_bind_a_new_chord() {
+        // Chord that has no default binding in the standard handler:
+        // Ctrl+Shift+K. Should be Ignored without config, and the
+        // configured action with config.
+        let mut without = StandardInputHandler::new(&Config::default());
+        assert!(matches!(
+            without.handle_key(
+                key(
+                    KeyCode::Char('k'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                &ctx(false)
+            ),
+            InputResult::Ignored
+        ));
+        let cfg = cfg_with_binding("ctrl+shift+k", "delete_line");
+        let mut with = StandardInputHandler::new(&cfg);
+        assert_eq!(
+            ops(with.handle_key(
+                key(
+                    KeyCode::Char('k'),
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ),
+                &ctx(false)
+            )),
+            vec![EditOp::DeleteLine]
+        );
+    }
+
+    #[test]
+    fn global_section_bindings_apply_to_standard_handler() {
+        // `[keys.global]` also overlays — a global entry should
+        // reach the standard handler.
+        let mut cfg = Config::default();
+        let mut section = std::collections::BTreeMap::new();
+        section.insert("ctrl+shift+p".to_string(), "duplicate_line".to_string());
+        cfg.keys.insert("global".to_string(), section);
+        let mut h = StandardInputHandler::new(&cfg);
+        assert_eq!(
+            ops(h.handle_key(
+                key(
+                    KeyCode::Char('p'),
                     KeyModifiers::CONTROL | KeyModifiers::SHIFT
                 ),
                 &ctx(false)
