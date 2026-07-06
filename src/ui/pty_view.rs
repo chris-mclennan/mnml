@@ -88,7 +88,7 @@ pub fn draw(
                 push_run(&mut spans, &mut text, &mut style, " ", Style::default());
                 continue;
             };
-            let s = cell_style(cell, def_fg, def_bg);
+            let s = cell_style(cell, def_fg, def_bg, &grid.ansi_palette);
             let g: &str = if cell.text.is_empty() {
                 " "
             } else {
@@ -301,14 +301,34 @@ fn push_run(
     }
 }
 
-fn cell_style(cell: &RenderCell, def_fg: Color, def_bg: Color) -> Style {
-    // libghostty resolves palette-indexed colors to RGB; `None` ⇒ default.
-    let conv = |c: Option<RgbColor>, def: Color| match c {
-        Some(rgb) => Color::Rgb(rgb.r, rgb.g, rgb.b),
-        None => def,
+fn cell_style(
+    cell: &RenderCell,
+    def_fg: Color,
+    def_bg: Color,
+    ansi_palette: &[Option<RgbColor>; 16],
+) -> Style {
+    // #17 — libghostty resolves palette-indexed colors to RGB
+    // against its OWN default palette. Remap: if the cell's RGB
+    // exactly matches one of the ANSI 0-15 palette slots we
+    // snapshotted, swap for the mnml theme's equivalent color
+    // so terminal colors respect the active theme.
+    let remap = |c: Option<RgbColor>, def: Color| -> Color {
+        let Some(rgb) = c else {
+            return def;
+        };
+        for (idx, slot) in ansi_palette.iter().enumerate() {
+            if let Some(pal) = slot
+                && pal.r == rgb.r
+                && pal.g == rgb.g
+                && pal.b == rgb.b
+            {
+                return theme_ansi_color(idx as u8);
+            }
+        }
+        Color::Rgb(rgb.r, rgb.g, rgb.b)
     };
-    let mut fg = conv(cell.fg, def_fg);
-    let mut bg = conv(cell.bg, def_bg);
+    let mut fg = remap(cell.fg, def_fg);
+    let mut bg = remap(cell.bg, def_bg);
     if cell.inverse {
         std::mem::swap(&mut fg, &mut bg);
     }
@@ -323,4 +343,30 @@ fn cell_style(cell: &RenderCell, def_fg: Color, def_bg: Color) -> Style {
         s = s.add_modifier(Modifier::UNDERLINED);
     }
     s
+}
+
+/// #17 — map an ANSI 0-15 palette index to the mnml theme's
+/// equivalent color slot. Standard convention:
+/// 0/8 = black/grey, 1/9 = red, 2/10 = green, 3/11 = yellow,
+/// 4/12 = blue, 5/13 = magenta, 6/14 = cyan, 7/15 = white.
+fn theme_ansi_color(idx: u8) -> Color {
+    let t = crate::ui::theme::cur();
+    match idx {
+        0 => t.bg,
+        1 => t.red,
+        2 => t.green,
+        3 => t.yellow,
+        4 => t.blue,
+        5 => t.purple,
+        6 => t.cyan,
+        7 => t.fg,
+        8 => t.grey_fg,
+        9 => t.red,
+        10 => t.green,
+        11 => t.yellow,
+        12 => t.blue,
+        13 => t.purple,
+        14 => t.cyan,
+        _ => t.fg,
+    }
 }

@@ -56,6 +56,12 @@ pub struct RenderGrid {
     pub default_bg: RgbColor,
     /// `(col, row)` of the cursor when visible + in the live viewport.
     pub cursor: Option<(u16, u16)>,
+    /// #17 — libghostty's ANSI 16 palette (indices 0-15). Snapshotted
+    /// from `snapshot.colors().palette[0..16]` so `cell_style` can
+    /// detect when a cell's RGB matches one of these and swap for
+    /// the mnml theme's equivalent color. Empty = "no remapping"
+    /// (test cases + fallback).
+    pub ansi_palette: [Option<RgbColor>; 16],
 }
 
 impl RenderGrid {
@@ -614,6 +620,7 @@ fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> Rende
         default_fg,
         default_bg,
         cursor: None,
+        ansi_palette: [None; 16],
     };
 
     let Ok(snapshot) = rs.update(term) else {
@@ -622,6 +629,9 @@ fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> Rende
     if let Ok(colors) = snapshot.colors() {
         grid.default_fg = colors.foreground;
         grid.default_bg = colors.background;
+        for (i, slot) in grid.ansi_palette.iter_mut().enumerate() {
+            *slot = Some(colors.palette[i]);
+        }
     }
     if snapshot.cursor_visible().unwrap_or(false)
         && let Ok(Some(CursorViewport { x, y, .. })) = snapshot.cursor_viewport()
