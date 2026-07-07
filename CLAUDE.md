@@ -221,6 +221,77 @@ public repo (Google Calendar v3 + OAuth loopback flow).
 Still user-driven: `cargo publish` the 37 siblings to crates.io + tag
 `v0.2.0` on mnml so cargo-dist takes over.
 
+**HTTP Request pane surface polish (2026-07-06 → 2026-07-07).** Two
+sessions of feature work landed on top of the 0.2.0 SDK:
+
+- **`[⇔]` edit-split.** New chip on the Request block's border row
+  toggles a side-by-side split of the edit content area. Left = current
+  primary tab (Body / Params / …), right = secondary tab (defaults to
+  Vars; clickable right-side tab strip lets you pick any combination).
+  Click the 1-cell divider to cycle the ratio 30/50/70. Palette command
+  `http.toggle_edit_split`. Below ~48 cells wide the split gracefully
+  degrades to primary-only. Keyboard still targets the primary side;
+  the secondary side is click-editable (Vars cells, Params rows).
+
+- **HTTP-panel `/` filter.** The activity-bar HTTP panel now matches
+  the Agents / Cloud Agents idiom — `/` focuses the filter row, typing
+  narrows across all seven sections (FILES / RECENT / CAPTURED / ENVS
+  / CHAINS / MOCKS / COLLECTIONS), Esc clears + unfocuses. For
+  COLLECTIONS a request-name hit keeps its collection visible and
+  force-expands it.
+
+- **`{{VAR}}` highlighting + click-to-def + hover.** Vars now render
+  cyan (resolved) or bold-red (unresolved) across the URL, Body
+  (JSON + plain), Params values, and Headers values. Left-click a
+  token → jump to its definition line in `.mnml/env/<active>.env`
+  (falls back to `.rqst/env/<active>.env`, opens at EOF when
+  undefined). Right-click → context menu with "Set value…" (seeds
+  the env-edit prompt so undefined vars can be defined in one step),
+  "Jump to definition", "Copy variable name". Hover shows the
+  resolved value or "not defined in active env". Dynamic
+  `{{$uuid}}` / `{{$timestamp}}` render as resolved but skip the
+  "Set value…" menu item (they're built-ins).
+
+- **`tokenize_vars` + `build_var_spans` + `colored_line_with_vars`
+  helpers.** New in `src/ui/request_view.rs`. The JSON path merges
+  tree-sitter syntax coloring with var styling at the per-character
+  level — vars override syntax colors.
+
+**Local file actions pack + tree up-nav (2026-07-07).** Adds the
+standard file-manager clipboard + operations that were missing:
+
+- `file.cut` (Ctrl+X), `file.copy` (Ctrl+C), `file.paste` (Ctrl+V),
+  `file.duplicate` (Ctrl+D) — Ctrl-shortcuts only fire in tree focus
+  so they don't fight standard-input Ctrl+X/C in editor panes.
+- `file.move_to` opens a destination-path prompt (workspace-relative
+  or absolute, `~` expands, missing intermediates created).
+- Right-click tree menu adds Cut / Copy / Paste here / Duplicate /
+  Move to…; the Paste entry appears only when the clipboard is
+  non-empty.
+- **Alt-drag = copy.** Existing tree drag-drop (move with confirm
+  prompt) now respects the Alt modifier at drag-start — Alt-drop
+  fires an immediate `copy_recursively` (non-destructive, no
+  confirmation). Matches Finder / VS Code convention.
+- **`..` up-navigation row.** New row at the top of the tree (hidden
+  at filesystem root) navigates the workspace root up one level via
+  `set_workspace_to`; tree / repos / git / integrations reload
+  consistently. Palette `view.workspace_up`.
+
+Copy paths use `fs::copy` for files, recursive walk for directories,
+`os::unix::fs::symlink` for symlinks. Same-dir Copy+Paste bumps to
+`-copy` / `-copy-N` instead of clobbering. Move = `fs::rename` (single-
+filesystem only).
+
+**Layout bug fix (2026-07-06).** `split_leaf_with` used to call
+`Layout::leaf(leaf)` for the source side, dropping every background
+tab in the source leaf — a pane that was only in the source leaf's
+`tabs` list became invisible until the split closed. Fixed by
+copying the source leaf's tabs via `leaf_containing` and passing
+them to `Layout::leaf_with_tabs`. 5 regression tests added
+(`leaf_containing_returns_tab_list_for_background_tab`,
+`all_panes_includes_background_tabs_across_splits`,
+`split_preserves_background_tabs_in_source_leaf`, +2).
+
 **For prior history** (the 7-month arc that built tmnl + the
 blit protocol + mixr-host + chrome chips integration) see
 `git log` before the cleanup commits. Those entries used to live
