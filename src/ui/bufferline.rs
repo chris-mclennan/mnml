@@ -131,7 +131,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // optional AI button) DO live on the bufferline — reserve the
     // rightmost `split_buttons_width(app)` cells for them so the
     // tab strip's scroll math doesn't run them over.
-    let cluster_w = split_buttons_width(app);
+    //
+    // #polish 2026-07-06 — plus a mode chip (`👁 Preview` when the
+    // active pane is a markdown Editor, `✏ Edit` when it's an
+    // MdPreview) sitting to the left of the split-button cluster.
+    // Replaces the per-pane banner row that used to eat a full
+    // content row per markdown pane.
+    let mode_chip = mode_chip_for_active(app);
+    let mode_chip_w = mode_chip
+        .as_ref()
+        .map(|(label, _, _)| label.chars().count() as u16)
+        .unwrap_or(0);
+    let cluster_w = split_buttons_width(app) + mode_chip_w;
     let tabs_max_x = area.x.saturating_add(area.width.saturating_sub(cluster_w));
 
     // Disambiguated labels — when two open editors share a filename, prepend
@@ -672,7 +683,72 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Bufferline paints the file-tab strip + the H/V split
     // buttons at the right end.
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    // #polish 2026-07-06 — paint the mode chip (Preview / Edit)
+    // in the gap between the tab-scroll cluster and the split
+    // buttons. It sits to the LEFT of the terminal icon.
+    if let Some((label, kind, pid)) = mode_chip {
+        let chip_w = label.chars().count() as u16;
+        let split_w = split_buttons_width(app);
+        let chip_x = area.x + area.width.saturating_sub(split_w + chip_w);
+        let chip_rect = Rect {
+            x: chip_x,
+            y: area.y,
+            width: chip_w,
+            height: 1,
+        };
+        let (fg, bg) = match kind {
+            ModeChipKind::EditorMd => (theme::cur().bg_darker, theme::cur().purple),
+            ModeChipKind::PreviewMd => (theme::cur().bg_darker, theme::cur().blue),
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                label.to_string(),
+                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+            ))),
+            chip_rect,
+        );
+        match kind {
+            ModeChipKind::EditorMd => app.rects.editor_md_preview_buttons.push((chip_rect, pid)),
+            ModeChipKind::PreviewMd => app.rects.md_preview_edit_buttons.push((chip_rect, pid)),
+        }
+    }
     paint_split_buttons(frame, app, area);
+}
+
+/// Which mode-switch chip belongs on the bufferline for the currently
+/// active pane. Returns `(label, kind, pane_id)` or `None` when the
+/// active pane isn't markdown-shaped.
+#[derive(Debug, Clone, Copy)]
+enum ModeChipKind {
+    /// Active pane is an editor with a `.md` path — chip toggles
+    /// to a rendered preview.
+    EditorMd,
+    /// Active pane is a rendered preview — chip toggles back to
+    /// the raw editor.
+    PreviewMd,
+}
+
+fn mode_chip_for_active(app: &App) -> Option<(&'static str, ModeChipKind, crate::layout::PaneId)> {
+    let pid = app.active?;
+    let pane = app.panes.get(pid)?;
+    let ascii = app.config.ui.ascii_icons;
+    match pane {
+        crate::pane::Pane::Editor(b)
+            if b.path.as_deref().is_some_and(crate::app::is_markdown_path) =>
+        {
+            let label = if ascii {
+                " p Preview "
+            } else {
+                " \u{f06e} Preview "
+            };
+            Some((label, ModeChipKind::EditorMd, pid))
+        }
+        crate::pane::Pane::MdPreview(_) => {
+            let label = if ascii { " e Edit " } else { " \u{f044} Edit " };
+            Some((label, ModeChipKind::PreviewMd, pid))
+        }
+        _ => None,
+    }
 }
 
 /// Width in cells of the right-cluster chrome (launcher icons +

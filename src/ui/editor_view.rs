@@ -64,24 +64,10 @@ pub fn draw_pane(
         draw_breadcrumb(frame, ca, &label);
     }
 
-    // qa-feature 2026-07-02 — markdown editor banner. When the active
-    // buffer is a .md file, add a 1-row banner across the top with a
-    // `👁 Preview` chip. Click swaps this pane in place to an MdPreview.
-    let is_md = matches!(
-        app.panes.get(pane_id),
-        Some(Pane::Editor(b)) if b.path.as_deref().is_some_and(crate::app::is_markdown_path)
-    );
-    let area = if is_md && area.height >= 3 {
-        draw_md_editor_banner(frame, app, pane_id, area);
-        Rect {
-            x: area.x,
-            y: area.y + 1,
-            width: area.width,
-            height: area.height - 1,
-        }
-    } else {
-        area
-    };
+    // #polish 2026-07-06 — the `👁 Preview` chip moved to the
+    // bufferline (right side, left of the terminal icon).
+    // `draw_md_editor_banner` is kept in this file only because
+    // there could still be a caller; it's not invoked here.
 
     let tab_w = app.config.editor.tab_width.max(1);
     let relnum = app.config.ui.relative_line_numbers;
@@ -1553,51 +1539,6 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
         ])),
         area,
     );
-}
-
-/// qa-feature 2026-07-02 — 1-row banner across the top of a markdown
-/// editor pane with a `👁 Preview` chip on the right. Click swaps the
-/// pane in place to a rendered MdPreview.
-///
-/// #polish 2026-07-06 — dropped the filename label on the left
-/// (was `󰃭 <file_name>`); user feedback that it duplicated the
-/// bufferline tab title. Matches the md_preview banner fix.
-fn draw_md_editor_banner(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
-    let t = theme::cur();
-    let banner_rect = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
-    let ascii = app.config.ui.ascii_icons;
-    let eye_glyph = if ascii { "p" } else { "\u{f06e}" }; // fa-eye
-    let preview_label = format!(" {eye_glyph} Preview ");
-    let preview_w = preview_label.chars().count() as u16;
-    let pad_w = area.width.saturating_sub(preview_w);
-    let line = Line::from(vec![
-        Span::styled(" ".repeat(pad_w as usize), Style::default().bg(t.bg_darker)),
-        Span::styled(
-            preview_label,
-            Style::default()
-                .fg(t.bg_darker)
-                .bg(t.purple)
-                .add_modifier(ratatui::style::Modifier::BOLD),
-        ),
-    ]);
-    frame.render_widget(
-        Paragraph::new(line).style(Style::default().bg(t.bg_darker)),
-        banner_rect,
-    );
-    let preview_rect = Rect {
-        x: area.x + area.width.saturating_sub(preview_w),
-        y: area.y,
-        width: preview_w,
-        height: 1,
-    };
-    app.rects
-        .editor_md_preview_buttons
-        .push((preview_rect, pane_id));
 }
 
 #[cfg(test)]

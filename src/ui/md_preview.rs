@@ -30,47 +30,12 @@ pub fn draw(
     let t = theme::cur();
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
-    // qa-feature 2026-07-02 — thin banner strip with an `✏ Edit`
-    // chip at the right. Click swaps the pane in place to a raw
-    // Editor of the same file.
-    //
-    // #polish 2026-07-06 — dropped the filename label on the left
-    // (was `󰃭 <file_name>`); user feedback that it duplicated the
-    // bufferline tab title. The bar now just carries the chip.
-    let ascii = app.config.ui.ascii_icons;
-    let banner_h: u16 = if area.height >= 3 { 1 } else { 0 };
-    if banner_h > 0 {
-        let banner_rect = Rect {
-            x: area.x,
-            y: area.y,
-            width: area.width,
-            height: 1,
-        };
-        let edit_glyph = if ascii { "e" } else { "\u{f044}" }; // codicon-edit
-        let edit_label = format!(" {edit_glyph} Edit ");
-        let edit_w = edit_label.chars().count() as u16;
-        let edit_span = Span::styled(
-            edit_label,
-            Style::default()
-                .fg(t.bg_darker)
-                .bg(t.blue)
-                .add_modifier(Modifier::BOLD),
-        );
-        let pad_w = area.width.saturating_sub(edit_w);
-        let pad_span = Span::styled(" ".repeat(pad_w as usize), Style::default().bg(t.bg_darker));
-        let line = ratatui::text::Line::from(vec![pad_span, edit_span]);
-        frame.render_widget(
-            Paragraph::new(line).style(Style::default().bg(t.bg_darker)),
-            banner_rect,
-        );
-        let edit_rect = Rect {
-            x: area.x + area.width.saturating_sub(edit_w),
-            y: area.y,
-            width: edit_w,
-            height: 1,
-        };
-        app.rects.md_preview_edit_buttons.push((edit_rect, pane_id));
-    }
+    // #polish 2026-07-06 — the `✏ Edit` chip moved to the
+    // bufferline (right side, left of the terminal icon). No
+    // per-pane banner row anymore; the pane gets the whole area.
+    let banner_h: u16 = 0;
+    let _ = pane_id; // reserved: chip registration now lives in bufferline
+    let _ = t;
 
     let protocol = app.image_protocol;
     let image_rows = app.config.ui.md_image_rows;
