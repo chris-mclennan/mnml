@@ -759,6 +759,46 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             }
         }
     }
+    // HTTP rail filter — same `/` → focus, then char/backspace/Esc/Enter.
+    if !app.http_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Http
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && let KeyCode::Char('/') = key.code
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        app.http_panel_filter_focused = true;
+        return;
+    }
+    if app.http_panel_filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.http_panel_filter.clear();
+                app.http_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.http_panel_filter.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.http_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.http_panel_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Agents rail filter — `/` in the panel focuses filter (matches
     // vim / less search idiom, mirrors the Integrations panel behavior).
     // Once focused, intercept typing / backspace / Esc / Enter.

@@ -1844,6 +1844,9 @@ pub struct PaneRects {
     /// `ActivitySection::Http` panel `+ New request` row rect. Click →
     /// create a stub `.http` file and open it.
     pub http_panel_new_chip: Option<Rect>,
+    /// `ActivitySection::Http` panel filter input row. Click → focus
+    /// the filter (typing appends; Esc clears + unfocuses).
+    pub http_panel_filter_input: Option<Rect>,
     /// Recent (from history.jsonl) row rects — `(rect, cache_index)`.
     /// Click → rebuild curl via `history::entry_to_curl` + open scratch.
     pub http_panel_recent_rows: Vec<(Rect, usize)>,
@@ -3738,6 +3741,13 @@ pub struct App {
     /// `/`-style substring filter for the rail agents panel
     /// (workspace / session id / last_msg). Case-insensitive.
     pub agents_panel_filter: String,
+    /// `/`-style substring filter for the rail HTTP panel — matches
+    /// env / chain / mock / collection / request labels. Case-
+    /// insensitive. Empty = show everything (default).
+    pub http_panel_filter: String,
+    /// `true` while the user is typing into the HTTP panel's filter
+    /// input (mirrors `agents_panel_filter_focused`).
+    pub http_panel_filter_focused: bool,
     /// Top-row scroll offset for the agents panel's content list (the
     /// session rows scroll; the filter + `+ New session` header stays put).
     /// Clamped to the content height each render.
@@ -4582,6 +4592,8 @@ impl App {
             agents_panel_group_by_workspace: false,
             agents_panel_expanded_workspaces: std::collections::HashSet::new(),
             agents_panel_filter: String::new(),
+            http_panel_filter: String::new(),
+            http_panel_filter_focused: false,
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
             integrations_panel_filter: String::new(),

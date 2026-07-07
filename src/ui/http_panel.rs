@@ -58,6 +58,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_captured_rows.clear();
     app.rects.http_panel_section_headers.clear();
     app.rects.http_panel_new_chip = None;
+    app.rects.http_panel_filter_input = None;
     app.rects.http_panel_capture_chip = None;
     app.rects.http_panel_captured_clear_chip = None;
     app.rects.http_panel_recent_clear_chip = None;
@@ -151,8 +152,48 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mocks_len = app.http_panel_mocks_cache.len();
     let ascii = app.config.ui.ascii_icons;
 
-    let mut y = area.y + 2;
+    // Filter input on row 1 (immediately under the HTTP header).
+    // Matches the Agents / Cloud Agents panel treatment — same
+    // "`/ filter`" placeholder, same focus / typing / Esc idiom.
+    let mut y = area.y + 1;
     let bottom = area.y + area.height;
+    if y < bottom {
+        let focused = app.http_panel_filter_focused;
+        let bg_chip = t.bg2;
+        let fg_chip = if app.http_panel_filter.is_empty() && !focused {
+            t.comment
+        } else {
+            t.fg
+        };
+        let display = if app.http_panel_filter.is_empty() {
+            if focused {
+                "type to filter\u{2026}".to_string()
+            } else {
+                "/ filter".to_string()
+            }
+        } else {
+            app.http_panel_filter.clone()
+        };
+        let cursor = if focused { "\u{258F}" } else { " " };
+        let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
+            Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
+            Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
+            Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
+            Span::styled(" ", Style::default().bg(bg)),
+        ]);
+        let row_rect = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(line), row_rect);
+        app.rects.http_panel_filter_input = Some(row_rect);
+        y += 1;
+    }
 
     // #polish 2026-07-06 — sections reordered so the primary
     // surface (COLLECTIONS) is at the top and runtime history
@@ -533,6 +574,7 @@ fn draw_files(
         return y;
     }
     let icon = if ascii { "\u{2192}" } else { "\u{F1D8}" };
+    let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     for path in files.iter().take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
@@ -542,6 +584,9 @@ fn draw_files(
             .unwrap_or(path)
             .to_string_lossy()
             .into_owned();
+        if !filter_lc.is_empty() && !rel.to_ascii_lowercase().contains(&filter_lc) {
+            continue;
+        }
         let row_rect = Rect {
             x: area.x,
             y,
@@ -595,6 +640,7 @@ fn draw_recent(
         }
         return y;
     }
+    let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     // Cache is oldest-first; reverse so newest shows at the top.
     for (idx, entry) in recent.iter().enumerate().rev().take(SECTION_ROW_CAP) {
         if y >= bottom {
@@ -606,6 +652,12 @@ fn draw_recent(
             .and_then(|s| s.as_str())
             .unwrap_or("GET");
         let url = entry.get("url").and_then(|s| s.as_str()).unwrap_or("");
+        if !filter_lc.is_empty() {
+            let hay = format!("{method} {url}").to_ascii_lowercase();
+            if !hay.contains(&filter_lc) {
+                continue;
+            }
+        }
         let short = short_url(url);
         let (status_str, status_fg) = if status == 0 {
             ("err ".to_string(), t.red)
@@ -677,9 +729,16 @@ fn draw_captured(
         }
         return y;
     }
+    let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     for (idx, row) in captured.iter().enumerate().rev().take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
+        }
+        if !filter_lc.is_empty() {
+            let hay = format!("{} {}", row.method, row.url).to_ascii_lowercase();
+            if !hay.contains(&filter_lc) {
+                continue;
+            }
         }
         let short = short_url(&row.url);
         let row_rect = Rect {
@@ -745,9 +804,13 @@ fn draw_envs(
             y += 1;
         }
     } else {
+        let filter_lc = app.http_panel_filter.to_ascii_lowercase();
         for name in envs.iter().take(SECTION_ROW_CAP) {
             if y >= bottom {
                 break;
+            }
+            if !filter_lc.is_empty() && !name.to_ascii_lowercase().contains(&filter_lc) {
+                continue;
             }
             let is_current = Some(name) == current.as_ref();
             let marker = if is_current { "●" } else { "○" };
@@ -832,6 +895,7 @@ fn draw_chains(
         );
         y += 1;
     }
+    let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     for path in chains.iter().take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
@@ -842,6 +906,9 @@ fn draw_chains(
             .unwrap_or("?")
             .trim_end_matches(".chain.json")
             .to_string();
+        if !filter_lc.is_empty() && !name.to_ascii_lowercase().contains(&filter_lc) {
+            continue;
+        }
         let row_rect = Rect {
             x: area.x,
             y,
@@ -924,6 +991,7 @@ fn draw_mocks(
         }
         return y;
     }
+    let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     for path in mocks.iter().take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
@@ -934,6 +1002,9 @@ fn draw_mocks(
             .to_string_lossy()
             .into_owned();
         let short = rel.trim_end_matches(".mock.json").to_string();
+        if !filter_lc.is_empty() && !short.to_ascii_lowercase().contains(&filter_lc) {
+            continue;
+        }
         let row_rect = Rect {
             x: area.x,
             y,
@@ -1025,12 +1096,46 @@ fn draw_collections(
     });
     let cap = SECTION_ROW_CAP * 3;
     let mut emitted = 0usize;
+    let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     for (root, kind) in &order {
         if emitted >= cap || y >= bottom {
             break;
         }
         // Collection row: chevron + icon + name + (count).
-        let collapsed = app.http_panel_collections_collapsed_dirs.contains(root);
+        let mut collapsed = app.http_panel_collections_collapsed_dirs.contains(root);
+        let name = root
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        // Filter shape (VS Code-style): if the collection name
+        // matches, show all its members; otherwise show only members
+        // that themselves match. Skip the collection entirely when
+        // nothing matches. An active filter also force-expands the
+        // collection so hits are visible without an extra click.
+        let name_hits = filter_lc.is_empty() || name.to_ascii_lowercase().contains(&filter_lc);
+        let all_members: Vec<&std::path::PathBuf> =
+            files.iter().filter(|p| p.starts_with(root)).collect();
+        let members: Vec<&std::path::PathBuf> = if name_hits {
+            all_members.clone()
+        } else {
+            all_members
+                .iter()
+                .copied()
+                .filter(|p| {
+                    p.strip_prefix(root)
+                        .map(|r| r.to_string_lossy().to_ascii_lowercase())
+                        .unwrap_or_default()
+                        .contains(&filter_lc)
+                })
+                .collect()
+        };
+        if !filter_lc.is_empty() && !name_hits && members.is_empty() {
+            continue;
+        }
+        if !filter_lc.is_empty() {
+            collapsed = false;
+        }
         let chev = if collapsed { "\u{25B8}" } else { "\u{25BE}" };
         let icon = match kind {
             HttpCollectionKind::InTree => "\u{f07b}", // nf-fa-folder
@@ -1040,13 +1145,6 @@ fn draw_collections(
             HttpCollectionKind::InTree => t.yellow,
             HttpCollectionKind::Hidden => t.comment,
         };
-        let name = root
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let members: Vec<&std::path::PathBuf> =
-            files.iter().filter(|p| p.starts_with(root)).collect();
         let count = members.len();
         let row_rect = Rect {
             x: area.x,

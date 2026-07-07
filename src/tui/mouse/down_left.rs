@@ -2047,6 +2047,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_panel_new_request();
         return;
     }
+    if let Some(r) = app.rects.http_panel_filter_input
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_panel_filter_focused = true;
+        return;
+    }
     if let Some((_, path)) = app
         .rects
         .http_panel_files
@@ -2371,6 +2377,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     if app.cloud_agents_filter_focused {
         app.cloud_agents_filter_focused = false;
+    }
+    if app.http_panel_filter_focused {
+        app.http_panel_filter_focused = false;
     }
     // Sessions panel tab (vertical-tab strip shown when
     // `ActivitySection::Sessions` is active). Click →
