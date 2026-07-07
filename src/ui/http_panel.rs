@@ -852,8 +852,18 @@ fn draw_recent(
         return y;
     }
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
+    let total = recent.len();
+    let max_scroll = total.saturating_sub(SECTION_ROW_CAP);
+    let scroll = app.http_panel_recent_scroll.min(max_scroll);
+    app.http_panel_recent_scroll = scroll;
     // Cache is oldest-first; reverse so newest shows at the top.
-    for (idx, entry) in recent.iter().enumerate().rev().take(SECTION_ROW_CAP) {
+    for (idx, entry) in recent
+        .iter()
+        .enumerate()
+        .rev()
+        .skip(scroll)
+        .take(SECTION_ROW_CAP)
+    {
         if y >= bottom {
             break;
         }
@@ -949,7 +959,20 @@ fn draw_captured(
         return y;
     }
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
-    for (idx, row) in captured.iter().enumerate().rev().take(SECTION_ROW_CAP) {
+    // Scroll offset — user's mouse-wheel scroll over the CAPTURED
+    // body. Clamped against total row count so we can't scroll past
+    // the last row. 2026-07-07.
+    let total = captured.len();
+    let max_scroll = total.saturating_sub(SECTION_ROW_CAP);
+    let scroll = app.http_panel_captured_scroll.min(max_scroll);
+    app.http_panel_captured_scroll = scroll;
+    for (idx, row) in captured
+        .iter()
+        .enumerate()
+        .rev()
+        .skip(scroll)
+        .take(SECTION_ROW_CAP)
+    {
         if y >= bottom {
             break;
         }

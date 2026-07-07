@@ -1005,6 +1005,46 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         }
         return;
     }
+    // HTTP panel — wheel over a CAPTURED / RECENT row scrolls that
+    // section past the SECTION_ROW_CAP visible slot. Checked BEFORE
+    // the general tree wheel so a scroll over the panel doesn't
+    // fall through and move the file-tree cursor. 2026-07-07.
+    if app.active_section == crate::app::ActivitySection::Http {
+        let over_captured = app
+            .rects
+            .http_panel_captured_rows
+            .iter()
+            .any(|(r, _)| contains(*r, x, y));
+        let over_recent = app
+            .rects
+            .http_panel_recent_rows
+            .iter()
+            .any(|(r, _)| contains(*r, x, y));
+        if over_captured {
+            let d = list_scroll_clamp(delta);
+            if d < 0 {
+                app.http_panel_captured_scroll = app
+                    .http_panel_captured_scroll
+                    .saturating_sub(d.unsigned_abs() as usize);
+            } else {
+                app.http_panel_captured_scroll =
+                    app.http_panel_captured_scroll.saturating_add(d as usize);
+            }
+            return;
+        }
+        if over_recent {
+            let d = list_scroll_clamp(delta);
+            if d < 0 {
+                app.http_panel_recent_scroll = app
+                    .http_panel_recent_scroll
+                    .saturating_sub(d.unsigned_abs() as usize);
+            } else {
+                app.http_panel_recent_scroll =
+                    app.http_panel_recent_scroll.saturating_add(d as usize);
+            }
+            return;
+        }
+    }
     if let Some(tr) = app.rects.tree
         && contains(tr, x, y)
     {

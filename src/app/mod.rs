@@ -2985,6 +2985,14 @@ pub struct App {
     /// Same refresh cadence as recent; drives the sidebar's
     /// `Captured` section + row-click → re-fire scratch.
     pub http_panel_captured_cache: Vec<crate::http::captured::CapturedRow>,
+    /// Scroll offset (in rows) for the CAPTURED section body. Wheel
+    /// events over the section area bump this so users can browse
+    /// past the visible cap when the log has >SECTION_ROW_CAP rows.
+    /// Clamped per render. 2026-07-07.
+    pub http_panel_captured_scroll: usize,
+    /// Same idea for RECENT — history.jsonl entries scroll under the
+    /// same wheel handler.
+    pub http_panel_recent_scroll: usize,
     /// Cached list of env names (basenames without `.env` extension)
     /// found under `.mnml/env/` + `.rqst/env/`. Refreshed by
     /// `http_panel_refresh` alongside the other caches.
@@ -4685,6 +4693,8 @@ impl App {
             http_panel_scanned_once: false,
             http_panel_recent_cache: Vec::new(),
             http_panel_captured_cache: Vec::new(),
+            http_panel_captured_scroll: 0,
+            http_panel_recent_scroll: 0,
             http_panel_envs_cache: Vec::new(),
             http_panel_chains_cache: Vec::new(),
             http_panel_collections_cache: Vec::new(),
