@@ -174,6 +174,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.split_strip_ai_buttons.clear();
     app.rects.request_edit_tabs.clear();
     app.rects.request_edit_tabs_split.clear();
+    // #polish 2026-07-07 — cleared here instead of inside `draw_edit`
+    // so the secondary side of a split-edit view (drained ~200 lines
+    // above the primary drain) doesn't get wiped by the primary
+    // side's `.clear()`. Both sides append; the vec resets once per
+    // frame at the top of `ui::mod::draw`.
+    app.rects.request_vars_rows.clear();
+    app.rects.request_params_rows.clear();
+    app.rects.request_auth_rows.clear();
     app.rects.request_edit_split_chip = None;
     app.rects.request_edit_split_divider = None;
     app.rects.request_var_click_rects.clear();

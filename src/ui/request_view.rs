@@ -395,6 +395,12 @@ pub(crate) fn render_kv_table(
     kind: KvTableKind,
     hover_key: Option<&str>,
     pane_id: PaneId,
+    // When `false`, the whole-row EditField click rect is skipped so
+    // clicks on the secondary side of a split-edit view don't
+    // silently steal keyboard focus into a buffer that isn't
+    // visually focused. Fix 2026-07-07 (code-reviewer follow-up).
+    // Primary side always passes `true`.
+    focused: bool,
     params_rows_local: &mut Vec<(Rect, String, KvTableKind)>,
     // When `Some`, `{{VAR}}` tokens inside VALUE cells render in
     // env-resolved cyan / unresolved red instead of the plain value
@@ -430,6 +436,9 @@ pub(crate) fn render_kv_table(
         KvTableKind::Vars => EditField::Url,
     };
     let register = |fields: &mut Vec<(Rect, PaneId, EditField)>, row_y: u16| {
+        if !focused {
+            return;
+        }
         fields.push((
             Rect {
                 x: area.x,
@@ -1474,7 +1483,12 @@ pub fn draw(
         r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_edit_tabs_split.push((r, pid, tab));
     }
-    app.rects.request_vars_rows.clear();
+    // #polish 2026-07-07 (code-reviewer finding) — primary-side drains
+    // used to `.clear()` then push, wiping any rects the secondary
+    // side of a split-edit view had pushed earlier in this same
+    // `draw()` call (secondary drains sit ~200 lines up). Only clear
+    // once per render, at the very top of the panel-rects setup in
+    // `ui::mod::draw`, so BOTH sides accumulate here.
     for (mut r, key, kind) in vars_rows_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
@@ -1483,7 +1497,6 @@ pub fn draw(
         r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_vars_rows.push((r, key, kind));
     }
-    app.rects.request_params_rows.clear();
     for (mut r, key, kind) in params_rows_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
@@ -1492,7 +1505,6 @@ pub fn draw(
         r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_params_rows.push((r, key, kind));
     }
-    app.rects.request_auth_rows.clear();
     for (mut r, id) in auth_rows_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
@@ -2671,6 +2683,7 @@ fn draw_edit(
             KvTableKind::Headers,
             None,
             pane_id,
+            focused,
             params_rows_local,
             Some(envset),
             Some(var_clicks_local),
@@ -2816,7 +2829,14 @@ fn draw_edit(
     // row as `EditField::Url` so the field-aware right-click works
     // (the URL-titled menu has Paste curl + Send + Copy as curl —
     // exactly what a user on the Source tab would want).
+    // Same `focused` gate as `register_field` / `render_kv_table`'s
+    // `register` — the secondary side of a split-edit view shouldn't
+    // push whole-row field rects that redirect keyboard focus into a
+    // buffer that isn't visually focused. Fix 2026-07-07.
     let register_tab_row = |fields: &mut Vec<(Rect, PaneId, EditField)>, row_y: u16| {
+        if !focused {
+            return;
+        }
         fields.push((
             Rect {
                 x: area.x,
@@ -2857,6 +2877,7 @@ fn draw_edit(
             KvTableKind::Params,
             rp.hover_params_key.as_deref(),
             pane_id,
+            focused,
             params_rows_local,
             Some(envset),
             Some(var_clicks_local),
@@ -3017,6 +3038,7 @@ fn draw_edit(
             KvTableKind::Vars,
             rp.hover_vars_key.as_deref(),
             pane_id,
+            focused,
             vars_rows_local,
             None,
             None,
