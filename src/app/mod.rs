@@ -5466,6 +5466,14 @@ impl App {
         self.recent_files
             .retain(|p| p != path && !(is_dir && p.starts_with(path)));
         self.tree.refresh();
+        // Bug 2026-07-06: right-click Delete on an HTTP-sidebar file
+        // row was refreshing the file tree but NOT the HTTP panel's
+        // own cache — the row stayed visible until the user closed +
+        // reopened the section. Refresh the HTTP cache whenever a
+        // path the panel might display gets deleted. Cheap to run
+        // unconditionally (walks `.http` / `.curl` / `.rest` in the
+        // workspace + `.mnml/` subdirs).
+        self.http_panel_refresh();
         self.toast(format!(
             "deleted {}{}",
             rel_path(&self.workspace, path),
