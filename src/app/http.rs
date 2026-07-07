@@ -3809,6 +3809,29 @@ impl App {
     /// var) when the name isn't defined yet. `.mnml/env/<n>.env`
     /// wins over `.rqst/env/<n>.env` when both exist. 2026-07-07.
     pub fn open_env_var_definition(&mut self, name: &str) {
+        // Dynamic vars (`{{$uuid}}`, `{{$timestamp}}`, `{{$epoch}}`,
+        // etc.) resolve through `dynamic_var()`, not the env file —
+        // there's no env entry to jump to. Toast the built-in's
+        // behavior instead so a click on a resolved dynamic var
+        // doesn't send the user into a "not defined — jump to end"
+        // dead-end. Unknown `$foo` names get a clear "unknown
+        // dynamic" message. SEV-3 fix 2026-07-07.
+        if let Some(dyn_name) = name.strip_prefix('$') {
+            match crate::http::template::dynamic_var(dyn_name) {
+                Some(val) => {
+                    let clipped: String = val.chars().take(60).collect();
+                    self.toast(format!(
+                        "{{{{{name}}}}} is a built-in dynamic var (current: {clipped})"
+                    ));
+                }
+                None => {
+                    self.toast(format!(
+                        "{{{{{name}}}}} — unknown dynamic var (try $uuid / $timestamp / $epoch / $randomInt / $randomHex / $randomString / $randomBool)"
+                    ));
+                }
+            }
+            return;
+        }
         let envset = crate::http::template::EnvSet::select(
             &self.workspace,
             self.http_env_override.as_deref(),

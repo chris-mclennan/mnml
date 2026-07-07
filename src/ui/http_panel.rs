@@ -487,49 +487,93 @@ fn draw_section_header(
         // Each chip renders as ` <text> ` (text + 2 pad) with a 1-cell
         // gap between adjacent pairs.
         let chip_len = |text: &str| text.chars().count() + 2;
+        let area_w = area.width as usize;
+        // Progressive drop-order when the full cluster doesn't fit
+        // (SEV-2 2026-07-07): drop lowest-priority chip first
+        // (Clear → Refresh → Filter → New → Capture) so the
+        // section's primary action always survives. Was: all-or-
+        // nothing hide, so 4-chip sections (CAPTURED / COLLECTIONS)
+        // silently lost `🌐 capture` / `+ new` — the whole point of
+        // those sections — at default panel widths.
+        let mut want_filter = has_filter_chip;
+        let mut want_refresh = has_refresh_chip;
+        let mut want_capture = has_capture_chip;
+        let mut want_clear = has_clear_chip;
+        let mut want_new = has_new_chip;
+        let compute_need = |wf: bool, wr: bool, wc: bool, wx: bool, wn: bool| -> usize {
+            let n = [wf, wr, wc, wx, wn].iter().filter(|b| **b).count();
+            let gaps = n.saturating_sub(1);
+            let mut sum = used + gaps + 2;
+            if wf {
+                sum += chip_len(filter_icon);
+            }
+            if wr {
+                sum += chip_len(refresh_icon);
+            }
+            if wc {
+                sum += chip_len(capture_icon);
+            }
+            if wx {
+                sum += chip_len(clear_icon);
+            }
+            if wn {
+                sum += chip_len(new_icon);
+            }
+            sum
+        };
+        // Drop order priority — least-important first. Uses indices
+        // over the (filter, refresh, capture, clear, new) tuple to
+        // avoid the borrow-checker headache of aliased `&mut bool`s
+        // in a single array literal.
+        let drop_order: &[u8] = &[3, 1, 0, 4, 2]; // Clear, Refresh, Filter, New, Capture
+        for &kind in drop_order {
+            if compute_need(
+                want_filter,
+                want_refresh,
+                want_capture,
+                want_clear,
+                want_new,
+            ) < area_w
+            {
+                break;
+            }
+            match kind {
+                0 => want_filter = false,
+                1 => want_refresh = false,
+                2 => want_capture = false,
+                3 => want_clear = false,
+                4 => want_new = false,
+                _ => {}
+            }
+        }
+        let (filter_text, refresh_text, capture_text, clear_text, new_text) = (
+            if want_filter { filter_icon } else { "" },
+            if want_refresh { refresh_icon } else { "" },
+            if want_capture { capture_icon } else { "" },
+            if want_clear { clear_icon } else { "" },
+            if want_new { new_icon } else { "" },
+        );
+        // Recompute gap_count for what actually renders (some chips
+        // may have been dropped above); the pad computation later
+        // uses this.
         let gap_count = [
-            has_filter_chip,
-            has_refresh_chip,
-            has_capture_chip,
-            has_clear_chip,
-            has_new_chip,
+            want_filter,
+            want_refresh,
+            want_capture,
+            want_clear,
+            want_new,
         ]
         .iter()
         .filter(|b| **b)
         .count()
         .saturating_sub(1);
-        let area_w = area.width as usize;
-        let need =
-            used + if has_filter_chip {
-                chip_len(filter_icon)
-            } else {
-                0
-            } + if has_refresh_chip {
-                chip_len(refresh_icon)
-            } else {
-                0
-            } + if has_capture_chip {
-                chip_len(capture_icon)
-            } else {
-                0
-            } + if has_clear_chip {
-                chip_len(clear_icon)
-            } else {
-                0
-            } + if has_new_chip { chip_len(new_icon) } else { 0 }
-                + gap_count
-                + 2;
-        let (filter_text, refresh_text, capture_text, clear_text, new_text) = if need < area_w {
-            (
-                filter_icon,
-                refresh_icon,
-                capture_icon,
-                clear_icon,
-                new_icon,
-            )
-        } else {
-            ("", "", "", "", "")
-        };
+        // Shadow the earlier has_* so downstream render code checks
+        // what we ACTUALLY draw.
+        let has_filter_chip = want_filter;
+        let has_refresh_chip = want_refresh;
+        let has_capture_chip = want_capture;
+        let has_clear_chip = want_clear;
+        let has_new_chip = want_new;
         if !refresh_text.is_empty()
             || !capture_text.is_empty()
             || !clear_text.is_empty()

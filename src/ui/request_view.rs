@@ -1005,16 +1005,46 @@ pub fn draw(
     // short env name (`staging`, `dev`, `prod`) fits with the
     // leading `env: ` label + trailing `▾` chevron.
     const ENV_BOX_WIDTH: u16 = 14;
-    let show_sub_panels = top_bar_rect.width
-        >= METHOD_BOX_WIDTH
-            + MIN_URL_WIDTH
-            + ENV_BOX_WIDTH
-            + SEND_BOX_WIDTH
-            + SAVE_BOX_WIDTH
-            + CLEAR_BOX_WIDTH
-            + CODE_BOX_WIDTH
-            + 2 * EDGE_PAD
-        && top_bar_rect.height >= METHOD_URL_ROW_H;
+    // Progressive degradation across three width tiers so the URL bar
+    // NEVER disappears entirely (SEV-1 fix 2026-07-07):
+    //   Full   (>=91): Method + URL + Env + Send + Save + Clear + Code
+    //   Medium (>=44): Method + URL + Send                (drop Env / Save / Clear / Code — palette still runs them)
+    //   Small  (>=34): Method + URL only
+    //   None   (<34):  nothing (rare — under 34 cells means the pane
+    //                  is too narrow for anything meaningful)
+    // On any width below Full the missing chips are one palette command
+    // away; the mandatory URL bar + Send-in-Medium give mouse users a
+    // way to compose + fire a request at 120-col terminals with the
+    // default tree_width = 30.
+    let full_width_needed = METHOD_BOX_WIDTH
+        + MIN_URL_WIDTH
+        + ENV_BOX_WIDTH
+        + SEND_BOX_WIDTH
+        + SAVE_BOX_WIDTH
+        + CLEAR_BOX_WIDTH
+        + CODE_BOX_WIDTH
+        + 2 * EDGE_PAD;
+    let medium_width_needed = METHOD_BOX_WIDTH + MIN_URL_WIDTH + SEND_BOX_WIDTH + 2 * EDGE_PAD;
+    let small_width_needed = METHOD_BOX_WIDTH + MIN_URL_WIDTH + 2 * EDGE_PAD;
+    #[derive(Copy, Clone, PartialEq, Eq)]
+    enum TopBarTier {
+        Full,
+        Medium,
+        Small,
+        None,
+    }
+    let tier = if top_bar_rect.height < METHOD_URL_ROW_H {
+        TopBarTier::None
+    } else if top_bar_rect.width >= full_width_needed {
+        TopBarTier::Full
+    } else if top_bar_rect.width >= medium_width_needed {
+        TopBarTier::Medium
+    } else if top_bar_rect.width >= small_width_needed {
+        TopBarTier::Small
+    } else {
+        TopBarTier::None
+    };
+    let show_sub_panels = tier == TopBarTier::Full;
 
     let mut method_url_absolute: Vec<(Rect, EditField)> = Vec::new();
     let mut send_button_rect: Option<Rect> = None;
@@ -1107,6 +1137,60 @@ pub fn draw(
         save_button_rect = draw_save_box(frame, rp, save_rect, t);
         clear_button_rect = draw_clear_box(frame, clear_rect, t);
         code_button_rect = draw_code_box(frame, code_rect, t);
+    } else if matches!(tier, TopBarTier::Medium | TopBarTier::Small) {
+        // Compact fallback — Method + URL always render; Send is
+        // included in Medium tier. Env / Save / Clear / Code drop off
+        // (still available via `:http.*` palette commands).
+        let row_y = top_bar_rect.y;
+        let method_rect = Rect {
+            x: top_bar_rect.x.saturating_add(EDGE_PAD),
+            y: row_y,
+            width: METHOD_BOX_WIDTH,
+            height: METHOD_URL_ROW_H,
+        };
+        let tail_reserve = if tier == TopBarTier::Medium {
+            SEND_BOX_WIDTH
+        } else {
+            0
+        };
+        let url_x = method_rect.x.saturating_add(METHOD_BOX_WIDTH);
+        let url_width = top_bar_rect
+            .width
+            .saturating_sub(EDGE_PAD)
+            .saturating_sub(METHOD_BOX_WIDTH)
+            .saturating_sub(tail_reserve)
+            .saturating_sub(EDGE_PAD);
+        let url_rect = Rect {
+            x: url_x,
+            y: row_y,
+            width: url_width,
+            height: METHOD_URL_ROW_H,
+        };
+        if let Some(mr) = draw_method_box(frame, rp, method_rect, focused, t) {
+            method_url_absolute.push((mr, EditField::Method));
+            app.rects.request_method_button = Some(mr);
+        }
+        if let Some(ur) = draw_url_box(
+            frame,
+            rp,
+            url_rect,
+            focused,
+            &mut caret_abs,
+            t,
+            &envset,
+            &mut var_click_rects,
+        ) {
+            method_url_absolute.push((ur, EditField::Url));
+        }
+        if tier == TopBarTier::Medium {
+            let send_rect = Rect {
+                x: url_x.saturating_add(url_width),
+                y: row_y,
+                width: SEND_BOX_WIDTH,
+                height: METHOD_URL_ROW_H,
+            };
+            send_button_rect = draw_send_box(frame, rp, send_rect, t);
+        }
     }
 
     // ── Zone 1: Request (tab strip + tab content). Method/URL now
@@ -2485,6 +2569,13 @@ fn draw_url_box(
             .bg(t.bg_dark)
             .add_modifier(Modifier::BOLD);
         let mut spans = vec![Span::styled(" ", Style::default().bg(t.bg_dark))];
+        // Collect var-click rects locally so we can clip any that
+        // spill past the URL box's right edge — build_var_spans
+        // walks character offsets and doesn't know the visible
+        // width. When URL text overflows the box (common on long
+        // paths), un-clipped rects land under neighbouring chips
+        // (Env / Send) and steal right-clicks. SEV-2 fix 2026-07-07.
+        let mut url_var_clicks: Vec<(Rect, String)> = Vec::new();
         spans.extend(build_var_spans(
             &url_text,
             envset,
@@ -2493,8 +2584,21 @@ fn draw_url_box(
             unresolved,
             inner.x + 1,
             inner.y,
-            Some(var_clicks),
+            Some(&mut url_var_clicks),
         ));
+        let url_right_edge = inner.x.saturating_add(inner.width);
+        for (mut r, name) in url_var_clicks {
+            // Drop rects entirely past the box; clip rects that
+            // straddle the edge.
+            if r.x >= url_right_edge {
+                continue;
+            }
+            let max_w = url_right_edge.saturating_sub(r.x);
+            if r.width > max_w {
+                r.width = max_w;
+            }
+            var_clicks.push((r, name));
+        }
         Line::from(spans)
     };
     frame.render_widget(
