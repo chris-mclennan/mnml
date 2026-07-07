@@ -615,6 +615,55 @@ impl App {
         self.toast(format!("env: created + switched to {name}"));
     }
 
+    /// #polish 2026-07-06 — per-collection `+` chip → open a new
+    /// in-memory Request pane whose `source_path` is pre-seeded to
+    /// the next unused `req-N.http` inside the given collection
+    /// folder. Ctrl+S writes it to disk without prompting; the user
+    /// can rename via Save-As if they want a real name.
+    pub fn http_new_request_in_collection(&mut self, collection: &std::path::Path) {
+        use crate::pane::Pane;
+        use crate::request_pane::{EditField, RequestPane, RunState, ViewMode};
+        let request = crate::http::Request {
+            method: "GET".to_string(),
+            url: String::new(),
+            headers: Vec::new(),
+            body: None,
+        };
+        // Pick the next unused req-N.http slot in the collection.
+        let mut n = 1usize;
+        let source = loop {
+            let candidate = collection.join(format!("req-{n}.http"));
+            if !candidate.exists() {
+                break candidate;
+            }
+            n += 1;
+            if n > 999 {
+                self.toast("collection: too many req-N.http files (999+)");
+                return;
+            }
+        };
+        let mut pane = RequestPane::new(
+            Some(source.clone()),
+            request,
+            crate::http::script::Script::default(),
+            0,
+        );
+        pane.view = ViewMode::Edit;
+        pane.focus = EditField::Url;
+        pane.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
+        self.panes.push(Pane::Request(pane));
+        let new_id = self.panes.len() - 1;
+        if self.active.is_some() {
+            self.reveal_pane(new_id);
+        } else {
+            *self.layout_mut() = crate::layout::Layout::leaf(new_id);
+            self.active = Some(new_id);
+        }
+        self.focus = crate::focus::Focus::Pane;
+        let rel = crate::app::rel_path(&self.workspace, &source);
+        self.toast(format!("new request → {rel} (Ctrl+S to save)"));
+    }
+
     /// `+ New chain` chip in the sidebar → prompt for a name.
     pub fn http_new_chain_prompt(&mut self) {
         self.prompt = Some(crate::prompt::Prompt::new(

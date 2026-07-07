@@ -3677,6 +3677,30 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_http_chain_picker(),
         },
         Command {
+            id: "http.refresh",
+            title: "HTTP: rescan collections / files / envs / captured log",
+            group: "http",
+            // Sidebar toolbar `↺` mirror. Cheap — walks the workspace
+            // tree once. 2026-07-06.
+            keys: &[],
+            run: |app| {
+                app.http_panel_refresh();
+                app.toast("HTTP panel refreshed");
+            },
+        },
+        Command {
+            id: "http.toggle_collapse_all",
+            title: "HTTP: collapse / expand all sidebar sections",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                let all_collapsed = app.http_panel_section_collapsed.iter().all(|c| *c);
+                for c in app.http_panel_section_collapsed.iter_mut() {
+                    *c = !all_collapsed;
+                }
+            },
+        },
+        Command {
             id: "http.new_env",
             title: "HTTP: create a new .env in .mnml/env/",
             group: "http",

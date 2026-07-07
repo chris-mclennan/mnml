@@ -1892,6 +1892,14 @@ pub struct PaneRects {
     /// #22 v2 — folder-row rects in the COLLECTIONS tree. Click
     /// toggles `http_panel_collections_collapsed_dirs`.
     pub http_panel_collection_folder_rows: Vec<(Rect, std::path::PathBuf)>,
+    /// #polish 2026-07-06 — right-aligned toolbar chips on the HTTP
+    /// panel header row (mirrors the file-tree pattern). Each
+    /// `(rect, command_id)` — click fires that command.
+    pub http_panel_icon_buttons: Vec<(Rect, &'static str)>,
+    /// #polish 2026-07-06 — `+` chip on each collection row for
+    /// "new request in THIS collection". Rect + collection root
+    /// path — click opens a Save-As prompt seeded to that folder.
+    pub http_panel_collection_new_request_chips: Vec<(Rect, std::path::PathBuf)>,
     /// `↓ Import…` bottom-action chip. Click → open the import
     /// picker (Postman collection / HAR).
     pub http_panel_import_chip: Option<Rect>,

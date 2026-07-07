@@ -62,19 +62,65 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_captured_clear_chip = None;
     app.rects.http_panel_recent_clear_chip = None;
     app.rects.http_panel_discover_chip = None;
+    app.rects.http_panel_icon_buttons.clear();
+    app.rects.http_panel_collection_new_request_chips.clear();
 
-    // Top header — matches the other activity panels' idiom.
+    // Top header — HTTP label on the left, toolbar chips on the
+    // right (mirrors the file-tree pattern). Order left→right:
+    // ↺ refresh · ↕ collapse/expand all.
+    let all_collapsed = app.http_panel_section_collapsed.iter().all(|c| *c);
+    let toolbar_chips: [(&str, &str, &str); 2] = [
+        ("\u{EB37}", "↺", "http.refresh"),
+        (
+            if all_collapsed {
+                "\u{F0AB4}"
+            } else {
+                "\u{EAC5}"
+            },
+            if all_collapsed { "↧" } else { "↕" },
+            "http.toggle_collapse_all",
+        ),
+    ];
+    const CHIP_W: usize = 3;
+    let width = area.width as usize;
+    let label = "HTTP";
+    let label_used = 1 + label.chars().count(); // leading space + "HTTP"
+    let chip_count = toolbar_chips.len();
+    let chips_used = chip_count * CHIP_W;
+    let pad = width.saturating_sub(label_used + chips_used);
+    let mut header_spans: Vec<Span<'static>> = Vec::new();
+    header_spans.push(Span::styled(" ", Style::default().bg(bg)));
+    header_spans.push(Span::styled(
+        label,
+        Style::default()
+            .fg(t.comment)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD),
+    ));
+    header_spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
+    let cluster_start_x = area.x + (label_used + pad) as u16;
+    for (i, (glyph_nerd, glyph_ascii, cmd_id)) in toolbar_chips.iter().enumerate() {
+        let glyph = if app.config.ui.ascii_icons {
+            *glyph_ascii
+        } else {
+            *glyph_nerd
+        };
+        header_spans.push(Span::styled(
+            format!(" {glyph} "),
+            Style::default().fg(t.cyan).bg(bg),
+        ));
+        app.rects.http_panel_icon_buttons.push((
+            Rect {
+                x: cluster_start_x + (i * CHIP_W) as u16,
+                y: area.y,
+                width: CHIP_W as u16,
+                height: 1,
+            },
+            *cmd_id,
+        ));
+    }
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                "HTTP",
-                Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ])),
+        Paragraph::new(Line::from(header_spans)),
         Rect {
             x: area.x,
             y: area.y,
@@ -108,11 +154,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut y = area.y + 2;
     let bottom = area.y + area.height;
 
-    // Section 1 — FILES (stragglers). #polish 2026-07-06 — only
-    // rendered when there are loose `.http` files that don't belong
-    // to any collection. On typical projects the section stays
-    // hidden and the sidebar starts with COLLECTIONS.
+    // #polish 2026-07-06 — sections reordered so the primary
+    // surface (COLLECTIONS) is at the top and runtime history
+    // (RECENT / CAPTURED) is at the bottom. Section indices in
+    // `http_panel_section_collapsed` are unchanged — this only
+    // affects render order.
+
+    // Section (idx=6) — COLLECTIONS. Primary surface.
+    let collections_len = app.http_panel_collection_roots.len();
+    y = draw_section_header(frame, app, y, area, bg, ascii, 6, collections_len);
+    if y >= bottom {
+        return;
+    }
+    if !app.http_panel_section_collapsed[6] {
+        y = draw_collections(frame, app, y, area, bg);
+        if y >= bottom {
+            return;
+        }
+    }
+    y += 1;
+
+    // Section (idx=0) — FILES (stragglers). Only rendered when
+    // there are loose `.http` files not in any collection.
     if files_len > 0 {
+        if y >= bottom {
+            return;
+        }
         y = draw_section_header(frame, app, y, area, bg, ascii, 0, files_len);
         if y >= bottom {
             return;
@@ -123,42 +190,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 return;
             }
         }
-        y += 1; // spacer
+        y += 1;
     }
 
-    // Section 2 — RECENT.
-    if y >= bottom {
-        return;
-    }
-    y = draw_section_header(frame, app, y, area, bg, ascii, 1, recent_len);
-    if y >= bottom {
-        return;
-    }
-    if !app.http_panel_section_collapsed[1] {
-        y = draw_recent(frame, app, y, area, bg);
-        if y >= bottom {
-            return;
-        }
-    }
-    y += 1;
-
-    // Section 3 — CAPTURED.
-    if y >= bottom {
-        return;
-    }
-    y = draw_section_header(frame, app, y, area, bg, ascii, 2, captured_len);
-    if y >= bottom {
-        return;
-    }
-    if !app.http_panel_section_collapsed[2] {
-        y = draw_captured(frame, app, y, area, bg);
-        if y >= bottom {
-            return;
-        }
-    }
-    y += 1;
-
-    // Section 4 — ENVS.
+    // Section (idx=3) — ENVS.
     if y >= bottom {
         return;
     }
@@ -174,7 +209,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     y += 1;
 
-    // Section 5 — CHAINS.
+    // Section (idx=4) — CHAINS.
     if y >= bottom {
         return;
     }
@@ -190,7 +225,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     y += 1;
 
-    // Section 6 — MOCKS.
+    // Section (idx=5) — MOCKS.
     if y >= bottom {
         return;
     }
@@ -206,19 +241,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     y += 1;
 
-    // Section 7 — COLLECTIONS. Count is the number of discovered
-    // collection roots (hidden + in-tree), not the number of files
-    // — matches what the user sees when they expand the section.
-    let collections_len = app.http_panel_collection_roots.len();
+    // Section (idx=1) — RECENT (runtime activity).
     if y >= bottom {
         return;
     }
-    y = draw_section_header(frame, app, y, area, bg, ascii, 6, collections_len);
+    y = draw_section_header(frame, app, y, area, bg, ascii, 1, recent_len);
     if y >= bottom {
         return;
     }
-    if !app.http_panel_section_collapsed[6] {
-        y = draw_collections(frame, app, y, area, bg);
+    if !app.http_panel_section_collapsed[1] {
+        y = draw_recent(frame, app, y, area, bg);
+        if y >= bottom {
+            return;
+        }
+    }
+    y += 1;
+
+    // Section (idx=2) — CAPTURED (runtime activity).
+    if y >= bottom {
+        return;
+    }
+    y = draw_section_header(frame, app, y, area, bg, ascii, 2, captured_len);
+    if y >= bottom {
+        return;
+    }
+    if !app.http_panel_section_collapsed[2] {
+        y = draw_captured(frame, app, y, area, bg);
         if y >= bottom {
             return;
         }
@@ -1006,22 +1054,44 @@ fn draw_collections(
             width: area.width,
             height: 1,
         };
+        // Reserve trailing 3 cells for the `+ new request` chip.
+        // Compute the visible width taken by the row content so we
+        // pad correctly. Everything before the chip:
+        //   "   " (3) + chev (2) + icon (2) + name (chars) + " (N)"
+        let used = 3 + 2 + 2 + name.chars().count() + format!(" ({count})").chars().count();
+        let chip_w: usize = 3;
+        let pad = (area.width as usize).saturating_sub(used + chip_w);
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("   ", Style::default().bg(bg)),
                 Span::styled(format!("{chev} "), Style::default().fg(t.comment).bg(bg)),
                 Span::styled(format!("{icon} "), Style::default().fg(icon_fg).bg(bg)),
                 Span::styled(
-                    name,
+                    name.clone(),
                     Style::default()
                         .fg(t.fg)
                         .bg(bg)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(format!(" ({count})"), Style::default().fg(t.comment).bg(bg)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                Span::styled(" + ", Style::default().fg(t.green).bg(bg)),
             ])),
             row_rect,
         );
+        // Registered rects: the ROW itself for click-to-collapse
+        // AND the `+` chip zone at the row's right edge. Order
+        // matters — mouse dispatch checks the chip vec first.
+        let chip_x = area.x + area.width.saturating_sub(chip_w as u16);
+        app.rects.http_panel_collection_new_request_chips.push((
+            Rect {
+                x: chip_x,
+                y,
+                width: chip_w as u16,
+                height: 1,
+            },
+            root.clone(),
+        ));
         app.rects
             .http_panel_collection_folder_rows
             .push((row_rect, root.clone()));

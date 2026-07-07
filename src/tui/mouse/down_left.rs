@@ -2115,6 +2115,31 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_path(&path);
         return;
     }
+    // #polish 2026-07-06 — per-collection `+` chip (new request in
+    // THIS collection). Checked BEFORE the row-wide collapse toggle
+    // so the chip cell wins over the row body.
+    if let Some((_, root)) = app
+        .rects
+        .http_panel_collection_new_request_chips
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        app.http_new_request_in_collection(&root);
+        return;
+    }
+    // #polish 2026-07-06 — HTTP panel header toolbar chips (↺ refresh,
+    // ↕ collapse-all). Runs the mapped command directly.
+    if let Some((_, cmd_id)) = app
+        .rects
+        .http_panel_icon_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .cloned()
+    {
+        let _ = crate::command::run(cmd_id, app);
+        return;
+    }
     // #22 v2 — Collections folder row → toggle expand/collapse.
     if let Some((_, dir)) = app
         .rects
