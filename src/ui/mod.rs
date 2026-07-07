@@ -1176,6 +1176,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // ── bufferline ──
+    // #polish 2026-07-06 — clear the md mode-chip rects BEFORE
+    // bufferline draws, so its own registrations survive. The
+    // general per-frame clear at ~L1284 used to run AFTER
+    // bufferline::draw, silently wiping the rects for the
+    // single-pane (top bufferline) case; only the per-leaf split
+    // strips (which paint later, in render_layout) refilled them.
+    // Bug user report 2026-07-06.
+    app.rects.md_preview_edit_buttons.clear();
+    app.rects.editor_md_preview_buttons.clear();
     if let Some(ba) = bufferline_area {
         bufferline::draw(frame, app, ba);
         app.rects.bufferline = Some(ba);
@@ -1281,8 +1290,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // `Minimized` = hidden (just the ♪ chip).
     app.rects.body = Some(body_area);
     app.rects.editor_panes.clear();
-    app.rects.md_preview_edit_buttons.clear();
-    app.rects.editor_md_preview_buttons.clear();
+    // (md preview / editor chip rects are cleared earlier — see the
+    // note above `bufferline::draw`.)
     app.rects.pane_bodies.clear();
     app.rects.editor_gutters.clear();
     app.rects.fold_chips.clear();
