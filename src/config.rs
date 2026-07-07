@@ -362,12 +362,41 @@ pub struct TaskDef {
 }
 
 /// `[http]` config table. api 2nd 2026-06-28 SEV-3d.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct HttpConfig {
     /// `[http] default_env = "staging"` — when unset, EnvSet::select
     /// falls through to `$MNML_ENV` and then `.rqst/config`. Empty
     /// strings ignored.
     pub default_env: Option<String>,
+    /// `[http] collection_root = ".mnml/collections"` (default) or
+    /// `"workspace"` — where `+ New collection` / `+ New request`
+    /// write. Discovery is universal (both hidden `.mnml/collections/`
+    /// and workspace-root folders with ≥2 http files are surfaced),
+    /// so this only picks the DEFAULT write location. 2026-07-06.
+    pub collection_root: HttpCollectionRoot,
+}
+
+/// Root for new HTTP collections + scratch requests. The default
+/// keeps scratches out of the code tree; users who prefer the
+/// Bruno-flavor (collections checked into git alongside code) set
+/// `collection_root = "workspace"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HttpCollectionRoot {
+    /// `.mnml/collections/` (hidden, per-user, gitignored). Default.
+    #[default]
+    Hidden,
+    /// The workspace root (Bruno-flavor — collections are folders
+    /// in your repo, git-tracked, shared with teammates).
+    Workspace,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        HttpConfig {
+            default_env: None,
+            collection_root: HttpCollectionRoot::Hidden,
+        }
+    }
 }
 
 /// `[ws]` config table (2026-07-03). Runtime knobs for
@@ -1550,6 +1579,10 @@ struct RawCi {
 #[derive(Debug, Default, Deserialize)]
 struct RawHttp {
     default_env: Option<String>,
+    /// `"hidden"` (or `".mnml/collections"`) → HttpCollectionRoot::Hidden.
+    /// `"workspace"` (or `"in_tree"`) → HttpCollectionRoot::Workspace.
+    /// Anything else → warn + default.
+    collection_root: Option<String>,
 }
 
 /// `[ws]` raw table (2026-07-03).
@@ -2170,6 +2203,23 @@ impl Config {
             if !trimmed.is_empty() {
                 self.http.default_env = Some(trimmed.to_string());
             }
+        }
+        if let Some(cr) = raw.http.collection_root {
+            let trimmed = cr.trim().to_ascii_lowercase();
+            self.http.collection_root = match trimmed.as_str() {
+                "workspace" | "in_tree" | "in-tree" | "bruno" => {
+                    crate::config::HttpCollectionRoot::Workspace
+                }
+                "hidden" | ".mnml/collections" | ".mnml" | "" => {
+                    crate::config::HttpCollectionRoot::Hidden
+                }
+                other => {
+                    eprintln!(
+                        "mnml: [http] collection_root = {other:?} not recognised — using \"hidden\" (\".mnml/collections\")"
+                    );
+                    crate::config::HttpCollectionRoot::Hidden
+                }
+            };
         }
         if let Some(ps) = raw.ws.subprotocols {
             self.ws.subprotocols = ps

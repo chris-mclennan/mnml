@@ -760,10 +760,10 @@ impl App {
     /// linewise — but we still gate on `http_panel_scanned_once` so
     /// they only run on activation, not every frame.
     pub fn http_panel_refresh(&mut self) {
-        let mut out = Vec::new();
-        walk_for_http(&self.workspace, 0, &mut out);
-        out.sort();
-        self.http_panel_files_cache = out;
+        // Walk the workspace tree for `.http` / `.curl` / `.rest` files.
+        let mut all_workspace_files = Vec::new();
+        walk_for_http(&self.workspace, 0, &mut all_workspace_files);
+        all_workspace_files.sort();
         // Recent + Captured share a ceiling of 20 rows — the sidebar
         // clips to 10 at display time, the home pane shows all 20.
         // Both loaders cap at load time so a multi-GB capture / a
@@ -841,17 +841,81 @@ impl App {
         mocks.sort();
         mocks.dedup();
         self.http_panel_mocks_cache = mocks;
-        // #22 — Collections cache. Walk `.mnml/collections/` for
-        // `.http` / `.curl` / `.rest` files; keep the full path
-        // so the renderer can print each as its relative path
-        // under `collections/`.
-        let mut collections = Vec::new();
-        let coll_root = self.workspace.join(".mnml").join("collections");
-        if coll_root.exists() {
-            walk_collections(&coll_root, &mut collections);
-            collections.sort();
+        // #polish 2026-07-06 — universal collection discovery. A
+        // "collection" is either:
+        //   (a) a subdir of `.mnml/collections/*` (Hidden — per-user)
+        //   (b) any workspace folder with ≥2 request files (InTree
+        //       — Bruno-flavor, git-tracked)
+        // Files not inside any collection root land in the FILES
+        // section as stragglers.
+        use crate::app::HttpCollectionKind;
+        let mut roots: Vec<(std::path::PathBuf, HttpCollectionKind)> = Vec::new();
+
+        // (a) Hidden collections — each direct subdir of
+        // `.mnml/collections/`. Empty subdirs still count as a
+        // collection (user just created it, no requests yet).
+        let hidden_root = self.workspace.join(".mnml").join("collections");
+        if let Ok(rd) = std::fs::read_dir(&hidden_root) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    roots.push((p, HttpCollectionKind::Hidden));
+                }
+            }
         }
-        self.http_panel_collections_cache = collections;
+
+        // (b) In-tree collections — group workspace files by parent
+        // dir; parents with ≥2 request files become collection roots.
+        // Skip the workspace root itself (that would eat every loose
+        // .http; the "workspace as one big collection" case isn't
+        // what the user wants).
+        let mut by_parent: std::collections::HashMap<std::path::PathBuf, usize> =
+            std::collections::HashMap::new();
+        for f in &all_workspace_files {
+            if let Some(parent) = f.parent()
+                && parent != self.workspace
+            {
+                *by_parent.entry(parent.to_path_buf()).or_insert(0) += 1;
+            }
+        }
+        for (parent, n) in by_parent {
+            if n >= 2 {
+                roots.push((parent, HttpCollectionKind::InTree));
+            }
+        }
+        roots.sort_by(|a, b| a.0.cmp(&b.0));
+        self.http_panel_collection_roots = roots;
+
+        // Partition all files into (in a collection) vs (straggler).
+        // A file belongs to a collection iff any collection root is
+        // its ancestor.
+        let is_in_collection = |p: &std::path::Path| -> bool {
+            self.http_panel_collection_roots
+                .iter()
+                .any(|(root, _)| p.starts_with(root))
+        };
+        let mut in_collection: Vec<std::path::PathBuf> = Vec::new();
+        let mut stragglers: Vec<std::path::PathBuf> = Vec::new();
+        for f in all_workspace_files {
+            if is_in_collection(&f) {
+                in_collection.push(f);
+            } else {
+                stragglers.push(f);
+            }
+        }
+        // Also pull hidden-collection files (they weren't in the
+        // workspace walk — walk_for_http skips hidden dirs).
+        for (root, kind) in &self.http_panel_collection_roots {
+            if *kind == HttpCollectionKind::Hidden {
+                let mut hidden_files = Vec::new();
+                walk_collections(root, &mut hidden_files);
+                in_collection.extend(hidden_files);
+            }
+        }
+        in_collection.sort();
+        in_collection.dedup();
+        self.http_panel_files_cache = stragglers;
+        self.http_panel_collections_cache = in_collection;
         self.http_panel_scanned_once = true;
     }
 

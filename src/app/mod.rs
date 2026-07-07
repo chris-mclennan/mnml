@@ -126,6 +126,18 @@ const DAP_LOG_MAX: usize = 500;
 /// ago, short enough that the picker isn't a wall of text."
 const RECENT_FILES_MAX: usize = 20;
 
+/// Kind of an HTTP collection root — where its files live.
+/// Discovery treats both as first-class collections; the icon in the
+/// sidebar (🗂 vs 📁) reflects the flavor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpCollectionKind {
+    /// Under `.mnml/collections/<name>/` — hidden per-user storage.
+    Hidden,
+    /// A workspace folder with ≥2 `.http`/`.curl`/`.rest` files.
+    /// Bruno-flavor: git-tracked, shared with teammates.
+    InTree,
+}
+
 /// Cap on `App::browser_url_history`. Higher than `recent_files` because
 /// URLs accumulate quickly (every navigation, every redirect) and the
 /// fuzzy picker handles long lists gracefully.
@@ -2913,11 +2925,19 @@ pub struct App {
     /// workspace. Bounded by the same walk that populates the
     /// FILES cache — cheap on typical projects.
     pub http_panel_mocks_cache: Vec<std::path::PathBuf>,
-    /// #22 — cached list of request files under `.mnml/collections/`.
-    /// The directory hierarchy is retained by keeping full paths;
-    /// the renderer prints each as its relative path under
-    /// `collections/` so folder structure shows through.
+    /// #22 — cached list of request files under any collection root.
+    /// A "collection" is either a subdir of `.mnml/collections/`
+    /// (Hidden — per-user, gitignored) or a workspace folder with
+    /// ≥2 `.http`/`.curl`/`.rest` files (InTree — Bruno-flavor,
+    /// git-tracked). Files not inside any collection root land in
+    /// `http_panel_files_cache` as stragglers.
     pub http_panel_collections_cache: Vec<std::path::PathBuf>,
+    /// #polish 2026-07-06 — per-collection metadata:
+    /// `(root_dir_absolute, kind)`. Populated in `http_panel_refresh`.
+    /// The renderer walks this list to paint each collection with
+    /// its icon (🗂 Hidden vs 📁 InTree) and to build the per-root
+    /// tree of files.
+    pub http_panel_collection_roots: Vec<(std::path::PathBuf, HttpCollectionKind)>,
     /// #22 v2 — set of collection folder paths (absolute) that
     /// are currently *collapsed* in the sidebar tree. Default
     /// state: everything expanded. Persists across activity-
@@ -4578,6 +4598,7 @@ impl App {
             http_panel_envs_cache: Vec::new(),
             http_panel_chains_cache: Vec::new(),
             http_panel_collections_cache: Vec::new(),
+            http_panel_collection_roots: Vec::new(),
             http_panel_collections_collapsed_dirs: std::collections::HashSet::new(),
             http_panel_mocks_cache: Vec::new(),
             http_panel_section_collapsed: [false; 7],

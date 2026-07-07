@@ -690,7 +690,16 @@ impl App {
             self.toast("collection: name can't be '.' or '..'");
             return;
         }
-        let dir = self.workspace.join(".mnml").join("collections").join(name);
+        // #polish 2026-07-06 — write location follows
+        // `[http] collection_root`. Default: `.mnml/collections/`
+        // (hidden per-user). Workspace mode drops the collection
+        // straight at the workspace root, Bruno-flavor.
+        let dir = match self.config.http.collection_root {
+            crate::config::HttpCollectionRoot::Hidden => {
+                self.workspace.join(".mnml").join("collections").join(name)
+            }
+            crate::config::HttpCollectionRoot::Workspace => self.workspace.join(name),
+        };
         if dir.exists() {
             self.toast(format!("collection: {name}/ already exists"));
             return;
