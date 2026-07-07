@@ -237,6 +237,77 @@ impl App {
     /// there are no extras — the context-menu item is hidden in that
     /// case, but we double-guard here so a stale command / rebind
     /// can't leave the app with nothing loaded.
+    /// #polish 2026-07-06 — right-click "Set as default workspace"
+    /// on the workspace-header rail row. Toggles the persisted
+    /// `[startup] default_workspace` in `~/.config/mnml/config.toml`:
+    /// - if not currently the default → set it
+    /// - if currently the default → clear it
+    ///
+    /// Writes via `crate::config::persist_default_workspace`, updates
+    /// the in-memory config, toasts the result.
+    pub fn toggle_default_workspace(&mut self) {
+        let current = self
+            .config
+            .default_workspace
+            .clone()
+            .and_then(|p| std::fs::canonicalize(&p).ok());
+        let self_canon = std::fs::canonicalize(&self.workspace).ok();
+        let already_default = current.is_some() && current == self_canon;
+        let new_value = if already_default {
+            None
+        } else {
+            Some(self.workspace.as_path())
+        };
+        match crate::config::persist_default_workspace(new_value) {
+            Ok(path) => {
+                self.config.default_workspace = new_value.map(|p| p.to_path_buf());
+                let ws_label = self
+                    .workspace
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("workspace");
+                if already_default {
+                    self.toast(format!("cleared default workspace → {}", path.display()));
+                } else {
+                    self.toast(format!("default workspace: {ws_label}"));
+                }
+            }
+            Err(e) => self.toast(format!("default workspace: {e}")),
+        }
+    }
+
+    /// Workspaces-editor kebab → "Set as default" / "Unset as
+    /// default". Persists to `~/.config/mnml/config.toml` and
+    /// updates the in-memory config.
+    pub fn workspaces_editor_toggle_default(&mut self, idx: usize) {
+        let Some(entry) = self.config.workspaces.get(idx).cloned() else {
+            return;
+        };
+        let entry_canon = std::fs::canonicalize(&entry.path).ok();
+        let default_canon = self
+            .config
+            .default_workspace
+            .as_deref()
+            .and_then(|p| std::fs::canonicalize(p).ok());
+        let already_default = entry_canon.is_some() && entry_canon == default_canon;
+        let new_value = if already_default {
+            None
+        } else {
+            Some(entry.path.as_path())
+        };
+        match crate::config::persist_default_workspace(new_value) {
+            Ok(_) => {
+                self.config.default_workspace = new_value.map(|p| p.to_path_buf());
+                if already_default {
+                    self.toast("default workspace cleared");
+                } else {
+                    self.toast(format!("default workspace: {}", entry.name));
+                }
+            }
+            Err(e) => self.toast(format!("default workspace: {e}")),
+        }
+    }
+
     pub fn remove_primary_workspace(&mut self) {
         if self.extra_workspaces.is_empty() {
             self.toast("can't remove: no other workspace to fall back on");
@@ -670,7 +741,22 @@ impl App {
             return;
         };
         let title = Some(w.name.clone());
+        // #polish 2026-07-06 — "Set / Unset default" label matches
+        // whether THIS entry's path is the persisted default.
+        let entry_canon = std::fs::canonicalize(&w.path).ok();
+        let default_canon = self
+            .config
+            .default_workspace
+            .as_deref()
+            .and_then(|p| std::fs::canonicalize(p).ok());
+        let is_default = entry_canon.is_some() && entry_canon == default_canon;
+        let set_default_label = if is_default {
+            "Unset as default"
+        } else {
+            "Set as default"
+        };
         let mut items = vec![
+            MenuItem::new(set_default_label, MenuAction::WorkspaceSetDefault(idx)),
             MenuItem::new("Edit name…", MenuAction::WorkspaceEditName(idx)),
             MenuItem::new("Edit path…", MenuAction::WorkspaceEditPath(idx)),
             MenuItem::new("Edit group…", MenuAction::WorkspaceEditGroup(idx)),
@@ -864,6 +950,57 @@ impl App {
             }
         }
 
+        // #polish 2026-07-06 — `.rqst/` support (legacy .rqst-style
+        // request stores). Classic layout:
+        //   .rqst/requests/<name>/*.curl — each <name> is a collection
+        //   .rqst/snippets/*.curl        — snippets is a collection
+        //   .rqst/lookups/*.curl         — lookups is a collection
+        // Skip the structural dirs (env / mocks / captured / ipc /
+        // config) that mnml handles separately.
+        let rqst_root = self.workspace.join(".rqst");
+        if rqst_root.exists() {
+            let has_request_file = |dir: &std::path::Path| -> bool {
+                std::fs::read_dir(dir)
+                    .map(|rd| {
+                        rd.flatten().any(|e| {
+                            let p = e.path();
+                            p.is_file()
+                                && matches!(
+                                    p.extension().and_then(|s| s.to_str()),
+                                    Some("http") | Some("curl") | Some("rest")
+                                )
+                        })
+                    })
+                    .unwrap_or(false)
+            };
+            let skip = ["env", "mocks", "captured", "ipc", "config"];
+            if let Ok(rd) = std::fs::read_dir(&rqst_root) {
+                for entry in rd.flatten() {
+                    let p = entry.path();
+                    if !p.is_dir() {
+                        continue;
+                    }
+                    let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    if skip.iter().any(|s| s == &name) {
+                        continue;
+                    }
+                    // Two shapes: either the dir itself has direct
+                    // request files (snippets, lookups), or its
+                    // children do (requests/<sub>/).
+                    if has_request_file(&p) {
+                        roots.push((p, HttpCollectionKind::Hidden));
+                    } else if let Ok(sub_rd) = std::fs::read_dir(&p) {
+                        for sub in sub_rd.flatten() {
+                            let sp = sub.path();
+                            if sp.is_dir() && has_request_file(&sp) {
+                                roots.push((sp, HttpCollectionKind::Hidden));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // (b) In-tree collections — group workspace files by parent
         // dir; parents with ≥2 request files become collection roots.
         // Skip the workspace root itself (that would eat every loose
@@ -904,7 +1041,8 @@ impl App {
             }
         }
         // Also pull hidden-collection files (they weren't in the
-        // workspace walk — walk_for_http skips hidden dirs).
+        // workspace walk — walk_for_http skips hidden dirs). Two
+        // sources now: .mnml/collections/*/ and .rqst/**/.
         for (root, kind) in &self.http_panel_collection_roots {
             if *kind == HttpCollectionKind::Hidden {
                 let mut hidden_files = Vec::new();

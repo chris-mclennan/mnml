@@ -39,6 +39,10 @@ pub enum MenuAction {
     /// drops the demoted old primary). No-op / hidden when there are no
     /// extras, since removing would leave the app with nothing loaded.
     RemovePrimaryWorkspace,
+    /// Toggle whether `App.workspace` is the persisted default
+    /// (`[startup] default_workspace` in the global config).
+    /// #polish 2026-07-06 — written to disk on click.
+    SetDefaultWorkspace,
     /// Open the integration-edit panel for the integration with the
     /// given id, pre-filled with that entry's glyph/color/tooltip.
     /// Surfaced by the integration-chip right-click menu so users
@@ -131,6 +135,9 @@ pub enum MenuAction {
     WorkspaceEditGroup(usize),
     /// Workspaces editor — remove the workspace at this index.
     WorkspaceDelete(usize),
+    /// #polish 2026-07-06 — Workspaces editor — toggle whether
+    /// this row's path is the persisted `[startup] default_workspace`.
+    WorkspaceSetDefault(usize),
     /// Workspaces editor — swap with the row above.
     WorkspaceMoveUp(usize),
     /// Workspaces editor — swap with the row below.

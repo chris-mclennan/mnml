@@ -119,6 +119,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         s
     };
+    // #polish 2026-07-06 — persisted default workspace, canonicalized
+    // for symlink-agnostic compare.
+    let default_canon: Option<std::path::PathBuf> = app
+        .config
+        .default_workspace
+        .as_deref()
+        .and_then(|p| std::fs::canonicalize(p).ok());
     for (i, w) in app.config.workspaces.iter().enumerate() {
         if y >= inner.y + inner.height {
             break;
@@ -126,8 +133,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let is_sel = i == sel;
         let bg = if is_sel { t.cyan } else { t.bg2 };
         let fg = if is_sel { t.bg } else { t.fg };
-        let is_open = loaded_paths
-            .contains(&std::fs::canonicalize(&w.path).unwrap_or_else(|_| w.path.clone()));
+        let entry_canon = std::fs::canonicalize(&w.path).unwrap_or_else(|_| w.path.clone());
+        let is_open = loaded_paths.contains(&entry_canon);
+        let is_default = default_canon.as_ref() == Some(&entry_canon);
         // `●` for open, `○` for available-but-not-loaded — same
         // visual language as the tree section headers so users
         // can tell at a glance which ones are currently mounted.
@@ -136,6 +144,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             t.bg
         } else if is_open {
             t.green
+        } else {
+            t.comment
+        };
+        // `★` between the dot and the name marks the persisted
+        // default. Empty space keeps the column alignment.
+        let star_glyph = if is_default { "★" } else { " " };
+        let star_fg = if is_sel {
+            t.bg
+        } else if is_default {
+            t.yellow
         } else {
             t.comment
         };
@@ -158,6 +176,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(dot_glyph, Style::default().fg(dot_fg).bg(bg)),
+            Span::styled(star_glyph, Style::default().fg(star_fg).bg(bg)),
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(name_padded, Style::default().fg(fg).bg(bg)),
             Span::styled("  ", Style::default().bg(bg)),

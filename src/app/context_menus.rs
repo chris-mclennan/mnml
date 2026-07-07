@@ -454,6 +454,21 @@ impl App {
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| "workspace".into());
+        // #polish 2026-07-06 — "Set as default" label reflects
+        // whether THIS workspace is already the persisted default
+        // (`[startup] default_workspace` in the global config).
+        let is_default = self
+            .config
+            .default_workspace
+            .as_deref()
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .as_deref()
+            == std::fs::canonicalize(&self.workspace).ok().as_deref();
+        let set_default_label = if is_default {
+            "Unset as default workspace"
+        } else {
+            "Set as default workspace"
+        };
         let mut items = vec![
             MenuItem::new(
                 "Toggle expand",
@@ -468,6 +483,7 @@ impl App {
                 "Manage workspaces…",
                 MenuAction::Command("view.manage_workspaces"),
             ),
+            MenuItem::new(set_default_label, MenuAction::SetDefaultWorkspace),
         ];
         // qa-feature 2026-07-01 — "Remove workspace" only when there's
         // at least one extra to fall back on. If we removed the sole
@@ -892,6 +908,9 @@ impl App {
             RemovePrimaryWorkspace => {
                 self.remove_primary_workspace();
             }
+            SetDefaultWorkspace => {
+                self.toggle_default_workspace();
+            }
             EditIntegration(id) => {
                 self.open_integration_edit_by_id(&id);
             }
@@ -1132,6 +1151,7 @@ impl App {
             WorkspaceEditPath(idx) => self.workspaces_editor_open_path(idx),
             WorkspaceEditGroup(idx) => self.workspaces_editor_open_group(idx),
             WorkspaceDelete(idx) => self.workspaces_editor_delete(idx),
+            WorkspaceSetDefault(idx) => self.workspaces_editor_toggle_default(idx),
             WorkspaceMoveUp(idx) => self.workspaces_editor_move_up(idx),
             WorkspaceMoveDown(idx) => self.workspaces_editor_move_down(idx),
             ExtraWorkspaceMoveUp(ws_idx) => self.move_extra_workspace(ws_idx, -1),
