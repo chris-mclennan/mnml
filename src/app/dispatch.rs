@@ -491,6 +491,25 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     }
     if let Some((idx, _)) = app
         .rects
+        .http_panel_icon_buttons
+        .iter()
+        .enumerate()
+        .find(|(_, (r, _))| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::HttpToolbarChip(idx));
+    }
+    if let Some(r) = app.rects.tree_up_row
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::TreeUpRow);
+    }
+    if let Some(r) = app.rects.request_edit_split_divider
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestEditSplitDivider);
+    }
+    if let Some((idx, _)) = app
+        .rects
         .request_var_click_rects
         .iter()
         .enumerate()

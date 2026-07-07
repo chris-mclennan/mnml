@@ -1042,7 +1042,12 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     "focus the `/` filter (matches / narrows across all sections)".to_string(),
                 ),
                 crate::app::HttpChipKind::Refresh => (
-                    format!("Refresh {section_name}"),
+                    // #polish 2026-07-07 (design-critic #2) — retitled
+                    // from "Refresh {section_name}" because clicking
+                    // fires `http.refresh` which rescans EVERY section
+                    // + toasts panel-wide. The old scope-implying title
+                    // was actively misleading.
+                    "Refresh HTTP panel".to_string(),
                     "re-scan collections / files / envs / captured log".to_string(),
                 ),
                 crate::app::HttpChipKind::Capture => (
@@ -1053,11 +1058,11 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 crate::app::HttpChipKind::Clear => match section {
                     1 => (
                         "Clear RECENT".to_string(),
-                        "truncate .rqst/history.jsonl".to_string(),
+                        "truncate the request history log".to_string(),
                     ),
                     2 => (
                         "Clear CAPTURED".to_string(),
-                        "truncate .rqst/captured/log.jsonl".to_string(),
+                        "truncate the captured-request log".to_string(),
                     ),
                     _ => (
                         "Clear filter".to_string(),
@@ -1065,6 +1070,10 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     ),
                 },
                 crate::app::HttpChipKind::New => match section {
+                    3 => (
+                        "New env…".to_string(),
+                        "prompt for a name and create an empty env file".to_string(),
+                    ),
                     6 => (
                         "New collection…".to_string(),
                         "prompt for a name and create an empty collection".to_string(),
@@ -1073,6 +1082,35 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 },
             };
             Some((rect, line, Some(sub)))
+        }
+        HoverChip::TreeUpRow => {
+            let rect = app.rects.tree_up_row?;
+            let parent = app
+                .workspace
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "/".to_string());
+            Some((
+                rect,
+                "Open parent as workspace".into(),
+                Some(format!("click: {parent}")),
+            ))
+        }
+        HoverChip::HttpToolbarChip(idx) => {
+            let (rect, cmd_id) = *app.rects.http_panel_icon_buttons.get(idx)?;
+            let title = crate::command::registry()
+                .get(cmd_id)
+                .map(|c| c.title.to_string())
+                .unwrap_or_else(|| cmd_id.to_string());
+            Some((rect, title, None))
+        }
+        HoverChip::RequestEditSplitDivider => {
+            let rect = app.rects.request_edit_split_divider?;
+            Some((
+                rect,
+                "click: cycle split ratio (30% / 50% / 70%)".into(),
+                Some("live drag-resize is a v2 follow-up".into()),
+            ))
         }
         HoverChip::RequestEditSplitChip => {
             let rect = app.rects.request_edit_split_chip?;

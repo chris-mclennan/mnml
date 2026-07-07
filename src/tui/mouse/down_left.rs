@@ -2092,6 +2092,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 }
             },
             HttpChipKind::New => match section {
+                3 => {
+                    crate::command::run("http.new_env", app);
+                }
                 6 => {
                     crate::command::run("http.new_collection", app);
                 }

@@ -309,7 +309,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     if !app.http_panel_section_collapsed[2] {
-        y = draw_captured(frame, app, y, area, bg);
+        y = draw_captured(frame, app, y, area, bg, ascii);
         if y >= bottom {
             return;
         }
@@ -467,10 +467,15 @@ fn draw_section_header(
     //   RECENT       (1) — filter + refresh + clear-log
     //   CAPTURED     (2) — filter + refresh + capture + clear-log
     let has_capture_chip = section == 2;
-    let has_new_chip = section == 6;
+    // `+ new` chip on any create-capable section — COLLECTIONS (6)
+    // gets it as of 7637a67; ENVS (3) gets it in this polish pass so
+    // all create-capable sections converge on the header-chip pattern
+    // (2026-07-07 design-critic finding #1). CHAINS (4) stays filter-
+    // only per earlier user ask.
+    let has_new_chip = matches!(section, 3 | 6);
     let has_clear_chip = matches!(section, 1 | 2 | 5 | 6);
     let has_refresh_chip = matches!(section, 1 | 2 | 5 | 6);
-    let has_filter_chip = matches!(section, 1 | 2 | 4 | 5 | 6);
+    let has_filter_chip = matches!(section, 1..=6);
     if has_capture_chip || has_clear_chip || has_refresh_chip || has_filter_chip || has_new_chip {
         // Base "used" width: leading pad + chevron + optional glyph
         // prefix + label + count.
@@ -630,9 +635,20 @@ fn draw_section_header(
                 }
             }
             if has_clear_chip {
+                // #polish 2026-07-07 (design-critic #4) — red ✕
+                // reserved for the two sections where "clear" is
+                // genuinely destructive (truncate the .jsonl log).
+                // MOCKS / COLLECTIONS wire ✕ to a safe "clear the
+                // panel filter" fallback; painting it in cyan (same
+                // as filter/refresh) removes the false "danger"
+                // signal red carries elsewhere in the app.
+                let clear_fg = match section {
+                    1 | 2 => t.red,
+                    _ => t.cyan,
+                };
                 spans.push(Span::styled(
                     format!(" {clear_text} "),
-                    Style::default().fg(t.red).bg(bg),
+                    Style::default().fg(clear_fg).bg(bg),
                 ));
                 let chip_rect = Rect {
                     x: area.x + chip_x,
@@ -855,17 +871,25 @@ fn draw_captured(
     mut y: u16,
     area: Rect,
     bg: ratatui::style::Color,
+    ascii: bool,
 ) -> u16 {
     let t = theme::cur();
     let bottom = area.y + area.height;
     let captured = app.http_panel_captured_cache.clone();
     if captured.is_empty() {
         if y < bottom {
+            // #polish 2026-07-07 (design-critic #9) — mirror the
+            // chip-glyph degrade: ascii mode shows the same letter
+            // (`c`) the CAPTURED chip renders, so users on a font
+            // without codicon glyphs aren't told to click a tofu.
+            let capture_hint = if ascii { "c" } else { "\u{EB01}" };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
                     Span::styled(
-                        "Nothing captured yet — click \u{EB01} capture on this row to dump entries from the browser pane.",
+                        format!(
+                            "Nothing captured yet — click {capture_hint} capture on this row to dump entries from the browser pane."
+                        ),
                         Style::default().fg(t.comment).bg(bg),
                     ),
                 ])),
@@ -1390,29 +1414,11 @@ fn draw_collections(
             emitted += 1;
         }
     }
-    if y < bottom {
-        let new_rect = Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled(
-                    "+ New collection",
-                    Style::default()
-                        .fg(t.green)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])),
-            new_rect,
-        );
-        app.rects.http_panel_collection_new_chip = Some(new_rect);
-        y += 1;
-    }
+    // #polish 2026-07-07 — bottom "+ New collection" row removed;
+    // the header `+` chip now hosts the same action for populated
+    // COLLECTIONS. The empty-state branch above still paints its own
+    // hint row with a `+ New collection` fallback so users landing on
+    // an empty section still see the affordance.
     y
 }
 
