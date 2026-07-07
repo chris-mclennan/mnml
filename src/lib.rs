@@ -407,6 +407,12 @@ pub enum HoverChip {
     /// The `[⇔]` chip that opens a side-by-side edit split
     /// (Body|Vars etc.). Tooltip explains what click does.
     RequestEditSplitChip,
+    /// Hover on one of the section-toolbar chips (filter / refresh /
+    /// capture / clear) on the HTTP activity-bar panel — RECENT /
+    /// CAPTURED / MOCKS / COLLECTIONS / CHAINS all render some
+    /// subset of these. `usize` indexes `PaneRects.http_panel_section_chips`.
+    /// 2026-07-07.
+    HttpSectionChip(usize),
     /// Hover over a `{{VAR}}` token in a Request pane's URL / body /
     /// value cell. Tooltip shows the resolved value (or "undefined"
     /// when the env doesn't have this key), plus a hint that clicking

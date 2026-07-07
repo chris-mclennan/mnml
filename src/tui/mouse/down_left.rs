@@ -699,10 +699,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
-    // Click on a `{{VAR}}` token in a Request pane's URL / body →
-    // jump to the var's definition in the active env file. Runs
-    // BEFORE the tab / field click routes so a click on a var
-    // token inside the URL box doesn't first refocus the URL field.
+    // Click on a `{{VAR}}` token in a Request pane's URL / body.
+    // Resolved var (defined in active env) → jump to the env-file
+    // definition line so the user can inspect/edit the value.
+    // Unresolved var (red) → open the env-value edit prompt
+    // directly, so defining a missing var is one click instead of
+    // right-click → Set value…. Dynamic `$foo` vars keep the
+    // jump-to-def behavior (they resolve to built-ins; there's no
+    // env file to prompt for). #polish 2026-07-07.
     if let Some((_, name)) = app
         .rects
         .request_var_click_rects
@@ -710,7 +714,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
         let name = name.clone();
-        app.open_env_var_definition(&name);
+        let envset =
+            crate::http::template::EnvSet::select(&app.workspace, app.http_env_override.as_deref());
+        let resolved = match name.strip_prefix('$') {
+            Some(dyn_name) => crate::http::template::dynamic_var(dyn_name).is_some(),
+            None => envset.lookup(&name).is_some(),
+        };
+        if resolved || name.starts_with('$') {
+            app.open_env_var_definition(&name);
+        } else {
+            app.accept_env_vars(&name);
+        }
         return;
     }
     // Click on a Request pane Edit-view tab chip (Body /
@@ -2076,6 +2090,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                     app.http_panel_filter.clear();
                     app.http_panel_filter_focused = false;
                 }
+            },
+            HttpChipKind::New => match section {
+                6 => {
+                    crate::command::run("http.new_collection", app);
+                }
+                _ => app.toast("no `new` action for this section"),
             },
         }
         return;

@@ -1026,6 +1026,54 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, head, Some(sub)))
         }
+        HoverChip::HttpSectionChip(idx) => {
+            let (rect, section, kind) = *app.rects.http_panel_section_chips.get(idx)?;
+            let section_name = match section {
+                1 => "RECENT",
+                2 => "CAPTURED",
+                4 => "CHAINS",
+                5 => "MOCKS",
+                6 => "COLLECTIONS",
+                _ => "section",
+            };
+            let (line, sub) = match kind {
+                crate::app::HttpChipKind::Filter => (
+                    format!("Filter {section_name}"),
+                    "focus the `/` filter (matches / narrows across all sections)".to_string(),
+                ),
+                crate::app::HttpChipKind::Refresh => (
+                    format!("Refresh {section_name}"),
+                    "re-scan collections / files / envs / captured log".to_string(),
+                ),
+                crate::app::HttpChipKind::Capture => (
+                    "Start capturing".to_string(),
+                    "open a browser pane (or dump the current log if one is already open)"
+                        .to_string(),
+                ),
+                crate::app::HttpChipKind::Clear => match section {
+                    1 => (
+                        "Clear RECENT".to_string(),
+                        "truncate .rqst/history.jsonl".to_string(),
+                    ),
+                    2 => (
+                        "Clear CAPTURED".to_string(),
+                        "truncate .rqst/captured/log.jsonl".to_string(),
+                    ),
+                    _ => (
+                        "Clear filter".to_string(),
+                        format!("reset the / filter on {section_name}"),
+                    ),
+                },
+                crate::app::HttpChipKind::New => match section {
+                    6 => (
+                        "New collection…".to_string(),
+                        "prompt for a name and create an empty collection".to_string(),
+                    ),
+                    _ => (format!("New {section_name} item"), String::new()),
+                },
+            };
+            Some((rect, line, Some(sub)))
+        }
         HoverChip::RequestEditSplitChip => {
             let rect = app.rects.request_edit_split_chip?;
             let open = matches!(

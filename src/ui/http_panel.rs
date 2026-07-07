@@ -455,22 +455,23 @@ fn draw_section_header(
     //             panel-wide HTTP header toolbar)
     //   capture → EB01 codicon browser
     //   clear   → EA76 codicon close
-    let (filter_icon, refresh_icon, capture_icon, clear_icon) = if ascii {
-        ("/", "r", "c", "x")
+    let (filter_icon, refresh_icon, capture_icon, clear_icon, new_icon) = if ascii {
+        ("/", "r", "c", "x", "+")
     } else {
-        ("\u{EB83}", "\u{EB37}", "\u{EB01}", "\u{EA76}")
+        ("\u{EB83}", "\u{EB37}", "\u{EB01}", "\u{EA76}", "\u{EA60}")
     };
     // Per-section chip layout (2026-07-07 user request):
-    //   CHAINS       (4) — just filter
-    //   MOCKS        (5) — filter + refresh + clear
-    //   COLLECTIONS  (6) — filter + refresh + clear
-    //   RECENT       (1) — filter + refresh + clear
-    //   CAPTURED     (2) — filter + refresh + capture + clear
+    //   CHAINS       (4) — filter
+    //   MOCKS        (5) — filter + refresh + clear-filter
+    //   COLLECTIONS  (6) — filter + refresh + clear-filter + new
+    //   RECENT       (1) — filter + refresh + clear-log
+    //   CAPTURED     (2) — filter + refresh + capture + clear-log
     let has_capture_chip = section == 2;
+    let has_new_chip = section == 6;
     let has_clear_chip = matches!(section, 1 | 2 | 5 | 6);
     let has_refresh_chip = matches!(section, 1 | 2 | 5 | 6);
     let has_filter_chip = matches!(section, 1 | 2 | 4 | 5 | 6);
-    if has_capture_chip || has_clear_chip || has_refresh_chip || has_filter_chip {
+    if has_capture_chip || has_clear_chip || has_refresh_chip || has_filter_chip || has_new_chip {
         // Base "used" width: leading pad + chevron + optional glyph
         // prefix + label + count.
         let used = 1
@@ -486,6 +487,7 @@ fn draw_section_header(
             has_refresh_chip,
             has_capture_chip,
             has_clear_chip,
+            has_new_chip,
         ]
         .iter()
         .filter(|b| **b)
@@ -509,15 +511,25 @@ fn draw_section_header(
                 chip_len(clear_icon)
             } else {
                 0
-            } + gap_count
+            } + if has_new_chip { chip_len(new_icon) } else { 0 }
+                + gap_count
                 + 2;
-        let (filter_text, refresh_text, capture_text, clear_text) = if need < area_w {
-            (filter_icon, refresh_icon, capture_icon, clear_icon)
+        let (filter_text, refresh_text, capture_text, clear_text, new_text) = if need < area_w {
+            (
+                filter_icon,
+                refresh_icon,
+                capture_icon,
+                clear_icon,
+                new_icon,
+            )
         } else {
-            // Even icons don't fit — bail without painting.
-            ("", "", "", "")
+            ("", "", "", "", "")
         };
-        if !refresh_text.is_empty() || !capture_text.is_empty() || !clear_text.is_empty() {
+        if !refresh_text.is_empty()
+            || !capture_text.is_empty()
+            || !clear_text.is_empty()
+            || !new_text.is_empty()
+        {
             let ref_len = if has_refresh_chip {
                 chip_len(refresh_text)
             } else {
@@ -538,12 +550,14 @@ fn draw_section_header(
             } else {
                 0
             };
+            let new_len = if has_new_chip { chip_len(new_text) } else { 0 };
             let pad = area_w
                 .saturating_sub(used)
                 .saturating_sub(filt_len)
                 .saturating_sub(ref_len)
                 .saturating_sub(cap_len)
                 .saturating_sub(clr_len)
+                .saturating_sub(new_len)
                 .saturating_sub(gap_count)
                 .saturating_sub(1);
             spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
@@ -635,6 +649,28 @@ fn draw_section_header(
                     chip_rect,
                     section,
                     crate::app::HttpChipKind::Clear,
+                ));
+                chip_x += clr_len as u16;
+                if has_new_chip {
+                    spans.push(Span::styled(" ", Style::default().bg(bg)));
+                    chip_x += 1;
+                }
+            }
+            if has_new_chip {
+                spans.push(Span::styled(
+                    format!(" {new_text} "),
+                    Style::default().fg(t.green).bg(bg),
+                ));
+                let chip_rect = Rect {
+                    x: area.x + chip_x,
+                    y,
+                    width: (new_len as u16).min(area.width.saturating_sub(chip_x)),
+                    height: 1,
+                };
+                app.rects.http_panel_section_chips.push((
+                    chip_rect,
+                    section,
+                    crate::app::HttpChipKind::New,
                 ));
             }
         }

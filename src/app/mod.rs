@@ -155,6 +155,9 @@ pub enum HttpChipKind {
     /// on RECENT / CAPTURED; clear the filter on MOCKS / COLLECTIONS
     /// so a stray click doesn't blow away user assets).
     Clear,
+    /// `+` new — section-specific "create empty …" action. Currently
+    /// only COLLECTIONS: runs `http.new_collection`. 2026-07-07.
+    New,
 }
 
 /// Cap on `App::browser_url_history`. Higher than `recent_files` because
