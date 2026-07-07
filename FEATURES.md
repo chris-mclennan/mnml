@@ -194,6 +194,32 @@ The complete, organised feature inventory. For the front-door overview see
   body), re-send, copy-as-curl, and write-back to the source file. The Edit
   view is **tabbed** — Body / Headers / Params / Vars / Source — with
   `Ctrl+]` / `Ctrl+[` cycling and `Ctrl+1..5` for direct jumps.
+- **Side-by-side edit split** — the `[⇔]` chip on the Request block's border
+  row opens a two-pane view of the edit area. Left = current primary tab,
+  right = a secondary tab you pick (any of Body / Params / Headers / Auth /
+  Vars / Source). Both sides operate on the same underlying request, so
+  edits in one are visible in the other. Right side has its own clickable
+  tab strip so any combination works (Body|Vars, Params|Body, Auth|Headers).
+  Click the 1-cell divider to cycle the ratio 30 / 50 / 70. Palette command
+  `http.toggle_edit_split`.
+- **`{{VAR}}` highlighting + click-to-def + hover** — variable tokens across
+  the URL, Body (JSON + plain), Params values, and Headers values render
+  cyan-bold when resolved, red-bold when the active env is missing them.
+  Left-click a token jumps to its definition line in
+  `.mnml/env/<active>.env` (falls back to `.rqst/env/<active>.env`; opens
+  at end-of-file when undefined so you can append). Right-click opens a
+  quick-fix menu: "Set value…" seeds the env-edit prompt (accept upserts
+  into the active env file), "Jump to definition", "Copy variable name".
+  Hover shows the resolved value or "not defined in active env" so you can
+  scan a request for missing envs at a glance. Dynamic vars like
+  `{{$uuid}}` / `{{$timestamp}}` render as resolved but skip the Set-value
+  menu since they're built-ins.
+- **HTTP activity-bar panel with `/` filter** — the seven-section HTTP
+  sidebar (COLLECTIONS / FILES / ENVS / CHAINS / MOCKS / RECENT / CAPTURED)
+  gains a `/`-focus filter row at the top, matching the Agents / Cloud
+  Agents idiom. Typing narrows across every section; for COLLECTIONS a
+  matching request-name keeps its collection visible and force-expands the
+  chevron so hits show without an extra click.
 - **Blank request scratch** — `:http.new` (or the green `+` chip in the
   INTEGRATIONS rail) opens an empty Request pane in Edit mode, no file
   backing. Postman-style entry point.
@@ -283,6 +309,20 @@ The complete, organised feature inventory. For the front-door overview see
 
 - **NvChad-style chrome** — file-tree rail, bufferline, powerline statusline,
   cmdline bar, which-key, indent guides, sticky scope context.
+- **Local file actions** — `file.cut` / `file.copy` / `file.paste` /
+  `file.duplicate` / `file.move_to` cover the standard file-manager surface
+  from tree focus (Ctrl+X / C / V / D chords, plus the right-click menu).
+  Cut+Paste renames (move, clipboard clears); Copy+Paste duplicates (recursive
+  for directories, symlinks preserved on Unix; clipboard sticks so the same
+  set can paste elsewhere); same-dir Copy bumps to `-copy` / `-copy-N` instead
+  of clobbering. Move-to opens a path prompt with autocomplete and `~`
+  expansion. Tree drag-and-drop works too — plain drag prompts "Move to X?"
+  before renaming, and `Alt`-drag copies immediately without a confirmation
+  (Finder / VS Code convention).
+- **`..` tree up-navigation** — a `..` row at the top of the tree (hidden at
+  filesystem root) climbs the workspace root up one level via
+  `set_workspace_to`, so tree / repos / git / integrations / palette-bar
+  workspace chip all follow. Palette command `view.workspace_up`.
 - **Optional right side panel** — a collapsible panel on the right edge; toggle
   with `Ctrl+Shift+B` or click the EC00 icon in the palette bar, or `:set
   rightpanel` (idempotent enable) / `:set rightpanel!` (toggle) / `:set
