@@ -246,28 +246,31 @@ impl App {
     /// Writes via `crate::config::persist_default_workspace`, updates
     /// the in-memory config, toasts the result.
     pub fn toggle_default_workspace(&mut self) {
+        let ws = self.workspace.clone();
+        self.toggle_default_workspace_for(&ws);
+    }
+
+    /// Same as `toggle_default_workspace` but targeting an
+    /// arbitrary path (used by the extra-workspace right-click and
+    /// the Manage-workspaces kebab).
+    pub fn toggle_default_workspace_for(&mut self, target: &std::path::Path) {
         let current = self
             .config
             .default_workspace
             .clone()
             .and_then(|p| std::fs::canonicalize(&p).ok());
-        let self_canon = std::fs::canonicalize(&self.workspace).ok();
-        let already_default = current.is_some() && current == self_canon;
-        let new_value = if already_default {
-            None
-        } else {
-            Some(self.workspace.as_path())
-        };
+        let target_canon = std::fs::canonicalize(target).ok();
+        let already_default = current.is_some() && current == target_canon;
+        let new_value = if already_default { None } else { Some(target) };
         match crate::config::persist_default_workspace(new_value) {
-            Ok(path) => {
+            Ok(_) => {
                 self.config.default_workspace = new_value.map(|p| p.to_path_buf());
-                let ws_label = self
-                    .workspace
+                let ws_label = target
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("workspace");
                 if already_default {
-                    self.toast(format!("cleared default workspace → {}", path.display()));
+                    self.toast("default workspace cleared");
                 } else {
                     self.toast(format!("default workspace: {ws_label}"));
                 }
@@ -283,29 +286,7 @@ impl App {
         let Some(entry) = self.config.workspaces.get(idx).cloned() else {
             return;
         };
-        let entry_canon = std::fs::canonicalize(&entry.path).ok();
-        let default_canon = self
-            .config
-            .default_workspace
-            .as_deref()
-            .and_then(|p| std::fs::canonicalize(p).ok());
-        let already_default = entry_canon.is_some() && entry_canon == default_canon;
-        let new_value = if already_default {
-            None
-        } else {
-            Some(entry.path.as_path())
-        };
-        match crate::config::persist_default_workspace(new_value) {
-            Ok(_) => {
-                self.config.default_workspace = new_value.map(|p| p.to_path_buf());
-                if already_default {
-                    self.toast("default workspace cleared");
-                } else {
-                    self.toast(format!("default workspace: {}", entry.name));
-                }
-            }
-            Err(e) => self.toast(format!("default workspace: {e}")),
-        }
+        self.toggle_default_workspace_for(&entry.path);
     }
 
     pub fn remove_primary_workspace(&mut self) {

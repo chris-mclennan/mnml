@@ -43,6 +43,9 @@ pub enum MenuAction {
     /// (`[startup] default_workspace` in the global config).
     /// #polish 2026-07-06 — written to disk on click.
     SetDefaultWorkspace,
+    /// Same as `SetDefaultWorkspace` but for an extra workspace row
+    /// — carries the target path so we don't rely on `App.workspace`.
+    SetDefaultWorkspaceAt(PathBuf),
     /// Open the integration-edit panel for the integration with the
     /// given id, pre-filled with that entry's glyph/color/tooltip.
     /// Surfaced by the integration-chip right-click menu so users

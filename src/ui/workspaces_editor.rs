@@ -70,18 +70,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let path_padded_hdr = format!("{:<width$}", "Path", width = max_path);
     let hdr_style = Style::default()
         .fg(t.comment)
-        .bg(t.bg2)
+        .bg(t.bg_dark)
         .add_modifier(Modifier::BOLD);
     let header = Line::from(vec![
-        Span::styled("   ", Style::default().bg(t.bg2)),
+        Span::styled("   ", Style::default().bg(t.bg_dark)),
         Span::styled(name_padded_hdr, hdr_style),
-        Span::styled("  ", Style::default().bg(t.bg2)),
+        Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled(path_padded_hdr, hdr_style),
-        Span::styled("  ", Style::default().bg(t.bg2)),
+        Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled("Group", hdr_style),
     ]);
     frame.render_widget(
-        Paragraph::new(header).style(Style::default().bg(t.bg2)),
+        Paragraph::new(header).style(Style::default().bg(t.bg_dark)),
         Rect {
             x: inner.x,
             y,
@@ -94,7 +94,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if y < inner.y + inner.height {
         let sep = Line::from(Span::styled(
             "─".repeat(inner.width as usize),
-            Style::default().fg(t.line).bg(t.bg2),
+            Style::default().fg(t.line).bg(t.bg_dark),
         ));
         frame.render_widget(
             Paragraph::new(sep),
@@ -131,7 +131,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             break;
         }
         let is_sel = i == sel;
-        let bg = if is_sel { t.cyan } else { t.bg2 };
+        let bg = if is_sel { t.cyan } else { t.bg_dark };
         let fg = if is_sel { t.bg } else { t.fg };
         let entry_canon = std::fs::canonicalize(&w.path).unwrap_or_else(|_| w.path.clone());
         let is_open = loaded_paths.contains(&entry_canon);
@@ -195,10 +195,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                     .add_modifier(Modifier::BOLD),
             ),
         ]);
+        // #polish 2026-07-06 — row rect spans the FULL inner width
+        // (was `inner.width - 3`) so the row's background bleeds all
+        // the way to the modal edge. The old width left a 2-3 cell
+        // strip painted in the modal's own bg, creating a visible
+        // seam next to each row. The kebab paints on top of the
+        // row-width rect at its own coords.
         let row_rect = Rect {
             x: inner.x,
             y,
-            width: inner.width.saturating_sub(3),
+            width: inner.width,
             height: 1,
         };
         // Paragraph style sets the bg of untouched cells — without
@@ -231,7 +237,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // `+ Add workspace…` action row.
     if y < inner.y + inner.height {
         let is_sel = sel == app.config.workspaces.len();
-        let bg = if is_sel { t.cyan } else { t.bg2 };
+        let bg = if is_sel { t.cyan } else { t.bg_dark };
         let fg = if is_sel { t.bg } else { t.green };
         let line = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
@@ -258,7 +264,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if y < inner.y + inner.height {
         let footer = Line::from(vec![Span::styled(
             "  ↑↓ select · Shift+↑↓ reorder · Enter edit · n new · d delete · Esc close",
-            Style::default().fg(t.comment).bg(t.bg2),
+            Style::default().fg(t.comment).bg(t.bg_dark),
         )]);
         frame.render_widget(
             Paragraph::new(footer),

@@ -528,8 +528,23 @@ impl App {
         if let Some(p) = path.clone() {
             items.push(MenuItem::new(
                 "Set as workspace",
-                MenuAction::SetAsWorkspace(p),
+                MenuAction::SetAsWorkspace(p.clone()),
             ));
+            // #polish 2026-07-06 — persist as `[startup] default_workspace`
+            // in the global config so mnml opens here next launch.
+            let default_canon = self
+                .config
+                .default_workspace
+                .as_deref()
+                .and_then(|p| std::fs::canonicalize(p).ok());
+            let this_canon = std::fs::canonicalize(&p).ok();
+            let is_default = this_canon.is_some() && this_canon == default_canon;
+            let label = if is_default {
+                "Unset as default workspace"
+            } else {
+                "Set as default workspace"
+            };
+            items.push(MenuItem::new(label, MenuAction::SetDefaultWorkspaceAt(p)));
         }
         items.push(MenuItem::new(
             "Expand this section",
@@ -910,6 +925,9 @@ impl App {
             }
             SetDefaultWorkspace => {
                 self.toggle_default_workspace();
+            }
+            SetDefaultWorkspaceAt(p) => {
+                self.toggle_default_workspace_for(&p);
             }
             EditIntegration(id) => {
                 self.open_integration_edit_by_id(&id);
