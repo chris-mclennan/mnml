@@ -697,6 +697,20 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // Click on a `{{VAR}}` token in a Request pane's URL / body →
+    // jump to the var's definition in the active env file. Runs
+    // BEFORE the tab / field click routes so a click on a var
+    // token inside the URL box doesn't first refocus the URL field.
+    if let Some((_, name)) = app
+        .rects
+        .request_var_click_rects
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let name = name.clone();
+        app.open_env_var_definition(&name);
+        return;
+    }
     // Click on a Request pane Edit-view tab chip (Body /
     // Headers / Params / Vars / Source) → switch the
     // pane's edit_tab.

@@ -176,6 +176,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.request_edit_tabs_split.clear();
     app.rects.request_edit_split_chip = None;
     app.rects.request_edit_split_divider = None;
+    app.rects.request_var_click_rects.clear();
     app.rects.tree_up_row = None;
     app.rects.extra_workspace_bodies.clear();
     app.rects.extra_workspace_toggles.clear();

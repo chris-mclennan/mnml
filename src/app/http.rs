@@ -3797,6 +3797,70 @@ impl App {
         }
     }
 
+    /// Click on a `{{VAR}}` token in a Request pane → open the active
+    /// env file at the line where `<name>=…` lives. Falls back to
+    /// opening the env file at end-of-file (so the user can add the
+    /// var) when the name isn't defined yet. `.mnml/env/<n>.env`
+    /// wins over `.rqst/env/<n>.env` when both exist. 2026-07-07.
+    pub fn open_env_var_definition(&mut self, name: &str) {
+        let envset = crate::http::template::EnvSet::select(
+            &self.workspace,
+            self.http_env_override.as_deref(),
+        );
+        let env_name = match envset.name() {
+            Some(n) => n.to_string(),
+            None => {
+                self.toast(format!(
+                    "no active env — set MNML_ENV or click env chip to define {name}"
+                ));
+                return;
+            }
+        };
+        let candidates = [
+            self.workspace
+                .join(".mnml")
+                .join("env")
+                .join(format!("{env_name}.env")),
+            self.workspace
+                .join(".rqst")
+                .join("env")
+                .join(format!("{env_name}.env")),
+        ];
+        let Some(env_file) = candidates.iter().find(|p| p.exists()).cloned() else {
+            self.toast(format!(
+                "env file {env_name}.env not found in .mnml/env or .rqst/env"
+            ));
+            return;
+        };
+        let text = std::fs::read_to_string(&env_file).unwrap_or_default();
+        let mut target_line = None;
+        for (idx, line) in text.lines().enumerate() {
+            let stripped = line.trim_start();
+            let stripped = stripped.strip_prefix("export ").unwrap_or(stripped);
+            if let Some(rest) = stripped.strip_prefix(name)
+                && rest.trim_start().starts_with('=')
+            {
+                target_line = Some(idx);
+                break;
+            }
+        }
+        self.open_path(&env_file);
+        if let Some(row) = target_line {
+            if let Some(b) = self.active_editor_mut() {
+                b.editor.place_cursor(row, 0);
+            }
+            self.toast(format!("{name} \u{2192} {env_name}.env line {}", row + 1));
+        } else {
+            if let Some(b) = self.active_editor_mut() {
+                let last_row = b.editor.text().lines().count().saturating_sub(1);
+                b.editor.place_cursor(last_row, 0);
+            }
+            self.toast(format!(
+                "{name} not defined in {env_name}.env \u{2014} jump to end so you can add it"
+            ));
+        }
+    }
+
     /// `http.toggle_edit_split` — flip the Request pane's edit
     /// area between single-tab and side-by-side (Body|Vars default,
     /// or whichever the user picked via the right-side tab strip).

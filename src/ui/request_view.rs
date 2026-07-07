@@ -664,6 +664,12 @@ pub fn draw(
     let show_ws = app.config.ui.show_whitespace;
     let workspace = app.workspace.clone();
     let env_override = app.http_env_override.clone();
+    // Env resolution used to colorize `{{VAR}}` tokens (cyan when
+    // resolved, red when missing) + build click rects for
+    // jump-to-definition. Computed once per frame so tokenize_vars
+    // doesn't re-load the env file for every span.
+    let envset = crate::http::template::EnvSet::select(&workspace, env_override.as_deref());
+    let mut var_click_rects: Vec<(Rect, String)> = Vec::new();
     let mut vars_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut params_rows_local: Vec<(Rect, String)> = Vec::new();
     let mut auth_rows_local: Vec<(Rect, String)> = Vec::new();
@@ -876,7 +882,16 @@ pub fn draw(
             method_url_absolute.push((mr, EditField::Method));
             app.rects.request_method_button = Some(mr);
         }
-        if let Some(ur) = draw_url_box(frame, rp, url_rect, focused, &mut caret_abs, t) {
+        if let Some(ur) = draw_url_box(
+            frame,
+            rp,
+            url_rect,
+            focused,
+            &mut caret_abs,
+            t,
+            &envset,
+            &mut var_click_rects,
+        ) {
             method_url_absolute.push((ur, EditField::Url));
         }
         env_button_rect = draw_env_box(
@@ -1187,6 +1202,10 @@ pub fn draw(
 
     // Register the whole pane area for wheel + fallback routing.
     app.rects.editor_panes.push((area, pane_id));
+    // Var click rects were collected in absolute screen coords by
+    // draw_url_box (and later body renderers). Move them onto the
+    // per-frame rects vec so the mouse handler can pick them up.
+    app.rects.request_var_click_rects.extend(var_click_rects);
 
     // ── Rect adjustment: edit_rows rects were collected with y = row
     // index within `edit_rows` (0-based relative to `tabs_rect`).
@@ -1893,6 +1912,135 @@ fn has_unresolved_var(text: &str, envset: &crate::http::template::EnvSet) -> boo
     !crate::http::template::unresolved(text, envset).is_empty()
 }
 
+/// One `{{VAR}}` occurrence in a piece of text — used by the URL /
+/// body renderers to break the text into styled spans (var vs plain)
+/// and to register click rects for jump-to-definition. Bytes are
+/// input-relative; the caller offsets them onto the screen.
+#[derive(Debug, Clone)]
+struct VarToken {
+    /// Byte index of the leading `{`.
+    start: usize,
+    /// Byte index one past the trailing `}`.
+    end: usize,
+    /// Trimmed variable name (no `{{`/`}}`, no surrounding spaces).
+    name: String,
+    /// `true` when the name resolves via the active env or as a built-
+    /// in dynamic (`$uuid`, `$timestamp`, …); `false` when the name is
+    /// present in `{{…}}` form but missing from the env.
+    resolved: bool,
+}
+
+/// Walk `text` and return every well-formed `{{name}}` occurrence
+/// (in source order). Malformed / unclosed tokens are skipped so the
+/// renderer never over-eats real text. Runs `resolve` under the hood
+/// so the caller gets the resolved/unresolved bit for free.
+fn tokenize_vars(text: &str, envset: &crate::http::template::EnvSet) -> Vec<VarToken> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len()
+            && bytes[i] == b'{'
+            && bytes[i + 1] == b'{'
+            && let Some(end_off) = text[i + 2..].find("}}")
+        {
+            let inner_start = i + 2;
+            let inner_end = inner_start + end_off;
+            let name = text[inner_start..inner_end].trim().to_string();
+            if !name.is_empty() {
+                // Match the resolve() gate in http::template — dynamics
+                // start with `$` and go through dynamic_var; plain names
+                // hit the env lookup.
+                let resolved = match name.strip_prefix('$') {
+                    Some(dyn_name) => crate::http::template::dynamic_var(dyn_name).is_some(),
+                    None => envset.lookup(&name).is_some(),
+                };
+                out.push(VarToken {
+                    start: i,
+                    end: inner_end + 2,
+                    name,
+                    resolved,
+                });
+            }
+            i = inner_end + 2;
+            continue;
+        }
+        let c = text[i..].chars().next().unwrap();
+        i += c.len_utf8();
+    }
+    out
+}
+
+/// Split `text` into styled spans, coloring `{{VAR}}` tokens per
+/// resolved vs unresolved. Non-var runs use `plain`. Also emits one
+/// click rect per token when `emit_click` is `Some((base_x, base_y,
+/// out_vec))` — `base_x` should include any left-edge padding the
+/// caller already added, `base_y` is the row's screen y, and the
+/// pushed rects use character offsets from `text.start()`.
+///
+/// One-line only — this is used by the URL box + a single Body line.
+/// Multi-line body text calls this per-line with the correct base_y.
+#[allow(clippy::too_many_arguments)]
+fn build_var_spans(
+    text: &str,
+    envset: &crate::http::template::EnvSet,
+    plain: Style,
+    resolved_style: Style,
+    unresolved_style: Style,
+    base_x: u16,
+    base_y: u16,
+    click_out: Option<&mut Vec<(Rect, String)>>,
+) -> Vec<Span<'static>> {
+    let tokens = tokenize_vars(text, envset);
+    if tokens.is_empty() {
+        return vec![Span::styled(text.to_string(), plain)];
+    }
+    let mut spans: Vec<Span<'static>> = Vec::with_capacity(tokens.len() * 2 + 1);
+    let mut cur = 0usize;
+    // Character-count as we go so we can position click rects by
+    // visible column (bytes ≠ cells for multibyte, but URLs and env
+    // names are ASCII in practice — chars() handles the rare non-ASCII
+    // case correctly enough for click routing).
+    let char_x_at = |slice: &str| -> u16 { slice.chars().count() as u16 };
+    let clicks = click_out;
+    let (mut push_click_rect, has_click): (Box<dyn FnMut(Rect, String)>, bool) = match clicks {
+        Some(v) => (Box::new(move |r, n| v.push((r, n))), true),
+        None => (Box::new(|_r, _n| {}), false),
+    };
+    for tok in &tokens {
+        if tok.start > cur {
+            let leading = &text[cur..tok.start];
+            spans.push(Span::styled(leading.to_string(), plain));
+        }
+        let token_text = &text[tok.start..tok.end];
+        let style = if tok.resolved {
+            resolved_style
+        } else {
+            unresolved_style
+        };
+        spans.push(Span::styled(token_text.to_string(), style));
+        if has_click {
+            let before = &text[..tok.start];
+            let x = base_x + char_x_at(before);
+            let width = char_x_at(token_text);
+            push_click_rect(
+                Rect {
+                    x,
+                    y: base_y,
+                    width,
+                    height: 1,
+                },
+                tok.name.clone(),
+            );
+        }
+        cur = tok.end;
+    }
+    if cur < text.len() {
+        spans.push(Span::styled(text[cur..].to_string(), plain));
+    }
+    spans
+}
+
 /// Clear sub-panel — modal_panel titled "Clear" with a bold red-ish
 /// "✕ Clear" label. Click resets the active Request pane's fields
 /// (URL, headers, body, method → GET). Same code path as
@@ -2065,6 +2213,7 @@ fn draw_method_box(
 /// text; when the URL field is focused, positions the terminal caret
 /// at the character offset that corresponds to `url_cursor`. Returns
 /// the absolute-coord click rect for the URL box.
+#[allow(clippy::too_many_arguments)]
 fn draw_url_box(
     frame: &mut Frame,
     rp: &crate::request_pane::RequestPane,
@@ -2072,6 +2221,8 @@ fn draw_url_box(
     focused: bool,
     caret: &mut Option<(u16, u16)>,
     t: theme::Theme,
+    envset: &crate::http::template::EnvSet,
+    var_clicks: &mut Vec<(Rect, String)>,
 ) -> Option<Rect> {
     let block = crate::ui::design_tokens::bordered_plain("URL");
     let inner = block.inner(rect);
@@ -2098,10 +2249,24 @@ fn draw_url_box(
             ),
         ])
     } else {
-        Line::from(vec![
-            Span::styled(" ", Style::default().bg(t.bg_dark)),
-            Span::styled(url_text.clone(), Style::default().fg(t.fg).bg(t.bg_dark)),
-        ])
+        let plain = Style::default().fg(t.fg).bg(t.bg_dark);
+        let resolved = Style::default().fg(t.cyan).bg(t.bg_dark);
+        let unresolved = Style::default()
+            .fg(t.red)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD);
+        let mut spans = vec![Span::styled(" ", Style::default().bg(t.bg_dark))];
+        spans.extend(build_var_spans(
+            &url_text,
+            envset,
+            plain,
+            resolved,
+            unresolved,
+            inner.x + 1,
+            inner.y,
+            Some(var_clicks),
+        ));
+        Line::from(spans)
     };
     frame.render_widget(
         Paragraph::new(vec![content]).style(Style::default().bg(t.bg_dark)),

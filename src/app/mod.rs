@@ -2390,6 +2390,11 @@ pub struct PaneRects {
     /// The 1-cell divider between the primary and secondary sides
     /// when a split is active. Drag to resize.
     pub request_edit_split_divider: Option<Rect>,
+    /// One entry per rendered `{{var}}` token in the active Request
+    /// pane's URL / body. Click → jump to the definition in the
+    /// active env file (or the file's tail when the var is missing).
+    /// Cleared + rebuilt per frame. 2026-07-07.
+    pub request_var_click_rects: Vec<(Rect, String)>,
     /// `(row_rect, filtered_index)` for each visible completion popup row
     /// (excluding the docs footer). Cleared + rebuilt every render. Click
     /// on a row ⇒ select + accept.
