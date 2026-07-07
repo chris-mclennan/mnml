@@ -3700,6 +3700,29 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_capture_browser_net_to_log(),
         },
         Command {
+            id: "http.capture_start",
+            title: "HTTP: launch browser + start capturing (or dump current if browser is open)",
+            group: "http",
+            // Sidebar CAPTURED chip 2026-07-07 — one-click "start
+            // capturing". No browser pane open ⇒ opens the browser
+            // URL prompt (autocapture toggles the log on for every
+            // network entry once the pane's live). Browser pane
+            // already open ⇒ dumps the current NetEntry list to the
+            // captured log (existing http.capture_now behavior).
+            keys: &[],
+            run: |app| {
+                let has_browser = app
+                    .panes
+                    .iter()
+                    .any(|p| matches!(p, crate::pane::Pane::Browser(_)));
+                if has_browser {
+                    app.http_capture_browser_net_to_log();
+                } else {
+                    app.open_browser_prompt();
+                }
+            },
+        },
+        Command {
             id: "http.view_captured",
             title: "HTTP: open .rqst/captured/log.jsonl (captured browser traffic)",
             group: "http",

@@ -415,17 +415,12 @@ fn draw_section_header(
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(chev, Style::default().fg(t.comment).bg(bg)),
     ];
-    // CAPTURED — prefix with a browser glyph since these come from
-    // the browser pane's network log. Ascii mode falls back to no
-    // glyph (label alone reads fine).
-    let mut label_prefix = String::new();
-    if section == 2 && !ascii {
-        // Codicon browser — same glyph as the palette-bar's
-        // browser-integration chip (`browser.open`). Was Nerd
-        // Font firefox (\u{F0239}) which shows a Firefox logo
-        // and reads inconsistent with the rest of the app.
-        label_prefix = "\u{EB01}  ".to_string();
-    }
+    // #polish 2026-07-07 — dropped the decorative browser glyph
+    // that used to prefix the CAPTURED label. User read it as
+    // "click here to launch a browser" — the actual action lives
+    // on the `capture` chip to the right of the label, so a
+    // pre-label glyph implied an action that wasn't there.
+    let label_prefix = String::new();
     spans.push(Span::styled(
         format!("{label_prefix}{label}"),
         Style::default()
@@ -440,10 +435,15 @@ fn draw_section_header(
     // CAPTURED gets two right-aligned chips: "⟳ capture" (start
     // capture) + "✕ clear" (truncate captured.jsonl). RECENT gets
     // one: "✕ clear" (truncate history.jsonl).
+    // #polish 2026-07-07 — swapped the ⟳ (refresh) glyph for the
+    // codicon browser globe. `⟳` implied re-fetch / retry semantics,
+    // but the chip's job is "open a browser pane and start
+    // capturing its network log" — a globe reads that more
+    // directly.
     let (capture_chip_text, clear_chip_text) = if ascii {
         (Some("capture"), Some("clear"))
     } else {
-        (Some("\u{27F3}  capture"), Some("\u{2715} clear"))
+        (Some("\u{EB01}  capture"), Some("\u{2715} clear"))
     };
     let has_capture_chip = section == 2;
     let has_clear_chip = section == 1 || section == 2;
