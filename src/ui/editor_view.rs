@@ -1558,6 +1558,10 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
 /// qa-feature 2026-07-02 — 1-row banner across the top of a markdown
 /// editor pane with a `👁 Preview` chip on the right. Click swaps the
 /// pane in place to a rendered MdPreview.
+///
+/// #polish 2026-07-06 — dropped the filename label on the left
+/// (was `󰃭 <file_name>`); user feedback that it duplicated the
+/// bufferline tab title. Matches the md_preview banner fix.
 fn draw_md_editor_banner(frame: &mut Frame, app: &mut App, pane_id: PaneId, area: Rect) {
     let t = theme::cur();
     let banner_rect = Rect {
@@ -1566,28 +1570,12 @@ fn draw_md_editor_banner(frame: &mut Frame, app: &mut App, pane_id: PaneId, area
         width: area.width,
         height: 1,
     };
-    let file_name = app
-        .panes
-        .get(pane_id)
-        .and_then(|p| match p {
-            Pane::Editor(b) => b
-                .path
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "markdown".to_string());
     let ascii = app.config.ui.ascii_icons;
     let eye_glyph = if ascii { "p" } else { "\u{f06e}" }; // fa-eye
     let preview_label = format!(" {eye_glyph} Preview ");
     let preview_w = preview_label.chars().count() as u16;
-    let title = format!(" 󰃭 {file_name}");
-    let title_w = title.chars().count() as u16;
-    let pad_w = area.width.saturating_sub(title_w + preview_w);
+    let pad_w = area.width.saturating_sub(preview_w);
     let line = Line::from(vec![
-        Span::styled(title, Style::default().fg(t.comment).bg(t.bg_darker)),
         Span::styled(" ".repeat(pad_w as usize), Style::default().bg(t.bg_darker)),
         Span::styled(
             preview_label,
