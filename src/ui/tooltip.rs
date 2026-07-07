@@ -1000,6 +1000,25 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 },
             ))
         }
+        HoverChip::RequestEditSplitChip => {
+            let rect = app.rects.request_edit_split_chip?;
+            let open = matches!(
+                app.active.and_then(|i| app.panes.get(i)),
+                Some(crate::pane::Pane::Request(rp)) if rp.edit_tab_split.is_some()
+            );
+            let (line, sub) = if open {
+                (
+                    "click: close side-by-side edit split",
+                    "click a right-side tab to change what it shows",
+                )
+            } else {
+                (
+                    "click: split the edit area side-by-side",
+                    "e.g. Body on the left, Vars on the right",
+                )
+            };
+            Some((rect, line.into(), Some(sub.into())))
+        }
         HoverChip::RequestSplitToggle => {
             let rect = app.rects.request_split_toggle?;
             let orient_desc = match app.active.and_then(|i| app.panes.get(i)) {

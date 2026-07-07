@@ -3824,6 +3824,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_parse_source_buffer(),
         },
         Command {
+            id: "http.toggle_edit_split",
+            title: "HTTP: split the Request edit area side-by-side (Body | Vars)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_toggle_edit_split(),
+        },
+        Command {
             id: "http.diff_last_two",
             title: "HTTP: diff the active Request pane's last two responses",
             group: "http",

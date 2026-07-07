@@ -2370,6 +2370,18 @@ pub struct PaneRects {
     /// Edit-view rebuild. Distinct from `request_tabs` (above)
     /// which is the Edit/Response view-mode toggle.
     pub request_edit_tabs: Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
+    /// Same shape as `request_edit_tabs` but for the SECONDARY tab
+    /// strip on the right side of a side-by-side split
+    /// (`rp.edit_tab_split`). Click ⇒ change the split's tab.
+    /// Empty when no split is active. 2026-07-07.
+    pub request_edit_tabs_split: Vec<(Rect, PaneId, crate::request_pane::EditTab)>,
+    /// The `⇔` chip on the tab strip that opens (or closes) a
+    /// side-by-side split of the edit content area. Cleared + rebuilt
+    /// every render.
+    pub request_edit_split_chip: Option<Rect>,
+    /// The 1-cell divider between the primary and secondary sides
+    /// when a split is active. Drag to resize.
+    pub request_edit_split_divider: Option<Rect>,
     /// `(row_rect, filtered_index)` for each visible completion popup row
     /// (excluding the docs footer). Cleared + rebuilt every render. Click
     /// on a row ⇒ select + accept.

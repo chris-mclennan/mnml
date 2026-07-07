@@ -3797,6 +3797,22 @@ impl App {
         }
     }
 
+    /// `http.toggle_edit_split` — flip the Request pane's edit
+    /// area between single-tab and side-by-side (Body|Vars default,
+    /// or whichever the user picked via the right-side tab strip).
+    pub fn http_toggle_edit_split(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.toggle_edit_split: no active Request pane");
+            return;
+        };
+        let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+            self.toast("http.toggle_edit_split: active pane isn't a Request");
+            return;
+        };
+        rp.view = crate::request_pane::ViewMode::Edit;
+        rp.toggle_edit_split();
+    }
+
     /// `http.diff_last_two` — open a scratch buffer with a
     /// textual diff between the active Request pane's previous
     /// Done response and the current one. Lines starting with

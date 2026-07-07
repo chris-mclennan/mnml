@@ -475,6 +475,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::RequestSplitToggle);
     }
+    if let Some(r) = app.rects.request_edit_split_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestEditSplitChip);
+    }
     if let Some(r) = app.rects.request_response_copy_chip
         && contains(r, x, y)
     {

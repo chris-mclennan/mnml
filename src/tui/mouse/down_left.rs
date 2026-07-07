@@ -719,6 +719,50 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // Click on the SECONDARY tab strip (right side of a side-by-side
+    // edit split) → change `edit_tab_split`, not the primary tab.
+    if let Some(&(_, pid, tab)) = app
+        .rects
+        .request_edit_tabs_split
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
+            rp.view = crate::request_pane::ViewMode::Edit;
+            rp.edit_tab_split = Some(tab);
+        }
+        return;
+    }
+    // Click on the `⇔` edit-split chip → toggle the split.
+    if let Some(r) = app.rects.request_edit_split_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        if let Some(pid) = app.active
+            && let Some(Pane::Request(rp)) = app.panes.get_mut(pid)
+        {
+            rp.view = crate::request_pane::ViewMode::Edit;
+            rp.toggle_edit_split();
+        }
+        return;
+    }
+    // Click on the edit-split divider → cycle the ratio (30/50/70).
+    // A cheap replacement for full drag-resize until it's needed.
+    if let Some(r) = app.rects.request_edit_split_divider
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        if let Some(pid) = app.active
+            && let Some(Pane::Request(rp)) = app.panes.get_mut(pid)
+        {
+            rp.edit_split_ratio = match rp.edit_split_ratio {
+                0..=39 => 50,
+                40..=59 => 70,
+                _ => 30,
+            };
+        }
+        return;
+    }
     // Click on a request-pane Edit-mode field row → focus that field.
     // 2026-06-19 — vscode-user-mouse agent caught that the
     // caret was never positioned at the click site (it stayed

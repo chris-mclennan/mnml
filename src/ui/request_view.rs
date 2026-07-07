@@ -906,16 +906,64 @@ pub fn draw(
     // safely overwrite the rightmost few cells of.
     app.rects.request_split_toggle =
         paint_split_toggle_chip(frame, rp.split_orientation, request_rect, t);
+    // The `⇔` chip that toggles a side-by-side edit split. Placed
+    // to the LEFT of the split-orientation chip so both chrome chips
+    // hug the right end of the Request block's border row.
+    app.rects.request_edit_split_chip = paint_edit_split_chip(
+        frame,
+        rp.edit_tab_split.is_some(),
+        request_rect,
+        app.rects.request_split_toggle,
+        t,
+    );
 
-    let mut edit_rows: Vec<Line> = Vec::new();
     let tabs_rect = request_inner;
+    let mut edit_tabs_split_local: Vec<(Rect, PaneId, crate::request_pane::EditTab)> = Vec::new();
 
     if tabs_rect.width > 0 && tabs_rect.height > 0 {
+        let split_secondary = rp.edit_tab_split;
+        // Slice tabs_rect into (left, divider, right) when a split
+        // is active. Below the minimum width the split degrades to
+        // primary-only so cells don't collide.
+        let (left_rect, divider_rect, right_rect) = if let Some(_secondary) = split_secondary {
+            const MIN_SIDE: u16 = 24;
+            if tabs_rect.width > MIN_SIDE * 2 {
+                let ratio = rp.edit_split_ratio.clamp(10, 90) as u32;
+                let left_w = ((tabs_rect.width as u32 * ratio) / 100) as u16;
+                let left_w = left_w.max(MIN_SIDE).min(tabs_rect.width - MIN_SIDE - 1);
+                let left = Rect {
+                    x: tabs_rect.x,
+                    y: tabs_rect.y,
+                    width: left_w,
+                    height: tabs_rect.height,
+                };
+                let divider = Rect {
+                    x: tabs_rect.x + left_w,
+                    y: tabs_rect.y,
+                    width: 1,
+                    height: tabs_rect.height,
+                };
+                let right = Rect {
+                    x: tabs_rect.x + left_w + 1,
+                    y: tabs_rect.y,
+                    width: tabs_rect.width - left_w - 1,
+                    height: tabs_rect.height,
+                };
+                (left, Some(divider), Some(right))
+            } else {
+                (tabs_rect, None, None)
+            }
+        } else {
+            (tabs_rect, None, None)
+        };
+
+        // Primary side (left when split, or whole tabs_rect otherwise).
+        let mut edit_rows: Vec<Line> = Vec::new();
         draw_edit(
             rp,
             t,
             &mut edit_rows,
-            tabs_rect,
+            left_rect,
             &mut caret,
             focused,
             pane_id,
@@ -927,23 +975,108 @@ pub fn draw(
             &mut vars_rows_local,
             &mut params_rows_local,
             &mut auth_rows_local,
+            None,
         );
-        // Edit content clips (no scroll for v1 — the Response zone
-        // is the main scrollable area; Edit fits by ratio).
         let edit_view: Vec<Line> = edit_rows
             .iter()
-            .take(tabs_rect.height as usize)
+            .take(left_rect.height as usize)
             .cloned()
             .collect();
         frame.render_widget(
             Paragraph::new(edit_view).style(Style::default().bg(t.bg_dark)),
-            tabs_rect,
+            left_rect,
         );
-        // Format chip — top-right of the Body tab area. Only shown
-        // when the current tab is Body AND detected content is
-        // JSON. Painted as an overlay AFTER the tab strip so it
-        // sits on the same row (the top of tabs_rect).
-        app.rects.request_format_button = paint_body_format_chip(frame, rp, tabs_rect, t);
+        // Format chip (JSON) sits above the primary side only —
+        // the secondary side has its own tab strip + content.
+        app.rects.request_format_button = paint_body_format_chip(frame, rp, left_rect, t);
+
+        // Divider (bg2 vertical bar between the two sides). Draggable.
+        if let Some(div_rect) = divider_rect {
+            let divider_line = Line::from(Span::styled(
+                "\u{2502}".to_string(),
+                Style::default().fg(t.bg3).bg(t.bg_dark),
+            ));
+            let divider_rows: Vec<Line> =
+                (0..div_rect.height).map(|_| divider_line.clone()).collect();
+            frame.render_widget(
+                Paragraph::new(divider_rows).style(Style::default().bg(t.bg_dark)),
+                div_rect,
+            );
+            app.rects.request_edit_split_divider = Some(div_rect);
+        }
+
+        // Secondary side.
+        if let (Some(secondary), Some(right)) = (split_secondary, right_rect) {
+            let mut edit_rows_r: Vec<Line> = Vec::new();
+            let mut fields_r: Vec<(Rect, PaneId, EditField)> = Vec::new();
+            let mut vars_rows_r: Vec<(Rect, String)> = Vec::new();
+            let mut params_rows_r: Vec<(Rect, String)> = Vec::new();
+            let mut auth_rows_r: Vec<(Rect, String)> = Vec::new();
+            let mut caret_r: Option<(u16, u16)> = None;
+            draw_edit(
+                rp,
+                t,
+                &mut edit_rows_r,
+                right,
+                &mut caret_r,
+                false, // secondary side does not own the caret
+                pane_id,
+                &mut fields_r,
+                &mut edit_tabs_split_local,
+                show_ws,
+                &workspace,
+                env_override.as_deref(),
+                &mut vars_rows_r,
+                &mut params_rows_r,
+                &mut auth_rows_r,
+                Some(secondary),
+            );
+            let edit_view_r: Vec<Line> = edit_rows_r
+                .iter()
+                .take(right.height as usize)
+                .cloned()
+                .collect();
+            frame.render_widget(
+                Paragraph::new(edit_view_r).style(Style::default().bg(t.bg_dark)),
+                right,
+            );
+            // Secondary side's rects are relative to `right` — translate
+            // y with `right.y` as origin.
+            let right_h = right.height as usize;
+            let right_origin = right.y;
+            for (mut r, pid, f) in fields_r.drain(..) {
+                let row_off = r.y as usize;
+                if row_off >= right_h {
+                    continue;
+                }
+                r.y = right_origin.saturating_add(row_off as u16);
+                app.rects.request_fields.push((r, pid, f));
+            }
+            for (mut r, key) in vars_rows_r.drain(..) {
+                let row_off = r.y as usize;
+                if row_off >= right_h {
+                    continue;
+                }
+                r.y = right_origin.saturating_add(row_off as u16);
+                app.rects.request_vars_rows.push((r, key));
+            }
+            for (mut r, key) in params_rows_r.drain(..) {
+                let row_off = r.y as usize;
+                if row_off >= right_h {
+                    continue;
+                }
+                r.y = right_origin.saturating_add(row_off as u16);
+                app.rects.request_params_rows.push((r, key));
+            }
+            for (mut r, id) in auth_rows_r.drain(..) {
+                let row_off = r.y as usize;
+                if row_off >= right_h {
+                    continue;
+                }
+                r.y = right_origin.saturating_add(row_off as u16);
+                app.rects.request_auth_rows.push((r, id));
+            }
+        }
     } else {
         app.rects.request_format_button = None;
     }
@@ -1094,6 +1227,16 @@ pub fn draw(
         }
         r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_edit_tabs.push((r, pid, tab));
+    }
+    // Secondary tab strip — same y-translation shape but pushed into
+    // a distinct rect vec so click routing knows which side to update.
+    for (mut r, pid, tab) in edit_tabs_split_local.drain(..) {
+        let row_off = r.y as usize;
+        if row_off >= edit_h {
+            continue;
+        }
+        r.y = edit_origin_y.saturating_add(row_off as u16);
+        app.rects.request_edit_tabs_split.push((r, pid, tab));
     }
     app.rects.request_vars_rows.clear();
     for (mut r, key) in vars_rows_local.drain(..) {
@@ -1536,6 +1679,57 @@ fn paint_split_toggle_chip(
     Some(chip_rect)
 }
 
+/// The `⇔` chip that opens (or closes) a side-by-side split of the
+/// Request pane's Edit content area. Sits on the Request block's
+/// top border row, immediately to the LEFT of the split-orientation
+/// `[▥ ▤]` chip. Active (split open) = cyan bold; inactive = comment.
+/// 2026-07-07.
+fn paint_edit_split_chip(
+    frame: &mut Frame,
+    split_open: bool,
+    request_rect: Rect,
+    orient_chip: Option<Rect>,
+    t: theme::Theme,
+) -> Option<Rect> {
+    let chip_w: u16 = 3; // `[⇔]`
+    let right_edge_x = match orient_chip {
+        Some(r) => r.x,
+        None => request_rect
+            .x
+            .saturating_add(request_rect.width)
+            .saturating_sub(2),
+    };
+    if right_edge_x <= request_rect.x + 4 || request_rect.height == 0 {
+        return None;
+    }
+    let chip_x = right_edge_x.saturating_sub(chip_w).saturating_sub(1);
+    let chip_rect = Rect {
+        x: chip_x,
+        y: request_rect.y,
+        width: chip_w,
+        height: 1,
+    };
+    let bracket = Style::default().fg(t.bg3).bg(t.bg_dark);
+    let icon_style = if split_open {
+        Style::default()
+            .fg(t.cyan)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.comment).bg(t.bg_dark)
+    };
+    let line = Line::from(vec![
+        Span::styled("[", bracket),
+        Span::styled("\u{21D4}", icon_style),
+        Span::styled("]", bracket),
+    ]);
+    frame.render_widget(
+        Paragraph::new(vec![line]).style(Style::default().bg(t.bg_dark)),
+        chip_rect,
+    );
+    Some(chip_rect)
+}
+
 /// Body tab's Format chip — floats at the top-right of `tabs_rect`
 /// (same row as the tab strip). Rendered only when the current
 /// Edit-tab is Body AND the body is detected as JSON. Reads as
@@ -1938,6 +2132,9 @@ fn draw_edit(
     vars_rows_local: &mut Vec<(Rect, String)>,
     params_rows_local: &mut Vec<(Rect, String)>,
     auth_rows_local: &mut Vec<(Rect, String)>,
+    // When `Some`, render this tab instead of `rp.edit_tab` — used by
+    // the right side of a side-by-side edit split.
+    tab_override: Option<crate::request_pane::EditTab>,
 ) {
     // Stash a click-target rect for the row at `row_idx_in_rows` covering
     // the full pane width (y stays as the *row index*; `draw` translates
@@ -1990,9 +2187,10 @@ fn draw_edit(
         let mut col: u16 = 2;
         label_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
         bar_spans.push(Span::styled("  ", Style::default().bg(t.bg_dark)));
+        let strip_tab = tab_override.unwrap_or(rp.edit_tab);
         for tab in EditTab::ALL {
             let label = tab.label();
-            let is_cur = rp.edit_tab == *tab;
+            let is_cur = strip_tab == *tab;
             let label_style = if is_cur {
                 Style::default()
                     .fg(t.fg)
@@ -2043,7 +2241,7 @@ fn draw_edit(
     }
 
     // ── Per-tab content ───────────────────────────────────────────────
-    let cur_tab = rp.edit_tab;
+    let cur_tab = tab_override.unwrap_or(rp.edit_tab);
 
     if cur_tab == crate::request_pane::EditTab::Headers {
         // Headers tab — Excel-cell table shared with Params

@@ -404,6 +404,9 @@ pub enum HoverChip {
     /// chip on a Request pane. Tooltip names the current
     /// orientation + the alternative.
     RequestSplitToggle,
+    /// The `[⇔]` chip that opens a side-by-side edit split
+    /// (Body|Vars etc.). Tooltip explains what click does.
+    RequestEditSplitChip,
     /// #21 v8 — hover on the response bar's `copy` chip.
     RequestResponseCopy,
     /// #21 v8 — hover on the response bar's `wrap` chip.

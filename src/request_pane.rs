@@ -128,6 +128,15 @@ pub struct RequestPane {
     /// response tab strip. Default = Auto (existing detect_body
     /// logic wins).
     pub response_body_format: ResponseBodyFormat,
+    /// When Some, the Request edit area is split side-by-side: the
+    /// primary `edit_tab` renders on the left, and this tab renders
+    /// on the right. Both sides read and write the same underlying
+    /// request state, so edits in one are immediately visible in the
+    /// other (Body|Vars, Params|Headers, etc. — 2026-07-07).
+    pub edit_tab_split: Option<EditTab>,
+    /// Percent of the split area given to the LEFT side (clamped
+    /// 10..=90). Only meaningful when `edit_tab_split` is Some.
+    pub edit_split_ratio: u16,
 }
 
 /// Draft state for an inline "add a new key/value pair" editor.
@@ -516,6 +525,25 @@ impl RequestPane {
             headers_add: None,
             kv_edit: None,
             response_body_format: ResponseBodyFormat::Auto,
+            edit_tab_split: None,
+            edit_split_ratio: 50,
+        }
+    }
+
+    /// Toggle the side-by-side edit split. If already open, close it.
+    /// If closed, open with a sensible secondary tab (Vars if the
+    /// primary is anything else, Body when the primary is Vars).
+    pub fn toggle_edit_split(&mut self) {
+        if self.edit_tab_split.is_some() {
+            self.edit_tab_split = None;
+        } else {
+            let default = if self.edit_tab == EditTab::Vars {
+                EditTab::Body
+            } else {
+                EditTab::Vars
+            };
+            self.edit_tab_split = Some(default);
+            self.edit_split_ratio = 50;
         }
     }
 
