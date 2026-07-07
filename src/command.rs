@@ -3677,6 +3677,33 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_http_chain_picker(),
         },
         Command {
+            id: "http.view_source",
+            title: "HTTP: open the active request's source file as text",
+            group: "http",
+            // Sibling of "Open as text" in the HTTP-row right-click
+            // menu. Falls back to a toast when the pane has no
+            // source (a fresh + New request that's never been saved).
+            keys: &[],
+            run: |app| {
+                let Some(cur) = app.active else {
+                    app.toast("view source: no active pane");
+                    return;
+                };
+                let path = match app.panes.get(cur) {
+                    Some(crate::pane::Pane::Request(rp)) => rp.source_path.clone(),
+                    _ => {
+                        app.toast("view source: not a Request pane");
+                        return;
+                    }
+                };
+                let Some(path) = path else {
+                    app.toast("view source: unsaved request (Save-As first)");
+                    return;
+                };
+                app.open_path_as_editor(&path);
+            },
+        },
+        Command {
             id: "http.refresh",
             title: "HTTP: rescan collections / files / envs / captured log",
             group: "http",

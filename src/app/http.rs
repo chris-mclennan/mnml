@@ -615,6 +615,98 @@ impl App {
         self.toast(format!("env: created + switched to {name}"));
     }
 
+    /// #polish 2026-07-06 — open a `.http`/`.curl`/`.rest` file
+    /// as a Request pane (parses the file, populates the pane's
+    /// form fields, wires \`source_path\` so Ctrl+S writes back).
+    /// Falls back to a plain text editor pane if the file doesn't
+    /// parse — that way a corrupt/half-written file is still
+    /// reachable.
+    pub fn open_request_pane_from_file(&mut self, path: &std::path::Path) {
+        use crate::pane::Pane;
+        use crate::request_pane::{EditField, RequestPane, RunState, ViewMode};
+        // Already open as a Request pane? Reveal it.
+        if let Some(i) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Request(rp) if rp.source_path.as_deref() == Some(path)))
+        {
+            self.reveal_pane(i);
+            return;
+        }
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.toast(format!("open: {}: {e}", path.display()));
+                return;
+            }
+        };
+        let request = match crate::http::parse(&text) {
+            Ok(r) => r,
+            Err(_) => {
+                // Bad parse — open as plain editor so the user can
+                // fix the file. Toast so they know why.
+                self.toast(format!(
+                    "http: parse failed for {}, opened as text",
+                    path.display()
+                ));
+                self.open_path_as_editor(path);
+                return;
+            }
+        };
+        let script = crate::http::script::parse(&text);
+        let mut pane = RequestPane::new(Some(path.to_path_buf()), request, script, 0);
+        // Land in Edit view on the URL field — the user just clicked
+        // a request, so they're likely about to fire or tweak it.
+        pane.view = ViewMode::Edit;
+        pane.focus = EditField::Url;
+        pane.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
+        self.panes.push(Pane::Request(pane));
+        let new_id = self.panes.len() - 1;
+        if self.active.is_some() {
+            self.reveal_pane(new_id);
+        } else {
+            *self.layout_mut() = crate::layout::Layout::leaf(new_id);
+            self.active = Some(new_id);
+        }
+        self.focus = crate::focus::Focus::Pane;
+        self.note_recent_file(path);
+    }
+
+    /// #polish 2026-07-06 — companion to `open_request_pane_from_file`.
+    /// Force-open the file as a plain text Editor pane, bypassing
+    /// the extension-based routing in `open_path`. Used by right-
+    /// click "Open as text" on HTTP-panel rows and the "raw" chip
+    /// on the Request pane top bar.
+    pub fn open_path_as_editor(&mut self, path: &std::path::Path) {
+        use crate::pane::Pane;
+        // Reuse existing editor pane for this path if one's open.
+        if let Some(i) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(b) if b.is_at(path)))
+        {
+            self.reveal_pane(i);
+            return;
+        }
+        match crate::buffer::Buffer::open_or_new_empty(path, &self.config) {
+            Ok(mut buf) => {
+                buf.apply_editorconfig(&self.workspace);
+                buf.input.set_ex_history(self.ex_history.clone());
+                self.panes.push(Pane::Editor(buf));
+                let new_id = self.panes.len() - 1;
+                if self.active.is_some() {
+                    self.reveal_pane(new_id);
+                } else {
+                    *self.layout_mut() = crate::layout::Layout::leaf(new_id);
+                    self.active = Some(new_id);
+                }
+                self.focus = crate::focus::Focus::Pane;
+                self.note_recent_file(path);
+            }
+            Err(e) => self.toast(format!("open: {}: {e}", path.display())),
+        }
+    }
+
     /// #polish 2026-07-06 — per-collection `+` chip → open a new
     /// in-memory Request pane whose `source_path` is pre-seeded to
     /// the next unused `req-N.http` inside the given collection

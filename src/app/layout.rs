@@ -47,6 +47,26 @@ impl App {
             MenuAction::CloseOtherTabs(id),
         ));
         items.push(MenuItem::new("Close all", MenuAction::CloseAllTabs));
+        // #polish 2026-07-06 — Request pane tab: "View source"
+        // opens the `.http`/`.curl`/`.rest` file as a plain text
+        // Editor so the user can see the file syntax. Only when
+        // the request has a saved source path.
+        if let Some(Pane::Request(rp)) = self.panes.get(id)
+            && let Some(p) = &rp.source_path
+        {
+            items.push(MenuItem::new(
+                "View source (as text)",
+                MenuAction::OpenPathAsText(p.clone()),
+            ));
+            items.push(MenuItem::new(
+                "Copy path",
+                MenuAction::CopyPath(rel_path(&self.workspace, p)),
+            ));
+            items.push(MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(p.clone()),
+            ));
+        }
         if let Some(Pane::Editor(b)) = self.panes.get(id)
             && let Some(p) = &b.path
         {
@@ -346,6 +366,18 @@ impl App {
         // raw) is the same either way for markdown.
         if is_markdown_path(&path) {
             self.open_md_preview_for_path(path.clone(), None, true);
+            return;
+        }
+        // #polish 2026-07-06 — `.http` / `.curl` / `.rest` open as
+        // Request pane by default (parses the file, populates the
+        // Request pane form fields, sets source_path so Ctrl+S
+        // writes back). The raw text view is still one right-click
+        // away via "Open as text" (or the "raw" chip in the
+        // Request pane top bar) — see `open_path_as_editor`.
+        if let Some(ext) = path.extension().and_then(|s| s.to_str())
+            && matches!(ext, "http" | "curl" | "rest")
+        {
+            self.open_request_pane_from_file(&path);
             return;
         }
         // Push the *current* position onto the back-stack before navigating

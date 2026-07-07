@@ -866,6 +866,7 @@ impl App {
         use crate::context_menu::MenuAction::*;
         match action {
             OpenPath(p) => self.open_path(&p),
+            OpenPathAsText(p) => self.open_path_as_editor(&p),
             OpenInSplit(p) => {
                 self.split_active(crate::layout::SplitDir::Horizontal);
                 self.open_path(&p);

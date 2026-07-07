@@ -12,6 +12,11 @@ use crate::layout::PaneId;
 pub enum MenuAction {
     /// Open the file (in the focused leaf).
     OpenPath(PathBuf),
+    /// #polish 2026-07-06 — force-open a `.http`/`.curl`/`.rest`
+    /// file as a plain text Editor pane (skips the Request-pane
+    /// routing in `open_path`). Right-click "Open as text" on
+    /// HTTP-panel rows.
+    OpenPathAsText(PathBuf),
     /// Open the file in a new split to the right.
     OpenInSplit(PathBuf),
     /// `open -R <path>` (macOS Finder reveal); a no-op elsewhere.

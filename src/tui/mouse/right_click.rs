@@ -442,6 +442,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             .unwrap_or_else(|| rel.clone());
         let items = vec![
             MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open as text", MenuAction::OpenPathAsText(path.clone())),
             MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
             MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
@@ -572,6 +573,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let rel = crate::app::rel_path(&app.workspace, &path);
         let items = vec![
             MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
+            MenuItem::new("Open as text", MenuAction::OpenPathAsText(path.clone())),
             MenuItem::new("Open in split", MenuAction::OpenInSplit(path.clone())),
             MenuItem::new("Reveal in tree", MenuAction::RevealInFinder(path.clone())),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
