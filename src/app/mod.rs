@@ -2685,6 +2685,9 @@ pub struct TreeDrag {
     /// pass to draw a small chip near the cursor.
     pub cursor_x: u16,
     pub cursor_y: u16,
+    /// `true` when Alt was held at drag-start → drop = copy instead
+    /// of move (matches Finder / VS Code convention). 2026-07-07.
+    pub copy_instead_of_move: bool,
 }
 
 /// One reversible git operation for the GitGraph toolbar's Undo / Redo.
@@ -5026,11 +5029,25 @@ impl App {
     /// drag is "armed" only after the mouse moves off this row, so a
     /// pure click still acts as a click.
     pub fn begin_tree_drag(&mut self, src_path: std::path::PathBuf, src_is_dir: bool, y: u16) {
+        self.begin_tree_drag_with_mode(src_path, src_is_dir, y, false);
+    }
+
+    /// Same as `begin_tree_drag` but stashes `copy_instead_of_move` on
+    /// the drag record. Called by the mouse-down handler with the Alt
+    /// modifier plumbed through.
+    pub fn begin_tree_drag_with_mode(
+        &mut self,
+        src_path: std::path::PathBuf,
+        src_is_dir: bool,
+        y: u16,
+        copy_instead_of_move: bool,
+    ) {
         if std::env::var_os("MNML_DEBUG_DRAG").is_some() {
             self.toast(format!(
-                "begin_tree_drag: {} (dir={})",
+                "begin_tree_drag: {} (dir={}, copy={})",
                 src_path.display(),
-                src_is_dir
+                src_is_dir,
+                copy_instead_of_move
             ));
         }
         self.tree_drag = Some(TreeDrag {
@@ -5041,6 +5058,7 @@ impl App {
             current_target_idx: None,
             cursor_x: 0,
             cursor_y: y,
+            copy_instead_of_move,
         });
     }
 
@@ -5131,6 +5149,20 @@ impl App {
             .unwrap_or(&dest)
             .to_string_lossy()
             .into_owned();
+        // Alt-drag = copy: fire immediately (non-destructive; matches
+        // Finder / VS Code convention where a modifier-drop skips the
+        // confirmation). Plain drag = move: keep the confirm prompt so
+        // an accidental drop can't silently rename a file.
+        if drag.copy_instead_of_move {
+            match copy_recursively(&drag.src_path, &dest) {
+                Ok(()) => {
+                    self.tree.refresh();
+                    self.toast(format!("copied \u{2192} {dest_rel}"));
+                }
+                Err(e) => self.toast(format!("copy failed: {e}")),
+            }
+            return;
+        }
         self.pending_tree_move = Some((drag.src_path.clone(), dest.clone()));
         let mut prompt = crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::TreeMoveConfirm,

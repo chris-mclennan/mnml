@@ -1754,9 +1754,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 app.tree.set_cursor(idx);
                 // Arm a drag — the source is captured here; the
                 // actual move happens on mouse-up over a different
-                // directory row.
+                // directory row. Alt held = copy instead of move
+                // (Finder / VS Code convention). Read the modifier
+                // at drag-start; the state at drop time is assumed
+                // to match, matching how OS file managers behave.
                 if let Some(row) = app.tree.selected_row() {
-                    app.begin_tree_drag(row.path.clone(), row.is_dir, y);
+                    let alt = m.modifiers.contains(KeyModifiers::ALT);
+                    app.begin_tree_drag_with_mode(row.path.clone(), row.is_dir, y, alt);
                 }
                 if let Some(row) = app.tree.selected_row()
                     && row.is_dir

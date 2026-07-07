@@ -289,6 +289,32 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(name), anchor, items));
     }
 
+    /// Right-click on a `{{VAR}}` token in a Request pane → context
+    /// menu (set value, jump to definition, copy name). Dynamic `$foo`
+    /// tokens (uuid / timestamp / etc.) skip the "set value" entry
+    /// since they're built-ins, not env-file backed. 2026-07-07.
+    pub fn open_request_var_context_menu(&mut self, name: &str, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = format!("{{{{{name}}}}}");
+        let is_dynamic = name.starts_with('$');
+        let mut items = Vec::new();
+        if !is_dynamic {
+            items.push(MenuItem::new(
+                "Set value…",
+                MenuAction::SetEnvVarValue(name.to_string()),
+            ));
+        }
+        items.push(MenuItem::new(
+            "Jump to definition",
+            MenuAction::JumpToEnvVar(name.to_string()),
+        ));
+        items.push(MenuItem::new(
+            "Copy variable name",
+            MenuAction::CopyPath(name.to_string()),
+        ));
+        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
+    }
+
     /// Right-click on an integration chip → quick-actions menu.
     /// Lets the user edit the chip's glyph/color/tooltip in place
     /// or remove it without opening the discovery overlay first.
@@ -1182,6 +1208,8 @@ impl App {
             FilePaste(target) => self.file_paste_into(target),
             FileDuplicate(path) => self.file_duplicate(path),
             FileMoveTo(path) => self.file_open_move_to_picker(path),
+            SetEnvVarValue(name) => self.accept_env_vars(&name),
+            JumpToEnvVar(name) => self.open_env_var_definition(&name),
             GitCheckoutBranch(name) => self.git_checkout_named(&name),
             GitMergeBranchInto(name) => self.git_merge_branch(name),
             GitRebaseCurrentOnto(name) => self.git_rebase_onto(name),

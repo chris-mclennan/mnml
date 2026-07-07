@@ -113,6 +113,15 @@ pub enum MenuAction {
     /// folder. Cross-workspace and outside-workspace targets are both
     /// allowed — the underlying rename() enforces same-filesystem.
     FileMoveTo(PathBuf),
+    /// Right-click on a `{{VAR}}` token → open the env-value edit
+    /// prompt seeded with the current value (empty when undefined).
+    /// Accept upserts into the active env file. 2026-07-07.
+    SetEnvVarValue(String),
+    /// Right-click on a `{{VAR}}` token → same as a left-click
+    /// (open the env file at the definition line, or EOF if
+    /// undefined) — surfaced as an explicit menu item for
+    /// discoverability.
+    JumpToEnvVar(String),
     /// Git rail — checkout an existing local branch.
     GitCheckoutBranch(String),
     /// #polish 2026-07-06 — merge the named branch into the

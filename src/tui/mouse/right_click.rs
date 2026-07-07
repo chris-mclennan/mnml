@@ -14,6 +14,20 @@ use crate::app::App;
 use crate::pane::Pane;
 
 pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
+    // Right-click on a `{{var}}` token → var context menu (set
+    // value, jump to definition, copy name). Checked first because
+    // token rects overlap the URL / body / value-cell rects that
+    // fall through to more generic menus below.
+    if let Some((_, name)) = app
+        .rects
+        .request_var_click_rects
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let name = name.clone();
+        app.open_request_var_context_menu(&name, (x, y));
+        return;
+    }
     // vscode-user-mouse SEV-3 — right-click on the palette
     // search chip mirrors the dropdown chevron and opens
     // recents directly (browser-style "back / forward / open
