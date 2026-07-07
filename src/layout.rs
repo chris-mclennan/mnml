@@ -928,6 +928,60 @@ mod tests {
     }
 
     #[test]
+    fn leaf_containing_returns_tab_list_for_background_tab() {
+        // A leaf with background tabs [10, 20, 30], active is 20.
+        // leaf_containing(30) should return the full [10, 20, 30]
+        // (not just the queried pane).
+        let l = Layout::leaf_with_tabs(20, vec![10, 20, 30]);
+        assert_eq!(l.leaf_containing(30), Some(&[10, 20, 30][..]));
+        assert_eq!(l.leaf_containing(10), Some(&[10, 20, 30][..]));
+        assert_eq!(l.leaf_containing(20), Some(&[10, 20, 30][..]));
+        assert_eq!(l.leaf_containing(99), None);
+    }
+
+    #[test]
+    fn leaf_containing_finds_across_splits() {
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf_with_tabs(1, vec![1, 2])),
+            second: Box::new(Layout::leaf_with_tabs(3, vec![3, 4])),
+        };
+        assert_eq!(l.leaf_containing(2), Some(&[1, 2][..]));
+        assert_eq!(l.leaf_containing(4), Some(&[3, 4][..]));
+        assert_eq!(l.leaf_containing(99), None);
+    }
+
+    #[test]
+    fn all_panes_includes_background_tabs_across_splits() {
+        // Regression check: `all_panes()` must surface background tabs on
+        // BOTH sides of a split. This is what garbage-collection walks
+        // rely on to know "pane X is still reachable somewhere".
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf_with_tabs(1, vec![1, 2, 5])),
+            second: Box::new(Layout::leaf_with_tabs(3, vec![3, 4])),
+        };
+        let mut panes = l.all_panes();
+        panes.sort();
+        assert_eq!(panes, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn remove_background_tab_keeps_leaf_and_active() {
+        // Regression: removing a BACKGROUND tab must not touch `active`
+        // and must not collapse the leaf.
+        let mut l = Layout::leaf_with_tabs(20, vec![10, 20, 30]);
+        assert!(l.remove_leaf(10));
+        let Layout::Leaf { active, tabs } = &l else {
+            panic!("leaf collapsed unexpectedly");
+        };
+        assert_eq!(*active, 20);
+        assert_eq!(*tabs, vec![20, 30]);
+    }
+
+    #[test]
     fn divider_hit_ratio_for() {
         let area = Rect::new(10, 0, 100, 20);
         let h = DividerHit {

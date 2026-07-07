@@ -701,6 +701,10 @@ impl App {
     }
 
     /// Replace `Leaf(leaf)` with `Split{leaf, new-pane}`; returns the new pane id.
+    /// The source leaf's background tabs are preserved on the `first` side so
+    /// splitting a leaf that held [A,B,C] with A active leaves [A,B,C] on the
+    /// left and [new] on the right (rather than dropping B and C, which used
+    /// to make them "vanish until the split closed" — 2026-07-06).
     pub(super) fn split_leaf_with(
         &mut self,
         leaf: PaneId,
@@ -709,12 +713,17 @@ impl App {
     ) -> PaneId {
         self.panes.push(pane);
         let new_id = self.panes.len() - 1;
+        let source_tabs: Vec<PaneId> = self
+            .layout()
+            .leaf_containing(leaf)
+            .map(|t| t.to_vec())
+            .unwrap_or_else(|| vec![leaf]);
         self.layout_mut().replace_leaf(
             leaf,
             Layout::Split {
                 dir,
                 ratio: 50,
-                first: Box::new(Layout::leaf(leaf)),
+                first: Box::new(Layout::leaf_with_tabs(leaf, source_tabs)),
                 second: Box::new(Layout::leaf(new_id)),
             },
         );
@@ -2161,6 +2170,61 @@ mod layout_tests {
         // Tab 0 still has the split (right leaf now single-tab w/
         // a-copy after b moved out).
         assert!(matches!(&app.layouts[0], Layout::Split { .. }));
+    }
+
+    #[test]
+    fn split_preserves_background_tabs_in_source_leaf() {
+        // Regression 2026-07-06 — splitting a leaf that held multiple
+        // tabs used to drop every tab except the active one, so
+        // background tabs vanished until the split closed and the
+        // top bufferline came back. The fix keeps them in the source
+        // leaf's tab list.
+        let (d, mut app) = app_with_files();
+        let a = d.path().join("a.txt").canonicalize().unwrap();
+        let b = d.path().join("b.txt").canonicalize().unwrap();
+        std::fs::write(d.path().join("c.txt"), "gamma").unwrap();
+        let c = d.path().join("c.txt").canonicalize().unwrap();
+        app.open_path(&a);
+        app.open_path(&b);
+        app.open_path(&c);
+        // All three panes live in one leaf.
+        let Layout::Leaf { tabs, .. } = app.layout() else {
+            panic!("expected a single leaf before split");
+        };
+        assert_eq!(tabs.len(), 3, "sanity: three tabs before split");
+        // Focus a (the leftmost tab) and split. Under the old bug the
+        // left half would lose b and c; the fix keeps them.
+        let a_id = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Editor(buf) if buf.is_at(&a)))
+            .unwrap();
+        app.reveal_pane(a_id);
+        app.split_active(crate::layout::SplitDir::Horizontal);
+        let Layout::Split { first, second, .. } = app.layout() else {
+            panic!("expected split after split_active");
+        };
+        let Layout::Leaf { active, tabs } = &**first else {
+            panic!("expected left leaf");
+        };
+        assert_eq!(*active, a_id, "left leaf still active on a");
+        assert!(
+            tabs.contains(&a_id),
+            "left leaf must still contain a: {tabs:?}"
+        );
+        assert_eq!(
+            tabs.len(),
+            3,
+            "left leaf must preserve all three source tabs, got {tabs:?}"
+        );
+        // Right side is the new split — one fresh pane.
+        let Layout::Leaf {
+            tabs: right_tabs, ..
+        } = &**second
+        else {
+            panic!("expected right leaf");
+        };
+        assert_eq!(right_tabs.len(), 1, "right leaf holds only the new pane");
     }
 
     #[test]
