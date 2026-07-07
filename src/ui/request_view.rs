@@ -242,6 +242,109 @@ fn colored_line(
     Line::from(out)
 }
 
+/// Same rendering shape as `colored_line`, but any `{{VAR}}` token in
+/// `src` overrides the JSON syntax coloring — resolved vars render
+/// cyan-bold, unresolved red-bold — and each token registers a click
+/// rect via `click_out`. Kept separate from `colored_line` so the
+/// non-JSON body / URL paths (which don't need the syntax layer)
+/// don't pay the extra tokenization cost. 2026-07-07.
+#[allow(clippy::too_many_arguments)]
+fn colored_line_with_vars(
+    src: &str,
+    spans: &[crate::highlight::ColoredSpan],
+    base_fg: ratatui::style::Color,
+    t: theme::Theme,
+    envset: &crate::http::template::EnvSet,
+    resolved_style: Style,
+    unresolved_style: Style,
+    base_x: u16,
+    row_y: u16,
+    click_out: Option<&mut Vec<(Rect, String)>>,
+) -> Line<'static> {
+    let tokens = tokenize_vars(src, envset);
+    if tokens.is_empty() {
+        return colored_line(src, spans, base_fg, t);
+    }
+    // Sort JSON syntax spans once so we can walk them alongside the
+    // character cursor. Overlapping/nested spans win by "innermost
+    // last" — same convention `colored_line` uses.
+    let mut ordered: Vec<crate::highlight::ColoredSpan> = spans.to_vec();
+    ordered.sort_by_key(|(s, _, _)| *s);
+    let base_style = Style::default().fg(base_fg).bg(t.bg_dark);
+    // Walk chars — for each, compute the current style (var wins
+    // over JSON), collect into runs of identical style. Emit one
+    // span per run.
+    let mut out: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut run_style = base_style;
+    let mut first = true;
+    // Emit-a-click-rect helper (each token → one rect over its full
+    // char range on this line). Pre-compute char offsets so rects
+    // land on the right screen column.
+    let mut click_out_ref = click_out;
+    for tok in &tokens {
+        let before = &src[..tok.start];
+        let width = src[tok.start..tok.end].chars().count() as u16;
+        if let Some(v) = click_out_ref.as_deref_mut() {
+            v.push((
+                Rect {
+                    x: base_x + before.chars().count() as u16,
+                    y: row_y,
+                    width,
+                    height: 1,
+                },
+                tok.name.clone(),
+            ));
+        }
+    }
+    let mut byte = 0usize;
+    while byte < src.len() {
+        let ch = src[byte..].chars().next().unwrap();
+        let ch_bytes = ch.len_utf8();
+        // Is this byte inside a var token? Var wins.
+        let mut style = None;
+        for tok in &tokens {
+            if byte >= tok.start && byte < tok.end {
+                style = Some(if tok.resolved {
+                    resolved_style
+                } else {
+                    unresolved_style
+                });
+                break;
+            }
+        }
+        // Otherwise, look up the JSON span covering `byte`. Later
+        // matches (deeper nesting) win.
+        if style.is_none() {
+            let mut winning_color = None;
+            for (s, e, color) in &ordered {
+                if byte >= *s && byte < *e {
+                    winning_color = Some(*color);
+                }
+                if *s > byte {
+                    break;
+                }
+            }
+            style = Some(match winning_color {
+                Some(c) => Style::default().fg(c).bg(t.bg_dark),
+                None => base_style,
+            });
+        }
+        let style = style.unwrap();
+        if !first && style != run_style {
+            out.push(Span::styled(std::mem::take(&mut run), run_style));
+        }
+        run.push(ch);
+        run_style = style;
+        first = false;
+        byte += ch_bytes;
+    }
+    if !run.is_empty() {
+        out.push(Span::styled(run, run_style));
+    }
+    Line::from(out)
+}
+
 /// `+ <label>` action row — matches the "+ New note" / "+ New session"
 /// / "+ New request" chip idiom used across the activity-bar panels
 /// (Notes, Sessions, HTTP). Green fg + BOLD reads as "additive
@@ -2615,28 +2718,37 @@ fn draw_edit(
                 } else {
                     line.to_string()
                 };
-                // JSON gets colored_line (per-token color); other
-                // content types keep the plain grey_fg rendering.
-                // Non-JSON path also gets `{{VAR}}` highlighting +
-                // click rects so form-data / text / xml / graphql bodies
-                // can jump to definitions. JSON is skipped for v1
-                // because it's already tree-sitter-colored; splitting
-                // its spans by var pattern is a follow-up.
+                // JSON gets colored_line_with_vars (tree-sitter colors
+                // for keys/strings/numbers, overridden by var styles
+                // for `{{VAR}}` tokens); other content types run
+                // build_var_spans on the plain body style. Both paths
+                // emit click rects for jump-to-definition.
+                let resolved_style = Style::default()
+                    .fg(t.cyan)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD);
+                let unresolved_style = Style::default()
+                    .fg(t.red)
+                    .bg(t.bg_dark)
+                    .add_modifier(Modifier::BOLD);
+                let gutter_prefix_cols = (gutter_w as u16).saturating_add(2);
                 let content_line = if let Some(spans) = json_spans.get(i) {
-                    let mut inner = colored_line(&rendered, spans, t.grey_fg, t);
+                    let mut inner = colored_line_with_vars(
+                        &rendered,
+                        spans,
+                        t.grey_fg,
+                        t,
+                        envset,
+                        resolved_style,
+                        unresolved_style,
+                        area.x.saturating_add(gutter_prefix_cols),
+                        row_y,
+                        Some(var_clicks_local),
+                    );
                     inner.spans.insert(0, gutter(n, t));
                     inner
                 } else {
                     let plain_style = Style::default().fg(t.grey_fg).bg(t.bg_dark);
-                    let resolved_style = Style::default()
-                        .fg(t.cyan)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::BOLD);
-                    let unresolved_style = Style::default()
-                        .fg(t.red)
-                        .bg(t.bg_dark)
-                        .add_modifier(Modifier::BOLD);
-                    let gutter_prefix_cols = (gutter_w as u16).saturating_add(2);
                     let mut inner_spans = vec![gutter(n, t)];
                     inner_spans.extend(build_var_spans(
                         &rendered,
