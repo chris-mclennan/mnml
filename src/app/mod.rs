@@ -8411,17 +8411,37 @@ impl App {
     /// Re-run the active diff pane's `git diff` (after staging, or on demand).
     pub fn refresh_active_diff(&mut self) {
         let Some(cur) = self.active else { return };
+        // Two shapes: a standalone `Pane::Diff` OR the embedded diff
+        // inside a `Pane::GitGraph`. Both cache their own hunk list
+        // and need re-fetching after a discard/stage/apply. Bug
+        // reported 2026-07-06 — user discarded a hunk in the
+        // GitGraph's embedded diff and it stayed visible until they
+        // navigated away and back.
         let scope = match self.panes.get(cur) {
             Some(Pane::Diff(d)) => d.scope.clone(),
+            Some(Pane::GitGraph(g)) => match g.embedded_diff.as_ref() {
+                Some(d) => d.scope.clone(),
+                None => return,
+            },
             _ => return,
         };
         let hunks = self.fetch_diff(&scope);
-        if let Some(Pane::Diff(d)) = self.panes.get_mut(cur) {
-            d.cursor = d.cursor.min(hunks.len().saturating_sub(1));
-            d.hunks = hunks;
-            // Invalidate the full-file-context cache; the split view
-            // will re-fetch next render.
-            d.full_hunks = None;
+        match self.panes.get_mut(cur) {
+            Some(Pane::Diff(d)) => {
+                d.cursor = d.cursor.min(hunks.len().saturating_sub(1));
+                d.hunks = hunks;
+                // Invalidate the full-file-context cache; the split
+                // view will re-fetch next render.
+                d.full_hunks = None;
+            }
+            Some(Pane::GitGraph(g)) => {
+                if let Some(d) = g.embedded_diff.as_mut() {
+                    d.cursor = d.cursor.min(hunks.len().saturating_sub(1));
+                    d.hunks = hunks;
+                    d.full_hunks = None;
+                }
+            }
+            _ => {}
         }
     }
     // ─── stash ──────────────────────────────────────────────────────
