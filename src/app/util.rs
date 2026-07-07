@@ -120,7 +120,7 @@ pub(crate) fn collision_free_copy_name(path: &Path) -> std::path::PathBuf {
     let Some(parent) = path.parent() else {
         return path.to_path_buf();
     };
-    let stem = path
+    let stem_raw = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
@@ -128,6 +128,20 @@ pub(crate) fn collision_free_copy_name(path: &Path) -> std::path::PathBuf {
         .extension()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // #polish 2026-07-07 (vscode-mouse SEV-3 #12) — strip a trailing
+    // `-copy` / `-copy-N` so duplicating `foo-copy.ext` produces
+    // `foo-copy-2.ext`, not `foo-copy-copy.ext`. Matches Finder /
+    // VS Code duplicate semantics.
+    let stem = if let Some(base) = stem_raw
+        .rsplit_once("-copy-")
+        .and_then(|(base, tail)| tail.parse::<usize>().ok().map(|_| base))
+    {
+        base.to_string()
+    } else if let Some(base) = stem_raw.strip_suffix("-copy") {
+        base.to_string()
+    } else {
+        stem_raw
+    };
     let make = |suffix: &str| {
         if ext.is_empty() {
             parent.join(format!("{stem}{suffix}"))
@@ -136,12 +150,12 @@ pub(crate) fn collision_free_copy_name(path: &Path) -> std::path::PathBuf {
         }
     };
     let first = make("-copy");
-    if !first.exists() {
+    if !first.exists() && first != path {
         return first;
     }
     for n in 2..1000 {
         let candidate = make(&format!("-copy-{n}"));
-        if !candidate.exists() {
+        if !candidate.exists() && candidate != path {
             return candidate;
         }
     }

@@ -427,6 +427,11 @@ pub enum HoverChip {
     /// the tree/right-panel edge grips (click cycles preset ratios
     /// instead of drag-resize) so the tooltip warns the user.
     RequestEditSplitDivider,
+    /// Hover on the `+` chip on a COLLECTIONS row (adds a new
+    /// request to that collection). `usize` indexes
+    /// `PaneRects.http_panel_collection_new_request_chips`.
+    /// 2026-07-07 (vscode-mouse SEV-2 #2).
+    HttpCollectionAddRequestChip(usize),
     /// Hover over a `{{VAR}}` token in a Request pane's URL / body /
     /// value cell. Tooltip shows the resolved value (or "undefined"
     /// when the env doesn't have this key), plus a hint that clicking

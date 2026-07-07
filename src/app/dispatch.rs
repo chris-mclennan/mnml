@@ -510,6 +510,15 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     }
     if let Some((idx, _)) = app
         .rects
+        .http_panel_collection_new_request_chips
+        .iter()
+        .enumerate()
+        .find(|(_, (r, _))| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::HttpCollectionAddRequestChip(idx));
+    }
+    if let Some((idx, _)) = app
+        .rects
         .request_var_click_rects
         .iter()
         .enumerate()

@@ -186,6 +186,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.request_edit_split_divider = None;
     app.rects.request_var_click_rects.clear();
     app.rects.tree_up_row = None;
+    // #polish 2026-07-07 (vscode-mouse SEV-3 #11) — the two confirm-
+    // dialog paint paths call .clear() inside their draw fns, but
+    // when no dialog is open the paint fn isn't called, so the vec
+    // keeps entries from the last dialog. Automated a11y / test
+    // tooling reading rects.json sees phantom buttons. Cleared once
+    // per frame here so state matches the visible UI.
+    app.rects.confirm_dialog_buttons.clear();
     app.rects.extra_workspace_bodies.clear();
     app.rects.extra_workspace_toggles.clear();
     app.rects.extra_workspace_promote_dots.clear();

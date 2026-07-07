@@ -1404,12 +1404,19 @@ fn draw_collections(
         // Registered rects: the ROW itself for click-to-collapse
         // AND the `+` chip zone at the row's right edge. Order
         // matters — mouse dispatch checks the chip vec first.
-        let chip_x = area.x + area.width.saturating_sub(chip_w as u16);
+        //
+        // #polish 2026-07-07 (vscode-mouse SEV-2 #3) — widened the
+        // click rect by 2 cells beyond the visible ` + ` so a click
+        // 1-2 cells left of the plus glyph still fires the add
+        // instead of falling through to the whole-row collapse
+        // handler (which felt like a wrong-action side effect).
+        let chip_hit_w: u16 = (chip_w as u16) + 2;
+        let chip_x = area.x + area.width.saturating_sub(chip_hit_w);
         app.rects.http_panel_collection_new_request_chips.push((
             Rect {
                 x: chip_x,
                 y,
-                width: chip_w as u16,
+                width: chip_hit_w,
                 height: 1,
             },
             root.clone(),

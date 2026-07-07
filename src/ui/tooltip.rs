@@ -1104,6 +1104,23 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .unwrap_or_else(|| cmd_id.to_string());
             Some((rect, title, None))
         }
+        HoverChip::HttpCollectionAddRequestChip(idx) => {
+            let (rect, root) = app
+                .rects
+                .http_panel_collection_new_request_chips
+                .get(idx)?
+                .clone();
+            let name = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            Some((
+                rect,
+                format!("New request in {name}"),
+                Some("prompt for a name and create req-N.http".into()),
+            ))
+        }
         HoverChip::RequestEditSplitDivider => {
             let rect = app.rects.request_edit_split_divider?;
             Some((
