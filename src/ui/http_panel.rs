@@ -441,21 +441,27 @@ fn draw_section_header(
     // but the chip's job is "open a browser pane and start
     // capturing its network log" — a globe reads that more
     // directly.
-    let (refresh_chip_text, capture_chip_text, clear_chip_text) = if ascii {
-        (Some("refresh"), Some("capture"), Some("clear"))
+    // Icon-only fallbacks used when the header row is too narrow to
+    // fit the full "↺ refresh · 🌐 capture · ✕ clear" text. Ascii
+    // mode uses letter abbreviations. Order: (refresh, capture, clear).
+    let (refresh_full, capture_full, clear_full, refresh_icon, capture_icon, clear_icon) = if ascii
+    {
+        ("refresh", "capture", "clear", "r", "c", "x")
     } else {
         (
-            Some("\u{21BA} refresh"),
-            Some("\u{EB01}  capture"),
-            Some("\u{2715} clear"),
+            "\u{21BA} refresh",
+            "\u{EB01}  capture",
+            "\u{2715} clear",
+            "\u{21BA}",
+            "\u{EB01}",
+            "\u{2715}",
         )
     };
     let has_capture_chip = section == 2;
     let has_clear_chip = section == 1 || section == 2;
     // #polish 2026-07-07 — added a section-local `↺ refresh` chip to
     // CAPTURED so the "the log file grew but the sidebar didn't
-    // update" scenario is one obvious click away. Was: user had to
-    // hunt for the panel-wide ↺ up next to the "HTTP" header.
+    // update" scenario is one obvious click away.
     let has_refresh_chip = section == 2;
     if has_capture_chip || has_clear_chip || has_refresh_chip {
         // Base "used" width: leading pad + chevron + optional glyph
@@ -465,52 +471,68 @@ fn draw_section_header(
             + label_prefix.chars().count()
             + label.chars().count()
             + format!(" ({count})").chars().count();
-        let ref_len = if has_refresh_chip {
-            refresh_chip_text
-                .map(|s| s.chars().count() + 2)
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        let cap_len = if has_capture_chip {
-            capture_chip_text
-                .map(|s| s.chars().count() + 2)
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        let clr_len = if has_clear_chip {
-            clear_chip_text.map(|s| s.chars().count() + 2).unwrap_or(0)
-        } else {
-            0
-        };
-        // 1-cell gap between every adjacent pair of chips.
+        // Each chip renders as ` <text> ` (text + 2 pad) with a 1-cell
+        // gap between adjacent pairs. Progressive degradation: try
+        // full text first, then icon-only, else hide the whole cluster.
+        let chip_len = |text: &str| text.chars().count() + 2;
         let gap_count = [has_refresh_chip, has_capture_chip, has_clear_chip]
             .iter()
             .filter(|b| **b)
             .count()
             .saturating_sub(1);
-        let chip_gap = gap_count;
+        let need_for = |r: &str, c: &str, x: &str| -> usize {
+            let mut n = used + gap_count + 2;
+            if has_refresh_chip {
+                n += chip_len(r);
+            }
+            if has_capture_chip {
+                n += chip_len(c);
+            }
+            if has_clear_chip {
+                n += chip_len(x);
+            }
+            n
+        };
         let area_w = area.width as usize;
-        let need = used
-            .saturating_add(ref_len)
-            .saturating_add(cap_len)
-            .saturating_add(clr_len)
-            .saturating_add(chip_gap)
-            .saturating_add(2);
-        if need < area_w {
+        let (refresh_text, capture_text, clear_text) =
+            if need_for(refresh_full, capture_full, clear_full) < area_w {
+                (refresh_full, capture_full, clear_full)
+            } else if need_for(refresh_icon, capture_icon, clear_icon) < area_w {
+                (refresh_icon, capture_icon, clear_icon)
+            } else {
+                // Not enough width even for icons — bail without
+                // painting so no chip catches phantom clicks at the
+                // right edge.
+                ("", "", "")
+            };
+        if !refresh_text.is_empty() || !capture_text.is_empty() || !clear_text.is_empty() {
+            let ref_len = if has_refresh_chip {
+                chip_len(refresh_text)
+            } else {
+                0
+            };
+            let cap_len = if has_capture_chip {
+                chip_len(capture_text)
+            } else {
+                0
+            };
+            let clr_len = if has_clear_chip {
+                chip_len(clear_text)
+            } else {
+                0
+            };
             let pad = area_w
                 .saturating_sub(used)
                 .saturating_sub(ref_len)
                 .saturating_sub(cap_len)
                 .saturating_sub(clr_len)
-                .saturating_sub(chip_gap)
+                .saturating_sub(gap_count)
                 .saturating_sub(1);
             spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
             let mut chip_x = (used + pad) as u16;
-            if has_refresh_chip && let Some(text) = refresh_chip_text {
+            if has_refresh_chip {
                 spans.push(Span::styled(
-                    format!(" {text} "),
+                    format!(" {refresh_text} "),
                     Style::default().fg(t.cyan).bg(bg),
                 ));
                 let chip_rect = Rect {
@@ -526,9 +548,9 @@ fn draw_section_header(
                     chip_x += 1;
                 }
             }
-            if has_capture_chip && let Some(text) = capture_chip_text {
+            if has_capture_chip {
                 spans.push(Span::styled(
-                    format!(" {text} "),
+                    format!(" {capture_text} "),
                     Style::default().fg(t.cyan).bg(bg),
                 ));
                 let chip_rect = Rect {
@@ -544,9 +566,9 @@ fn draw_section_header(
                     chip_x += 1;
                 }
             }
-            if has_clear_chip && let Some(text) = clear_chip_text {
+            if has_clear_chip {
                 spans.push(Span::styled(
-                    format!(" {text} "),
+                    format!(" {clear_text} "),
                     Style::default().fg(t.red).bg(bg),
                 ));
                 let chip_rect = Rect {
