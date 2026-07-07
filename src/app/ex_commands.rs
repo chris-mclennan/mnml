@@ -2051,6 +2051,14 @@ impl App {
                 if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
                     b.editor
                         .apply(crate::edit_op::EditOp::DeleteLine, 20, &mut self.clipboard);
+                    // SEV-1 fix 2026-07-07 — was: `:g/pattern/d`
+                    // deleted lines but never flipped `dirty`, so
+                    // `:q` silently discarded the changes (data loss).
+                    // The `:d` handler drives every `:g/…/d` iteration
+                    // via run_ex_command, and each apply() call needs
+                    // its own dirty recompute for the buffer to know
+                    // the mutation happened.
+                    b.recompute_dirty();
                     self.toast(":delete");
                 }
             }
@@ -2060,6 +2068,10 @@ impl App {
                 if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
                     b.editor
                         .apply(crate::edit_op::EditOp::YankLine, 20, &mut self.clipboard);
+                    // YankLine doesn't mutate the buffer, but recompute
+                    // for consistency with the surrounding `:d`/`:put`
+                    // handlers.
+                    b.recompute_dirty();
                     self.toast(":yank");
                 }
             }

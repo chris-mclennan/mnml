@@ -3824,6 +3824,88 @@ impl App {
         }
     }
 
+    /// Pick a `{{VAR}}` name for the palette-driven `set_value` /
+    /// `jump_to_definition` commands to act on: first tries the URL
+    /// caret location; falls back to the first UNDEFINED var anywhere
+    /// in URL / body / headers (so a keyboard user can define a
+    /// missing token without needing to place the caret exactly).
+    /// Returns "" when no vars are present. 2026-07-07.
+    pub fn pending_var_at_cursor_name(&self) -> String {
+        let Some(cur) = self.active else {
+            return String::new();
+        };
+        let Some(crate::pane::Pane::Request(rp)) = self.panes.get(cur) else {
+            return String::new();
+        };
+        let envset = crate::http::template::EnvSet::select(
+            &self.workspace,
+            self.http_env_override.as_deref(),
+        );
+        // 1. URL caret first — most specific.
+        let url = &rp.request.url;
+        let caret = rp.url_cursor.min(url.len());
+        let bytes = url.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'{'
+                && bytes[i + 1] == b'{'
+                && let Some(end_off) = url[i + 2..].find("}}")
+            {
+                let end = i + 2 + end_off + 2;
+                if caret >= i && caret <= end {
+                    let name = url[i + 2..i + 2 + end_off].trim();
+                    if !name.is_empty() {
+                        return name.to_string();
+                    }
+                }
+                i = end;
+                continue;
+            }
+            i += 1;
+        }
+        // 2. First undefined var anywhere.
+        let hay = format!(
+            "{} {} {}",
+            url,
+            rp.request.body.as_deref().unwrap_or(""),
+            rp.headers_buffer
+        );
+        let bytes = hay.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'{'
+                && bytes[i + 1] == b'{'
+                && let Some(end_off) = hay[i + 2..].find("}}")
+            {
+                let name = hay[i + 2..i + 2 + end_off].trim().to_string();
+                if !name.is_empty() && !name.starts_with('$') && envset.lookup(&name).is_none() {
+                    return name;
+                }
+                i = i + 2 + end_off + 2;
+                continue;
+            }
+            i += 1;
+        }
+        // 3. Any var at all (fallback).
+        let bytes = url.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'{'
+                && bytes[i + 1] == b'{'
+                && let Some(end_off) = url[i + 2..].find("}}")
+            {
+                let name = url[i + 2..i + 2 + end_off].trim().to_string();
+                if !name.is_empty() {
+                    return name;
+                }
+                i = i + 2 + end_off + 2;
+                continue;
+            }
+            i += 1;
+        }
+        String::new()
+    }
+
     /// Click on a `{{VAR}}` token in a Request pane → open the active
     /// env file at the line where `<name>=…` lives. Falls back to
     /// opening the env file at end-of-file (so the user can add the

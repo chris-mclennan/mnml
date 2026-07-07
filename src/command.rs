@@ -1881,6 +1881,46 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "file.rename",
+            title: "Rename the selected tree file (F2)",
+            group: "file",
+            keys: &["f2"],
+            run: |app| {
+                if let Some(p) = app.tree.selected_file() {
+                    app.open_fs_rename_prompt(p);
+                }
+            },
+        },
+        Command {
+            id: "file.delete",
+            title: "Delete the selected tree file (Delete)",
+            group: "file",
+            keys: &["delete"],
+            run: |app| {
+                if let Some(p) = app.tree.selected_file() {
+                    app.open_fs_delete_prompt(p);
+                }
+            },
+        },
+        Command {
+            id: "view.focus_pane",
+            title: "Focus the active pane (reverse of view.focus_tree)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                if app.active.is_some() {
+                    app.focus_pane();
+                }
+            },
+        },
+        Command {
+            id: "buffer.reopen_or_toast",
+            title: "Reopen the most recently closed buffer (Ctrl+Shift+T)",
+            group: "buffer",
+            keys: &["ctrl+shift+t"],
+            run: |app| app.reopen_closed_buffer(),
+        },
+        Command {
             id: "view.workspace_up",
             title: "Navigate the workspace root up one level (..)",
             group: "view",
@@ -4314,6 +4354,53 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.copy_active_response_body(),
         },
         Command {
+            id: "http.toggle_response_wrap",
+            title: "HTTP: toggle response body wrap",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_toggle_response_wrap(),
+        },
+        Command {
+            id: "http.toggle_split_orientation",
+            title: "HTTP: cycle Request/Response split orientation (Auto → Vertical → Horizontal)",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                let Some(cur) = app.active else { return };
+                if let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur) {
+                    rp.split_orientation = rp.split_orientation.toggle();
+                }
+            },
+        },
+        Command {
+            id: "http.set_env_var_value",
+            title: "HTTP: set value for env var at cursor / active request pane",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                let name = app.pending_var_at_cursor_name();
+                if name.is_empty() {
+                    app.toast("no {{VAR}} at cursor / active pane");
+                    return;
+                }
+                app.accept_env_vars(&name);
+            },
+        },
+        Command {
+            id: "http.jump_to_env_var",
+            title: "HTTP: jump to env var definition at cursor / active request pane",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                let name = app.pending_var_at_cursor_name();
+                if name.is_empty() {
+                    app.toast("no {{VAR}} at cursor / active pane");
+                    return;
+                }
+                app.open_env_var_definition(&name);
+            },
+        },
+        Command {
             id: "http.ai_debug",
             title: "HTTP: ask Claude why this request is failing",
             group: "http",
@@ -4441,10 +4528,24 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "term.focus_or_open_shell",
-            title: "Terminal: focus existing shell or open one (VS Code Ctrl+`)",
+            title: "Terminal: focus existing shell or open one",
             group: "term",
-            keys: &["ctrl+t"],
+            // #polish 2026-07-07 (vscode-user SEV-2 #5) — dropped
+            // Ctrl+T; VS Code binds Ctrl+T to "Go to Symbol in
+            // Workspace" and users hit it reflexively. Terminal
+            // is already on Ctrl+backtick (the standard VS Code
+            // chord for the same action).
+            keys: &[],
             run: |app| app.focus_or_open_shell(),
+        },
+        Command {
+            id: "picker.workspace_symbol",
+            title: "Go to Symbol in Workspace (VS Code Ctrl+T)",
+            group: "picker",
+            // Alias for lsp.workspace_symbols so the VS Code chord
+            // lands on the right thing.
+            keys: &["ctrl+t"],
+            run: |app| app.lsp_workspace_symbols(),
         },
         Command {
             id: "ai.session_picker",

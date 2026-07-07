@@ -1211,7 +1211,17 @@ impl App {
             // open_path will install a leaf in the (now-empty) active tab.
             self.open_path(p);
         } else {
-            self.focus = Focus::Tree;
+            // SEV-2 fix 2026-07-07 — was: bare `:tabnew` left focus in
+            // the tree, so vim users typing `:tabnew` then `i` got tree
+            // navigation instead of insert mode. Open an empty scratch
+            // buffer so the tab is immediately usable — matches vim
+            // behavior (`:tabnew` opens `[No Name]` and lands on it).
+            let scratch = crate::buffer::Buffer::scratch(&self.config);
+            self.panes.push(crate::pane::Pane::Editor(scratch));
+            let new_id = self.panes.len() - 1;
+            *self.layout_mut() = crate::layout::Layout::leaf(new_id);
+            self.active = Some(new_id);
+            self.focus = Focus::Pane;
         }
         self.toast(format!("tab {}/{}", insert_at + 1, self.layouts.len()));
     }

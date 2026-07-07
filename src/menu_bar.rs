@@ -137,8 +137,12 @@ fn file_menu() -> MenuDef {
                 command_id: "file.new",
             },
             MenuItem::Action {
+                // #polish 2026-07-07 (vscode-user SEV-2 #1) — was
+                // wired to view.discovery (click-hint overlay); VS
+                // Code users hit "Open file..." expecting a file
+                // picker. Now routes to picker.files.
                 label: "Open file…",
-                command_id: "view.discovery",
+                command_id: "picker.files",
             },
             MenuItem::Action {
                 label: "Open folder…",

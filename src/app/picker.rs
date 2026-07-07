@@ -161,13 +161,14 @@ impl App {
                 items.push(make_item(p).with_priority(1));
             }
         }
-        for ws in &self.extra_workspaces {
-            for p in ws.tree.all_files() {
-                if !is_noise(&p) && seen.insert(p.clone()) {
-                    items.push(make_item(&p));
-                }
-            }
-        }
+        // #polish 2026-07-07 (vscode-user SEV-2 #2) — do NOT scan the
+        // extra_workspaces. Was: files from every registered
+        // `[[workspaces]]` entry showed up in Ctrl+P, drowning the
+        // active workspace's 6 files under thousands of unrelated
+        // hits (tester saw `3373 of 22783 matching`). VS Code's
+        // Ctrl+P is scoped to the current workspace root; mirror
+        // that. `picker.workspaces` remains the way to jump to
+        // another workspace root.
         self.open_picker(Picker::new(PickerKind::Files, "Open file", items));
     }
 

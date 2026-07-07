@@ -55,8 +55,8 @@ pub fn draw(
         Span::styled("  ", Style::default().bg(t.bg_dark)),
         Span::styled(
             format!(
-                "cmdline history · {n} entry{}",
-                if n == 1 { "" } else { "ies" }
+                "cmdline history · {n} entr{}",
+                if n == 1 { "y" } else { "ies" }
             ),
             Style::default()
                 .fg(t.fg)

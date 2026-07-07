@@ -51,16 +51,9 @@ impl App {
             self.search_used = "";
             return;
         }
-        let (mut hits, used) = crate::app::grep_workspace(&self.workspace, &q);
-        let extras: Vec<std::path::PathBuf> = self
-            .extra_workspaces
-            .iter()
-            .map(|w| w.root.clone())
-            .collect();
-        for root in extras {
-            let (mut extra_hits, _) = crate::app::grep_workspace(&root, &q);
-            hits.append(&mut extra_hits);
-        }
+        // #polish 2026-07-07 — same scoping fix as run_workspace_grep
+        // (SEV-2 #3). Search panel now current-workspace-only.
+        let (hits, used) = crate::app::grep_workspace(&self.workspace, &q);
         self.search_hits = hits;
         self.search_used = used;
         self.search_selected = 0;
@@ -136,15 +129,13 @@ impl App {
         if q.is_empty() {
             return;
         }
-        // Multi-root: run grep in the primary workspace + each extra,
-        // concat the hits. `used` reflects the tool of the primary run
-        // (consistent — extras presumably have the same toolchain
-        // available since they're sibling user dirs).
-        let (mut hits, used) = grep_workspace(&self.workspace, &q);
-        for ws in &self.extra_workspaces {
-            let (mut extra_hits, _) = grep_workspace(&ws.root, &q);
-            hits.append(&mut extra_hits);
-        }
+        // #polish 2026-07-07 (vscode-user SEV-2 #3) — do NOT scan
+        // extra_workspaces. Was: grep results from every registered
+        // `[[workspaces]]` entry, so 4 workspace-local matches
+        // drowned in 2000+ from unrelated sibling repos. Scope to
+        // the current workspace — matches VS Code's Ctrl+Shift+F
+        // convention.
+        let (hits, used) = grep_workspace(&self.workspace, &q);
         if hits.is_empty() {
             self.toast(format!("{used}: no matches for {q:?}"));
             return;
