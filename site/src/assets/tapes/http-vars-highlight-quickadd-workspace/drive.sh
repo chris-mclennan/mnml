@@ -61,7 +61,7 @@ PY
 
   echo '{"cmd":"open","path":"api.http"}' >> "$CMD"
   wait_rects_has "request_var:DATABASE_URL"
-  sleep 0.6
+  sleep 1.2
 
   # Coords for the token.
   TOK="$(rect_center "request_var:DATABASE_URL")"

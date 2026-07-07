@@ -2042,10 +2042,40 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // HTTP panel — sectioned sidebar (#10 v2). Order: chip rects
     // first (they sit inside header rows), then row rects, then
     // header rows themselves (the collapse-toggle catch-all).
-    if let Some(r) = app.rects.http_panel_captured_refresh_chip
-        && crate::app::dispatch::contains(r, x, y)
+    // Per-section chip cluster (filter / refresh / capture / clear).
+    // Checked before the older section-specific rect handlers below so
+    // routing goes through the shared HttpChipKind dispatch.
+    if let Some((_, section, kind)) = app
+        .rects
+        .http_panel_section_chips
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+        .copied()
     {
-        crate::command::run("http.refresh", app);
+        use crate::app::HttpChipKind;
+        match kind {
+            HttpChipKind::Filter => {
+                app.http_panel_filter_focused = true;
+            }
+            HttpChipKind::Refresh => {
+                crate::command::run("http.refresh", app);
+            }
+            HttpChipKind::Capture => {
+                crate::command::run("http.capture_start", app);
+            }
+            HttpChipKind::Clear => match section {
+                1 => app.http_panel_clear_recent(),
+                2 => app.http_panel_clear_captured(),
+                _ => {
+                    // MOCKS / COLLECTIONS — the ✕ chip clears the
+                    // filter as a safe default (destructive delete-
+                    // all was too dangerous to bind to a single
+                    // click).
+                    app.http_panel_filter.clear();
+                    app.http_panel_filter_focused = false;
+                }
+            },
+        }
         return;
     }
     if let Some(r) = app.rects.http_panel_capture_chip

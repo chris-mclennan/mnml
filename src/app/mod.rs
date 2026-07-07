@@ -138,6 +138,25 @@ pub enum HttpCollectionKind {
     InTree,
 }
 
+/// Which toolbar action a per-section HTTP panel chip fires. Stashed on
+/// `PaneRects.http_panel_section_chips` next to the rect + section id
+/// so the mouse handler dispatches without knowing which specific
+/// field owned it. 2026-07-07.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpChipKind {
+    /// `/` filter — focus the `http_panel_filter` input.
+    Filter,
+    /// `↺` refresh — rescan the caches (`http.refresh`).
+    Refresh,
+    /// `🌐` capture — launch a browser and start capturing, or dump
+    /// the current network log when a browser is already open.
+    Capture,
+    /// `✕` clear — section-specific destructive action (truncate log
+    /// on RECENT / CAPTURED; clear the filter on MOCKS / COLLECTIONS
+    /// so a stray click doesn't blow away user assets).
+    Clear,
+}
+
 /// Cap on `App::browser_url_history`. Higher than `recent_files` because
 /// URLs accumulate quickly (every navigation, every redirect) and the
 /// fuzzy picker handles long lists gracefully.
@@ -1873,6 +1892,13 @@ pub struct PaneRects {
     /// autocapture writes show up without a full panel refresh.
     /// 2026-07-07.
     pub http_panel_captured_refresh_chip: Option<Rect>,
+    /// Per-section chip rects (filter / refresh / capture / clear) —
+    /// one entry per painted chip with its rect, section index, and
+    /// action kind. Cleared + rebuilt every render; mouse routing
+    /// walks the vec and dispatches based on `HttpChipKind`.
+    /// Consolidates the old *_filter_chip / *_refresh_chip fields.
+    /// 2026-07-07.
+    pub http_panel_section_chips: Vec<(Rect, u8, HttpChipKind)>,
     /// `✕ clear` chip inside the RECENT section header. Click →
     /// truncate the workspace-local history.jsonl.
     pub http_panel_recent_clear_chip: Option<Rect>,

@@ -62,6 +62,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_capture_chip = None;
     app.rects.http_panel_captured_clear_chip = None;
     app.rects.http_panel_captured_refresh_chip = None;
+    app.rects.http_panel_section_chips.clear();
     app.rects.http_panel_recent_clear_chip = None;
     app.rects.http_panel_discover_chip = None;
     app.rects.http_panel_icon_buttons.clear();
@@ -441,29 +442,35 @@ fn draw_section_header(
     // but the chip's job is "open a browser pane and start
     // capturing its network log" — a globe reads that more
     // directly.
-    // Icon-only fallbacks used when the header row is too narrow to
-    // fit the full "↺ refresh · 🌐 capture · ✕ clear" text. Ascii
-    // mode uses letter abbreviations. Order: (refresh, capture, clear).
-    let (refresh_full, capture_full, clear_full, refresh_icon, capture_icon, clear_icon) = if ascii
-    {
-        ("refresh", "capture", "clear", "r", "c", "x")
+    // #polish 2026-07-07 — always render as icons; the panel is
+    // usually 24–32 cells wide so labeled chips crowded the row and
+    // the width-dependent degradation read inconsistently. Tooltips
+    // (see HoverChip::HttpCapture* variants) surface the label on
+    // hover, matching VS Code's file-tree toolbar convention.
+    // Order left→right on CAPTURED: filter · refresh · capture · clear.
+    // Codicon glyphs — larger + more consistent stroke weight than
+    // the small nerd-font/unicode versions that shipped first.
+    //   filter  → EB83 codicon filter
+    //   refresh → EB37 codicon refresh (same glyph used up in the
+    //             panel-wide HTTP header toolbar)
+    //   capture → EB01 codicon browser
+    //   clear   → EA76 codicon close
+    let (filter_icon, refresh_icon, capture_icon, clear_icon) = if ascii {
+        ("/", "r", "c", "x")
     } else {
-        (
-            "\u{21BA} refresh",
-            "\u{EB01}  capture",
-            "\u{2715} clear",
-            "\u{21BA}",
-            "\u{EB01}",
-            "\u{2715}",
-        )
+        ("\u{EB83}", "\u{EB37}", "\u{EB01}", "\u{EA76}")
     };
+    // Per-section chip layout (2026-07-07 user request):
+    //   CHAINS       (4) — just filter
+    //   MOCKS        (5) — filter + refresh + clear
+    //   COLLECTIONS  (6) — filter + refresh + clear
+    //   RECENT       (1) — filter + refresh + clear
+    //   CAPTURED     (2) — filter + refresh + capture + clear
     let has_capture_chip = section == 2;
-    let has_clear_chip = section == 1 || section == 2;
-    // #polish 2026-07-07 — added a section-local `↺ refresh` chip to
-    // CAPTURED so the "the log file grew but the sidebar didn't
-    // update" scenario is one obvious click away.
-    let has_refresh_chip = section == 2;
-    if has_capture_chip || has_clear_chip || has_refresh_chip {
+    let has_clear_chip = matches!(section, 1 | 2 | 5 | 6);
+    let has_refresh_chip = matches!(section, 1 | 2 | 5 | 6);
+    let has_filter_chip = matches!(section, 1 | 2 | 4 | 5 | 6);
+    if has_capture_chip || has_clear_chip || has_refresh_chip || has_filter_chip {
         // Base "used" width: leading pad + chevron + optional glyph
         // prefix + label + count.
         let used = 1
@@ -472,58 +479,43 @@ fn draw_section_header(
             + label.chars().count()
             + format!(" ({count})").chars().count();
         // Each chip renders as ` <text> ` (text + 2 pad) with a 1-cell
-        // gap between adjacent pairs. Progressive degradation: try
-        // full text first, then icon-only, else hide the whole cluster.
+        // gap between adjacent pairs.
         let chip_len = |text: &str| text.chars().count() + 2;
-        let gap_count = [has_refresh_chip, has_capture_chip, has_clear_chip]
-            .iter()
-            .filter(|b| **b)
-            .count()
-            .saturating_sub(1);
-        let need_for = |r: &str, c: &str, x: &str| -> usize {
-            let mut n = used + gap_count + 2;
-            if has_refresh_chip {
-                n += chip_len(r);
-            }
-            if has_capture_chip {
-                n += chip_len(c);
-            }
-            if has_clear_chip {
-                n += chip_len(x);
-            }
-            n
-        };
+        let gap_count = [
+            has_filter_chip,
+            has_refresh_chip,
+            has_capture_chip,
+            has_clear_chip,
+        ]
+        .iter()
+        .filter(|b| **b)
+        .count()
+        .saturating_sub(1);
         let area_w = area.width as usize;
-        // Shared mode decision: if CAPTURED's full text won't fit at
-        // this width, EVERY chip-bearing section in the panel goes
-        // icon-only so RECENT doesn't render `× clear` next to
-        // CAPTURED's collapsed `× ✕` and read inconsistently. User
-        // feedback 2026-07-07.
-        //
-        // CAPTURED (idx=2) is the widest chip cluster, so it drives
-        // the tier. Compute its full-text need against the same
-        // area.width every section sees.
-        let captured_full_used = 1
-            + chev.chars().count()
-            + label_prefix.chars().count()
-            + "CAPTURED".chars().count()
-            + " (9999)".chars().count();
-        let captured_full_need = captured_full_used
-            + chip_len(refresh_full)
-            + chip_len(capture_full)
-            + chip_len(clear_full)
-            + 2 /* gap between 3 chips */
-            + 2;
-        let use_icons_panel_wide = captured_full_need >= area_w;
-        let (refresh_text, capture_text, clear_text) = if !use_icons_panel_wide {
-            (refresh_full, capture_full, clear_full)
-        } else if need_for(refresh_icon, capture_icon, clear_icon) < area_w {
-            (refresh_icon, capture_icon, clear_icon)
+        let need =
+            used + if has_filter_chip {
+                chip_len(filter_icon)
+            } else {
+                0
+            } + if has_refresh_chip {
+                chip_len(refresh_icon)
+            } else {
+                0
+            } + if has_capture_chip {
+                chip_len(capture_icon)
+            } else {
+                0
+            } + if has_clear_chip {
+                chip_len(clear_icon)
+            } else {
+                0
+            } + gap_count
+                + 2;
+        let (filter_text, refresh_text, capture_text, clear_text) = if need < area_w {
+            (filter_icon, refresh_icon, capture_icon, clear_icon)
         } else {
-            // Not enough width even for icons — bail without
-            // painting so no chip catches phantom clicks at the
-            // right edge.
-            ("", "", "")
+            // Even icons don't fit — bail without painting.
+            ("", "", "", "")
         };
         if !refresh_text.is_empty() || !capture_text.is_empty() || !clear_text.is_empty() {
             let ref_len = if has_refresh_chip {
@@ -541,8 +533,14 @@ fn draw_section_header(
             } else {
                 0
             };
+            let filt_len = if has_filter_chip {
+                chip_len(filter_text)
+            } else {
+                0
+            };
             let pad = area_w
                 .saturating_sub(used)
+                .saturating_sub(filt_len)
                 .saturating_sub(ref_len)
                 .saturating_sub(cap_len)
                 .saturating_sub(clr_len)
@@ -550,6 +548,28 @@ fn draw_section_header(
                 .saturating_sub(1);
             spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
             let mut chip_x = (used + pad) as u16;
+            if has_filter_chip {
+                spans.push(Span::styled(
+                    format!(" {filter_text} "),
+                    Style::default().fg(t.cyan).bg(bg),
+                ));
+                let chip_rect = Rect {
+                    x: area.x + chip_x,
+                    y,
+                    width: (filt_len as u16).min(area.width.saturating_sub(chip_x)),
+                    height: 1,
+                };
+                app.rects.http_panel_section_chips.push((
+                    chip_rect,
+                    section,
+                    crate::app::HttpChipKind::Filter,
+                ));
+                chip_x += filt_len as u16;
+                if has_refresh_chip || has_capture_chip || has_clear_chip {
+                    spans.push(Span::styled(" ", Style::default().bg(bg)));
+                    chip_x += 1;
+                }
+            }
             if has_refresh_chip {
                 spans.push(Span::styled(
                     format!(" {refresh_text} "),
@@ -561,7 +581,11 @@ fn draw_section_header(
                     width: (ref_len as u16).min(area.width.saturating_sub(chip_x)),
                     height: 1,
                 };
-                app.rects.http_panel_captured_refresh_chip = Some(chip_rect);
+                app.rects.http_panel_section_chips.push((
+                    chip_rect,
+                    section,
+                    crate::app::HttpChipKind::Refresh,
+                ));
                 chip_x += ref_len as u16;
                 if has_capture_chip || has_clear_chip {
                     spans.push(Span::styled(" ", Style::default().bg(bg)));
@@ -580,6 +604,11 @@ fn draw_section_header(
                     height: 1,
                 };
                 app.rects.http_panel_capture_chip = Some(chip_rect);
+                app.rects.http_panel_section_chips.push((
+                    chip_rect,
+                    section,
+                    crate::app::HttpChipKind::Capture,
+                ));
                 chip_x += cap_len as u16;
                 if has_clear_chip {
                     spans.push(Span::styled(" ", Style::default().bg(bg)));
@@ -599,9 +628,14 @@ fn draw_section_header(
                 };
                 if section == 1 {
                     app.rects.http_panel_recent_clear_chip = Some(chip_rect);
-                } else {
+                } else if section == 2 {
                     app.rects.http_panel_captured_clear_chip = Some(chip_rect);
                 }
+                app.rects.http_panel_section_chips.push((
+                    chip_rect,
+                    section,
+                    crate::app::HttpChipKind::Clear,
+                ));
             }
         }
     }
