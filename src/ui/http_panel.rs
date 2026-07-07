@@ -918,7 +918,12 @@ fn draw_chains(
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("   ", Style::default().bg(bg)),
-                Span::styled("\u{f085} ", Style::default().fg(t.cyan).bg(bg)),
+                // Extra space after the `\u{f085}` cogs glyph — it
+                // renders wide + tight against the following char in
+                // Nerd Font / CoreText combos, eating the single-space
+                // gap other rows use. Doubled here so the chain name
+                // isn't glued to the icon. 2026-07-07.
+                Span::styled("\u{f085}  ", Style::default().fg(t.cyan).bg(bg)),
                 Span::styled(name, Style::default().fg(t.fg).bg(bg)),
             ])),
             row_rect,

@@ -85,6 +85,7 @@ export default defineConfig({
           label: 'Manual',
           items: [
             { label: 'Workspaces & the file rail', slug: 'manual/workspaces' },
+            { label: 'File actions & tree up-navigation', slug: 'manual/file-actions' },
             { label: 'Activity bar', slug: 'manual/activity-bar' },
             { label: 'Right side panel', slug: 'manual/right-panel' },
             { label: 'Bridge & Mount (sibling integration)', slug: 'manual/bridge-mount' },
@@ -103,6 +104,7 @@ export default defineConfig({
             { label: 'Git', slug: 'manual/git' },
             { label: 'HTTP client', slug: 'manual/http' },
             { label: 'HTTP Request pane — tabs & layout', slug: 'manual/http-edit-tabs' },
+            { label: 'HTTP variables, edit split & panel filter', slug: 'manual/http-request-polish' },
             { label: 'HTTP new request (Postman-style)', slug: 'manual/http-new-request' },
             { label: 'HTTP build from natural language', slug: 'manual/http-ai-build' },
             { label: 'HTTP envs & templating', slug: 'manual/http-envs' },
