@@ -293,6 +293,13 @@ pub(crate) fn render_kv_table(
     hover_key: Option<&str>,
     pane_id: PaneId,
     params_rows_local: &mut Vec<(Rect, String)>,
+    // When `Some`, `{{VAR}}` tokens inside VALUE cells render in
+    // env-resolved cyan / unresolved red instead of the plain value
+    // style, and each token's click rect is pushed onto `var_clicks`
+    // (using row-index y — the caller translates to screen y like it
+    // does for the other rect vecs). None ⇒ old plain rendering.
+    envset: Option<&crate::http::template::EnvSet>,
+    var_clicks: Option<&mut Vec<(Rect, String)>>,
 ) {
     const TABLE_MAX_W: u16 = 100;
     const TABLE_RIGHT_PAD: u16 = 3;
@@ -344,12 +351,17 @@ pub(crate) fn render_kv_table(
             ),
         ])
     };
-    let make_row = |key_text: String,
-                    val_text: String,
-                    key_style: Style,
-                    val_style: Style,
-                    x_glyph: &str,
-                    x_style: Style|
+    // Shared border cell + row assembler. `value_spans` covers the
+    // value column only (already truncated + not padded); the assembler
+    // adds the trailing padding to fill `value_w`. Value-column width
+    // (in cells) is derived from the spans' `.content` char count so
+    // vars-highlighted callers can pass multiple spans without messing
+    // up the layout.
+    let assemble_row = |key_text: String,
+                        key_style: Style,
+                        value_spans: Vec<Span<'static>>,
+                        x_glyph: &str,
+                        x_style: Style|
      -> Line<'static> {
         let mut key_s = key_text;
         if key_s.chars().count() > name_w as usize {
@@ -357,14 +369,10 @@ pub(crate) fn render_kv_table(
             key_s = truncated;
         }
         let pad_k = (name_w as usize).saturating_sub(key_s.chars().count());
-        let mut val_s = val_text;
-        if val_s.chars().count() > value_w as usize {
-            let truncated: String = val_s.chars().take(value_w as usize).collect();
-            val_s = truncated;
-        }
-        let pad_v = (value_w as usize).saturating_sub(val_s.chars().count());
+        let value_cells: usize = value_spans.iter().map(|s| s.content.chars().count()).sum();
+        let pad_v = (value_w as usize).saturating_sub(value_cells);
         let border = Span::styled("│", Style::default().fg(t.bg3).bg(t.bg_dark));
-        Line::from(vec![
+        let mut spans = vec![
             Span::styled("  ", Style::default().bg(t.bg_dark)),
             border.clone(),
             Span::styled(" ", Style::default().bg(t.bg_dark)),
@@ -373,13 +381,39 @@ pub(crate) fn render_kv_table(
             Span::styled(" ", Style::default().bg(t.bg_dark)),
             border.clone(),
             Span::styled(" ", Style::default().bg(t.bg_dark)),
-            Span::styled(val_s, val_style),
+        ];
+        spans.extend(value_spans);
+        spans.extend(vec![
             Span::styled(" ".repeat(pad_v), Style::default().bg(t.bg_dark)),
             Span::styled(" ", Style::default().bg(t.bg_dark)),
             border.clone(),
             Span::styled(x_glyph.to_string(), x_style),
             border,
-        ])
+        ]);
+        Line::from(spans)
+    };
+    // Back-compat wrapper: builds a single-span value + delegates to
+    // `assemble_row`. Used by all callers that don't participate in
+    // var-highlighting (header row, draft rows, non-data pieces).
+    let make_row = |key_text: String,
+                    val_text: String,
+                    key_style: Style,
+                    val_style: Style,
+                    x_glyph: &str,
+                    x_style: Style|
+     -> Line<'static> {
+        let mut val_s = val_text;
+        if val_s.chars().count() > value_w as usize {
+            let truncated: String = val_s.chars().take(value_w as usize).collect();
+            val_s = truncated;
+        }
+        assemble_row(
+            key_text,
+            key_style,
+            vec![Span::styled(val_s, val_style)],
+            x_glyph,
+            x_style,
+        )
     };
     let key_color_default = match kind {
         KvTableKind::Params => t.fg,
@@ -424,6 +458,20 @@ pub(crate) fn render_kv_table(
     let name_col_x_off: u16 = 2 + 1 + 1;
     let value_col_x_off: u16 = 2 + 1 + 1 + name_w + 1 + 1 + 1;
     let x_col_x_off: u16 = value_col_x_off + value_w + 1 + 1 + 1;
+    // Var-highlighting styles reused across all data rows in this
+    // table. Cyan+bold for resolved, red+bold for unresolved — same
+    // treatment used by the URL box.
+    let var_resolved_style = Style::default()
+        .fg(t.cyan)
+        .bg(t.bg_dark)
+        .add_modifier(Modifier::BOLD);
+    let var_unresolved_style = Style::default()
+        .fg(t.red)
+        .bg(t.bg_dark)
+        .add_modifier(Modifier::BOLD);
+    // Single-owner mutable ref for click accumulation. Wrapped so the
+    // per-row closures below can push through it without cloning.
+    let mut click_out_wrap = var_clicks;
     for (i, (k, v)) in data.iter().enumerate() {
         let is_hover = hover_key == Some(k.as_str());
         let row_is_editing = edit_target.map(|e| e.original_key == *k).unwrap_or(false);
@@ -465,11 +513,42 @@ pub(crate) fn render_kv_table(
         };
         let x_style = Style::default().fg(t.red).bg(t.bg_dark);
         let row_y = rows.len() as u16;
-        rows.push(make_row(
+        // Build the value cell's spans. When var-highlighting is
+        // active (Params / Headers with an envset), split the value on
+        // `{{VAR}}` tokens and colorize each; register click rects at
+        // the value-cell x offset in row-index coords (the caller
+        // translates y to screen).
+        let use_vars = !editing_value && envset.is_some();
+        let value_spans: Vec<Span<'static>> = if use_vars {
+            let mut truncated = val_display.clone();
+            if truncated.chars().count() > value_w as usize {
+                let clipped: String = truncated.chars().take(value_w as usize).collect();
+                truncated = clipped;
+            }
+            let plain_style = val_style;
+            let click_target = click_out_wrap.as_deref_mut();
+            build_var_spans(
+                &truncated,
+                envset.unwrap(),
+                plain_style,
+                var_resolved_style,
+                var_unresolved_style,
+                area.x.saturating_add(value_col_x_off),
+                row_y,
+                click_target,
+            )
+        } else {
+            let mut truncated = val_display.clone();
+            if truncated.chars().count() > value_w as usize {
+                let clipped: String = truncated.chars().take(value_w as usize).collect();
+                truncated = clipped;
+            }
+            vec![Span::styled(truncated, val_style)]
+        };
+        rows.push(assemble_row(
             name_display,
-            val_display,
             key_style,
-            val_style,
+            value_spans,
             " ✕ ",
             x_style,
         ));
@@ -934,6 +1013,10 @@ pub fn draw(
 
     let tabs_rect = request_inner;
     let mut edit_tabs_split_local: Vec<(Rect, PaneId, crate::request_pane::EditTab)> = Vec::new();
+    // Var-click rects collected inside the primary side's draw_edit
+    // (row-index y); translated to screen y in the section below the
+    // `if tabs_rect.width > 0` block.
+    let mut var_clicks_primary: Vec<(Rect, String)> = Vec::new();
 
     if tabs_rect.width > 0 && tabs_rect.height > 0 {
         let split_secondary = rp.edit_tab_split;
@@ -990,6 +1073,8 @@ pub fn draw(
             &mut vars_rows_local,
             &mut params_rows_local,
             &mut auth_rows_local,
+            &envset,
+            &mut var_clicks_primary,
             None,
         );
         let edit_view: Vec<Line> = edit_rows
@@ -1027,6 +1112,7 @@ pub fn draw(
             let mut vars_rows_r: Vec<(Rect, String)> = Vec::new();
             let mut params_rows_r: Vec<(Rect, String)> = Vec::new();
             let mut auth_rows_r: Vec<(Rect, String)> = Vec::new();
+            let mut var_clicks_r: Vec<(Rect, String)> = Vec::new();
             let mut caret_r: Option<(u16, u16)> = None;
             draw_edit(
                 rp,
@@ -1044,6 +1130,8 @@ pub fn draw(
                 &mut vars_rows_r,
                 &mut params_rows_r,
                 &mut auth_rows_r,
+                &envset,
+                &mut var_clicks_r,
                 Some(secondary),
             );
             let edit_view_r: Vec<Line> = edit_rows_r
@@ -1090,6 +1178,14 @@ pub fn draw(
                 }
                 r.y = right_origin.saturating_add(row_off as u16);
                 app.rects.request_auth_rows.push((r, id));
+            }
+            for (mut r, name) in var_clicks_r.drain(..) {
+                let row_off = r.y as usize;
+                if row_off >= right_h {
+                    continue;
+                }
+                r.y = right_origin.saturating_add(row_off as u16);
+                app.rects.request_var_click_rects.push((r, name));
             }
         }
     } else {
@@ -1246,6 +1342,14 @@ pub fn draw(
         }
         r.y = edit_origin_y.saturating_add(row_off as u16);
         app.rects.request_edit_tabs.push((r, pid, tab));
+    }
+    for (mut r, name) in var_clicks_primary.drain(..) {
+        let row_off = r.y as usize;
+        if row_off >= edit_h {
+            continue;
+        }
+        r.y = edit_origin_y.saturating_add(row_off as u16);
+        app.rects.request_var_click_rects.push((r, name));
     }
     // Secondary tab strip — same y-translation shape but pushed into
     // a distinct rect vec so click routing knows which side to update.
@@ -2297,6 +2401,14 @@ fn draw_edit(
     vars_rows_local: &mut Vec<(Rect, String)>,
     params_rows_local: &mut Vec<(Rect, String)>,
     auth_rows_local: &mut Vec<(Rect, String)>,
+    // The env set used to resolve `{{VAR}}` tokens in value cells /
+    // body / URL. Computed once at the top of `draw()` so per-frame
+    // env reloads are minimized.
+    envset: &crate::http::template::EnvSet,
+    // Var-token click rects for Params / Headers value cells, in
+    // row-index y coords — the caller translates to screen y like it
+    // does for `params_rows_local`.
+    var_clicks_local: &mut Vec<(Rect, String)>,
     // When `Some`, render this tab instead of `rp.edit_tab` — used by
     // the right side of a side-by-side edit split.
     tab_override: Option<crate::request_pane::EditTab>,
@@ -2438,6 +2550,8 @@ fn draw_edit(
             None,
             pane_id,
             params_rows_local,
+            Some(envset),
+            Some(var_clicks_local),
         );
     } // end Headers tab
 
@@ -2503,15 +2617,38 @@ fn draw_edit(
                 };
                 // JSON gets colored_line (per-token color); other
                 // content types keep the plain grey_fg rendering.
+                // Non-JSON path also gets `{{VAR}}` highlighting +
+                // click rects so form-data / text / xml / graphql bodies
+                // can jump to definitions. JSON is skipped for v1
+                // because it's already tree-sitter-colored; splitting
+                // its spans by var pattern is a follow-up.
                 let content_line = if let Some(spans) = json_spans.get(i) {
                     let mut inner = colored_line(&rendered, spans, t.grey_fg, t);
                     inner.spans.insert(0, gutter(n, t));
                     inner
                 } else {
-                    Line::from(vec![
-                        gutter(n, t),
-                        Span::styled(rendered, Style::default().fg(t.grey_fg).bg(t.bg_dark)),
-                    ])
+                    let plain_style = Style::default().fg(t.grey_fg).bg(t.bg_dark);
+                    let resolved_style = Style::default()
+                        .fg(t.cyan)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD);
+                    let unresolved_style = Style::default()
+                        .fg(t.red)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD);
+                    let gutter_prefix_cols = (gutter_w as u16).saturating_add(2);
+                    let mut inner_spans = vec![gutter(n, t)];
+                    inner_spans.extend(build_var_spans(
+                        &rendered,
+                        envset,
+                        plain_style,
+                        resolved_style,
+                        unresolved_style,
+                        area.x.saturating_add(gutter_prefix_cols),
+                        row_y,
+                        Some(var_clicks_local),
+                    ));
+                    Line::from(inner_spans)
                 };
                 rows.push(content_line);
                 register_field(fields, row_y, EditField::Body);
@@ -2590,6 +2727,8 @@ fn draw_edit(
             rp.hover_params_key.as_deref(),
             pane_id,
             params_rows_local,
+            Some(envset),
+            Some(var_clicks_local),
         );
     }
 
@@ -2748,6 +2887,8 @@ fn draw_edit(
             rp.hover_vars_key.as_deref(),
             pane_id,
             vars_rows_local,
+            None,
+            None,
         );
     }
 

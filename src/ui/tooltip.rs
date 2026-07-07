@@ -1000,6 +1000,32 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 },
             ))
         }
+        HoverChip::RequestVarToken(idx) => {
+            let (rect, name) = app.rects.request_var_click_rects.get(idx)?.clone();
+            let envset = crate::http::template::EnvSet::select(
+                &app.workspace,
+                app.http_env_override.as_deref(),
+            );
+            // Same resolution shape as tokenize_vars — `$foo` hits
+            // dynamic_var, otherwise env lookup.
+            let value = match name.strip_prefix('$') {
+                Some(dyn_name) => crate::http::template::dynamic_var(dyn_name),
+                None => envset.lookup(&name),
+            };
+            let head = format!("{{{{{name}}}}}");
+            let sub = match value {
+                Some(v) => {
+                    // Truncate long values so the tooltip stays a
+                    // one-liner. 100 chars is generous — env values
+                    // are usually short.
+                    let clipped: String = v.chars().take(100).collect();
+                    let more = if v.chars().count() > 100 { "…" } else { "" };
+                    format!("= {clipped}{more} · click to jump to env")
+                }
+                None => "not defined in active env · click to open env file".to_string(),
+            };
+            Some((rect, head, Some(sub)))
+        }
         HoverChip::RequestEditSplitChip => {
             let rect = app.rects.request_edit_split_chip?;
             let open = matches!(

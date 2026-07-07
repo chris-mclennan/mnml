@@ -407,6 +407,14 @@ pub enum HoverChip {
     /// The `[⇔]` chip that opens a side-by-side edit split
     /// (Body|Vars etc.). Tooltip explains what click does.
     RequestEditSplitChip,
+    /// Hover over a `{{VAR}}` token in a Request pane's URL / body /
+    /// value cell. Tooltip shows the resolved value (or "undefined"
+    /// when the env doesn't have this key), plus a hint that clicking
+    /// jumps to the env-file definition. `String` is the var name.
+    /// Index is stored on `App.hover_chip_var_idx` (not the name)
+    /// because HoverChip is Copy-only — the tooltip callback looks
+    /// the name back up from `PaneRects.request_var_click_rects`.
+    RequestVarToken(usize),
     /// #21 v8 — hover on the response bar's `copy` chip.
     RequestResponseCopy,
     /// #21 v8 — hover on the response bar's `wrap` chip.
