@@ -30,9 +30,13 @@ pub fn draw(
     let t = theme::cur();
     frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
 
-    // qa-feature 2026-07-02 — banner across the top of the preview
-    // pane with an `✏ Edit` chip. Click swaps this pane in place
-    // to a raw Editor of the same file.
+    // qa-feature 2026-07-02 — thin banner strip with an `✏ Edit`
+    // chip at the right. Click swaps the pane in place to a raw
+    // Editor of the same file.
+    //
+    // #polish 2026-07-06 — dropped the filename label on the left
+    // (was `󰃭 <file_name>`); user feedback that it duplicated the
+    // bufferline tab title. The bar now just carries the chip.
     let ascii = app.config.ui.ascii_icons;
     let banner_h: u16 = if area.height >= 3 { 1 } else { 0 };
     if banner_h > 0 {
@@ -42,23 +46,9 @@ pub fn draw(
             width: area.width,
             height: 1,
         };
-        let file_name = app
-            .panes
-            .get(pane_id)
-            .and_then(|p| match p {
-                Pane::MdPreview(mp) => mp
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string()),
-                _ => None,
-            })
-            .unwrap_or_else(|| "preview".to_string());
         let edit_glyph = if ascii { "e" } else { "\u{f044}" }; // codicon-edit
         let edit_label = format!(" {edit_glyph} Edit ");
         let edit_w = edit_label.chars().count() as u16;
-        let title = format!(" 󰃭 {file_name}");
-        let title_span = Span::styled(title, Style::default().fg(t.comment).bg(t.bg_darker));
         let edit_span = Span::styled(
             edit_label,
             Style::default()
@@ -66,12 +56,9 @@ pub fn draw(
                 .bg(t.blue)
                 .add_modifier(Modifier::BOLD),
         );
-        // Layout: title on the left, edit chip on the right.
-        let pad_w = area
-            .width
-            .saturating_sub(title_span.content.chars().count() as u16 + edit_w);
+        let pad_w = area.width.saturating_sub(edit_w);
         let pad_span = Span::styled(" ".repeat(pad_w as usize), Style::default().bg(t.bg_darker));
-        let line = ratatui::text::Line::from(vec![title_span, pad_span, edit_span]);
+        let line = ratatui::text::Line::from(vec![pad_span, edit_span]);
         frame.render_widget(
             Paragraph::new(line).style(Style::default().bg(t.bg_darker)),
             banner_rect,
