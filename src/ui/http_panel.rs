@@ -61,6 +61,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_filter_input = None;
     app.rects.http_panel_capture_chip = None;
     app.rects.http_panel_captured_clear_chip = None;
+    app.rects.http_panel_captured_refresh_chip = None;
     app.rects.http_panel_recent_clear_chip = None;
     app.rects.http_panel_discover_chip = None;
     app.rects.http_panel_icon_buttons.clear();
@@ -440,14 +441,23 @@ fn draw_section_header(
     // but the chip's job is "open a browser pane and start
     // capturing its network log" — a globe reads that more
     // directly.
-    let (capture_chip_text, clear_chip_text) = if ascii {
-        (Some("capture"), Some("clear"))
+    let (refresh_chip_text, capture_chip_text, clear_chip_text) = if ascii {
+        (Some("refresh"), Some("capture"), Some("clear"))
     } else {
-        (Some("\u{EB01}  capture"), Some("\u{2715} clear"))
+        (
+            Some("\u{21BA} refresh"),
+            Some("\u{EB01}  capture"),
+            Some("\u{2715} clear"),
+        )
     };
     let has_capture_chip = section == 2;
     let has_clear_chip = section == 1 || section == 2;
-    if has_capture_chip || has_clear_chip {
+    // #polish 2026-07-07 — added a section-local `↺ refresh` chip to
+    // CAPTURED so the "the log file grew but the sidebar didn't
+    // update" scenario is one obvious click away. Was: user had to
+    // hunt for the panel-wide ↺ up next to the "HTTP" header.
+    let has_refresh_chip = section == 2;
+    if has_capture_chip || has_clear_chip || has_refresh_chip {
         // Base "used" width: leading pad + chevron + optional glyph
         // prefix + label + count.
         let used = 1
@@ -455,6 +465,13 @@ fn draw_section_header(
             + label_prefix.chars().count()
             + label.chars().count()
             + format!(" ({count})").chars().count();
+        let ref_len = if has_refresh_chip {
+            refresh_chip_text
+                .map(|s| s.chars().count() + 2)
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let cap_len = if has_capture_chip {
             capture_chip_text
                 .map(|s| s.chars().count() + 2)
@@ -467,13 +484,16 @@ fn draw_section_header(
         } else {
             0
         };
-        let chip_gap = if has_capture_chip && has_clear_chip {
-            1
-        } else {
-            0
-        };
+        // 1-cell gap between every adjacent pair of chips.
+        let gap_count = [has_refresh_chip, has_capture_chip, has_clear_chip]
+            .iter()
+            .filter(|b| **b)
+            .count()
+            .saturating_sub(1);
+        let chip_gap = gap_count;
         let area_w = area.width as usize;
         let need = used
+            .saturating_add(ref_len)
             .saturating_add(cap_len)
             .saturating_add(clr_len)
             .saturating_add(chip_gap)
@@ -481,12 +501,31 @@ fn draw_section_header(
         if need < area_w {
             let pad = area_w
                 .saturating_sub(used)
+                .saturating_sub(ref_len)
                 .saturating_sub(cap_len)
                 .saturating_sub(clr_len)
                 .saturating_sub(chip_gap)
                 .saturating_sub(1);
             spans.push(Span::styled(" ".repeat(pad), Style::default().bg(bg)));
             let mut chip_x = (used + pad) as u16;
+            if has_refresh_chip && let Some(text) = refresh_chip_text {
+                spans.push(Span::styled(
+                    format!(" {text} "),
+                    Style::default().fg(t.cyan).bg(bg),
+                ));
+                let chip_rect = Rect {
+                    x: area.x + chip_x,
+                    y,
+                    width: (ref_len as u16).min(area.width.saturating_sub(chip_x)),
+                    height: 1,
+                };
+                app.rects.http_panel_captured_refresh_chip = Some(chip_rect);
+                chip_x += ref_len as u16;
+                if has_capture_chip || has_clear_chip {
+                    spans.push(Span::styled(" ", Style::default().bg(bg)));
+                    chip_x += 1;
+                }
+            }
             if has_capture_chip && let Some(text) = capture_chip_text {
                 spans.push(Span::styled(
                     format!(" {text} "),
@@ -500,9 +539,9 @@ fn draw_section_header(
                 };
                 app.rects.http_panel_capture_chip = Some(chip_rect);
                 chip_x += cap_len as u16;
-                if chip_gap > 0 {
+                if has_clear_chip {
                     spans.push(Span::styled(" ", Style::default().bg(bg)));
-                    chip_x += chip_gap as u16;
+                    chip_x += 1;
                 }
             }
             if has_clear_chip && let Some(text) = clear_chip_text {

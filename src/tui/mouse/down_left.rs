@@ -2042,6 +2042,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // HTTP panel — sectioned sidebar (#10 v2). Order: chip rects
     // first (they sit inside header rows), then row rects, then
     // header rows themselves (the collapse-toggle catch-all).
+    if let Some(r) = app.rects.http_panel_captured_refresh_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        crate::command::run("http.refresh", app);
+        return;
+    }
     if let Some(r) = app.rects.http_panel_capture_chip
         && crate::app::dispatch::contains(r, x, y)
     {

@@ -1868,6 +1868,11 @@ pub struct PaneRects {
     /// `✕ clear` chip inside the CAPTURED section header. Click →
     /// truncate the captured-traffic log.
     pub http_panel_captured_clear_chip: Option<Rect>,
+    /// `↺ refresh` chip inside the CAPTURED section header. Click →
+    /// re-read `.rqst/captured/log.jsonl` into the panel cache so
+    /// autocapture writes show up without a full panel refresh.
+    /// 2026-07-07.
+    pub http_panel_captured_refresh_chip: Option<Rect>,
     /// `✕ clear` chip inside the RECENT section header. Click →
     /// truncate the workspace-local history.jsonl.
     pub http_panel_recent_clear_chip: Option<Rect>,
