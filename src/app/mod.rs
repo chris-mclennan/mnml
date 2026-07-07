@@ -1350,6 +1350,7 @@ pub enum FsAction {
     NewFolder { parent: PathBuf },
     Rename { path: PathBuf },
     Delete { path: PathBuf },
+    MoveTo { source: PathBuf },
 }
 
 /// One watch row's most-recent evaluation. `expression` keys the
@@ -1628,6 +1629,10 @@ pub struct PaneRects {
     pub tree: Option<Rect>,
     /// Tree scroll offset at render time (so a click maps to the right row).
     pub tree_scroll: usize,
+    /// The `.. (parent)` row at the top of the tree file list. Click →
+    /// `App::navigate_workspace_up`. `None` when the workspace is at
+    /// filesystem root (`/`) so there's nowhere to go. 2026-07-07.
+    pub tree_up_row: Option<Rect>,
     /// The clickable rect for "toggle tree visibility" — the workspace-name
     /// header row when the tree is expanded, or the whole activity-bar column
     /// when it's collapsed. Click → `App::toggle_tree`.
@@ -3969,6 +3974,17 @@ pub struct App {
     pub prompt: Option<crate::prompt::Prompt>,
     /// The right-click context menu, when open. Steals key + mouse input.
     pub context_menu: Option<crate::context_menu::ContextMenu>,
+    /// File-manager clipboard — paths staged by `file.cut` / `file.copy`
+    /// for a later `file.paste`. `Vec<_>` so a future multi-select
+    /// can stage several paths at once. Empty when nothing is
+    /// staged. Cleared after a Cut-then-Paste (move semantics);
+    /// left as-is after Copy-then-Paste so the same set can be
+    /// pasted into multiple places.
+    pub file_clipboard: Vec<std::path::PathBuf>,
+    /// `true` when the clipboard was populated by Cut (paste = move).
+    /// `false` for Copy (paste = duplicate). Meaningless when
+    /// `file_clipboard` is empty. 2026-07-07.
+    pub file_clipboard_cut: bool,
     /// The LSP hover popup, when open (set when a `textDocument/hover` reply
     /// arrives). The next key dismisses it (j/k/arrows scroll it first).
     pub hover: Option<crate::hover::HoverPopup>,
@@ -4753,6 +4769,8 @@ impl App {
             help_overlay: None,
             prompt: None,
             context_menu: None,
+            file_clipboard: Vec::new(),
+            file_clipboard_cut: false,
             hover: None,
             mouse_hover_at: None,
             mouse_hover_fired: None,
@@ -5394,6 +5412,174 @@ impl App {
         // destructive action.
         prompt.cursor = 1;
         self.prompt = Some(prompt);
+    }
+
+    /// Stage `path` on `file_clipboard`. `cut = true` marks paste as
+    /// move; `cut = false` marks paste as copy. Multi-select support
+    /// slots in here (push multiple; for now v1 is single-path).
+    pub fn file_stage_clipboard(&mut self, path: PathBuf, cut: bool) {
+        self.file_clipboard = vec![path.clone()];
+        self.file_clipboard_cut = cut;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        self.toast(format!("{} {}", if cut { "cut" } else { "copied" }, name));
+    }
+
+    /// Paste the clipboard into `target`. If `target` is a file, its
+    /// parent dir is used. Cut = rename() the source; Copy = fs::copy
+    /// (recursive for dirs). Refresh the tree; clear the clipboard on
+    /// cut, keep it on copy so the same set can paste elsewhere.
+    pub fn file_paste_into(&mut self, target: PathBuf) {
+        if self.file_clipboard.is_empty() {
+            self.toast("clipboard empty");
+            return;
+        }
+        let target_dir = if target.is_dir() {
+            target.clone()
+        } else {
+            target
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| self.workspace.clone())
+        };
+        if !target_dir.is_dir() {
+            self.toast(format!("not a directory: {}", target_dir.display()));
+            return;
+        }
+        let sources = self.file_clipboard.clone();
+        let cut = self.file_clipboard_cut;
+        let mut ok = 0usize;
+        for src in &sources {
+            let Some(name) = src.file_name() else {
+                self.toast(format!("skip (no filename): {}", src.display()));
+                continue;
+            };
+            let mut dest = target_dir.join(name);
+            // Same-dir copy: bump the filename so we don't clobber
+            // the source. Cut into the same dir is a no-op (toast).
+            if dest == *src {
+                if cut {
+                    continue;
+                }
+                dest = collision_free_copy_name(&dest);
+            } else if dest.exists() {
+                self.toast(format!(
+                    "already exists: {}",
+                    rel_path(&self.workspace, &dest)
+                ));
+                continue;
+            }
+            let result = if cut {
+                std::fs::rename(src, &dest).map_err(|e| e.to_string())
+            } else {
+                copy_recursively(src, &dest)
+            };
+            if let Err(e) = result {
+                self.toast(format!(
+                    "{} failed for {}: {e}",
+                    if cut { "move" } else { "copy" },
+                    rel_path(&self.workspace, src)
+                ));
+                continue;
+            }
+            ok += 1;
+        }
+        if cut {
+            self.file_clipboard.clear();
+            self.file_clipboard_cut = false;
+        }
+        self.tree.refresh();
+        if ok > 0 {
+            self.toast(format!(
+                "{} {ok} item{} into {}",
+                if cut { "moved" } else { "copied" },
+                if ok == 1 { "" } else { "s" },
+                rel_path(&self.workspace, &target_dir)
+            ));
+        }
+    }
+
+    /// Duplicate `path` in place with a `-copy` suffix; falls back to
+    /// `-copy-2`, `-copy-3`, ... on collision.
+    pub fn file_duplicate(&mut self, path: PathBuf) {
+        let dest = collision_free_copy_name(&path);
+        match copy_recursively(&path, &dest) {
+            Ok(()) => {
+                self.tree.refresh();
+                self.toast(format!(
+                    "duplicated {} \u{2192} {}",
+                    rel_path(&self.workspace, &path),
+                    rel_path(&self.workspace, &dest)
+                ));
+            }
+            Err(e) => self.toast(format!("duplicate failed: {e}")),
+        }
+    }
+
+    /// Open the "Move to..." prompt — the user types a destination
+    /// directory (workspace-relative or absolute). Path suggestions
+    /// come from the standard `is_path_kind` autocomplete path.
+    pub fn file_open_move_to_picker(&mut self, path: PathBuf) {
+        self.pending_fs_action = Some(FsAction::MoveTo {
+            source: path.clone(),
+        });
+        let title = format!("Move {} to…", rel_path(&self.workspace, &path));
+        let seed = path
+            .parent()
+            .map(|p| rel_path(&self.workspace, p))
+            .unwrap_or_default();
+        self.prompt = Some(crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::FileMoveTo,
+            title,
+            seed,
+        ));
+    }
+
+    /// Resolve the "Move to..." prompt — moves the pending source
+    /// into the typed destination directory.
+    pub fn file_finish_move_to(&mut self, dest_text: &str) {
+        let Some(FsAction::MoveTo { source }) = self.pending_fs_action.take() else {
+            return;
+        };
+        let dest_dir_raw = dest_text.trim();
+        if dest_dir_raw.is_empty() {
+            self.toast("move: empty destination");
+            return;
+        }
+        let dest_dir = expand_tilde_and_resolve(&self.workspace, dest_dir_raw);
+        if let Err(e) = std::fs::create_dir_all(&dest_dir) {
+            self.toast(format!("mkdir failed: {e}"));
+            return;
+        }
+        let Some(name) = source.file_name() else {
+            self.toast(format!("no filename in {}", source.display()));
+            return;
+        };
+        let dest = dest_dir.join(name);
+        if dest == source {
+            self.toast("move: source and destination are the same");
+            return;
+        }
+        if dest.exists() {
+            self.toast(format!(
+                "already exists: {}",
+                rel_path(&self.workspace, &dest)
+            ));
+            return;
+        }
+        match std::fs::rename(&source, &dest) {
+            Ok(()) => {
+                self.tree.refresh();
+                self.toast(format!(
+                    "moved {} \u{2192} {}",
+                    rel_path(&self.workspace, &source),
+                    rel_path(&self.workspace, &dest)
+                ));
+            }
+            Err(e) => self.toast(format!("move failed: {e}")),
+        }
     }
 
     /// Dispatch handler for the generic destructive confirm-button

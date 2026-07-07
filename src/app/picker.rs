@@ -1827,6 +1827,11 @@ impl App {
                 let typed = p.input.clone();
                 self.install_sibling_confirm_resolve(&typed);
             }
+            crate::prompt::PromptKind::FileMoveTo => {
+                let from_selected = p.take_selected_input();
+                let raw = from_selected.unwrap_or_else(|| p.input.trim().to_string());
+                self.file_finish_move_to(&raw);
+            }
         }
     }
 }

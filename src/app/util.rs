@@ -113,6 +113,102 @@ pub(crate) fn walk_entry_count(dir: &Path, depth: u32, max: usize) -> usize {
     total
 }
 
+/// Pick the first free `stem-copy[.ext]` / `stem-copy-N[.ext]` name
+/// next to `path`. Used by `file.duplicate` + `file.paste` when the
+/// destination already exists in the same directory. 2026-07-07.
+pub(crate) fn collision_free_copy_name(path: &Path) -> std::path::PathBuf {
+    let Some(parent) = path.parent() else {
+        return path.to_path_buf();
+    };
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let make = |suffix: &str| {
+        if ext.is_empty() {
+            parent.join(format!("{stem}{suffix}"))
+        } else {
+            parent.join(format!("{stem}{suffix}.{ext}"))
+        }
+    };
+    let first = make("-copy");
+    if !first.exists() {
+        return first;
+    }
+    for n in 2..1000 {
+        let candidate = make(&format!("-copy-{n}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // Astronomical fallback — 1000 copies of the same file in one dir.
+    make("-copy-lots")
+}
+
+/// Recursive `cp` — files use `fs::copy`, directories walk children.
+/// Returns Err with a human-readable string on the first failure.
+pub(crate) fn copy_recursively(src: &Path, dst: &Path) -> Result<(), String> {
+    let meta =
+        std::fs::symlink_metadata(src).map_err(|e| format!("stat {}: {e}", src.display()))?;
+    if meta.is_dir() {
+        std::fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
+        for entry in
+            std::fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))?
+        {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let child_src = entry.path();
+            let Some(name) = child_src.file_name() else {
+                continue;
+            };
+            let child_dst = dst.join(name);
+            copy_recursively(&child_src, &child_dst)?;
+        }
+        Ok(())
+    } else if meta.file_type().is_symlink() {
+        let target = std::fs::read_link(src).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&target, dst)
+                .map_err(|e| format!("symlink {}: {e}", dst.display()))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = target;
+            return Err("symlink copy unsupported on this platform".to_string());
+        }
+        Ok(())
+    } else {
+        std::fs::copy(src, dst)
+            .map(|_| ())
+            .map_err(|e| format!("copy {} → {}: {e}", src.display(), dst.display()))
+    }
+}
+
+/// Resolve `input` to an absolute path — `~` expands to the user's
+/// home dir, relative paths join to `workspace`.
+pub(crate) fn expand_tilde_and_resolve(workspace: &Path, input: &str) -> std::path::PathBuf {
+    if let Some(rest) = input.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return std::path::PathBuf::from(home).join(rest);
+    }
+    if input == "~"
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return std::path::PathBuf::from(home);
+    }
+    let p = std::path::PathBuf::from(input);
+    if p.is_absolute() {
+        p
+    } else {
+        workspace.join(p)
+    }
+}
+
 /// Walk `text` and return every `(row, col_chars, len_chars)` for a
 /// whole-word occurrence of `word`. Char columns (not byte) so the
 /// renderer's per-cell painter can align without re-decoding UTF-8.

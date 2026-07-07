@@ -138,6 +138,12 @@ pub enum PromptKind {
     /// Pre-seeded with the AI's suggestion when the
     /// `AiBranchNameDescription` flow completes.
     BranchName,
+    /// Accept ⇒ move the source path stashed in
+    /// `App.pending_file_move` into the typed destination
+    /// directory. Typed value is a workspace-relative or absolute
+    /// dir; missing intermediates are created; existing target
+    /// blocks the move. 2026-07-07.
+    FileMoveTo,
     /// Accept (any non-empty) ⇒ `git worktree add <pending_path> <input>`.
     /// `App.pending_worktree_path` is set by `:git.worktree_add`
     /// before the prompt opens. Input is the branch name to check
@@ -346,9 +352,10 @@ impl Prompt {
     }
 
     /// Does this prompt type want a directory listing alongside the
-    /// text input? Today only `AddWorkspace`; extend as needed.
+    /// text input? Today `AddWorkspace` and `FileMoveTo`; extend as
+    /// needed.
     pub fn is_path_kind(&self) -> bool {
-        matches!(self.kind, PromptKind::AddWorkspace)
+        matches!(self.kind, PromptKind::AddWorkspace | PromptKind::FileMoveTo)
     }
 
     pub fn insert_char(&mut self, c: char) {

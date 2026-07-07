@@ -1927,6 +1927,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_repo_picker();
         return;
     }
+    // `..` row → navigate the workspace root up one level.
+    if let Some(r) = app.rects.tree_up_row
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.navigate_workspace_up();
+        return;
+    }
     // Workspace-picker row click → switch + close.
     if let Some(&(_, ws_idx)) = app
         .rects

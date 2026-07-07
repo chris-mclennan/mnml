@@ -89,6 +89,31 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
         }
         return;
     }
+    // File-manager clipboard shortcuts — Ctrl+X/C/V/D from tree
+    // focus map to the same commands the palette exposes. Tree
+    // focus never edits text, so these don't fight the standard-
+    // input meanings of Ctrl+X/C (which fire only from pane focus).
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            KeyCode::Char('x') => {
+                crate::command::run("file.cut", app);
+                return;
+            }
+            KeyCode::Char('c') => {
+                crate::command::run("file.copy", app);
+                return;
+            }
+            KeyCode::Char('v') => {
+                crate::command::run("file.paste", app);
+                return;
+            }
+            KeyCode::Char('d') => {
+                crate::command::run("file.duplicate", app);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Note: the no_pane_cmdline keystroke gate lives in
     // `dispatch_key` above so it's enforced regardless of focus —
     // an opened cmdline owns input even when the user started

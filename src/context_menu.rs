@@ -96,6 +96,23 @@ pub enum MenuAction {
     /// Prompt for the filename as a confirmation; on exact match, delete
     /// `path` (`rm` for a file, `rm -rf` for a directory).
     Delete(PathBuf),
+    /// Stage `path` on `App.file_clipboard` with cut semantics — a
+    /// subsequent `FilePaste` will MOVE it into the target dir.
+    FileCut(PathBuf),
+    /// Stage `path` on `App.file_clipboard` with copy semantics — a
+    /// subsequent `FilePaste` DUPLICATES it into the target dir.
+    FileCopy(PathBuf),
+    /// Paste the clipboard into `target_dir` (or the file's parent if
+    /// the click target was a file). Move-vs-copy is decided by
+    /// `App.file_clipboard_cut`.
+    FilePaste(PathBuf),
+    /// Duplicate `path` in place — creates `name-copy.ext` (or
+    /// `name-copy-N.ext` when the first collides).
+    FileDuplicate(PathBuf),
+    /// Open a folder picker; on selection, move `path` into the chosen
+    /// folder. Cross-workspace and outside-workspace targets are both
+    /// allowed — the underlying rename() enforces same-filesystem.
+    FileMoveTo(PathBuf),
     /// Git rail — checkout an existing local branch.
     GitCheckoutBranch(String),
     /// #polish 2026-07-06 — merge the named branch into the

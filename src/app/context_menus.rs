@@ -216,8 +216,9 @@ impl App {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| self.workspace.clone())
         };
+        let has_clipboard = !self.file_clipboard.is_empty();
         let items = if is_dir {
-            vec![
+            let mut items = vec![
                 MenuItem::new("Set as workspace", MenuAction::SetAsWorkspace(path.clone())),
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent.clone())),
@@ -230,13 +231,26 @@ impl App {
                     MenuAction::TreeCollapseRecursive(path.clone()),
                 ),
                 MenuItem::new("Open in terminal", MenuAction::OpenTerminal(parent)),
+                MenuItem::new("Cut", MenuAction::FileCut(path.clone())),
+                MenuItem::new("Copy", MenuAction::FileCopy(path.clone())),
+            ];
+            if has_clipboard {
+                items.push(MenuItem::new(
+                    "Paste here",
+                    MenuAction::FilePaste(path.clone()),
+                ));
+            }
+            items.extend([
+                MenuItem::new("Duplicate", MenuAction::FileDuplicate(path.clone())),
+                MenuItem::new("Move to…", MenuAction::FileMoveTo(path.clone())),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
                 MenuItem::new("Open externally", MenuAction::OpenExternally(path.clone())),
                 MenuItem::new("Copy path", MenuAction::CopyPath(rel)),
                 MenuItem::new("Refresh tree", MenuAction::Command("tree.refresh")),
-            ]
+            ]);
+            items
         } else {
             let mut items = vec![
                 MenuItem::new("Open", MenuAction::OpenPath(path.clone())),
@@ -252,6 +266,18 @@ impl App {
                 MenuItem::new("New file…", MenuAction::NewFile(parent.clone())),
                 MenuItem::new("New folder…", MenuAction::NewFolder(parent.clone())),
                 MenuItem::new("Open in terminal", MenuAction::OpenTerminal(parent)),
+                MenuItem::new("Cut", MenuAction::FileCut(path.clone())),
+                MenuItem::new("Copy", MenuAction::FileCopy(path.clone())),
+            ]);
+            if has_clipboard {
+                items.push(MenuItem::new(
+                    "Paste here",
+                    MenuAction::FilePaste(path.clone()),
+                ));
+            }
+            items.extend([
+                MenuItem::new("Duplicate", MenuAction::FileDuplicate(path.clone())),
+                MenuItem::new("Move to…", MenuAction::FileMoveTo(path.clone())),
                 MenuItem::new("Rename…", MenuAction::Rename(path.clone())),
                 MenuItem::new("Delete…", MenuAction::Delete(path.clone())),
                 MenuItem::new("Reveal in Finder", MenuAction::RevealInFinder(path.clone())),
@@ -1151,6 +1177,11 @@ impl App {
             NewFolder(parent) => self.open_new_folder_prompt(parent),
             Rename(path) => self.open_fs_rename_prompt(path),
             Delete(path) => self.open_fs_delete_prompt(path),
+            FileCut(path) => self.file_stage_clipboard(path, true),
+            FileCopy(path) => self.file_stage_clipboard(path, false),
+            FilePaste(target) => self.file_paste_into(target),
+            FileDuplicate(path) => self.file_duplicate(path),
+            FileMoveTo(path) => self.file_open_move_to_picker(path),
             GitCheckoutBranch(name) => self.git_checkout_named(&name),
             GitMergeBranchInto(name) => self.git_merge_branch(name),
             GitRebaseCurrentOnto(name) => self.git_rebase_onto(name),

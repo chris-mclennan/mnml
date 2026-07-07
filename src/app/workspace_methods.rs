@@ -344,6 +344,19 @@ impl App {
     /// current empty-state / has-extras situation. Canonicalises the
     /// path so the resolved root is consistent with everything else
     /// in App that reads `self.workspace`.
+    /// `..` tree row: navigate the workspace root up one level (e.g.
+    /// from `~/Projects/mnml` → `~/Projects`). Uses `set_workspace_to`
+    /// so tree, repos, git state, integrations all reload consistently.
+    /// No-op at filesystem root. 2026-07-07.
+    pub fn navigate_workspace_up(&mut self) {
+        let Some(parent) = self.workspace.parent() else {
+            self.toast("already at filesystem root");
+            return;
+        };
+        let parent = parent.to_path_buf();
+        self.set_workspace_to(parent);
+    }
+
     pub fn set_workspace_to(&mut self, path: PathBuf) {
         let root = match path.canonicalize() {
             Ok(p) => p,

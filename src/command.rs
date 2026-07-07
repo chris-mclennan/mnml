@@ -1834,6 +1834,71 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "file.cut",
+            title: "Cut selected tree file (paste = move)",
+            group: "file",
+            keys: &[],
+            run: |app| {
+                if let Some(p) = app.tree.selected_file() {
+                    app.file_stage_clipboard(p, true);
+                }
+            },
+        },
+        Command {
+            id: "file.copy",
+            title: "Copy selected tree file (paste = duplicate)",
+            group: "file",
+            keys: &[],
+            run: |app| {
+                if let Some(p) = app.tree.selected_file() {
+                    app.file_stage_clipboard(p, false);
+                }
+            },
+        },
+        Command {
+            id: "file.paste",
+            title: "Paste the file clipboard into the selected tree row's dir",
+            group: "file",
+            keys: &[],
+            run: |app| {
+                if let Some(p) = app.tree.selected_file() {
+                    app.file_paste_into(p);
+                } else {
+                    let ws = app.workspace.clone();
+                    app.file_paste_into(ws);
+                }
+            },
+        },
+        Command {
+            id: "file.duplicate",
+            title: "Duplicate the selected tree file in place (name-copy.ext)",
+            group: "file",
+            keys: &[],
+            run: |app| {
+                if let Some(p) = app.tree.selected_file() {
+                    app.file_duplicate(p);
+                }
+            },
+        },
+        Command {
+            id: "view.workspace_up",
+            title: "Navigate the workspace root up one level (..)",
+            group: "view",
+            keys: &[],
+            run: |app| app.navigate_workspace_up(),
+        },
+        Command {
+            id: "file.move_to",
+            title: "Move the selected tree file to a chosen folder…",
+            group: "file",
+            keys: &[],
+            run: |app| {
+                if let Some(p) = app.tree.selected_file() {
+                    app.file_open_move_to_picker(p);
+                }
+            },
+        },
+        Command {
             id: "file.reload",
             title: "Reload active buffer from disk (refuses if dirty)",
             group: "file",
