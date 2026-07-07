@@ -502,17 +502,32 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         .map(|(_, n)| n.clone())
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let env_file = app
+        // Prefer `.mnml/env/<name>.env` (mnml-native), fall back to
+        // `.rqst/env/<name>.env` (legacy). This matches
+        // `EnvSet::load` precedence.
+        let mnml_path = app
             .workspace
             .join(".mnml")
             .join("env")
             .join(format!("{name}.env"));
+        let rqst_path = app
+            .workspace
+            .join(".rqst")
+            .join("env")
+            .join(format!("{name}.env"));
+        let env_file = if mnml_path.exists() {
+            mnml_path
+        } else {
+            rqst_path
+        };
         let rel = crate::app::rel_path(&app.workspace, &env_file);
         let items = vec![
             MenuItem::new("Set active", MenuAction::Command("http.pick_env")),
             MenuItem::new("Open file", MenuAction::OpenPath(env_file.clone())),
             MenuItem::new("Yank name", MenuAction::CopyPath(name.clone())),
             MenuItem::new("Yank path", MenuAction::CopyPath(rel)),
+            MenuItem::new("Rename…", MenuAction::Rename(env_file.clone())),
+            MenuItem::new("Delete…", MenuAction::Delete(env_file)),
         ];
         app.context_menu = Some(ContextMenu::new(Some(name), (x, y), items));
         return;
