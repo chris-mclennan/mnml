@@ -3382,9 +3382,18 @@ fn paint_leaf_tab_strip(
         _ => 1,
     };
     let split_btns_total: u16 = SPLIT_BTN_W * (3 + ai_button_count);
+    // #polish 2026-07-06 — per-leaf mode chip (Preview / Edit) for a
+    // markdown editor / preview in this leaf. Sits between the tab
+    // strip and the split buttons — same visual position as on the
+    // top-level bufferline.
+    let mode_chip = crate::ui::bufferline::mode_chip_for_pane(app, active);
+    let mode_chip_w: u16 = mode_chip
+        .as_ref()
+        .map(|(label, _, _)| label.chars().count() as u16)
+        .unwrap_or(0);
     let mut chip_x = strip.x;
     let strip_right = strip.x + strip.width;
-    let tabs_right = strip_right.saturating_sub(split_btns_total);
+    let tabs_right = strip_right.saturating_sub(split_btns_total + mode_chip_w);
 
     for &id in tabs {
         if chip_x >= tabs_right {
@@ -3497,6 +3506,38 @@ fn paint_leaf_tab_strip(
         chip_x = chip_x.saturating_add(painted_w);
         // 1-cell gap between chips (strip bg shows through).
         chip_x = chip_x.saturating_add(1);
+    }
+
+    // #polish 2026-07-06 — mode chip (Preview / Edit) painted in the
+    // strip between tabs and the split buttons.
+    if let Some((label, kind, pid)) = mode_chip {
+        let chip_w = label.chars().count() as u16;
+        let chip_x = strip_right.saturating_sub(split_btns_total + chip_w);
+        let chip_rect = Rect {
+            x: chip_x,
+            y: strip.y,
+            width: chip_w,
+            height: 1,
+        };
+        let (fg, bg) = match kind {
+            crate::ui::bufferline::ModeChipKind::EditorMd => (t.bg_darker, t.purple),
+            crate::ui::bufferline::ModeChipKind::PreviewMd => (t.bg_darker, t.blue),
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                label.to_string(),
+                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+            ))),
+            chip_rect,
+        );
+        match kind {
+            crate::ui::bufferline::ModeChipKind::EditorMd => {
+                app.rects.editor_md_preview_buttons.push((chip_rect, pid))
+            }
+            crate::ui::bufferline::ModeChipKind::PreviewMd => {
+                app.rects.md_preview_edit_buttons.push((chip_rect, pid))
+            }
+        }
     }
 
     // VS Code-style split-editor + terminal buttons on the far

@@ -719,7 +719,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 /// active pane. Returns `(label, kind, pane_id)` or `None` when the
 /// active pane isn't markdown-shaped.
 #[derive(Debug, Clone, Copy)]
-enum ModeChipKind {
+pub(crate) enum ModeChipKind {
     /// Active pane is an editor with a `.md` path — chip toggles
     /// to a rendered preview.
     EditorMd,
@@ -730,6 +730,16 @@ enum ModeChipKind {
 
 fn mode_chip_for_active(app: &App) -> Option<(&'static str, ModeChipKind, crate::layout::PaneId)> {
     let pid = app.active?;
+    mode_chip_for_pane(app, pid)
+}
+
+/// Same shape as `mode_chip_for_active` but for a specific pane id
+/// — used by the per-leaf tab strip (`paint_leaf_tab_strip`) so
+/// each leaf can host its own chip based on its active pane.
+pub(crate) fn mode_chip_for_pane(
+    app: &App,
+    pid: crate::layout::PaneId,
+) -> Option<(&'static str, ModeChipKind, crate::layout::PaneId)> {
     let pane = app.panes.get(pid)?;
     let ascii = app.config.ui.ascii_icons;
     match pane {
