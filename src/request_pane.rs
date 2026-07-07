@@ -207,15 +207,45 @@ pub enum ResponseBodyFormat {
 /// across renders + tab switches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitOrientation {
+    /// Auto — the renderer picks Vertical or Horizontal from the
+    /// available width. Threshold: `>= AUTO_HORIZONTAL_THRESHOLD`
+    /// cells → Horizontal (side-by-side); narrower → Vertical
+    /// (stacked). Default for new panes. 2026-07-07.
+    Auto,
     Vertical,
     Horizontal,
 }
 
+/// Pane-content width at or above which `SplitOrientation::Auto`
+/// resolves to Horizontal (side-by-side). Below this, Auto stacks
+/// Request over Response. Tuned so each half in horizontal mode still
+/// has ~50 cells of comfortable width.
+pub const AUTO_HORIZONTAL_THRESHOLD: u16 = 100;
+
 impl SplitOrientation {
+    /// Cycle Auto → Vertical → Horizontal → Auto. Was a 2-state
+    /// Vertical ↔ Horizontal toggle before Auto shipped.
     pub fn toggle(self) -> Self {
         match self {
+            SplitOrientation::Auto => SplitOrientation::Vertical,
             SplitOrientation::Vertical => SplitOrientation::Horizontal,
-            SplitOrientation::Horizontal => SplitOrientation::Vertical,
+            SplitOrientation::Horizontal => SplitOrientation::Auto,
+        }
+    }
+
+    /// Resolve `Auto` against the pane's available width; Vertical /
+    /// Horizontal pass through unchanged. Callers use this at render
+    /// time so the enum stays clean.
+    pub fn resolve(self, pane_width: u16) -> Self {
+        match self {
+            SplitOrientation::Auto => {
+                if pane_width >= AUTO_HORIZONTAL_THRESHOLD {
+                    SplitOrientation::Horizontal
+                } else {
+                    SplitOrientation::Vertical
+                }
+            }
+            other => other,
         }
     }
 }
@@ -519,7 +549,7 @@ impl RequestPane {
             hover_params_key: None,
             hover_vars_key: None,
             hover_auth_id: None,
-            split_orientation: SplitOrientation::Vertical,
+            split_orientation: SplitOrientation::Auto,
             response_tab: ResponseTab::Body,
             params_add: None,
             headers_add: None,

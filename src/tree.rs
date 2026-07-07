@@ -216,6 +216,12 @@ impl Tree {
                         | "vendor"
                         | ".venv"
                         | "venv"
+                        // #polish 2026-07-07 (multilang-dev SEV-2) —
+                        // hide `.git/` too. Was: shown at depth 0 with
+                        // auto-expand, so every fresh workspace put
+                        // hooks/info/logs/objects/refs above the user's
+                        // own src/. Matches nvim-tree's default.
+                        | ".git"
                 )
             {
                 // Skip the directory entirely — `ignore::Walk` would

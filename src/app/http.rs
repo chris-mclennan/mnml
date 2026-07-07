@@ -3552,7 +3552,7 @@ impl App {
         if let Some(Pane::Request(rp)) = self.panes.get_mut(pane_id) {
             rp.commit_headers();
         }
-        let (request, script, source_path) = match self.panes.get(pane_id) {
+        let (mut request, script, source_path) = match self.panes.get(pane_id) {
             Some(Pane::Request(rp)) => (
                 rp.request.clone(),
                 rp.script.clone(),
@@ -3560,6 +3560,27 @@ impl App {
             ),
             _ => return,
         };
+        // #polish 2026-07-07 (multilang-dev SEV-1) — resolve `{{VAR}}`
+        // templates before spawning the job. Was: refire_request
+        // (opened when clicking a `.curl`/`.http` file or pressing `r`
+        // on a Request pane) skipped `template::expand`, so vars
+        // stayed literal on the wire — breaking the headline var/auth-
+        // token flow that the sidebar UI heavily depends on. Other
+        // send paths (`send_active`, `send_file`) already do this;
+        // refire_request was the outlier.
+        let mut env = crate::http::template::EnvSet::select_with_config_default(
+            &self.workspace,
+            self.http_env_override.as_deref(),
+            self.config.http.default_env.as_deref(),
+        );
+        crate::http::script::apply_pre(&script, &mut request, &mut env);
+        request.url = crate::http::template::expand(&request.url, &env);
+        for (_, v) in &mut request.headers {
+            *v = crate::http::template::expand(v, &env);
+        }
+        if let Some(body) = &mut request.body {
+            *body = crate::http::template::expand(body, &env);
+        }
         let job_id = self.spawn_http_job(request, script, source_path);
         if let Some(Pane::Request(rp)) = self.panes.get_mut(pane_id) {
             rp.job_id = job_id;

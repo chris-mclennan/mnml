@@ -1152,16 +1152,19 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let rect = app.rects.request_split_toggle?;
             let orient_desc = match app.active.and_then(|i| app.panes.get(i)) {
                 Some(crate::pane::Pane::Request(rp)) => match rp.split_orientation {
+                    crate::request_pane::SplitOrientation::Auto => {
+                        "current: A auto (picks by width)"
+                    }
                     crate::request_pane::SplitOrientation::Vertical => {
                         "current: ▥ stacked (request above response)"
                     }
                     crate::request_pane::SplitOrientation::Horizontal => "current: ▤ side-by-side",
                 },
-                _ => "toggle stacked / side-by-side",
+                _ => "cycle auto / stacked / side-by-side",
             };
             Some((
                 rect,
-                "click: cycle split orientation".into(),
+                "click: cycle split orientation (auto → ▥ → ▤)".into(),
                 Some(orient_desc.into()),
             ))
         }

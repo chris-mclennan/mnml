@@ -919,7 +919,11 @@ pub fn draw(
         width: area.width,
         height: ai_height,
     };
-    let (request_rect, response_rect) = match rp.split_orientation {
+    // Resolve `Auto` against the pane width — narrow panes stack
+    // (Vertical), wide panes go side-by-side (Horizontal). 2026-07-07.
+    let resolved_orient = rp.split_orientation.resolve(area.width);
+    let (request_rect, response_rect) = match resolved_orient {
+        crate::request_pane::SplitOrientation::Auto => unreachable!(),
         crate::request_pane::SplitOrientation::Vertical => {
             // #polish 2026-07-06 — even 50/50 split. Was 55/45
             // biased toward Request; user reported Request looked
@@ -1960,7 +1964,10 @@ fn paint_split_toggle_chip(
     // Fonts, so a symmetric space on each side visually collapses
     // one and inflates the other. Pinning the icons directly to
     // the brackets removes the asymmetry.
-    let chip_w: u16 = 5;
+    // Chip now shows 3 states (auto / ▥ vertical / ▤ horizontal)
+    // since SplitOrientation grew an Auto variant that resolves by
+    // width. Auto is the default and cycles first: [A ▥ ▤]. 2026-07-07.
+    let chip_w: u16 = 7;
     if request_rect.width < chip_w + 4 || request_rect.height == 0 {
         return None;
     }
@@ -1975,6 +1982,7 @@ fn paint_split_toggle_chip(
         width: chip_w,
         height: 1,
     };
+    let auto_active = matches!(orient, crate::request_pane::SplitOrientation::Auto);
     let vert_active = matches!(orient, crate::request_pane::SplitOrientation::Vertical);
     let horiz_active = matches!(orient, crate::request_pane::SplitOrientation::Horizontal);
     let active_style = Style::default()
@@ -1985,6 +1993,15 @@ fn paint_split_toggle_chip(
     let bracket = Style::default().fg(t.bg3).bg(t.bg_dark);
     let line = Line::from(vec![
         Span::styled("[", bracket),
+        Span::styled(
+            "A",
+            if auto_active {
+                active_style
+            } else {
+                inactive_style
+            },
+        ),
+        Span::styled(" ", Style::default().bg(t.bg_dark)),
         Span::styled(
             "▥",
             if vert_active {
