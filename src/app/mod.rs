@@ -6210,11 +6210,20 @@ impl App {
                 return;
             }
         };
-        let has_request = matches!(
+        // Reuse the active Request pane ONLY when it's empty (no URL,
+        // no body, no headers) — matches Postman/Bruno: clicking a
+        // Recent from the sidebar shouldn't clobber a request you're
+        // in the middle of composing. When the active pane has real
+        // content, or when the active pane isn't a Request at all,
+        // spawn a fresh pane. User-reported 2026-07-07.
+        let active_is_blank_request = matches!(
             self.active.and_then(|i| self.panes.get(i)),
-            Some(Pane::Request(_))
+            Some(Pane::Request(rp))
+                if rp.request.url.is_empty()
+                    && rp.headers_buffer.trim().is_empty()
+                    && rp.request.body.as_deref().unwrap_or("").is_empty()
         );
-        if !has_request {
+        if !active_is_blank_request {
             self.open_new_request_pane();
         }
         let Some(cur) = self.active else { return };
