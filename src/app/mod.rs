@@ -2071,12 +2071,12 @@ pub struct PaneRects {
     /// `+ Add new variable…` row → opens add prompt; non-empty =
     /// existing key → opens edit prompt with that key. Cleared
     /// + repopulated every render.
-    pub request_vars_rows: Vec<(Rect, String)>,
+    pub request_vars_rows: Vec<(Rect, String, crate::ui::request_view::KvTableKind)>,
     /// Click rect for each row in the Params tab. Empty string =
     /// `+ Add new parameter…` row → opens params_add prompt;
     /// non-empty = existing key → deletes that param (v2 will
     /// open an edit prompt).
-    pub request_params_rows: Vec<(Rect, String)>,
+    pub request_params_rows: Vec<(Rect, String, crate::ui::request_view::KvTableKind)>,
     /// Click rect over the AI section header in the Request pane.
     /// Click → fire :http.ai_debug (same as the `a` keystroke).
     pub request_ai_section: Option<Rect>,

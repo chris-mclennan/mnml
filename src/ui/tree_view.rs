@@ -881,6 +881,13 @@ fn draw_workspace_files(
         height: h as u16,
     };
 
+    // #polish 2026-07-07 — track the total rows consumed BEFORE the
+    // file list (filter + `..` up-nav) so the returned `next_y` is
+    // `start_y + shift + drew`, not just `start_y + drew`. Was:
+    // callers (`+ Add workspace` row, extra-workspace section
+    // headers, etc.) landed 1–2 rows too high when both prelude
+    // rows were visible, overlapping the tail of the tree body.
+    let mut shift: u16 = 0;
     // Filter line — when the tree's in filter mode or has a sticky filter,
     // reserve the top row of the tree section for a `/ <query>` input.
     let show_filter = app.tree.filter_mode || !app.tree.filter.is_empty();
@@ -914,6 +921,7 @@ fn draw_workspace_files(
             width: inner.width,
             height: inner.height - 1,
         };
+        shift += 1;
     }
     // `..` up-navigation row — always sits above the file list so
     // users can climb out of the current workspace root without the
@@ -960,11 +968,12 @@ fn draw_workspace_files(
             width: inner.width,
             height: inner.height - 1,
         };
+        shift += 1;
     }
     app.rects.tree = Some(inner);
     let h = inner.height as usize;
     if h == 0 {
-        return start_y + inner.height + if show_filter { 1 } else { 0 };
+        return start_y + shift + inner.height;
     }
 
     // Empty-workspace state: when mnml is launched without a real
@@ -974,7 +983,7 @@ fn draw_workspace_files(
     // mouse handling fires the same commands as the keychords.
     if is_empty_workspace(app) {
         draw_empty_workspace_state(frame, app, inner);
-        return start_y + inner.height + if show_filter { 1 } else { 0 };
+        return start_y + shift + inner.height;
     }
 
     let rows = app.tree.visible_rows();
@@ -1214,7 +1223,7 @@ fn draw_workspace_files(
     // way. Callers left the `inner` unchanged; the thumbnail
     // function is gone.
     let _ = inner;
-    start_y + drew
+    start_y + shift + drew
 }
 
 /// Draw one extra-workspace section starting at `start_y`. Renders a

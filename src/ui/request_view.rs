@@ -353,7 +353,7 @@ fn colored_line_with_vars(
 /// Which HTTP-tab is calling `render_kv_table` — controls `EditField`
 /// registration and the hover-key lookup for the row-highlight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KvTableKind {
+pub enum KvTableKind {
     Params,
     Headers,
     /// #23 v3 — env var table (Vars tab). Rows come from the
@@ -395,7 +395,7 @@ pub(crate) fn render_kv_table(
     kind: KvTableKind,
     hover_key: Option<&str>,
     pane_id: PaneId,
-    params_rows_local: &mut Vec<(Rect, String)>,
+    params_rows_local: &mut Vec<(Rect, String, KvTableKind)>,
     // When `Some`, `{{VAR}}` tokens inside VALUE cells render in
     // env-resolved cyan / unresolved red instead of the plain value
     // style, and each token's click rect is pushed onto `var_clicks`
@@ -656,7 +656,13 @@ pub(crate) fn render_kv_table(
             x_style,
         ));
         // Cell-level click rects: name cell → rename edit,
-        // value cell → value edit, X cell → delete.
+        // value cell → value edit, X cell → delete. Each carries the
+        // KvTableKind so the click handler routes to the right
+        // params/headers/vars path even when this table renders on
+        // the SECONDARY side of a side-by-side edit split (fix
+        // 2026-07-07 — was: click handler read rp.edit_tab which
+        // reflected the primary side only, misrouting secondary
+        // Headers clicks to Params).
         params_rows_local.push((
             Rect {
                 x: area.x.saturating_add(name_col_x_off),
@@ -665,6 +671,7 @@ pub(crate) fn render_kv_table(
                 height: 1,
             },
             format!("\0NAME{k}"),
+            kind,
         ));
         params_rows_local.push((
             Rect {
@@ -674,6 +681,7 @@ pub(crate) fn render_kv_table(
                 height: 1,
             },
             format!("\0VAL{k}"),
+            kind,
         ));
         params_rows_local.push((
             Rect {
@@ -683,6 +691,7 @@ pub(crate) fn render_kv_table(
                 height: 1,
             },
             format!("\0DEL{k}"),
+            kind,
         ));
         register(fields, row_y);
         if i + 1 < data.len() || draft.is_some() {
@@ -750,7 +759,7 @@ pub(crate) fn render_kv_table(
             width: 3,
             height: 1,
         };
-        params_rows_local.push((check_rect, "\0COMMIT".to_string()));
+        params_rows_local.push((check_rect, "\0COMMIT".to_string(), kind));
     }
     rows.push(make_border('└', '┴', '┘', '─'));
 
@@ -766,6 +775,7 @@ pub(crate) fn render_kv_table(
                 height: 1,
             },
             String::new(),
+            kind,
         ));
         register(fields, add_y);
     } else {
@@ -852,8 +862,8 @@ pub fn draw(
     // doesn't re-load the env file for every span.
     let envset = crate::http::template::EnvSet::select(&workspace, env_override.as_deref());
     let mut var_click_rects: Vec<(Rect, String)> = Vec::new();
-    let mut vars_rows_local: Vec<(Rect, String)> = Vec::new();
-    let mut params_rows_local: Vec<(Rect, String)> = Vec::new();
+    let mut vars_rows_local: Vec<(Rect, String, KvTableKind)> = Vec::new();
+    let mut params_rows_local: Vec<(Rect, String, KvTableKind)> = Vec::new();
     let mut auth_rows_local: Vec<(Rect, String)> = Vec::new();
 
     // ── Layout: full-width top strip (Method / URL / Send / Save /
@@ -1212,8 +1222,8 @@ pub fn draw(
         if let (Some(secondary), Some(right)) = (split_secondary, right_rect) {
             let mut edit_rows_r: Vec<Line> = Vec::new();
             let mut fields_r: Vec<(Rect, PaneId, EditField)> = Vec::new();
-            let mut vars_rows_r: Vec<(Rect, String)> = Vec::new();
-            let mut params_rows_r: Vec<(Rect, String)> = Vec::new();
+            let mut vars_rows_r: Vec<(Rect, String, KvTableKind)> = Vec::new();
+            let mut params_rows_r: Vec<(Rect, String, KvTableKind)> = Vec::new();
             let mut auth_rows_r: Vec<(Rect, String)> = Vec::new();
             let mut var_clicks_r: Vec<(Rect, String)> = Vec::new();
             let mut caret_r: Option<(u16, u16)> = None;
@@ -1258,21 +1268,21 @@ pub fn draw(
                 r.y = right_origin.saturating_add(row_off as u16);
                 app.rects.request_fields.push((r, pid, f));
             }
-            for (mut r, key) in vars_rows_r.drain(..) {
+            for (mut r, key, kind) in vars_rows_r.drain(..) {
                 let row_off = r.y as usize;
                 if row_off >= right_h {
                     continue;
                 }
                 r.y = right_origin.saturating_add(row_off as u16);
-                app.rects.request_vars_rows.push((r, key));
+                app.rects.request_vars_rows.push((r, key, kind));
             }
-            for (mut r, key) in params_rows_r.drain(..) {
+            for (mut r, key, kind) in params_rows_r.drain(..) {
                 let row_off = r.y as usize;
                 if row_off >= right_h {
                     continue;
                 }
                 r.y = right_origin.saturating_add(row_off as u16);
-                app.rects.request_params_rows.push((r, key));
+                app.rects.request_params_rows.push((r, key, kind));
             }
             for (mut r, id) in auth_rows_r.drain(..) {
                 let row_off = r.y as usize;
@@ -1465,22 +1475,22 @@ pub fn draw(
         app.rects.request_edit_tabs_split.push((r, pid, tab));
     }
     app.rects.request_vars_rows.clear();
-    for (mut r, key) in vars_rows_local.drain(..) {
+    for (mut r, key, kind) in vars_rows_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
             continue;
         }
         r.y = edit_origin_y.saturating_add(row_off as u16);
-        app.rects.request_vars_rows.push((r, key));
+        app.rects.request_vars_rows.push((r, key, kind));
     }
     app.rects.request_params_rows.clear();
-    for (mut r, key) in params_rows_local.drain(..) {
+    for (mut r, key, kind) in params_rows_local.drain(..) {
         let row_off = r.y as usize;
         if row_off >= edit_h {
             continue;
         }
         r.y = edit_origin_y.saturating_add(row_off as u16);
-        app.rects.request_params_rows.push((r, key));
+        app.rects.request_params_rows.push((r, key, kind));
     }
     app.rects.request_auth_rows.clear();
     for (mut r, id) in auth_rows_local.drain(..) {
@@ -2501,8 +2511,8 @@ fn draw_edit(
     show_ws: bool,
     workspace: &std::path::Path,
     env_override: Option<&str>,
-    vars_rows_local: &mut Vec<(Rect, String)>,
-    params_rows_local: &mut Vec<(Rect, String)>,
+    vars_rows_local: &mut Vec<(Rect, String, KvTableKind)>,
+    params_rows_local: &mut Vec<(Rect, String, KvTableKind)>,
     auth_rows_local: &mut Vec<(Rect, String)>,
     // The env set used to resolve `{{VAR}}` tokens in value cells /
     // body / URL. Computed once at the top of `draw()` so per-frame
@@ -2519,8 +2529,18 @@ fn draw_edit(
     // Stash a click-target rect for the row at `row_idx_in_rows` covering
     // the full pane width (y stays as the *row index*; `draw` translates
     // it to a screen y after applying scroll).
+    // Skip field-click registration for the SECONDARY side of a
+    // side-by-side edit split — that side is view-and-click-cells-
+    // only in v1, so a whole-row click there shouldn't silently
+    // redirect keyboard focus into a buffer that isn't visually
+    // focused. Fix 2026-07-07 — was: `let _ = focused;` (unused),
+    // so both sides pushed identical rects and the mouse handler
+    // couldn't tell them apart.
     let register_field =
         |fields: &mut Vec<(Rect, PaneId, EditField)>, row_y: u16, field: EditField| {
+            if !focused {
+                return;
+            }
             fields.push((
                 Rect {
                     x: area.x,
@@ -2550,7 +2570,6 @@ fn draw_edit(
     // that row — the URL caret + method/url click rects are also
     // registered by the top-level. draw_edit picks up from the tab
     // strip.
-    let _ = focused;
     let _ = caret;
 
     // Tab strip (Body / Headers / Params / Auth / Vars / Source).

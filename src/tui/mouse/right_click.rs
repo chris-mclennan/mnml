@@ -402,8 +402,8 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         .rects
         .request_vars_rows
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        .map(|(_, k)| k.clone())
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(_, k, _)| k.clone())
     {
         if !key.is_empty() {
             use crate::context_menu::{ContextMenu, MenuAction, MenuItem};

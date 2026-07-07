@@ -503,14 +503,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 .rects
                 .request_params_rows
                 .iter()
-                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-                .map(|(_, k)| k.clone());
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, k, _)| k.clone());
             let hv = app
                 .rects
                 .request_vars_rows
                 .iter()
-                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-                .map(|(_, k)| k.clone());
+                .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|(_, k, _)| k.clone());
             let ha = app
                 .rects
                 .request_auth_rows

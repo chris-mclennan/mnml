@@ -596,11 +596,11 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     //   `\0COMMIT`    → no-op for Vars (no draft-add row)
     //   ""            → add-row (falls through to palette prompt)
     //   any other     → whole-row click (falls through to palette prompt)
-    if let Some((_, key)) = app
+    if let Some((_, key, _)) = app
         .rects
         .request_vars_rows
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
         .cloned()
     {
         if key == "\0COMMIT" {
@@ -630,17 +630,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // deletes that row (whole-row hitbox for v1). The dispatch
     // routes to params vs headers based on the active pane's
     // current edit_tab.
-    if let Some((_, key)) = app
+    if let Some((_, key, kind)) = app
         .rects
         .request_params_rows
         .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
         .cloned()
     {
-        let is_headers = matches!(
-            app.active.and_then(|i| app.panes.get(i)),
-            Some(crate::pane::Pane::Request(rp)) if rp.edit_tab == crate::request_pane::EditTab::Headers
-        );
+        // Kind is now carried on the rect itself (fix 2026-07-07) so
+        // secondary-side clicks in a side-by-side edit split route
+        // to the right params/headers path even when the primary
+        // tab is something else. Was: read rp.edit_tab, which
+        // reflected only the primary side.
+        let is_headers = matches!(kind, crate::ui::request_view::KvTableKind::Headers);
         // Sentinel-key routing. The `\0` prefix can't appear in
         // any HTTP header name or URL query key, so no user data
         // collides:
