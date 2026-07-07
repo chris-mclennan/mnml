@@ -326,7 +326,13 @@ impl App {
         let pane = Pane::Browser(browser_pane);
         match self.active {
             Some(cur) => {
-                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Vertical, pane);
+                // #polish 2026-07-07 — was Vertical (stacked below the
+                // active pane), which felt cramped when the browser
+                // opens next to a Request pane. Horizontal (side-by-
+                // side) matches the "look at the request while
+                // watching the network log" workflow that the CAPTURED
+                // chip drives.
+                let new_id = self.split_leaf_with(cur, crate::layout::SplitDir::Horizontal, pane);
                 self.active = Some(new_id);
             }
             None => {
