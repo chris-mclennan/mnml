@@ -494,17 +494,37 @@ fn draw_section_header(
             n
         };
         let area_w = area.width as usize;
-        let (refresh_text, capture_text, clear_text) =
-            if need_for(refresh_full, capture_full, clear_full) < area_w {
-                (refresh_full, capture_full, clear_full)
-            } else if need_for(refresh_icon, capture_icon, clear_icon) < area_w {
-                (refresh_icon, capture_icon, clear_icon)
-            } else {
-                // Not enough width even for icons — bail without
-                // painting so no chip catches phantom clicks at the
-                // right edge.
-                ("", "", "")
-            };
+        // Shared mode decision: if CAPTURED's full text won't fit at
+        // this width, EVERY chip-bearing section in the panel goes
+        // icon-only so RECENT doesn't render `× clear` next to
+        // CAPTURED's collapsed `× ✕` and read inconsistently. User
+        // feedback 2026-07-07.
+        //
+        // CAPTURED (idx=2) is the widest chip cluster, so it drives
+        // the tier. Compute its full-text need against the same
+        // area.width every section sees.
+        let captured_full_used = 1
+            + chev.chars().count()
+            + label_prefix.chars().count()
+            + "CAPTURED".chars().count()
+            + " (9999)".chars().count();
+        let captured_full_need = captured_full_used
+            + chip_len(refresh_full)
+            + chip_len(capture_full)
+            + chip_len(clear_full)
+            + 2 /* gap between 3 chips */
+            + 2;
+        let use_icons_panel_wide = captured_full_need >= area_w;
+        let (refresh_text, capture_text, clear_text) = if !use_icons_panel_wide {
+            (refresh_full, capture_full, clear_full)
+        } else if need_for(refresh_icon, capture_icon, clear_icon) < area_w {
+            (refresh_icon, capture_icon, clear_icon)
+        } else {
+            // Not enough width even for icons — bail without
+            // painting so no chip catches phantom clicks at the
+            // right edge.
+            ("", "", "")
+        };
         if !refresh_text.is_empty() || !capture_text.is_empty() || !clear_text.is_empty() {
             let ref_len = if has_refresh_chip {
                 chip_len(refresh_text)
