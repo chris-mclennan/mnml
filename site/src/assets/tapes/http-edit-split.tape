@@ -31,16 +31,16 @@ Output site/src/assets/tapes/http-edit-split.gif
 
 Set Shell       "bash"
 Set FontFamily  "JetBrainsMono Nerd Font mnml"
-Set FontSize    13
-Set Width       1280
-Set Height      760
+Set FontSize    12
+Set Width       1600
+Set Height      900
 Set Padding     20
 Set TypingSpeed 50ms
 Set Theme       "Catppuccin Mocha"
 
 # ── setup (hidden) ───────────────────────────────────────────────────────
 Hide
-Type "MNML_DEMO=/private/tmp/mnml-tape-http-edit-split && rm -rf $MNML_DEMO && mkdir -p $MNML_DEMO && cd $MNML_DEMO"
+Type "MNML_DEMO=$(mktemp -d) && cd $MNML_DEMO"
 Enter
 Sleep 200ms
 # Pre-seed a .http request whose Body / Vars tabs are both interesting

@@ -1202,6 +1202,11 @@ pub fn rects_dump_json(app: &App) -> String {
     }
     one!("tree_toggle", app.rects.tree_toggle);
     one!("tree_edge", app.rects.tree_edge);
+    // 2026-07-07 tape-recorder — expose the primary tree body rect
+    // so IPC drivers can compute per-row click coords (`tree_up_row`
+    // sits above; each visible tree row is at `tree.y + row_idx`).
+    one!("tree", app.rects.tree);
+    one!("tree_up_row", app.rects.tree_up_row);
     one!(
         "integration_section_toggle",
         app.rects.integration_section_toggle
@@ -1471,6 +1476,29 @@ pub fn rects_dump_json(app: &App) -> String {
             &format!("request_tab:{pid}:{view:?}"),
             *r,
         );
+    }
+    // 2026-07-07 tape-recorder — expose split + var-token rects so
+    // headless / IPC-driven scripts can drive the split-edit
+    // interactions + right-click on `{{VAR}}` tokens.
+    if let Some(r) = app.rects.request_edit_split_chip {
+        push_rect(&mut out, &mut first, "request_edit_split_chip", r);
+    }
+    if let Some(r) = app.rects.request_edit_split_divider {
+        push_rect(&mut out, &mut first, "request_edit_split_divider", r);
+    }
+    if let Some(r) = app.rects.request_split_toggle {
+        push_rect(&mut out, &mut first, "request_split_toggle", r);
+    }
+    for (r, pid, tab) in &app.rects.request_edit_tabs_split {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("request_edit_tab_split:{pid}:{tab:?}"),
+            *r,
+        );
+    }
+    for (r, name) in &app.rects.request_var_click_rects {
+        push_rect(&mut out, &mut first, &format!("request_var:{name}"), *r);
     }
     out.push_str("\n]");
     out

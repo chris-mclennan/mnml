@@ -714,7 +714,7 @@ fn draw_captured(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
                     Span::styled(
-                        "Nothing captured yet — click ↺ to refresh, or click \u{EB01} capture to launch a browser.",
+                        "Nothing captured yet — click \u{EB01} capture on this row to dump entries from the browser pane.",
                         Style::default().fg(t.comment).bg(bg),
                     ),
                 ])),

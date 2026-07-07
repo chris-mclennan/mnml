@@ -2454,6 +2454,12 @@ impl App {
                     "http.capture_now: wrote {written}/{count} entries to {}",
                     log_path.display()
                 ));
+                // #polish 2026-07-07 — user reported CAPTURED still
+                // read `(0)` after clicking the chip because the
+                // panel's captured cache was loaded lazily and
+                // never re-read after writes. Refresh so freshly-
+                // dumped entries land in the sidebar immediately.
+                self.http_panel_refresh();
             }
             Err(e) => self.toast(format!(
                 "http.capture_now: open {}: {e}",
