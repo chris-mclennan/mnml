@@ -1013,10 +1013,13 @@ fn draw_captured(
     y
 }
 
-/// Paint a 1-cell vertical scrollbar over the right edge of the body
-/// area when the underlying list has more entries than fit in the
-/// visible SECTION_ROW_CAP window. Shared by CAPTURED / RECENT /
-/// MOCKS / CHAINS / COLLECTIONS section renders. 2026-07-07.
+/// Paint a THIN 1-cell vertical scrollbar over the right edge of the
+/// body area when the underlying list has more entries than fit in
+/// the visible SECTION_ROW_CAP window. Uses `▏` (U+258F left one-
+/// eighth block) for both track and thumb so it visually reads as a
+/// hairline on the panel background — much lighter than the editor
+/// pane's `█`/`│` scrollbar, matching the compactness of the sidebar.
+/// User-requested 2026-07-07.
 fn paint_section_scrollbar(
     frame: &mut Frame,
     section_area: Rect,
@@ -1032,23 +1035,35 @@ fn paint_section_scrollbar(
     if body_y_end <= body_y_start {
         return;
     }
-    let bar_rect = Rect {
-        x: section_area
-            .x
-            .saturating_add(section_area.width)
-            .saturating_sub(1),
-        y: body_y_start,
-        width: 1,
-        height: body_y_end.saturating_sub(body_y_start),
-    };
-    crate::ui::scrollbar::paint_simple_scrollbar(
-        frame,
-        bar_rect,
-        t,
-        total,
-        SECTION_ROW_CAP,
-        scroll,
-    );
+    let bar_x = section_area
+        .x
+        .saturating_add(section_area.width)
+        .saturating_sub(1);
+    let cells = body_y_end.saturating_sub(body_y_start) as usize;
+    let track_glyph = "\u{2502}"; // │ box-drawings vertical
+    let thumb_glyph = "\u{258D}"; // ▍ left three-eighths block
+    let bg = t.bg_darker;
+    // Track — subtle grey.
+    for cy in 0..cells {
+        frame.render_widget(
+            Paragraph::new(track_glyph).style(ratatui::style::Style::default().fg(t.bg2).bg(bg)),
+            Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
+        );
+    }
+    // Thumb — cyan-comment for contrast without being loud.
+    let thumb_h = ((cells * SECTION_ROW_CAP) / total).max(1);
+    let max_scroll = total - SECTION_ROW_CAP;
+    let max_thumb_top = cells.saturating_sub(thumb_h);
+    let thumb_top = (scroll * max_thumb_top)
+        .checked_div(max_scroll)
+        .unwrap_or(0);
+    for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
+        frame.render_widget(
+            Paragraph::new(thumb_glyph)
+                .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
+            Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
+        );
+    }
 }
 
 /// ENVS body — one row per env file under `.mnml/env/` +
@@ -1567,21 +1582,35 @@ fn draw_collections(
     // Scrollbar uses `cap` (max painted rows) as the "viewport" so
     // the thumb reflects how much of the collections list you're
     // seeing.
+    // COLLECTIONS uses the same thin-hairline paint as the other
+    // sections (via a local re-implementation since the shared
+    // helper wants "viewport" == SECTION_ROW_CAP but COLLECTIONS
+    // uses `cap = SECTION_ROW_CAP * 3`).
     if total_logical > cap && y > body_y_start {
-        let bar_rect = Rect {
-            x: area.x.saturating_add(area.width).saturating_sub(1),
-            y: body_y_start,
-            width: 1,
-            height: y.saturating_sub(body_y_start),
-        };
-        crate::ui::scrollbar::paint_simple_scrollbar(
-            frame,
-            bar_rect,
-            &t,
-            total_logical,
-            cap,
-            scroll,
-        );
+        let bar_x = area.x.saturating_add(area.width).saturating_sub(1);
+        let cells = y.saturating_sub(body_y_start) as usize;
+        let track_glyph = "\u{2502}";
+        let thumb_glyph = "\u{258D}";
+        for cy in 0..cells {
+            frame.render_widget(
+                Paragraph::new(track_glyph)
+                    .style(ratatui::style::Style::default().fg(t.bg2).bg(bg)),
+                Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
+            );
+        }
+        let thumb_h = ((cells * cap) / total_logical).max(1);
+        let max_scroll = total_logical - cap;
+        let max_thumb_top = cells.saturating_sub(thumb_h);
+        let thumb_top = (scroll * max_thumb_top)
+            .checked_div(max_scroll)
+            .unwrap_or(0);
+        for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
+            frame.render_widget(
+                Paragraph::new(thumb_glyph)
+                    .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
+                Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
+            );
+        }
     }
     y
 }
