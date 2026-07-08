@@ -532,6 +532,26 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.commit_pending_undo();
         return;
     }
+    // F2 focus routing: `lsp.rename` claims F2 in the static keymap
+    // (VS Code: rename symbol under cursor), but VS Code ALSO uses
+    // F2 to rename the selected file when the tree is focused. When
+    // no overlay is claiming keys and Focus == Tree, redirect F2 to
+    // `file.rename`. This lives here (not in the keymap) so the
+    // static registry can bind F2 to `lsp.rename` alone — dropping
+    // the previous keymap-collision warning. 2026-07-08.
+    if key.code == KeyCode::F(2)
+        && key.modifiers.is_empty()
+        && app.picker.is_none()
+        && app.prompt.is_none()
+        && app.whichkey.is_none()
+        && app.context_menu.is_none()
+        && app.menu_open.is_none()
+        && app.focus == crate::focus::Focus::Tree
+        && app.tree.selected_file().is_some()
+    {
+        let _ = crate::command::run("file.rename", app);
+        return;
+    }
     // Zen-mode escape hatch: when zen is on and no overlay is
     // claiming Esc, treat Esc as "exit zen" so the user is never
     // trapped. Overlays (picker / prompt / which-key) get first

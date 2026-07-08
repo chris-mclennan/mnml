@@ -2046,9 +2046,14 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "file.rename",
-            title: "Rename the selected tree file (F2)",
+            // F2 routing: `lsp.rename` also claims F2 (VS Code parity —
+            // rename symbol under cursor). Real chord binding lives on
+            // `lsp.rename` in the static keymap; when Focus == Tree,
+            // `tui::dispatch_key` intercepts F2 and runs THIS command
+            // instead. Palette users still search "rename" → this.
+            title: "Rename the selected tree file (F2, when tree focused)",
             group: "file",
-            keys: &["f2"],
+            keys: &[],
             run: |app| {
                 if let Some(p) = app.tree.selected_file() {
                     app.open_fs_rename_prompt(p);
@@ -2076,13 +2081,6 @@ fn builtin_commands() -> Vec<Command> {
                     app.focus_pane();
                 }
             },
-        },
-        Command {
-            id: "buffer.reopen_or_toast",
-            title: "Reopen the most recently closed buffer (Ctrl+Shift+T)",
-            group: "buffer",
-            keys: &["ctrl+shift+t"],
-            run: |app| app.reopen_closed_buffer(),
         },
         Command {
             id: "view.workspace_up",
