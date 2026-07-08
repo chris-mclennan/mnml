@@ -1406,6 +1406,12 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, id) in &app.rects.bufferline_tabs {
         push_rect(&mut out, &mut first, &format!("bufferline_tab:{id}"), *r);
     }
+    // 2026-07-08 — expose pane body rects for tree-drag-to-split
+    // debugging. If pane_bodies is empty, drag-to-split can't hit-
+    // test a target and the drop overlay never appears.
+    for (r, id) in &app.rects.pane_bodies {
+        push_rect(&mut out, &mut first, &format!("pane_body:{id}"), *r);
+    }
     for hit in &app.rects.scrollbars {
         push_rect(
             &mut out,
