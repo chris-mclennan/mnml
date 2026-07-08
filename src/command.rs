@@ -125,6 +125,87 @@ pub fn run(id: &str, app: &mut App) -> bool {
     ok
 }
 
+/// Build a human-readable text dump of every command mnml knows —
+/// builtins from the static registry plus any `DynCommand`s the
+/// session has picked up from IPC / integration manifests. Grouped
+/// by `group`, sorted within each group, one line each:
+///
+///     id                              title                                keys
+///
+/// Opened as a scratch buffer via `view.commands_reference`. Users
+/// hit `Ctrl+F` to search — mnml's editor Find works on this like
+/// any other buffer.
+fn build_commands_reference_text(dyn_cmds: &[DynCommand]) -> String {
+    use std::collections::BTreeMap;
+
+    struct Row {
+        id: String,
+        title: String,
+        keys: String,
+        origin: &'static str,
+    }
+    let mut by_group: BTreeMap<String, Vec<Row>> = BTreeMap::new();
+    for c in registry().all() {
+        by_group.entry(c.group.to_string()).or_default().push(Row {
+            id: c.id.to_string(),
+            title: c.title.to_string(),
+            keys: c.key_hint(),
+            origin: "builtin",
+        });
+    }
+    for d in dyn_cmds {
+        by_group.entry(d.group.clone()).or_default().push(Row {
+            id: d.id.clone(),
+            title: d.title.clone(),
+            keys: d.keys.join(" / "),
+            origin: "plugin",
+        });
+    }
+    let mut total = 0usize;
+    for rows in by_group.values_mut() {
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        total += rows.len();
+    }
+    // Compute a column width per group so titles line up. Caps at 40
+    // so a rogue verbose id doesn't push every title off the right
+    // edge of a normal terminal.
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# mnml commands — {total} total across {} groups\n\n",
+        by_group.len()
+    ));
+    out.push_str(
+        "Hit Ctrl+F to search this buffer. `id` is what the palette and `[keys.*]` config\n\
+         reference. Blank `keys` = palette-only (no default chord).\n\n",
+    );
+    for (group, rows) in &by_group {
+        out.push_str(&format!("## {group}  ({})\n\n", rows.len()));
+        let id_w = rows.iter().map(|r| r.id.chars().count()).max().unwrap_or(0);
+        let id_w = id_w.min(40);
+        let title_w = rows
+            .iter()
+            .map(|r| r.title.chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(60);
+        for r in rows {
+            let id_padded = format!("{:<width$}", r.id, width = id_w);
+            let title_padded = format!("{:<width$}", r.title, width = title_w);
+            let origin_tag = if r.origin == "plugin" {
+                "  [plugin]"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "  {id_padded}  {title_padded}  {}{}\n",
+                r.keys, origin_tag
+            ));
+        }
+        out.push('\n');
+    }
+    out
+}
+
 fn builtin_commands() -> Vec<Command> {
     #[allow(unused_mut)]
     let mut cmds = vec![
@@ -1605,6 +1686,31 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| {
                 app.integration_section_expanded = !app.integration_section_expanded;
+            },
+        },
+        Command {
+            id: "view.commands_reference",
+            title: "Commands reference — every mnml command, grouped, in a scratch buffer",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let text = build_commands_reference_text(&app.dynamic_commands);
+                app.open_scratch_with_text("[commands]".into(), text);
+            },
+        },
+        Command {
+            id: "view.toggle_hover_help",
+            title: "Toggle the Ableton-style hover-help strip (bottom-left)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.hover_help = !app.config.ui.hover_help;
+                let state = if app.config.ui.hover_help {
+                    "on"
+                } else {
+                    "off"
+                };
+                app.toast(format!("hover-help {state}"));
             },
         },
         Command {

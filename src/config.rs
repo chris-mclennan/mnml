@@ -803,6 +803,16 @@ pub struct UiConfig {
     /// integrations_section_default_expanded = false
     /// ```
     pub integrations_section_default_expanded: bool,
+
+    /// Ableton-style hover-help footer strip. When true, mnml
+    /// reserves 1 row at the very bottom of the screen (below the
+    /// cmdline) that shows a plain-English description of whatever
+    /// the mouse is currently hovering over — chip, menu item, tab,
+    /// tree row, etc. Zero-delay (fires as the mouse enters the
+    /// chip, unlike the popup tooltip which waits 500ms). Off by
+    /// default. Toggle at runtime via `view.toggle_hover_help` or
+    /// `:set hoverhelp`.
+    pub hover_help: bool,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -1476,6 +1486,7 @@ impl Default for Config {
                 tab_bar_ai_icon: "none".to_string(),
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
+                hover_help: false,
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1778,6 +1789,11 @@ struct RawUi {
     /// Same shape, for the `> INTEGRATIONS` section.
     #[serde(default)]
     integrations_section_default_expanded: Option<bool>,
+    /// See [`UiConfig::hover_help`]. Ableton-style bottom-left help
+    /// strip that describes whatever the mouse is over. Off by
+    /// default — palette command `view.toggle_hover_help`.
+    #[serde(default)]
+    hover_help: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2165,6 +2181,9 @@ impl Config {
         }
         if let Some(b) = raw.ui.integrations_section_default_expanded {
             self.ui.integrations_section_default_expanded = b;
+        }
+        if let Some(b) = raw.ui.hover_help {
+            self.ui.hover_help = b;
         }
         if let Some(s) = raw.ui.projects_dir {
             // Tilde-expand on load so renderers can use the value

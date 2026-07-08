@@ -3467,6 +3467,22 @@ impl App {
             self.right_panel_visible = false;
             self.close_right_panel_hosted_panes();
             self.toast("right_panel: off");
+        } else if matches!(opt, "hoverhelp" | "hover_help" | "hh") {
+            self.config.ui.hover_help = true;
+            self.toast("hover_help: on");
+        } else if matches!(opt, "nohoverhelp" | "nohover_help" | "nohh") {
+            self.config.ui.hover_help = false;
+            self.toast("hover_help: off");
+        } else if matches!(opt, "hoverhelp!" | "hover_help!" | "hh!" | "invhoverhelp") {
+            self.config.ui.hover_help = !self.config.ui.hover_help;
+            self.toast(format!(
+                "hover_help: {}",
+                if self.config.ui.hover_help {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
         } else if matches!(opt, "relativenumber" | "rnu") {
             self.set_relative_line_numbers(true);
         } else if matches!(opt, "norelativenumber" | "nornu") {

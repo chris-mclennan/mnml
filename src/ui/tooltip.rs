@@ -74,6 +74,13 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
+/// Public wrapper that drops the anchor rect — used by the
+/// hover-help footer (`ui/hover_help.rs`), which paints a fixed
+/// row at the bottom of the screen and only needs the text.
+pub fn describe_text(chip: HoverChip, app: &App) -> Option<(String, Option<String>)> {
+    describe(chip, app).map(|(_rect, primary, secondary)| (primary, secondary))
+}
+
 /// `(anchor_rect, primary_line, secondary_line)`. None ⇒ chip's rect isn't
 /// registered this frame (chip is hidden, terminal too narrow, etc.) — bail.
 fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)> {

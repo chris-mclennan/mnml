@@ -86,6 +86,7 @@ pub mod agents_panel;
 pub mod cloud_agents_panel;
 pub mod dock;
 pub mod git_palette;
+pub mod hover_help;
 pub mod http_panel;
 pub mod menu_bar;
 pub mod mount_view;
@@ -372,14 +373,22 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // when the window is wide enough.
     let palette_bar_visible = area.width >= 80;
     let palette_bar_h: u16 = if palette_bar_visible { 1 } else { 0 };
+    // Ableton-style hover-help strip — 1 row at the very bottom,
+    // BELOW the cmdline. Off by default; runtime-toggle via
+    // `view.toggle_hover_help`. Skipped on narrow terminals so
+    // the body stays roomy.
+    let hover_help_visible = app.config.ui.hover_help && area.height >= 8;
+    let hover_help_h: u16 = if hover_help_visible { 1 } else { 0 };
     let v = RLayout::vertical([
         Constraint::Length(palette_bar_h),
         Constraint::Min(1),
         Constraint::Length(1),
         Constraint::Length(1),
+        Constraint::Length(hover_help_h),
     ])
     .split(area);
-    let (palette_bar_area, upper, statusline_area, cmdline_bar_area) = (v[0], v[1], v[2], v[3]);
+    let (palette_bar_area, upper, statusline_area, cmdline_bar_area, hover_help_area) =
+        (v[0], v[1], v[2], v[3], v[4]);
 
     if palette_bar_visible {
         draw_palette_bar(frame, app, palette_bar_area);
@@ -1533,6 +1542,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.peek_overlay.is_some() {
         peek_overlay_view::draw(frame, app, area);
+    }
+    // Ableton-style hover-help strip — 1-row footer BELOW the
+    // cmdline that describes whatever's under the mouse.
+    if hover_help_visible {
+        hover_help::draw(frame, app, hover_help_area);
     }
     // Hover tooltip — sits above everything else (chip popups can't conflict
     // with picker/prompt/etc. because the hover_chip is only set when the
