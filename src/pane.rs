@@ -457,6 +457,14 @@ pub struct MdPreview {
     /// resolved path. Cleared when the source's image set changes
     /// (entries no longer referenced are dropped).
     pub image_cache: std::collections::HashMap<PathBuf, crate::image::ImageData>,
+    /// External-renderer cache (glow / custom cmd). Empty on the
+    /// builtin path. See `ui::md_preview_external::ExternalCache`.
+    /// 2026-07-07.
+    pub external_cache: crate::ui::md_preview_external::ExternalCache,
+    /// One-shot toast latch — flips true after the first failed
+    /// external render so we don't spam toasts every frame while
+    /// the tool is missing. Cleared when the engine config changes.
+    pub external_error_toasted: bool,
 }
 
 impl MdPreview {

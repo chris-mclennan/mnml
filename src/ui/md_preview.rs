@@ -39,6 +39,7 @@ pub fn draw(
 
     let protocol = app.image_protocol;
     let image_rows = app.config.ui.md_image_rows;
+    let engine = app.config.ui.md_preview_engine.clone();
     let Some(Pane::MdPreview(p)) = app.panes.get_mut(pane_id) else {
         return None;
     };
@@ -50,16 +51,56 @@ pub fn draw(
         width: area.width.saturating_sub(1),
         height: area.height.saturating_sub(banner_h),
     };
+    // Choose the rendering path once per frame. Builtin is the default
+    // (image-aware, cursor-tracking); glow / custom-cmd is the opt-in
+    // richer path (no images, but nicer typography). Failure to spawn
+    // the external tool falls back to builtin with a one-shot toast.
+    let use_external = engine != "builtin" && !engine.is_empty();
+    let mut external_lines: Option<Vec<Line<'static>>> = None;
+    let mut external_error: Option<String> = None;
+    if use_external {
+        if p.external_cache
+            .is_fresh(&engine, text_area.width, &p.source)
+        {
+            external_lines = Some(p.external_cache.lines.clone());
+        } else {
+            match crate::ui::md_preview_external::render(&engine, text_area.width, &p.source) {
+                Ok(lines) => {
+                    p.external_cache = crate::ui::md_preview_external::ExternalCache {
+                        key: (engine.clone(), text_area.width, {
+                            use std::hash::{Hash, Hasher};
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            p.source.hash(&mut h);
+                            h.finish()
+                        }),
+                        lines: lines.clone(),
+                    };
+                    p.external_error_toasted = false;
+                    external_lines = Some(lines);
+                }
+                Err(reason) => {
+                    if !p.external_error_toasted {
+                        p.external_error_toasted = true;
+                        external_error = Some(reason);
+                    }
+                }
+            }
+        }
+    }
     // Image-aware render path: when the terminal can paint images, reserve
     // rows for `![alt](path)` references so the post-draw overlay has a
     // place to land. Plain-text terminal (no image protocol) still gets
     // the placeholder rows + dim caption — keeps line-count math
     // identical between the two paths so scroll position is stable.
     let directives = parse_image_directives(&p.source, image_rows);
-    let lines = wrap_lines(
-        render_markdown_with_image_placeholders(&p.source, image_rows),
-        text_area.width as usize,
-    );
+    let lines = if let Some(ext) = external_lines {
+        ext
+    } else {
+        wrap_lines(
+            render_markdown_with_image_placeholders(&p.source, image_rows),
+            text_area.width as usize,
+        )
+    };
     let h = area.height as usize;
     let max_scroll = lines.len().saturating_sub(h.min(lines.len()));
     p.scroll = p.scroll.min(max_scroll);
@@ -152,6 +193,14 @@ pub fn draw(
     }
     // Re-borrow `app` to push the staged requests now that `p` is dropped.
     app.image_paint_requests.extend(requests);
+    // One-shot toast when the external renderer failed and we fell
+    // back to builtin. Latched via `external_error_toasted` on the
+    // pane so we don't spam the user every frame while the tool is
+    // still missing.
+    if let Some(msg) = external_error {
+        app.toast(msg);
+        app.toast("md-preview: falling back to builtin renderer");
+    }
 
     None // no caret in a preview
 }

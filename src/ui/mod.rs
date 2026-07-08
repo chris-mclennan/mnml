@@ -88,6 +88,7 @@ pub mod dock;
 pub mod git_palette;
 pub mod hover_help;
 pub mod http_panel;
+pub mod md_preview_external;
 pub mod menu_bar;
 pub mod mount_view;
 pub mod notes_panel;

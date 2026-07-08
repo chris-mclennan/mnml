@@ -813,6 +813,20 @@ pub struct UiConfig {
     /// default. Toggle at runtime via `view.toggle_hover_help` or
     /// `:set hoverhelp`.
     pub hover_help: bool,
+
+    /// Markdown preview rendering engine. Values:
+    ///   - `"builtin"` (default) — mnml's own line renderer
+    ///     (`ui::md_preview::render_markdown`). Read-only, scrolls,
+    ///     inline images via kitty/sixel/iterm2 protocols.
+    ///   - `"glow"` — pipe the source through
+    ///     `glow -s auto -w <cols>` and paint the ANSI output.
+    ///     Requires `glow` on PATH; falls back to builtin with a
+    ///     one-shot toast if missing.
+    ///   - `"custom:<cmd>"` — pipe the source through `<cmd>` on
+    ///     stdin, paint the ANSI output. `<cmd>` runs via
+    ///     `sh -c` so args + pipes work naturally.
+    /// 2026-07-07.
+    pub md_preview_engine: String,
 }
 
 /// One entry in the rail's INTEGRATIONS section. Same shape as
@@ -1487,6 +1501,7 @@ impl Default for Config {
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
                 hover_help: false,
+                md_preview_engine: "builtin".to_string(),
             },
             session: SessionConfig { restore: true },
             keys: BTreeMap::new(),
@@ -1794,6 +1809,10 @@ struct RawUi {
     /// default — palette command `view.toggle_hover_help`.
     #[serde(default)]
     hover_help: Option<bool>,
+    /// See [`UiConfig::md_preview_engine`]. `"builtin"` (default)
+    /// / `"glow"` / `"custom:<cmd>"`. 2026-07-07.
+    #[serde(default)]
+    md_preview_engine: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2184,6 +2203,12 @@ impl Config {
         }
         if let Some(b) = raw.ui.hover_help {
             self.ui.hover_help = b;
+        }
+        if let Some(s) = raw.ui.md_preview_engine {
+            let trimmed = s.trim().to_string();
+            if !trimmed.is_empty() {
+                self.ui.md_preview_engine = trimmed;
+            }
         }
         if let Some(s) = raw.ui.projects_dir {
             // Tilde-expand on load so renderers can use the value

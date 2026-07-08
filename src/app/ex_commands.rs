@@ -3481,6 +3481,25 @@ impl App {
         } else if matches!(opt, "nohoverhelp" | "nohover_help" | "nohh") {
             self.config.ui.hover_help = false;
             self.toast("hover_help: off");
+        } else if let Some(val) = opt
+            .strip_prefix("mdengine=")
+            .or_else(|| opt.strip_prefix("md_preview_engine="))
+        {
+            let val = val.trim();
+            if val.is_empty() {
+                self.toast(":set mdengine=<builtin|glow|custom:...> — value required");
+                return;
+            }
+            self.config.ui.md_preview_engine = val.to_string();
+            // Invalidate every open md preview so the new engine
+            // kicks in on the next paint.
+            for pane in self.panes.iter_mut() {
+                if let crate::pane::Pane::MdPreview(p) = pane {
+                    p.external_cache = Default::default();
+                    p.external_error_toasted = false;
+                }
+            }
+            self.toast(format!("md_preview_engine: {val}"));
         } else if matches!(opt, "hoverhelp!" | "hover_help!" | "hh!" | "invhoverhelp") {
             self.config.ui.hover_help = !self.config.ui.hover_help;
             self.toast(format!(

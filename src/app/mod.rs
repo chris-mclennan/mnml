@@ -7188,6 +7188,8 @@ impl App {
             source,
             scroll: 0,
             image_cache: std::collections::HashMap::new(),
+            external_cache: Default::default(),
+            external_error_toasted: false,
         });
         let prior_active = self.active;
         let anchor = near.or(prior_active);
@@ -7309,6 +7311,8 @@ impl App {
             source,
             scroll: 0,
             image_cache: std::collections::HashMap::new(),
+            external_cache: Default::default(),
+            external_error_toasted: false,
         });
         self.reveal_pane(pane_id);
     }

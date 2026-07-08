@@ -1693,6 +1693,31 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "markdown.cycle_engine",
+            title: "Markdown preview engine — cycle builtin / glow (external ANSI renderer)",
+            group: "markdown",
+            keys: &[],
+            run: |app| {
+                let next = match app.config.ui.md_preview_engine.as_str() {
+                    "builtin" => "glow",
+                    "glow" => "builtin",
+                    // Any custom:<cmd> value cycles back to builtin
+                    // so users have an easy way to reset.
+                    _ => "builtin",
+                };
+                app.config.ui.md_preview_engine = next.to_string();
+                // Invalidate every open MdPreview pane's external
+                // cache so the new engine kicks in on the next frame.
+                for pane in app.panes.iter_mut() {
+                    if let crate::pane::Pane::MdPreview(p) = pane {
+                        p.external_cache = Default::default();
+                        p.external_error_toasted = false;
+                    }
+                }
+                app.toast(format!("md_preview_engine: {next}"));
+            },
+        },
+        Command {
             id: "view.commands_reference",
             title: "Commands reference — every mnml command, grouped, in a scratch buffer",
             group: "view",
