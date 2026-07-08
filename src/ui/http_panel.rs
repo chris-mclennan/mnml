@@ -1072,17 +1072,20 @@ fn paint_section_scrollbar(
         .saturating_add(section_area.width)
         .saturating_sub(1);
     let cells = body_y_end.saturating_sub(body_y_start) as usize;
+    // User feedback 2026-07-08: track was too subtle to read as a
+    // scrollbar. Bumped track to `t.comment` (visible grey) and
+    // thumb to a full block on `t.cyan` (accent) so section
+    // overflow is obvious.
     let track_glyph = "\u{2502}"; // │ box-drawings vertical
-    let thumb_glyph = "\u{258D}"; // ▍ left three-eighths block
+    let thumb_glyph = "\u{2588}"; // █ full block
     let bg = t.bg_darker;
-    // Track — subtle grey.
     for cy in 0..cells {
         frame.render_widget(
-            Paragraph::new(track_glyph).style(ratatui::style::Style::default().fg(t.bg2).bg(bg)),
+            Paragraph::new(track_glyph)
+                .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
             Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
         );
     }
-    // Thumb — cyan-comment for contrast without being loud.
     let thumb_h = ((cells * SECTION_ROW_CAP) / total).max(1);
     let max_scroll = total - SECTION_ROW_CAP;
     let max_thumb_top = cells.saturating_sub(thumb_h);
@@ -1091,8 +1094,7 @@ fn paint_section_scrollbar(
         .unwrap_or(0);
     for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
         frame.render_widget(
-            Paragraph::new(thumb_glyph)
-                .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
+            Paragraph::new(thumb_glyph).style(ratatui::style::Style::default().fg(t.cyan).bg(bg)),
             Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
         );
     }
@@ -1686,19 +1688,24 @@ fn draw_collections(
     // Scrollbar uses `cap` (max painted rows) as the "viewport" so
     // the thumb reflects how much of the collections list you're
     // seeing.
-    // COLLECTIONS uses the same thin-hairline paint as the other
-    // sections (via a local re-implementation since the shared
-    // helper wants "viewport" == SECTION_ROW_CAP but COLLECTIONS
-    // uses `cap = SECTION_ROW_CAP * 3`).
+    // COLLECTIONS uses the same paint as the other sections (via a
+    // local re-implementation since the shared helper wants
+    // "viewport" == SECTION_ROW_CAP but COLLECTIONS uses `cap =
+    // SECTION_ROW_CAP * 3`).
+    // User feedback 2026-07-08: the track was `t.bg2` which reads
+    // as near-invisible on the dark panel bg. Bumped track to
+    // `t.comment` (visible grey) and thumb to `t.cyan` (accent) so
+    // large collections like `integrations-api (373)` obviously show
+    // there's more content to scroll to.
     if total_logical > cap && y > body_y_start {
         let bar_x = area.x.saturating_add(area.width).saturating_sub(1);
         let cells = y.saturating_sub(body_y_start) as usize;
         let track_glyph = "\u{2502}";
-        let thumb_glyph = "\u{258D}";
+        let thumb_glyph = "\u{2588}"; // █ full block — unmistakable
         for cy in 0..cells {
             frame.render_widget(
                 Paragraph::new(track_glyph)
-                    .style(ratatui::style::Style::default().fg(t.bg2).bg(bg)),
+                    .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
                 Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
             );
         }
@@ -1711,7 +1718,7 @@ fn draw_collections(
         for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
             frame.render_widget(
                 Paragraph::new(thumb_glyph)
-                    .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
+                    .style(ratatui::style::Style::default().fg(t.cyan).bg(bg)),
                 Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
             );
         }
