@@ -37,7 +37,7 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     // Curated tips — the bare minimum a new user needs to click and chord
     // their way around.
     type Tip = (&'static str, &'static str);
-    let tips: [Tip; 10] = [
+    let tips: [Tip; 12] = [
         ("F1", "help overlay (this is similar — keymap reference)"),
         ("Ctrl+P", "fuzzy file picker"),
         ("Ctrl+Shift+P", "command palette"),
@@ -50,6 +50,8 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         ("<leader>g l", "commit graph (or click branch chip)"),
         ("<leader>l h", "LSP hover info"),
         ("right-click anywhere", "context menu for that surface"),
+        (":commands", "browse every command in a scratch buffer"),
+        (":set hh", "Ableton-style hover-help strip (bottom row)"),
         (":welcome / view.welcome", "reopen this overlay any time"),
     ];
 

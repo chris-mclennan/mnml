@@ -746,6 +746,14 @@ impl App {
             "settings" => {
                 self.open_settings_overlay();
             }
+            // `:commands` / `:reference` — open a scratch buffer
+            // listing every registered command grouped by category.
+            // Same as `view.commands_reference` in the palette.
+            "commands" | "reference" => {
+                let text =
+                    crate::command::build_commands_reference_text_public(&self.dynamic_commands);
+                self.open_scratch_with_text("[commands]".into(), text);
+            }
             // `:debug.rects` — toggle the visual click-rect overlay.
             // Paints borders around every registered hit-rect so you
             // can SEE where clicks are caught vs where glyphs are

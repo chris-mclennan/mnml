@@ -135,6 +135,10 @@ pub fn run(id: &str, app: &mut App) -> bool {
 /// Opened as a scratch buffer via `view.commands_reference`. Users
 /// hit `Ctrl+F` to search — mnml's editor Find works on this like
 /// any other buffer.
+pub fn build_commands_reference_text_public(dyn_cmds: &[DynCommand]) -> String {
+    build_commands_reference_text(dyn_cmds)
+}
+
 fn build_commands_reference_text(dyn_cmds: &[DynCommand]) -> String {
     use std::collections::BTreeMap;
 
