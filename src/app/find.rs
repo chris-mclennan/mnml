@@ -526,7 +526,10 @@ impl App {
                 if crate::input::is_vim_style(&self.config) {
                     self.toast(":%s/old/new/g — substitute across buffer");
                 } else {
-                    self.toast("Ctrl+H: type a find pattern, then Ctrl+H again to replace");
+                    // Ctrl+H mid-Find now accepts the query + opens
+                    // Replace in one step (see tui/handlers/overlay.rs),
+                    // so a single chord finishes the flow.
+                    self.toast("Ctrl+H: type a find pattern, then Ctrl+H to replace");
                 }
             }
         }

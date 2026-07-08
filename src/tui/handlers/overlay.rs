@@ -545,6 +545,25 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
         }
     }
     let was_find = matches!(p.kind, crate::prompt::PromptKind::Find);
+    // Ctrl+H inside the Find prompt = "accept find + open replace" —
+    // a single fluid chord instead of Ctrl+F, type, Enter, Ctrl+H, type.
+    // Matches VS Code's unified find/replace bar behavior without a
+    // full two-field prompt refactor. Empty query ⇒ just toast the hint.
+    if was_find
+        && ctrl
+        && matches!(key.code, KeyCode::Char('h'))
+        && !crate::input::is_vim_style(&app.config)
+    {
+        let query = p.input.clone();
+        if query.trim().is_empty() {
+            app.toast("type a find pattern first, then Ctrl+H");
+            return;
+        }
+        app.prompt = None;
+        app.accept_find(query);
+        app.open_replace_prompt();
+        return;
+    }
     // Up/Down on the Find prompt cycle through the find-history (shell-style).
     if was_find && matches!(key.code, KeyCode::Up | KeyCode::Down) {
         match key.code {
