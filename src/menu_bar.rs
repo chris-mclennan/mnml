@@ -278,6 +278,15 @@ fn view_menu() -> MenuDef {
                 label: "Toggle zen mode",
                 command_id: "view.zen",
             },
+            MenuItem::Action {
+                label: "Toggle hover-help strip",
+                command_id: "view.toggle_hover_help",
+            },
+            MenuItem::Separator,
+            MenuItem::Action {
+                label: "Commands reference…",
+                command_id: "view.commands_reference",
+            },
             MenuItem::Separator,
             MenuItem::Action {
                 label: "Pick theme…",
@@ -413,6 +422,10 @@ fn help_menu() -> MenuDef {
             MenuItem::Action {
                 label: "Keybindings & help",
                 command_id: "view.help",
+            },
+            MenuItem::Action {
+                label: "Commands reference…",
+                command_id: "view.commands_reference",
             },
             MenuItem::Separator,
             MenuItem::Action {
