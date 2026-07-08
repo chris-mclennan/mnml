@@ -144,29 +144,19 @@ pub fn draw(
         (body_area_full, None)
     };
     // Vertical divider between list + detail — clickable +
-    // drag-resizable. A 2-row centered grip glyph advertises the
-    // handle, mirroring the file-tree edge.
+    // drag-resizable. 2026-07-08: dropped the centered grip
+    // glyph to match the tree / right-panel edge cleanup. The
+    // `│` line is the drag affordance; hover-highlight would go
+    // here if we track it (git-graph doesn't yet, but the click
+    // rect below still catches drag events).
     if detail_w > 0 {
         let divider_x = body_area_full.x + body_area_full.width - detail_w - 1;
-        let grip_h: u16 = 2;
-        let grip_y = body_area_full.y + body_area_full.height.saturating_sub(grip_h) / 2;
-        let grip_glyph = if app.config.ui.ascii_icons {
-            "|"
-        } else {
-            "┃"
-        };
         for row in 0..body_area_full.height {
             let abs_y = body_area_full.y + row;
-            let is_grip = abs_y >= grip_y && abs_y < grip_y + grip_h;
-            let (glyph, color) = if is_grip {
-                (grip_glyph, t.comment)
-            } else {
-                ("│", t.grey)
-            };
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    glyph,
-                    Style::default().fg(color).bg(t.bg_dark),
+                    "│",
+                    Style::default().fg(t.grey).bg(t.bg_dark),
                 ))),
                 Rect::new(divider_x, abs_y, 1, 1),
             );

@@ -3719,55 +3719,29 @@ pub(crate) fn clip_to_cells(s: &str, max_cells: usize) -> String {
 
 fn draw_divider(frame: &mut Frame, rect: Rect, dir: SplitDir, hover: bool) {
     let t = theme::cur();
-    // Hover/drag state: paint the divider in yellow so the user knows it's
-    // grabbable. Idle state stays subtle (`t.line` / `t.comment`).
-    let (line_fg, grip_fg) = if hover {
-        (t.yellow, t.yellow)
-    } else {
-        (t.line, t.comment)
-    };
+    // 2026-07-08 — grip glyphs removed. Hover state paints the WHOLE
+    // divider in the accent color (was yellow, now cyan for parity
+    // with the tree / right-panel edge hover); idle stays a subtle
+    // `t.line`. The line itself IS the drag affordance — no `┃` /
+    // `━` grip cue in the middle. Matches the tree / right-panel
+    // edge treatment.
+    let line_fg = if hover { t.cyan } else { t.line };
     let line_style = Style::default().fg(line_fg).bg(t.bg_dark);
-    let grip_style = Style::default()
-        .fg(grip_fg)
-        .bg(t.bg_dark)
-        .add_modifier(if hover {
-            Modifier::BOLD
-        } else {
-            Modifier::empty()
-        });
     match dir {
         SplitDir::Horizontal => {
-            // Vertical divider — paint `│` everywhere, then a centered
-            // 2-row `┃` grip cue advertising the drag handle.
-            let grip_h: u16 = 2;
-            let grip_y = rect.y + rect.height.saturating_sub(grip_h) / 2;
+            // Vertical divider — one column of `│` glyphs.
             for dy in 0..rect.height {
-                let abs_y = rect.y + dy;
-                let in_grip = abs_y >= grip_y && abs_y < grip_y + grip_h;
-                let (glyph, style) = if in_grip {
-                    ("┃", grip_style)
-                } else {
-                    ("│", line_style)
-                };
                 frame.render_widget(
-                    Paragraph::new(Span::styled(glyph, style)),
-                    Rect::new(rect.x, abs_y, 1, 1),
+                    Paragraph::new(Span::styled("│", line_style)),
+                    Rect::new(rect.x, rect.y + dy, 1, 1),
                 );
             }
         }
         SplitDir::Vertical => {
-            // Horizontal divider — paint `─` everywhere, then a
-            // centered 2-cell `━` grip cue.
-            let grip_w: u16 = 4;
-            let grip_x = rect.x + rect.width.saturating_sub(grip_w) / 2;
+            // Horizontal divider — one row of `─` glyphs across the
+            // pane width.
             let line: String = "─".repeat(rect.width as usize);
             frame.render_widget(Paragraph::new(Span::styled(line, line_style)), rect);
-            // Overpaint the grip cells.
-            let grip = "━".repeat(grip_w as usize);
-            frame.render_widget(
-                Paragraph::new(Span::styled(grip, grip_style)),
-                Rect::new(grip_x, rect.y, grip_w, 1),
-            );
         }
     }
 }
