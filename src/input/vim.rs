@@ -46,6 +46,12 @@ enum PendingOp {
     Upper,
     /// `g~{motion}` — toggle case of the motion's range.
     ToggleCase,
+    /// `gc{motion}` / `gc{text-object}` — toggle line comment over
+    /// the motion's / text object's range. 2026-07-07 fix — was:
+    /// `gc` only handled simple motions (j/k/etc.), so `gcap`
+    /// / `gcip` fell through to the operator-less parser and either
+    /// dropped or misrouted (letter `p` was treated as paste).
+    Comment,
     /// vim-surround `ys{motion}<c>` — wrap the motion's range with a
     /// surround char chosen *after* the motion completes. The motion's
     /// select-ops get stashed in `pending_surround_ops`, then we transition
@@ -1241,7 +1247,8 @@ impl VimInputHandler {
                                 | PendingOp::Outdent
                                 | PendingOp::Reflow
                                 | PendingOp::SurroundAdd
-                                | PendingOp::Align => {
+                                | PendingOp::Align
+                                | PendingOp::Comment => {
                                     // Not meaningful for a find-match
                                     // range — drop silently.
                                     return InputResult::Consumed;
@@ -1277,11 +1284,27 @@ impl VimInputHandler {
                 };
             }
             Prefix::Gc => {
-                self.reset_pending();
                 if key.code == KeyCode::Char('c') {
+                    self.reset_pending();
                     return InputResult::Ops(vec![ToggleLineComment]);
                 }
-                // `gc` + motion: select the motion's span, comment it, collapse.
+                // `gcip` / `gcap` — text-object dispatch. Reuses the
+                // same TextObjectInner / Around prefix machinery `gq`
+                // relies on so paragraph / brackets / quotes all work
+                // uniformly. 2026-07-07.
+                if matches!(key.code, KeyCode::Char('i')) {
+                    self.op = Some(PendingOp::Comment);
+                    self.prefix = Prefix::TextObjectInner;
+                    return InputResult::Consumed;
+                }
+                if matches!(key.code, KeyCode::Char('a')) {
+                    self.op = Some(PendingOp::Comment);
+                    self.prefix = Prefix::TextObjectAround;
+                    return InputResult::Consumed;
+                }
+                self.reset_pending();
+                // `gc` + simple motion: select the motion's span,
+                // comment it, collapse.
                 return match Self::motion(key.code) {
                     Some(m) => {
                         InputResult::Ops(vec![SelectStart, m, ToggleLineComment, SelectClear])
@@ -1428,6 +1451,10 @@ impl VimInputHandler {
                         // Find-char span is single-line — alignment needs
                         // multiple lines, so this is a no-op.
                         return InputResult::Consumed;
+                    }
+                    PendingOp::Comment => {
+                        ops.push(ToggleLineComment);
+                        ops.push(SelectClear);
                     }
                 }
                 return InputResult::Ops(ops);
@@ -1600,6 +1627,14 @@ impl VimInputHandler {
                         // selection is live by the time the next key
                         // arrives.
                         return InputResult::Ops(ops);
+                    }
+                    PendingOp::Comment => {
+                        // `gcip` / `gcap` / `gci{`, etc. — the select_op
+                        // established the range; ToggleLineComment
+                        // reads the current selection to know which
+                        // lines to comment. 2026-07-07 fix.
+                        ops.push(ToggleLineComment);
+                        ops.push(SelectClear);
                     }
                 }
                 return InputResult::Ops(ops);
@@ -1941,6 +1976,11 @@ impl VimInputHandler {
                         // no-op (only one occurrence in scope). Drop.
                         InputResult::Consumed
                     }
+                    PendingOp::Comment => {
+                        // `gcgc` (unusual but syntactically valid)
+                        // fires ToggleLineComment on the current line.
+                        InputResult::Ops(vec![ToggleLineComment])
+                    }
                 };
             }
             // operator + `s` ⇒ vim-surround chord:
@@ -2086,6 +2126,10 @@ impl VimInputHandler {
                         // motion]` — exactly what we need.
                         self.prefix = Prefix::AlignCharWait;
                         return InputResult::Ops(ops);
+                    }
+                    PendingOp::Comment => {
+                        ops.push(ToggleLineComment);
+                        ops.push(SelectClear);
                     }
                 }
                 return InputResult::Ops(ops);
@@ -3031,6 +3075,7 @@ impl InputHandler for VimInputHandler {
                 PendingOp::ToggleCase => s.push_str("g~"),
                 PendingOp::SurroundAdd => s.push_str("ys"),
                 PendingOp::Align => s.push_str("gA"),
+                PendingOp::Comment => s.push_str("gc"),
             }
         }
         match self.prefix {

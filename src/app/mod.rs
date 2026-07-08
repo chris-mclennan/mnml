@@ -6455,6 +6455,16 @@ impl App {
         Some(NavPoint { path, row, col })
     }
 
+    /// Public wrapper around `push_nav_back` for the dispatch_key
+    /// post-key hook that records vim-jumplist entries on big cursor
+    /// moves (`G` / `gg` / `{N}G` / `/pattern` / LSP goto / etc.).
+    /// Also clears the forward stack — matches vim's behavior of
+    /// "any new jump wipes the redo lane." 2026-07-07.
+    pub fn record_within_file_jump(&mut self, np: NavPoint) {
+        self.push_nav_back(np);
+        self.nav_forward.clear();
+    }
+
     fn push_nav_back(&mut self, np: NavPoint) {
         self.nav_back.push(np);
         if self.nav_back.len() > NAV_STACK_MAX {

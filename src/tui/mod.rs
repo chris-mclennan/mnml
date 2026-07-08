@@ -1693,9 +1693,27 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Snapshot cursor position BEFORE dispatch so we can record a
+    // vim-jumplist entry after any key that produced a "big jump"
+    // (>= JUMP_ROW_THRESHOLD rows away from the previous position,
+    // OR a file switch). Fix 2026-07-07 — was: only `open_path`
+    // pushed nav_back, so within-file jumps like `G`/`gg`/`{N}G`/
+    // `/pattern` never made Ctrl+O go anywhere.
+    let before = app.current_nav_point();
     match app.focus {
         Focus::Tree => handle_tree_key(app, key),
         Focus::Pane => handle_pane_key(app, key),
+    }
+    if let Some(before) = before
+        && let Some(after) = app.current_nav_point()
+    {
+        const JUMP_ROW_THRESHOLD: usize = 3;
+        let big_row_move =
+            before.path == after.path && before.row.abs_diff(after.row) >= JUMP_ROW_THRESHOLD;
+        let file_switched = before.path != after.path;
+        if big_row_move || file_switched {
+            app.record_within_file_jump(before);
+        }
     }
 }
 
