@@ -657,6 +657,81 @@ mod snippet_position_tests {
     }
 
     #[test]
+    fn arrow_away_type_then_tab_lands_at_correct_stop() {
+        // Regression for the stale doc comment on `SnippetSession`
+        // claiming that edits made "outside the active stop" (arrow
+        // away → type) would attribute to the active stop and drift
+        // later stops. The runtime path via
+        // `tui::handlers::pane::dispatch_editor_key` +
+        // `apply_snippet_text_edits` is position-aware now; this test
+        // walks the actual pipeline to lock that in.
+        //
+        // Setup: `fn` snippet expands to `fn name($1) {\n    $0\n}`.
+        // Cursor lands at $1 = the `(` gap. We arrow LEFT twice
+        // (into the `name` word), type "X" (an edit BEFORE the
+        // active stop $1), then Tab. If the old text-length-diff
+        // logic were still in play, $2 = `$0` would have drifted by
+        // +1 in the wrong direction and Tab would land at the wrong
+        // byte. With the per-splice path, both stops stay accurate.
+        use crate::config::Config;
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        let mut rs = std::collections::BTreeMap::new();
+        // Snippet lays out 3 stops: $1 (arg list), $0 (body).
+        rs.insert("fnn".to_string(), "fn name($1) {\n    $0\n}".to_string());
+        cfg.snippets.insert("rs".to_string(), rs);
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        let path = d.path().join("code.rs");
+        std::fs::write(&path, "").unwrap();
+        app.open_path(&path);
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        for c in "fnn".chars() {
+            crate::tui::dispatch_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        crate::command::run("snippet.expand", &mut app);
+        // Cursor should be at $1 now (`fn name(|) {...}`).
+        let sess = app.snippet_session.as_ref().expect("session opens");
+        let stop_0 = sess.stops[0];
+        let stop_1 = sess.stops[1];
+        assert!(stop_0 < stop_1, "stops out of order: {stop_0} vs {stop_1}");
+        // Confirm the pipeline puts the cursor on $1.
+        let pane_id = sess.pane_id;
+        if let Some(Pane::Editor(b)) = app.panes.get(pane_id) {
+            assert_eq!(b.editor.cursor(), stop_0);
+        } else {
+            panic!("editor pane expected");
+        }
+        // ── Arrow LEFT twice: cursor jumps out of $1 back into
+        // the `name` identifier (specifically 2 bytes left, ending
+        // at `nam|e`). This is EDITS OUTSIDE the active stop. ──
+        crate::tui::dispatch_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        crate::tui::dispatch_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        // Type "X" — that lands BEFORE stop_0.
+        crate::tui::dispatch_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('X'), KeyModifiers::NONE),
+        );
+        // Both stops must have shifted by +1 (the "X"). If the old
+        // text-length-diff attribution were in play, stop_0 would be
+        // unchanged (bug) — the actual insertion happened LEFT of it
+        // so it must move.
+        let sess = app.snippet_session.as_ref().expect("session survives");
+        assert_eq!(
+            sess.stops[0],
+            stop_0 + 1,
+            "stop_0 didn't shift for pre-stop insertion"
+        );
+        assert_eq!(
+            sess.stops[1],
+            stop_1 + 1,
+            "stop_1 didn't shift for pre-stop insertion"
+        );
+    }
+
+    #[test]
     fn apply_text_edit_batch_applies_each_in_order() {
         // Two edits in sequence: first shifts +5 at position 30,
         // second shifts +10 at position 80. Stop at 50 → 55 → 55

@@ -36,25 +36,23 @@ use std::collections::BTreeMap;
 /// currently sits at. Tab advances `current`; Shift-Tab walks it back. When
 /// `current == stops.len()` the session ends.
 ///
-/// `last_text_len` records the buffer's text length at the moment the cursor
-/// was placed at `stops[current]`. On the next transition the stops at
-/// indices > `current` get shifted by `current_text_len - last_text_len` so
-/// chars typed at the active placeholder push the later positions along by
-/// the right amount. Stops at indices < `current` are not touched (they sit
-/// earlier in the file and aren't disturbed by edits at the cursor).
+/// Position tracking (2026-07-08): stops are kept live by
+/// [`App::apply_snippet_text_edits`], which the buffer-edit dispatch in
+/// `tui::handlers::pane` calls after every `Editor::apply`. It reads the
+/// per-splice `TextEdit`s that `Editor::apply` writes into
+/// `buffer.pending_tree_edits` and shifts each stop by
+/// `new_end_byte - old_end_byte` when the edit lands before it — so edits
+/// AT the active stop, INSIDE the buffer somewhere else, or SPANNING a
+/// stop all update the correct positions. `edits_consumed` is a
+/// per-session watermark into `pending_tree_edits` so a single splice
+/// is folded exactly once. `last_text_len` remains for backwards
+/// compatibility but the per-splice path is the authoritative one.
 ///
-/// Backtab to a previously-visited stop now restores the cursor to its
+/// Backtab to a previously-visited stop restores the cursor to its
 /// recorded *exit* position (`stop_cursors[idx]`) — i.e. the end of
 /// whatever the user typed there — rather than dropping back at
 /// `stops[idx]`. The exit position shifts along with `stops` when later
 /// edits move it.
-///
-/// Limitation that remains: edits made *outside* the active stop (the user
-/// arrows away mid-session, then types) still get attributed to the
-/// active stop, so later stops shift by the wrong amount. Fixing this
-/// would require hooking into per-buffer change events to detect *where*
-/// each insertion happened — out of scope for the snippet machinery
-/// (which only polls text-length at each Tab transition).
 #[derive(Debug, Clone)]
 pub struct SnippetSession {
     /// Pane the session belongs to. If the active pane drifts away from this
