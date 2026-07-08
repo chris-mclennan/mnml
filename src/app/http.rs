@@ -3993,6 +3993,113 @@ impl App {
         }
     }
 
+    /// HTTP panel keyboard nav helpers — the tuple's `.0` is the
+    /// section id (1=RECENT, 2=CAPTURED, 4=CHAINS, 5=MOCKS,
+    /// 6=COLLECTIONS); `.1` is the row within that section. Skips
+    /// FILES (0) and ENVS (3) since those don't have arrow-key nav
+    /// today (envs are 1-click set-active, files are stragglers).
+    /// 2026-07-07.
+    fn http_panel_navigable_sections(&self) -> Vec<(u8, usize)> {
+        vec![
+            // Skip COLLECTIONS in the arrow-key nav flow — it's a
+            // tree-shaped list that needs its own expand/collapse
+            // navigation. Just leave the cursor as a folder row and
+            // treat Enter as focus-the-collection for a follow-up.
+            (6, 0),
+            (1, self.http_panel_recent_cache.len()),
+            (2, self.http_panel_captured_cache.len()),
+            (4, self.http_panel_chains_cache.len()),
+            (5, self.http_panel_mocks_cache.len()),
+        ]
+    }
+
+    /// Move the HTTP-panel cursor one row down. Wraps forward to the
+    /// next non-empty section when the current section's last row is
+    /// under the cursor.
+    pub fn http_panel_cursor_down(&mut self) {
+        let sections = self.http_panel_navigable_sections();
+        let (cur_sec, cur_row) = self.http_panel_cursor;
+        let cur_idx = sections
+            .iter()
+            .position(|(s, _)| *s == cur_sec)
+            .unwrap_or(0);
+        if let Some((_, count)) = sections.get(cur_idx)
+            && cur_row + 1 < *count
+        {
+            self.http_panel_cursor = (cur_sec, cur_row + 1);
+            return;
+        }
+        // Advance to the next section with entries.
+        for (i, (s, count)) in sections.iter().enumerate().skip(cur_idx + 1) {
+            if *count > 0 {
+                self.http_panel_cursor = (*s, 0);
+                let _ = i;
+                return;
+            }
+        }
+    }
+
+    /// Move up — reverse of `http_panel_cursor_down`.
+    pub fn http_panel_cursor_up(&mut self) {
+        let sections = self.http_panel_navigable_sections();
+        let (cur_sec, cur_row) = self.http_panel_cursor;
+        let cur_idx = sections
+            .iter()
+            .position(|(s, _)| *s == cur_sec)
+            .unwrap_or(0);
+        if cur_row > 0 {
+            self.http_panel_cursor = (cur_sec, cur_row - 1);
+            return;
+        }
+        // Retreat to the previous section's last row.
+        for i in (0..cur_idx).rev() {
+            let (s, count) = sections[i];
+            if count > 0 {
+                self.http_panel_cursor = (s, count - 1);
+                return;
+            }
+        }
+    }
+
+    /// Enter on the cursor row — activate whichever row's under it.
+    pub fn http_panel_cursor_activate(&mut self) {
+        let (sec, row) = self.http_panel_cursor;
+        match sec {
+            1 => {
+                // RECENT — cache is oldest-first, newest at end. UI
+                // displays newest-first so row 0 → last entry.
+                let recent = self.http_panel_recent_cache.clone();
+                let n = recent.len();
+                let Some(entry) = n.checked_sub(row + 1).and_then(|i| recent.get(i)) else {
+                    return;
+                };
+                let (curl, method, url) = crate::http::history::entry_to_curl(entry);
+                self.open_curl_scratch(&curl, &method, &url);
+            }
+            2 => {
+                let captured = self.http_panel_captured_cache.clone();
+                let n = captured.len();
+                let Some(row_data) = n.checked_sub(row + 1).and_then(|i| captured.get(i)) else {
+                    return;
+                };
+                self.open_curl_scratch(&row_data.to_curl(), &row_data.method, &row_data.url);
+            }
+            4 => {
+                if let Some(path) = self.http_panel_chains_cache.get(row).cloned() {
+                    self.http_chain_run_path(path);
+                }
+            }
+            5 => {
+                if let Some(path) = self.http_panel_mocks_cache.get(row).cloned() {
+                    self.open_path_as_editor(&path);
+                }
+            }
+            _ => {
+                self.toast("HTTP-panel activate: nothing at cursor");
+            }
+        }
+    }
+
     /// `http.toggle_edit_split` — flip the Request pane's edit
     /// area between single-tab and side-by-side (Body|Vars default,
     /// or whichever the user picked via the right-side tab strip).

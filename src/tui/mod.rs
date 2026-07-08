@@ -799,6 +799,34 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // HTTP panel row navigation — j/k / arrows / Enter when the
+    // panel has focus and no filter's active. Keyboard-user SEV-2 #4
+    // fix (2026-07-07).
+    if app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Http
+        && !app.http_panel_filter_focused
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.http_panel_cursor_down();
+                return;
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.http_panel_cursor_up();
+                return;
+            }
+            KeyCode::Enter => {
+                app.http_panel_cursor_activate();
+                return;
+            }
+            _ => {}
+        }
+    }
     // Agents rail filter — `/` in the panel focuses filter (matches
     // vim / less search idiom, mirrors the Integrations panel behavior).
     // Once focused, intercept typing / backspace / Esc / Enter.

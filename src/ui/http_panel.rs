@@ -858,6 +858,13 @@ fn draw_recent(
     let scroll = app.http_panel_recent_scroll.min(max_scroll);
     app.http_panel_recent_scroll = scroll;
     // Cache is oldest-first; reverse so newest shows at the top.
+    // display_row = position in the rendered list (0-based from top).
+    let cursor = if app.http_panel_cursor.0 == 1 {
+        Some(app.http_panel_cursor.1)
+    } else {
+        None
+    };
+    let mut display_row = scroll;
     for (idx, entry) in recent
         .iter()
         .enumerate()
@@ -898,9 +905,19 @@ fn draw_recent(
             width: area.width,
             height: 1,
         };
+        let is_cursor = cursor == Some(display_row);
+        let prefix = if is_cursor { " \u{25B8} " } else { "   " };
+        let prefix_style = if is_cursor {
+            Style::default()
+                .fg(t.cyan)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(bg)
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled(prefix, prefix_style),
                 Span::styled(status_str, Style::default().fg(status_fg).bg(bg)),
                 Span::styled(
                     format!("{method:<4} "),
@@ -915,6 +932,7 @@ fn draw_recent(
         );
         app.rects.http_panel_recent_rows.push((row_rect, idx));
         y += 1;
+        display_row += 1;
     }
     paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     y
@@ -962,13 +980,16 @@ fn draw_captured(
         return y;
     }
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
-    // Scroll offset — user's mouse-wheel scroll over the CAPTURED
-    // body. Clamped against total row count so we can't scroll past
-    // the last row. 2026-07-07.
     let total = captured.len();
     let max_scroll = total.saturating_sub(SECTION_ROW_CAP);
     let scroll = app.http_panel_captured_scroll.min(max_scroll);
     app.http_panel_captured_scroll = scroll;
+    let cursor = if app.http_panel_cursor.0 == 2 {
+        Some(app.http_panel_cursor.1)
+    } else {
+        None
+    };
+    let mut display_row = scroll;
     for (idx, row) in captured
         .iter()
         .enumerate()
@@ -992,9 +1013,19 @@ fn draw_captured(
             width: area.width,
             height: 1,
         };
+        let is_cursor = cursor == Some(display_row);
+        let prefix = if is_cursor { " \u{25B8} " } else { "   " };
+        let prefix_style = if is_cursor {
+            Style::default()
+                .fg(t.cyan)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(bg)
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled(prefix, prefix_style),
                 Span::styled(
                     format!("{:<4} ", row.method),
                     Style::default()
@@ -1008,6 +1039,7 @@ fn draw_captured(
         );
         app.rects.http_panel_captured_rows.push((row_rect, idx));
         y += 1;
+        display_row += 1;
     }
     paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     y
@@ -1200,6 +1232,12 @@ fn draw_chains(
     let max_scroll = total.saturating_sub(SECTION_ROW_CAP);
     let scroll = app.http_panel_chains_scroll.min(max_scroll);
     app.http_panel_chains_scroll = scroll;
+    let cursor = if app.http_panel_cursor.0 == 4 {
+        Some(app.http_panel_cursor.1)
+    } else {
+        None
+    };
+    let mut display_row = scroll;
     for path in chains.iter().skip(scroll).take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
@@ -1219,14 +1257,19 @@ fn draw_chains(
             width: area.width,
             height: 1,
         };
+        let is_cursor = cursor == Some(display_row);
+        let prefix = if is_cursor { " \u{25B8} " } else { "   " };
+        let prefix_style = if is_cursor {
+            Style::default()
+                .fg(t.cyan)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(bg)
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                // Extra space after the `\u{f085}` cogs glyph — it
-                // renders wide + tight against the following char in
-                // Nerd Font / CoreText combos, eating the single-space
-                // gap other rows use. Doubled here so the chain name
-                // isn't glued to the icon. 2026-07-07.
+                Span::styled(prefix, prefix_style),
                 Span::styled("\u{f085}  ", Style::default().fg(t.cyan).bg(bg)),
                 Span::styled(name, Style::default().fg(t.fg).bg(bg)),
             ])),
@@ -1236,6 +1279,7 @@ fn draw_chains(
             .http_panel_chain_rows
             .push((row_rect, path.clone()));
         y += 1;
+        display_row += 1;
     }
     paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     // `+ New chain` action row — mirrors the ENVS section idiom so
@@ -1307,6 +1351,12 @@ fn draw_mocks(
     let max_scroll = total.saturating_sub(SECTION_ROW_CAP);
     let scroll = app.http_panel_mocks_scroll.min(max_scroll);
     app.http_panel_mocks_scroll = scroll;
+    let cursor = if app.http_panel_cursor.0 == 5 {
+        Some(app.http_panel_cursor.1)
+    } else {
+        None
+    };
+    let mut display_row = scroll;
     for path in mocks.iter().skip(scroll).take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
@@ -1326,9 +1376,19 @@ fn draw_mocks(
             width: area.width,
             height: 1,
         };
+        let is_cursor = cursor == Some(display_row);
+        let prefix = if is_cursor { " \u{25B8} " } else { "   " };
+        let prefix_style = if is_cursor {
+            Style::default()
+                .fg(t.cyan)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().bg(bg)
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
+                Span::styled(prefix, prefix_style),
                 Span::styled("\u{f0c0} ", Style::default().fg(t.orange).bg(bg)),
                 Span::styled(short, Style::default().fg(t.fg).bg(bg)),
             ])),
@@ -1338,6 +1398,7 @@ fn draw_mocks(
             .http_panel_mock_rows
             .push((row_rect, path.clone()));
         y += 1;
+        display_row += 1;
     }
     paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     y

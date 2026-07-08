@@ -3000,6 +3000,13 @@ pub struct App {
     /// Scroll offset for COLLECTIONS (indexes the flattened
     /// collection-rows + member-file rows list).
     pub http_panel_collections_scroll: usize,
+    /// Keyboard cursor for HTTP panel row navigation. `.0` is the
+    /// section index (1=RECENT, 2=CAPTURED, 4=CHAINS, 5=MOCKS,
+    /// 6=COLLECTIONS); `.1` is the 0-based row within that section.
+    /// Enter activates the row under the cursor; j/k / arrows move
+    /// within a section; Tab crosses to the next non-empty section.
+    /// 2026-07-07 — keyboard-user SEV-2 #4 fix.
+    pub http_panel_cursor: (u8, usize),
     /// Cached list of env names (basenames without `.env` extension)
     /// found under `.mnml/env/` + `.rqst/env/`. Refreshed by
     /// `http_panel_refresh` alongside the other caches.
@@ -4705,6 +4712,7 @@ impl App {
             http_panel_mocks_scroll: 0,
             http_panel_chains_scroll: 0,
             http_panel_collections_scroll: 0,
+            http_panel_cursor: (6, 0),
             http_panel_envs_cache: Vec::new(),
             http_panel_chains_cache: Vec::new(),
             http_panel_collections_cache: Vec::new(),
