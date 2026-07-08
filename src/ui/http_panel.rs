@@ -1490,6 +1490,17 @@ fn draw_collections(
     app.http_panel_collections_scroll = scroll;
     let mut skip_left = scroll;
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
+    // Track logical-row index (across folder + expanded members) so
+    // we can highlight the ▸ cursor row exactly like the other
+    // sections. Advances by 1 per would-render row, matching the
+    // shape of `App::http_panel_collection_flat_rows`.
+    // 2026-07-07 — closes the design-critic #3 keyboard-nav gap.
+    let mut logical_row: usize = 0;
+    let cursor_row: Option<usize> = if app.http_panel_cursor.0 == 6 {
+        Some(app.http_panel_cursor.1)
+    } else {
+        None
+    };
     for (root, kind) in &order {
         if emitted >= cap || y >= bottom {
             break;
@@ -1545,6 +1556,7 @@ fn draw_collections(
         // below. 2026-07-07 scroll-support.
         if skip_left > 0 {
             skip_left -= 1;
+            logical_row += 1;
         } else if emitted < cap && y < bottom {
             let row_rect = Rect {
                 x: area.x,
@@ -1554,9 +1566,19 @@ fn draw_collections(
             };
             let used = 3 + 2 + 2 + name.chars().count() + format!(" ({count})").chars().count();
             let pad = (area.width as usize).saturating_sub(used + chip_w);
+            let is_cursor = cursor_row == Some(logical_row);
+            let prefix = if is_cursor { " \u{25B8} " } else { "   " };
+            let prefix_style = if is_cursor {
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().bg(bg)
+            };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled(prefix, prefix_style),
                     Span::styled(format!("{chev} "), Style::default().fg(t.comment).bg(bg)),
                     Span::styled(format!("{icon} "), Style::default().fg(icon_fg).bg(bg)),
                     Span::styled(
@@ -1591,6 +1613,7 @@ fn draw_collections(
                 .push((row_rect, root.clone()));
             y += 1;
             emitted += 1;
+            logical_row += 1;
         }
         if collapsed {
             continue;
@@ -1599,6 +1622,7 @@ fn draw_collections(
         for path in &members {
             if skip_left > 0 {
                 skip_left -= 1;
+                logical_row += 1;
                 continue;
             }
             if emitted >= cap || y >= bottom {
@@ -1619,9 +1643,27 @@ fn draw_collections(
                 width: area.width,
                 height: 1,
             };
+            let is_cursor = cursor_row == Some(logical_row);
+            // Member rows are indented 4 cells beyond folder rows so
+            // the tree shape reads; the ▸ marker sits at the same
+            // column as the folder-row marker to keep vertical
+            // continuity when the cursor walks up into a folder.
+            let prefix = if is_cursor {
+                " \u{25B8}    "
+            } else {
+                "       "
+            };
+            let prefix_style = if is_cursor {
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().bg(bg)
+            };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled("       ", Style::default().bg(bg)),
+                    Span::styled(prefix, prefix_style),
                     Span::styled("\u{f15c} ", Style::default().fg(t.blue).bg(bg)),
                     Span::styled(rel, Style::default().fg(t.fg).bg(bg)),
                 ])),
@@ -1632,6 +1674,7 @@ fn draw_collections(
                 .push((row_rect, (*path).clone()));
             y += 1;
             emitted += 1;
+            logical_row += 1;
         }
     }
     // #polish 2026-07-07 — bottom "+ New collection" row removed;

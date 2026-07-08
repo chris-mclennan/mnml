@@ -4003,16 +4003,80 @@ impl App {
     /// 2026-07-07.
     fn http_panel_navigable_sections(&self) -> Vec<(u8, usize)> {
         vec![
-            // COLLECTIONS keyboard nav = tree-shaped expand/collapse
-            // (deferred). We surface it in the section list so cursor
-            // math has an anchor for it, but the count is 0 —
-            // cursor_down/up skip straight through.
-            (6, 0),
+            (6, self.http_panel_collection_flat_rows().len()),
             (1, self.http_panel_filtered_recent().len()),
             (2, self.http_panel_filtered_captured().len()),
             (4, self.http_panel_filtered_chains().len()),
             (5, self.http_panel_filtered_mocks().len()),
         ]
+    }
+
+    /// COLLECTIONS as a flat list of navigable rows, matching the
+    /// order the renderer produces. Each entry is either a folder
+    /// header (`member = None`) or a member file inside its
+    /// currently-expanded folder. Respects:
+    ///   - the collapsed-set (`http_panel_collections_collapsed_dirs`)
+    ///   - the `/` filter (folders whose name doesn't hit are shown
+    ///     only when some member path matches)
+    ///
+    /// The renderer force-expands filter-matched folders even when
+    /// their collapsed-set entry is present; we mirror that here so
+    /// arrow-key nav lands on the same rows the user sees.
+    /// 2026-07-07 — closes the design-critic #3 stub.
+    pub(crate) fn http_panel_collection_flat_rows(
+        &self,
+    ) -> Vec<(std::path::PathBuf, Option<std::path::PathBuf>)> {
+        let mut out = Vec::new();
+        let mut order: Vec<(std::path::PathBuf, crate::app::HttpCollectionKind)> =
+            self.http_panel_collection_roots.clone();
+        order.sort_by(|a, b| match (a.1, b.1) {
+            (crate::app::HttpCollectionKind::InTree, crate::app::HttpCollectionKind::Hidden) => {
+                std::cmp::Ordering::Less
+            }
+            (crate::app::HttpCollectionKind::Hidden, crate::app::HttpCollectionKind::InTree) => {
+                std::cmp::Ordering::Greater
+            }
+            _ => a.0.cmp(&b.0),
+        });
+        let files = &self.http_panel_files_cache;
+        let filter_lc = self.http_panel_filter.to_ascii_lowercase();
+        for (root, _kind) in &order {
+            let name = root
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let name_hits = filter_lc.is_empty() || name.to_ascii_lowercase().contains(&filter_lc);
+            let all_members: Vec<&std::path::PathBuf> =
+                files.iter().filter(|p| p.starts_with(root)).collect();
+            let members: Vec<&std::path::PathBuf> = if name_hits {
+                all_members.clone()
+            } else {
+                all_members
+                    .iter()
+                    .copied()
+                    .filter(|p| {
+                        p.strip_prefix(root)
+                            .map(|r| r.to_string_lossy().to_ascii_lowercase())
+                            .unwrap_or_default()
+                            .contains(&filter_lc)
+                    })
+                    .collect()
+            };
+            if !filter_lc.is_empty() && !name_hits && members.is_empty() {
+                continue;
+            }
+            let force_expanded = !filter_lc.is_empty();
+            let collapsed =
+                !force_expanded && self.http_panel_collections_collapsed_dirs.contains(root);
+            out.push((root.clone(), None));
+            if !collapsed {
+                for m in members {
+                    out.push((root.clone(), Some(m.clone())));
+                }
+            }
+        }
+        out
     }
 
     /// RECENT entries in display order (newest-first) after the `/`
@@ -4235,10 +4299,24 @@ impl App {
                 }
             }
             6 => {
-                // COLLECTIONS keyboard-nav stub — 2026-07-07
-                // design-critic #3. Toast so users know it's known,
-                // not silently broken.
-                self.toast("collections keyboard nav coming soon — click a row");
+                let rows = self.http_panel_collection_flat_rows();
+                let Some((root, member)) = rows.get(row).cloned() else {
+                    return;
+                };
+                match member {
+                    None => {
+                        // Folder row — toggle collapse.
+                        if self.http_panel_collections_collapsed_dirs.contains(&root) {
+                            self.http_panel_collections_collapsed_dirs.remove(&root);
+                        } else {
+                            self.http_panel_collections_collapsed_dirs.insert(root);
+                        }
+                    }
+                    Some(path) => {
+                        // Member row — open the request as an editor.
+                        self.open_path_as_editor(&path);
+                    }
+                }
             }
             _ => {
                 self.toast("nothing to activate at cursor");
