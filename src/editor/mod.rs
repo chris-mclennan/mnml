@@ -2570,11 +2570,22 @@ impl Editor {
                     return;
                 }
                 let word = self.text[ws..we].to_string();
-                // On the first call (no extras yet), snap the primary cursor
-                // to the END of its word so subsequent inserts land after
-                // every occurrence consistently (VSCode behavior).
-                if self.extra_cursors.is_empty() {
+                // First press: SELECT the word (anchor at its start,
+                // cursor at its end) but don't add any extras yet.
+                // That matches VS Code — 1st Ctrl+D selects, 2nd+
+                // adds the next occurrence. Previously we jumped
+                // straight to adding a next-match cursor on the very
+                // first press with no visible feedback for the word
+                // that had been "picked up".
+                let first_press = self.extra_cursors.is_empty()
+                    && self
+                        .anchor
+                        .map(|a| a != ws || self.cursor != we)
+                        .unwrap_or(true);
+                if first_press {
+                    self.anchor = Some(ws);
                     self.cursor = we;
+                    return;
                 }
                 let mut bottom = self.cursor;
                 for &b in &self.extra_cursors {
@@ -2597,7 +2608,13 @@ impl Editor {
                         // cursor we last added is sitting at the end of its
                         // own match; we want the NEXT one).
                         if before_ok && after_ok && after > bottom {
+                            // Add extra cursor at end-of-match AND anchor
+                            // it at start-of-match so every occurrence
+                            // shows the same word-selection highlight.
                             self.add_extra_cursor(after);
+                            if let Some(i) = self.extra_cursors.iter().position(|&c| c == after) {
+                                self.extra_anchors[i] = Some(pos);
+                            }
                             return;
                         }
                         start = pos + 1;
