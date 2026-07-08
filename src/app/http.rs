@@ -3998,24 +3998,133 @@ impl App {
     /// 6=COLLECTIONS); `.1` is the row within that section. Skips
     /// FILES (0) and ENVS (3) since those don't have arrow-key nav
     /// today (envs are 1-click set-active, files are stragglers).
+    /// Counts respect the active `/` filter so the cursor never lands
+    /// on a hidden row (design-critic #1 2026-07-07).
     /// 2026-07-07.
     fn http_panel_navigable_sections(&self) -> Vec<(u8, usize)> {
         vec![
-            // Skip COLLECTIONS in the arrow-key nav flow — it's a
-            // tree-shaped list that needs its own expand/collapse
-            // navigation. Just leave the cursor as a folder row and
-            // treat Enter as focus-the-collection for a follow-up.
+            // COLLECTIONS keyboard nav = tree-shaped expand/collapse
+            // (deferred). We surface it in the section list so cursor
+            // math has an anchor for it, but the count is 0 —
+            // cursor_down/up skip straight through.
             (6, 0),
-            (1, self.http_panel_recent_cache.len()),
-            (2, self.http_panel_captured_cache.len()),
-            (4, self.http_panel_chains_cache.len()),
-            (5, self.http_panel_mocks_cache.len()),
+            (1, self.http_panel_filtered_recent().len()),
+            (2, self.http_panel_filtered_captured().len()),
+            (4, self.http_panel_filtered_chains().len()),
+            (5, self.http_panel_filtered_mocks().len()),
         ]
     }
 
-    /// Move the HTTP-panel cursor one row down. Wraps forward to the
-    /// next non-empty section when the current section's last row is
-    /// under the cursor.
+    /// RECENT entries in display order (newest-first) after the `/`
+    /// filter, returned as raw-cache indices. Mirrors the render
+    /// loop in `ui/http_panel::draw_recent`.
+    fn http_panel_filtered_recent(&self) -> Vec<usize> {
+        let filter_lc = self.http_panel_filter.to_ascii_lowercase();
+        self.http_panel_recent_cache
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, entry)| {
+                if filter_lc.is_empty() {
+                    return true;
+                }
+                let method = entry
+                    .get("method")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("GET");
+                let url = entry.get("url").and_then(|s| s.as_str()).unwrap_or("");
+                format!("{method} {url}")
+                    .to_ascii_lowercase()
+                    .contains(&filter_lc)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// CAPTURED entries in display order (newest-first) after filter.
+    fn http_panel_filtered_captured(&self) -> Vec<usize> {
+        let filter_lc = self.http_panel_filter.to_ascii_lowercase();
+        self.http_panel_captured_cache
+            .iter()
+            .enumerate()
+            .rev()
+            .filter(|(_, row)| {
+                if filter_lc.is_empty() {
+                    return true;
+                }
+                format!("{} {}", row.method, row.url)
+                    .to_ascii_lowercase()
+                    .contains(&filter_lc)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// CHAINS paths in display order after filter — matches
+    /// `draw_chains`' name-based filter (`.chain.json` trimmed off).
+    fn http_panel_filtered_chains(&self) -> Vec<usize> {
+        let filter_lc = self.http_panel_filter.to_ascii_lowercase();
+        self.http_panel_chains_cache
+            .iter()
+            .enumerate()
+            .filter(|(_, path)| {
+                if filter_lc.is_empty() {
+                    return true;
+                }
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .trim_end_matches(".chain.json");
+                name.to_ascii_lowercase().contains(&filter_lc)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// MOCKS paths in display order after filter — matches
+    /// `draw_mocks`' filter on the workspace-relative short path
+    /// (`.mock.json` trimmed off).
+    fn http_panel_filtered_mocks(&self) -> Vec<usize> {
+        let filter_lc = self.http_panel_filter.to_ascii_lowercase();
+        self.http_panel_mocks_cache
+            .iter()
+            .enumerate()
+            .filter(|(_, path)| {
+                if filter_lc.is_empty() {
+                    return true;
+                }
+                let rel = path
+                    .strip_prefix(&self.workspace)
+                    .unwrap_or(path)
+                    .to_string_lossy();
+                rel.trim_end_matches(".mock.json")
+                    .to_ascii_lowercase()
+                    .contains(&filter_lc)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Snap `http_panel_cursor` back to the first populated navigable
+    /// section (row 0). Called whenever the filter text changes so
+    /// the `▸` marker can't be left pointing past the visible set.
+    pub fn http_panel_cursor_reset(&mut self) {
+        let sections = self.http_panel_navigable_sections();
+        for (s, count) in sections {
+            if count > 0 {
+                self.http_panel_cursor = (s, 0);
+                return;
+            }
+        }
+        // Nothing populated — leave cursor as-is (both down and up
+        // fall through when every count is 0).
+        self.http_panel_cursor = (1, 0);
+    }
+
+    /// Move the HTTP-panel cursor one row down. Wraps to the first
+    /// populated section when the last row of the last populated
+    /// section is under the cursor (design-critic #4 2026-07-07).
     pub fn http_panel_cursor_down(&mut self) {
         let sections = self.http_panel_navigable_sections();
         let (cur_sec, cur_row) = self.http_panel_cursor;
@@ -4024,22 +4133,32 @@ impl App {
             .position(|(s, _)| *s == cur_sec)
             .unwrap_or(0);
         if let Some((_, count)) = sections.get(cur_idx)
+            && *count > 0
             && cur_row + 1 < *count
         {
             self.http_panel_cursor = (cur_sec, cur_row + 1);
             return;
         }
         // Advance to the next section with entries.
-        for (i, (s, count)) in sections.iter().enumerate().skip(cur_idx + 1) {
+        for (s, count) in sections.iter().skip(cur_idx + 1) {
             if *count > 0 {
                 self.http_panel_cursor = (*s, 0);
-                let _ = i;
+                return;
+            }
+        }
+        // Wrap — walk from the start looking for the first populated
+        // section (skipping the current one so `j` at the very end
+        // moves visibly instead of no-op'ing).
+        for (s, count) in sections.iter() {
+            if *count > 0 {
+                self.http_panel_cursor = (*s, 0);
                 return;
             }
         }
     }
 
-    /// Move up — reverse of `http_panel_cursor_down`.
+    /// Move up — reverse of `http_panel_cursor_down`, with wrap to
+    /// the last row of the last populated section.
     pub fn http_panel_cursor_up(&mut self) {
         let sections = self.http_panel_navigable_sections();
         let (cur_sec, cur_row) = self.http_panel_cursor;
@@ -4047,11 +4166,15 @@ impl App {
             .iter()
             .position(|(s, _)| *s == cur_sec)
             .unwrap_or(0);
-        if cur_row > 0 {
+        // Cursor might be sitting on an empty section (init default
+        // is COLLECTIONS at count=0) — treat that as "before any row"
+        // so up walks the same wrap path as down.
+        let on_empty = sections.get(cur_idx).is_some_and(|(_, count)| *count == 0);
+        if !on_empty && cur_row > 0 {
             self.http_panel_cursor = (cur_sec, cur_row - 1);
             return;
         }
-        // Retreat to the previous section's last row.
+        // Retreat to the previous populated section's last row.
         for i in (0..cur_idx).rev() {
             let (s, count) = sections[i];
             if count > 0 {
@@ -4059,43 +4182,66 @@ impl App {
                 return;
             }
         }
+        // Wrap — last populated section's last row (design-critic #2).
+        for (s, count) in sections.iter().rev() {
+            if *count > 0 {
+                self.http_panel_cursor = (*s, *count - 1);
+                return;
+            }
+        }
     }
 
     /// Enter on the cursor row — activate whichever row's under it.
+    /// Walks the filtered display order so the row we open matches
+    /// what the `▸` marker shows (design-critic #1 2026-07-07).
     pub fn http_panel_cursor_activate(&mut self) {
         let (sec, row) = self.http_panel_cursor;
         match sec {
             1 => {
-                // RECENT — cache is oldest-first, newest at end. UI
-                // displays newest-first so row 0 → last entry.
+                let indices = self.http_panel_filtered_recent();
                 let recent = self.http_panel_recent_cache.clone();
-                let n = recent.len();
-                let Some(entry) = n.checked_sub(row + 1).and_then(|i| recent.get(i)) else {
+                let Some(entry) = indices.get(row).and_then(|&i| recent.get(i)) else {
                     return;
                 };
                 let (curl, method, url) = crate::http::history::entry_to_curl(entry);
                 self.open_curl_scratch(&curl, &method, &url);
             }
             2 => {
+                let indices = self.http_panel_filtered_captured();
                 let captured = self.http_panel_captured_cache.clone();
-                let n = captured.len();
-                let Some(row_data) = n.checked_sub(row + 1).and_then(|i| captured.get(i)) else {
+                let Some(row_data) = indices.get(row).and_then(|&i| captured.get(i)) else {
                     return;
                 };
                 self.open_curl_scratch(&row_data.to_curl(), &row_data.method, &row_data.url);
             }
             4 => {
-                if let Some(path) = self.http_panel_chains_cache.get(row).cloned() {
+                let indices = self.http_panel_filtered_chains();
+                if let Some(path) = indices
+                    .get(row)
+                    .and_then(|&i| self.http_panel_chains_cache.get(i))
+                    .cloned()
+                {
                     self.http_chain_run_path(path);
                 }
             }
             5 => {
-                if let Some(path) = self.http_panel_mocks_cache.get(row).cloned() {
+                let indices = self.http_panel_filtered_mocks();
+                if let Some(path) = indices
+                    .get(row)
+                    .and_then(|&i| self.http_panel_mocks_cache.get(i))
+                    .cloned()
+                {
                     self.open_path_as_editor(&path);
                 }
             }
+            6 => {
+                // COLLECTIONS keyboard-nav stub — 2026-07-07
+                // design-critic #3. Toast so users know it's known,
+                // not silently broken.
+                self.toast("collections keyboard nav coming soon — click a row");
+            }
             _ => {
-                self.toast("HTTP-panel activate: nothing at cursor");
+                self.toast("nothing to activate at cursor");
             }
         }
     }

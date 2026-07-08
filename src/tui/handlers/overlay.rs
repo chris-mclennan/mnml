@@ -559,8 +559,30 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             app.toast("type a find pattern first, then Ctrl+H");
             return;
         }
-        app.prompt = None;
+        // Design-critic #7 2026-07-07 — accept the find FIRST while
+        // the prompt is still up. `accept_find` populates the buffer's
+        // find state; if there are zero matches, keep the Find prompt
+        // in place so the user can adjust the query. Only drop the
+        // prompt and open Replace when we know there are matches to
+        // splice over.
         app.accept_find(query);
+        let has_matches = app
+            .active
+            .and_then(|cur| app.panes.get(cur))
+            .and_then(|pane| {
+                if let crate::pane::Pane::Editor(b) = pane {
+                    b.find.as_ref().map(|f| !f.matches.is_empty())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+        if !has_matches {
+            // Toast fired inside accept_find. Leave the Find prompt
+            // up so the user can refine without hitting Ctrl+F again.
+            return;
+        }
+        app.prompt = None;
         app.open_replace_prompt();
         return;
     }

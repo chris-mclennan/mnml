@@ -778,14 +778,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc => {
                 app.http_panel_filter.clear();
                 app.http_panel_filter_focused = false;
+                app.http_panel_cursor_reset();
                 return;
             }
             KeyCode::Backspace => {
                 app.http_panel_filter.pop();
+                app.http_panel_cursor_reset();
                 return;
             }
             KeyCode::Enter => {
                 app.http_panel_filter_focused = false;
+                // Filter accepted — snap cursor to first visible
+                // row so `j`/`k`/Enter operate on the narrowed set.
+                app.http_panel_cursor_reset();
                 return;
             }
             KeyCode::Char(c)
@@ -794,6 +799,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 app.http_panel_filter.push(c);
+                app.http_panel_cursor_reset();
                 return;
             }
             _ => {}

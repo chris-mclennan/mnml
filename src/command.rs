@@ -746,7 +746,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "editor.add_cursor_at_next_word",
-            title: "Add cursor at next occurrence of word (VSCode `Ctrl+D`)",
+            title: "Select word / add cursor at next occurrence (VSCode `Ctrl+D`)",
             group: "editor",
             // `Ctrl+D` for standard mode (VS Code muscle memory); the vim
             // handler intercepts Ctrl+D as HalfPageDown before the keymap
