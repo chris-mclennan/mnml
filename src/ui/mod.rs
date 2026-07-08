@@ -620,35 +620,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.rects.tree_toggle = None;
             app.rects.tree_icon_buttons.clear();
         }
-        // Tiny drag-handle indicator — a 2-row vertical grip sitting ON the
-        // rail's right-edge column (the separator between rail and editor),
-        // not a full-height border. `tree_edge.x` is 1 col left of that edge
-        // (the hit zone is 3 cols wide, centered on the edge), so draw the
-        // grip at the hit zone's center = `edge.x + edge.width / 2` = the edge.
+        // Resize-edge affordance — no persistent grip glyph (user
+        // 2026-07-08: "the drag handles are becoming a drag and look
+        // weird sometimes"). When the mouse is over the edge hit
+        // zone (or a drag is already in progress), paint the whole
+        // edge column in the accent color so the user knows it's
+        // draggable. Otherwise the column stays blank.
         if let Some(edge) = app.rects.tree_edge
-            && edge.height >= 3
+            && (app.hover_tree_edge || app.dragging.is_some())
         {
             let t = theme::cur();
-            let glyph = if app.config.ui.ascii_icons {
-                "|"
-            } else {
-                "┃"
-            };
-            let grip_h: u16 = 2;
-            let grip_y = edge.y + edge.height.saturating_sub(grip_h) / 2;
-            let grip_rect = Rect {
-                x: edge.x + edge.width / 2,
-                y: grip_y,
+            let col_x = edge.x + edge.width / 2;
+            let edge_rect = Rect {
+                x: col_x,
+                y: edge.y,
                 width: 1,
-                height: grip_h,
+                height: edge.height,
             };
-            let line = std::iter::repeat_n(glyph, grip_h as usize)
-                .collect::<Vec<_>>()
-                .join("\n");
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(line)
-                    .style(Style::default().fg(t.comment).bg(t.bg_darker)),
-                grip_rect,
+                ratatui::widgets::Block::default().style(Style::default().bg(t.cyan)),
+                edge_rect,
             );
         }
     } else {
@@ -1177,30 +1168,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.rects.right_panel_empty_grep = None;
             app.rects.right_panel_empty_test = None;
         }
-        // Drag-grip indicator on the panel's left edge.
+        // Hover-highlight edge (same idiom as the tree rail — no
+        // persistent grip glyph).
         if let Some(edge) = app.rects.right_panel_edge
-            && edge.height >= 3
+            && (app.hover_right_panel_edge || app.dragging.is_some())
         {
-            let glyph = if app.config.ui.ascii_icons {
-                "|"
-            } else {
-                "┃"
-            };
-            let grip_h: u16 = 2;
-            let grip_y = edge.y + edge.height.saturating_sub(grip_h) / 2;
-            let grip_rect = Rect {
-                x: edge.x + edge.width / 2,
-                y: grip_y,
+            let col_x = edge.x + edge.width / 2;
+            let edge_rect = Rect {
+                x: col_x,
+                y: edge.y,
                 width: 1,
-                height: grip_h,
+                height: edge.height,
             };
-            let line = std::iter::repeat_n(glyph, grip_h as usize)
-                .collect::<Vec<_>>()
-                .join("\n");
             frame.render_widget(
-                ratatui::widgets::Paragraph::new(line)
-                    .style(Style::default().fg(t.comment).bg(t.bg_darker)),
-                grip_rect,
+                ratatui::widgets::Block::default().style(Style::default().bg(t.cyan)),
+                edge_rect,
             );
         }
     }

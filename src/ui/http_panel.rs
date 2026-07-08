@@ -1067,37 +1067,23 @@ fn paint_section_scrollbar(
     if body_y_end <= body_y_start {
         return;
     }
+    // User 2026-07-08: revert to the "normal" scrollbar shape used
+    // by editor / diff / other list panes — `│` track on `bg2` +
+    // `█` thumb in `comment`. Cheat by delegating to the shared
+    // helper so we can't drift out of sync with those panes.
     let bar_x = section_area
         .x
         .saturating_add(section_area.width)
         .saturating_sub(1);
-    let cells = body_y_end.saturating_sub(body_y_start) as usize;
-    // User feedback 2026-07-08: track was too subtle to read as a
-    // scrollbar. Bumped track to `t.comment` (visible grey) and
-    // thumb to a full block on `t.cyan` (accent) so section
-    // overflow is obvious.
-    let track_glyph = "\u{2502}"; // │ box-drawings vertical
-    let thumb_glyph = "\u{2588}"; // █ full block
-    let bg = t.bg_darker;
-    for cy in 0..cells {
-        frame.render_widget(
-            Paragraph::new(track_glyph)
-                .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
-            Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
-        );
-    }
-    let thumb_h = ((cells * SECTION_ROW_CAP) / total).max(1);
-    let max_scroll = total - SECTION_ROW_CAP;
-    let max_thumb_top = cells.saturating_sub(thumb_h);
-    let thumb_top = (scroll * max_thumb_top)
-        .checked_div(max_scroll)
-        .unwrap_or(0);
-    for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
-        frame.render_widget(
-            Paragraph::new(thumb_glyph).style(ratatui::style::Style::default().fg(t.cyan).bg(bg)),
-            Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
-        );
-    }
+    let cells = body_y_end.saturating_sub(body_y_start);
+    crate::ui::scrollbar::paint_simple_scrollbar(
+        frame,
+        Rect::new(bar_x, body_y_start, 1, cells),
+        t,
+        total,
+        SECTION_ROW_CAP,
+        scroll,
+    );
 }
 
 /// ENVS body — one row per env file under `.mnml/env/` +
@@ -1688,40 +1674,24 @@ fn draw_collections(
     // Scrollbar uses `cap` (max painted rows) as the "viewport" so
     // the thumb reflects how much of the collections list you're
     // seeing.
-    // COLLECTIONS uses the same paint as the other sections (via a
-    // local re-implementation since the shared helper wants
-    // "viewport" == SECTION_ROW_CAP but COLLECTIONS uses `cap =
-    // SECTION_ROW_CAP * 3`).
-    // User feedback 2026-07-08: the track was `t.bg2` which reads
-    // as near-invisible on the dark panel bg. Bumped track to
-    // `t.comment` (visible grey) and thumb to `t.cyan` (accent) so
-    // large collections like `integrations-api (373)` obviously show
-    // there's more content to scroll to.
+    // COLLECTIONS scrollbar — delegate to the shared
+    // `paint_simple_scrollbar` helper so we get the same track /
+    // thumb glyphs as the editor pane and don't drift out of sync.
+    // `cap` = COLLECTIONS' larger viewport (SECTION_ROW_CAP * 3)
+    // since a collection with many members needs more rows than a
+    // flat RECENT list.
     if total_logical > cap && y > body_y_start {
         let bar_x = area.x.saturating_add(area.width).saturating_sub(1);
-        let cells = y.saturating_sub(body_y_start) as usize;
-        let track_glyph = "\u{2502}";
-        let thumb_glyph = "\u{2588}"; // █ full block — unmistakable
-        for cy in 0..cells {
-            frame.render_widget(
-                Paragraph::new(track_glyph)
-                    .style(ratatui::style::Style::default().fg(t.comment).bg(bg)),
-                Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
-            );
-        }
-        let thumb_h = ((cells * cap) / total_logical).max(1);
-        let max_scroll = total_logical - cap;
-        let max_thumb_top = cells.saturating_sub(thumb_h);
-        let thumb_top = (scroll * max_thumb_top)
-            .checked_div(max_scroll)
-            .unwrap_or(0);
-        for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
-            frame.render_widget(
-                Paragraph::new(thumb_glyph)
-                    .style(ratatui::style::Style::default().fg(t.cyan).bg(bg)),
-                Rect::new(bar_x, body_y_start + cy as u16, 1, 1),
-            );
-        }
+        let cells = y.saturating_sub(body_y_start);
+        let _ = bg;
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            Rect::new(bar_x, body_y_start, 1, cells),
+            &t,
+            total_logical,
+            cap,
+            scroll,
+        );
     }
     y
 }

@@ -536,6 +536,23 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if new_div != app.hover_divider_idx {
             app.hover_divider_idx = new_div;
         }
+        // Track tree- / right-panel-edge hover so the renderer can
+        // paint the border in an accent color instead of showing a
+        // persistent grip glyph. 2026-07-08 user feedback.
+        let new_tree_edge = app
+            .rects
+            .tree_edge
+            .is_some_and(|r| crate::app::dispatch::contains(r, x, y));
+        if new_tree_edge != app.hover_tree_edge {
+            app.hover_tree_edge = new_tree_edge;
+        }
+        let new_right_edge = app
+            .rects
+            .right_panel_edge
+            .is_some_and(|r| crate::app::dispatch::contains(r, x, y));
+        if new_right_edge != app.hover_right_panel_edge {
+            app.hover_right_panel_edge = new_right_edge;
+        }
         // Editor body hover → schedule an LSP hover request after a
         // debounce. The actual fire happens in `tick`; we just record
         // (pane, file_row, file_col, when) here. Moving to a new cell

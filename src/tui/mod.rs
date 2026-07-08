@@ -517,6 +517,8 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the user moved on to typing, the hover-cue is no longer relevant.
     app.hover_chip = None;
     app.hover_divider_idx = None;
+    app.hover_tree_edge = false;
+    app.hover_right_panel_edge = false;
     // #20 v5 — Ctrl+Shift+Z as a global keyboard shortcut for the
     // pending-undo chip. Consumed before overlay routing so it
     // works even when a picker / prompt is open (undo of the last

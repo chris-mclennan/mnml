@@ -3940,6 +3940,13 @@ pub struct App {
     /// hovering. Drives the per-divider yellow tint that advertises drag-
     /// resizability. Cleared on click + on hover-leave.
     pub hover_divider_idx: Option<usize>,
+    /// True when the mouse is hovering the tree's resize edge (right
+    /// column of the rail). Drives the border-highlight cue that
+    /// replaced the grip glyph 2026-07-08. Cleared on hover-leave.
+    pub hover_tree_edge: bool,
+    /// True when the mouse is hovering the right-panel's resize edge
+    /// (left column of the panel). Same cue idiom as `hover_tree_edge`.
+    pub hover_right_panel_edge: bool,
     /// `F1` discovery overlay — a centered floating panel listing every
     /// clickable region category with live rect counts. Press F1 again or
     /// Esc to close. In-memory only.
@@ -4809,6 +4816,8 @@ impl App {
             no_pane_cmdline: None,
             hover_chip: None,
             hover_divider_idx: None,
+            hover_tree_edge: false,
+            hover_right_panel_edge: false,
             show_discovery_overlay: false,
             discovery_flash: None,
             show_welcome: false,
