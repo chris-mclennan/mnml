@@ -75,21 +75,75 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 /// The hover-help text pair: primary (bold) + optional secondary.
 /// Delegates to the same describe logic as `ui::tooltip::describe`
 /// but stripped down to just the text (no anchor rect needed here).
+///
+/// Fallback ladder when no chip is hovered:
+///   1. Active pane summary (file / URL / kind) — Ableton-style
+///      "here's what you're looking at".
+///   2. Focus hint pointing at the palette.
 fn pick_help_text(app: &App) -> (String, Option<String>) {
     if let Some((chip, _)) = app.hover_chip
         && let Some((primary, secondary)) = crate::ui::tooltip::describe_text(chip, app)
     {
         return (primary, secondary);
     }
-    // Nothing hovered — steer users toward the palette so the strip
-    // stays useful when the mouse is idle. Kept short.
+    // Active-pane summary — reads out the file / request / diff
+    // that has focus so the strip is useful when the mouse is idle.
+    if let Some(cur) = app.active
+        && let Some(pane) = app.panes.get(cur)
+        && let Some(pair) = describe_active_pane(pane)
+    {
+        return pair;
+    }
+    // Last-resort — steer users toward the palette.
     let hint = match app.focus {
         crate::focus::Focus::Tree => {
             "sidebar focus — arrows / j/k walk rows · Enter opens · Ctrl+Shift+P palette"
         }
         crate::focus::Focus::Pane => {
-            "editor focus — hover a chip / tab / tree row for help · Ctrl+Shift+P palette"
+            "hover a chip / tab / tree row for help · Ctrl+Shift+P palette"
         }
     };
     (hint.to_string(), None)
+}
+
+fn describe_active_pane(pane: &crate::pane::Pane) -> Option<(String, Option<String>)> {
+    use crate::pane::Pane;
+    match pane {
+        Pane::Editor(b) => {
+            let title = pane.title();
+            let lang = b
+                .language_ext
+                .as_deref()
+                .map(|e| e.to_ascii_uppercase())
+                .unwrap_or_else(|| "TEXT".to_string());
+            let lines = b.editor.text().lines().count().max(1);
+            let dirty = if b.dirty { " · unsaved" } else { "" };
+            let primary = format!("{title}  ·  {lang}  ·  {lines} lines{dirty}");
+            let secondary = if b.is_preview {
+                Some("preview tab — first edit or double-click promotes it".to_string())
+            } else if b.is_pinned {
+                Some("pinned — stays at front of the bufferline".to_string())
+            } else {
+                None
+            };
+            Some((primary, secondary))
+        }
+        Pane::Request(_) => Some((
+            pane.title(),
+            Some("Request pane — Enter to send · Ctrl+S saves as .http/.curl".into()),
+        )),
+        Pane::Pty(_) => Some((
+            pane.title(),
+            Some("terminal pane — Ctrl+Alt+H to detach, Ctrl+Alt+K to kill".into()),
+        )),
+        Pane::MdPreview(_) => Some((
+            pane.title(),
+            Some("rendered markdown preview — click header chip to jump back to source".into()),
+        )),
+        Pane::Ai(_) => Some((
+            pane.title(),
+            Some("Claude / Codex session — type at the bottom prompt".into()),
+        )),
+        _ => Some((pane.title(), None)),
+    }
 }
