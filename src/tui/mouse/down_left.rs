@@ -1198,6 +1198,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         let _ = crate::command::run("git.graph", app);
         return;
     }
+    // Ableton-style hover-help footer strip → left-click toggles
+    // it off (fast dismiss without palette-hunting). 2026-07-07.
+    if let Some(r) = app.rects.hover_help_strip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let _ = crate::command::run("view.toggle_hover_help", app);
+        return;
+    }
     // Statusline test-runner chip → focus the test pane.
     if let Some(r) = app.rects.statusline_test_chip
         && crate::app::dispatch::contains(r, x, y)

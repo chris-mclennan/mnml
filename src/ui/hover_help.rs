@@ -22,7 +22,8 @@ use crate::ui::theme;
 
 /// Paint the 1-row hover-help footer over `area`. Caller reserves
 /// the row only when `app.config.ui.hover_help` is on.
-pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
+    app.rects.hover_help_strip = Some(area);
     let t = theme::cur();
     // Solid background band so it reads as a distinct strip, not
     // an accidental line of body text.
@@ -51,10 +52,9 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled("  ·  ", Style::default().fg(t.comment).bg(bg)));
         spans.push(Span::styled(sub, Style::default().fg(t.comment).bg(bg)));
     }
-    // Right-side hint: toggle key discovery so users learn how to
-    // dismiss the strip without palette-hunting. Skipped if the
+    // Right-side hint: click the strip to hide it. Skipped if the
     // primary line already crowds the row.
-    let hint = "toggle: view.toggle_hover_help";
+    let hint = "click to hide  ·  :set nohh";
     let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let hint_len = hint.chars().count();
     let room = (area.width as usize).saturating_sub(used).saturating_sub(2);

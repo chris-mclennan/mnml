@@ -2463,6 +2463,10 @@ pub struct PaneRects {
     /// One entry per split divider, with enough info to drag-resize it.
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,
+    /// 2026-07-07 — Ableton-style hover-help footer rect (when the
+    /// strip is visible). Left-click toggles the strip off; right-
+    /// click opens a mini context menu ("Hide strip").
+    pub hover_help_strip: Option<Rect>,
     /// 2026-06-21 vscode SEV-2 — the floating peek_definition overlay's
     /// outer rect when shown. The mouse dispatcher uses this to consume
     /// inside-clicks (instead of bleeding through to the editor) and
