@@ -967,6 +967,34 @@ impl App {
                     })
                     .unwrap_or(false)
             };
+            // Same predicate as `has_request_file` but recurses so a
+            // dir that contains request files ONLY in deeper subfolders
+            // still qualifies as a collection root. Bug 2026-07-08 —
+            // integrations-api/Admin/*.curl was invisible in the HTTP
+            // panel because integrations-api/ had no direct files and
+            // the old scanner only looked one level down.
+            fn has_request_file_recursive(dir: &std::path::Path, depth: u32) -> bool {
+                if depth > 6 {
+                    return false;
+                }
+                let Ok(rd) = std::fs::read_dir(dir) else {
+                    return false;
+                };
+                for entry in rd.flatten() {
+                    let p = entry.path();
+                    if p.is_file() {
+                        if matches!(
+                            p.extension().and_then(|s| s.to_str()),
+                            Some("http") | Some("curl") | Some("rest")
+                        ) {
+                            return true;
+                        }
+                    } else if p.is_dir() && has_request_file_recursive(&p, depth + 1) {
+                        return true;
+                    }
+                }
+                false
+            }
             let skip = ["env", "mocks", "captured", "ipc", "config"];
             if let Ok(rd) = std::fs::read_dir(&rqst_root) {
                 for entry in rd.flatten() {
@@ -980,13 +1008,16 @@ impl App {
                     }
                     // Two shapes: either the dir itself has direct
                     // request files (snippets, lookups), or its
-                    // children do (requests/<sub>/).
+                    // children do (requests/<sub>/). Sub-level is
+                    // checked recursively so a `requests/<api>/` whose
+                    // .curl files live in `requests/<api>/<endpoint>/`
+                    // still surfaces as its own collection.
                     if has_request_file(&p) {
                         roots.push((p, HttpCollectionKind::Hidden));
                     } else if let Ok(sub_rd) = std::fs::read_dir(&p) {
                         for sub in sub_rd.flatten() {
                             let sp = sub.path();
-                            if sp.is_dir() && has_request_file(&sp) {
+                            if sp.is_dir() && has_request_file_recursive(&sp, 0) {
                                 roots.push((sp, HttpCollectionKind::Hidden));
                             }
                         }
