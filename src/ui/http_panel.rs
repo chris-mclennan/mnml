@@ -829,6 +829,7 @@ fn draw_recent(
 ) -> u16 {
     let t = theme::cur();
     let bottom = area.y + area.height;
+    let body_y_start = y;
     let recent = app.http_panel_recent_cache.clone();
     if recent.is_empty() {
         if y < bottom {
@@ -915,6 +916,7 @@ fn draw_recent(
         app.rects.http_panel_recent_rows.push((row_rect, idx));
         y += 1;
     }
+    paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     y
 }
 
@@ -929,6 +931,7 @@ fn draw_captured(
 ) -> u16 {
     let t = theme::cur();
     let bottom = area.y + area.height;
+    let body_y_start = y;
     let captured = app.http_panel_captured_cache.clone();
     if captured.is_empty() {
         if y < bottom {
@@ -1006,7 +1009,46 @@ fn draw_captured(
         app.rects.http_panel_captured_rows.push((row_rect, idx));
         y += 1;
     }
+    paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     y
+}
+
+/// Paint a 1-cell vertical scrollbar over the right edge of the body
+/// area when the underlying list has more entries than fit in the
+/// visible SECTION_ROW_CAP window. Shared by CAPTURED / RECENT /
+/// MOCKS / CHAINS / COLLECTIONS section renders. 2026-07-07.
+fn paint_section_scrollbar(
+    frame: &mut Frame,
+    section_area: Rect,
+    body_y_start: u16,
+    body_y_end: u16,
+    total: usize,
+    scroll: usize,
+    t: &theme::Theme,
+) {
+    if total <= SECTION_ROW_CAP {
+        return;
+    }
+    if body_y_end <= body_y_start {
+        return;
+    }
+    let bar_rect = Rect {
+        x: section_area
+            .x
+            .saturating_add(section_area.width)
+            .saturating_sub(1),
+        y: body_y_start,
+        width: 1,
+        height: body_y_end.saturating_sub(body_y_start),
+    };
+    crate::ui::scrollbar::paint_simple_scrollbar(
+        frame,
+        bar_rect,
+        t,
+        total,
+        SECTION_ROW_CAP,
+        scroll,
+    );
 }
 
 /// ENVS body — one row per env file under `.mnml/env/` +
@@ -1121,6 +1163,7 @@ fn draw_chains(
 ) -> u16 {
     let t = theme::cur();
     let bottom = area.y + area.height;
+    let body_y_start = y;
     let chains = app.http_panel_chains_cache.clone();
     if chains.is_empty() && y < bottom {
         frame.render_widget(
@@ -1138,7 +1181,11 @@ fn draw_chains(
         y += 1;
     }
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
-    for path in chains.iter().take(SECTION_ROW_CAP) {
+    let total = chains.len();
+    let max_scroll = total.saturating_sub(SECTION_ROW_CAP);
+    let scroll = app.http_panel_chains_scroll.min(max_scroll);
+    app.http_panel_chains_scroll = scroll;
+    for path in chains.iter().skip(scroll).take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
         }
@@ -1175,6 +1222,7 @@ fn draw_chains(
             .push((row_rect, path.clone()));
         y += 1;
     }
+    paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     // `+ New chain` action row — mirrors the ENVS section idiom so
     // creating a chain is discoverable without palette hunting.
     if y < bottom {
@@ -1216,6 +1264,7 @@ fn draw_mocks(
 ) -> u16 {
     let t = theme::cur();
     let bottom = area.y + area.height;
+    let body_y_start = y;
     let mocks = app.http_panel_mocks_cache.clone();
     if mocks.is_empty() {
         if y < bottom {
@@ -1239,7 +1288,11 @@ fn draw_mocks(
         return y;
     }
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
-    for path in mocks.iter().take(SECTION_ROW_CAP) {
+    let total = mocks.len();
+    let max_scroll = total.saturating_sub(SECTION_ROW_CAP);
+    let scroll = app.http_panel_mocks_scroll.min(max_scroll);
+    app.http_panel_mocks_scroll = scroll;
+    for path in mocks.iter().skip(scroll).take(SECTION_ROW_CAP) {
         if y >= bottom {
             break;
         }
@@ -1271,6 +1324,7 @@ fn draw_mocks(
             .push((row_rect, path.clone()));
         y += 1;
     }
+    paint_section_scrollbar(frame, area, body_y_start, y, total, scroll, &t);
     y
 }
 
@@ -1343,6 +1397,22 @@ fn draw_collections(
     });
     let cap = SECTION_ROW_CAP * 3;
     let mut emitted = 0usize;
+    let body_y_start = y;
+    // Total logical row count (folders + files inside expanded ones)
+    // so we can clamp scroll against something sensible. Approximate:
+    // one row per collection + one row per member if expanded.
+    let total_logical: usize = order
+        .iter()
+        .map(|(root, _)| {
+            let members_ct = files.iter().filter(|p| p.starts_with(root)).count();
+            let expanded = !app.http_panel_collections_collapsed_dirs.contains(root);
+            1 + if expanded { members_ct } else { 0 }
+        })
+        .sum();
+    let max_scroll = total_logical.saturating_sub(cap);
+    let scroll = app.http_panel_collections_scroll.min(max_scroll);
+    app.http_panel_collections_scroll = scroll;
+    let mut skip_left = scroll;
     let filter_lc = app.http_panel_filter.to_ascii_lowercase();
     for (root, kind) in &order {
         if emitted >= cap || y >= bottom {
@@ -1393,68 +1463,68 @@ fn draw_collections(
             HttpCollectionKind::Hidden => t.comment,
         };
         let count = members.len();
-        let row_rect = Rect {
-            x: area.x,
-            y,
-            width: area.width,
-            height: 1,
-        };
-        // Reserve trailing 3 cells for the `+ new request` chip.
-        // Compute the visible width taken by the row content so we
-        // pad correctly. Everything before the chip:
-        //   "   " (3) + chev (2) + icon (2) + name (chars) + " (N)"
-        let used = 3 + 2 + 2 + name.chars().count() + format!(" ({count})").chars().count();
         let chip_w: usize = 3;
-        let pad = (area.width as usize).saturating_sub(used + chip_w);
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled("   ", Style::default().bg(bg)),
-                Span::styled(format!("{chev} "), Style::default().fg(t.comment).bg(bg)),
-                Span::styled(format!("{icon} "), Style::default().fg(icon_fg).bg(bg)),
-                Span::styled(
-                    name.clone(),
-                    Style::default()
-                        .fg(t.fg)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!(" ({count})"), Style::default().fg(t.comment).bg(bg)),
-                Span::styled(" ".repeat(pad), Style::default().bg(bg)),
-                Span::styled(" + ", Style::default().fg(t.green).bg(bg)),
-            ])),
-            row_rect,
-        );
-        // Registered rects: the ROW itself for click-to-collapse
-        // AND the `+` chip zone at the row's right edge. Order
-        // matters — mouse dispatch checks the chip vec first.
-        //
-        // #polish 2026-07-07 (vscode-mouse SEV-2 #3) — widened the
-        // click rect by 2 cells beyond the visible ` + ` so a click
-        // 1-2 cells left of the plus glyph still fires the add
-        // instead of falling through to the whole-row collapse
-        // handler (which felt like a wrong-action side effect).
-        let chip_hit_w: u16 = (chip_w as u16) + 2;
-        let chip_x = area.x + area.width.saturating_sub(chip_hit_w);
-        app.rects.http_panel_collection_new_request_chips.push((
-            Rect {
-                x: chip_x,
+        // Only render this collection's header if we've scrolled past
+        // enough leading rows. Same skip logic applies to member rows
+        // below. 2026-07-07 scroll-support.
+        if skip_left > 0 {
+            skip_left -= 1;
+        } else if emitted < cap && y < bottom {
+            let row_rect = Rect {
+                x: area.x,
                 y,
-                width: chip_hit_w,
+                width: area.width,
                 height: 1,
-            },
-            root.clone(),
-        ));
-        app.rects
-            .http_panel_collection_folder_rows
-            .push((row_rect, root.clone()));
-        y += 1;
-        emitted += 1;
-        if collapsed || y >= bottom {
+            };
+            let used = 3 + 2 + 2 + name.chars().count() + format!(" ({count})").chars().count();
+            let pad = (area.width as usize).saturating_sub(used + chip_w);
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("   ", Style::default().bg(bg)),
+                    Span::styled(format!("{chev} "), Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(format!("{icon} "), Style::default().fg(icon_fg).bg(bg)),
+                    Span::styled(
+                        name.clone(),
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(format!(" ({count})"), Style::default().fg(t.comment).bg(bg)),
+                    Span::styled(" ".repeat(pad), Style::default().bg(bg)),
+                    Span::styled(" + ", Style::default().fg(t.green).bg(bg)),
+                ])),
+                row_rect,
+            );
+            // #polish 2026-07-07 (vscode-mouse SEV-2 #3) — widened the
+            // click rect by 2 cells beyond the visible ` + ` so a click
+            // 1-2 cells left of the plus glyph still fires the add.
+            let chip_hit_w: u16 = (chip_w as u16) + 2;
+            let chip_x = area.x + area.width.saturating_sub(chip_hit_w);
+            app.rects.http_panel_collection_new_request_chips.push((
+                Rect {
+                    x: chip_x,
+                    y,
+                    width: chip_hit_w,
+                    height: 1,
+                },
+                root.clone(),
+            ));
+            app.rects
+                .http_panel_collection_folder_rows
+                .push((row_rect, root.clone()));
+            y += 1;
+            emitted += 1;
+        }
+        if collapsed {
             continue;
         }
-        // Files under this root — one row each, indented. Relative
-        // paths shown when the file's in a nested subdir.
+        // Files under this root — one row each, indented.
         for path in &members {
+            if skip_left > 0 {
+                skip_left -= 1;
+                continue;
+            }
             if emitted >= cap || y >= bottom {
                 break;
             }
@@ -1493,6 +1563,26 @@ fn draw_collections(
     // COLLECTIONS. The empty-state branch above still paints its own
     // hint row with a `+ New collection` fallback so users landing on
     // an empty section still see the affordance.
+    //
+    // Scrollbar uses `cap` (max painted rows) as the "viewport" so
+    // the thumb reflects how much of the collections list you're
+    // seeing.
+    if total_logical > cap && y > body_y_start {
+        let bar_rect = Rect {
+            x: area.x.saturating_add(area.width).saturating_sub(1),
+            y: body_y_start,
+            width: 1,
+            height: y.saturating_sub(body_y_start),
+        };
+        crate::ui::scrollbar::paint_simple_scrollbar(
+            frame,
+            bar_rect,
+            &t,
+            total_logical,
+            cap,
+            scroll,
+        );
+    }
     y
 }
 

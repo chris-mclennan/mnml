@@ -2993,6 +2993,13 @@ pub struct App {
     /// Same idea for RECENT — history.jsonl entries scroll under the
     /// same wheel handler.
     pub http_panel_recent_scroll: usize,
+    /// Scroll offset for MOCKS.
+    pub http_panel_mocks_scroll: usize,
+    /// Scroll offset for CHAINS.
+    pub http_panel_chains_scroll: usize,
+    /// Scroll offset for COLLECTIONS (indexes the flattened
+    /// collection-rows + member-file rows list).
+    pub http_panel_collections_scroll: usize,
     /// Cached list of env names (basenames without `.env` extension)
     /// found under `.mnml/env/` + `.rqst/env/`. Refreshed by
     /// `http_panel_refresh` alongside the other caches.
@@ -4695,6 +4702,9 @@ impl App {
             http_panel_captured_cache: Vec::new(),
             http_panel_captured_scroll: 0,
             http_panel_recent_scroll: 0,
+            http_panel_mocks_scroll: 0,
+            http_panel_chains_scroll: 0,
+            http_panel_collections_scroll: 0,
             http_panel_envs_cache: Vec::new(),
             http_panel_chains_cache: Vec::new(),
             http_panel_collections_cache: Vec::new(),

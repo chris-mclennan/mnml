@@ -1010,38 +1010,62 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
     // the general tree wheel so a scroll over the panel doesn't
     // fall through and move the file-tree cursor. 2026-07-07.
     if app.active_section == crate::app::ActivitySection::Http {
-        let over_captured = app
+        let d = list_scroll_clamp(delta);
+        let bump = |cur: &mut usize, d: i32| {
+            if d < 0 {
+                *cur = cur.saturating_sub(d.unsigned_abs() as usize);
+            } else {
+                *cur = cur.saturating_add(d as usize);
+            }
+        };
+        if app
             .rects
             .http_panel_captured_rows
             .iter()
-            .any(|(r, _)| contains(*r, x, y));
-        let over_recent = app
+            .any(|(r, _)| contains(*r, x, y))
+        {
+            bump(&mut app.http_panel_captured_scroll, d);
+            return;
+        }
+        if app
             .rects
             .http_panel_recent_rows
             .iter()
-            .any(|(r, _)| contains(*r, x, y));
-        if over_captured {
-            let d = list_scroll_clamp(delta);
-            if d < 0 {
-                app.http_panel_captured_scroll = app
-                    .http_panel_captured_scroll
-                    .saturating_sub(d.unsigned_abs() as usize);
-            } else {
-                app.http_panel_captured_scroll =
-                    app.http_panel_captured_scroll.saturating_add(d as usize);
-            }
+            .any(|(r, _)| contains(*r, x, y))
+        {
+            bump(&mut app.http_panel_recent_scroll, d);
             return;
         }
-        if over_recent {
-            let d = list_scroll_clamp(delta);
-            if d < 0 {
-                app.http_panel_recent_scroll = app
-                    .http_panel_recent_scroll
-                    .saturating_sub(d.unsigned_abs() as usize);
-            } else {
-                app.http_panel_recent_scroll =
-                    app.http_panel_recent_scroll.saturating_add(d as usize);
-            }
+        if app
+            .rects
+            .http_panel_mock_rows
+            .iter()
+            .any(|(r, _)| contains(*r, x, y))
+        {
+            bump(&mut app.http_panel_mocks_scroll, d);
+            return;
+        }
+        if app
+            .rects
+            .http_panel_chain_rows
+            .iter()
+            .any(|(r, _)| contains(*r, x, y))
+        {
+            bump(&mut app.http_panel_chains_scroll, d);
+            return;
+        }
+        if app
+            .rects
+            .http_panel_collection_folder_rows
+            .iter()
+            .any(|(r, _)| contains(*r, x, y))
+            || app
+                .rects
+                .http_panel_collection_rows
+                .iter()
+                .any(|(r, _)| contains(*r, x, y))
+        {
+            bump(&mut app.http_panel_collections_scroll, d);
             return;
         }
     }
