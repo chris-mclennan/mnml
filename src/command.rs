@@ -1908,6 +1908,35 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.run_external_tool("btop"),
         },
+        // ── 2026-07-08 extension pass (TODO external-tools catalog). ──
+        Command {
+            id: "tools.ncdu",
+            title: "Tools: open ncdu (or hint brew install)",
+            group: "term",
+            keys: &[],
+            run: |app| app.run_external_tool("ncdu"),
+        },
+        Command {
+            id: "tools.lazygit",
+            title: "Tools: open lazygit (or hint brew install)",
+            group: "term",
+            keys: &[],
+            run: |app| app.run_external_tool("lazygit"),
+        },
+        Command {
+            id: "tools.gh",
+            title: "Tools: open gh (GitHub CLI, or hint brew install)",
+            group: "term",
+            keys: &[],
+            run: |app| app.run_external_tool("gh"),
+        },
+        Command {
+            id: "tools.dust",
+            title: "Tools: open dust (or hint brew install)",
+            group: "term",
+            keys: &[],
+            run: |app| app.run_external_tool("dust"),
+        },
         Command {
             id: "integrations.icon_picker",
             title: "Integrations: browse Nerd Font glyphs (copies to clipboard)",

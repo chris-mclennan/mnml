@@ -292,6 +292,41 @@ pub const EXTERNAL_TOOLS: &[ExternalTool] = &[
         label: "btop — resource monitor (cpu / mem / disk / net)",
         needs_sudo: false,
     },
+    // ── 2026-07-08 extension pass (TODO.md external-tools catalog). ──
+    // Same shape as htop / btop; interactive CLI tools that make
+    // sense to run in a Pty pane. No sudo needed for any of these.
+    ExternalTool {
+        id: "ncdu",
+        binary: "ncdu",
+        brew_pkg: "ncdu",
+        apt_pkg: "ncdu",
+        label: "ncdu — interactive disk usage (drill into what's big)",
+        needs_sudo: false,
+    },
+    ExternalTool {
+        id: "lazygit",
+        binary: "lazygit",
+        brew_pkg: "lazygit",
+        apt_pkg: "lazygit",
+        label: "lazygit — full-featured git TUI",
+        needs_sudo: false,
+    },
+    ExternalTool {
+        id: "gh",
+        binary: "gh",
+        brew_pkg: "gh",
+        apt_pkg: "gh",
+        label: "gh — GitHub CLI (issues, PRs, releases)",
+        needs_sudo: false,
+    },
+    ExternalTool {
+        id: "dust",
+        binary: "dust",
+        brew_pkg: "dust",
+        apt_pkg: "dust",
+        label: "dust — du replacement with a tree view (du -sh . done right)",
+        needs_sudo: false,
+    },
 ];
 
 /// Best-effort detection of the primary network interface (the one
