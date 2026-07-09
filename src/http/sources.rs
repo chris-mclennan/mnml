@@ -161,6 +161,7 @@ pub fn check_sync_with_normalize(
             out: tmp.path().to_path_buf(),
             base_url: s.base_url_override.clone(),
             normalize,
+            edge_cases: false,
         };
         if let Err(e) = discover::run(&dargs) {
             trace.push_str(&format!("  ERR: discover: {e}\n\n"));
@@ -297,6 +298,7 @@ pub fn run_sync_with_normalize(
             out: s.out.clone(),
             base_url: s.base_url_override.clone(),
             normalize,
+            edge_cases: false,
         };
         match discover::run(&dargs) {
             Ok(n) => {

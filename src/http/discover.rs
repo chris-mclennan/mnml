@@ -42,6 +42,13 @@ pub struct Options {
     /// output modulo real API changes.
     /// 2026-07-09 Tier 1 of the dynamic-realistic roadmap.
     pub normalize: bool,
+    /// When `true`, emit additional edge-case variants alongside
+    /// the happy-path stub — `<opId>.edge-min.curl` (minLength
+    /// strings, minimum numbers, non-first enum values) and
+    /// `<opId>.edge-max.curl` (maxLength strings, maximum numbers,
+    /// last enum values). Skipped for operations without a JSON
+    /// body schema. Tier 7 of the dynamic-realistic roadmap.
+    pub edge_cases: bool,
 }
 
 /// Returns the number of `.curl` files written.
@@ -143,7 +150,16 @@ pub fn run(opts: &Options) -> Result<usize, String> {
             let hints = login_extract_hints(path, &method.to_uppercase(), op, &spec);
             let named = collect_named_examples(op);
             if named.is_empty() {
-                let curl = render_curl(&base_url, path, method, op, &spec, None, opts.normalize);
+                let curl = render_curl(
+                    &base_url,
+                    path,
+                    method,
+                    op,
+                    &spec,
+                    None,
+                    opts.normalize,
+                    None,
+                );
                 let file = dir.join(format!("{file_base}.curl"));
                 std::fs::write(&file, curl)
                     .map_err(|e| format!("write {}: {e}", file.display()))?;
@@ -160,6 +176,27 @@ pub fn run(opts: &Options) -> Result<usize, String> {
                     .or_default()
                     .push(step);
                 count += 1;
+                // Tier 7 edge-case variants — only when the operation
+                // has a body schema and opts.edge_cases is on.
+                if opts.edge_cases && has_body_schema(op) {
+                    for (label, edge) in &[("edge-min", EdgeCase::Min), ("edge-max", EdgeCase::Max)]
+                    {
+                        let curl = render_curl(
+                            &base_url,
+                            path,
+                            method,
+                            op,
+                            &spec,
+                            None,
+                            opts.normalize,
+                            Some(*edge),
+                        );
+                        let file = dir.join(format!("{file_base}.{label}.curl"));
+                        std::fs::write(&file, curl)
+                            .map_err(|e| format!("write {}: {e}", file.display()))?;
+                        count += 1;
+                    }
+                }
             } else {
                 for named in named {
                     let safe = sanitize(&named.name);
@@ -171,6 +208,7 @@ pub fn run(opts: &Options) -> Result<usize, String> {
                         &spec,
                         Some(&named),
                         opts.normalize,
+                        None,
                     );
                     let file = dir.join(format!("{file_base}.{safe}.curl"));
                     std::fs::write(&file, curl)
@@ -241,6 +279,23 @@ fn emit_chain_templates(
         std::fs::write(&file, text).map_err(|e| format!("write {}: {e}", file.display()))?;
     }
     Ok(())
+}
+
+fn has_body_schema(op: &Value) -> bool {
+    op.get("requestBody")
+        .and_then(|rb| rb.get("content"))
+        .and_then(|c| c.get("application/json"))
+        .and_then(|j| j.get("schema"))
+        .is_some()
+        || op
+            .get("parameters")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter().any(|p| {
+                    p.get("in").and_then(Value::as_str) == Some("body") && p.get("schema").is_some()
+                })
+            })
+            .unwrap_or(false)
 }
 
 fn step_to_json(step: &ChainStep) -> Value {
@@ -346,6 +401,16 @@ fn normalize_dynamic_values(body: &str) -> String {
     step2.into_owned()
 }
 
+/// Edge-case bias for body synthesis. `None` = happy path (Tier 2/3
+/// defaults). `Some(EdgeCase::Min)` = boundary-minimum picks;
+/// `Some(EdgeCase::Max)` = boundary-maximum picks.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum EdgeCase {
+    Min,
+    Max,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_curl(
     base_url: &str,
     path: &str,
@@ -354,6 +419,7 @@ fn render_curl(
     spec: &Value,
     named: Option<&NamedExample>,
     normalize: bool,
+    edge: Option<EdgeCase>,
 ) -> String {
     // Path params: `{id}` → `{{id}}`, plus Tier 4 well-known-ID
     // upgrade. Buffer the param name between `{` and `}`, then
@@ -475,7 +541,7 @@ fn render_curl(
                             .get("schema")
                     })?;
                 let mut visited: HashSet<String> = HashSet::new();
-                let mut synthesized = synth_example(schema, spec, &mut visited, 0);
+                let mut synthesized = synth_example_edge(schema, spec, &mut visited, 0, "", edge);
                 // Tier 3 — coherence pass: sync sibling fields
                 // (email ← firstName+lastName, updatedAt ← createdAt
                 // + 30min, total ← amount * quantity, etc.) before
@@ -744,8 +810,195 @@ fn json_to_string_flat(v: &Value) -> String {
 /// value), and the composition keywords `allOf` / `oneOf` / `anyOf`
 /// (takes the first branch). Depth capped at 5 to keep pathological
 /// deeply-recursive specs from blowing the stack.
-fn synth_example(schema: &Value, spec: &Value, visited: &mut HashSet<String>, depth: u32) -> Value {
-    synth_example_hinted(schema, spec, visited, depth, "")
+/// Tier 7 entrypoint — same walk as the base synthesizer but with an
+/// edge-case bias applied at leaves (`Min` picks minLength/minimum/
+/// non-first-enum; `Max` picks maxLength/maximum/last-enum).
+/// `None` = happy path (Tier 2/3 defaults).
+fn synth_example_edge(
+    schema: &Value,
+    spec: &Value,
+    visited: &mut HashSet<String>,
+    depth: u32,
+    prop: &str,
+    edge: Option<EdgeCase>,
+) -> Value {
+    match edge {
+        None => synth_example_hinted(schema, spec, visited, depth, prop),
+        Some(e) => synth_example_edge_inner(schema, spec, visited, depth, prop, e),
+    }
+}
+
+fn synth_example_edge_inner(
+    schema: &Value,
+    spec: &Value,
+    visited: &mut HashSet<String>,
+    depth: u32,
+    prop: &str,
+    edge: EdgeCase,
+) -> Value {
+    if depth > 5 {
+        return Value::Null;
+    }
+    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
+        if visited.contains(r) {
+            return Value::Null;
+        }
+        visited.insert(r.to_string());
+        if let Some(resolved) = resolve_ref(spec, r) {
+            return synth_example_edge_inner(resolved, spec, visited, depth + 1, prop, edge);
+        }
+        return Value::Null;
+    }
+    // Even in edge mode, an explicit example is authoritative —
+    // we only touch synthesis defaults.
+    if let Some(example) = schema.get("example") {
+        return example.clone();
+    }
+    let ty = schema.get("type").and_then(Value::as_str).unwrap_or("");
+    match ty {
+        "object" => {
+            let mut obj = serde_json::Map::new();
+            if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+                for (k, v) in props {
+                    obj.insert(
+                        k.clone(),
+                        synth_example_edge_inner(v, spec, visited, depth + 1, k, edge),
+                    );
+                }
+            }
+            Value::Object(obj)
+        }
+        "array" => {
+            let item = schema
+                .get("items")
+                .map(|i| synth_example_edge_inner(i, spec, visited, depth + 1, "", edge))
+                .unwrap_or(Value::Null);
+            // Min → single-element array (smallest non-empty).
+            // Max → three-element array (a variety pick users can
+            // trim). Empty arrays would break required-min-items
+            // validators in half the specs we care about.
+            if edge == EdgeCase::Max {
+                Value::Array(vec![item.clone(), item.clone(), item])
+            } else {
+                Value::Array(vec![item])
+            }
+        }
+        "string" => {
+            // Enum: min → last entry, max → first entry (both pick
+            // the non-canonical option so the emitted stub differs
+            // from the happy-path).
+            if let Some(en) = schema.get("enum").and_then(Value::as_array)
+                && en.len() >= 2
+            {
+                return match edge {
+                    EdgeCase::Min => en.last().cloned().unwrap_or(Value::Null),
+                    EdgeCase::Max => en.first().cloned().unwrap_or(Value::Null),
+                };
+            }
+            let min_len = schema.get("minLength").and_then(Value::as_u64).unwrap_or(1) as usize;
+            let max_len = schema
+                .get("maxLength")
+                .and_then(Value::as_u64)
+                .unwrap_or(64) as usize;
+            let base = match schema.get("format").and_then(Value::as_str) {
+                Some("date-time") => "2026-01-01T00:00:00Z".to_string(),
+                Some("date") => "2026-01-01".to_string(),
+                Some("email") => "user@example.com".to_string(),
+                Some("uuid") => "00000000-0000-0000-0000-000000000000".to_string(),
+                _ => {
+                    // Property-name faker vocab still applies —
+                    // even edge cases want realistic-looking base
+                    // values (min-length "a"s aren't a useful test
+                    // when a name field is expected).
+                    if !prop.is_empty()
+                        && let Some(Value::String(s)) =
+                            crate::http::faker::placeholder_for(prop, ty)
+                    {
+                        s
+                    } else {
+                        "string".to_string()
+                    }
+                }
+            };
+            let n = match edge {
+                EdgeCase::Min => min_len.max(1),
+                EdgeCase::Max => max_len.min(64),
+            };
+            if n < base.chars().count() {
+                // Truncate at char boundary.
+                Value::String(base.chars().take(n).collect())
+            } else if n == base.chars().count() {
+                Value::String(base)
+            } else {
+                // Pad with `x`s so the length matches the boundary.
+                let pad = "x".repeat(n - base.chars().count());
+                Value::String(format!("{base}{pad}"))
+            }
+        }
+        "integer" => {
+            let mut v = match edge {
+                EdgeCase::Min => schema.get("minimum").and_then(Value::as_i64).unwrap_or(0),
+                EdgeCase::Max => schema
+                    .get("maximum")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(9999),
+            };
+            if let Some(excl) = schema.get("exclusiveMinimum").and_then(Value::as_i64)
+                && edge == EdgeCase::Min
+            {
+                v = excl + 1;
+            }
+            if let Some(excl) = schema.get("exclusiveMaximum").and_then(Value::as_i64)
+                && edge == EdgeCase::Max
+            {
+                v = excl - 1;
+            }
+            Value::Number(v.into())
+        }
+        "number" => {
+            let v = match edge {
+                EdgeCase::Min => schema.get("minimum").and_then(Value::as_f64).unwrap_or(0.0),
+                EdgeCase::Max => schema
+                    .get("maximum")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(9999.99),
+            };
+            Value::Number(serde_json::Number::from_f64(v).unwrap_or(0.into()))
+        }
+        "boolean" => match edge {
+            EdgeCase::Min => Value::Bool(false),
+            EdgeCase::Max => Value::Bool(true),
+        },
+        _ => {
+            for k in &["allOf", "oneOf", "anyOf"] {
+                if let Some(arr) = schema.get(*k).and_then(Value::as_array) {
+                    // Edge mode picks the LAST branch for `oneOf` /
+                    // `anyOf` (second variant) so the emitted stub
+                    // differs from the happy-path first-branch
+                    // pick. `allOf` still uses the first (semantic
+                    // conjunction has no "second" branch).
+                    let pick = if *k == "allOf" {
+                        arr.first()
+                    } else if arr.len() >= 2 {
+                        arr.last()
+                    } else {
+                        arr.first()
+                    };
+                    if let Some(chosen) = pick {
+                        return synth_example_edge_inner(
+                            chosen,
+                            spec,
+                            visited,
+                            depth + 1,
+                            prop,
+                            edge,
+                        );
+                    }
+                }
+            }
+            Value::Null
+        }
+    }
 }
 
 /// Same as `synth_example` but with a property-name hint — used
@@ -1145,6 +1398,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         assert_eq!(n, 3);
@@ -1209,6 +1463,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         assert_eq!(n, 2, "should emit one stub per named example");
@@ -1274,6 +1529,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/CreateThing.curl")).unwrap();
@@ -1340,6 +1596,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("nodes/PostNode.curl")).unwrap();
@@ -1410,11 +1667,127 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: true,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("p/Ping.curl")).unwrap();
         assert!(body.contains(r#""id":"{{$uuid}}""#), "body: {body}");
         assert!(body.contains(r#""at":"{{$isoTimestamp}}""#), "body: {body}");
+    }
+
+    #[test]
+    fn edge_cases_flag_emits_min_and_max_variants_per_body_operation() {
+        // Tier 7: --edge-cases produces the happy-path stub plus
+        // `<op>.edge-min.curl` (minimum boundary values, last enum)
+        // and `<op>.edge-max.curl` (maximum boundary values, first
+        // enum + longer strings).
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/things": {
+                  "post": {
+                    "operationId": "createThing",
+                    "tags": ["things"],
+                    "requestBody": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "name": { "type": "string", "minLength": 3, "maxLength": 8 },
+                              "status": { "type": "string", "enum": ["draft","published","archived"] },
+                              "score": { "type": "integer", "minimum": 1, "maximum": 100 }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "/things/{id}": {
+                  "get": { "operationId": "getThing", "tags": ["things"] }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        let n = run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+            edge_cases: true,
+        })
+        .unwrap();
+        // 1 happy for POST + 2 edge for POST + 1 happy for GET = 4.
+        assert_eq!(n, 4);
+        let happy = std::fs::read_to_string(out.join("things/createThing.curl")).unwrap();
+        let emin = std::fs::read_to_string(out.join("things/createThing.edge-min.curl")).unwrap();
+        let emax = std::fs::read_to_string(out.join("things/createThing.edge-max.curl")).unwrap();
+        // Happy-path: Tier 2 faker vocab wins over enum-first, so
+        // `status` becomes "active" (the canonical faker default).
+        assert!(
+            happy.contains(r#""status":"active""#),
+            "happy status: {happy}"
+        );
+        // Min-edge picks the LAST enum ("archived") and boundary score=1.
+        assert!(
+            emin.contains(r#""status":"archived""#),
+            "min status: {emin}"
+        );
+        assert!(emin.contains(r#""score":1"#), "min score: {emin}");
+        // Max-edge picks the FIRST enum ("draft") and boundary score=100.
+        assert!(emax.contains(r#""status":"draft""#), "max status: {emax}");
+        assert!(emax.contains(r#""score":100"#), "max score: {emax}");
+        // GET has no body → no edge variants emitted.
+        assert!(!out.join("things/getThing.edge-min.curl").exists());
+    }
+
+    #[test]
+    fn edge_cases_flag_off_by_default_produces_only_happy_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/things": {
+                  "post": {
+                    "operationId": "createThing",
+                    "tags": ["things"],
+                    "requestBody": {
+                      "content": {
+                        "application/json": {
+                          "schema": { "type": "object" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+            edge_cases: false,
+        })
+        .unwrap();
+        assert!(out.join("things/createThing.curl").exists());
+        assert!(!out.join("things/createThing.edge-min.curl").exists());
+        assert!(!out.join("things/createThing.edge-max.curl").exists());
     }
 
     #[test]
@@ -1527,6 +1900,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let login_body = std::fs::read_to_string(out.join("auth/login.curl")).unwrap();
@@ -1583,6 +1957,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("auth/signIn.curl")).unwrap();
@@ -1617,6 +1992,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let has_chain = std::fs::read_dir(&out)
@@ -1655,6 +2031,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/getThing.curl")).unwrap();
@@ -1717,6 +2094,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("customers/createCustomer.curl")).unwrap();
@@ -1768,6 +2146,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
@@ -1807,6 +2186,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
@@ -1848,6 +2228,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
@@ -1881,6 +2262,7 @@ mod tests {
             out: out.clone(),
             base_url: None,
             normalize: false,
+            edge_cases: false,
         })
         .unwrap();
         // 2026-07-09 — hyphens (matches rqst-parity `sanitize`).

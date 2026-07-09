@@ -555,9 +555,10 @@ fn sync_check_subcommand(argv: Vec<String>) -> ExitCode {
 }
 
 fn discover_subcommand(argv: Vec<String>) -> ExitCode {
-    let usage = "usage: mnml discover SPEC [--out DIR] [--base-url URL]\n  SPEC is a local OpenAPI/Swagger JSON file or an http(s):// URL";
+    let usage = "usage: mnml discover SPEC [--out DIR] [--base-url URL] [--normalize] [--edge-cases]\n  SPEC is a local OpenAPI/Swagger JSON file or an http(s):// URL";
     let (mut spec, mut out, mut base_url) = (None::<String>, None::<PathBuf>, None::<String>);
     let mut normalize = false;
+    let mut edge_cases = false;
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -576,6 +577,7 @@ fn discover_subcommand(argv: Vec<String>) -> ExitCode {
                 }
             },
             "--normalize" | "-n" => normalize = true,
+            "--edge-cases" | "-e" => edge_cases = true,
             "-h" | "--help" => {
                 println!("{usage}");
                 return ExitCode::SUCCESS;
@@ -601,6 +603,7 @@ fn discover_subcommand(argv: Vec<String>) -> ExitCode {
         out: out.clone(),
         base_url,
         normalize,
+        edge_cases,
     }) {
         Ok(n) => {
             println!("wrote {n} .curl stub(s) under {}", out.display());
