@@ -27,7 +27,7 @@ use crate::ui::{icons, theme};
 /// the verb in its method color while the URL/name takes the
 /// regular fg. Returns `None` for non-Request labels or unusual
 /// verbs — the caller falls back to a single-color label.
-fn split_http_verb(name: &str) -> Option<(String, String)> {
+pub(crate) fn split_http_verb(name: &str) -> Option<(String, String)> {
     for verb in &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
         if let Some(rest) = name.strip_prefix(verb) {
             let rest = rest.trim_start();
@@ -42,7 +42,7 @@ fn split_http_verb(name: &str) -> Option<(String, String)> {
 /// `✗N` (errors) / `⚠N` (warnings) / `""` for editor panes; `""` for everything
 /// else. Surfaced in the bufferline so broken buffers are visible without
 /// switching to them.
-fn diag_chip_for(p: &Pane) -> String {
+pub(crate) fn diag_chip_for(p: &Pane) -> String {
     if let Pane::Editor(b) = p {
         let mut err = 0usize;
         let mut warn = 0usize;
@@ -99,6 +99,226 @@ fn tab_labels(panes: &[Pane]) -> Vec<String> {
         }
     }
     titles
+}
+
+/// The shape of a single tab chip. Fed into `paint_tab_chip` by
+/// both the top bufferline (`draw`) and the per-leaf strip
+/// (`paint_leaf_tab_strip` in `ui::mod`). One source of truth for
+/// how a tab looks — pin/dirty/preview/active/close, diagnostics
+/// chip, Request-pane verb splitting. Callers stay responsible for
+/// layout math (overflow, right-cluster reservation) + rect
+/// registration.
+///
+/// 2026-07-08 — first cut of the tab-strip unification (stage 1 of
+/// 3). Kept opaque so future fields don't break call sites.
+#[derive(Clone)]
+pub struct TabChipInputs {
+    /// The pane id — carried through so the caller can register
+    /// click rects. Not read by `paint_tab_chip` itself.
+    pub id: crate::layout::PaneId,
+    /// Nerd-Font (or ASCII fallback) glyph shown at the left of
+    /// the chip. Empty string skips the icon slot (Request panes
+    /// use the METHOD chip in its place).
+    pub glyph: String,
+    /// Foreground color for the icon glyph.
+    pub icon_color: ratatui::style::Color,
+    /// Human-readable label (usually the pane title). Clipped to
+    /// the available width by the painter.
+    pub name: String,
+    pub is_active: bool,
+    pub is_dirty: bool,
+    pub is_pinned: bool,
+    pub is_preview: bool,
+    /// `""` for panes with no LSP / linter diagnostics; else a
+    /// short `"✗3"` (errors) or `"⚠2"` (warnings) chip that renders
+    /// between the name and the badge.
+    pub diag_chip: String,
+    /// `Some((verb, rest))` for Request panes whose label starts
+    /// with an HTTP verb — the painter renders the verb as a
+    /// solid-color badge on `icon_color`, then `rest` in the tab's
+    /// normal text style. `None` for everything else.
+    pub verb_split: Option<(String, String)>,
+    /// Cap (in cells) for the visible name portion. Longer names
+    /// get clipped with a `…` suffix. Chips still register a click
+    /// rect for their full painted width.
+    pub name_cap: usize,
+}
+
+/// Rects registered per-chip by `paint_tab_chip`. The caller
+/// pushes these into whichever vector its strip owns
+/// (`bufferline_tabs` vs `split_tab_chips`, etc.) — the painter
+/// doesn't touch `app.rects` directly.
+pub struct TabChipRects {
+    /// The full painted rect (`chip.x`, `chip.y`, `painted_w`, 1).
+    /// Click → switch active.
+    pub chip: Rect,
+    /// The trailing close/badge cells (last 2 cells) when the chip
+    /// carries an ACTIVE close-× badge and there's room for one.
+    /// `None` for pinned / dirty / inactive chips (their trailing
+    /// badge isn't a close target).
+    pub close: Option<Rect>,
+}
+
+/// Paint one tab chip at the given `area`, clipping to
+/// `avail_width`. Returns the painted rect + optional close rect
+/// so the caller can register click zones. `strip_bg` is the color
+/// of the strip beneath inactive chips (usually `t.bg_darker`).
+///
+/// Layout (all cells, from left):
+///
+///     " {glyph}  {name}[ {diag}] {badge} "
+///
+/// - `glyph` is skipped (2-cell reservation dropped) when
+///   `inputs.glyph.is_empty()`.
+/// - `{name}` becomes the two-span verb-chip + rest when
+///   `inputs.verb_split` is `Some`.
+/// - `{diag}` is dropped when `inputs.diag_chip.is_empty()`.
+/// - `{badge}` is the close/pin/dirty glyph.
+///
+/// 2026-07-08 stage-1 shared painter. Consumers: `bufferline::draw`
+/// (top strip) + `ui::mod::paint_leaf_tab_strip` (per-leaf).
+pub fn paint_tab_chip(
+    frame: &mut Frame,
+    area: Rect,
+    inputs: &TabChipInputs,
+    strip_bg: ratatui::style::Color,
+    avail_width: u16,
+    nerd: bool,
+) -> Option<TabChipRects> {
+    if avail_width == 0 {
+        return None;
+    }
+    let t = theme::cur();
+    // Clipped name.
+    let name_clipped = crate::ui::clip_to_cells(&inputs.name, inputs.name_cap);
+    // Badge glyph — priority: pinned > dirty > (active ? close : blank).
+    let pin_glyph = if nerd { "\u{f08d}" } else { "P" };
+    let close_glyph = if nerd { "\u{F0156}" } else { "x" };
+    let (badge, badge_fg_active, badge_fg_inactive) = if inputs.is_pinned {
+        (pin_glyph.to_string(), t.yellow, t.yellow)
+    } else if inputs.is_dirty {
+        ("●".to_string(), t.orange, t.orange)
+    } else if inputs.is_active {
+        (close_glyph.to_string(), t.red, t.grey)
+    } else {
+        (" ".to_string(), t.grey_fg, t.grey)
+    };
+    let skip_icon = inputs.glyph.is_empty();
+    // Precompute label cell width (matches the actual span layout
+    // below). ` <icon>  {name} {diag} {badge} ` with skip_icon
+    // dropping the icon segment (2 cells: glyph + gap).
+    let name_cells = name_clipped.chars().count() as u16;
+    let diag_cells = if inputs.diag_chip.is_empty() {
+        0
+    } else {
+        inputs.diag_chip.chars().count() as u16 + 1
+    };
+    // Verb chip adds a solid-bg " VERB " + separator space when
+    // present — replaces the plain name span, so account for verb
+    // length here.
+    let verb_extra = if let Some((verb, _)) = &inputs.verb_split {
+        // " VERB " (verb.len + 2) + separator space (1) → total
+        // adds verb.len+3 cells. Then the "rest" span replaces
+        // the name. name_clipped already counts the "rest" via
+        // `inputs.name` on the caller side, so we only add
+        // verb.len+3 as extra.
+        Some(verb.chars().count() as u16 + 3)
+    } else {
+        None
+    };
+    // ` <icon>  <name> [<diag> ]<badge> ` — icon segment is 4
+    // cells (space + glyph + 2-space gap) or 1 cell (bare space
+    // for skip_icon), then name, then 1 cell for the space after
+    // name, then diag if present (its own chars + 1 leading
+    // space accounted in `diag_cells`), then badge + trailing pad
+    // = 2 cells.
+    let icon_cells = if skip_icon { 1 } else { 4 };
+    let base_cells = icon_cells + name_cells + 1 /* space after name */ + diag_cells + 2 /* badge + pad */;
+    let chip_w = base_cells + verb_extra.unwrap_or(0);
+    let painted_w = chip_w.min(avail_width);
+    if painted_w == 0 {
+        return None;
+    }
+    let chip_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: painted_w,
+        height: 1,
+    };
+    // Colors: active = bg (light), inactive = strip_bg (dark).
+    let bg = if inputs.is_active { t.bg } else { strip_bg };
+    let name_fg = if inputs.is_active { t.fg } else { t.grey_fg };
+    let mut name_style = Style::default().fg(name_fg).bg(bg);
+    if inputs.is_active {
+        name_style = name_style.add_modifier(Modifier::BOLD);
+    }
+    if inputs.is_preview {
+        name_style = name_style.add_modifier(Modifier::ITALIC);
+    }
+    let badge_fg = if inputs.is_active {
+        badge_fg_active
+    } else {
+        badge_fg_inactive
+    };
+    // Build spans.
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    if skip_icon {
+        spans.push(Span::styled(" ".to_string(), Style::default().bg(bg)));
+    } else {
+        spans.push(Span::styled(
+            format!(" {}  ", inputs.glyph),
+            Style::default().fg(inputs.icon_color).bg(bg),
+        ));
+    }
+    if let Some((verb, rest)) = &inputs.verb_split {
+        // Solid-color verb chip: verb-color as bg, tab bg as text.
+        spans.push(Span::styled(
+            format!(" {verb} "),
+            Style::default()
+                .fg(bg)
+                .bg(inputs.icon_color)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(" ".to_string(), Style::default().bg(bg)));
+        spans.push(Span::styled(format!("{rest} "), name_style));
+    } else {
+        spans.push(Span::styled(format!("{name_clipped} "), name_style));
+    }
+    if !inputs.diag_chip.is_empty() {
+        let diag_fg = if inputs.diag_chip.starts_with('\u{2717}') {
+            t.red
+        } else {
+            t.yellow
+        };
+        spans.push(Span::styled(
+            format!("{} ", inputs.diag_chip),
+            Style::default().fg(diag_fg).bg(bg),
+        ));
+    }
+    spans.push(Span::styled(
+        format!("{badge} "),
+        Style::default().fg(badge_fg).bg(bg),
+    ));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
+        chip_rect,
+    );
+    // Close rect — active + non-pinned + non-dirty chips have a
+    // real close × in the trailing 2 cells (badge + pad).
+    let close = if inputs.is_active && !inputs.is_pinned && !inputs.is_dirty && painted_w >= 2 {
+        Some(Rect {
+            x: chip_rect.x + chip_rect.width - 2,
+            y: chip_rect.y,
+            width: 2,
+            height: 1,
+        })
+    } else {
+        None
+    };
+    Some(TabChipRects {
+        chip: chip_rect,
+        close,
+    })
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {

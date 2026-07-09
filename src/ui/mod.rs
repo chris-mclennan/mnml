@@ -3403,6 +3403,13 @@ fn paint_leaf_tab_strip(
     let strip_right = strip.x + strip.width;
     let tabs_right = strip_right.saturating_sub(split_btns_total + mode_chip_w);
 
+    // 2026-07-08 stage-1 unification: per-chip painting now goes
+    // through `bufferline::paint_tab_chip` — the same function the
+    // top bufferline uses. Per-leaf chips gain diagnostics badges,
+    // Request-pane verb splitting, and pin/dirty/preview semantics
+    // identical to the top strip; the divergence that produced
+    // "gremlins" is gone. Layout math (overflow break, gap between
+    // chips) stays here; the caller still owns rect registration.
     for &id in tabs {
         if chip_x >= tabs_right {
             break;
@@ -3410,111 +3417,50 @@ fn paint_leaf_tab_strip(
         let Some(pane) = app.panes.get(id) else {
             continue;
         };
-        let is_active = id == active;
-        // Active chip: bg2 + bright fg. Inactive: bg_darker + dim fg.
-        let chip_bg = if is_active { t.bg2 } else { strip_bg };
-        let _ = leaf_focused;
-        let chip_fg = if is_active { t.fg } else { t.comment };
-        let title = pane.title();
-        let dirty = pane.is_dirty();
         let (glyph, icon_color) = icon_for_pane(pane, nerd);
-        let pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
-        let is_preview = matches!(pane, Pane::Editor(b) if b.is_preview);
-
-        // 2026-06-22 — pinned tabs keep the file-type glyph on
-        // the LEFT (so you can still see what kind of file it
-        // is) and show the pin indicator on the RIGHT where the
-        // close × would normally be. User-feedback.
-        let icon_text = glyph.to_string();
-
-        // chip = " <icon> <name> <•/⌹/×> "
-        let name_clipped = clip_to_cells(&title, chip_max_name_w);
-        let icon_w = icon_text.chars().count() as u16;
-        let name_w = name_clipped.chars().count() as u16;
-        // Status char priority:
-        //   dirty       → •  (orange — any tab)
-        //   pinned      → 📌  (yellow — any tab)
-        //   active+clean → ×  (red close — only active)
-        //   else        → space
-        let pin_glyph = if nerd { "\u{f08d}" } else { "P" };
-        // Pinned wins over dirty + active (matches VS Code).
-        let status_char = if pinned {
-            pin_glyph
-        } else if dirty {
-            "•"
-        } else if is_active {
-            "×"
+        let verb_split = if matches!(pane, Pane::Request(_)) {
+            crate::ui::bufferline::split_http_verb(&pane.title())
         } else {
-            " "
+            None
         };
-        let status_color = if pinned {
-            t.yellow
-        } else if dirty {
-            t.orange
-        } else if is_active {
-            t.red
-        } else {
-            chip_fg
+        let inputs = crate::ui::bufferline::TabChipInputs {
+            id,
+            glyph: glyph.to_string(),
+            icon_color,
+            name: pane.title(),
+            is_active: id == active,
+            is_dirty: pane.is_dirty(),
+            is_pinned: matches!(pane, Pane::Editor(b) if b.is_pinned),
+            is_preview: matches!(pane, Pane::Editor(b) if b.is_preview),
+            diag_chip: crate::ui::bufferline::diag_chip_for(pane),
+            verb_split,
+            name_cap: chip_max_name_w,
         };
-        let chip_w = 1 + icon_w + 1 + name_w + 1 + 1 + 1; // pad + icon + gap + name + gap + status + pad
-        // Clip to remaining space.
         let avail = tabs_right.saturating_sub(chip_x);
-        let painted_w = chip_w.min(avail);
-        if painted_w == 0 {
-            break;
-        }
-        let chip_rect = Rect {
-            x: chip_x,
-            y: strip.y,
-            width: painted_w,
-            height: 1,
-        };
-
-        // Build the line as a sequence of styled spans with the chip's bg.
-        let mut name_style = Style::default().fg(chip_fg).bg(chip_bg);
-        if is_active {
-            name_style = name_style.add_modifier(Modifier::BOLD);
-        }
-        if is_preview {
-            name_style = name_style.add_modifier(Modifier::ITALIC);
-        }
-        let line = Line::from(vec![
-            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
-            Span::styled(icon_text, Style::default().fg(icon_color).bg(chip_bg)),
-            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
-            Span::styled(name_clipped, name_style),
-            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
-            Span::styled(
-                status_char.to_string(),
-                Style::default().fg(status_color).bg(chip_bg),
-            ),
-            Span::styled(" ".to_string(), Style::default().bg(chip_bg)),
-        ]);
-        frame.render_widget(
-            Paragraph::new(line).style(Style::default().bg(chip_bg)),
-            chip_rect,
-        );
-
-        // Register click rects: whole chip → switch active.
-        // Active chip's × (4th-from-end of the chip) → close.
-        app.rects.split_tab_chips.push((chip_rect, active, id));
-        if is_active && painted_w >= 3 {
-            // The × sits at: pad(1) + icon(1) + gap(1) + name + gap(1) → 4+name_w from chip_x
-            // Actually let me compute it from the right: the trailing pad is 1, then × is 1.
-            let close_x = chip_rect.x + chip_rect.width.saturating_sub(2);
-            let close_rect = Rect {
-                x: close_x,
-                y: chip_rect.y,
-                width: 1,
+        let Some(rects) = crate::ui::bufferline::paint_tab_chip(
+            frame,
+            Rect {
+                x: chip_x,
+                y: strip.y,
+                width: 0,
                 height: 1,
-            };
-            app.rects.split_tab_close.push((close_rect, active, id));
+            },
+            &inputs,
+            strip_bg,
+            avail,
+            nerd,
+        ) else {
+            break;
+        };
+        app.rects.split_tab_chips.push((rects.chip, active, id));
+        if let Some(close) = rects.close {
+            app.rects.split_tab_close.push((close, active, id));
         }
-
-        chip_x = chip_x.saturating_add(painted_w);
+        chip_x = chip_x.saturating_add(rects.chip.width);
         // 1-cell gap between chips (strip bg shows through).
         chip_x = chip_x.saturating_add(1);
     }
+    let _ = leaf_focused;
 
     // #polish 2026-07-06 — mode chip (Preview / Edit) painted in the
     // strip between tabs and the split buttons.
