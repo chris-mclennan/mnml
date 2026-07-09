@@ -4336,6 +4336,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_format_body(),
         },
         Command {
+            id: "http.regenerate_body",
+            title: "HTTP: regenerate body dynamic values (fresh timestamps + UUIDs)",
+            group: "http",
+            // Rerolls every ISO 8601 timestamp and UUID in the
+            // body — concrete → concrete-fresh, template →
+            // template-then-fresh. One-click "give me another
+            // order" gesture for repeated fires.
+            keys: &[],
+            run: |app| app.http_regenerate_body(),
+        },
+        Command {
             id: "http.show_schema_errors",
             title: "HTTP: open scratch buffer with response schema validation errors",
             group: "http",

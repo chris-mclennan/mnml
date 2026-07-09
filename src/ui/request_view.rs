@@ -1299,6 +1299,12 @@ pub fn draw(
         // Format chip (JSON) sits above the primary side only —
         // the secondary side has its own tab strip + content.
         app.rects.request_format_button = paint_body_format_chip(frame, rp, left_rect, t);
+        // Regenerate chip sits IMMEDIATELY LEFT of the format chip
+        // (same tab-strip row). 2026-07-09 — one-click reroll of
+        // dynamic timestamps + UUIDs so users can fire "another
+        // order" without hand-editing.
+        app.rects.request_regenerate_button =
+            paint_body_regenerate_chip(frame, rp, left_rect, t, app.rects.request_format_button);
 
         // Divider (bg2 vertical bar between the two sides). Draggable.
         if let Some(div_rect) = divider_rect {
@@ -1400,6 +1406,7 @@ pub fn draw(
         }
     } else {
         app.rects.request_format_button = None;
+        app.rects.request_regenerate_button = None;
     }
 
     // ── Zone 2: Response ─────────────────────────────────────────
@@ -2121,6 +2128,73 @@ fn paint_body_format_chip(
         chip_text.to_string(),
         Style::default()
             .fg(t.cyan)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD),
+    )]);
+    frame.render_widget(
+        Paragraph::new(vec![line]).style(Style::default().bg(t.bg_dark)),
+        chip_rect,
+    );
+    Some(chip_rect)
+}
+
+/// `↻ Reroll` chip — paints immediately to the LEFT of the format
+/// chip (when present) on the Body-tab strip. Click → runs
+/// `http.regenerate_body`, which walks the JSON body and refreshes
+/// every ISO 8601 timestamp + lowercase UUID with fresh values.
+///
+/// Suppressed when the Body isn't JSON (matches the format chip's
+/// visibility) or when there's no format chip to anchor against
+/// on a too-narrow strip.
+/// 2026-07-09.
+fn paint_body_regenerate_chip(
+    frame: &mut Frame,
+    rp: &crate::request_pane::RequestPane,
+    tabs_rect: Rect,
+    t: theme::Theme,
+    format_chip: Option<Rect>,
+) -> Option<Rect> {
+    if rp.edit_tab != crate::request_pane::EditTab::Body {
+        return None;
+    }
+    let body = rp.request.body.as_deref().unwrap_or("");
+    if !matches!(detect_body_kind(body), Some("JSON")) {
+        return None;
+    }
+    let chip_text = " \u{21BB} Reroll ";
+    let chip_w = chip_text.chars().count() as u16;
+    // Anchor to the format chip's left edge minus 1 cell of gap.
+    // When there IS no format chip (narrow strip), fall back to
+    // right-aligning on the tabs_rect.
+    let (chip_x, chip_y) = if let Some(fc) = format_chip {
+        let x = fc.x.saturating_sub(chip_w).saturating_sub(1);
+        // Skip painting if it would collide with the tabs_rect
+        // left edge — no room.
+        if x < tabs_rect.x + 1 {
+            return None;
+        }
+        (x, fc.y)
+    } else {
+        let x = tabs_rect
+            .x
+            .saturating_add(tabs_rect.width)
+            .saturating_sub(chip_w)
+            .saturating_sub(1);
+        if x < tabs_rect.x + 1 {
+            return None;
+        }
+        (x, tabs_rect.y)
+    };
+    let chip_rect = Rect {
+        x: chip_x,
+        y: chip_y,
+        width: chip_w,
+        height: 1,
+    };
+    let line = Line::from(vec![Span::styled(
+        chip_text.to_string(),
+        Style::default()
+            .fg(t.green)
             .bg(t.bg_dark)
             .add_modifier(Modifier::BOLD),
     )]);

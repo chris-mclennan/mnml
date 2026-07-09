@@ -220,6 +220,13 @@ fn is_http_method(m: &str) -> bool {
 ///   matching user-defined constants that happen to be UUID-shaped.
 /// - Preserves the surrounding JSON string quotes (`"..."`) so the
 ///   result still parses as valid JSON.
+/// Public shim over `normalize_dynamic_values` so the palette-side
+/// `http.regenerate_body` command can reuse the exact same detection
+/// as the discover-side sync normalization.
+pub fn normalize_dynamic_values_public(body: &str) -> String {
+    normalize_dynamic_values(body)
+}
+
 fn normalize_dynamic_values(body: &str) -> String {
     use std::sync::OnceLock;
     static ISO_RX: OnceLock<regex::Regex> = OnceLock::new();

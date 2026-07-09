@@ -522,6 +522,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_format_body();
         return;
     }
+    // Click on the "↻ Reroll" chip → regenerate body dynamic values.
+    if let Some(r) = app.rects.request_regenerate_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_regenerate_body();
+        return;
+    }
     // Click on "</> Code" → open the Generate Code language
     // picker (Bruno-style).
     if let Some(r) = app.rects.request_code_button

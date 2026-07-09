@@ -1726,6 +1726,44 @@ impl App {
         }
     }
 
+    /// `http.regenerate_body` — refresh every dynamic value in the
+    /// active Request pane's body. Walks the body, finds ISO 8601
+    /// timestamps and lowercase UUIDs (whether concrete or already
+    /// `{{$dynamic}}` templates), and replaces each with a fresh
+    /// value. Reroll gesture for repeated sends: fire an order,
+    /// click ↻, fire another with new customer + order id + timestamp.
+    ///
+    /// 2026-07-09 Tier 1 companion — user request: "if i sent want
+    /// to send an order and then send another order its just a click
+    /// away to make new customer info and order id".
+    pub fn http_regenerate_body(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.regenerate_body: no active Request pane");
+            return;
+        };
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let body = match rp.request.body.as_deref() {
+                Some(b) if !b.trim().is_empty() => b.to_string(),
+                _ => {
+                    self.toast("http.regenerate_body: Body is empty");
+                    return;
+                }
+            };
+            // Two-step: (1) normalize concrete timestamp/UUID values
+            // back into `{{$dynamic}}` templates, (2) expand the
+            // templates to fresh concrete values via the runtime env.
+            // Net: every dynamic value in the body is refreshed
+            // regardless of whether the user last saw it as concrete
+            // or as a template.
+            let normalized = crate::http::discover::normalize_dynamic_values_public(&body);
+            let env = crate::http::template::EnvSet::empty();
+            let refreshed = crate::http::template::expand(&normalized, &env);
+            rp.body_cursor = refreshed.len();
+            rp.request.body = Some(refreshed);
+            self.toast("body: regenerated (fresh timestamps + UUIDs)");
+        }
+    }
+
     /// `http.format_body` — parse the active Request pane's Body
     /// as JSON and rewrite with 2-space indent. No-op if Body
     /// isn't valid JSON (toasts the parse error).
@@ -5962,6 +6000,37 @@ mod http_tests {
     use super::*;
 
     // ── extract_summary — drives the bufferline tab label ──
+
+    #[test]
+    fn regenerate_body_rerolls_concrete_timestamps_and_uuids() {
+        // Body has a stale timestamp + UUID. After regenerate, they
+        // should be different values (fresh from the runtime).
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        app.open_new_request_pane();
+        let stale = r#"{"orderId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","asOfDate":"2020-01-01T00:00:00.0000000Z","note":"keep"}"#.to_string();
+        if let Some(cur) = app.active
+            && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
+        {
+            rp.request.body = Some(stale.clone());
+        }
+        app.http_regenerate_body();
+        let out = app
+            .active
+            .and_then(|i| app.panes.get(i))
+            .and_then(|p| match p {
+                crate::pane::Pane::Request(rp) => rp.request.body.clone(),
+                _ => None,
+            })
+            .unwrap();
+        assert_ne!(out, stale, "body should change");
+        // Static text is preserved.
+        assert!(out.contains(r#""note":"keep""#), "note preserved: {out}");
+        // The stale UUID / date should NOT be in the output (fresh
+        // values replaced them).
+        assert!(!out.contains("aaaaaaaa-bbbb"), "stale uuid gone: {out}");
+        assert!(!out.contains("2020-01-01"), "stale date gone: {out}");
+    }
 
     #[test]
     fn extract_summary_picks_first_useful_comment() {
