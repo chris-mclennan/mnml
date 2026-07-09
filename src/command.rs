@@ -3813,6 +3813,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_sync_sources(),
         },
         Command {
+            id: "http.sync_check",
+            title: "HTTP: check for drift between swagger sources + on-disk stubs (dry run)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_sync_check(),
+        },
+        Command {
             id: "http.bench",
             title: "HTTP: bench active request 10× (concurrent)",
             group: "http",

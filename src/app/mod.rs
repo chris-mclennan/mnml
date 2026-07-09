@@ -3628,6 +3628,11 @@ pub struct App {
     /// while the background fetch is running; `App::tick` drains
     /// it. None when idle. Phase 2 of the rqst→mnml port-back.
     pub http_sync_rx: Option<std::sync::mpsc::Receiver<Result<(String, usize), String>>>,
+    /// In-flight `http.sync_check` worker result channel — same
+    /// shape as `http_sync_rx` but the string is the drift trace
+    /// (added/removed/changed report) instead of the sync trace,
+    /// and no writes happen. 2026-07-08.
+    pub http_sync_check_rx: Option<std::sync::mpsc::Receiver<Result<(String, usize), String>>>,
     /// In-flight `http.bench` worker result channel. Same shape /
     /// drain pattern as `http_sync_rx`; payload is the bench's
     /// trace string (multi-line summary the user will see in a
@@ -4799,6 +4804,7 @@ impl App {
             now_playing_rx: None,
             last_mixr_track_at: None,
             http_sync_rx: None,
+            http_sync_check_rx: None,
             http_bench_rx: None,
             http_bench_started: None,
             http_bench_progress: None,
@@ -12299,6 +12305,7 @@ impl App {
         self.maybe_auto_refresh_claude_agents();
         self.maybe_escalate_claude_kills();
         self.drain_http_sync_result();
+        self.drain_http_sync_check_result();
         self.drain_http_bench_result();
         self.drain_lookup_fire_result();
         // 2026-06-19 — keep started stamps in sync with rx. When

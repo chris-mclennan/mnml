@@ -3456,6 +3456,59 @@ impl App {
         self.toast("http.sync: fetching swagger sources…");
     }
 
+    /// `http.sync_check` — dry-run drift check. Fetches every
+    /// swagger source (same as `http.sync`) but generates into a
+    /// temp dir + diffs against the on-disk stub tree. Opens a
+    /// scratch pane with the added/removed/changed report; NO
+    /// writes to the real `.rqst/requests/` tree. Users who want
+    /// to know what changed upstream without touching their
+    /// current stubs run this first, then decide whether to
+    /// follow up with `http.sync`.
+    /// 2026-07-08 user request.
+    pub fn http_sync_check(&mut self) {
+        if self.http_sync_check_rx.is_some() {
+            self.toast("http.sync_check already running");
+            return;
+        }
+        let workspace = self.workspace.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = crate::http::sources::check_sync(&workspace);
+            let _ = tx.send(result);
+        });
+        self.http_sync_check_rx = Some(rx);
+        self.toast("http.sync_check: checking for drift…");
+    }
+
+    /// Drain the in-flight `http.sync_check` result. Called from
+    /// `App::tick`; opens the drift trace as a `[sync-check]`
+    /// scratch pane and toasts a summary.
+    pub fn drain_http_sync_check_result(&mut self) {
+        let Some(rx) = self.http_sync_check_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok((trace, drift))) => {
+                self.http_sync_check_rx = None;
+                if drift == 0 {
+                    self.toast("http.sync_check: clean — no drift");
+                } else {
+                    self.toast(format!("http.sync_check: {drift} file(s) differ"));
+                }
+                self.open_scratch_with_text("[sync-check]".into(), trace);
+            }
+            Ok(Err(e)) => {
+                self.http_sync_check_rx = None;
+                self.toast(format!("http.sync_check failed: {e}"));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.http_sync_check_rx = None;
+                self.toast("http.sync_check: worker dropped");
+            }
+        }
+    }
+
     /// Drain the in-flight `http.sync` result. Called from
     /// `App::tick`; no-op when nothing is pending or the worker
     /// hasn't responded yet.

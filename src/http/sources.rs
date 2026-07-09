@@ -94,6 +94,143 @@ pub fn load(workspace: &Path) -> Result<Option<Vec<Source>>, String> {
     Ok(Some(out))
 }
 
+/// Dry-run drift check — for each source, fetch the spec into a
+/// temp dir and diff the generated stubs against what's currently
+/// on disk under the source's `out`. Reports Added / Removed /
+/// Changed files per source; NO writes to the real `out` dirs.
+///
+/// Output shape mirrors `run_sync` — a trace string per source
+/// suitable for a scratch pane, plus a summary total. When there's
+/// zero drift, the trace is short + celebratory.
+///
+/// 2026-07-08 user request: "id like to be able to run something
+/// to check".
+pub fn check_sync(workspace: &Path) -> Result<(String, usize), String> {
+    let sources = match load(workspace)? {
+        Some(s) if !s.is_empty() => s,
+        Some(_) => return Err("sources.json is empty".into()),
+        None => {
+            return Err(format!(
+                "no sources.json found at {} or {}",
+                workspace.join(".mnml").join("sources.json").display(),
+                workspace.join(".rqst").join("sources.json").display(),
+            ));
+        }
+    };
+    let mut trace = String::new();
+    trace.push_str("# http.sync_check — drift report\n\n");
+    let mut total_drift: usize = 0;
+    for s in &sources {
+        if s.kind != "swagger" {
+            trace.push_str(&format!(
+                "## {}\n  skipping unsupported kind '{}'\n\n",
+                s.name, s.kind
+            ));
+            continue;
+        }
+        trace.push_str(&format!(
+            "## {}\n  spec: {}\n  compared against: {}\n",
+            s.name,
+            s.url,
+            s.out.display()
+        ));
+        // Generate into a temp dir. Best-effort cleanup at scope
+        // exit even on error paths (tempdir Drop handles it).
+        let tmp = match tempfile::TempDir::new() {
+            Ok(t) => t,
+            Err(e) => {
+                trace.push_str(&format!("  ERR: tempdir: {e}\n\n"));
+                continue;
+            }
+        };
+        let dargs = discover::Options {
+            spec: s.url.clone(),
+            out: tmp.path().to_path_buf(),
+            base_url: s.base_url_override.clone(),
+        };
+        if let Err(e) = discover::run(&dargs) {
+            trace.push_str(&format!("  ERR: discover: {e}\n\n"));
+            continue;
+        }
+        // Walk both trees, collect relative paths.
+        let generated = walk_curls(tmp.path());
+        let existing = walk_curls(&s.out);
+        let mut added: Vec<PathBuf> = generated
+            .keys()
+            .filter(|p| !existing.contains_key(*p))
+            .cloned()
+            .collect();
+        let mut removed: Vec<PathBuf> = existing
+            .keys()
+            .filter(|p| !generated.contains_key(*p))
+            .cloned()
+            .collect();
+        let mut changed: Vec<PathBuf> = generated
+            .iter()
+            .filter(|(p, new)| existing.get(*p).is_some_and(|old| old != *new))
+            .map(|(p, _)| p.clone())
+            .collect();
+        added.sort();
+        removed.sort();
+        changed.sort();
+        let drift = added.len() + removed.len() + changed.len();
+        total_drift += drift;
+        if drift == 0 {
+            trace.push_str("  clean — no drift\n\n");
+            continue;
+        }
+        trace.push_str(&format!(
+            "  drift: {} added, {} removed, {} changed\n",
+            added.len(),
+            removed.len(),
+            changed.len()
+        ));
+        for p in &added {
+            trace.push_str(&format!("    + {}\n", p.display()));
+        }
+        for p in &removed {
+            trace.push_str(&format!("    - {}\n", p.display()));
+        }
+        for p in &changed {
+            trace.push_str(&format!("    ~ {}\n", p.display()));
+        }
+        trace.push('\n');
+    }
+    trace.push_str(&format!(
+        "# summary — {} file(s) differ across all sources\n",
+        total_drift
+    ));
+    if total_drift > 0 {
+        trace.push_str("# run `:http.sync` to apply (overwrites existing stubs)\n");
+    }
+    Ok((trace, total_drift))
+}
+
+/// Walk `dir` recursively, return `{relative_path → contents}` for
+/// every `.curl` file. `None` on unreadable dir → empty map (a
+/// missing `out` dir is treated as "all generated files are
+/// ADDED"). File contents are read as UTF-8; non-UTF-8 files are
+/// skipped (unusual for .curl but safe).
+fn walk_curls(dir: &Path) -> std::collections::HashMap<PathBuf, String> {
+    let mut out = std::collections::HashMap::new();
+    fn walk(root: &Path, cur: &Path, acc: &mut std::collections::HashMap<PathBuf, String>) {
+        let Ok(rd) = fs::read_dir(cur) else { return };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                walk(root, &p, acc);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("curl")
+                && let Ok(text) = fs::read_to_string(&p)
+                && let Ok(rel) = p.strip_prefix(root)
+            {
+                acc.insert(rel.to_path_buf(), text);
+            }
+        }
+    }
+    walk(dir, dir, &mut out);
+    out
+}
+
 /// Run discover for each `kind == "swagger"` source. Returns a
 /// trace string (one line per source) so the TUI can render it in
 /// a pane like bench / chain output, plus the total count of stubs
