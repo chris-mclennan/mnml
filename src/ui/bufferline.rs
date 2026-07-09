@@ -377,17 +377,35 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let diag_chips: Vec<String> = app.panes.iter().map(diag_chip_for).collect();
     // Pre-compute each tab's display width so we can scroll the bufferline to
     // keep the active tab on screen (and show `‹`/`›` overflow indicators).
-    // Each tab is ` <icon> <name>[ <diag>] <badge> ` — base chrome is 4 cells
-    // + name; diag chip (if any) adds its own char count + a leading space.
+    // Matches `tab_chip_spans`'s width formula so the scroll math stays
+    // consistent with what's actually painted:
+    //   icon (4 or 1 for skip_icon)
+    //   + name
+    //   + 1 (space after name)
+    //   + diag (chars + 1 leading space, or 0)
+    //   + 2 (badge + trailing pad)
+    //   + verb_extra (verb len + 3, for Request-pane verb split)
     let widths: Vec<u16> = labels
         .iter()
+        .enumerate()
         .zip(&diag_chips)
-        .map(|(name, diag)| {
-            let mut w = 4u16 + name.chars().count() as u16 + 1u16;
-            if !diag.is_empty() {
-                w += diag.chars().count() as u16 + 1; // leading space
-            }
-            w
+        .map(|((idx, name), diag)| {
+            let pane = &app.panes[idx];
+            let skip_icon = matches!(pane, Pane::Request(_));
+            let icon_cells: u16 = if skip_icon { 1 } else { 4 };
+            let diag_cells: u16 = if diag.is_empty() {
+                0
+            } else {
+                diag.chars().count() as u16 + 1
+            };
+            let verb_extra: u16 = if matches!(pane, Pane::Request(_)) {
+                split_http_verb(name)
+                    .map(|(v, _)| v.chars().count() as u16 + 3)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            icon_cells + name.chars().count() as u16 + 1 + diag_cells + 2 + verb_extra
         })
         .collect();
     // 2026-06-27 — Pty panes (Claude / Codex / shell) are now
