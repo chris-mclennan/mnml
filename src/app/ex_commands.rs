@@ -3481,6 +3481,24 @@ impl App {
         } else if matches!(opt, "nohoverhelp" | "nohover_help" | "nohh") {
             self.config.ui.hover_help = false;
             self.toast("hover_help: off");
+        } else if matches!(opt, "autoformat" | "auto_format_body" | "af") {
+            self.config.http.auto_format_body = true;
+            self.toast("auto_format_body: on");
+            self.maybe_auto_format_active_body();
+        } else if matches!(opt, "noautoformat" | "noauto_format_body" | "noaf") {
+            self.config.http.auto_format_body = false;
+            self.toast("auto_format_body: off");
+        } else if matches!(opt, "autoformat!" | "auto_format_body!" | "af!") {
+            self.config.http.auto_format_body = !self.config.http.auto_format_body;
+            let state = if self.config.http.auto_format_body {
+                "on"
+            } else {
+                "off"
+            };
+            self.toast(format!("auto_format_body: {state}"));
+            if self.config.http.auto_format_body {
+                self.maybe_auto_format_active_body();
+            }
         } else if let Some(val) = opt
             .strip_prefix("mdengine=")
             .or_else(|| opt.strip_prefix("md_preview_engine="))

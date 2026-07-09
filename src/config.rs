@@ -374,6 +374,14 @@ pub struct HttpConfig {
     /// and workspace-root folders with ≥2 http files are surfaced),
     /// so this only picks the DEFAULT write location. 2026-07-06.
     pub collection_root: HttpCollectionRoot,
+    /// `[http] auto_format_body = true` — auto-prettify JSON request
+    /// bodies at key touchpoints (paste, send, load-from-file).
+    /// Same effect as clicking the `{ } Format` chip, but automatic.
+    /// Skips when the body doesn't parse as JSON — leaves whatever
+    /// the user typed intact. Default true (matches the "always
+    /// pretty" ask from 2026-07-08). Set `false` to preserve
+    /// hand-crafted compact bodies exactly.
+    pub auto_format_body: bool,
 }
 
 /// Root for new HTTP collections + scratch requests. The default
@@ -395,6 +403,7 @@ impl Default for HttpConfig {
         HttpConfig {
             default_env: None,
             collection_root: HttpCollectionRoot::Hidden,
+            auto_format_body: true,
         }
     }
 }
@@ -1609,6 +1618,8 @@ struct RawHttp {
     /// `"workspace"` (or `"in_tree"`) → HttpCollectionRoot::Workspace.
     /// Anything else → warn + default.
     collection_root: Option<String>,
+    /// See [`HttpConfig::auto_format_body`]. Default on.
+    auto_format_body: Option<bool>,
 }
 
 /// `[ws]` raw table (2026-07-03).
@@ -2247,6 +2258,9 @@ impl Config {
             if !trimmed.is_empty() {
                 self.http.default_env = Some(trimmed.to_string());
             }
+        }
+        if let Some(b) = raw.http.auto_format_body {
+            self.http.auto_format_body = b;
         }
         if let Some(cr) = raw.http.collection_root {
             let trimmed = cr.trim().to_ascii_lowercase();

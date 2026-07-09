@@ -4523,6 +4523,26 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_toggle_response_wrap(),
         },
         Command {
+            id: "http.toggle_auto_format_body",
+            title: "HTTP: toggle auto-format request body (paste/send/load)",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                app.config.http.auto_format_body = !app.config.http.auto_format_body;
+                let state = if app.config.http.auto_format_body {
+                    "on"
+                } else {
+                    "off"
+                };
+                app.toast(format!("auto_format_body: {state}"));
+                if app.config.http.auto_format_body {
+                    // Immediately format the currently-open body so
+                    // the toggle feels responsive.
+                    app.maybe_auto_format_active_body();
+                }
+            },
+        },
+        Command {
             id: "http.toggle_split_orientation",
             title: "HTTP: cycle Request/Response split orientation (Auto → Vertical → Horizontal)",
             group: "http",

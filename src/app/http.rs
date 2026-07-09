@@ -669,6 +669,10 @@ impl App {
             self.active = Some(new_id);
         }
         self.focus = crate::focus::Focus::Pane;
+        // Format the just-loaded body when auto-format is on.
+        // Files saved in prior sessions might have compressed bodies;
+        // this keeps the "always pretty" invariant.
+        self.maybe_auto_format_active_body();
         self.note_recent_file(path);
     }
 
@@ -1588,6 +1592,38 @@ impl App {
         }
         // 2) Start a fresh connection to the URL.
         self.ws_connect_to(&url);
+    }
+
+    /// Auto-format hook: fires the same logic as
+    /// `http_format_body` when `[http] auto_format_body = true` AND
+    /// the active pane's body parses as JSON. Silent on failure —
+    /// leaves the user's typed body untouched. Called at key
+    /// touchpoints (paste, load-from-file, send) so bodies stay
+    /// pretty without any user action.
+    ///
+    /// 2026-07-08 user request: "an auto setting that autoformats
+    /// so it's always pretty".
+    pub fn maybe_auto_format_active_body(&mut self) {
+        if !self.config.http.auto_format_body {
+            return;
+        }
+        let Some(cur) = self.active else {
+            return;
+        };
+        let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
+            return;
+        };
+        let body = match rp.request.body.as_deref() {
+            Some(b) if !b.trim().is_empty() => b.to_string(),
+            _ => return,
+        };
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body)
+            && let Ok(pretty) = serde_json::to_string_pretty(&v)
+            && pretty != body
+        {
+            rp.body_cursor = pretty.len();
+            rp.request.body = Some(pretty);
+        }
     }
 
     /// `http.format_body` — parse the active Request pane's Body
@@ -3437,6 +3473,9 @@ impl App {
         };
         // From an existing request pane, `http.send` just re-fires it.
         if matches!(self.panes.get(cur), Some(Pane::Request(_))) {
+            // Auto-format the body before send so what gets fired
+            // matches what the user just saw pretty-printed.
+            self.maybe_auto_format_active_body();
             self.refire_request(cur);
             return;
         }
@@ -3748,6 +3787,9 @@ impl App {
             rp.focus = crate::request_pane::EditField::Url;
             rp.edit_tab = crate::request_pane::EditTab::Body;
         }
+        // Auto-format the just-pasted body when the config is on —
+        // curl paste often dumps a compressed one-line JSON blob.
+        self.maybe_auto_format_active_body();
         let preview = if raw.trim().len() > 56 {
             format!("{}…", &raw.trim()[..54])
         } else {
