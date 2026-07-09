@@ -427,15 +427,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             .max(8);
         let cols = RLayout::horizontal([Constraint::Min(1), Constraint::Length(w)]).split(upper);
         let resize_x = cols[1].x;
-        let grip_visible_h: u16 = 2;
-        let grip_hit_h: u16 = (grip_visible_h + 2).min(cols[1].height);
-        let grip_y = cols[1].y + cols[1].height.saturating_sub(grip_visible_h) / 2;
-        let grip_hit_y = grip_y.saturating_sub(1).max(cols[1].y);
+        // 2026-07-08 — drag hit rect is now the FULL edge column
+        // (was clamped to a 4-row band centered on the old grip
+        // glyph — that made the edge undraggable everywhere else
+        // once the grip visual was removed).
         app.rects.right_panel_edge = Some(Rect {
             x: resize_x.saturating_sub(1),
-            y: grip_hit_y,
+            y: cols[1].y,
             width: 3,
-            height: grip_hit_h,
+            height: cols[1].height,
         });
         (Some(cols[1]), cols[0])
     } else {
@@ -447,25 +447,21 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let (tree_area, right) = if app.tree_visible {
         let w = app.tree_width.min(upper.width.saturating_sub(20)).max(8);
         let cols = RLayout::horizontal([Constraint::Length(w), Constraint::Min(1)]).split(upper);
-        // The rail's resize handle is only the visible grip area —
-        // a 3-cell-wide × 4-row-tall band centered vertically on the
-        // rail. Wider hit zone (3 cols vs the 1-col visible grip)
-        // for trackpad findability per vscode-mouse-2026-06-10
-        // SEV-3 #6; taller hit area (4 rows vs the 2-row visible
-        // grip) gives an extra row of margin on each side. Restricts
-        // to the grip's y-range so clicking anywhere ELSE on the
-        // separator strip (e.g. on a right-aligned chip) doesn't
-        // initiate a drag. 2026-06-19 user-requested.
+        // 2026-07-08 — drag hit rect is now the FULL rail-right
+        // edge column (was clamped to a 4-row band centered on
+        // the old grip glyph so clicks OUTSIDE that band would
+        // fall through to rail chips; that made every other
+        // vertical position undraggable once the glyph came out).
+        // 3 cells wide × full rail height, centered on the
+        // separator column. Any right-aligned rail chip that
+        // overlaps this rect wins via `begin_tree_edge_drag`'s
+        // `tree_icon_buttons` short-circuit.
         let resize_x = cols[0].x + cols[0].width.saturating_sub(1);
-        let grip_visible_h: u16 = 2;
-        let grip_hit_h: u16 = (grip_visible_h + 2).min(cols[0].height);
-        let grip_visible_y = cols[0].y + cols[0].height.saturating_sub(grip_visible_h) / 2;
-        let grip_hit_y = grip_visible_y.saturating_sub(1).max(cols[0].y);
         app.rects.tree_edge = Some(Rect {
             x: resize_x.saturating_sub(1),
-            y: grip_hit_y,
+            y: cols[0].y,
             width: 3,
-            height: grip_hit_h,
+            height: cols[0].height,
         });
         (Some(cols[0]), cols[1])
     } else {
