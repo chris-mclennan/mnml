@@ -113,16 +113,7 @@ fn numeric_placeholder(key: &str) -> Option<Value> {
     // wired in now for the common cases). Emit as a *string* value
     // so the `{{ENV_VAR}}` template renders literally in the body;
     // downstream `template::expand` substitutes at fire time.
-    let env_var = match key {
-        "merchantid" | "restaurantid" | "storeid" => Some("MERCHANT_ID"),
-        "userid" | "accountid" | "customerid" => Some("USER_ID"),
-        "locationid" | "siteid" | "branchid" => Some("LOCATION_ID"),
-        "surveyid" => Some("SURVEY_ID"),
-        "orderid" | "transactionid" => Some("ORDER_ID"),
-        "productid" | "itemid" | "menuitemid" => Some("PRODUCT_ID"),
-        _ => None,
-    };
-    if let Some(name) = env_var {
+    if let Some(name) = id_env_var(key) {
         return Some(Value::String(format!("{{{{{name}}}}}")));
     }
     let n: i64 = match key {
@@ -159,6 +150,48 @@ fn bool_placeholder(key: &str) -> Option<Value> {
         _ => return None,
     };
     Some(Value::Bool(val))
+}
+
+/// Well-known-ID → env-var mapping. Given a property or path-param
+/// name, return the env-var it should reference. `None` for
+/// non-ID or unknown names.
+///
+/// Public so discover's path templater (`render_curl`) can reuse
+/// the exact same table for `{merchantId}` → `{{MERCHANT_ID}}`
+/// path substitution — Tier 4 of the dynamic-realistic roadmap.
+pub fn id_env_var(name: &str) -> Option<&'static str> {
+    let key = normalize_key(name);
+    match key.as_str() {
+        "merchantid" | "restaurantid" | "storeid" => Some("MERCHANT_ID"),
+        "userid" | "accountid" | "customerid" => Some("USER_ID"),
+        "locationid" | "siteid" | "branchid" => Some("LOCATION_ID"),
+        "surveyid" => Some("SURVEY_ID"),
+        "orderid" | "transactionid" => Some("ORDER_ID"),
+        "productid" | "itemid" | "menuitemid" => Some("PRODUCT_ID"),
+        "brandid" => Some("BRAND_ID"),
+        "questionnaireid" => Some("QUESTIONNAIRE_ID"),
+        "campaignid" => Some("CAMPAIGN_ID"),
+        _ => None,
+    }
+}
+
+/// Return every distinct env-var name this vocab knows about.
+/// Used to seed `.mnml/env/dev.env.example` so users see the
+/// full menu of overridable IDs at a glance.
+pub fn known_env_vars() -> Vec<&'static str> {
+    let mut out = vec![
+        "MERCHANT_ID",
+        "USER_ID",
+        "LOCATION_ID",
+        "SURVEY_ID",
+        "ORDER_ID",
+        "PRODUCT_ID",
+        "BRAND_ID",
+        "QUESTIONNAIRE_ID",
+        "CAMPAIGN_ID",
+    ];
+    out.sort();
+    out
 }
 
 /// Normalize a property name to a lowercase-alphanumeric key so

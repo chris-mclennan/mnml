@@ -261,19 +261,32 @@ fn render_curl(
     named: Option<&NamedExample>,
     normalize: bool,
 ) -> String {
-    // Path params `{id}` → `{{id}}`.
+    // Path params: `{id}` → `{{id}}`, plus Tier 4 well-known-ID
+    // upgrade. Buffer the param name between `{` and `}`, then
+    // check if it matches an env-var rule (`merchantId` →
+    // `MERCHANT_ID`, `userId` → `USER_ID`, etc). When it does,
+    // emit the env-var form so users tune once via
+    // `.mnml/env/dev.env` instead of hand-editing.
     let mut url_path = String::new();
+    let mut buf = String::new();
     let mut in_brace = false;
     for c in path.chars() {
         match c {
             '{' => {
                 in_brace = true;
-                url_path.push_str("{{");
+                buf.clear();
             }
             '}' if in_brace => {
                 in_brace = false;
-                url_path.push_str("}}");
+                let name = if let Some(env) = crate::http::faker::id_env_var(&buf) {
+                    env.to_string()
+                } else {
+                    buf.clone()
+                };
+                url_path.push_str(&format!("{{{{{name}}}}}"));
+                buf.clear();
             }
+            other if in_brace => buf.push(other),
             other => url_path.push(other),
         }
     }
@@ -969,6 +982,51 @@ mod tests {
         let body = std::fs::read_to_string(out.join("p/Ping.curl")).unwrap();
         assert!(body.contains(r#""id":"{{$uuid}}""#), "body: {body}");
         assert!(body.contains(r#""at":"{{$isoTimestamp}}""#), "body: {body}");
+    }
+
+    #[test]
+    fn path_params_upgrade_to_env_vars_when_named_as_wellknown_ids() {
+        // Tier 4: `{merchantId}` in the path → `{{MERCHANT_ID}}`,
+        // not `{{merchantId}}`. Unknown-name path params fall
+        // through to the existing camelCase templating.
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/merchants/{merchantId}/locations/{locationId}/thing/{thingId}": {
+                  "get": {
+                    "operationId": "getThing",
+                    "tags": ["things"]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(out.join("things/getThing.curl")).unwrap();
+        // merchantId + locationId are known → env vars.
+        assert!(
+            body.contains("/merchants/{{MERCHANT_ID}}/"),
+            "MERCHANT_ID: {body}"
+        );
+        assert!(
+            body.contains("/locations/{{LOCATION_ID}}/"),
+            "LOCATION_ID: {body}"
+        );
+        // thingId is unknown → keep the original name.
+        assert!(body.contains("/thing/{{thingId}}"), "unknown kept: {body}");
     }
 
     #[test]

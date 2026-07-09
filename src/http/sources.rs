@@ -309,8 +309,73 @@ pub fn run_sync_with_normalize(
             }
         }
     }
+    // Seed `.mnml/env/dev.env.example` with the well-known env
+    // vars discover references (Tier 4). Only touches the file
+    // when it doesn't exist — never clobbers a user's tuned copy.
+    if let Some(seeded) = maybe_seed_env_example(workspace) {
+        trace.push_str(&format!("\n[sync] seeded {}\n", seeded.display()));
+    }
     trace.push_str(&format!(
         "\n[sync] done — {ran} source(s), {total} request stub(s) total\n"
     ));
     Ok((trace, total))
+}
+
+/// If `<workspace>/.mnml/env/dev.env.example` doesn't exist yet,
+/// write a starter file listing the well-known env vars that
+/// discover's ID substitution + faker vocab reference. Users
+/// can `cp dev.env.example dev.env` and fill in values.
+///
+/// Skipped when the file already exists (never clobbers). Returns
+/// the path when written; `None` otherwise.
+fn maybe_seed_env_example(workspace: &Path) -> Option<PathBuf> {
+    let dir = workspace.join(".mnml").join("env");
+    let path = dir.join("dev.env.example");
+    if path.exists() {
+        return None;
+    }
+    if fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    let mut contents = String::from(
+        "# Seeded by `mnml sync` on first run — 2026-07-09.\n\
+         # Well-known env vars that discover-generated stubs reference.\n\
+         # Copy to `dev.env` and fill in values for your workspace.\n\
+         \n\
+         BASE_URL=\n\
+         TOKEN=\n\
+         \n",
+    );
+    for v in crate::http::faker::known_env_vars() {
+        contents.push_str(&format!("{v}=\n"));
+    }
+    fs::write(&path, contents).ok().map(|_| path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maybe_seed_env_example_writes_starter_file_on_first_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = maybe_seed_env_example(dir.path()).expect("should write");
+        let text = fs::read_to_string(&out).unwrap();
+        assert!(text.contains("BASE_URL="), "starter contents: {text}");
+        assert!(text.contains("TOKEN="), "starter contents: {text}");
+        assert!(text.contains("MERCHANT_ID="), "starter contents: {text}");
+        assert!(text.contains("LOCATION_ID="), "starter contents: {text}");
+    }
+
+    #[test]
+    fn maybe_seed_env_example_leaves_existing_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let env_dir = dir.path().join(".mnml").join("env");
+        fs::create_dir_all(&env_dir).unwrap();
+        let path = env_dir.join("dev.env.example");
+        fs::write(&path, "USER_TUNED=1\n").unwrap();
+        let result = maybe_seed_env_example(dir.path());
+        assert!(result.is_none(), "should not touch existing file");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "USER_TUNED=1\n");
+    }
 }
