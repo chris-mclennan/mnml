@@ -622,21 +622,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // zone (or a drag is already in progress), paint the whole
         // edge column in the accent color so the user knows it's
         // draggable. Otherwise the column stays blank.
+        //
+        // Per-row `Paragraph::new(" ")` (not `Block::default()`) so
+        // it fully OVERWRITES the underlying cell — otherwise a
+        // scrollbar `│` glyph painted by whatever section is under
+        // the edge column shows through the cyan bg as a broken
+        // line. 2026-07-08 user report.
         if let Some(edge) = app.rects.tree_edge
             && (app.hover_tree_edge || app.dragging.is_some())
         {
             let t = theme::cur();
             let col_x = edge.x + edge.width / 2;
-            let edge_rect = Rect {
-                x: col_x,
-                y: edge.y,
-                width: 1,
-                height: edge.height,
-            };
-            frame.render_widget(
-                ratatui::widgets::Block::default().style(Style::default().bg(t.cyan)),
-                edge_rect,
-            );
+            for dy in 0..edge.height {
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(" ").style(Style::default().bg(t.cyan)),
+                    Rect::new(col_x, edge.y + dy, 1, 1),
+                );
+            }
         }
     } else {
         app.rects.tree = None;
@@ -1165,21 +1167,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.rects.right_panel_empty_test = None;
         }
         // Hover-highlight edge (same idiom as the tree rail — no
-        // persistent grip glyph).
+        // persistent grip glyph). Per-row Paragraph so the paint
+        // overwrites any scrollbar `│` glyph sharing the column.
         if let Some(edge) = app.rects.right_panel_edge
             && (app.hover_right_panel_edge || app.dragging.is_some())
         {
             let col_x = edge.x + edge.width / 2;
-            let edge_rect = Rect {
-                x: col_x,
-                y: edge.y,
-                width: 1,
-                height: edge.height,
-            };
-            frame.render_widget(
-                ratatui::widgets::Block::default().style(Style::default().bg(t.cyan)),
-                edge_rect,
-            );
+            for dy in 0..edge.height {
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(" ").style(Style::default().bg(t.cyan)),
+                    Rect::new(col_x, edge.y + dy, 1, 1),
+                );
+            }
         }
     }
 
