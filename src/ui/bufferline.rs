@@ -1459,4 +1459,261 @@ mod tests {
         let mode = pick_cluster_mode(0, 0, 0, 50, 4);
         assert_eq!(mode, None);
     }
+
+    // ── Stage-3 contract tests: TabChipInputs → tab_chip_spans ──
+    //
+    // These lock the visual identity of a tab chip across every
+    // combination of {active, dirty, pinned, preview, close, diag,
+    // verb}. Both the top bufferline and per-leaf strips call
+    // `tab_chip_spans`; if any state gets rendered inconsistently
+    // between them, one of these tests fails.
+
+    fn base_inputs() -> TabChipInputs {
+        TabChipInputs {
+            id: 0,
+            glyph: "R".to_string(),
+            icon_color: crate::ui::theme::cur().cyan,
+            name: "file.rs".to_string(),
+            is_active: false,
+            is_dirty: false,
+            is_pinned: false,
+            is_preview: false,
+            diag_chip: String::new(),
+            verb_split: None,
+            name_cap: 32,
+        }
+    }
+
+    /// Concatenate a span vec into a raw string (glyphs, no
+    /// styles) so tests can assert on what actually reads on
+    /// screen.
+    fn spans_to_text(spans: &[ratatui::text::Span<'_>]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+    }
+
+    #[test]
+    fn chip_inactive_reads_glyph_name_and_blank_badge() {
+        let (spans, w) = tab_chip_spans(&base_inputs(), theme::cur().bg_darker, 40, true)
+            .expect("chip should paint");
+        let text = spans_to_text(&spans);
+        assert!(text.contains("R"), "icon glyph missing: {text:?}");
+        assert!(text.contains("file.rs"), "name missing: {text:?}");
+        // ` R  file.rs   ` — trailing space is the "blank badge"
+        // for inactive-clean chips.
+        assert!(
+            text.trim_end().ends_with("file.rs"),
+            "trailing badge should be blank space: {text:?}"
+        );
+        assert_eq!(
+            w,
+            text.chars().count() as u16,
+            "reported width must match painted width"
+        );
+    }
+
+    #[test]
+    fn chip_active_ends_with_close_glyph() {
+        let inputs = TabChipInputs {
+            is_active: true,
+            ..base_inputs()
+        };
+        let (spans, _) = tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true).unwrap();
+        let text = spans_to_text(&spans);
+        // Close glyph is nerd `\u{F0156}` in nerd mode.
+        assert!(
+            text.contains('\u{F0156}'),
+            "active chip should render close glyph: {text:?}"
+        );
+    }
+
+    #[test]
+    fn chip_pinned_wins_over_dirty_over_close() {
+        // pinned + dirty + active → pin glyph in badge slot.
+        let pin_glyph = '\u{f08d}';
+        let inputs = TabChipInputs {
+            is_active: true,
+            is_dirty: true,
+            is_pinned: true,
+            ..base_inputs()
+        };
+        let text = spans_to_text(
+            &tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true)
+                .unwrap()
+                .0,
+        );
+        assert!(
+            text.contains(pin_glyph),
+            "pinned should win over dirty/close: {text:?}"
+        );
+        assert!(
+            !text.contains('\u{F0156}'),
+            "close glyph should be absent when pinned: {text:?}"
+        );
+    }
+
+    #[test]
+    fn chip_dirty_shows_orange_dot_badge() {
+        let inputs = TabChipInputs {
+            is_dirty: true,
+            ..base_inputs()
+        };
+        let text = spans_to_text(
+            &tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true)
+                .unwrap()
+                .0,
+        );
+        assert!(text.contains('●'), "dirty chip missing • badge: {text:?}");
+    }
+
+    #[test]
+    fn chip_preview_carries_italic_modifier() {
+        let inputs = TabChipInputs {
+            is_preview: true,
+            ..base_inputs()
+        };
+        let spans = tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true)
+            .unwrap()
+            .0;
+        let name_span = spans
+            .iter()
+            .find(|s| s.content.contains("file.rs"))
+            .expect("name span present");
+        assert!(
+            name_span
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::ITALIC),
+            "preview name should be italic"
+        );
+    }
+
+    #[test]
+    fn chip_diagnostic_error_renders_red_chip_between_name_and_badge() {
+        let inputs = TabChipInputs {
+            diag_chip: "\u{2717}3".to_string(),
+            ..base_inputs()
+        };
+        let spans = tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true)
+            .unwrap()
+            .0;
+        let text = spans_to_text(&spans);
+        let name_idx = text.find("file.rs").unwrap();
+        let diag_idx = text.find('\u{2717}').unwrap();
+        assert!(
+            diag_idx > name_idx,
+            "diag chip should sit right of the name"
+        );
+        // Error-severity ⚠ chip gets red fg.
+        let diag_span = spans
+            .iter()
+            .find(|s| s.content.contains('\u{2717}'))
+            .expect("diag span present");
+        assert_eq!(diag_span.style.fg, Some(theme::cur().red));
+    }
+
+    #[test]
+    fn chip_verb_split_renders_solid_verb_bg_before_url() {
+        let inputs = TabChipInputs {
+            glyph: String::new(), // skip_icon path
+            icon_color: theme::cur().green,
+            name: "https://api.example.com/foo".to_string(),
+            verb_split: Some(("GET".to_string(), "https://api.example.com/foo".to_string())),
+            ..base_inputs()
+        };
+        let spans = tab_chip_spans(&inputs, theme::cur().bg_darker, 60, true)
+            .unwrap()
+            .0;
+        let text = spans_to_text(&spans);
+        let verb_idx = text.find("GET").unwrap();
+        let url_idx = text.find("api.example.com").unwrap();
+        assert!(verb_idx < url_idx, "verb should render before url");
+        // The verb span itself carries a solid bg equal to the
+        // method color (`icon_color`).
+        let verb_span = spans
+            .iter()
+            .find(|s| s.content.contains(" GET "))
+            .expect("verb span present");
+        assert_eq!(verb_span.style.bg, Some(theme::cur().green));
+    }
+
+    #[test]
+    fn chip_reports_true_painted_width_including_verb_extra() {
+        // Verb splitting adds `verb_len + 3` cells. Regression
+        // lock — the width the top bufferline uses for scroll
+        // math has been off by these cells historically.
+        let inputs = TabChipInputs {
+            glyph: String::new(),
+            icon_color: theme::cur().green,
+            name: "url".to_string(),
+            verb_split: Some(("GET".to_string(), "url".to_string())),
+            ..base_inputs()
+        };
+        let (spans, w) = tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true).unwrap();
+        let painted = spans
+            .iter()
+            .map(|s| s.content.chars().count())
+            .sum::<usize>() as u16;
+        assert_eq!(w, painted, "reported width must match summed span chars");
+    }
+
+    #[test]
+    fn chip_returns_none_when_avail_is_zero() {
+        assert!(tab_chip_spans(&base_inputs(), theme::cur().bg_darker, 0, true).is_none());
+    }
+
+    #[test]
+    fn chip_paint_registers_close_rect_only_for_active_clean_unpinned() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        // Grid so each case renders into its own scratch buffer.
+        let cases: Vec<(TabChipInputs, bool, &str)> = vec![
+            (base_inputs(), false, "inactive"),
+            (
+                TabChipInputs {
+                    is_active: true,
+                    ..base_inputs()
+                },
+                true,
+                "active-clean-unpinned",
+            ),
+            (
+                TabChipInputs {
+                    is_active: true,
+                    is_dirty: true,
+                    ..base_inputs()
+                },
+                false,
+                "active-dirty",
+            ),
+            (
+                TabChipInputs {
+                    is_active: true,
+                    is_pinned: true,
+                    ..base_inputs()
+                },
+                false,
+                "active-pinned",
+            ),
+        ];
+        for (inputs, expect_close, label) in cases {
+            let mut term = Terminal::new(TestBackend::new(40, 1)).unwrap();
+            let mut got_close = false;
+            term.draw(|f| {
+                let rects = paint_tab_chip(
+                    f,
+                    Rect::new(0, 0, 40, 1),
+                    &inputs,
+                    theme::cur().bg_darker,
+                    40,
+                    true,
+                );
+                got_close = rects.and_then(|r| r.close).is_some();
+            })
+            .unwrap();
+            assert_eq!(
+                got_close, expect_close,
+                "close-rect presence mismatch for {label}"
+            );
+        }
+    }
 }
