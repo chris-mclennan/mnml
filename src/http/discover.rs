@@ -97,7 +97,15 @@ pub fn run(opts: &Options) -> Result<usize, String> {
         .ok_or("spec has no `paths`")?;
     std::fs::create_dir_all(&opts.out).map_err(|e| format!("mkdir {}: {e}", opts.out.display()))?;
 
+    // Tier 6 — track login-shaped endpoints per tag and every
+    // request file we write, so a `.chain.json` template per tag
+    // (containing a login endpoint) can be emitted after the main
+    // loop as a starter chain.
     let mut count = 0usize;
+    let mut login_by_tag: std::collections::BTreeMap<String, ChainStep> =
+        std::collections::BTreeMap::new();
+    let mut requests_by_tag: std::collections::BTreeMap<String, Vec<ChainStep>> =
+        std::collections::BTreeMap::new();
     for (path, methods) in paths {
         let Some(methods) = methods.as_object() else {
             continue;
@@ -132,12 +140,25 @@ pub fn run(opts: &Options) -> Result<usize, String> {
             // — with each example's `.value` as the body. Falls
             // through to the default (one stub, `example`/schema-
             // synthesized body) when the map is absent.
+            let hints = login_extract_hints(path, &method.to_uppercase(), op, &spec);
             let named = collect_named_examples(op);
             if named.is_empty() {
                 let curl = render_curl(&base_url, path, method, op, &spec, None, opts.normalize);
                 let file = dir.join(format!("{file_base}.curl"));
                 std::fs::write(&file, curl)
                     .map_err(|e| format!("write {}: {e}", file.display()))?;
+                let rel = format!("{folder}/{file_base}.curl");
+                let step = ChainStep {
+                    request: rel,
+                    extract: hints.clone(),
+                };
+                if !hints.is_empty() {
+                    login_by_tag.entry(folder.clone()).or_insert(step.clone());
+                }
+                requests_by_tag
+                    .entry(folder.clone())
+                    .or_default()
+                    .push(step);
                 count += 1;
             } else {
                 for named in named {
@@ -154,12 +175,85 @@ pub fn run(opts: &Options) -> Result<usize, String> {
                     let file = dir.join(format!("{file_base}.{safe}.curl"));
                     std::fs::write(&file, curl)
                         .map_err(|e| format!("write {}: {e}", file.display()))?;
+                    let rel = format!("{folder}/{file_base}.{safe}.curl");
+                    let step = ChainStep {
+                        request: rel,
+                        extract: hints.clone(),
+                    };
+                    if !hints.is_empty() {
+                        login_by_tag.entry(folder.clone()).or_insert(step.clone());
+                    }
+                    requests_by_tag
+                        .entry(folder.clone())
+                        .or_default()
+                        .push(step);
                     count += 1;
                 }
             }
         }
     }
+    // Tier 6 — emit `.chain.json` starters per tag with a login
+    // endpoint. Chain lives at `<opts.out>/chains/<tag>-flow.chain.json`
+    // and contains the login step plus one representative non-login
+    // request from the same tag (picked deterministically). Users
+    // move to `.mnml/chains/` (or run sync, which handles the move
+    // for them) and edit from there.
+    emit_chain_templates(&opts.out, &login_by_tag, &requests_by_tag)?;
     Ok(count)
+}
+
+#[derive(Clone)]
+struct ChainStep {
+    request: String,
+    extract: Vec<(String, String)>,
+}
+
+fn emit_chain_templates(
+    out: &std::path::Path,
+    login_by_tag: &std::collections::BTreeMap<String, ChainStep>,
+    requests_by_tag: &std::collections::BTreeMap<String, Vec<ChainStep>>,
+) -> Result<(), String> {
+    if login_by_tag.is_empty() {
+        return Ok(());
+    }
+    // Chains live at the top of `opts.out`. Steps reference
+    // `<tag>/<file>.curl` — chain::resolve_request_path walks
+    // relative to the chain's own dir first, so `<out>/<tag>/<file>`
+    // resolves cleanly without needing `..` prefixes.
+    for (tag, login) in login_by_tag {
+        let mut steps: Vec<Value> = Vec::new();
+        steps.push(step_to_json(login));
+        if let Some(list) = requests_by_tag.get(tag)
+            && let Some(other) = list.iter().find(|s| s.request != login.request)
+        {
+            let mut step = other.clone();
+            step.extract.clear();
+            steps.push(step_to_json(&step));
+        }
+        let file = out.join(format!("{tag}-flow.chain.json"));
+        // Never clobber a user's chain — discover is a generator,
+        // not a source-of-truth for chains they've hand-edited.
+        if file.exists() {
+            continue;
+        }
+        let text = serde_json::to_string_pretty(&Value::Array(steps))
+            .map_err(|e| format!("serialize chain: {e}"))?;
+        std::fs::write(&file, text).map_err(|e| format!("write {}: {e}", file.display()))?;
+    }
+    Ok(())
+}
+
+fn step_to_json(step: &ChainStep) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("request".to_string(), Value::String(step.request.clone()));
+    if !step.extract.is_empty() {
+        let mut ex = serde_json::Map::new();
+        for (var, path) in &step.extract {
+            ex.insert(var.clone(), Value::String(format!("${path}")));
+        }
+        obj.insert("extract".to_string(), Value::Object(ex));
+    }
+    Value::Object(obj)
 }
 
 struct NamedExample {
@@ -334,6 +428,16 @@ fn render_curl(
         out.push_str(&format!("# example: {s}\n"));
     }
     out.push_str(&format!("# {method_upper} {path}\n"));
+    // Tier 6 — auto extract hints for login-shaped endpoints so
+    // chains can pick up an access token without the user reading
+    // the response schema. Rendered as `# extract: VAR=$.path`
+    // lines directly after the METHOD marker; `.chain.json` steps
+    // read the same syntax verbatim (see `chain::parse` for the
+    // parse side) and users can lift these into a chain step
+    // uncommented.
+    for (var, path_expr) in login_extract_hints(path, &method_upper, op, spec) {
+        out.push_str(&format!("# extract: {var}=${path_expr}\n"));
+    }
     // Body decision: named-example wins, then plain `.example`,
     // then schema synthesis. Passed to the header-line logic so
     // -X inference matches curl's own defaults.
@@ -426,6 +530,99 @@ fn render_curl(
         }
     }
     out
+}
+
+/// Detect login-shaped endpoints and return the `(var, json_path)`
+/// pairs a chain step should extract from the response — Tier 6 of
+/// the dynamic-realistic roadmap. `path` is the OpenAPI path,
+/// `method` the uppercase HTTP method, `op` the operation object,
+/// `spec` the full spec (for `$ref` walks into the response schema).
+///
+/// Rules — all HEURISTICS, deliberately narrow to avoid false
+/// positives. A returned hint that doesn't apply to the user's
+/// backend is a lint they can remove; a missed hint is silent.
+///
+/// 1. Path segment ending in one of: `login`, `signin`, `sign-in`,
+///    `sign_in`, `token`, `authenticate`, `oauth/token`, `sessions`.
+///    Case-insensitive on the last segment only.
+/// 2. Method must be POST (login endpoints don't GET).
+/// 3. If the response schema has a property named `access_token` /
+///    `accessToken` → extract `TOKEN=$.access_token` (or the actual
+///    key). Same for `refresh_token` → `REFRESH_TOKEN`. Same for
+///    `id_token` → `ID_TOKEN`.
+/// 4. When the response schema is unknown but the path is
+///    login-shaped, fall back to `TOKEN=$.access_token` as the
+///    conventional guess.
+fn login_extract_hints(
+    path: &str,
+    method: &str,
+    op: &Value,
+    spec: &Value,
+) -> Vec<(String, String)> {
+    if method != "POST" {
+        return Vec::new();
+    }
+    let last = path
+        .rsplit('/')
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let is_login = matches!(
+        last.as_str(),
+        "login" | "signin" | "sign-in" | "sign_in" | "token" | "authenticate" | "sessions"
+    );
+    if !is_login {
+        return Vec::new();
+    }
+    // Walk `responses.200 | 201 | default → .content."application/json".schema`
+    // (with `$ref` resolution) and pluck token-shaped property names.
+    let mut hints: Vec<(String, String)> = Vec::new();
+    let schema = op
+        .get("responses")
+        .and_then(Value::as_object)
+        .and_then(|responses| {
+            responses
+                .get("200")
+                .or_else(|| responses.get("201"))
+                .or_else(|| responses.get("default"))
+        })
+        .and_then(|r| r.get("content"))
+        .and_then(|c| c.get("application/json"))
+        .and_then(|j| j.get("schema"));
+    let props: Vec<String> = if let Some(schema) = schema {
+        let resolved = if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
+            resolve_ref(spec, r).unwrap_or(schema)
+        } else {
+            schema
+        };
+        resolved
+            .get("properties")
+            .and_then(Value::as_object)
+            .map(|p| p.keys().cloned().collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let mut push_if_matches = |candidates: &[&str], var: &str| {
+        for name in &props {
+            let key = name.to_ascii_lowercase().replace(['_', '-'], "");
+            if candidates.iter().any(|c| c == &key.as_str()) {
+                hints.push((var.to_string(), format!(".{name}")));
+                return;
+            }
+        }
+    };
+    push_if_matches(&["accesstoken", "token"], "TOKEN");
+    push_if_matches(&["refreshtoken"], "REFRESH_TOKEN");
+    push_if_matches(&["idtoken"], "ID_TOKEN");
+    // Fallback — path is login-shaped but response schema is unknown
+    // or lacks token-shaped fields. Assume `access_token` as the
+    // 90%-common convention (OAuth 2.0). Users prune if their API
+    // uses a different field.
+    if hints.is_empty() {
+        hints.push(("TOKEN".to_string(), ".access_token".to_string()));
+    }
+    hints
 }
 
 /// Collect query + header parameters from a swagger operation.
@@ -982,6 +1179,152 @@ mod tests {
         let body = std::fs::read_to_string(out.join("p/Ping.curl")).unwrap();
         assert!(body.contains(r#""id":"{{$uuid}}""#), "body: {body}");
         assert!(body.contains(r#""at":"{{$isoTimestamp}}""#), "body: {body}");
+    }
+
+    #[test]
+    fn login_endpoints_emit_extract_hints_and_chain_template() {
+        // Tier 6: a POST /auth/login with an access_token in the
+        // response schema gets `# extract: TOKEN=$.access_token` in
+        // the curl header and an `auth-flow.chain.json` starter.
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/auth/login": {
+                  "post": {
+                    "operationId": "login",
+                    "tags": ["auth"],
+                    "responses": {
+                      "200": {
+                        "content": {
+                          "application/json": {
+                            "schema": {
+                              "type": "object",
+                              "properties": {
+                                "access_token": { "type": "string" },
+                                "refresh_token": { "type": "string" }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "/auth/me": {
+                  "get": { "operationId": "getMe", "tags": ["auth"] }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let login_body = std::fs::read_to_string(out.join("auth/login.curl")).unwrap();
+        assert!(
+            login_body.contains("# extract: TOKEN=$.access_token"),
+            "extract TOKEN hint missing: {login_body}"
+        );
+        assert!(
+            login_body.contains("# extract: REFRESH_TOKEN=$.refresh_token"),
+            "extract REFRESH_TOKEN hint missing: {login_body}"
+        );
+        // getMe is not login-shaped → no extract hint.
+        let me_body = std::fs::read_to_string(out.join("auth/getMe.curl")).unwrap();
+        assert!(
+            !me_body.contains("# extract:"),
+            "non-login should have no extract hint: {me_body}"
+        );
+        // Chain template exists with login + one non-login step.
+        let chain_path = out.join("auth-flow.chain.json");
+        let chain_text = std::fs::read_to_string(&chain_path).unwrap();
+        let chain: serde_json::Value = serde_json::from_str(&chain_text).unwrap();
+        let steps = chain.as_array().unwrap();
+        assert_eq!(steps.len(), 2, "chain has 2 steps: {chain_text}");
+        assert_eq!(steps[0]["request"].as_str().unwrap(), "auth/login.curl");
+        assert_eq!(
+            steps[0]["extract"]["TOKEN"].as_str().unwrap(),
+            "$.access_token"
+        );
+        assert_eq!(steps[1]["request"].as_str().unwrap(), "auth/getMe.curl");
+    }
+
+    #[test]
+    fn login_extract_hint_falls_back_when_schema_absent() {
+        // A POST /login with no response schema → conventional
+        // `TOKEN=$.access_token` fallback still emitted.
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/login": {
+                  "post": { "operationId": "signIn", "tags": ["auth"] }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(out.join("auth/signIn.curl")).unwrap();
+        assert!(
+            body.contains("# extract: TOKEN=$.access_token"),
+            "fallback missing: {body}"
+        );
+    }
+
+    #[test]
+    fn no_chain_template_when_no_login_endpoint() {
+        // Tier 6 only emits chain templates for tags with login-
+        // shaped endpoints. A spec without any login → no chains.
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/things": {
+                  "get": { "operationId": "listThings", "tags": ["things"] }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let has_chain = std::fs::read_dir(&out)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().ends_with(".chain.json"));
+        assert!(!has_chain, "no chain template expected");
     }
 
     #[test]
