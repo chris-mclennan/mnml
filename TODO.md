@@ -516,6 +516,132 @@ splits (split horizontally, then split the resulting half
 vertically) or a real 4-way grid mode. Halves-only path is
 much cheaper to ship; consider phasing.
 
+### HTTP: dynamic + realistic request generation (roadmap)
+**Status:** roadmap captured 2026-07-09. User wants stubs that
+are "as dynamic and realistic as possible" — not just cleaner
+sync diffs but genuinely usable ready-to-fire scaffolds. A
+`↻ Regenerate` button on the Request pane rerolls example data
+for repeated sends without manual editing.
+
+**Tier 1 — dynamic value substitution (deterministic sync).**
+`--normalize` flag on `mnml discover` / `mnml sync` /
+`mnml sync-check` + palette `[http] sync_normalize = true`.
+When on:
+- ISO 8601 timestamp strings → `{{$timestamp}}`.
+- Lowercase UUIDs → `{{$uuid}}`.
+- Numeric ID fields where the name suggests randomness
+  (`orderId` as int, `requestId`) → `{{$randomInt}}`.
+Not substituted: date-only strings, epoch integers, uppercase
+UUIDs — too many false positives.
+Impact: swagger-side timestamp/UUID churn (117 files/sync on
+tattle-mnml-workspace) drops to zero.
+
+**Tier 2 — property-name-keyed faker vocab.** Small
+`src/http/faker.rs` module. When schema-synthesis has a
+`type: "string"` field with no example, look up the property
+name and emit a realistic value instead of `"string"`:
+- `firstName`/`givenName` → `"John"`
+- `lastName`/`familyName`/`surname` → `"Smith"`
+- `emailAddress`/`email` → `"user@example.com"`
+- `phoneNumber`/`phone` → `"555-0100"`
+- `city` → `"San Francisco"`
+- `zipCode`/`postalCode` → `"94105"`
+- `countryCode` → `"US"`
+- `currency` → `"USD"`
+- `merchantId`/`userId`/`accountId` → `{{MERCHANT_ID}}` etc
+  (env-var references, not literal ints)
+Similar heuristics for integer / enum types:
+- `quantity` / `count` → `1`
+- `price` / `amount` → `9.99`
+- Enum: prefer "active"-like values over "deactivated" /
+  "archived" / "cancelled" (skip words with `-ed` suffix
+  and negative prefixes when possible).
+
+**Tier 3 — coherent object graphs.** Cross-field consistency
+within a single body:
+- `firstName` + `lastName` on the same object → matched pair
+  ("John" + "Smith", not two independent picks).
+- `orderPlacedUtc` + `orderCompletedUtc` → picked ~30 min apart.
+- `amount` + `currency` + `total` → math still works out.
+- `email` matches `firstName.lastName@example.com` when both
+  are on the same object.
+
+**Tier 4 — well-known env-var relations.** Cross-request
+consistency:
+- Path params `{{merchantId}}` in URL, body, query all map to
+  the same `MERCHANT_ID` env var (not three independent
+  templates).
+- Ship `.mnml/env/dev.env.example` with the common vars
+  pre-seeded: `MERCHANT_ID=`, `USER_ID=`, `LOCATION_ID=`,
+  `BASE_URL=`.
+
+**Tier 5 — query params + headers from swagger `parameters`.**
+Currently only path params are templated; query and header
+params from swagger are silently dropped.
+- Required query params → `?filter={{filter}}` appended to URL.
+- Optional query params → commented-out `# ?filter=<value>`
+  hint below the curl line.
+- Header params → `-H '<name>: <example-or-template>'` in the
+  header block.
+
+**Tier 6 — auto chain generation + extract hints.**
+- `POST /*/auth/login` stubs get a comment
+  `# extract: TOKEN=$.access_token` documenting how a chain
+  should pull the token.
+- Endpoints returning `{ id: ... }` in the response schema
+  get `# extract: LAST_ID=$.id`.
+- Per-tag starter chains: `.mnml/chains/orders.chain.json`
+  auto-generated as `login → create → get → update → delete`
+  when the API surface has all four verbs on a resource.
+
+**Tier 7 — happy-path + edge-case variety.** Optional flag
+`--edge-cases` generates a `<base>.happy.curl` +
+`<base>.edge.curl` pair for each operation. Happy = default
+faker values. Edge = empty strings, min/max values, boundary
+enum values. Skip unless requested.
+
+**`↻ Regenerate` button on the Request pane.** Companion to
+tiers 1-3. Chip on the Request block header (near `{ } Format`
+and `↺ Refresh`). Click → walks the body, finds anything that
+LOOKS like a dynamic value we could have generated (via the
+same detection Tier 1 uses), and rerolls with fresh randoms.
+
+Rules:
+- Timestamps: new `now()` UTC.
+- UUIDs (lowercase, standard shape): new `uuid_v4()`.
+- Faker-vocab strings (matched against the small dictionary
+  from Tier 2): pick a new value from the same category the
+  original was in. E.g., `"John"` gets replaced by another
+  first name, not by a city.
+- Numeric IDs the tier-1 substitution would have caught: new
+  randints in the same range.
+- Do NOT touch: strings that don't match any known pattern
+  (probably user-authored), literal `{{$uuid}}` / `{{$timestamp}}`
+  templates already in place (those resolve at send anyway),
+  path parameters, headers.
+
+Right-click on the chip → menu:
+- Regenerate all (default click behavior)
+- Regenerate timestamps only
+- Regenerate UUIDs only
+- Regenerate faker fields only
+- Convert to `{{$dynamic}}` templates (opposite direction —
+  turn the concrete values back into placeholders so every
+  send is fresh without a click).
+
+Palette: `http.regenerate_body`, `http.convert_to_dynamic`.
+
+**Practical sequence (recommended):**
+1. Tier 1 — small, unblocks clean git history immediately.
+2. Tier 5 — real feature gap; query/header params make stubs
+   actually usable.
+3. Tier 2 — big usability jump; scoped to one new module.
+4. Regenerate button — depends on Tier 1 detection rules.
+5. Tier 4 — cross-request consistency; env-var convention.
+6. Tier 6 — auto chains; where mnml gets ahead of Postman/Bruno.
+7. Tier 3 — polish on top of Tier 2.
+8. Tier 7 — diminishing returns; skip unless requested.
+
 ### Activity sidebar: add / remove integrations from the UI + right-click menus
 **Status:** captured 2026-07-09 user request. "todo add integrations
 to the activity sidebar and removing. should probably also be in
