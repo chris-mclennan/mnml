@@ -270,6 +270,25 @@ fn render_curl(
             other => url_path.push(other),
         }
     }
+    // Query + header params from the swagger `parameters` array
+    // (2026-07-09 Tier 5). Required ones become part of the curl
+    // — `?filter={{filter}}` in the URL, `-H '<name>: {{value}}'`
+    // in the header block. Optional ones surface as commented
+    // hints below the curl so users can uncomment when needed
+    // without hunting the swagger.
+    let (required_query, optional_query, required_headers, optional_headers) =
+        collect_query_and_header_params(op, spec);
+    if !required_query.is_empty() {
+        url_path.push('?');
+        for (i, (name, value)) in required_query.iter().enumerate() {
+            if i > 0 {
+                url_path.push('&');
+            }
+            url_path.push_str(name);
+            url_path.push('=');
+            url_path.push_str(value);
+        }
+    }
     // Header block matches rqst's `render_curl` output byte-for-
     // byte: `accept` + `Authorization: Bearer {{TOKEN}}` on every
     // stub (rqst always emitted both; downstream users strip or
@@ -347,6 +366,9 @@ fn render_curl(
         "  -H 'accept: application/json'".to_string(),
         "  -H 'Authorization: Bearer {{TOKEN}}'".to_string(),
     ];
+    for (name, value) in &required_headers {
+        header_lines.push(format!("  -H '{name}: {value}'"));
+    }
     if body.is_some() {
         header_lines.push("  -H 'content-type: application/json'".to_string());
     }
@@ -371,7 +393,126 @@ fn render_curl(
     if let Some(b) = body {
         out.push_str(&format!("  --data-raw '{}'\n", b.replace('\'', "'\\''")));
     }
+    // Optional query / header params surface as commented hints so
+    // users can uncomment when needed.
+    if !optional_query.is_empty() || !optional_headers.is_empty() {
+        out.push('\n');
+        out.push_str("# Optional parameters (uncomment to use):\n");
+        for (name, value) in &optional_query {
+            out.push_str(&format!("#   ?{name}={value}\n"));
+        }
+        for (name, value) in &optional_headers {
+            out.push_str(&format!("#   -H '{name}: {value}'\n"));
+        }
+    }
     out
+}
+
+/// Collect query + header parameters from a swagger operation.
+/// Returns `(required_query, optional_query, required_headers,
+/// optional_headers)`. Each entry is `(name, value)` where `value`
+/// is either the parameter's example / default / enum-first / a
+/// `{{name}}` template placeholder (fallback).
+///
+/// Path-level `parameters` and operation-level `parameters` are
+/// merged; the operation's take precedence when a name collides.
+/// `$ref` in the parameters array is resolved through the spec's
+/// components.
+///
+/// Ports Swagger 2.0's `parameters.in` = `path|query|header|body`
+/// and OpenAPI 3's identical shape.
+///
+/// 2026-07-09 Tier 5.
+#[allow(clippy::type_complexity)]
+fn collect_query_and_header_params(
+    op: &Value,
+    spec: &Value,
+) -> (
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+    Vec<(String, String)>,
+) {
+    let mut req_q = Vec::new();
+    let mut opt_q = Vec::new();
+    let mut req_h = Vec::new();
+    let mut opt_h = Vec::new();
+    let params = op.get("parameters").and_then(Value::as_array);
+    let Some(params) = params else {
+        return (req_q, opt_q, req_h, opt_h);
+    };
+    for p in params {
+        // Resolve `$ref` if the parameter is a component reference.
+        let resolved = if let Some(r) = p.get("$ref").and_then(Value::as_str) {
+            match resolve_ref(spec, r) {
+                Some(v) => v,
+                None => continue,
+            }
+        } else {
+            p
+        };
+        let name = match resolved.get("name").and_then(Value::as_str) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let loc = resolved
+            .get("in")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(loc, "query" | "header") {
+            continue;
+        }
+        let required = resolved
+            .get("required")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let value = param_placeholder_value(resolved, &name);
+        let bucket = match (loc, required) {
+            ("query", true) => &mut req_q,
+            ("query", false) => &mut opt_q,
+            ("header", true) => &mut req_h,
+            ("header", false) => &mut opt_h,
+            _ => unreachable!(),
+        };
+        bucket.push((name, value));
+    }
+    (req_q, opt_q, req_h, opt_h)
+}
+
+/// Pick a placeholder value for a swagger parameter — favors
+/// `example` / `default` / `enum.first` / a `{{name}}` env-var
+/// template as the fallback so users can override via
+/// `.mnml/env/<env>.env` without hand-editing the curl.
+fn param_placeholder_value(param: &Value, name: &str) -> String {
+    // OpenAPI 3: `schema.example` / `schema.default` /
+    // `schema.enum[0]`. Swagger 2.0: fields on `param` directly.
+    let schema_or_self = param.get("schema").unwrap_or(param);
+    if let Some(ex) = schema_or_self.get("example") {
+        return json_to_string_flat(ex);
+    }
+    if let Some(default) = schema_or_self.get("default") {
+        return json_to_string_flat(default);
+    }
+    if let Some(en) = schema_or_self.get("enum").and_then(Value::as_array)
+        && let Some(first) = en.first()
+    {
+        return json_to_string_flat(first);
+    }
+    // Fallback: `{{camelCaseName}}` template placeholder.
+    format!("{{{{{name}}}}}")
+}
+
+/// Flatten a JSON value into a compact string suitable for
+/// embedding in a URL query or header value (no quotes; scalars
+/// as-is; objects/arrays JSON-stringified).
+fn json_to_string_flat(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        _ => v.to_string(),
+    }
 }
 
 /// Recursively synthesize an example JSON value from a schema.
@@ -795,6 +936,135 @@ mod tests {
         let body = std::fs::read_to_string(out.join("p/Ping.curl")).unwrap();
         assert!(body.contains(r#""id":"{{$uuid}}""#), "body: {body}");
         assert!(body.contains(r#""at":"{{$isoTimestamp}}""#), "body: {body}");
+    }
+
+    #[test]
+    fn required_query_params_become_url_query_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/things": {
+                  "get": {
+                    "operationId": "listThings",
+                    "tags": ["things"],
+                    "parameters": [
+                      { "name": "merchantId", "in": "query", "required": true,
+                        "schema": { "type": "integer" } },
+                      { "name": "status", "in": "query", "required": true,
+                        "schema": { "type": "string", "enum": ["active","inactive"] } }
+                    ]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
+        assert!(
+            body.contains("things?merchantId={{merchantId}}&status=active"),
+            "url query missing: {body}"
+        );
+    }
+
+    #[test]
+    fn required_header_params_become_dash_h_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/things": {
+                  "get": {
+                    "operationId": "listThings",
+                    "tags": ["things"],
+                    "parameters": [
+                      { "name": "X-Merchant-Id", "in": "header", "required": true,
+                        "schema": { "type": "string" } }
+                    ]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
+        assert!(
+            body.contains("-H 'X-Merchant-Id: {{X-Merchant-Id}}'"),
+            "header line missing: {body}"
+        );
+    }
+
+    #[test]
+    fn optional_params_surface_as_commented_hints() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/things": {
+                  "get": {
+                    "operationId": "listThings",
+                    "tags": ["things"],
+                    "parameters": [
+                      { "name": "cursor", "in": "query", "required": false,
+                        "schema": { "type": "string" } },
+                      { "name": "X-Debug", "in": "header", "required": false,
+                        "schema": { "type": "boolean", "default": false } }
+                    ]
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
+        assert!(
+            body.contains("# Optional parameters (uncomment to use):"),
+            "hint header missing: {body}"
+        );
+        assert!(
+            body.contains("#   ?cursor={{cursor}}"),
+            "cursor hint: {body}"
+        );
+        assert!(
+            body.contains("#   -H 'X-Debug: false'"),
+            "X-Debug hint (with default): {body}"
+        );
     }
 
     #[test]
