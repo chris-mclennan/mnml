@@ -516,9 +516,78 @@ splits (split horizontally, then split the resulting half
 vertically) or a real 4-way grid mode. Halves-only path is
 much cheaper to ship; consider phasing.
 
+### Activity sidebar: add / remove integrations from the UI + right-click menus
+**Status:** captured 2026-07-09 user request. "todo add integrations
+to the activity sidebar and removing. should probably also be in
+right click menus to edit or remove. iterate as much as needed i
+dont want to lose functionality."
+
+Current shape:
+- Integrations live in `.mnml/integrations/<id>.toml` (workspace)
+  or `~/.config/mnml/integrations/<id>.toml` (user).
+- The Integrations section on the activity sidebar reads
+  `App::config.ui.integration_icons` at render time.
+- Adding one today: manually author the TOML, then
+  `:integrations.refresh` to pick it up.
+- Removing: `:integration.uninstall <id>` OR delete the file
+  and refresh.
+
+What's missing (surface-level ergonomics):
+
+**1. `+ Add integration` chip at the bottom of the section.**
+Click → opens the marketplace picker (fuzzy over
+`family_catalog::CATALOG` + community manifests). Accept →
+downloads the sibling manifest, writes the TOML, refreshes.
+Same install flow as `:sibling.install` but reachable without
+palette-hunting.
+
+**2. Right-click menu on any Integration chip.**
+- Edit config (opens `<id>.toml` in an editor pane)
+- Toggle enabled (mirrors `:integration.toggle_enabled`)
+- Uninstall (with confirm)
+- Copy id to clipboard
+- View sibling repo (if the manifest has a `homepage` field)
+- Show in Finder (macOS) / File Manager
+
+**3. `- Remove` chip visible on hover.**
+Same idiom as HTTP-panel CAPTURED clear chip — an `×` that
+appears on the chip when the mouse is over it. Click → confirm
+prompt → remove.
+
+**4. Reorder via drag.**
+Chips accept vertical drag-drop; the ordering persists to a
+new `[ui] integration_order = ["id1","id2",...]` config key.
+Users who install 15 siblings currently can't reorder the
+common ones to the top.
+
+**5. Import from URL / paste manifest.**
+`+ Add integration` menu also offers "paste manifest…" — a
+prompt where the user pastes a TOML block. Saves to
+`.mnml/integrations/<id>.toml` after basic validation.
+Same shape as `+ New env` / `+ New chain` prompts already in
+the HTTP panel.
+
+Non-goals (deliberately):
+- In-app manifest EDITOR (grid / form). Config TOML in an editor
+  pane is fine — text is the canonical source.
+- Marketplace ratings / reviews. Local package management, not
+  a curation portal.
+
+Preserve functionality — the palette commands stay reachable
+(`:integration.install`, `:integration.uninstall`,
+`:integration.toggle_enabled`, `:integrations.refresh`) so
+scripts and IPC callers don't break. UI adds are additive.
+
 ### HTTP: discover should expand `requestBody.content.*.examples` (map)
-**Status:** captured 2026-07-09 — surfaced by running
-`mnml sync-check` on tattle-mnml-workspace. Big user gap.
+**Status: DONE 2026-07-09** — shipped in the same session.
+`src/http/discover.rs` now handles `.examples` map expansion +
+schema synthesis (ports both from `archived/rqst/src/discover.rs`).
+Tests added:
+`named_examples_map_expands_to_one_file_per_example`,
+`schema_synthesis_fills_body_when_no_example_provided`,
+`schema_synthesis_resolves_local_refs_and_survives_cycles`.
+
+Historical note (why the entry existed):
 
 Current: `src/http/discover.rs` handles `requestBody.content.
 "application/json".example` (SINGULAR — one example → filled
