@@ -37,20 +37,21 @@ pub fn paint_simple_scrollbar(
         return;
     }
     let cells = area.height as usize;
-    let track_glyph = "│".repeat(area.width as usize);
-    let thumb_glyph = "█".repeat(area.width as usize);
-    // Track — a dim `│` over `bg2`. Visible enough that the column
-    // edge reads as a scrollbar gutter even when the thumb isn't
-    // present (file fits in the viewport).
+    // 2026-07-08 user report: track glyph was `│` (thin box-drawings
+    // vertical) while thumb was `█` (full block). Mixed silhouettes
+    // read as a thin line running through the thumb instead of a
+    // clean scrollbar gutter. Now both use `█`: the track is a `█`
+    // in the dim `bg2` foreground on the same bg (so the column
+    // reads as a subtle recessed strip), the thumb is a brighter
+    // `█` in `comment` on top. Same width the whole way, no glyph
+    // switch.
+    let bar_glyph = "█".repeat(area.width as usize);
     for cy in 0..cells {
         frame.render_widget(
-            Paragraph::new(track_glyph.clone()).style(Style::default().fg(t.grey).bg(t.bg2)),
+            Paragraph::new(bar_glyph.clone()).style(Style::default().fg(t.bg2).bg(t.bg2)),
             Rect::new(area.x, area.y + cy as u16, area.width, 1),
         );
     }
-    // Thumb — `█` block in `comment` (mid-grey) on `bg2`. The block
-    // glyph + the contrast of fg vs the surrounding track make the
-    // thumb obviously visible.
     if total > viewport && viewport > 0 {
         let thumb_h = ((cells * viewport) / total).max(1);
         let max_scroll = total - viewport;
@@ -60,7 +61,7 @@ pub fn paint_simple_scrollbar(
             .unwrap_or(0);
         for cy in thumb_top..(thumb_top + thumb_h).min(cells) {
             frame.render_widget(
-                Paragraph::new(thumb_glyph.clone()).style(Style::default().fg(t.comment).bg(t.bg2)),
+                Paragraph::new(bar_glyph.clone()).style(Style::default().fg(t.comment).bg(t.bg2)),
                 Rect::new(area.x, area.y + cy as u16, area.width, 1),
             );
         }
@@ -136,10 +137,10 @@ mod tests {
         assert_eq!(row(10, 20, 0), "─".repeat(20));
     }
 
-    /// The vertical scrollbar paints `█` block-glyph thumb cells (fg
-    /// `comment`) over a `│` track (fg `grey`), both on `bg2`.
-    /// Detect thumb by the `█` symbol — that distinguishes thumb
-    /// cells from track cells regardless of bg.
+    /// Both track and thumb paint `█` (2026-07-08 — was `│` track
+    /// + `█` thumb, but the shape switch showed as a broken line
+    /// through the thumb). Distinguish by fg color: track fg =
+    /// `bg2` (invisible on bg2 bg), thumb fg = `comment`.
     #[test]
     fn simple_scrollbar_sizes_and_places_the_thumb() {
         let t = theme::onedark();
@@ -149,7 +150,7 @@ mod tests {
                 .unwrap();
             let buf = term.backend().buffer();
             (0..10u16)
-                .filter(|&y| buf[(0, y)].symbol() == "█")
+                .filter(|&y| buf[(0, y)].fg == t.comment)
                 .map(|y| y as usize)
                 .collect()
         };
