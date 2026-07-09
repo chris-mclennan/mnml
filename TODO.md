@@ -516,6 +516,48 @@ splits (split horizontally, then split the resulting half
 vertically) or a real 4-way grid mode. Halves-only path is
 much cheaper to ship; consider phasing.
 
+### HTTP: discover should expand `requestBody.content.*.examples` (map)
+**Status:** captured 2026-07-09 — surfaced by running
+`mnml sync-check` on tattle-mnml-workspace. Big user gap.
+
+Current: `src/http/discover.rs` handles `requestBody.content.
+"application/json".example` (SINGULAR — one example → filled
+into the stub body). Explicitly does NOT handle the plural
+`examples` (map of named examples).
+
+Impact on tattle workspace:
+- `tasks-api` swagger: 2 real operations, but `POST /admin/event`
+  has 219 named `examples`. Old rqst tool expanded that map into
+  203 `TriggerEvent.<eventName>.curl` files (one per event
+  type). Users navigated by event name via `Ctrl+O`.
+- `integrations-api`: 247 operations, 1 with a 133-entry
+  `examples` map. Existing 372 stubs = 247 + ~125 example
+  expansions. New discover generates 247, so ~125 are
+  effectively lost.
+
+Fix shape:
+- After emitting the "one stub per operation" default,
+  iterate `requestBody.content.<mime>.examples` for each
+  operation.
+- For each `(name, example)` pair:
+  - Emit an extra stub at `<tag>/<operationId>.<name>.curl`
+    (or nested subdir `<tag>/<operationId>/<name>.curl`).
+  - Fill the body with the named example's `.value` field.
+- Add an `Options.expand_examples: bool` flag (default `true`)
+  so users can opt out for surface-only discover.
+- README the new file-count expectation.
+
+Naming clash: existing tattle stubs use `TriggerEvent.<name>.curl`
+where TriggerEvent is the operationId. That's the same pattern
+the new expansion should produce. Keeps 1:1 filename parity
+with the old rqst tool → `mnml sync-check` becomes a clean
+"real drift" report on tattle workspaces.
+
+Related: `mnml sync-check` (shipped 7b3dff9 / 4f3c4f6) currently
+misreports 1959 files of drift on tattle-mnml-workspace almost
+entirely because of this feature regression. Once expansion is
+back, the drift number will collapse to actual API changes.
+
 ### HTTP: "Generate AI prompt" button on failed requests
 **Status:** captured 2026-07-09 user request.
 
