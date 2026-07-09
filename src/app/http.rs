@@ -3524,14 +3524,19 @@ impl App {
             return;
         }
         let workspace = self.workspace.clone();
+        let normalize = self.config.http.sync_normalize;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = crate::http::sources::run_sync(&workspace);
+            let result = crate::http::sources::run_sync_with_normalize(&workspace, normalize);
             let _ = tx.send(result);
         });
         self.http_sync_rx = Some(rx);
         self.http_sync_started = Some(std::time::Instant::now());
-        self.toast("http.sync: fetching swagger sources…");
+        self.toast(if normalize {
+            "http.sync: fetching swagger sources… (normalize on)"
+        } else {
+            "http.sync: fetching swagger sources…"
+        });
     }
 
     /// `http.sync_check` — dry-run drift check. Fetches every
@@ -3549,13 +3554,18 @@ impl App {
             return;
         }
         let workspace = self.workspace.clone();
+        let normalize = self.config.http.sync_normalize;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let result = crate::http::sources::check_sync(&workspace);
+            let result = crate::http::sources::check_sync_with_normalize(&workspace, normalize);
             let _ = tx.send(result);
         });
         self.http_sync_check_rx = Some(rx);
-        self.toast("http.sync_check: checking for drift…");
+        self.toast(if normalize {
+            "http.sync_check: checking for drift… (normalize on)"
+        } else {
+            "http.sync_check: checking for drift…"
+        });
     }
 
     /// Drain the in-flight `http.sync_check` result. Called from

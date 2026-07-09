@@ -3820,6 +3820,21 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_sync_check(),
         },
         Command {
+            id: "http.toggle_sync_normalize",
+            title: "HTTP: toggle sync normalization ({{$isoTimestamp}} / {{$uuid}} substitution)",
+            group: "http",
+            keys: &[],
+            run: |app| {
+                app.config.http.sync_normalize = !app.config.http.sync_normalize;
+                let state = if app.config.http.sync_normalize {
+                    "on"
+                } else {
+                    "off"
+                };
+                app.toast(format!("sync_normalize: {state}"));
+            },
+        },
+        Command {
             id: "http.bench",
             title: "HTTP: bench active request 10× (concurrent)",
             group: "http",

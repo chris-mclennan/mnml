@@ -3481,6 +3481,22 @@ impl App {
         } else if matches!(opt, "nohoverhelp" | "nohover_help" | "nohh") {
             self.config.ui.hover_help = false;
             self.toast("hover_help: off");
+        } else if matches!(opt, "syncnormalize" | "sync_normalize" | "sn") {
+            self.config.http.sync_normalize = true;
+            self.toast("sync_normalize: on");
+        } else if matches!(opt, "nosyncnormalize" | "nosync_normalize" | "nosn") {
+            self.config.http.sync_normalize = false;
+            self.toast("sync_normalize: off");
+        } else if matches!(opt, "syncnormalize!" | "sync_normalize!" | "sn!") {
+            self.config.http.sync_normalize = !self.config.http.sync_normalize;
+            self.toast(format!(
+                "sync_normalize: {}",
+                if self.config.http.sync_normalize {
+                    "on"
+                } else {
+                    "off"
+                }
+            ));
         } else if matches!(opt, "autoformat" | "auto_format_body" | "af") {
             self.config.http.auto_format_body = true;
             self.toast("auto_format_body: on");

@@ -106,6 +106,19 @@ pub fn load(workspace: &Path) -> Result<Option<Vec<Source>>, String> {
 /// 2026-07-08 user request: "id like to be able to run something
 /// to check".
 pub fn check_sync(workspace: &Path) -> Result<(String, usize), String> {
+    check_sync_with_normalize(workspace, false)
+}
+
+/// Same as `check_sync` but with an explicit `normalize` flag that
+/// turns Tier-1 dynamic-value substitution on/off on the discover
+/// side. When on, ISO 8601 timestamps and lowercase UUIDs in the
+/// generated bodies are compared as `{{$isoTimestamp}}` / `{{$uuid}}`
+/// — so swagger-side re-generation of those values stops registering
+/// as drift. 2026-07-09.
+pub fn check_sync_with_normalize(
+    workspace: &Path,
+    normalize: bool,
+) -> Result<(String, usize), String> {
     let sources = match load(workspace)? {
         Some(s) if !s.is_empty() => s,
         Some(_) => return Err("sources.json is empty".into()),
@@ -147,6 +160,7 @@ pub fn check_sync(workspace: &Path) -> Result<(String, usize), String> {
             spec: s.url.clone(),
             out: tmp.path().to_path_buf(),
             base_url: s.base_url_override.clone(),
+            normalize,
         };
         if let Err(e) = discover::run(&dargs) {
             trace.push_str(&format!("  ERR: discover: {e}\n\n"));
@@ -238,6 +252,18 @@ fn walk_curls(dir: &Path) -> std::collections::HashMap<PathBuf, String> {
 /// silently logged as skipped — forward-compat hook for future
 /// importers.
 pub fn run_sync(workspace: &Path) -> Result<(String, usize), String> {
+    run_sync_with_normalize(workspace, false)
+}
+
+/// Same as `run_sync` but with an explicit `normalize` flag
+/// (Tier-1 dynamic-value substitution). Writes stubs with
+/// `{{$isoTimestamp}}` / `{{$uuid}}` in place of concrete timestamp/
+/// UUID values so re-syncing produces byte-identical output modulo
+/// real API changes.
+pub fn run_sync_with_normalize(
+    workspace: &Path,
+    normalize: bool,
+) -> Result<(String, usize), String> {
     let sources = match load(workspace)? {
         Some(s) if !s.is_empty() => s,
         Some(_) => return Err("sources.json is empty".into()),
@@ -270,6 +296,7 @@ pub fn run_sync(workspace: &Path) -> Result<(String, usize), String> {
             spec: s.url.clone(),
             out: s.out.clone(),
             base_url: s.base_url_override.clone(),
+            normalize,
         };
         match discover::run(&dargs) {
             Ok(n) => {

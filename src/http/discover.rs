@@ -35,6 +35,13 @@ pub struct Options {
     pub out: PathBuf,
     /// Overrides the spec's `servers[0].url` (falls back to `{{BASE_URL}}`).
     pub base_url: Option<String>,
+    /// When `true`, walk each generated stub's JSON body and swap
+    /// ISO 8601 timestamp strings for `{{$isoTimestamp}}` and
+    /// lowercase-UUID strings for `{{$uuid}}`. Kills swagger-side
+    /// timestamp/UUID churn — every re-sync produces byte-identical
+    /// output modulo real API changes.
+    /// 2026-07-09 Tier 1 of the dynamic-realistic roadmap.
+    pub normalize: bool,
 }
 
 /// Returns the number of `.curl` files written.
@@ -127,7 +134,7 @@ pub fn run(opts: &Options) -> Result<usize, String> {
             // synthesized body) when the map is absent.
             let named = collect_named_examples(op);
             if named.is_empty() {
-                let curl = render_curl(&base_url, path, method, op, &spec, None);
+                let curl = render_curl(&base_url, path, method, op, &spec, None, opts.normalize);
                 let file = dir.join(format!("{file_base}.curl"));
                 std::fs::write(&file, curl)
                     .map_err(|e| format!("write {}: {e}", file.display()))?;
@@ -135,7 +142,15 @@ pub fn run(opts: &Options) -> Result<usize, String> {
             } else {
                 for named in named {
                     let safe = sanitize(&named.name);
-                    let curl = render_curl(&base_url, path, method, op, &spec, Some(&named));
+                    let curl = render_curl(
+                        &base_url,
+                        path,
+                        method,
+                        op,
+                        &spec,
+                        Some(&named),
+                        opts.normalize,
+                    );
                     let file = dir.join(format!("{file_base}.{safe}.curl"));
                     std::fs::write(&file, curl)
                         .map_err(|e| format!("write {}: {e}", file.display()))?;
@@ -192,6 +207,44 @@ fn is_http_method(m: &str) -> bool {
     )
 }
 
+/// Replace ISO 8601 timestamps and lowercase UUIDs found inside a
+/// JSON-body string with the corresponding `{{$dynamic}}` template
+/// vars. Applied after body serialization so both example-derived
+/// and schema-synthesized bodies get the treatment.
+///
+/// Rules (Tier 1, 2026-07-09):
+/// - ISO 8601: `\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}` optional `.fraction`,
+///   optional `Z` or `±HH:MM`. Distinctive enough that false positives
+///   on non-timestamp strings are near-zero.
+/// - UUID: 8-4-4-4-12 lowercase hex. Uppercase excluded to avoid
+///   matching user-defined constants that happen to be UUID-shaped.
+/// - Preserves the surrounding JSON string quotes (`"..."`) so the
+///   result still parses as valid JSON.
+fn normalize_dynamic_values(body: &str) -> String {
+    use std::sync::OnceLock;
+    static ISO_RX: OnceLock<regex::Regex> = OnceLock::new();
+    static UUID_RX: OnceLock<regex::Regex> = OnceLock::new();
+    let iso = ISO_RX.get_or_init(|| {
+        // JSON strings only — bounded by quotes — so we don't
+        // accidentally rewrite the same span twice. `?:` on the
+        // fractional-seconds group so it's optional.
+        regex::Regex::new(
+            r#""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?""#,
+        )
+        .expect("ISO regex")
+    });
+    let uuid = UUID_RX.get_or_init(|| {
+        regex::Regex::new(r#""[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}""#)
+            .expect("UUID regex")
+    });
+    // `NoExpand` — otherwise `$uuid` / `$isoTimestamp` in the
+    // replacement string would be treated as named-capture backrefs
+    // (regex crate convention) and resolve to empty strings.
+    let step1 = iso.replace_all(body, regex::NoExpand(r#""{{$isoTimestamp}}""#));
+    let step2 = uuid.replace_all(&step1, regex::NoExpand(r#""{{$uuid}}""#));
+    step2.into_owned()
+}
+
 fn render_curl(
     base_url: &str,
     path: &str,
@@ -199,6 +252,7 @@ fn render_curl(
     op: &Value,
     spec: &Value,
     named: Option<&NamedExample>,
+    normalize: bool,
 ) -> String {
     // Path params `{id}` → `{{id}}`.
     let mut url_path = String::new();
@@ -245,7 +299,11 @@ fn render_curl(
     // then schema synthesis. Passed to the header-line logic so
     // -X inference matches curl's own defaults.
     let body = if let Some(n) = named {
-        Some(n.body.clone())
+        Some(if normalize {
+            normalize_dynamic_values(&n.body)
+        } else {
+            n.body.clone()
+        })
     } else {
         op.get("requestBody")
             .and_then(|rb| rb.get("content"))
@@ -276,6 +334,13 @@ fn render_curl(
                 let mut visited: HashSet<String> = HashSet::new();
                 let synthesized = synth_example(schema, spec, &mut visited, 0);
                 serde_json::to_string(&synthesized).ok()
+            })
+            .map(|s| {
+                if normalize {
+                    normalize_dynamic_values(&s)
+                } else {
+                    s
+                }
             })
     };
     let mut header_lines: Vec<String> = vec![
@@ -461,6 +526,7 @@ mod tests {
             spec: spec.to_string_lossy().into_owned(),
             out: out.clone(),
             base_url: None,
+            normalize: false,
         })
         .unwrap();
         assert_eq!(n, 3);
@@ -524,6 +590,7 @@ mod tests {
             spec: spec.to_string_lossy().into_owned(),
             out: out.clone(),
             base_url: None,
+            normalize: false,
         })
         .unwrap();
         assert_eq!(n, 2, "should emit one stub per named example");
@@ -588,6 +655,7 @@ mod tests {
             spec: spec.to_string_lossy().into_owned(),
             out: out.clone(),
             base_url: None,
+            normalize: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/CreateThing.curl")).unwrap();
@@ -651,11 +719,82 @@ mod tests {
             spec: spec.to_string_lossy().into_owned(),
             out: out.clone(),
             base_url: None,
+            normalize: false,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("nodes/PostNode.curl")).unwrap();
         // "id" must be filled; "child" nullifies at the cycle break.
         assert!(body.contains(r#""id":0"#), "cycle-broken body: {body}");
+    }
+
+    #[test]
+    fn normalize_replaces_iso_timestamps_and_uuids() {
+        let raw = r#"{"orderId":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","asOfDate":"2026-07-09T17:35:39.4944815Z","label":"OrderCreated"}"#;
+        let out = normalize_dynamic_values(raw);
+        assert!(
+            out.contains(r#""orderId":"{{$uuid}}""#),
+            "uuid not replaced: {out}"
+        );
+        assert!(
+            out.contains(r#""asOfDate":"{{$isoTimestamp}}""#),
+            "iso timestamp not replaced: {out}"
+        );
+        // Non-matching strings unchanged.
+        assert!(out.contains(r#""label":"OrderCreated""#));
+    }
+
+    #[test]
+    fn normalize_ignores_uppercase_uuid_and_date_only() {
+        let raw = r#"{"const":"ABCDEF12-3456-7890-ABCD-EF1234567890","birthDate":"2026-07-09","note":"1234-5678"}"#;
+        let out = normalize_dynamic_values(raw);
+        // Uppercase UUIDs left alone (could be user constants).
+        assert!(out.contains("ABCDEF12-3456-7890-ABCD-EF1234567890"));
+        // Date-only strings left alone (could be business data).
+        assert!(out.contains(r#""birthDate":"2026-07-09""#));
+        assert!(out.contains(r#""note":"1234-5678""#));
+    }
+
+    #[test]
+    fn discover_normalize_flag_wires_through_to_generated_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/e": {
+                  "post": {
+                    "operationId": "Ping",
+                    "tags": ["p"],
+                    "requestBody": {
+                      "content": {
+                        "application/json": {
+                          "example": {
+                            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                            "at": "2026-07-09T17:35:39.4944815Z"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: true,
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(out.join("p/Ping.curl")).unwrap();
+        assert!(body.contains(r#""id":"{{$uuid}}""#), "body: {body}");
+        assert!(body.contains(r#""at":"{{$isoTimestamp}}""#), "body: {body}");
     }
 
     #[test]
@@ -673,6 +812,7 @@ mod tests {
             spec: spec.to_string_lossy().into_owned(),
             out: out.clone(),
             base_url: None,
+            normalize: false,
         })
         .unwrap();
         // 2026-07-09 — hyphens (matches rqst-parity `sanitize`).

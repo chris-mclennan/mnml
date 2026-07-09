@@ -382,6 +382,14 @@ pub struct HttpConfig {
     /// pretty" ask from 2026-07-08). Set `false` to preserve
     /// hand-crafted compact bodies exactly.
     pub auto_format_body: bool,
+    /// `[http] sync_normalize = true` — when running `:http.sync` or
+    /// `:http.sync_check` from the palette, apply Tier-1 dynamic-value
+    /// substitution: swap ISO 8601 timestamp strings for
+    /// `{{$isoTimestamp}}` and lowercase UUIDs for `{{$uuid}}`. Kills
+    /// swagger-side re-generation churn on re-syncs. Off by default —
+    /// opting in means committing to the template placeholders.
+    /// 2026-07-09.
+    pub sync_normalize: bool,
 }
 
 /// Root for new HTTP collections + scratch requests. The default
@@ -404,6 +412,7 @@ impl Default for HttpConfig {
             default_env: None,
             collection_root: HttpCollectionRoot::Hidden,
             auto_format_body: true,
+            sync_normalize: false,
         }
     }
 }
@@ -1620,6 +1629,8 @@ struct RawHttp {
     collection_root: Option<String>,
     /// See [`HttpConfig::auto_format_body`]. Default on.
     auto_format_body: Option<bool>,
+    /// See [`HttpConfig::sync_normalize`]. Default off.
+    sync_normalize: Option<bool>,
 }
 
 /// `[ws]` raw table (2026-07-03).
@@ -2261,6 +2272,9 @@ impl Config {
         }
         if let Some(b) = raw.http.auto_format_body {
             self.http.auto_format_body = b;
+        }
+        if let Some(b) = raw.http.sync_normalize {
+            self.http.sync_normalize = b;
         }
         if let Some(cr) = raw.http.collection_root {
             let trimmed = cr.trim().to_ascii_lowercase();

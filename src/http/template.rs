@@ -118,6 +118,12 @@ pub fn dynamic_var(name: &str) -> Option<String> {
         "uuid" | "guid" => Some(uuid_v4()),
         "timestamp" | "epochMs" => Some(unix_ms().to_string()),
         "epoch" | "epochS" => Some((unix_ms() / 1000).to_string()),
+        // ISO 8601 UTC timestamp with fractional seconds + `Z` — the
+        // format Tattle-style .NET APIs emit ("2026-07-09T17:35:39.4944815Z").
+        // 2026-07-09 — added for the discover normalization pass so
+        // swagger example timestamps become `{{$isoTimestamp}}` and
+        // resolve fresh each fire.
+        "isoTimestamp" | "isoTime" | "nowIso" => Some(iso_utc_now()),
         "randomInt" => Some((small_random_u32() % 1_000_000).to_string()),
         "randomHex" => Some(format!("{:08x}", small_random_u32())),
         "randomString" => Some(uuid_v4().replace('-', "")[..16].to_string()),
@@ -131,6 +137,48 @@ pub fn dynamic_var(name: &str) -> Option<String> {
         ),
         _ => None,
     }
+}
+
+/// ISO 8601 UTC "now" with sub-second precision and a trailing `Z`.
+/// Matches the shape .NET APIs emit — `"2026-07-09T17:35:39.4944815Z"`.
+fn iso_utc_now() -> String {
+    let ns = unix_ns();
+    let secs = (ns / 1_000_000_000) as i64;
+    let frac_ns = (ns % 1_000_000_000) as u32;
+    // Break down `secs` into Y/M/D/H/M/S using civil-from-days (a
+    // stdlib-free calendar algorithm — Howard Hinnant, "days_from_civil").
+    let days = secs.div_euclid(86_400);
+    let seconds_of_day = secs.rem_euclid(86_400) as u32;
+    let (y, m, d) = civil_from_days(days);
+    let h = seconds_of_day / 3600;
+    let mm = (seconds_of_day % 3600) / 60;
+    let ss = seconds_of_day % 60;
+    // 7-digit sub-second precision to match Microsoft's default.
+    format!(
+        "{y:04}-{m:02}-{d:02}T{h:02}:{mm:02}:{ss:02}.{sub:07}Z",
+        sub = frac_ns / 100
+    )
+}
+
+/// Days since 1970-01-01 → (year, month, day). Zero-alloc, no
+/// stdlib chrono dep. Ported from Hinnant's `civil_from_days`
+/// algorithm — https://howardhinnant.github.io/date_algorithms.html
+fn civil_from_days(z: i64) -> (i32, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 {
+        z / 146_097
+    } else {
+        (z - 146_096) / 146_097
+    };
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i32 + era as i32 * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = y + if m <= 2 { 1 } else { 0 };
+    (y, m, d)
 }
 
 /// Substitute every resolvable `{{VAR}}` / `{{$DYN}}` in `text`; leave the rest verbatim.
@@ -366,6 +414,28 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_digit())
         );
+    }
+
+    #[test]
+    fn iso_timestamp_matches_dotnet_shape() {
+        let e = EnvSet::empty();
+        let out = expand("{{$isoTimestamp}}", &e);
+        // Shape: "YYYY-MM-DDTHH:MM:SS.<7 digits>Z"
+        assert_eq!(out.len(), 28, "unexpected length: {out}");
+        assert_eq!(&out[4..5], "-");
+        assert_eq!(&out[7..8], "-");
+        assert_eq!(&out[10..11], "T");
+        assert_eq!(&out[13..14], ":");
+        assert_eq!(&out[16..17], ":");
+        assert_eq!(&out[19..20], ".");
+        assert!(out.ends_with('Z'));
+        // Regression: two calls should produce different (fresh) values
+        // when the clock advances. Use the `>=` in case the resolution
+        // is coarse enough that they collide.
+        let a = expand("{{$isoTimestamp}}", &e);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let b = expand("{{$isoTimestamp}}", &e);
+        assert!(a <= b, "{a} vs {b}");
     }
 
     #[test]

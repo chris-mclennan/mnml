@@ -463,8 +463,9 @@ fn proxy_subcommand(argv: Vec<String>) -> ExitCode {
 /// `http.sync` palette command runs in-app, exposed as a CLI for
 /// scripting / cron / one-off batches.
 fn sync_subcommand(argv: Vec<String>) -> ExitCode {
-    let usage = "usage: mnml sync [--workspace DIR]\n  reads <workspace>/.mnml/sources.json (or .rqst/sources.json) and regenerates .curl stubs per swagger source";
+    let usage = "usage: mnml sync [--workspace DIR] [--normalize]\n  reads <workspace>/.mnml/sources.json (or .rqst/sources.json) and regenerates .curl stubs per swagger source\n  --normalize / -n : swap ISO timestamps + lowercase UUIDs for {{$isoTimestamp}} / {{$uuid}}";
     let mut workspace: Option<PathBuf> = None;
+    let mut normalize = false;
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -475,6 +476,7 @@ fn sync_subcommand(argv: Vec<String>) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             },
+            "--normalize" | "-n" => normalize = true,
             "-h" | "--help" => {
                 println!("{usage}");
                 return ExitCode::SUCCESS;
@@ -487,7 +489,7 @@ fn sync_subcommand(argv: Vec<String>) -> ExitCode {
     }
     let ws =
         workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    match mnml::http::sources::run_sync(&ws) {
+    match mnml::http::sources::run_sync_with_normalize(&ws, normalize) {
         Ok((trace, total)) => {
             print!("{trace}");
             println!("ok — {total} stubs written");
@@ -504,8 +506,9 @@ fn sync_subcommand(argv: Vec<String>) -> ExitCode {
 /// Same logic as the `http.sync_check` palette command; writes
 /// the drift trace to stdout instead of a scratch pane.
 fn sync_check_subcommand(argv: Vec<String>) -> ExitCode {
-    let usage = "usage: mnml sync-check [--workspace DIR]\n  reports added/removed/changed .curl files without writing anything";
+    let usage = "usage: mnml sync-check [--workspace DIR] [--normalize]\n  reports added/removed/changed .curl files without writing anything\n  --normalize / -n : compare against normalized bodies (see `mnml sync --help`)";
     let mut workspace: Option<PathBuf> = None;
+    let mut normalize = false;
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -516,6 +519,7 @@ fn sync_check_subcommand(argv: Vec<String>) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             },
+            "--normalize" | "-n" => normalize = true,
             "-h" | "--help" => {
                 println!("{usage}");
                 return ExitCode::SUCCESS;
@@ -528,7 +532,7 @@ fn sync_check_subcommand(argv: Vec<String>) -> ExitCode {
     }
     let ws =
         workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    match mnml::http::sources::check_sync(&ws) {
+    match mnml::http::sources::check_sync_with_normalize(&ws, normalize) {
         Ok((trace, drift)) => {
             print!("{trace}");
             if drift == 0 {
@@ -553,6 +557,7 @@ fn sync_check_subcommand(argv: Vec<String>) -> ExitCode {
 fn discover_subcommand(argv: Vec<String>) -> ExitCode {
     let usage = "usage: mnml discover SPEC [--out DIR] [--base-url URL]\n  SPEC is a local OpenAPI/Swagger JSON file or an http(s):// URL";
     let (mut spec, mut out, mut base_url) = (None::<String>, None::<PathBuf>, None::<String>);
+    let mut normalize = false;
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -570,6 +575,7 @@ fn discover_subcommand(argv: Vec<String>) -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             },
+            "--normalize" | "-n" => normalize = true,
             "-h" | "--help" => {
                 println!("{usage}");
                 return ExitCode::SUCCESS;
@@ -594,6 +600,7 @@ fn discover_subcommand(argv: Vec<String>) -> ExitCode {
         spec,
         out: out.clone(),
         base_url,
+        normalize,
     }) {
         Ok(n) => {
             println!("wrote {n} .curl stub(s) under {}", out.display());
