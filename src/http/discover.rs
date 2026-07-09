@@ -112,7 +112,14 @@ pub fn run(opts: &Options) -> Result<usize, String> {
                 .get("operationId")
                 .and_then(Value::as_str)
                 .map(sanitize)
-                .unwrap_or_else(|| sanitize(&format!("{}_{}", method, path.trim_matches('/'))));
+                .unwrap_or_else(|| {
+                    // 2026-07-09 — rqst-parity fallback name. Lower-
+                    // case method + hyphen + path so the produced
+                    // filename matches what tattle-style workspaces
+                    // already have on disk (`post-admin-event`, not
+                    // `POST_admin_event`). See sanitize's comment.
+                    sanitize(&format!("{}-{}", method.to_lowercase(), path))
+                });
             // If the operation has a NAMED-examples map, emit one
             // stub per example — `<operationId>.<exampleName>.curl`
             // — with each example's `.value` as the body. Falls
@@ -209,32 +216,34 @@ fn render_curl(
             other => url_path.push(other),
         }
     }
+    // Header block matches rqst's `render_curl` output byte-for-
+    // byte: `accept` + `Authorization: Bearer {{TOKEN}}` on every
+    // stub (rqst always emitted both; downstream users strip or
+    // template the token via env). Lowercased `content-type` added
+    // when the request has a body.
+    let method_upper = method.to_uppercase();
     let mut out = String::new();
+    // Header block: `# summary\n`, `# description-line-1\n`,
+    // ..., `# example: <name>\n`, `# METHOD /path\n`. Matches
+    // rqst's leading-block layout so downstream tools that greps
+    // for the METHOD-marker line still work.
     if let Some(summary) = op.get("summary").and_then(Value::as_str) {
         out.push_str(&format!("# {summary}\n"));
-    } else if let Some(desc) = op.get("description").and_then(Value::as_str) {
-        out.push_str(&format!("# {}\n", desc.lines().next().unwrap_or("")));
+    }
+    if let Some(desc) = op.get("description").and_then(Value::as_str) {
+        for line in desc.lines() {
+            out.push_str(&format!("# {line}\n"));
+        }
     }
     if let Some(n) = named
         && let Some(s) = &n.summary
     {
         out.push_str(&format!("# example: {s}\n"));
     }
-    out.push_str(&format!("curl '{base_url}{url_path}'"));
-    if !method.eq_ignore_ascii_case("get") {
-        out.push_str(&format!(" \\\n  -X {}", method.to_uppercase()));
-    }
-    // Bearer auth if the operation declares a security requirement.
-    let needs_auth = op
-        .get("security")
-        .and_then(Value::as_array)
-        .map(|a| !a.is_empty())
-        .unwrap_or(false);
-    if needs_auth {
-        out.push_str(" \\\n  -H 'Authorization: Bearer {{TOKEN}}'");
-    }
-    // Body: named-example wins, then plain `.example`, then schema
-    // synthesis, then leave a TODO placeholder.
+    out.push_str(&format!("# {method_upper} {path}\n"));
+    // Body decision: named-example wins, then plain `.example`,
+    // then schema synthesis. Passed to the header-line logic so
+    // -X inference matches curl's own defaults.
     let body = if let Some(n) = named {
         Some(n.body.clone())
     } else {
@@ -243,7 +252,6 @@ fn render_curl(
             .and_then(|c| c.get("application/json"))
             .and_then(|j| j.get("example"))
             .or_else(|| {
-                // Swagger 2.0: body parameter with a schema example.
                 op.get("parameters")
                     .and_then(Value::as_array)?
                     .iter()
@@ -253,8 +261,6 @@ fn render_curl(
             })
             .and_then(|ex| serde_json::to_string(ex).ok())
             .or_else(|| {
-                // Schema-driven synthesis fallback — walk the schema
-                // recursively and produce placeholder values by type.
                 let schema = op
                     .get("requestBody")
                     .and_then(|rb| rb.get("content"))
@@ -272,14 +278,34 @@ fn render_curl(
                 serde_json::to_string(&synthesized).ok()
             })
     };
-    if let Some(b) = body {
-        out.push_str(" \\\n  -H 'Content-Type: application/json'");
-        out.push_str(&format!(" \\\n  --data-raw '{}'", b.replace('\'', "'\\''")));
-    } else if !method.eq_ignore_ascii_case("get") && op.get("requestBody").is_some() {
-        out.push_str(" \\\n  -H 'Content-Type: application/json'");
-        out.push_str(" \\\n  --data-raw '{}'  # TODO: fill in the request body");
+    let mut header_lines: Vec<String> = vec![
+        "  -H 'accept: application/json'".to_string(),
+        "  -H 'Authorization: Bearer {{TOKEN}}'".to_string(),
+    ];
+    if body.is_some() {
+        header_lines.push("  -H 'content-type: application/json'".to_string());
     }
-    out.push('\n');
+    out.push_str(&format!("curl '{base_url}{url_path}' \\\n"));
+    // -X is omitted when curl can infer the method from the
+    // shape: bare GET (no body), or POST with a body. Everything
+    // else needs explicit -X (matches rqst).
+    let needs_explicit_method =
+        (method_upper != "GET" && body.is_none()) || (method_upper != "POST" && body.is_some());
+    if needs_explicit_method {
+        out.push_str(&format!("  -X {method_upper} \\\n"));
+    }
+    for (i, line) in header_lines.iter().enumerate() {
+        if i + 1 < header_lines.len() || body.is_some() {
+            out.push_str(line);
+            out.push_str(" \\\n");
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if let Some(b) = body {
+        out.push_str(&format!("  --data-raw '{}'\n", b.replace('\'', "'\\''")));
+    }
     out
 }
 
@@ -374,21 +400,30 @@ fn resolve_ref<'a>(spec: &'a Value, r: &str) -> Option<&'a Value> {
 }
 
 fn sanitize(s: &str) -> String {
-    let cleaned: String = s
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let trimmed = cleaned.trim_matches('_');
-    if trimmed.is_empty() {
+    // 2026-07-09 — align with the rqst convention (hyphens) so
+    // existing tattle-style workspaces don't see cosmetic drift
+    // (`post-events-deferred-clean.curl` — old — vs
+    // `post_events_deferred_clean.curl` — mnml pre-port). Also
+    // collapses runs of hyphens so `Get/By Id` doesn't produce
+    // `Get--By--Id`. Matches
+    // `archived/rqst/src/discover.rs::sanitize` byte-for-byte.
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c);
+        } else {
+            out.push('-');
+        }
+    }
+    let collapsed: String = out
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if collapsed.is_empty() {
         "op".to_string()
     } else {
-        trimmed.to_string()
+        collapsed
     }
 }
 
@@ -436,7 +471,13 @@ mod tests {
         assert!(del.contains("-X DELETE"));
         assert!(del.contains("Authorization: Bearer {{TOKEN}}"));
         let post = std::fs::read_to_string(out.join("users/createUser.curl")).unwrap();
-        assert!(post.contains("-X POST"));
+        // 2026-07-09 — rqst-parity: POST-with-body doesn't need
+        // explicit `-X POST` (curl infers it from the presence of
+        // --data-raw). Assert its ABSENCE.
+        assert!(
+            !post.contains("-X POST"),
+            "POST+body shouldn't need -X: {post}"
+        );
         assert!(post.contains(r#"--data-raw '{"name":"Alice"}'"#));
     }
 
@@ -632,7 +673,8 @@ mod tests {
             base_url: None,
         })
         .unwrap();
-        let f = std::fs::read_to_string(out.join("untagged/get_ping.curl")).unwrap();
+        // 2026-07-09 — hyphens (matches rqst-parity `sanitize`).
+        let f = std::fs::read_to_string(out.join("untagged/get-ping.curl")).unwrap();
         assert!(f.contains("curl 'https://x.test/api/ping'"), "{f}");
     }
 }
