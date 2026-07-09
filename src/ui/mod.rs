@@ -436,13 +436,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Constraint::Length(w),
         ])
         .split(upper);
-        let divider_x = cols[1].x;
-        app.rects.right_panel_edge = Some(Rect {
-            x: divider_x.saturating_sub(1),
-            y: cols[1].y,
-            width: 3.min(upper.width.saturating_sub(divider_x.saturating_sub(1))),
-            height: cols[1].height,
-        });
+        // 1-cell hit zone matching the divider column — same
+        // rationale as the tree edge (scrollbar of the pane on
+        // the LEFT stays free for wheel / drag).
+        app.rects.right_panel_edge = Some(cols[1]);
         (Some(cols[2]), Some(cols[1]), cols[0])
     } else {
         app.rects.right_panel_edge = None;
@@ -466,18 +463,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Constraint::Min(1),
         ])
         .split(upper);
-        // Resize hit zone is 3 cells wide × full height, centered
-        // on the divider column so a click 1 cell either side of
-        // the visible line still starts a drag (trackpad
-        // findability). Chip short-circuit in `begin_tree_edge_drag`
-        // still protects right-aligned rail chips.
-        let divider_x = cols[1].x;
-        app.rects.tree_edge = Some(Rect {
-            x: divider_x.saturating_sub(1),
-            y: cols[1].y,
-            width: 3.min(upper.width.saturating_sub(divider_x.saturating_sub(1))),
-            height: cols[1].height,
-        });
+        // Resize hit zone is ONLY the divider column (1 cell wide).
+        // User 2026-07-08: earlier a 3-cell wide zone extended 1
+        // cell to the left into the SCROLLBAR column, so clicking
+        // the scrollbar started a resize instead of a scroll drag.
+        // The 1-cell divider column is small but distinct — the
+        // hover cyan makes it easy to spot; the scrollbar has its
+        // own dedicated column immediately to the left.
+        app.rects.tree_edge = Some(cols[1]);
         (Some(cols[0]), Some(cols[1]), cols[2])
     } else {
         app.rects.tree_edge = None;
