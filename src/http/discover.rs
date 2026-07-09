@@ -523,6 +523,20 @@ fn json_to_string_flat(v: &Value) -> String {
 /// (takes the first branch). Depth capped at 5 to keep pathological
 /// deeply-recursive specs from blowing the stack.
 fn synth_example(schema: &Value, spec: &Value, visited: &mut HashSet<String>, depth: u32) -> Value {
+    synth_example_hinted(schema, spec, visited, depth, "")
+}
+
+/// Same as `synth_example` but with a property-name hint — used
+/// during object descent so `firstName` / `emailAddress` / etc.
+/// route through the faker vocab (Tier 2) instead of producing
+/// the naive `"string"` fallback. Empty `prop` = no hint.
+fn synth_example_hinted(
+    schema: &Value,
+    spec: &Value,
+    visited: &mut HashSet<String>,
+    depth: u32,
+    prop: &str,
+) -> Value {
     if depth > 5 {
         return Value::Null;
     }
@@ -532,7 +546,7 @@ fn synth_example(schema: &Value, spec: &Value, visited: &mut HashSet<String>, de
         }
         visited.insert(r.to_string());
         if let Some(resolved) = resolve_ref(spec, r) {
-            return synth_example(resolved, spec, visited, depth + 1);
+            return synth_example_hinted(resolved, spec, visited, depth + 1, prop);
         }
         return Value::Null;
     }
@@ -543,12 +557,22 @@ fn synth_example(schema: &Value, spec: &Value, visited: &mut HashSet<String>, de
         return default.clone();
     }
     let ty = schema.get("type").and_then(Value::as_str).unwrap_or("");
+    // Faker vocab wins when the property name matches a known
+    // rule for this type — realistic values instead of "string" / 0.
+    if !prop.is_empty()
+        && let Some(v) = crate::http::faker::placeholder_for(prop, ty)
+    {
+        return v;
+    }
     match ty {
         "object" => {
             let mut obj = serde_json::Map::new();
             if let Some(props) = schema.get("properties").and_then(Value::as_object) {
                 for (k, v) in props {
-                    obj.insert(k.clone(), synth_example(v, spec, visited, depth + 1));
+                    obj.insert(
+                        k.clone(),
+                        synth_example_hinted(v, spec, visited, depth + 1, k),
+                    );
                 }
             }
             Value::Object(obj)
@@ -556,7 +580,7 @@ fn synth_example(schema: &Value, spec: &Value, visited: &mut HashSet<String>, de
         "array" => {
             let item = schema
                 .get("items")
-                .map(|i| synth_example(i, spec, visited, depth + 1))
+                .map(|i| synth_example_hinted(i, spec, visited, depth + 1, ""))
                 .unwrap_or(Value::Null);
             Value::Array(vec![item])
         }
@@ -586,7 +610,7 @@ fn synth_example(schema: &Value, spec: &Value, visited: &mut HashSet<String>, de
                 if let Some(arr) = schema.get(*k).and_then(Value::as_array)
                     && let Some(first) = arr.first()
                 {
-                    return synth_example(first, spec, visited, depth + 1);
+                    return synth_example_hinted(first, spec, visited, depth + 1, prop);
                 }
             }
             Value::Null
@@ -800,11 +824,13 @@ mod tests {
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/CreateThing.curl")).unwrap();
+        // 2026-07-09 — Tier 2 faker now returns "John Smith" for a
+        // property named `name`, not the generic "string" fallback.
         assert!(
-            body.contains(r#""name":"string""#),
+            body.contains(r#""name":"John Smith""#),
             "synthesized name: {body}"
         );
-        assert!(body.contains(r#""count":0"#), "synthesized count: {body}");
+        assert!(body.contains(r#""count":1"#), "synthesized count: {body}");
         assert!(
             body.contains(r#""createdAt":"2026-01-01T00:00:00Z""#),
             "date-time format: {body}"
@@ -936,6 +962,69 @@ mod tests {
         let body = std::fs::read_to_string(out.join("p/Ping.curl")).unwrap();
         assert!(body.contains(r#""id":"{{$uuid}}""#), "body: {body}");
         assert!(body.contains(r#""at":"{{$isoTimestamp}}""#), "body: {body}");
+    }
+
+    #[test]
+    fn faker_vocab_fills_realistic_placeholders_by_property_name() {
+        // Tier 2: firstName + lastName + email + merchantId + status
+        // + quantity all get realistic values instead of the naive
+        // "string" / 0 fallback.
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/customers": {
+                  "post": {
+                    "operationId": "createCustomer",
+                    "tags": ["customers"],
+                    "requestBody": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "firstName": { "type": "string" },
+                              "lastName": { "type": "string" },
+                              "emailAddress": { "type": "string" },
+                              "merchantId": { "type": "integer" },
+                              "status": { "type": "string" },
+                              "quantity": { "type": "integer" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(out.join("customers/createCustomer.curl")).unwrap();
+        assert!(body.contains(r#""firstName":"John""#), "firstName: {body}");
+        assert!(body.contains(r#""lastName":"Smith""#), "lastName: {body}");
+        assert!(
+            body.contains(r#""emailAddress":"user@example.com""#),
+            "email: {body}"
+        );
+        assert!(
+            body.contains(r#""merchantId":"{{MERCHANT_ID}}""#),
+            "merchantId env-var: {body}"
+        );
+        assert!(body.contains(r#""status":"active""#), "status: {body}");
+        assert!(body.contains(r#""quantity":1"#), "quantity: {body}");
     }
 
     #[test]

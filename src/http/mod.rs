@@ -21,6 +21,7 @@ pub mod captured;
 pub mod chain;
 pub mod curl;
 pub mod discover;
+pub mod faker;
 pub mod file;
 pub mod history;
 pub mod lookup;
