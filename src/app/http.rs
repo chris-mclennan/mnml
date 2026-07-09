@@ -195,6 +195,59 @@ fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Opt
     Some(joined)
 }
 
+/// Read the first useful `# ...` comment from a `.curl` / `.http`
+/// file's leading comment block — a proxy for the swagger operation
+/// summary. Used by `open_request_pane_from_file` to populate
+/// `RequestPane::summary`, which drives the bufferline tab label.
+///
+/// Rules (2026-07-09):
+/// - Only lines at the very top (before the first non-comment,
+///   non-blank line) are considered.
+/// - `#` and `//` markers both count as comments.
+/// - Skip empty comment lines and the discover-added
+///   `# METHOD /path` marker (that's routing metadata, not a
+///   summary).
+/// - Skip `# example: <name>` — that's the named-example label,
+///   not the operation title.
+/// - First remaining comment wins. Trimmed of leading marker + ws.
+/// - Falls back to `None` when no matching comment exists.
+fn extract_summary(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let body = if let Some(rest) = trimmed.strip_prefix('#') {
+            rest.trim()
+        } else if let Some(rest) = trimmed.strip_prefix("//") {
+            rest.trim()
+        } else {
+            // Hit the first non-comment line — comment block over.
+            break;
+        };
+        if body.is_empty() {
+            continue;
+        }
+        if let Some(rest) = body.strip_prefix("example:") {
+            let _ = rest;
+            continue;
+        }
+        // Skip `# METHOD /path` markers (discover adds them right
+        // before the curl line). Detected by "METHOD /..." where
+        // METHOD is one of the HTTP verbs in uppercase.
+        let head = body.split_whitespace().next().unwrap_or("");
+        if matches!(
+            head,
+            "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"
+        ) && body.contains('/')
+        {
+            continue;
+        }
+        return Some(body.to_string());
+    }
+    None
+}
+
 /// Does the `.env` file at `path` contain a (non-comment) line
 /// for `key`? Used by `write_env_var` to decide which file gets
 /// the write when both `.mnml/env/` and `.rqst/env/` exist.
@@ -655,6 +708,14 @@ impl App {
         };
         let script = crate::http::script::parse(&text);
         let mut pane = RequestPane::new(Some(path.to_path_buf()), request, script, 0);
+        // Pull the tab summary from the file's leading `# ...`
+        // comment. Discover-generated stubs put the swagger
+        // operation's `summary` on the first line; matching format
+        // works for hand-authored `.curl`/`.http` files too. Skip
+        // the `# example: <name>` line (that's the named-example
+        // marker, not the operation title) — first non-`example`
+        // comment wins.
+        pane.summary = extract_summary(&text);
         // Land in Edit view on the URL field — the user just clicked
         // a request, so they're likely about to fire or tweak it.
         pane.view = ViewMode::Edit;
@@ -5872,6 +5933,46 @@ impl App {
 #[cfg(test)]
 mod http_tests {
     use super::*;
+
+    // ── extract_summary — drives the bufferline tab label ──
+
+    #[test]
+    fn extract_summary_picks_first_useful_comment() {
+        let text = "# Trigger a Playwright build\n# POST /v3/api/test-executions/playwright/builds\ncurl 'https://x' \\\n  -X POST\n";
+        assert_eq!(
+            extract_summary(text).as_deref(),
+            Some("Trigger a Playwright build")
+        );
+    }
+
+    #[test]
+    fn extract_summary_skips_method_path_marker() {
+        // Bare "# POST /path" isn't a summary — it's discover-added
+        // routing metadata.
+        let text = "# POST /admin/event\ncurl 'https://x' \\\n";
+        assert_eq!(extract_summary(text), None);
+    }
+
+    #[test]
+    fn extract_summary_skips_example_label_and_uses_next_line() {
+        // The `# example: <name>` line is the named-example
+        // marker, not the operation summary — the FIRST non-example
+        // comment should win.
+        let text = "# Send an event\n# example: OrderCreated\ncurl 'https://x'\n";
+        assert_eq!(extract_summary(text).as_deref(), Some("Send an event"));
+    }
+
+    #[test]
+    fn extract_summary_handles_slash_slash_comments() {
+        let text = "// Get a user\ncurl 'https://x'\n";
+        assert_eq!(extract_summary(text).as_deref(), Some("Get a user"));
+    }
+
+    #[test]
+    fn extract_summary_empty_when_no_leading_comments() {
+        let text = "curl 'https://x'\n";
+        assert_eq!(extract_summary(text), None);
+    }
 
     #[test]
     fn curl_block_bounds_no_separators_returns_whole_file() {
