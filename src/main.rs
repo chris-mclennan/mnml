@@ -37,6 +37,10 @@ fn main() -> ExitCode {
             args.next();
             sync_subcommand(args.collect())
         }
+        Some("sync-check") => {
+            args.next();
+            sync_check_subcommand(args.collect())
+        }
         Some("proxy") => {
             args.next();
             proxy_subcommand(args.collect())
@@ -491,6 +495,56 @@ fn sync_subcommand(argv: Vec<String>) -> ExitCode {
         }
         Err(e) => {
             eprintln!("mnml sync: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `mnml sync-check [--workspace DIR]` — dry-run drift check.
+/// Same logic as the `http.sync_check` palette command; writes
+/// the drift trace to stdout instead of a scratch pane.
+fn sync_check_subcommand(argv: Vec<String>) -> ExitCode {
+    let usage = "usage: mnml sync-check [--workspace DIR]\n  reports added/removed/changed .curl files without writing anything";
+    let mut workspace: Option<PathBuf> = None;
+    let mut it = argv.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--workspace" | "-w" => match it.next() {
+                Some(v) => workspace = Some(PathBuf::from(v)),
+                None => {
+                    eprintln!("mnml sync-check: --workspace needs a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            "-h" | "--help" => {
+                println!("{usage}");
+                return ExitCode::SUCCESS;
+            }
+            s => {
+                eprintln!("mnml sync-check: unexpected arg: {s}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    let ws =
+        workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    match mnml::http::sources::check_sync(&ws) {
+        Ok((trace, drift)) => {
+            print!("{trace}");
+            if drift == 0 {
+                println!("ok — no drift");
+                ExitCode::SUCCESS
+            } else {
+                println!("drift — {drift} file(s) differ");
+                // Non-zero exit code so CI can `mnml sync-check`
+                // as a gate. Distinct from FAILURE (2) so scripts
+                // can distinguish "drift found" from "the tool
+                // crashed".
+                ExitCode::from(2)
+            }
+        }
+        Err(e) => {
+            eprintln!("mnml sync-check: {e}");
             ExitCode::FAILURE
         }
     }
