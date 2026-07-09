@@ -532,15 +532,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let pane = &app.panes[i];
         let active = app.active == Some(i);
         let name = labels[i].clone();
-        let (glyph, icon_color) = match pane {
+        // 2026-07-08 — returns owned `String` glyphs instead of the
+        // prior `&str` / `Box::leak` mix. The old sibling-glyph
+        // branch leaked a fresh heap allocation for the Pty
+        // integration icon on every frame; with N pty tabs at
+        // 60fps that was ~60N/s leaked strings. Owned strings
+        // move cleanly into `TabChipInputs::glyph` without leak
+        // or clone tricks.
+        let (glyph, icon_color): (String, ratatui::style::Color) = match pane {
             Pane::Editor(b) => {
                 let p = b.path.clone().unwrap_or_else(|| name.clone().into());
-                icons::for_path(&p, false, false, nerd)
+                let (g, c) = icons::for_path(&p, false, false, nerd);
+                (g.to_string(), c)
             }
-            Pane::MdPreview(p) => icons::for_path(&p.path, false, false, nerd),
-            Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, tt.orange),
-            Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, tt.orange),
-            Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, tt.green),
+            Pane::MdPreview(p) => {
+                let (g, c) = icons::for_path(&p.path, false, false, nerd);
+                (g.to_string(), c)
+            }
+            Pane::Diff(_) => (
+                (if nerd { "\u{f0e7e}" } else { "±" }).to_string(),
+                tt.orange,
+            ),
+            Pane::GitGraph(_) => ((if nerd { "\u{f1d3}" } else { "⎇" }).to_string(), tt.orange),
+            Pane::GitStatus(_) => ((if nerd { "\u{f1d2}" } else { "±" }).to_string(), tt.green),
             Pane::Request(r) => {
                 // No icon glyph — the colored METHOD prefix in the
                 // label (rendered below via `split_http_verb`) IS
@@ -559,7 +573,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     "OPTIONS" => tt.purple,
                     _ => tt.blue,
                 };
-                ("", color)
+                (String::new(), color)
             }
             Pane::Pty(s) => {
                 // 2026-07-03 — sibling integrations that run as
@@ -588,30 +602,58 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     })
                     .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)));
                 match sibling_glyph {
-                    Some((g, c)) if nerd => (Box::leak(g.into_boxed_str()) as &str, c),
-                    _ => (if nerd { "\u{f489}" } else { "▶" }, tt.teal),
+                    Some((g, c)) if nerd => (g, c),
+                    _ => ((if nerd { "\u{f489}" } else { "▶" }).to_string(), tt.teal),
                 }
             }
-            Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, tt.purple),
-            Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, tt.green),
-            Pane::Browser(_) => (if nerd { "\u{f059f}" } else { "◉" }, tt.blue),
-            Pane::Diagnostics(_) => (if nerd { "\u{f0026}" } else { "⚠" }, tt.red),
-            Pane::Grep(_) => (if nerd { "\u{f0349}" } else { "⌕" }, tt.yellow),
-            Pane::Flaky(_) => (if nerd { "\u{f0668}" } else { "≋" }, tt.purple),
-            Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, tt.purple),
-            Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, tt.teal),
-            Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, tt.comment),
-            Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, tt.yellow),
-            Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, tt.red),
-            Pane::DapRepl(_) => (if nerd { "\u{F018D}" } else { ">" }, tt.cyan),
-            Pane::Image(_) => (if nerd { "\u{F021F}" } else { "▤" }, tt.purple),
-            Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, tt.purple),
-            Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, tt.teal),
-            Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, tt.orange),
-            Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, tt.cyan),
-            Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, tt.blue),
-            Pane::NewCloudAgentWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, tt.green),
-            Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, tt.cyan),
+            Pane::Ai(_) => (
+                (if nerd { "\u{f0e0a}" } else { "✦" }).to_string(),
+                tt.purple,
+            ),
+            Pane::Tests(_) => ((if nerd { "\u{f0668}" } else { "✓" }).to_string(), tt.green),
+            Pane::Browser(_) => ((if nerd { "\u{f059f}" } else { "◉" }).to_string(), tt.blue),
+            Pane::Diagnostics(_) => ((if nerd { "\u{f0026}" } else { "⚠" }).to_string(), tt.red),
+            Pane::Grep(_) => (
+                (if nerd { "\u{f0349}" } else { "⌕" }).to_string(),
+                tt.yellow,
+            ),
+            Pane::Flaky(_) => (
+                (if nerd { "\u{f0668}" } else { "≋" }).to_string(),
+                tt.purple,
+            ),
+            Pane::Outline(_) => (
+                (if nerd { "\u{f01bd}" } else { "⌥" }).to_string(),
+                tt.purple,
+            ),
+            Pane::Quickfix(_) => ((if nerd { "\u{f0349}" } else { "⌕" }).to_string(), tt.teal),
+            Pane::CmdlineHistory(_) => (
+                (if nerd { "\u{eb15}" } else { "❯" }).to_string(),
+                tt.comment,
+            ),
+            Pane::Cheatsheet(_) => ((if nerd { "\u{f128}" } else { "?" }).to_string(), tt.yellow),
+            Pane::Debug(_) => ((if nerd { "\u{f188}" } else { "🐛" }).to_string(), tt.red),
+            Pane::DapRepl(_) => ((if nerd { "\u{F018D}" } else { ">" }).to_string(), tt.cyan),
+            Pane::Image(_) => (
+                (if nerd { "\u{F021F}" } else { "▤" }).to_string(),
+                tt.purple,
+            ),
+            Pane::ClaudeAgents(_) => (
+                (if nerd { "\u{F06A9}" } else { "◆" }).to_string(),
+                tt.purple,
+            ),
+            Pane::Websocket(_) => ((if nerd { "\u{F0317}" } else { "◇" }).to_string(), tt.teal),
+            Pane::SpendReport(_) => (
+                (if nerd { "\u{F01C2}" } else { "$" }).to_string(),
+                tt.orange,
+            ),
+            Pane::Mount(_) => ((if nerd { "\u{F0BD3}" } else { "M" }).to_string(), tt.cyan),
+            Pane::CloudAgentRun(_) => ((if nerd { "\u{F0956}" } else { "☁" }).to_string(), tt.blue),
+            Pane::NewCloudAgentWizard(_) => {
+                ((if nerd { "\u{F0FB1}" } else { "+" }).to_string(), tt.green)
+            }
+            Pane::NewCloudRunWizard(_) => {
+                ((if nerd { "\u{F0FB1}" } else { "+" }).to_string(), tt.cyan)
+            }
         };
         // Build the chip inputs from pane state — one spec, one
         // painter across both strips.
@@ -625,7 +667,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let inputs = TabChipInputs {
             id: i,
-            glyph: glyph.to_string(),
+            glyph,
             icon_color,
             name: name.clone(),
             is_active: active,
