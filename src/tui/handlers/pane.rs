@@ -2454,6 +2454,20 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
         use crate::request_pane::ViewMode;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        // Promote out of preview on any edit-triggering keystroke.
+        // Navigation-only keys (arrows, tab, esc, page-up/down)
+        // leave preview intact so the user can arrow around the
+        // pane without committing to keep the tab.
+        // 2026-07-08 user report: preview → permanent on first edit.
+        if rp.is_preview {
+            let is_editing = matches!(
+                key.code,
+                KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Enter
+            );
+            if is_editing {
+                rp.is_preview = false;
+            }
+        }
         // In-place value-cell edit on an existing KV row. Same
         // Tab/Enter/Esc/text-input rhythm as the draft row, but
         // there's no `key` field — Tab does nothing, Enter

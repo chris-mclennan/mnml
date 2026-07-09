@@ -137,6 +137,17 @@ pub struct RequestPane {
     /// Percent of the split area given to the LEFT side (clamped
     /// 10..=90). Only meaningful when `edit_tab_split` is Some.
     pub edit_split_ratio: u16,
+    /// VS Code-style preview tab. Set to `true` when the pane was
+    /// opened via arrow-nav or single-click in the HTTP panel —
+    /// user is BROWSING, not committing to keep the tab. Any edit
+    /// (typing URL, changing method, editing body/headers/params/
+    /// vars) flips it to `false` and promotes the tab to permanent.
+    /// Opening another preview Request pane REPLACES this one
+    /// instead of adding a new bufferline tab.
+    ///
+    /// 2026-07-08 user report: "if im scrolling through requests
+    /// with arrow key im getting a bunch of new tabs opened."
+    pub is_preview: bool,
 }
 
 /// Draft state for an inline "add a new key/value pair" editor.
@@ -557,6 +568,7 @@ impl RequestPane {
             response_body_format: ResponseBodyFormat::Auto,
             edit_tab_split: None,
             edit_split_ratio: 50,
+            is_preview: false,
         }
     }
 

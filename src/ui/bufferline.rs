@@ -697,7 +697,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // painter across both strips.
         let diag = diag_chips[i].clone();
         let is_pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
-        let is_preview = matches!(pane, Pane::Editor(b) if b.is_preview);
+        let is_preview = matches!(pane, Pane::Editor(b) if b.is_preview)
+            || matches!(pane, Pane::Request(rp) if rp.is_preview);
         let verb_split = if matches!(pane, Pane::Request(_)) {
             split_http_verb(&name)
         } else {

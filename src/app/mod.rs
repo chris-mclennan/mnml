@@ -6285,21 +6285,39 @@ impl App {
                 return;
             }
         };
-        // Reuse the active Request pane ONLY when it's empty (no URL,
-        // no body, no headers) — matches Postman/Bruno: clicking a
-        // Recent from the sidebar shouldn't clobber a request you're
-        // in the middle of composing. When the active pane has real
-        // content, or when the active pane isn't a Request at all,
-        // spawn a fresh pane. User-reported 2026-07-07.
-        let active_is_blank_request = matches!(
+        // Reuse the active Request pane in TWO cases (2026-07-08):
+        //   1. It's blank (no URL/body/headers) — matches Postman:
+        //      don't clobber real in-progress composition.
+        //   2. It's a PREVIEW pane — user was just browsing (opened
+        //      via arrow-nav / click in HTTP panel, never edited).
+        //      Replacing the preview keeps the "one tab as I flip
+        //      through requests" idiom without piling up scratch
+        //      tabs the user has to close.
+        //
+        // Also — if this isn't the active pane but some OTHER open
+        // Request pane is currently a preview, replace THAT one and
+        // switch to it. This handles the "click a row in HTTP
+        // panel while focus is in the tree" case.
+        let can_reuse_active = matches!(
             self.active.and_then(|i| self.panes.get(i)),
             Some(Pane::Request(rp))
-                if rp.request.url.is_empty()
-                    && rp.headers_buffer.trim().is_empty()
-                    && rp.request.body.as_deref().unwrap_or("").is_empty()
+                if rp.is_preview
+                    || (rp.request.url.is_empty()
+                        && rp.headers_buffer.trim().is_empty()
+                        && rp.request.body.as_deref().unwrap_or("").is_empty())
         );
-        if !active_is_blank_request {
-            self.open_new_request_pane();
+        if !can_reuse_active {
+            // Look for another Request pane sitting in preview.
+            if let Some(preview_pid) = self
+                .panes
+                .iter()
+                .position(|p| matches!(p, Pane::Request(rp) if rp.is_preview))
+            {
+                self.active = Some(preview_pid);
+                self.focus = crate::focus::Focus::Pane;
+            } else {
+                self.open_new_request_pane();
+            }
         }
         let Some(cur) = self.active else { return };
         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
@@ -6310,6 +6328,10 @@ impl App {
             rp.request = parsed;
             rp.view = crate::request_pane::ViewMode::Edit;
             rp.edit_tab = crate::request_pane::EditTab::Body;
+            // Mark as preview so a subsequent open replaces this
+            // in place. Any edit (see `request_pane::promote_out_of_preview`)
+            // flips this back to false.
+            rp.is_preview = true;
         }
     }
 

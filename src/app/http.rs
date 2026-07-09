@@ -660,6 +660,28 @@ impl App {
         pane.view = ViewMode::Edit;
         pane.focus = EditField::Url;
         pane.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
+        // File-backed requests open in PREVIEW mode too — arrowing
+        // through the tree / HTTP-panel COLLECTIONS shouldn't pile
+        // up tabs for each request the user glances at. The first
+        // edit promotes; a subsequent preview-open replaces this
+        // pane. 2026-07-08.
+        pane.is_preview = true;
+        // Preview-replace path: if any existing Request pane is
+        // still in preview, REPLACE its contents instead of
+        // spawning a new pane. Keeps the "one browsing tab as I
+        // flip through requests" idiom.
+        if let Some(preview_pid) = self
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::Request(rp) if rp.is_preview))
+        {
+            self.panes[preview_pid] = Pane::Request(pane);
+            self.active = Some(preview_pid);
+            self.focus = crate::focus::Focus::Pane;
+            self.maybe_auto_format_active_body();
+            self.note_recent_file(path);
+            return;
+        }
         self.panes.push(Pane::Request(pane));
         let new_id = self.panes.len() - 1;
         if self.active.is_some() {
