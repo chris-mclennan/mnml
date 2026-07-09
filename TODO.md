@@ -515,3 +515,67 @@ Quarters are a new layout shape — requires either recursive
 splits (split horizontally, then split the resulting half
 vertically) or a real 4-way grid mode. Halves-only path is
 much cheaper to ship; consider phasing.
+
+### HTTP: "Generate AI prompt" button on failed requests
+**Status:** captured 2026-07-09 user request.
+
+When a Request pane's response is a failure — non-2xx status,
+schema validation error, connection error, timeout — surface a
+one-click chip that copies (or opens) an AI-ready prompt with
+all the details a coding assistant would need to help debug.
+
+Shape of the generated prompt:
+
+    I'm hitting an error on this HTTP request. Help me figure
+    out why.
+
+    ## Request
+    METHOD URL
+    (headers, with sensitive values redacted)
+    (body)
+
+    ## Response
+    HTTP <status>  (elapsed: <ms>ms)
+    (headers)
+    (body — pretty-printed if JSON, capped at ~2KB with a
+    `…truncated` marker)
+
+    ## Env / context
+    - active env: <name>
+    - defined vars used: <list of {{VARS}} that were substituted>
+    - undefined vars: <list of {{VARS}} that stayed literal>
+
+    ## Schema validation (if a .schema.json sidecar exists)
+    <the errors from schema_result>
+
+    ## What I've tried
+    (blank — for user to fill in)
+
+Where the button lives:
+- Response block header, right of the `copy` / `wrap` chips.
+- Only shown when `RunState::Done` has status ∉ [200, 300) OR
+  `schema_result` has errors OR `RunState::Failed`.
+- Label: `⚡ AI` or `? AI prompt` (nerd glyph + short label).
+
+Two flavors of click:
+1. **Plain click** — copy the prompt to the clipboard, toast
+   "prompt copied — paste into Claude / Codex".
+2. **Right-click** — menu:
+   - Copy to clipboard
+   - Open in a new AI pane (spawns `ai.claude_code_new` /
+     `ai.codex_new` with the prompt pre-filled)
+   - Save as `.mnml/ai-prompts/<timestamp>-<method>-<url-slug>.md`
+
+Also add ex/palette variants:
+- `http.copy_ai_prompt` (palette)
+- `http.ask_ai_about_failure` (opens AI pane with prompt)
+
+Sensitive-value redaction: any header whose key matches
+`(?i)authorization|api[_-]?key|token|cookie|x-.*-secret` gets
+its value replaced with `<redacted>`. Same rule for body fields
+that LOOK like tokens (Bearer-length strings, JWT shape).
+
+Reason this beats "just paste the whole tab": the prompt is
+structured for AI parsing, keeps the important context, and
+strips secrets so users don't leak credentials into their AI
+provider by accident.
