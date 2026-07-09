@@ -2101,7 +2101,19 @@ mod tests {
                     );
                 }
                 let right_x = rect.x + rect.width;
-                if is_visible(right_x, y) {
+                // 2026-07-08 — the rail's rightmost column is now a
+                // dedicated resize divider (`│`) sibling to the
+                // scrollbar. A chip that ends at the tree-body
+                // right edge will legitimately have that divider
+                // glyph one cell past its rect; that's the
+                // divider column, not an off-by-one chip render.
+                let right_glyph = if right_x < buf.area.width {
+                    buf[(right_x, y)].symbol()
+                } else {
+                    ""
+                };
+                let is_divider = right_glyph == "│" || right_glyph == "┃";
+                if is_visible(right_x, y) && !is_divider {
                     panic!(
                         "tree_icon_button rect `{label}` at ({x},{y},{w}x{h}): visible glyph at ({rx},{y}) is OUTSIDE the rect (off-by-one to the right)",
                         x = rect.x,

@@ -420,53 +420,68 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Right-panel split: carve a fixed-width column off the right
     // edge BEFORE we do the left rail split, so widths stay
     // independent. `upper` shrinks to the remaining middle column.
-    let (right_panel_area, upper) = if app.right_panel_visible {
+    let (right_panel_area, right_panel_edge_area, upper) = if app.right_panel_visible {
+        // 2026-07-08 — DEDICATED 1-cell divider column between the
+        // upper (editor) area and the right panel, mirroring the
+        // tree edge treatment. Editor keeps its scrollbar
+        // unaffected; the divider gets its own column that can
+        // light up on hover / drag without stomping content.
         let w = app
             .right_panel_width
-            .min(upper.width.saturating_sub(20))
+            .min(upper.width.saturating_sub(21))
             .max(8);
-        let cols = RLayout::horizontal([Constraint::Min(1), Constraint::Length(w)]).split(upper);
-        let resize_x = cols[1].x;
-        // 2026-07-08 — drag hit rect is now the FULL edge column
-        // (was clamped to a 4-row band centered on the old grip
-        // glyph — that made the edge undraggable everywhere else
-        // once the grip visual was removed).
+        let cols = RLayout::horizontal([
+            Constraint::Min(1),
+            Constraint::Length(1),
+            Constraint::Length(w),
+        ])
+        .split(upper);
+        let divider_x = cols[1].x;
         app.rects.right_panel_edge = Some(Rect {
-            x: resize_x.saturating_sub(1),
+            x: divider_x.saturating_sub(1),
             y: cols[1].y,
-            width: 3,
+            width: 3.min(upper.width.saturating_sub(divider_x.saturating_sub(1))),
             height: cols[1].height,
         });
-        (Some(cols[1]), cols[0])
+        (Some(cols[2]), Some(cols[1]), cols[0])
     } else {
         app.rects.right_panel_edge = None;
         app.rects.right_panel_close = None;
-        (None, upper)
+        (None, None, upper)
     };
 
-    let (tree_area, right) = if app.tree_visible {
-        let w = app.tree_width.min(upper.width.saturating_sub(20)).max(8);
-        let cols = RLayout::horizontal([Constraint::Length(w), Constraint::Min(1)]).split(upper);
-        // 2026-07-08 — drag hit rect is now the FULL rail-right
-        // edge column (was clamped to a 4-row band centered on
-        // the old grip glyph so clicks OUTSIDE that band would
-        // fall through to rail chips; that made every other
-        // vertical position undraggable once the glyph came out).
-        // 3 cells wide × full rail height, centered on the
-        // separator column. Any right-aligned rail chip that
-        // overlaps this rect wins via `begin_tree_edge_drag`'s
-        // `tree_icon_buttons` short-circuit.
-        let resize_x = cols[0].x + cols[0].width.saturating_sub(1);
+    let (tree_area, tree_edge_area, right) = if app.tree_visible {
+        // 2026-07-08 — carve a DEDICATED 1-cell resize divider
+        // column between the tree body and the editor area, same
+        // shape as `layout::split_rects` does for a split. The
+        // tree gets its own `w` cells (scrollbar in its own
+        // rightmost column, unaffected); the divider takes 1
+        // cell to the right; the editor takes what's left. This
+        // matches the split-pane pattern instead of overpainting
+        // the tree's scrollbar with the hover-highlight.
+        let w = app.tree_width.min(upper.width.saturating_sub(21)).max(8);
+        let cols = RLayout::horizontal([
+            Constraint::Length(w),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(upper);
+        // Resize hit zone is 3 cells wide × full height, centered
+        // on the divider column so a click 1 cell either side of
+        // the visible line still starts a drag (trackpad
+        // findability). Chip short-circuit in `begin_tree_edge_drag`
+        // still protects right-aligned rail chips.
+        let divider_x = cols[1].x;
         app.rects.tree_edge = Some(Rect {
-            x: resize_x.saturating_sub(1),
-            y: cols[0].y,
-            width: 3,
-            height: cols[0].height,
+            x: divider_x.saturating_sub(1),
+            y: cols[1].y,
+            width: 3.min(upper.width.saturating_sub(divider_x.saturating_sub(1))),
+            height: cols[1].height,
         });
-        (Some(cols[0]), cols[1])
+        (Some(cols[0]), Some(cols[1]), cols[2])
     } else {
         app.rects.tree_edge = None;
-        (None, upper)
+        (None, None, upper)
     };
 
     // right column: optionally a 1-row bufferline above the body.
@@ -616,29 +631,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             app.rects.tree_toggle = None;
             app.rects.tree_icon_buttons.clear();
         }
-        // Resize-edge affordance — no persistent grip glyph (user
-        // 2026-07-08: "the drag handles are becoming a drag and look
-        // weird sometimes"). When the mouse is over the edge hit
-        // zone (or a drag is already in progress), paint the whole
-        // edge column in the accent color so the user knows it's
-        // draggable. Otherwise the column stays blank.
-        //
-        // Per-row `Paragraph::new(" ")` (not `Block::default()`) so
-        // it fully OVERWRITES the underlying cell — otherwise a
-        // scrollbar `│` glyph painted by whatever section is under
-        // the edge column shows through the cyan bg as a broken
-        // line. 2026-07-08 user report.
-        if let Some(edge) = app.rects.tree_edge
-            && (app.hover_tree_edge || app.dragging.is_some())
-        {
-            let t = theme::cur();
-            let col_x = edge.x + edge.width / 2;
-            for dy in 0..edge.height {
-                frame.render_widget(
-                    ratatui::widgets::Paragraph::new(" ").style(Style::default().bg(t.cyan)),
-                    Rect::new(col_x, edge.y + dy, 1, 1),
-                );
-            }
+        // Resize divider — its own 1-cell column, sibling to the
+        // scrollbar (not overlapping). Idle = subtle `│` in
+        // `t.line`; hover / drag = cyan. Same `draw_divider` helper
+        // that split panes use.
+        if let Some(divider) = tree_edge_area {
+            let hover = app.hover_tree_edge || app.dragging_tree_edge;
+            draw_divider(frame, divider, crate::layout::SplitDir::Horizontal, hover);
         }
     } else {
         app.rects.tree = None;
@@ -1168,18 +1167,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
         // Hover-highlight edge (same idiom as the tree rail — no
         // persistent grip glyph). Per-row Paragraph so the paint
-        // overwrites any scrollbar `│` glyph sharing the column.
-        if let Some(edge) = app.rects.right_panel_edge
-            && (app.hover_right_panel_edge || app.dragging.is_some())
-        {
-            let col_x = edge.x + edge.width / 2;
-            for dy in 0..edge.height {
-                frame.render_widget(
-                    ratatui::widgets::Paragraph::new(" ").style(Style::default().bg(t.cyan)),
-                    Rect::new(col_x, edge.y + dy, 1, 1),
-                );
-            }
+        // Resize divider — dedicated column (same shape as split
+        // dividers). Idle = subtle line; hover / drag = cyan.
+        if let Some(divider) = right_panel_edge_area {
+            let hover = app.hover_right_panel_edge || app.dragging_right_panel_edge;
+            draw_divider(frame, divider, crate::layout::SplitDir::Horizontal, hover);
         }
+        let _ = t;
     }
 
     // ── bufferline ──
