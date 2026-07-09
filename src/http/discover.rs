@@ -475,7 +475,12 @@ fn render_curl(
                             .get("schema")
                     })?;
                 let mut visited: HashSet<String> = HashSet::new();
-                let synthesized = synth_example(schema, spec, &mut visited, 0);
+                let mut synthesized = synth_example(schema, spec, &mut visited, 0);
+                // Tier 3 — coherence pass: sync sibling fields
+                // (email ← firstName+lastName, updatedAt ← createdAt
+                // + 30min, total ← amount * quantity, etc.) before
+                // serialization + normalize.
+                coherence_pass(&mut synthesized);
                 serde_json::to_string(&synthesized).ok()
             })
             .map(|s| {
@@ -835,6 +840,237 @@ fn synth_example_hinted(
     }
 }
 
+/// Tier 3 — walk a synthesized JSON body and fix up sibling
+/// fields inside every object so the body is internally
+/// coherent. Doesn't touch fields with values that look
+/// user-provided (`example`/`default`); only overrides the
+/// canonical faker fallbacks.
+///
+/// Runs recursively — nested objects and arrays get the same
+/// treatment.
+///
+/// Rules (all applied per-object):
+///   - `email` derived from `firstName` + `lastName` when both
+///     are the faker defaults ("John" / "Smith" → `john.smith@example.com`)
+///   - `fullName` / `name` / `displayName` derived from same
+///   - `updatedAt` / `endTime` / `modifiedAt` = the corresponding
+///     `createdAt` / `startTime` / `insertedAt` + 30 minutes
+///     when both are ISO strings and updated matches created
+///     (naive schema-synth outputs identical timestamps)
+///   - `total` derived from `amount` * `quantity` (or `price` *
+///     `quantity`) when total looks like the amount's default
+///   - `total` derived from `subtotal` + `tax` when both present
+pub(crate) fn coherence_pass(v: &mut Value) {
+    match v {
+        Value::Object(obj) => {
+            // First recurse so nested objects are coherent before
+            // this level pulls from them.
+            for (_, child) in obj.iter_mut() {
+                coherence_pass(child);
+            }
+            // Snapshot sibling values by lowercased key as owned data
+            // so the mutable-borrow window on `obj` below stays
+            // clean. This runs once per object; the pass is small.
+            let keys: Vec<String> = obj.keys().cloned().collect();
+            let mut lc_str: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            let mut lc_num: std::collections::HashMap<String, f64> =
+                std::collections::HashMap::new();
+            let mut lc_present: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for k in &keys {
+                let lk = crate::http::faker::normalize_key(k);
+                lc_present.insert(lk.clone());
+                if let Some(s) = obj.get(k).and_then(Value::as_str) {
+                    lc_str.insert(lk.clone(), s.to_string());
+                }
+                if let Some(n) = obj.get(k).and_then(Value::as_f64) {
+                    lc_num.insert(lk, n);
+                }
+            }
+            // Derive coherent email + fullName + username.
+            let first = lc_str
+                .get("firstname")
+                .or_else(|| lc_str.get("givenname"))
+                .or_else(|| lc_str.get("fname"))
+                .cloned();
+            let last = lc_str
+                .get("lastname")
+                .or_else(|| lc_str.get("familyname"))
+                .or_else(|| lc_str.get("surname"))
+                .or_else(|| lc_str.get("lname"))
+                .cloned();
+            if let (Some(f), Some(l)) = (first, last) {
+                let derived_email =
+                    format!("{}.{}@example.com", f.to_lowercase(), l.to_lowercase());
+                let derived_full = format!("{f} {l}");
+                let derived_user = format!(
+                    "{}{}",
+                    f.chars().next().unwrap_or('j').to_ascii_lowercase(),
+                    l.to_lowercase()
+                );
+                for k in &keys {
+                    let lk = crate::http::faker::normalize_key(k);
+                    match lk.as_str() {
+                        "email" | "emailaddress" | "emailid"
+                            if obj.get(k).and_then(Value::as_str) == Some("user@example.com") =>
+                        {
+                            obj.insert(k.clone(), Value::String(derived_email.clone()));
+                        }
+                        "fullname" | "name" | "displayname"
+                            if obj.get(k).and_then(Value::as_str) == Some("John Smith") =>
+                        {
+                            obj.insert(k.clone(), Value::String(derived_full.clone()));
+                        }
+                        "username" if obj.get(k).and_then(Value::as_str) == Some("jsmith") => {
+                            obj.insert(k.clone(), Value::String(derived_user.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // Derive coherent timestamp pair — updated 30min after created.
+            for (created_key, updated_key) in &[
+                ("createdat", "updatedat"),
+                ("createdat", "modifiedat"),
+                ("insertedat", "updatedat"),
+                ("starttime", "endtime"),
+                ("startsat", "endsat"),
+            ] {
+                let created = lc_str.get(*created_key).cloned();
+                let updated_exists = lc_present.contains(*updated_key);
+                if let (Some(created), true) = (created, updated_exists)
+                    && let Some(bumped) = bump_iso_by_minutes(&created, 30)
+                {
+                    for k in &keys {
+                        if crate::http::faker::normalize_key(k) == *updated_key
+                            && obj.get(k).and_then(Value::as_str) == Some(created.as_str())
+                        {
+                            obj.insert(k.clone(), Value::String(bumped.clone()));
+                        }
+                    }
+                }
+            }
+            // Derive coherent total: amount * quantity or subtotal + tax.
+            let amount = lc_num
+                .get("amount")
+                .or_else(|| lc_num.get("price"))
+                .copied();
+            let quantity = lc_num
+                .get("quantity")
+                .or_else(|| lc_num.get("qty"))
+                .copied();
+            let subtotal = lc_num.get("subtotal").copied();
+            let tax = lc_num.get("tax").copied();
+            let derived_total = if let (Some(s), Some(t)) = (subtotal, tax) {
+                Some(round_money(s + t))
+            } else if let (Some(a), Some(q)) = (amount, quantity) {
+                Some(round_money(a * q))
+            } else {
+                None
+            };
+            if let Some(total) = derived_total {
+                for k in &keys {
+                    if crate::http::faker::normalize_key(k) == "total"
+                        && obj.get(k).and_then(Value::as_f64) == Some(9.99)
+                        && let Some(n) = serde_json::Number::from_f64(total)
+                    {
+                        obj.insert(k.clone(), Value::Number(n));
+                    }
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                coherence_pass(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn round_money(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+/// Parse an ISO 8601 timestamp (`YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH:MM]`)
+/// and bump it forward by `minutes`. Returns the new stamp in the
+/// same shape as the input (preserves fractional seconds + zone).
+/// `None` for unparseable inputs — caller keeps the original value.
+fn bump_iso_by_minutes(input: &str, minutes: i64) -> Option<String> {
+    let (year, month, day, hour, minute, sec, rest) = parse_iso(input)?;
+    let total_min = hour as i64 * 60 + minute as i64 + minutes;
+    let day_offset = total_min.div_euclid(24 * 60);
+    let mod_min = total_min.rem_euclid(24 * 60) as u32;
+    let new_hour = mod_min / 60;
+    let new_min = mod_min % 60;
+    let (nyear, nmonth, nday) =
+        civil_from_days(days_from_civil(year, month, day) + day_offset as i32);
+    let base = format!("{nyear:04}-{nmonth:02}-{nday:02}T{new_hour:02}:{new_min:02}:{sec:02}");
+    Some(format!("{base}{rest}"))
+}
+
+#[allow(clippy::type_complexity)]
+fn parse_iso(input: &str) -> Option<(i32, u32, u32, u32, u32, u32, String)> {
+    // Minimal parser: `YYYY-MM-DDTHH:MM:SS` prefix + anything else
+    // (fractional + zone) captured as `rest`. Reject if the prefix
+    // isn't exactly that shape.
+    let bytes = input.as_bytes();
+    if bytes.len() < 19 {
+        return None;
+    }
+    let get = |s: usize, e: usize| -> Option<&str> { input.get(s..e) };
+    let year: i32 = get(0, 4)?.parse().ok()?;
+    if bytes[4] != b'-' {
+        return None;
+    }
+    let month: u32 = get(5, 7)?.parse().ok()?;
+    if bytes[7] != b'-' {
+        return None;
+    }
+    let day: u32 = get(8, 10)?.parse().ok()?;
+    if bytes[10] != b'T' {
+        return None;
+    }
+    let hour: u32 = get(11, 13)?.parse().ok()?;
+    if bytes[13] != b':' {
+        return None;
+    }
+    let minute: u32 = get(14, 16)?.parse().ok()?;
+    if bytes[16] != b':' {
+        return None;
+    }
+    let sec: u32 = get(17, 19)?.parse().ok()?;
+    let rest = input.get(19..).unwrap_or("").to_string();
+    Some((year, month, day, hour, minute, sec, rest))
+}
+
+/// Howard Hinnant civil_from_days — days-since-epoch → (Y,M,D).
+/// Copy of `template.rs::civil_from_days` to avoid making that
+/// helper `pub`. Correct for the entire Gregorian range.
+fn civil_from_days(z: i32) -> (i32, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i32 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
+fn days_from_civil(y: i32, m: u32, d: u32) -> i32 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32;
+    let doy = (153 * if m > 2 { m - 3 } else { m + 9 } + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe as i32 - 719_468
+}
+
 /// Resolve a local `#/components/schemas/Foo` reference. Only local
 /// refs are supported — external `spec.yaml#/…` refs return `None`.
 fn resolve_ref<'a>(spec: &'a Value, r: &str) -> Option<&'a Value> {
@@ -1182,6 +1418,69 @@ mod tests {
     }
 
     #[test]
+    fn coherence_pass_derives_email_from_first_last() {
+        let mut v = serde_json::json!({
+            "firstName": "John",
+            "lastName": "Smith",
+            "emailAddress": "user@example.com",
+            "fullName": "John Smith",
+            "username": "jsmith",
+        });
+        coherence_pass(&mut v);
+        assert_eq!(v["emailAddress"], "john.smith@example.com");
+        assert_eq!(v["fullName"], "John Smith");
+        // username derived from first-initial + last (jsmith is
+        // already the canonical shape but proves coherence works
+        // when first/last vary via example overrides).
+        assert_eq!(v["username"], "jsmith");
+    }
+
+    #[test]
+    fn coherence_pass_bumps_updated_after_created() {
+        let mut v = serde_json::json!({
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        });
+        coherence_pass(&mut v);
+        assert_eq!(v["updatedAt"], "2026-01-01T00:30:00Z");
+    }
+
+    #[test]
+    fn coherence_pass_computes_total_from_amount_and_quantity() {
+        let mut v = serde_json::json!({
+            "amount": 9.99,
+            "quantity": 3,
+            "total": 9.99,
+        });
+        coherence_pass(&mut v);
+        assert_eq!(v["total"].as_f64().unwrap(), 29.97);
+    }
+
+    #[test]
+    fn coherence_pass_computes_total_from_subtotal_plus_tax() {
+        let mut v = serde_json::json!({
+            "subtotal": 20.0,
+            "tax": 1.6,
+            "total": 9.99,
+        });
+        coherence_pass(&mut v);
+        assert_eq!(v["total"].as_f64().unwrap(), 21.6);
+    }
+
+    #[test]
+    fn coherence_pass_recurses_into_nested_objects_and_arrays() {
+        let mut v = serde_json::json!({
+            "user": { "firstName": "John", "lastName": "Smith", "email": "user@example.com" },
+            "items": [
+                { "amount": 5.0, "quantity": 2, "total": 9.99 }
+            ]
+        });
+        coherence_pass(&mut v);
+        assert_eq!(v["user"]["email"], "john.smith@example.com");
+        assert_eq!(v["items"][0]["total"].as_f64().unwrap(), 10.0);
+    }
+
+    #[test]
     fn login_endpoints_emit_extract_hints_and_chain_template() {
         // Tier 6: a POST /auth/login with an access_token in the
         // response schema gets `# extract: TOKEN=$.access_token` in
@@ -1423,8 +1722,10 @@ mod tests {
         let body = std::fs::read_to_string(out.join("customers/createCustomer.curl")).unwrap();
         assert!(body.contains(r#""firstName":"John""#), "firstName: {body}");
         assert!(body.contains(r#""lastName":"Smith""#), "lastName: {body}");
+        // Tier 3 coherence pass runs after faker vocab and derives
+        // email from firstName + lastName in the same object.
         assert!(
-            body.contains(r#""emailAddress":"user@example.com""#),
+            body.contains(r#""emailAddress":"john.smith@example.com""#),
             "email: {body}"
         );
         assert!(

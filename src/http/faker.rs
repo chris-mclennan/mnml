@@ -196,8 +196,9 @@ pub fn known_env_vars() -> Vec<&'static str> {
 
 /// Normalize a property name to a lowercase-alphanumeric key so
 /// `firstName`, `first_name`, `FirstName`, `first-name` all map
-/// to the same lookup key `firstname`.
-fn normalize_key(prop: &str) -> String {
+/// to the same lookup key `firstname`. Public so the Tier 3
+/// coherence pass in `discover.rs` can key on the same shape.
+pub fn normalize_key(prop: &str) -> String {
     let mut out = String::with_capacity(prop.len());
     for c in prop.chars() {
         if c.is_ascii_alphanumeric() {
