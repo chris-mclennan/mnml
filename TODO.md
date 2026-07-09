@@ -365,3 +365,153 @@ is worse than just keeping the Nerd Font icons.
 
 Pick up when the user has a few hours and an integration whose
 current glyph annoys them enough to drive the design.
+
+### HTTP: drop non-dirty "new request" tab on navigate-away
+**Status:** captured 2026-07-08 user report.
+
+When the user opens the HTTP activity section (rqst/http rail),
+mnml auto-opens a fresh Request pane so the URL/method fields
+are ready. If the user glances at it and navigates elsewhere
+without typing anything, the empty scratch tab hangs around in
+the bufferline forever.
+
+Shape:
+- On Request-pane open via the auto-path (not `+ New request`
+  click), start with a `is_preview = true` flag — VS Code's
+  preview-tab treatment. Same idiom already used for tree-click
+  editor previews.
+- Any user interaction (typing URL, changing method, editing
+  body, hitting `r` to fire) flips the preview flag off →
+  permanent tab.
+- Navigating to any other pane without interaction → close the
+  preview Request pane instead of leaving it as a ghost.
+
+Reuses `Buffer::is_preview` semantics if possible; if not, add
+`RequestPane::is_preview: bool` and mirror the promote-on-edit
+path.
+
+### TODOs panel: 1-cell padding between rescan icon and label
+**Status:** captured 2026-07-08 — visual polish.
+
+One of the "Rescan" chips (need to identify which — TODOs
+section header most likely, matching what the user saw) is
+missing a cell of padding between the `↺`-in-circle icon and
+the "Rescan" text. Reads as glyph-kisses-word instead of clean
+chip.
+
+Fix: audit the section-header chip render for TODOs (and any
+sibling with the same pattern — CAPTURED refresh chip, Notes
+refresh chip if present) and ensure the format is `↺ Rescan`
+(1 space between).
+
+### TODOs panel: add `/` filter row (parity with HTTP / Agents)
+**Status:** captured 2026-07-08 user request.
+
+The HTTP and Agents activity panels have a `/` filter row at
+the top that narrows their list as you type. TODOs panel
+doesn't. Add the same idiom so users can grep across
+TODO/FIXME/HACK/XXX markers by keyword.
+
+Symmetric mirror of `App::http_panel_filter*` state:
+- `todos_panel_filter: String`
+- `todos_panel_filter_focused: bool`
+- render row above the section body
+- filter matches against marker text + file path
+- Esc clears + unfocuses
+
+### TODOs panel: pick up `.fail` markers in Playwright workspaces
+**Status:** captured 2026-07-08 user report.
+
+Steps to reproduce: open tattle-playwright workspace → TODOs
+section → click Rescan → no results. But the workspace has
+`.fixme` and `.fail` blocks in test files.
+
+Current marker set (see `src/config.rs` TODO keyword highlight
+list): TODO / FIXME / HACK / XXX / REVIEW. Playwright uses
+`.fixme(...)` and `.fail(...)` as test-modifier syntax — those
+call-site tokens aren't picked up because they don't match the
+comment-marker shape.
+
+Two things to fix:
+1. Add `.fail` to the scanned marker set for Playwright test
+   files (`.spec.ts`, `.test.ts` under `tests/`, `e2e/`, etc.).
+2. Consider whether `.fixme` also warrants the TODO panel row —
+   it's a test-skip marker not really a TODO, but users would
+   likely find it useful there.
+
+Marker-detection heuristic probably needs a per-language rule
+(Playwright TS: `.fixme(` / `.fail(` / `.skip(`; Jest: `.only(`;
+etc.) rather than one global regex.
+
+### Notes panel: add `/` filter row
+**Status:** captured 2026-07-08 user request.
+
+Same as the TODOs filter above — Notes panel should get the
+same filter idiom as HTTP / Agents for consistency.
+
+`App::notes_panel_filter*` state, filter matches note file
+name + first-line content.
+
+### Notes panel: `+ New note` chip is a no-op
+**Status:** captured 2026-07-08 user report — user clicked
+"new note" and nothing happened.
+
+Verify:
+- Is `App.rects.notes_new_chip` (or equivalent) actually
+  registered during the section render?
+- Is the click handler wired?
+- What's the expected flow — open a fresh untitled `.md` file
+  under `.mnml/notes/`, prompt for a filename, or scratch first
+  and save later?
+
+Likely a missed registration during a rework of the section
+header chips. Grep for `notes_new` in `src/tui/mouse/` /
+`src/app/dispatch.rs` and confirm the routing.
+
+### Tab bar: add Claude Code + Codex launcher icons
+**Status:** captured 2026-07-08 user request.
+
+Extend the far-right cluster of icons on the per-leaf tab
+strip (currently `$` terminal / `⊟` split-vert / `⊞`
+split-horiz) with two more chips positioned IMMEDIATELY LEFT
+of the terminal glyph:
+
+  [ Claude Code ] [ Codex ] [ $ ] [ ⊟ ] [ ⊞ ]
+
+Click → spawn a fresh Claude Code / Codex session (mirrors
+existing `ai.claude_code_new` / `ai.codex_new` commands) in
+the current leaf.
+
+Reuse the existing `tab_bar_ai_icon` config knob that already
+gates `"claude_code"` / `"codex"` / `"both"` variants — but
+this is asking to make BOTH visible unconditionally on the
+tab bar, i.e. bump the default from `"none"` (current) to
+`"both"`, or add a new `[ui] tab_bar_ai_launchers = true`
+switch.
+
+### Tab bar: right-click on AI launcher chip → placement menu
+**Status:** captured 2026-07-08 user request. Depends on the
+launcher-icons TODO above.
+
+Right-click on the Claude Code or Codex chip should open a
+context menu offering placement options for the new pane:
+
+  Place in half:
+    - Left half
+    - Right half
+    - Top half
+    - Bottom half
+  Place in quarter:
+    - Top-left
+    - Top-right
+    - Bottom-left
+    - Bottom-right
+
+Halves are already reachable via the drag-to-split drop-zones
+(Left/Right/Top/Bottom); this makes them explicitly clickable
+without needing a drag gesture.
+
+Quarters are a new layout shape — requires either recursive
+splits (split horizontally, then split the resulting half
+vertically) or a real 4-way grid mode. Halves-only path is
+much cheaper to ship; consider phasing.
