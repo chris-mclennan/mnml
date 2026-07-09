@@ -72,7 +72,14 @@ tempfile = "3"
 # Config + IPC status.json.
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `preserve_order` swaps `Value::Object`'s backing from `BTreeMap`
+# (alphabetical iteration) to `IndexMap` (insertion order). Keeps
+# discover-generated `.curl` bodies matching the swagger's field
+# order — otherwise `{eventName, data}` in the source becomes
+# `{data, eventName}` in the output, which is neither what humans
+# expect nor what hand-authored stubs use. See 2026-07-09
+# `discover` rqst-parity port.
+serde_json = { version = "1", features = ["preserve_order"] }
 # System clipboard (best-effort; falls back to an internal register if unavailable).
 arboard = "3"
 # Signal handler for SIGTERM/SIGINT/SIGHUP — the IPC death certificate

@@ -529,10 +529,12 @@ mod tests {
         assert_eq!(n, 2, "should emit one stub per named example");
         let created =
             std::fs::read_to_string(out.join("Admin/TriggerEvent.OrderCreated.curl")).unwrap();
-        // serde_json sorts object keys alphabetically on
-        // serialization — assert on the sorted form.
+        // 2026-07-09 — with serde_json's `preserve_order` feature
+        // enabled, field ORDER matches the input (swagger source
+        // order). `eventName` was declared first in the fixture
+        // above, so it comes first here.
         assert!(
-            created.contains(r#"--data-raw '{"data":{"id":1},"eventName":"OrderCreated"}'"#),
+            created.contains(r#"--data-raw '{"eventName":"OrderCreated","data":{"id":1}}'"#),
             "OrderCreated body missing: {created}"
         );
         assert!(
