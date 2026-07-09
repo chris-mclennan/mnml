@@ -195,23 +195,25 @@ fn splice_http_block(existing: &str, name: Option<&str>, new_block: &str) -> Opt
     Some(joined)
 }
 
-/// Read the first useful `# ...` comment from a `.curl` / `.http`
-/// file's leading comment block — a proxy for the swagger operation
-/// summary. Used by `open_request_pane_from_file` to populate
-/// `RequestPane::summary`, which drives the bufferline tab label.
+/// Read the most-distinctive `# ...` comment from a `.curl` /
+/// `.http` file's leading comment block for the bufferline tab
+/// label.
 ///
-/// Rules (2026-07-09):
-/// - Only lines at the very top (before the first non-comment,
-///   non-blank line) are considered.
-/// - `#` and `//` markers both count as comments.
-/// - Skip empty comment lines and the discover-added
-///   `# METHOD /path` marker (that's routing metadata, not a
-///   summary).
-/// - Skip `# example: <name>` — that's the named-example label,
-///   not the operation title.
-/// - First remaining comment wins. Trimmed of leading marker + ws.
-/// - Falls back to `None` when no matching comment exists.
+/// Priority (2026-07-09):
+/// 1. **`# example: <name>`** — named-example expansions from
+///    `discover` (`POST /admin/event` with 200+ event variants
+///    share the SAME operation summary — "Trigger an event" —
+///    but the example name IS the distinctive info). When
+///    present, `<name>` wins.
+/// 2. **First plain `# <text>` / `// <text>`** — the operation
+///    summary from the swagger. Skips empty lines and the
+///    `# METHOD /path` routing marker discover writes.
+/// 3. `None` if the leading block has no matching comment.
+///
+/// Only lines at the top before the first non-comment line count.
+/// Both `#` and `//` markers accepted.
 fn extract_summary(text: &str) -> Option<String> {
+    // First pass: named-example wins if present.
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -222,19 +224,34 @@ fn extract_summary(text: &str) -> Option<String> {
         } else if let Some(rest) = trimmed.strip_prefix("//") {
             rest.trim()
         } else {
-            // Hit the first non-comment line — comment block over.
             break;
         };
-        if body.is_empty() {
+        if let Some(rest) = body.strip_prefix("example:") {
+            let name = rest.trim();
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    // Second pass: first non-empty, non-METHOD-path, non-example
+    // comment wins.
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             continue;
         }
-        if let Some(rest) = body.strip_prefix("example:") {
-            let _ = rest;
+        let body = if let Some(rest) = trimmed.strip_prefix('#') {
+            rest.trim()
+        } else if let Some(rest) = trimmed.strip_prefix("//") {
+            rest.trim()
+        } else {
+            break;
+        };
+        if body.is_empty() || body.starts_with("example:") {
             continue;
         }
         // Skip `# METHOD /path` markers (discover adds them right
-        // before the curl line). Detected by "METHOD /..." where
-        // METHOD is one of the HTTP verbs in uppercase.
+        // before the curl line).
         let head = body.split_whitespace().next().unwrap_or("");
         if matches!(
             head,
@@ -5954,12 +5971,23 @@ mod http_tests {
     }
 
     #[test]
-    fn extract_summary_skips_example_label_and_uses_next_line() {
-        // The `# example: <name>` line is the named-example
-        // marker, not the operation summary — the FIRST non-example
-        // comment should win.
-        let text = "# Send an event\n# example: OrderCreated\ncurl 'https://x'\n";
-        assert_eq!(extract_summary(text).as_deref(), Some("Send an event"));
+    fn extract_summary_prefers_example_name_over_operation_summary() {
+        // 2026-07-09 flip: when a `# example: <name>` line is
+        // present, the example name is the DISTINCTIVE info (the
+        // operation summary is shared across 200+ TriggerEvent
+        // files). Example name wins.
+        let text =
+            "# Trigger an event\n# example: ChatmeterDeleteReviewCommand\ncurl 'https://x'\n";
+        assert_eq!(
+            extract_summary(text).as_deref(),
+            Some("ChatmeterDeleteReviewCommand")
+        );
+    }
+
+    #[test]
+    fn extract_summary_falls_through_to_summary_when_no_example() {
+        let text = "# Trigger an event\ncurl 'https://x'\n";
+        assert_eq!(extract_summary(text).as_deref(), Some("Trigger an event"));
     }
 
     #[test]
