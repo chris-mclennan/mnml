@@ -200,7 +200,6 @@ pub fn tab_chip_spans(
         return None;
     }
     let t = theme::cur();
-    let name_clipped = crate::ui::clip_to_cells(&inputs.name, inputs.name_cap);
     let pin_glyph = if nerd { "\u{f08d}" } else { "P" };
     let close_glyph = if nerd { "\u{F0156}" } else { "x" };
     let (badge, badge_fg_active, badge_fg_inactive) = if inputs.is_pinned {
@@ -213,7 +212,25 @@ pub fn tab_chip_spans(
         (" ".to_string(), t.grey_fg, t.grey)
     };
     let skip_icon = inputs.glyph.is_empty();
-    let name_cells = name_clipped.chars().count() as u16;
+    // Design-critic 2026-07-08 HIGH: `inputs.name` from real
+    // callers is the FULL label (e.g. "GET /api/users") — verb
+    // included. When `verb_split` is Some, the render path draws
+    // `rest` in the name slot, not `name_clipped`. Cap `rest`
+    // separately and use ITS clipped length for the width math;
+    // otherwise the verb text is counted twice (once via
+    // `name_cells`, once via `verb_extra`) and the chip paints a
+    // dead trailing gap on Request-pane tabs. Symmetrically, an
+    // unclipped `rest` on narrow per-leaf strips would blow past
+    // `name_cap` mid-URL with no `…`.
+    let (name_clipped, name_cells) = if let Some((_, rest)) = &inputs.verb_split {
+        let clipped = crate::ui::clip_to_cells(rest, inputs.name_cap);
+        let cells = clipped.chars().count() as u16;
+        (clipped, cells)
+    } else {
+        let clipped = crate::ui::clip_to_cells(&inputs.name, inputs.name_cap);
+        let cells = clipped.chars().count() as u16;
+        (clipped, cells)
+    };
     let diag_cells = if inputs.diag_chip.is_empty() {
         0
     } else {
@@ -253,7 +270,10 @@ pub fn tab_chip_spans(
             Style::default().fg(inputs.icon_color).bg(bg),
         ));
     }
-    if let Some((verb, rest)) = &inputs.verb_split {
+    if let Some((verb, _rest)) = &inputs.verb_split {
+        // `name_clipped` above already clipped `rest` to `name_cap`.
+        // Use it in place of `rest` so wide URLs get `…` truncation
+        // instead of mid-character Paragraph hard-clip.
         spans.push(Span::styled(
             format!(" {verb} "),
             Style::default()
@@ -262,7 +282,7 @@ pub fn tab_chip_spans(
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(" ".to_string(), Style::default().bg(bg)));
-        spans.push(Span::styled(format!("{rest} "), name_style));
+        spans.push(Span::styled(format!("{name_clipped} "), name_style));
     } else {
         spans.push(Span::styled(format!("{name_clipped} "), name_style));
     }
@@ -1701,11 +1721,17 @@ mod tests {
         // Verb splitting adds `verb_len + 3` cells. Regression
         // lock — the width the top bufferline uses for scroll
         // math has been off by these cells historically.
+        //
+        // Design-critic 2026-07-08 HIGH: previous version set
+        // `name == rest` so the double-count bug (name_cells
+        // ALSO counting the verb via the full `name`) was
+        // invisible. Realistic fixture: `name = "GET /api/foo"`,
+        // `verb_split = Some(("GET", "/api/foo"))`.
         let inputs = TabChipInputs {
             glyph: String::new(),
             icon_color: theme::cur().green,
-            name: "url".to_string(),
-            verb_split: Some(("GET".to_string(), "url".to_string())),
+            name: "GET /api/foo".to_string(),
+            verb_split: Some(("GET".to_string(), "/api/foo".to_string())),
             ..base_inputs()
         };
         let (spans, w) = tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true).unwrap();
@@ -1714,6 +1740,32 @@ mod tests {
             .map(|s| s.content.chars().count())
             .sum::<usize>() as u16;
         assert_eq!(w, painted, "reported width must match summed span chars");
+    }
+
+    #[test]
+    fn chip_verb_split_clips_long_url_with_ellipsis() {
+        // Design-critic 2026-07-08 HIGH follow-up: when `rest`
+        // exceeds `name_cap`, the painter should clip it with a
+        // `…` suffix — same behavior as non-verb chips. Prior
+        // to the fix, `rest` was rendered unclipped and got
+        // hard-truncated mid-character by Paragraph.
+        let inputs = TabChipInputs {
+            glyph: String::new(),
+            icon_color: theme::cur().green,
+            name: "GET https://api.example.com/very/deep/nested/path/segment".to_string(),
+            verb_split: Some((
+                "GET".to_string(),
+                "https://api.example.com/very/deep/nested/path/segment".to_string(),
+            )),
+            name_cap: 18,
+            ..base_inputs()
+        };
+        let (spans, _) = tab_chip_spans(&inputs, theme::cur().bg_darker, 100, true).unwrap();
+        let text = spans_to_text(&spans);
+        assert!(
+            text.contains('\u{2026}'),
+            "long verb-split URL should end with `…`: {text:?}"
+        );
     }
 
     #[test]

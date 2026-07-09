@@ -3343,10 +3343,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 
-/// 2026-06-22 — paint a multi-tab strip above an in-split leaf,
-/// one chip per pane in the leaf's `tabs`. Active chip is
-/// highlighted (bg2); inactive chips are dimmer (bg_darker).
-/// Each chip renders ` <icon> <name> <•/×> ` left-to-right.
+/// Paint a multi-tab strip above an in-split leaf, one chip per
+/// pane in the leaf's `tabs`. Post-2026-07-08 tab-refactor: chip
+/// composition (glyph + name + diag + badge + verb split) goes
+/// through the shared `ui::bufferline::paint_tab_chip` — active
+/// chips get `t.bg` (not `t.bg2` as an earlier version had),
+/// matching the top bufferline. Layout math (overflow, gap
+/// between chips, right-cluster reservation) stays here.
 /// Click chip → switch active. Click × → close that tab.
 fn paint_leaf_tab_strip(
     frame: &mut Frame,
