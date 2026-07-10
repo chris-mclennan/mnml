@@ -45,9 +45,9 @@ pub fn fuzzy_match(needle: &str, haystack: &str) -> Option<(i64, Vec<usize>)> {
             }
             hi += 1;
         }
-        match found {
-            Some(i) => matched.push(i),
-            None => return None,
+        {
+            let i = found?;
+            matched.push(i)
         }
     }
 

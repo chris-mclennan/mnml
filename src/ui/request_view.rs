@@ -3152,7 +3152,7 @@ fn draw_edit(
             .map(|(_, v)| v.clone());
         let summary = match current.as_deref() {
             Some(v) if v.starts_with("Bearer ") => {
-                format!("Bearer · {}", &v[7..].chars().take(20).collect::<String>())
+                format!("Bearer · {}", v[7..].chars().take(20).collect::<String>())
             }
             Some(v) if v.starts_with("Basic ") => "Basic · (base64 user:pass)".to_string(),
             Some(v) if v.len() > 24 => format!("{}…", &v[..22]),

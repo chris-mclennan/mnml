@@ -1918,13 +1918,10 @@ fn parse_code_actions(result: &serde_json::Value) -> Vec<CodeAction> {
             continue;
         }
         let kind = it.get("kind").and_then(|k| k.as_str()).map(str::to_string);
-        let edit = it.get("edit").map(parse_workspace_edit).and_then(|e| {
-            if e.is_empty() && it.get("edit").map(|j| j.is_null()).unwrap_or(true) {
-                None
-            } else {
-                Some(e)
-            }
-        });
+        let edit = it
+            .get("edit")
+            .map(parse_workspace_edit)
+            .filter(|e| !(e.is_empty() && it.get("edit").map(|j| j.is_null()).unwrap_or(true)));
         // Two shapes: a CodeAction with nested `command: Command`, or a bare
         // `Command` literal (the `command` field is itself a string).
         let command = match it.get("command") {
@@ -1967,13 +1964,10 @@ fn parse_code_actions(result: &serde_json::Value) -> Vec<CodeAction> {
 pub(crate) fn parse_code_action_resolve(
     result: &serde_json::Value,
 ) -> (Option<super::WorkspaceEdit>, Option<super::CodeCommand>) {
-    let edit = result.get("edit").map(parse_workspace_edit).and_then(|e| {
-        if e.is_empty() && result.get("edit").map(|j| j.is_null()).unwrap_or(true) {
-            None
-        } else {
-            Some(e)
-        }
-    });
+    let edit = result
+        .get("edit")
+        .map(parse_workspace_edit)
+        .filter(|e| !(e.is_empty() && result.get("edit").map(|j| j.is_null()).unwrap_or(true)));
     let command = match result.get("command") {
         Some(serde_json::Value::Object(o)) => {
             o.get("command")

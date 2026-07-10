@@ -467,9 +467,8 @@ pub fn path_for_var_ref_in(rows: &[VarRow], var_ref: i64) -> Option<Vec<String>>
 /// match.
 pub fn var_ref_for_path_in(rows: &[VarRow], path: &[String]) -> Option<i64> {
     let mut current_parent: i64 = 0;
-    let mut target_depth: usize = 0;
     let mut chosen_ref: Option<i64> = None;
-    for segment in path {
+    for (target_depth, segment) in path.iter().enumerate() {
         chosen_ref = rows.iter().find_map(|r| {
             if r.depth == target_depth && r.parent_ref == current_parent && r.name == *segment {
                 Some(r.var_ref)
@@ -477,13 +476,7 @@ pub fn var_ref_for_path_in(rows: &[VarRow], path: &[String]) -> Option<i64> {
                 None
             }
         });
-        match chosen_ref {
-            Some(r) => {
-                current_parent = r;
-                target_depth += 1;
-            }
-            None => return None,
-        }
+        current_parent = chosen_ref?;
     }
     chosen_ref
 }

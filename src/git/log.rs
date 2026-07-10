@@ -341,10 +341,9 @@ fn load_refs(workspace: &Path) -> Vec<(String, RefLabel)> {
                     return None; // the `origin/HEAD -> origin/main` alias — skip
                 }
                 (RefKind::RemoteBranch, n.to_string())
-            } else if let Some(n) = refname.strip_prefix("refs/tags/") {
-                (RefKind::Tag, n.to_string())
             } else {
-                return None;
+                let n = refname.strip_prefix("refs/tags/")?;
+                (RefKind::Tag, n.to_string())
             };
             Some((hash.to_string(), RefLabel { kind, name }))
         })

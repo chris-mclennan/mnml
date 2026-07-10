@@ -881,7 +881,7 @@ impl App {
         if hunks.is_empty() {
             self.toast(format!(
                 "{} — no diff for {}",
-                &hash.chars().take(9).collect::<String>(),
+                hash.chars().take(9).collect::<String>(),
                 rel_path.display()
             ));
             return;
@@ -978,7 +978,7 @@ impl App {
         if hunks.is_empty() {
             self.toast(format!(
                 "{} — empty diff",
-                &hash.chars().take(9).collect::<String>()
+                hash.chars().take(9).collect::<String>()
             ));
             return;
         }

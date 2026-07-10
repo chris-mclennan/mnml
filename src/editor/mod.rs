@@ -4323,12 +4323,11 @@ impl Editor {
         let ref_indent = if !is_blank(cur) {
             indent_of(cur)
         } else {
-            match (cur + 1..n)
-                .find(|&l| !is_blank(l))
-                .or_else(|| (0..cur).rev().find(|&l| !is_blank(l)))
             {
-                Some(l) => indent_of(l),
-                None => return None,
+                let l = (cur + 1..n)
+                    .find(|&l| !is_blank(l))
+                    .or_else(|| (0..cur).rev().find(|&l| !is_blank(l)))?;
+                indent_of(l)
             }
         };
         let belongs = |l: usize| is_blank(l) || indent_of(l) >= ref_indent;

@@ -292,10 +292,9 @@ pub(crate) fn parse_substitute(line: &str) -> Option<Substitute> {
     // `%s/...` ⇒ buffer-wide; bare `s/...` ⇒ current-line only (vim convention).
     let (rest, whole_buffer) = if let Some(r) = line.strip_prefix("%s/") {
         (r, true)
-    } else if let Some(r) = line.strip_prefix("s/") {
-        (r, false)
     } else {
-        return None;
+        let r = line.strip_prefix("s/")?;
+        (r, false)
     };
     // Split into find / replace / flags on unescaped `/`. `\/` and `\\` survive.
     let mut parts: Vec<String> = Vec::with_capacity(3);

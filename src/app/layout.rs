@@ -1576,7 +1576,7 @@ impl App {
         if idx >= state.matches.len() {
             return;
         }
-        let new_line = format!("{}{}", state.head, &state.matches[idx]);
+        let new_line = format!("{}{}", state.head, state.matches[idx]);
         self.cmdline_popup_selected = idx;
         // Write back to whichever path was hosting the cmdline.
         if self.no_pane_cmdline.is_some() {
@@ -1789,7 +1789,7 @@ impl App {
             }
             state
         };
-        let new_line = format!("{}{}", new_state.head, &new_state.matches[new_state.idx]);
+        let new_line = format!("{}{}", new_state.head, new_state.matches[new_state.idx]);
         // Stash before-write so `last_shown` can match against the line as
         // the handler reports it on the next Tab.
         let mut stored = new_state;

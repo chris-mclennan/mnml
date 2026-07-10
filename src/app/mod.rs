@@ -1207,12 +1207,11 @@ fn derive_bitbucket_slug(repo_path: &std::path::Path) -> Option<String> {
         s.to_string()
     } else if let Some(s) = url.strip_prefix("https://bitbucket.org/") {
         s.to_string()
-    } else if let Some(idx) = url.find("bitbucket.org") {
+    } else {
+        let idx = url.find("bitbucket.org")?;
         // Tolerate other forms like ssh://git@bitbucket.org/ws/repo.git
         let tail = &url[idx + "bitbucket.org".len()..];
         tail.trim_start_matches(['/', ':']).to_string()
-    } else {
-        return None;
     };
     let slug = after_host.trim_end_matches(".git").to_string();
     Some(slug)
