@@ -61,6 +61,14 @@ pub enum MenuAction {
     /// when it's already InRail. Surfaced by the chip right-click
     /// menu's "Remove from rail" entry.
     RemoveIntegration(String),
+    /// 2026-07-09 — copy the integration id to the system
+    /// clipboard. Useful for pasting into a chord binding, a
+    /// palette command, or a sibling install script.
+    CopyIntegrationId(String),
+    /// 2026-07-09 — open the on-disk TOML manifest for the
+    /// integration in an editor pane so users can hand-edit
+    /// without leaving mnml.
+    ShowIntegrationManifest(String),
     /// Run a registered command by id (e.g. `tree.refresh`).
     Command(&'static str),
     CloseTab(PaneId),

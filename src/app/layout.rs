@@ -1884,6 +1884,11 @@ impl App {
             self.todos_panel_filter_focused = false;
             self.notes_panel_filter_focused = false;
             self.sessions_panel_filter_focused = false;
+            // code-reviewer 2026-07-09: also clear Agents +
+            // Integrations, which were part of the same bug
+            // class but missed in the initial guard-hoist.
+            self.agents_panel_filter_focused = false;
+            self.integrations_panel_filter_focused = false;
             // Also snap focus back to Tree so `/` (and j/k nav)
             // on the newly-active panel land where the user
             // expects. HTTP auto-opens a Request pane and sets

@@ -735,10 +735,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // the section was open; kept accreting gates for every collision
     // until 2026-07-04 flipped it to explicit). Focus is set by
     // pressing `/` in the panel or clicking the filter chip.
+    // code-reviewer 2026-07-09: add `prompt.is_none()` +
+    // `no_pane_cmdline.is_none()` guards for parity with the
+    // other panels' hoisted absorb; the prior version could still
+    // eat keys while a confirm dialog was open or the no-pane
+    // cmdline was capturing.
     if app.focus == crate::focus::Focus::Tree
         && app.active_section == crate::app::ActivitySection::Integrations
         && app.picker.is_none()
         && app.integration_edit.is_none()
+        && app.prompt.is_none()
+        && app.no_pane_cmdline.is_none()
     {
         // Not-yet-focused: `/` enters filter mode (matches vim /
         // less search idiom). All other chars flow through so
@@ -1090,7 +1097,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.agents_panel_filter_focused = true;
         return;
     }
-    if app.agents_panel_filter_focused {
+    // code-reviewer 2026-07-09: agents' absorb also needed the
+    // guard-hoist — same class as the four filter panels fixed
+    // in the parent commit.
+    if app.agents_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Agents
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.agents_panel_filter.clear();

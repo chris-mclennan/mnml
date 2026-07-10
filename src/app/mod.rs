@@ -1986,6 +1986,11 @@ pub struct PaneRects {
     /// chips below the header. Click switches the active tab.
     pub integrations_tab_installed: Option<Rect>,
     pub integrations_tab_marketplace: Option<Rect>,
+    /// 2026-07-09 user request — `+ Add integration` chip at the
+    /// bottom of the Integrations panel. Click → sibling install
+    /// picker. Prior to this the flow was
+    /// `:sibling.install` palette-only, which is undiscoverable.
+    pub integrations_add_chip: Option<Rect>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.

@@ -2983,6 +2983,8 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let nerd = !app.config.ui.ascii_icons;
+    // Reset chip rects on every frame — same idiom as the other panels.
+    app.rects.integrations_add_chip = None;
 
     // Header row.
     let header_rect = Rect {
@@ -3340,6 +3342,37 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 cell,
             );
         }
+    }
+
+    // 2026-07-09 — `+ Add integration` chip at the bottom of
+    // the panel. Click → open the sibling install picker
+    // (`open_sibling_install_picker`). Same idiom as the
+    // `+ New session` chip on the Sessions panel and the
+    // `+ New note` chip on the Notes panel — a discoverable
+    // entry point that was previously palette-only.
+    let last_row = area.y + area.height.saturating_sub(1);
+    if last_row > area.y + 4 {
+        let add_rect = Rect {
+            x: area.x,
+            y: last_row,
+            width: area.width,
+            height: 1,
+        };
+        let plus = if nerd { "\u{ea60} " } else { "+ " };
+        frame.render_widget(
+            Paragraph::new(ratatui::text::Line::from(vec![
+                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(
+                    format!("{plus}Add integration"),
+                    Style::default()
+                        .fg(t.green)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])),
+            add_rect,
+        );
+        app.rects.integrations_add_chip = Some(add_rect);
     }
 }
 

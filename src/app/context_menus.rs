@@ -372,6 +372,18 @@ impl App {
             "Edit…",
             MenuAction::EditIntegration(id.clone()),
         ));
+        // 2026-07-09 user request — more integration-management
+        // gestures in the right-click menu. Copy id + open the
+        // manifest live above Remove so a mis-click is more likely
+        // to land on the harmless action.
+        items.push(MenuItem::new(
+            "Copy id",
+            MenuAction::CopyIntegrationId(id.clone()),
+        ));
+        items.push(MenuItem::new(
+            "Show manifest…",
+            MenuAction::ShowIntegrationManifest(id.clone()),
+        ));
         items.push(MenuItem::new("Remove", MenuAction::RemoveIntegration(id)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
@@ -987,6 +999,39 @@ impl App {
             }
             RemoveIntegration(id) => {
                 self.open_integration_remove_confirm(id);
+            }
+            CopyIntegrationId(id) => {
+                let mut clip = crate::clipboard::Clipboard::new();
+                clip.set(id.clone(), false);
+                self.toast(format!("copied `{id}` to clipboard"));
+            }
+            ShowIntegrationManifest(id) => {
+                // Manifests live at ~/.config/mnml/integrations/<id>.toml
+                // (user) OR <workspace>/.mnml/integrations/<id>.toml
+                // (workspace override). Open the workspace one if it
+                // exists, else the user one, else toast.
+                let ws_path = self
+                    .workspace
+                    .join(".mnml")
+                    .join("integrations")
+                    .join(format!("{id}.toml"));
+                let home = std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                let user_path = home
+                    .join(".config")
+                    .join("mnml")
+                    .join("integrations")
+                    .join(format!("{id}.toml"));
+                if ws_path.exists() {
+                    self.open_path(&ws_path);
+                } else if user_path.exists() {
+                    self.open_path(&user_path);
+                } else {
+                    self.toast(format!(
+                        "no manifest file for `{id}` — it's a built-in default"
+                    ));
+                }
             }
             ToggleIntegrationEnabled(id) => {
                 if let Some(slot) = self

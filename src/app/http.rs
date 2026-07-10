@@ -1784,10 +1784,16 @@ impl App {
         // the name as a string, so the AI prompt reported every
         // `.mnml/env`-defined var as "undefined" — api-workflow
         // SEV-2 2026-07-09.
+        // code-reviewer 2026-07-09: pass the `[http] default_env`
+        // config value in the third arg so users on a plain config
+        // (no explicit override, no $MNML_ENV) still resolve the
+        // same env the actual send-time path would use. Prior
+        // version hardcoded `None`, leaving a narrower slice of
+        // the original SEV-2 unfixed.
         let env = crate::http::template::EnvSet::select_with_config_default(
             &self.workspace,
             self.http_env_override.as_deref(),
-            None,
+            self.config.http.default_env.as_deref(),
         );
         let Some(Pane::Request(rp)) = self.panes.get(cur) else {
             self.toast("http.copy_ai_prompt: active pane isn't a Request");
