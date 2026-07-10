@@ -114,6 +114,50 @@ Empty `ticket_prefixes` (the default) skips the scan entirely — no perf cost.
 
 If Claude is currently "thinking" (its TUI shows a spinner glyph + `…`), the tab appends the live spinner: `TE-1234 ✽`. The glyph animates frame-to-frame; the name stays put so the tab's still identifiable.
 
+## The per-leaf tab-strip AI chips
+
+Every leaf's tab strip (top-right corner, next to the terminal glyph and the H/V split buttons) carries **Claude Code** and **Codex** launcher chips by default. Right-click either chip for a placement menu; left-click opens a new session using the default placement.
+
+```
+… [ ⚛ Claude ][ ▸ Codex ][ $ ][ ⊟ ][ ⊞ ]
+```
+
+The chips are on by default via `[ui] tab_bar_ai_icon = "both"`. Set to `"none"` to hide them entirely, or `"claude_code"` / `"codex"` to show only one. When the leaf is too narrow to fit both AI chips plus the terminal + H/V cluster (which is load-bearing), AI chips are dropped one at a time from the right — Codex first, then Claude Code. Terminal + H/V are never dropped.
+
+### Left-click — new session (default placement)
+
+Left-click either chip to fire the corresponding `ai.claude_code_new` / `ai.codex_new` command — a fresh session opens to the right of the active leaf (the IDE-canonical "chat panel" placement).
+
+### Right-click — placement menu
+
+Right-click either chip for a context menu:
+
+```
+Claude Code launcher
+  Open new Claude Code session (right dock)
+  Toggle existing Claude Code pane
+  Place new session in left half
+  Place new session in right half
+  Place new session in top half
+  Place new session in bottom half
+```
+
+The menu is symmetric for both chips. The four halves-only placements route through eight palette commands:
+
+| Command | Places new session in |
+|---|---|
+| `ai.claude_code_new_left` | Left half of the active leaf |
+| `ai.claude_code_new_right` | Right half of the active leaf |
+| `ai.claude_code_new_top` | Top half of the active leaf |
+| `ai.claude_code_new_bottom` | Bottom half of the active leaf |
+| `ai.codex_new_left` / `_right` / `_top` / `_bottom` | Same for Codex |
+
+Under the hood: right / bottom placements call `open_pty_dir(dir)` which spawns the new pane in the second position by default. Left / top placements call the same then `swap_siblings_containing(new_id)` so the new pane ends up on the requested side.
+
+Quarters (top-left, top-right, etc.) are deferred — they'd need a recursive split; no signal yet that users want them badly enough to justify the layout complexity.
+
+Bind any of the 8 palette commands under `[keys.global]` if you want chord-driven placement.
+
 ## The launcher-icon strip
 
 There are two launcher rows in mnml. Both are config-driven and both can fire any registered command.

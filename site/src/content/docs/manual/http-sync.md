@@ -78,12 +78,16 @@ Per-source failures don't abort the whole run. If `billing-service` 404s, the tr
 mnml sync
 mnml sync --workspace ~/code/api
 mnml sync -w .
+mnml sync --normalize             # or -n; substitute {{$isoTimestamp}} / {{$uuid}}
 ```
 
 | Flag | What |
 |---|---|
 | `--workspace DIR` / `-w DIR` | Workspace to read `sources.json` from. Defaults to the current directory |
+| `--normalize` / `-n` | Swap ISO 8601 timestamps + lowercase UUIDs in synthesized bodies for `{{$isoTimestamp}}` / `{{$uuid}}`. See [HTTP realistic request generation → Tier 1](/manual/http-generation/#tier-1--dynamic-value-substitution) |
 | `-h` / `--help` | Print usage and exit |
+
+Add `[http] sync_normalize = true` to `~/.config/mnml/config.toml` to enable normalization by default for both the palette command and the CLI.
 
 The CLI streams the same trace to stdout as the TUI puts in its toast — one line per source for the fetch attempt, one line per source for the write count, and a final `ok — N stubs written`:
 
@@ -103,6 +107,30 @@ ok — 78 stubs written
 Exit code is `0` when at least one source succeeded (matching `mnml discover`'s convention); non-zero only on a fatal failure (missing `sources.json`, malformed JSON). A workspace where every source 404s exits `0` with `0 stubs written` — `sync` doesn't pre-judge whether some sources matter more than others.
 
 The CLI variant is useful from a cron job, a CI step, or a `[tasks]` entry — the spec endpoints change as backend teams deploy, and `mnml sync` keeps the stub tree synced overnight without anyone opening the editor.
+
+## Dry-run — `mnml sync-check` / `:http.sync_check`
+
+Before overwriting your local `.curl` stubs, `sync-check` reports what *would* change without writing anything:
+
+```bash
+mnml sync-check                    # exit 0 = clean, exit 2 = drift found, exit 1 = failure
+mnml sync-check --normalize
+mnml sync-check -w ~/code/api
+```
+
+The palette command `http.sync_check` opens a scratch pane `[sync-check]` with a per-source markdown report — added / removed / changed files, per-source drift counts, an overall summary. Toast: `clean — no drift` (0 drift) or `N file(s) differ` (any drift).
+
+Under the hood each source's stubs regenerate into a `tempfile::TempDir` (auto-cleaned on Drop) and get compared against the real `out` tree. No writes happen anywhere. Same background-worker shape as `http.sync`; concurrent calls report `already running`.
+
+The CLI variant exits with distinct codes so scripts can gate on drift:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Clean — no drift |
+| `2` | Drift found — files differ |
+| `1` | Failure — malformed spec, missing `sources.json`, etc. |
+
+Useful as a CI gate: `mnml sync-check --normalize` in a pre-commit hook fails fast if upstream swagger drifted.
 
 ## What the generator writes
 
@@ -138,6 +166,7 @@ This is a forward-compat hook — drop-in support for other importers (Bruno, In
 
 ## Next
 
+- [HTTP realistic request generation](/manual/http-generation/) — the seven tiers of stub-quality work `sync --normalize` unlocks (faker vocab, coherent object graphs, well-known env-var IDs, login-flow chain starters, edge-case variants)
 - [HTTP client](/manual/http/) — the parent overview, with `mnml discover` for the single-source case
 - [HTTP envs & templating](/manual/http-envs/) — `{{BASE_URL}}` resolution, which the synced stubs rely on
 - [HTTP history](/manual/http-history/) — every send the synced stubs fire is logged here

@@ -20,6 +20,15 @@ This page is about the second door — an in-memory Postman-style scratch pane t
 
 The chip is wired by default — no config required. It sits in the INTEGRATIONS rail next to the blue paper-plane `→` chip (`http`, fires `http.send`): `→` fires the active request, the green `+` opens a new one. Don't confuse it with the *other* `+` on the section header itself — that one (`integrations.add`) opens the **Add integration** overlay listed in [Installing integrations](/manual/integrations/installing/). The two chips have different colors (the rail-row `+` is green; the section-header `+` follows the header's foreground).
 
+### Preview-tab behavior on activity-section entry
+
+Activating the HTTP activity section (`view.activity_http`, or clicking the HTTP icon in the activity bar) auto-opens a fresh Request pane so you can start typing straight away. That auto-opened pane is a **preview tab** (`is_preview = true`) — the same VS Code idiom mnml uses for tree-click editor previews:
+
+- **Any user interaction** — typing into URL / Body / Headers, changing method, hitting `r` — promotes it to a permanent tab. It survives leaving and returning to the HTTP section.
+- **Leaving the HTTP section without touching the pane** — closes it instead of leaving a ghost tab in the bufferline.
+
+So a user who clicks the HTTP icon to glance at requests, then goes back to Explorer, doesn't end up with an empty scratch tab piling up in the bufferline every time. Only the panes you actually edited stick.
+
 What you get when the pane lands:
 
 - **Method** = `GET`
@@ -73,6 +82,22 @@ The parse layer is the same one the file reader uses: curl flags (`-X`, `--reque
 6. Toasts `paste_curl: populated from <first 54 chars of clipboard>…`.
 
 The auto-tab-switch to Body matters because the Source tab is the natural place to be when you're about to paste — its hint says exactly "Then run `:http.paste_curl` (or `Ctrl+Shift+V`) to populate fields." If the pane stayed on Source after the paste, you'd see the same hint text instead of your shiny new body. The SEV-3 fix on 2026-06-19 routes you to Body so the population is obvious.
+
+### Auto-format body
+
+`[http] auto_format_body = true` (the default) prettifies the Body as JSON at three natural touchpoints — on paste, on send, and on load-from-file. So the compressed one-liner curl you just pasted from Chrome DevTools shows up as a formatted JSON body instead of a wall of `{"a":1,"b":2,…}`.
+
+Not fired on every keystroke — the idiom is "prettify at pause points" so in-progress edits aren't interrupted.
+
+| Surface | Call |
+|---|---|
+| Palette | `http.toggle_auto_format_body` |
+| Ex | `:set autoformat` / `:set noautoformat` / `:set autoformat!` (aliases `af`) |
+| Config | `[http] auto_format_body = false` to opt out |
+
+Silent no-op when the body doesn't parse as JSON (form-encoded / XML / plain text pass through untouched). The `{ } Format` chip + `Shift+Alt+F` chord remain — those are the "format NOW" path (works even when auto is off).
+
+See [HTTP realistic request generation → Auto-format body](/manual/http-generation/#auto-format-body---http-auto_format_body) for the full behavior.
 
 ### `Ctrl+Shift+V` vs `Ctrl+V`
 

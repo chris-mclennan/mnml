@@ -312,6 +312,7 @@ This is a smoke-test surface — you can run an end-to-end "log in, fetch users,
 Deep-dives on individual surfaces:
 
 - [HTTP Request pane — tabs & layout](/manual/http-edit-tabs/) — the three-panel layout, the colored Method chip, the six Edit tabs (Body / Headers / Params / Auth / Vars / Source), the AI strip, every chord that drives them
+- [HTTP realistic request generation](/manual/http-generation/) — the seven tiers of realistic-data work — faker vocab, coherent object graphs, `{{MERCHANT_ID}}` path params, login-flow chain starters, `↻ Reroll`, `⚡ AI` debug prompt, auto-format
 - [HTTP response schema validation](/manual/http-schema/) — `.schema.json` sidecars, the Response-view footer, `:http.show_schema_errors`, `:http.revalidate_schema`
 - [HTTP build from natural language](/manual/http-ai-build/) — `:http.ai_build` describes a request in English; Claude returns a curl; mnml parses + opens it
 - [HTTP chains](/manual/http-chains/) — `:http.run_chain` picker over `.mnml/chains/*.chain.json` + the `[chain-trace]` scratch

@@ -212,6 +212,19 @@ Two things can happen depending on what you want:
 
 2. **Uninstall the binary** — `cargo uninstall mnml-<class>-<name>`. The chip disappears from the collapsed rail on the next render (detection is in-process, cached per session — run `:integrations.refresh` if you want to clear it sooner). The `[[ui.integration_icon]]` entry stays in your config; if you reinstall the binary, the chip comes back.
 
+### The Remove confirm dialog
+
+Both in-app entry points to the destructive remove path — the right-click chip menu's **Remove from rail** entry and the `:integrations.remove` palette picker — route through a two-button confirmation dialog:
+
+```
+Remove integration 'bitbucket' from the rail?
+[ Remove ]  [ Cancel ]
+```
+
+`Cancel` is the default focus so an accidental `Enter` doesn't remove the chip. Arrow keys / `Tab` move between buttons; the primary `[ Remove ]` button runs the actual remove (drops the `[[ui.integration_icon]]` entry from the in-memory list and rewrites `~/.config/mnml/config.toml`). Palette command: `integrations.remove`. Right-click chip → **Remove from rail** is the mouse-driven variant.
+
+The pattern matches the destructive-confirm idiom used elsewhere in mnml (file deletion, workspace close). No dialog fires when the id isn't in the rail — the remove path silently no-ops with an explanatory toast.
+
 ## Troubleshooting
 
 ### "I installed via `cargo install` but mnml.app from Finder doesn't see the chip"

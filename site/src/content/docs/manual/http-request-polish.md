@@ -136,6 +136,42 @@ The most useful compound flow — see a red `{{DATABASE_URL}}`, right-click it, 
 
 For dynamic vars this is a two-key **Jump to definition** into the env file so you can wire a static override that shadows the built-in for this workspace.
 
+## The `⚡ AI` debug-prompt chip
+
+When a response comes back non-2xx, schema-invalid, or a transport error, the Response tab strip grows an `⚡ AI` chip (orange, bold, immediately left of `wrap`). One click copies a structured markdown prompt to the system clipboard — ready to paste into Claude, Codex, ChatGPT, or any AI CLI:
+
+```markdown
+## Request
+METHOD URL
+Headers (sensitive values redacted)
+Body (truncated to 2 KB)
+
+## Response
+HTTP <status>  (elapsed: <ms>ms)
+Headers + Body
+
+## Env / context
+- active env: <name>
+- defined vars used: TOKEN, MERCHANT_ID
+- undefined vars: DATABASE_URL
+
+## Schema validation
+- <errors>
+
+## What I've tried
+(fill me in)
+```
+
+**Sensitive-value redaction.** Headers matching (case-insensitive) `authorization`, `cookie`, `*api-key`, `*api_key`, `*apikey`, `*token`, `x-*-secret`, `proxy-authorization` get their values replaced with `<redacted>`. Auth schemes survive so the AI still sees the shape: `Authorization: Bearer <redacted>` reads as bearer-token auth, `Authorization: Basic <redacted>` reads as basic auth.
+
+**Env classification.** Every `{{VAR}}` referenced in the URL, headers, or body gets bucketed as *defined* (has a value in the active env; reported by name) or *undefined* (would resolve to the literal `{{VAR}}` at fire time; named so you can see what's missing). Built-in dynamics (`$uuid`, `$isoTimestamp`, `$timestamp`) are excluded.
+
+Also available as `:http.copy_ai_prompt` from the palette. No default keybinding — bind under `[keys.global]` if you reach for it often.
+
+Hover the chip: `click: copy a debug prompt to clipboard (redacts Authorization, api keys, cookies)`. Not painted on 2xx responses that also passed schema validation — for a successful send there's nothing to debug.
+
+See [HTTP realistic request generation → The ⚡ AI chip on failed responses](/manual/http-generation/#the--ai-chip-on-failed-responses) for the full prompt shape.
+
 ## HTTP panel `/` filter
 
 The HTTP activity-bar panel — the seven-section rail (FILES / RECENT / CAPTURED / ENVS / CHAINS / MOCKS / COLLECTIONS) — grew a filter input right under the `HTTP` header:
@@ -192,6 +228,7 @@ The auto-expansion only lasts while the filter is non-empty — clear the filter
 ## Next
 
 - [HTTP Request pane — tabs & layout](/manual/http-edit-tabs/) — the three-panel Request pane, the six Edit tabs, the AI strip
+- [HTTP realistic request generation](/manual/http-generation/) — the seven-tier realistic-data pipeline the pane's Reroll chip + Auto-format toggle plug into
 - [HTTP envs & templating](/manual/http-envs/) — the `{{var}}` resolution the highlighting is built on, plus the `:http.edit_env` picker the right-click menu launches
 - [HTTP client](/manual/http/) — the file-driven `.http` / `.curl` / `.rest` surface
 - [Activity bar](/manual/activity-bar/) — the sectioned rail the HTTP panel lives in
