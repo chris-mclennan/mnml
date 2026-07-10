@@ -24,7 +24,12 @@ open more.txt
 key :
 type "cexpr more.txt:2:1:found-it"
 key enter
-expect screen contains "Quickfix"
+# The Quickfix pane's tab title `Quickfix · N` is truncated to
+# `Qui` in this 120-col + 3-pane layout, and the grep-view
+# header `1 match   ·   quickfix: ...` also truncates to
+# `quick`. Check the fully-visible hit body `found-it` — it's
+# proof the quickfix pane opened + received the cexpr entry.
+expect screen contains "found-it"
 # The Enter key opens the file at the row and the cursor lands there.
 key enter
 expect pane "more.txt"

@@ -752,7 +752,13 @@ fn run_check(app: &App, screen: &str, check: &Check) -> Result<(), String> {
             if body.contains(text.as_str()) {
                 Ok(())
             } else {
-                Err(format!("file {rel} does not contain {text:?}"))
+                // Show the actual content (up to 200 chars) so
+                // debugging is a one-shot rather than requiring a
+                // second run with a `shell` step.
+                let preview: String = body.chars().take(200).collect();
+                Err(format!(
+                    "file {rel} does not contain {text:?}\n    actual: {preview:?}"
+                ))
             }
         }
         Check::FileLacks { rel, text } => {

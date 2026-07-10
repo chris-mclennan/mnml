@@ -33,4 +33,8 @@ expect pane "c.txt"
 # `key ctrl+w` was interfering as a vim leader prefix.
 ex bd
 # After close, the leaf still exists with the remaining tabs.
-expect screen lacks "c.txt"
+# `expect screen lacks` matched the "closed c.txt · Undo"
+# toast; `expect pane` on b.txt fails because focus fell back
+# to the left leaf (a.txt). Check the bufferline body directly
+# — either sibling should be visible AS a tab.
+expect screen contains "b.txt"

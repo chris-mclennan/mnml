@@ -29,8 +29,11 @@ open h.txt
 command view.toggle_tree
 
 # After 8 opens, the active tab is h.txt — bufferline is showing
-# h.txt at the right edge with first_visible > 0. The ‹ chevron
-# exists at col 0 of the bufferline row (row 1 in screen, 0-based).
+# h.txt at the right edge with first_visible > 0.  The ‹ chevron
+# renders at `inner_right..inner_right+3` (2026-07 bufferline
+# refactor moved it from col 0 to the right end of the tabs).
+# On a 120-col screen with 6 visible ~10-cell tabs + activity
+# bar the chevron sits around col 92.
 expect screen contains "‹"
 
 # Click the chevron repeatedly — each click decrements
@@ -38,13 +41,13 @@ expect screen contains "‹"
 # the auto-scroll-to-keep-active-visible does NOT clobber the
 # manual scroll. Walking all the way left should reveal a.txt
 # even though h.txt is still active.
-click 0 1
-click 0 1
-click 0 1
-click 0 1
-click 0 1
-click 0 1
-click 0 1
+click 100 1
+click 100 1
+click 100 1
+click 100 1
+click 100 1
+click 100 1
+click 100 1
 
 # a.txt should now be at the left edge of the strip — proves the
 # chevron clicks weren't reverted by the auto-scroll.
