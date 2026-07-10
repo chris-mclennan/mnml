@@ -130,7 +130,9 @@ pub fn run(id: &str, app: &mut App) -> bool {
 /// session has picked up from IPC / integration manifests. Grouped
 /// by `group`, sorted within each group, one line each:
 ///
-///     id                              title                                keys
+/// ```text
+/// id                              title                                keys
+/// ```
 ///
 /// Opened as a scratch buffer via `view.commands_reference`. Users
 /// hit `Ctrl+F` to search — mnml's editor Find works on this like

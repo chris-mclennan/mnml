@@ -166,7 +166,9 @@ pub struct TabChipRects {
 ///
 /// Layout (all cells, from left):
 ///
-///     " {glyph}  {name}[ {diag}] {badge} "
+/// ```text
+/// " {glyph}  {name}[ {diag}] {badge} "
+/// ```
 ///
 /// - `glyph` is skipped (2-cell reservation dropped) when
 ///   `inputs.glyph.is_empty()`.

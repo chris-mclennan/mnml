@@ -16,15 +16,28 @@ command snippet.expand
 # Expansion is on screen with `$1`/`$2`/`$0` stripped (rendered blank).
 expect screen contains "for  in  {"
 
+# 2026-07 CI-flake mitigation: add wait steps between edits so
+# pending_tree_edits + snippet edits_consumed settle before the
+# next key/type — matches the wait-step pattern in the
+# snippet_backtab_visited.test companion. Without these the
+# macOS CI runner's 50ms render sleep can drift past the 120ms
+# highlights-idle gate and land in an edge case where the next
+# type misses its stop-shift.
+
 # Cursor is at $1. Type the loop variable.
+wait 150
 type i
 
 # Tab moves to $2 — type the iterable.
+wait 150
 key tab
+wait 150
 type items
 
 # Tab again moves to $0 (the body indent).
+wait 150
 key tab
+wait 150
 type println
 
 # Final state shows the filled-in template.
