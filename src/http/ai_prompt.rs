@@ -9,12 +9,21 @@
 //! and the `⚡ AI` chip in the Response block header both route
 //! here.
 
+use crate::http::template::EnvSet;
 use crate::request_pane::{RequestPane, RunState};
 
 /// Build the markdown prompt for the given Request pane.
 /// Returns `None` when the response isn't in a failure state
 /// (nothing useful to ask an AI about).
-pub fn build_prompt(rp: &RequestPane, active_env_name: Option<&str>) -> Option<String> {
+///
+/// `env` is the workspace's resolved var set (loaded from
+/// `.mnml/env/<name>.env` — NOT the OS process env). Var
+/// classification (`defined vs undefined`) uses `env.lookup`
+/// so vars that resolve at send time are honestly reported
+/// as defined even when they aren't in the OS env.
+/// api-workflow-user SEV-2 fix, 2026-07-09.
+pub fn build_prompt(rp: &RequestPane, env: &EnvSet) -> Option<String> {
+    let active_env_name = env.name();
     let (status_line, response_headers, response_body, elapsed_ms, schema_errors) = match &rp.state
     {
         RunState::Done(r) if !(200..300).contains(&r.status) => (
@@ -89,6 +98,7 @@ pub fn build_prompt(rp: &RequestPane, active_env_name: Option<&str>) -> Option<S
         &rp.request.url,
         &rp.headers_buffer,
         rp.request.body.as_deref(),
+        env,
     );
     if let Some(env) = active_env_name {
         out.push_str("## Env / context\n");
@@ -169,15 +179,26 @@ fn truncate_with_marker(s: &str, max_bytes: usize) -> String {
     format!("{}\n…truncated ({} bytes total)", &s[..end], s.len())
 }
 
-fn classify_vars(url: &str, headers: &str, body: Option<&str>) -> (Vec<String>, Vec<String>) {
+fn classify_vars(
+    url: &str,
+    headers: &str,
+    body: Option<&str>,
+    env: &EnvSet,
+) -> (Vec<String>, Vec<String>) {
     let mut all = std::collections::BTreeSet::new();
     scan_vars(url, &mut all);
     scan_vars(headers, &mut all);
     if let Some(b) = body {
         scan_vars(b, &mut all);
     }
+    // Look up in the workspace `.mnml/env/*.env` first (via
+    // `EnvSet::lookup`, which falls through to std::env::var if
+    // the file didn't define it) — matches how send-time
+    // substitution actually resolves. Prior version used only
+    // std::env::var and reported EVERY workspace-file-defined var
+    // as "undefined", flagging false negatives to the AI.
     let (defined, undefined): (Vec<_>, Vec<_>) =
-        all.into_iter().partition(|v| std::env::var(v).is_ok());
+        all.into_iter().partition(|v| env.lookup(v).is_some());
     (defined, undefined)
 }
 
@@ -213,6 +234,16 @@ mod tests {
     use crate::request_pane::{RequestPane, ResponseView, RunState};
     use std::time::Duration;
 
+    fn named_env(name: &str) -> EnvSet {
+        // Empty-vars EnvSet carrying just a `name` — enough for
+        // the `active env: <name>` section without pulling in
+        // filesystem I/O.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(".mnml/env")).unwrap();
+        std::fs::write(d.path().join(".mnml/env").join(format!("{name}.env")), "").unwrap();
+        EnvSet::load(d.path(), name)
+    }
+
     fn pane_with_failure(status: u16, body: &str) -> RequestPane {
         let req = Request {
             method: "POST".to_string(),
@@ -246,13 +277,13 @@ mod tests {
     #[test]
     fn build_prompt_returns_none_when_response_is_2xx() {
         let rp = pane_with_failure(200, "{}");
-        assert!(build_prompt(&rp, Some("dev")).is_none());
+        assert!(build_prompt(&rp, &named_env("dev")).is_none());
     }
 
     #[test]
     fn build_prompt_includes_method_url_and_status_line() {
         let rp = pane_with_failure(400, r#"{"error":"missing merchantId"}"#);
-        let prompt = build_prompt(&rp, Some("dev")).unwrap();
+        let prompt = build_prompt(&rp, &named_env("dev")).unwrap();
         assert!(prompt.contains("POST https://api.example.com/orders"));
         assert!(prompt.contains("HTTP 400 Bad Request"));
         assert!(prompt.contains("(elapsed: 123ms)"));
@@ -262,7 +293,7 @@ mod tests {
     #[test]
     fn build_prompt_redacts_authorization_header() {
         let rp = pane_with_failure(401, "");
-        let prompt = build_prompt(&rp, Some("dev")).unwrap();
+        let prompt = build_prompt(&rp, &named_env("dev")).unwrap();
         assert!(prompt.contains("Bearer <redacted>"));
         assert!(!prompt.contains("secret-token-12345"));
         // Non-secret headers pass through.
@@ -271,12 +302,35 @@ mod tests {
 
     #[test]
     fn build_prompt_lists_defined_and_undefined_vars() {
-        // The MERCHANT_ID var isn't set in the environment during
-        // tests → classified as undefined.
+        // MERCHANT_ID isn't in this env → classified undefined.
         let rp = pane_with_failure(400, "");
-        let prompt = build_prompt(&rp, Some("dev")).unwrap();
+        let prompt = build_prompt(&rp, &named_env("dev")).unwrap();
         assert!(prompt.contains("undefined vars: MERCHANT_ID"));
         assert!(prompt.contains("active env: dev"));
+    }
+
+    #[test]
+    fn build_prompt_classifies_env_file_vars_as_defined() {
+        // api-workflow-user SEV-2 regression lock 2026-07-09.
+        // Previously `classify_vars` used std::env::var, so a var
+        // resolvable from `.mnml/env/dev.env` was always reported
+        // as undefined even though `template::expand` would fill
+        // it correctly at send time.
+        let d = tempfile::tempdir().unwrap();
+        let env_dir = d.path().join(".mnml/env");
+        std::fs::create_dir_all(&env_dir).unwrap();
+        std::fs::write(env_dir.join("dev.env"), "MERCHANT_ID=42\n").unwrap();
+        let env = EnvSet::load(d.path(), "dev");
+        let rp = pane_with_failure(400, "");
+        let prompt = build_prompt(&rp, &env).unwrap();
+        assert!(
+            prompt.contains("defined vars used: MERCHANT_ID"),
+            "prompt should classify env-file vars as defined: {prompt}"
+        );
+        assert!(
+            !prompt.contains("undefined vars: MERCHANT_ID"),
+            "must not double-count as undefined: {prompt}"
+        );
     }
 
     #[test]
@@ -285,7 +339,7 @@ mod tests {
         rp.request.body = None;
         rp.request.url = "https://api.example.com/health".to_string();
         rp.request.headers = Vec::new();
-        let prompt = build_prompt(&rp, None).unwrap();
+        let prompt = build_prompt(&rp, &EnvSet::empty()).unwrap();
         assert!(!prompt.contains("## Env"));
     }
 

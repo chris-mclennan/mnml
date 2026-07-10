@@ -129,7 +129,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(
-                "No matches — try clearing the filter (Esc).",
+                "No matches — Esc clears",
                 Style::default().fg(t.comment).bg(bg),
             ),
         ]);
@@ -189,10 +189,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
-        for path in files.iter().take(area.height.saturating_sub(4) as usize) {
+        // Clamp cursor to filtered length so a stale index
+        // after a filter narrows doesn't paint invisibly.
+        let clamped_cursor = app.notes_panel_cursor.min(files.len().saturating_sub(1));
+        app.notes_panel_cursor = clamped_cursor;
+        for (row_i, path) in files
+            .iter()
+            .take(area.height.saturating_sub(4) as usize)
+            .enumerate()
+        {
             if y >= area.y + area.height {
                 break;
             }
+            let is_focused_row = row_i == clamped_cursor;
+            let row_bg = if is_focused_row { t.bg2 } else { bg };
             let name = path
                 .file_stem()
                 .and_then(|s| s.to_str())
@@ -228,10 +238,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             };
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled("  ", Style::default().bg(bg)),
-                    Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(bg)),
-                    Span::styled(name_padded, Style::default().fg(t.fg).bg(bg)),
-                    Span::styled(format!(" {age_str}"), Style::default().fg(t.comment).bg(bg)),
+                    Span::styled("  ", Style::default().bg(row_bg)),
+                    Span::styled(format!("{icon} "), Style::default().fg(t.yellow).bg(row_bg)),
+                    Span::styled(name_padded, Style::default().fg(t.fg).bg(row_bg)),
+                    Span::styled(
+                        format!(" {age_str}"),
+                        Style::default().fg(t.comment).bg(row_bg),
+                    ),
                 ])),
                 row_rect,
             );

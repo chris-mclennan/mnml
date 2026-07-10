@@ -827,6 +827,154 @@ impl App {
         hits.sort_by(|a, b| a.path.cmp(&b.path).then(a.line.cmp(&b.line)));
         self.todos_hits = hits;
         self.todos_panel_scanned_once = true;
+        self.todos_panel_cursor = 0;
+    }
+
+    // vscode-user-keyboard SEV-2 fix 2026-07-09 — j/k / arrow
+    // nav on the three activity panels. Cursor is an index into
+    // the currently-visible filtered list; each `_cursor_down`
+    // clamps to the list length so filtering doesn't leave the
+    // cursor pointing past the end.
+    fn todos_filtered_len(&self) -> usize {
+        let f = self.todos_panel_filter.to_ascii_lowercase();
+        if f.is_empty() {
+            return self.todos_hits.len();
+        }
+        self.todos_hits
+            .iter()
+            .filter(|h| {
+                h.tag.to_ascii_lowercase().contains(&f)
+                    || h.path.to_string_lossy().to_ascii_lowercase().contains(&f)
+                    || h.title.to_ascii_lowercase().contains(&f)
+            })
+            .count()
+    }
+
+    pub fn todos_panel_cursor_down(&mut self) {
+        let n = self.todos_filtered_len();
+        if n == 0 {
+            self.todos_panel_cursor = 0;
+            return;
+        }
+        self.todos_panel_cursor = (self.todos_panel_cursor + 1).min(n - 1);
+    }
+
+    pub fn todos_panel_cursor_up(&mut self) {
+        self.todos_panel_cursor = self.todos_panel_cursor.saturating_sub(1);
+    }
+
+    pub fn todos_panel_activate(&mut self) {
+        let f = self.todos_panel_filter.to_ascii_lowercase();
+        let idx = self.todos_panel_cursor;
+        let picked = self
+            .todos_hits
+            .iter()
+            .filter(|h| {
+                f.is_empty()
+                    || h.tag.to_ascii_lowercase().contains(&f)
+                    || h.path.to_string_lossy().to_ascii_lowercase().contains(&f)
+                    || h.title.to_ascii_lowercase().contains(&f)
+            })
+            .nth(idx)
+            .cloned();
+        if let Some(hit) = picked {
+            let path = hit.path.clone();
+            let line = hit.line.to_string();
+            self.open_path(&path);
+            self.goto_line_str(&line);
+        }
+    }
+
+    pub fn notes_panel_cursor_down(&mut self) {
+        let n = self.notes_filtered().len();
+        if n == 0 {
+            self.notes_panel_cursor = 0;
+            return;
+        }
+        self.notes_panel_cursor = (self.notes_panel_cursor + 1).min(n - 1);
+    }
+
+    pub fn notes_panel_cursor_up(&mut self) {
+        self.notes_panel_cursor = self.notes_panel_cursor.saturating_sub(1);
+    }
+
+    pub fn notes_panel_activate(&mut self) {
+        if let Some(path) = self
+            .notes_filtered()
+            .into_iter()
+            .nth(self.notes_panel_cursor)
+        {
+            self.open_path(&path);
+        }
+    }
+
+    fn notes_filtered(&self) -> Vec<std::path::PathBuf> {
+        let f = self.notes_panel_filter.to_ascii_lowercase();
+        if f.is_empty() {
+            return self.notes_panel_files_cache.clone();
+        }
+        self.notes_panel_files_cache
+            .iter()
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(&f)
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn sessions_panel_cursor_down(&mut self) {
+        let n = self.sessions_filtered_ids().len();
+        if n == 0 {
+            self.sessions_panel_cursor = 0;
+            return;
+        }
+        self.sessions_panel_cursor = (self.sessions_panel_cursor + 1).min(n - 1);
+    }
+
+    pub fn sessions_panel_cursor_up(&mut self) {
+        self.sessions_panel_cursor = self.sessions_panel_cursor.saturating_sub(1);
+    }
+
+    pub fn sessions_panel_activate(&mut self) {
+        if let Some(pid) = self
+            .sessions_filtered_ids()
+            .into_iter()
+            .nth(self.sessions_panel_cursor)
+        {
+            self.reveal_pane(pid);
+        }
+    }
+
+    fn sessions_filtered_ids(&self) -> Vec<usize> {
+        let f = self.sessions_panel_filter.to_ascii_lowercase();
+        self.panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| matches!(p, crate::pane::Pane::Pty(_)).then_some(i))
+            .filter(|pid| {
+                if f.is_empty() {
+                    return true;
+                }
+                let Some(crate::pane::Pane::Pty(s)) = self.panes.get(*pid) else {
+                    return false;
+                };
+                let cwd = s.profile.cwd.as_ref();
+                let cwd_basename = cwd
+                    .and_then(|p| p.file_name().and_then(|n| n.to_str()))
+                    .unwrap_or_default();
+                [
+                    s.display_name.as_deref().unwrap_or_default(),
+                    s.profile.label.as_str(),
+                    cwd_basename,
+                ]
+                .iter()
+                .any(|c| !c.is_empty() && c.to_ascii_lowercase().contains(&f))
+            })
+            .collect()
     }
 
     /// Refresh the HTTP panel caches (files + recent history +

@@ -266,7 +266,12 @@ impl App {
             self.toast(format!("integration: {id} not in rail"));
             return;
         }
-        let title = format!("Remove integration '{id}' from the rail?");
+        // Backtick-quoted id to match every other confirm-dialog
+        // title (`Delete branch \`name\`?`, `Remove worktree
+        // \`name\`?`, etc.). design-critic 2026-07-09.
+        // Shortened copy so it doesn't truncate at ~45 cells on
+        // longer ids — vscode-user-mouse 2026-07-09.
+        let title = format!("Remove integration `{id}`?");
         self.pending_integration_remove_id = Some(id);
         let mut p =
             crate::prompt::Prompt::new(crate::prompt::PromptKind::IntegrationRemoveConfirm, title);

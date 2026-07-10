@@ -1329,6 +1329,31 @@ pub fn rects_dump_json(app: &App) -> String {
     // Same pattern as bufferline_overflow_* above.
     one!("settings_save_button", app.rects.settings_save_button);
     one!("settings_cancel_button", app.rects.settings_cancel_button);
+    // vscode-user-mouse + vscode-user-keyboard 2026-07-09 —
+    // the new filter-row inputs on TODOs / Notes / Sessions +
+    // the tab-strip AI launcher chips had rects populated but
+    // no `one!` entry, so headless drivers had to hardcode
+    // coords. Same class of gap.
+    one!(
+        "todos_panel_filter_input",
+        app.rects.todos_panel_filter_input
+    );
+    one!(
+        "notes_panel_filter_input",
+        app.rects.notes_panel_filter_input
+    );
+    one!(
+        "sessions_panel_filter_input",
+        app.rects.sessions_panel_filter_input
+    );
+    for (r, _leaf, tag) in &app.rects.split_strip_ai_buttons {
+        let label = if *tag == 1 {
+            "split_strip_ai_codex"
+        } else {
+            "split_strip_ai_claude"
+        };
+        push_rect(&mut out, &mut first, label, *r);
+    }
     for (r, idx) in &app.rects.settings_rows {
         push_rect(&mut out, &mut first, &format!("settings_row:{idx}"), *r);
     }

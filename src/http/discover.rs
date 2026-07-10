@@ -895,42 +895,46 @@ fn synth_example_edge_inner(
                     EdgeCase::Max => en.first().cloned().unwrap_or(Value::Null),
                 };
             }
+            // Fixed-shape formats — return as-is regardless of
+            // the length-edge bias. Truncating an ISO timestamp
+            // to `minLength=1` yields `"2"`; padding an email
+            // past `maxLength=64` yields `user@example.comxxx…`.
+            // Neither is a useful edge case; both break the
+            // format. api-workflow SEV-3 fix 2026-07-09.
+            if let Some(fmt) = schema.get("format").and_then(Value::as_str)
+                && matches!(fmt, "date-time" | "date" | "email" | "uuid")
+            {
+                return Value::String(match fmt {
+                    "date-time" => "2026-01-01T00:00:00Z".to_string(),
+                    "date" => "2026-01-01".to_string(),
+                    "email" => "user@example.com".to_string(),
+                    "uuid" => "00000000-0000-0000-0000-000000000000".to_string(),
+                    _ => unreachable!(),
+                });
+            }
             let min_len = schema.get("minLength").and_then(Value::as_u64).unwrap_or(1) as usize;
             let max_len = schema
                 .get("maxLength")
                 .and_then(Value::as_u64)
                 .unwrap_or(64) as usize;
-            let base = match schema.get("format").and_then(Value::as_str) {
-                Some("date-time") => "2026-01-01T00:00:00Z".to_string(),
-                Some("date") => "2026-01-01".to_string(),
-                Some("email") => "user@example.com".to_string(),
-                Some("uuid") => "00000000-0000-0000-0000-000000000000".to_string(),
-                _ => {
-                    // Property-name faker vocab still applies —
-                    // even edge cases want realistic-looking base
-                    // values (min-length "a"s aren't a useful test
-                    // when a name field is expected).
-                    if !prop.is_empty()
-                        && let Some(Value::String(s)) =
-                            crate::http::faker::placeholder_for(prop, ty)
-                    {
-                        s
-                    } else {
-                        "string".to_string()
-                    }
-                }
+            // Opaque-string base value — property-name faker
+            // vocab still applies for a realistic-looking basis.
+            let base = if !prop.is_empty()
+                && let Some(Value::String(s)) = crate::http::faker::placeholder_for(prop, ty)
+            {
+                s
+            } else {
+                "string".to_string()
             };
             let n = match edge {
                 EdgeCase::Min => min_len.max(1),
                 EdgeCase::Max => max_len.min(64),
             };
             if n < base.chars().count() {
-                // Truncate at char boundary.
                 Value::String(base.chars().take(n).collect())
             } else if n == base.chars().count() {
                 Value::String(base)
             } else {
-                // Pad with `x`s so the length matches the boundary.
                 let pad = "x".repeat(n - base.chars().count());
                 Value::String(format!("{base}{pad}"))
             }
@@ -1747,6 +1751,72 @@ mod tests {
         assert!(emax.contains(r#""score":100"#), "max score: {emax}");
         // GET has no body → no edge variants emitted.
         assert!(!out.join("things/getThing.edge-min.curl").exists());
+    }
+
+    #[test]
+    fn edge_cases_preserves_format_typed_strings_intact() {
+        // api-workflow SEV-3 regression lock 2026-07-09.
+        // date-time / date / email / uuid fields shouldn't get
+        // length-boundary trimming — that produces `"2"` and
+        // `"u"` on edge-min, and format-breaking x-padded
+        // suffixes on edge-max.
+        let dir = tempfile::tempdir().unwrap();
+        let spec = dir.path().join("s.json");
+        std::fs::write(
+            &spec,
+            r#"{
+              "openapi": "3.0.0",
+              "servers": [{ "url": "https://api.example.com" }],
+              "paths": {
+                "/things": {
+                  "post": {
+                    "operationId": "createThing",
+                    "tags": ["things"],
+                    "requestBody": {
+                      "content": {
+                        "application/json": {
+                          "schema": {
+                            "type": "object",
+                            "properties": {
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "email":     { "type": "string", "format": "email" },
+                              "id":        { "type": "string", "format": "uuid" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+        let out = dir.path().join("o");
+        run(&Options {
+            spec: spec.to_string_lossy().into_owned(),
+            out: out.clone(),
+            base_url: None,
+            normalize: false,
+            edge_cases: true,
+        })
+        .unwrap();
+        let emin = std::fs::read_to_string(out.join("things/createThing.edge-min.curl")).unwrap();
+        let emax = std::fs::read_to_string(out.join("things/createThing.edge-max.curl")).unwrap();
+        for body in &[emin, emax] {
+            assert!(
+                body.contains(r#""createdAt":"2026-01-01T00:00:00Z""#),
+                "createdAt intact: {body}"
+            );
+            assert!(
+                body.contains(r#""email":"user@example.com""#),
+                "email intact: {body}"
+            );
+            assert!(
+                body.contains(r#""id":"00000000-0000-0000-0000-000000000000""#),
+                "uuid intact: {body}"
+            );
+        }
     }
 
     #[test]

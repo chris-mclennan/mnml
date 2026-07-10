@@ -1777,12 +1777,23 @@ impl App {
             self.toast("http.copy_ai_prompt: no active Request pane");
             return;
         };
-        let env_name = self.http_env_override.clone();
+        // Resolve the workspace env via the same path every other
+        // send-time consumer uses (explicit override → MNML_ENV →
+        // config default → `.rqst/config` default). Prior
+        // implementation only read `http_env_override` and passed
+        // the name as a string, so the AI prompt reported every
+        // `.mnml/env`-defined var as "undefined" — api-workflow
+        // SEV-2 2026-07-09.
+        let env = crate::http::template::EnvSet::select_with_config_default(
+            &self.workspace,
+            self.http_env_override.as_deref(),
+            None,
+        );
         let Some(Pane::Request(rp)) = self.panes.get(cur) else {
             self.toast("http.copy_ai_prompt: active pane isn't a Request");
             return;
         };
-        let Some(prompt) = crate::http::ai_prompt::build_prompt(rp, env_name.as_deref()) else {
+        let Some(prompt) = crate::http::ai_prompt::build_prompt(rp, &env) else {
             self.toast("http.copy_ai_prompt: no failure to explain (response is 2xx)");
             return;
         };

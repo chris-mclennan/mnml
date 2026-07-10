@@ -1279,8 +1279,16 @@ pub fn split_buttons_width(app: &App) -> u16 {
 ///   - `app.rects.split_strip_buttons` (H/V)
 /// No-op when there's no active leaf.
 pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
-    let total_w = split_buttons_width(app);
-    if area.width < total_w {
+    // design-critic 2026-07-09 SEV-2: the previous all-or-nothing
+    // gate (`if area.width < total_w { return }`) meant flipping
+    // the `tab_bar_ai_icon` default from "none" to "both" raised
+    // the min width from 9 → 15, silently killing terminal + split
+    // buttons on leaves that used to render fine. Now: paint the
+    // core cluster (terminal + H/V) whenever there's room for
+    // those 9 cells, and add AI chips only when the area also
+    // fits them. Users on narrow leaves get a partial cluster
+    // instead of nothing.
+    if area.width < SPLIT_BUTTONS_W {
         return;
     }
     let Some(active) = app.active else {
@@ -1306,8 +1314,6 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
     let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let bg = t.bg_darker;
-    let mut bx = area.x + area.width - total_w;
-
     // AI button(s), leftmost in the cluster — configurable per
     // `[ui] tab_bar_ai_icon`. "none" hides them; "both" paints
     // Claude AND Codex chips (#19) so users can pick per-click
@@ -1315,15 +1321,23 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     // rect; the handler in tui/mouse dispatches to the right
     // `ai.*_new` command based on which was hit.
     let ai_kind = app.config.ui.tab_bar_ai_icon.as_str();
-    // Build the visible chip list. `"both"` gets two chips (Claude
-    // then Codex); a single-mode config gets one chip; "none" gets
-    // an empty list.
-    let ai_kinds: Vec<&'static str> = match ai_kind {
+    let mut ai_kinds: Vec<&'static str> = match ai_kind {
         "none" => Vec::new(),
         "both" => vec!["claude_code", "codex"],
         "codex" => vec!["codex"],
         _ => vec!["claude_code"],
     };
+    // Drop AI chips one at a time (from the end, i.e. Codex first
+    // in "both" mode) until the total width fits. Terminal + H/V
+    // are never dropped — they're the load-bearing part of the
+    // cluster (SPLIT_BUTTONS_W = 9 cells for those three).
+    while area.width < SPLIT_BUTTONS_W + (ai_kinds.len() as u16) * 3 {
+        if ai_kinds.pop().is_none() {
+            break;
+        }
+    }
+    let total_w = SPLIT_BUTTONS_W + (ai_kinds.len() as u16) * 3;
+    let mut bx = area.x + area.width - total_w;
     for kind in &ai_kinds {
         let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(kind, &t);
         let glyph = if nerd { ai_glyph } else { ai_fallback };

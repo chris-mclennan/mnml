@@ -75,17 +75,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new(Line::from(vec![
             Span::styled(" ", Style::default().bg(bg)),
             Span::styled(
-                "TODOs",
+                "TODOS",
                 Style::default()
                     .fg(t.comment)
                     .bg(bg)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
+                // Only show a count when the filter is active —
+                // design-critic 2026-07-09 flagged parity with
+                // Notes / Sessions / HTTP (which all show the
+                // count only when filter is on).
                 if filter_lc.is_empty() {
-                    format!("  ({} hits)", app.todos_hits.len())
+                    String::new()
                 } else {
-                    format!("  ({} of {} hits)", filtered.len(), app.todos_hits.len())
+                    format!("  ({} of {})", filtered.len(), app.todos_hits.len())
                 },
                 Style::default()
                     .fg(t.comment)
@@ -185,7 +189,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Paragraph::new(Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
                 Span::styled(
-                    "No matches — try clearing the filter (Esc).",
+                    "No matches — Esc clears",
                     Style::default().fg(t.comment).bg(bg),
                 ),
             ])),
@@ -198,14 +202,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         );
         y += 2;
     } else {
-        for (idx, hit) in filtered
+        // Clamp the cursor to the filtered length so a stale
+        // cursor after a filter narrows doesn't paint nothing.
+        let clamped_cursor = app.todos_panel_cursor.min(filtered.len().saturating_sub(1));
+        app.todos_panel_cursor = clamped_cursor;
+        for (row_i, (idx, hit)) in filtered
             .iter()
             .copied()
             .take(area.height.saturating_sub(5) as usize)
+            .enumerate()
         {
             if y >= area.y + area.height {
                 break;
             }
+            let is_focused_row = row_i == clamped_cursor;
+            let row_bg = if is_focused_row { t.bg2 } else { bg };
             let rel = hit
                 .path
                 .strip_prefix(&app.workspace)
@@ -229,17 +240,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             let title: String = hit.title.chars().take(40).collect();
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
-                    Span::styled(" ", Style::default().bg(bg)),
+                    Span::styled(" ", Style::default().bg(row_bg)),
                     Span::styled(
                         hit.tag,
                         Style::default()
                             .fg(tag_fg)
-                            .bg(bg)
+                            .bg(row_bg)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(path_line, Style::default().fg(t.comment).bg(bg)),
-                    Span::styled(" ", Style::default().bg(bg)),
-                    Span::styled(title, Style::default().fg(t.fg).bg(bg)),
+                    Span::styled(path_line, Style::default().fg(t.comment).bg(row_bg)),
+                    Span::styled(" ", Style::default().bg(row_bg)),
+                    Span::styled(title, Style::default().fg(t.fg).bg(row_bg)),
                 ])),
                 row_rect,
             );

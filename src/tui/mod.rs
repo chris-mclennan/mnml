@@ -795,7 +795,19 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.http_panel_filter_focused = true;
         return;
     }
-    if app.http_panel_filter_focused {
+    // Absorb block must re-check the same guards as the entry —
+    // the `_filter_focused` flag alone would trap keys after
+    // focus moves to a pane / a picker opens / a prompt fires.
+    // nvchad-user + vscode-user-mouse + vscode-user-keyboard all
+    // hit variants of that on 2026-07-09. Same guard-hoist
+    // pattern for all four filter panels below.
+    if app.http_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Http
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.http_panel_filter.clear();
@@ -870,7 +882,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.todos_panel_filter_focused = true;
         return;
     }
-    if app.todos_panel_filter_focused {
+    if app.todos_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Todos
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.todos_panel_filter.clear();
@@ -896,6 +914,76 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Row nav on TODOs / Notes / Sessions when the panel has
+    // focus and the filter isn't focused. Mirrors the HTTP
+    // panel's j/k/arrow/Enter handling. vscode-user-keyboard
+    // SEV-2 fix 2026-07-09.
+    if app.focus == crate::focus::Focus::Tree
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        match (app.active_section, key.code) {
+            (crate::app::ActivitySection::Todos, KeyCode::Down | KeyCode::Char('j'))
+                if !app.todos_panel_filter_focused =>
+            {
+                app.todos_panel_cursor_down();
+                return;
+            }
+            (crate::app::ActivitySection::Todos, KeyCode::Up | KeyCode::Char('k'))
+                if !app.todos_panel_filter_focused =>
+            {
+                app.todos_panel_cursor_up();
+                return;
+            }
+            (crate::app::ActivitySection::Todos, KeyCode::Enter)
+                if !app.todos_panel_filter_focused =>
+            {
+                app.todos_panel_activate();
+                return;
+            }
+            (crate::app::ActivitySection::Notes, KeyCode::Down | KeyCode::Char('j'))
+                if !app.notes_panel_filter_focused =>
+            {
+                app.notes_panel_cursor_down();
+                return;
+            }
+            (crate::app::ActivitySection::Notes, KeyCode::Up | KeyCode::Char('k'))
+                if !app.notes_panel_filter_focused =>
+            {
+                app.notes_panel_cursor_up();
+                return;
+            }
+            (crate::app::ActivitySection::Notes, KeyCode::Enter)
+                if !app.notes_panel_filter_focused =>
+            {
+                app.notes_panel_activate();
+                return;
+            }
+            (crate::app::ActivitySection::Sessions, KeyCode::Down | KeyCode::Char('j'))
+                if !app.sessions_panel_filter_focused =>
+            {
+                app.sessions_panel_cursor_down();
+                return;
+            }
+            (crate::app::ActivitySection::Sessions, KeyCode::Up | KeyCode::Char('k'))
+                if !app.sessions_panel_filter_focused =>
+            {
+                app.sessions_panel_cursor_up();
+                return;
+            }
+            (crate::app::ActivitySection::Sessions, KeyCode::Enter)
+                if !app.sessions_panel_filter_focused =>
+            {
+                app.sessions_panel_activate();
+                return;
+            }
+            _ => {}
+        }
+    }
     if !app.sessions_panel_filter_focused
         && app.focus == crate::focus::Focus::Tree
         && app.active_section == crate::app::ActivitySection::Sessions
@@ -909,7 +997,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.sessions_panel_filter_focused = true;
         return;
     }
-    if app.sessions_panel_filter_focused {
+    if app.sessions_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Sessions
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.sessions_panel_filter.clear();
@@ -948,7 +1042,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         app.notes_panel_filter_focused = true;
         return;
     }
-    if app.notes_panel_filter_focused {
+    if app.notes_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Notes
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.notes_panel_filter.clear();

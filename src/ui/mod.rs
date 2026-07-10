@@ -3386,13 +3386,20 @@ fn paint_leaf_tab_strip(
     const SPLIT_BTN_W: u16 = 3;
     // Three base buttons (terminal + V-split + H-split) plus the
     // optional AI button(s). `"both"` mode shows 2 AI chips.
+    // Graceful degradation: on narrow leaves the AI chips drop
+    // out (Codex first, then Claude) so terminal + splits are
+    // never sacrificed. design-critic 2026-07-09 SEV-2.
     let ai_kind_cfg = app.config.ui.tab_bar_ai_icon.as_str();
-    let ai_button_count: u16 = match ai_kind_cfg {
+    let mut ai_button_count: u16 = match ai_kind_cfg {
         "none" => 0,
         "both" => 2,
         _ => 1,
     };
-    let split_btns_total: u16 = SPLIT_BTN_W * (3 + ai_button_count);
+    let base_split_w: u16 = SPLIT_BTN_W * 3;
+    while strip.width < base_split_w + ai_button_count * SPLIT_BTN_W && ai_button_count > 0 {
+        ai_button_count -= 1;
+    }
+    let split_btns_total: u16 = base_split_w + ai_button_count * SPLIT_BTN_W;
     // #polish 2026-07-06 — per-leaf mode chip (Preview / Edit) for a
     // markdown editor / preview in this leaf. Sits between the tab
     // strip and the split buttons — same visual position as on the
@@ -3511,13 +3518,16 @@ fn paint_leaf_tab_strip(
     let dim_fg = t.comment;
     let mut bx = strip_right.saturating_sub(split_btns_total);
 
-    // AI button(s), leftmost in cluster — `"both"` shows Claude AND
-    // Codex chips so users can pick which to spawn without changing
-    // config (#19).
-    let ai_kinds: Vec<&'static str> = match ai_kind_cfg {
-        "none" => Vec::new(),
-        "both" => vec!["claude_code", "codex"],
-        "codex" => vec!["codex"],
+    // AI button(s), leftmost in cluster. `ai_button_count` was
+    // downgraded above based on strip width, so a "both" config
+    // on a 12-cell strip will paint 1 chip (Claude wins), and 9
+    // cells will paint 0 chips. Terminal + splits are never
+    // dropped.
+    let ai_kinds: Vec<&'static str> = match (ai_kind_cfg, ai_button_count) {
+        ("none", _) | (_, 0) => Vec::new(),
+        ("both", 1) => vec!["claude_code"],
+        ("both", _) => vec!["claude_code", "codex"],
+        ("codex", _) => vec!["codex"],
         _ => vec!["claude_code"],
     };
     for kind in &ai_kinds {

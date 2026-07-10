@@ -3854,6 +3854,15 @@ pub struct App {
     /// and detected ticket. Empty = show all.
     pub sessions_panel_filter: String,
     pub sessions_panel_filter_focused: bool,
+    /// Row cursor for j/k / arrow navigation on the three activity
+    /// panels (indexes into the currently-visible filtered list).
+    /// Reset on section change, filter accept, or refresh.
+    /// Enter activates: TODOs → jump to hit; Notes → open note;
+    /// Sessions → focus the Pty. vscode-user-keyboard SEV-2 fix
+    /// 2026-07-09.
+    pub todos_panel_cursor: usize,
+    pub notes_panel_cursor: usize,
+    pub sessions_panel_cursor: usize,
     /// Top-row scroll offset for the agents panel's content list (the
     /// session rows scroll; the filter + `+ New session` header stays put).
     /// Clamped to the content height each render.
@@ -4729,6 +4738,9 @@ impl App {
             notes_panel_filter_focused: false,
             sessions_panel_filter: String::new(),
             sessions_panel_filter_focused: false,
+            todos_panel_cursor: 0,
+            notes_panel_cursor: 0,
+            sessions_panel_cursor: 0,
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
             integrations_panel_filter: String::new(),

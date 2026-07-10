@@ -812,32 +812,39 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                     "ai.claude_code_new_bottom",
                 )
             };
+        // design-critic 2026-07-09: the previous menu had two
+        // items that ran the same code path — "Open new session
+        // (right dock)" and "Place new session in right half"
+        // both split horizontally and put the new pane on the
+        // second (right) side. Dropped the parenthetical and
+        // kept the four half-placement items so the six-item
+        // menu now maps to five distinct outcomes: toggle
+        // existing + place in {left, right, top, bottom}.
         let items = vec![
-            MenuItem::new(
-                format!("Open new {kind_label} session (right dock)"),
-                MenuAction::Command(new_cmd),
-            ),
             MenuItem::new(
                 format!("Toggle existing {kind_label} pane"),
                 MenuAction::Command(toggle_cmd),
             ),
             MenuItem::new(
-                "Place new session in left half",
+                format!("New {kind_label} session in left half"),
                 MenuAction::Command(left_cmd),
             ),
             MenuItem::new(
-                "Place new session in right half",
+                format!("New {kind_label} session in right half"),
                 MenuAction::Command(right_cmd),
             ),
             MenuItem::new(
-                "Place new session in top half",
+                format!("New {kind_label} session in top half"),
                 MenuAction::Command(top_cmd),
             ),
             MenuItem::new(
-                "Place new session in bottom half",
+                format!("New {kind_label} session in bottom half"),
                 MenuAction::Command(bottom_cmd),
             ),
         ];
+        // Suppress the unused vars from the earlier item set —
+        // kept the local for the toggle path above.
+        let _ = new_cmd;
         app.context_menu = Some(ContextMenu::new(
             Some(format!("{kind_label} launcher")),
             (x, y),

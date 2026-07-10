@@ -1920,11 +1920,15 @@ fn paint_response_tab_strip(
                 width: ai_w,
                 height: 1,
             };
+            // Cyan rather than orange — design-critic 2026-07-09
+            // flagged that orange collides with the 4xx-status
+            // color rendered elsewhere on the same row. The chip
+            // is an ACTION, not a status readout.
             frame.render_widget(
                 Paragraph::new(vec![Line::from(vec![Span::styled(
                     ai_text,
                     Style::default()
-                        .fg(t.orange)
+                        .fg(t.cyan)
                         .bg(t.bg_dark)
                         .add_modifier(Modifier::BOLD),
                 )])])

@@ -130,7 +130,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     if pty_indices.is_empty() {
         let msg = if !filter_lc.is_empty() {
-            "No matches — clear the filter (Esc)."
+            "No matches — Esc clears"
         } else {
             "No sessions yet."
         };
@@ -153,8 +153,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 2;
     }
 
+    // Clamp the cursor to the filtered list so keyboard nav
+    // stays in-bounds after a filter narrows.
+    let clamped_cursor = app
+        .sessions_panel_cursor
+        .min(pty_indices.len().saturating_sub(1));
+    app.sessions_panel_cursor = clamped_cursor;
     let active_pid = app.active;
-    for &pid in &pty_indices {
+    for (row_i, &pid) in pty_indices.iter().enumerate() {
         if y + TAB_H > area.y + area.height {
             break;
         }
@@ -165,6 +171,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let Pane::Pty(s) = pane else { continue };
 
         let is_active = active_pid == Some(pid);
+        let is_cursored = row_i == clamped_cursor;
         let tab_rect = Rect {
             x: area.x,
             y,
@@ -173,7 +180,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
 
         // 1-cell accent on the left edge: user-set color always
-        // wins; otherwise green for active, transparent for idle.
+        // wins; then keyboard-cursor cyan; then active green;
+        // else transparent.
         let accent_color = match s.accent_color.as_deref() {
             Some("green") => t.green,
             Some("blue") => t.blue,
@@ -183,7 +191,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Some("purple") => t.purple,
             Some("cyan") => t.cyan,
             _ => {
-                if is_active {
+                if is_cursored && app.focus == crate::focus::Focus::Tree {
+                    t.cyan
+                } else if is_active {
                     t.green
                 } else {
                     bg

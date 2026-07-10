@@ -1872,6 +1872,26 @@ impl App {
             && section == crate::app::ActivitySection::Http;
         let leaving_http = self.active_section == crate::app::ActivitySection::Http
             && section != crate::app::ActivitySection::Http;
+        // vscode-user-keyboard SEV-2 #1 + vscode-user-mouse SEV-2 +
+        // nvchad-user SEV-2 (2026-07-09): switching activity
+        // sections must reset any panel filter's focus flag, or
+        // the *previous* panel's filter absorb block silently
+        // steals the next section's keystrokes. Clear all four
+        // symmetrically on every section change; a no-op when
+        // none were focused.
+        if self.active_section != section {
+            self.http_panel_filter_focused = false;
+            self.todos_panel_filter_focused = false;
+            self.notes_panel_filter_focused = false;
+            self.sessions_panel_filter_focused = false;
+            // Also snap focus back to Tree so `/` (and j/k nav)
+            // on the newly-active panel land where the user
+            // expects. HTTP auto-opens a Request pane and sets
+            // focus = Pane; without this reset, arriving at
+            // TODOs/Notes/Sessions from HTTP left `/` typing
+            // into the hidden pane.
+            self.focus = crate::focus::Focus::Tree;
+        }
         self.active_section = section;
         if entering_search {
             self.search_input_focused = true;
@@ -2268,6 +2288,28 @@ mod layout_tests {
             panic!("expected right leaf");
         };
         assert_eq!(right_tabs.len(), 1, "right leaf holds only the new pane");
+    }
+
+    #[test]
+    fn section_switch_clears_all_panel_filter_focused_flags() {
+        // vscode-user-mouse + vscode-user-keyboard + nvchad-user
+        // SEV-2 regression lock 2026-07-09. Previously any of the
+        // four filter-focused flags could persist across a section
+        // switch, silently capturing keystrokes intended for the
+        // now-active panel (or a picker / editor).
+        let (_d, mut app) = app_with_files();
+        app.http_panel_filter_focused = true;
+        app.todos_panel_filter_focused = true;
+        app.notes_panel_filter_focused = true;
+        app.sessions_panel_filter_focused = true;
+        app.set_activity_section(crate::app::ActivitySection::Todos);
+        assert!(!app.http_panel_filter_focused);
+        assert!(!app.todos_panel_filter_focused);
+        assert!(!app.notes_panel_filter_focused);
+        assert!(!app.sessions_panel_filter_focused);
+        // Focus snapped back to Tree so `/` on the new panel
+        // reaches the filter entry gate.
+        assert_eq!(app.focus, crate::focus::Focus::Tree);
     }
 
     #[test]
