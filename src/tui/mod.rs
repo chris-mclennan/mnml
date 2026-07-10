@@ -1311,8 +1311,15 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     }
     // Git-palette filter input — when focused, intercept typing /
     // backspace / Esc here so the keys don't fall through to the
-    // editor.
-    if app.git_palette_filter_focused {
+    // editor. 2026-07-10 audit: guard-hoisted to match the other
+    // panel filters (same absorb-block class as the SEV-2 fixes).
+    if app.git_palette_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Git
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.git_palette_filter.clear();

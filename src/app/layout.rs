@@ -1894,6 +1894,7 @@ impl App {
             // class as the other 6.
             self.cloud_agents_filter_focused = false;
             self.cloud_run_prompt_focused = false;
+            self.git_palette_filter_focused = false;
             // Also snap focus back to Tree so `/` (and j/k nav)
             // on the newly-active panel land where the user
             // expects. HTTP auto-opens a Request pane and sets
@@ -2303,8 +2304,11 @@ mod layout_tests {
     #[test]
     fn section_switch_clears_all_panel_filter_focused_flags() {
         // vscode-user-mouse + vscode-user-keyboard + nvchad-user
-        // SEV-2 regression lock 2026-07-09. Previously any of the
-        // four filter-focused flags could persist across a section
+        // SEV-2 regression lock 2026-07-09.  Extended 2026-07-10
+        // as more absorb blocks were audited: 9 flags total (HTTP,
+        // TODOs, Notes, Sessions, Agents, Integrations, Cloud
+        // Agents filter + quick-fire prompt, Git palette filter).
+        // Previously any of these could persist across a section
         // switch, silently capturing keystrokes intended for the
         // now-active panel (or a picker / editor).
         let (_d, mut app) = app_with_files();
@@ -2312,11 +2316,21 @@ mod layout_tests {
         app.todos_panel_filter_focused = true;
         app.notes_panel_filter_focused = true;
         app.sessions_panel_filter_focused = true;
+        app.agents_panel_filter_focused = true;
+        app.integrations_panel_filter_focused = true;
+        app.cloud_agents_filter_focused = true;
+        app.cloud_run_prompt_focused = true;
+        app.git_palette_filter_focused = true;
         app.set_activity_section(crate::app::ActivitySection::Todos);
         assert!(!app.http_panel_filter_focused);
         assert!(!app.todos_panel_filter_focused);
         assert!(!app.notes_panel_filter_focused);
         assert!(!app.sessions_panel_filter_focused);
+        assert!(!app.agents_panel_filter_focused);
+        assert!(!app.integrations_panel_filter_focused);
+        assert!(!app.cloud_agents_filter_focused);
+        assert!(!app.cloud_run_prompt_focused);
+        assert!(!app.git_palette_filter_focused);
         // Focus snapped back to Tree so `/` on the new panel
         // reaches the filter entry gate.
         assert_eq!(app.focus, crate::focus::Focus::Tree);
