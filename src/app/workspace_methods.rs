@@ -1284,3 +1284,48 @@ fn walk_for_todos(
         }
     }
 }
+
+#[cfg(test)]
+mod notes_new_note_tests {
+    #[test]
+    fn new_note_creates_file_and_opens_preview_pane() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config::default();
+        let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
+        let before_panes = app.panes.len();
+        app.notes_panel_new_note();
+        let note_path = d.path().join(".mnml").join("notes").join("note-1.md");
+        assert!(note_path.exists(), "note file should be created");
+        assert!(
+            app.panes.len() > before_panes,
+            "opening the note should push a new pane; before={} after={}",
+            before_panes,
+            app.panes.len()
+        );
+        // Match preview by file name — canonicalization on macOS may
+        // give `/private/var/…` vs `/var/…` differences.
+        let preview_name = app.panes.iter().find_map(|p| match p {
+            crate::pane::Pane::MdPreview(mp) => mp
+                .path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string),
+            _ => None,
+        });
+        assert_eq!(preview_name.as_deref(), Some("note-1.md"));
+    }
+
+    #[test]
+    fn new_note_numbers_sequentially_when_pressed_repeatedly() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config::default();
+        let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.notes_panel_new_note();
+        app.notes_panel_new_note();
+        app.notes_panel_new_note();
+        let dir = d.path().join(".mnml").join("notes");
+        assert!(dir.join("note-1.md").exists());
+        assert!(dir.join("note-2.md").exists());
+        assert!(dir.join("note-3.md").exists());
+    }
+}

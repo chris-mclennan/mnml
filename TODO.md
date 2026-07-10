@@ -404,69 +404,32 @@ sibling with the same pattern — CAPTURED refresh chip, Notes
 refresh chip if present) and ensure the format is `↺ Rescan`
 (1 space between).
 
-### TODOs panel: add `/` filter row (parity with HTTP / Agents)
-**Status:** captured 2026-07-08 user request.
+### ~~TODOs panel: add `/` filter row (parity with HTTP / Agents)~~
+**Shipped 2026-07-09.** `todos_panel_filter` state + filter row
+render + `/`-focus keybinding + click-to-focus + click-outside-
+to-unfocus. Header shows `(N of M hits)` when active. Matches
+tag, path, or title case-insensitively.
 
-The HTTP and Agents activity panels have a `/` filter row at
-the top that narrows their list as you type. TODOs panel
-doesn't. Add the same idiom so users can grep across
-TODO/FIXME/HACK/XXX markers by keyword.
+### ~~TODOs panel: pick up `.fail` markers in Playwright workspaces~~
+**Shipped 2026-07-09.** Playwright test files (`.spec.ts` /
+`.test.ts` / `.spec.js` / `.test.js`) now get an extra scanner
+pass that picks up `.fixme(` / `.fail(` / `.skip(` call-site
+tokens. Mapped to FIXME / XXX / REVIEW respectively; the test
+title (first quoted string in the call) becomes the entry
+text. Non-test files still use the comment-only path.
 
-Symmetric mirror of `App::http_panel_filter*` state:
-- `todos_panel_filter: String`
-- `todos_panel_filter_focused: bool`
-- render row above the section body
-- filter matches against marker text + file path
-- Esc clears + unfocuses
+### ~~Notes panel: add `/` filter row~~
+**Shipped 2026-07-09.** Same idiom as TODOs above — filter row,
+`/` to focus, Esc clears + unfocuses. Matches note file names
+case-insensitively. Header shows `(N of M)` when active.
 
-### TODOs panel: pick up `.fail` markers in Playwright workspaces
-**Status:** captured 2026-07-08 user report.
-
-Steps to reproduce: open tattle-playwright workspace → TODOs
-section → click Rescan → no results. But the workspace has
-`.fixme` and `.fail` blocks in test files.
-
-Current marker set (see `src/config.rs` TODO keyword highlight
-list): TODO / FIXME / HACK / XXX / REVIEW. Playwright uses
-`.fixme(...)` and `.fail(...)` as test-modifier syntax — those
-call-site tokens aren't picked up because they don't match the
-comment-marker shape.
-
-Two things to fix:
-1. Add `.fail` to the scanned marker set for Playwright test
-   files (`.spec.ts`, `.test.ts` under `tests/`, `e2e/`, etc.).
-2. Consider whether `.fixme` also warrants the TODO panel row —
-   it's a test-skip marker not really a TODO, but users would
-   likely find it useful there.
-
-Marker-detection heuristic probably needs a per-language rule
-(Playwright TS: `.fixme(` / `.fail(` / `.skip(`; Jest: `.only(`;
-etc.) rather than one global regex.
-
-### Notes panel: add `/` filter row
-**Status:** captured 2026-07-08 user request.
-
-Same as the TODOs filter above — Notes panel should get the
-same filter idiom as HTTP / Agents for consistency.
-
-`App::notes_panel_filter*` state, filter matches note file
-name + first-line content.
-
-### Notes panel: `+ New note` chip is a no-op
-**Status:** captured 2026-07-08 user report — user clicked
-"new note" and nothing happened.
-
-Verify:
-- Is `App.rects.notes_new_chip` (or equivalent) actually
-  registered during the section render?
-- Is the click handler wired?
-- What's the expected flow — open a fresh untitled `.md` file
-  under `.mnml/notes/`, prompt for a filename, or scratch first
-  and save later?
-
-Likely a missed registration during a rework of the section
-header chips. Grep for `notes_new` in `src/tui/mouse/` /
-`src/app/dispatch.rs` and confirm the routing.
+### ~~Notes panel: `+ New note` chip is a no-op~~
+**Verified 2026-07-09.** Handler works — creates
+`.mnml/notes/note-N.md`, refreshes the panel, opens as an
+MdPreview pane. Locked in by 2 unit tests
+(`notes_new_note_tests` in `src/app/workspace_methods.rs`).
+The original report was stale; whatever regressed it was fixed
+in a prior session and no follow-up was needed.
 
 ### Tab bar: add Claude Code + Codex launcher icons
 **Status:** captured 2026-07-08 user request.

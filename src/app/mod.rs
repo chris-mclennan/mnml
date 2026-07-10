@@ -1950,11 +1950,15 @@ pub struct PaneRects {
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
     /// `ActivitySection::Notes` panel `+ New note` row rect.
     pub notes_panel_new_chip: Option<Rect>,
+    /// `ActivitySection::Notes` panel `/` filter input row.
+    pub notes_panel_filter_input: Option<Rect>,
     /// `ActivitySection::Todos` panel — one row per hit + the index
     /// in `App::todos_hits`. Click → jump to file:line. (#9)
     pub todos_panel_rows: Vec<(Rect, usize)>,
     /// `ActivitySection::Todos` panel refresh chip rect.
     pub todos_panel_refresh_chip: Option<Rect>,
+    /// `ActivitySection::Todos` panel `/` filter input row.
+    pub todos_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New session` row at the bottom of
     /// the sessions panel. Click → spawns a Claude Code pane
     /// (most common case; a follow-up could open a picker).
@@ -3830,6 +3834,14 @@ pub struct App {
     /// `true` while the user is typing into the HTTP panel's filter
     /// input (mirrors `agents_panel_filter_focused`).
     pub http_panel_filter_focused: bool,
+    /// `/`-style filter for the TODOs panel — case-insensitive match
+    /// against the marker tag, path, and title. Empty = show all.
+    pub todos_panel_filter: String,
+    pub todos_panel_filter_focused: bool,
+    /// `/`-style filter for the Notes panel — case-insensitive match
+    /// against the note file name. Empty = show all.
+    pub notes_panel_filter: String,
+    pub notes_panel_filter_focused: bool,
     /// Top-row scroll offset for the agents panel's content list (the
     /// session rows scroll; the filter + `+ New session` header stays put).
     /// Clamped to the content height each render.
@@ -4694,6 +4706,10 @@ impl App {
             agents_panel_filter: String::new(),
             http_panel_filter: String::new(),
             http_panel_filter_focused: false,
+            todos_panel_filter: String::new(),
+            todos_panel_filter_focused: false,
+            notes_panel_filter: String::new(),
+            notes_panel_filter_focused: false,
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
             integrations_panel_filter: String::new(),

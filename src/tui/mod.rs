@@ -855,6 +855,86 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // TODOs / Notes rail filter — same `/` idiom as HTTP + Agents.
+    // Focus on `/`, then intercept typing / backspace / Esc / Enter.
+    if !app.todos_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Todos
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && let KeyCode::Char('/') = key.code
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        app.todos_panel_filter_focused = true;
+        return;
+    }
+    if app.todos_panel_filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.todos_panel_filter.clear();
+                app.todos_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.todos_panel_filter.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.todos_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.todos_panel_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
+    if !app.notes_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Notes
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && let KeyCode::Char('/') = key.code
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        app.notes_panel_filter_focused = true;
+        return;
+    }
+    if app.notes_panel_filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.notes_panel_filter.clear();
+                app.notes_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.notes_panel_filter.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.notes_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.notes_panel_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     // Agents rail filter — `/` in the panel focuses filter (matches
     // vim / less search idiom, mirrors the Integrations panel behavior).
     // Once focused, intercept typing / backspace / Esc / Enter.

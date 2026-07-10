@@ -2311,7 +2311,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_import_prompt();
         return;
     }
-    // Notes panel — file rows + `+ New note` chip (#8).
+    // Notes panel — filter row, file rows, `+ New note` chip (#8).
+    if let Some(r) = app.rects.notes_panel_filter_input
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.notes_panel_filter_focused = true;
+        return;
+    }
     if let Some(r) = app.rects.notes_panel_new_chip
         && crate::app::dispatch::contains(r, x, y)
     {
@@ -2329,6 +2335,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // TODOs panel — refresh chip + row click (#9).
+    if let Some(r) = app.rects.todos_panel_filter_input
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.todos_panel_filter_focused = true;
+        return;
+    }
     if let Some(r) = app.rects.todos_panel_refresh_chip
         && crate::app::dispatch::contains(r, x, y)
     {
@@ -2481,6 +2493,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     if app.http_panel_filter_focused {
         app.http_panel_filter_focused = false;
+    }
+    if app.todos_panel_filter_focused {
+        app.todos_panel_filter_focused = false;
+    }
+    if app.notes_panel_filter_focused {
+        app.notes_panel_filter_focused = false;
     }
     // Sessions panel tab (vertical-tab strip shown when
     // `ActivitySection::Sessions` is active). Click →

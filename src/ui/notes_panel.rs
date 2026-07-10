@@ -29,6 +29,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     app.rects.notes_panel_files.clear();
     app.rects.notes_panel_new_chip = None;
+    app.rects.notes_panel_filter_input = None;
+
+    // Files come from the cache — populated on first activation.
+    // Keeps per-frame stat() calls off the render path.
+    if !app.notes_panel_scanned_once {
+        app.notes_panel_refresh();
+    }
+    let filter_lc = app.notes_panel_filter.to_ascii_lowercase();
+    let all_files = app.notes_panel_files_cache.clone();
+    let files: Vec<std::path::PathBuf> = if filter_lc.is_empty() {
+        all_files.clone()
+    } else {
+        all_files
+            .iter()
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(&filter_lc)
+            })
+            .cloned()
+            .collect()
+    };
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -40,6 +64,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .bg(bg)
                     .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(
+                if filter_lc.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ({} of {})", files.len(), all_files.len())
+                },
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ),
         ])),
         Rect {
             x: area.x,
@@ -48,15 +83,67 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         },
     );
-    let mut y = area.y + 2;
-
-    // Files come from the cache — populated on first activation.
-    // Keeps per-frame stat() calls off the render path.
-    if !app.notes_panel_scanned_once {
-        app.notes_panel_refresh();
+    // Filter row (row 1). Same idiom as HTTP / Agents / TODOs.
+    {
+        let y_filter = area.y + 1;
+        if y_filter < area.y + area.height {
+            let focused = app.notes_panel_filter_focused;
+            let bg_chip = t.bg2;
+            let fg_chip = if app.notes_panel_filter.is_empty() && !focused {
+                t.comment
+            } else {
+                t.fg
+            };
+            let display = if app.notes_panel_filter.is_empty() {
+                if focused {
+                    "type to filter\u{2026}".to_string()
+                } else {
+                    "/ filter".to_string()
+                }
+            } else {
+                app.notes_panel_filter.clone()
+            };
+            let cursor = if focused { "\u{258F}" } else { " " };
+            let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
+            let line = Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
+                Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
+                Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
+                Span::styled(" ", Style::default().bg(bg)),
+            ]);
+            let row_rect = Rect {
+                x: area.x,
+                y: y_filter,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(line), row_rect);
+            app.rects.notes_panel_filter_input = Some(row_rect);
+        }
     }
-    let files = app.notes_panel_files_cache.clone();
-    if files.is_empty() {
+    let mut y = area.y + 3;
+
+    if files.is_empty() && !filter_lc.is_empty() {
+        let empty = Line::from(vec![
+            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled(
+                "No matches — try clearing the filter (Esc).",
+                Style::default().fg(t.comment).bg(bg),
+            ),
+        ]);
+        frame.render_widget(
+            Paragraph::new(empty),
+            Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            },
+        );
+        y += 2;
+    } else if files.is_empty() {
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(
