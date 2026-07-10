@@ -536,6 +536,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::RequestResponseWrap);
     }
+    if let Some(r) = app.rects.request_response_ai_prompt_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::RequestResponseAiPrompt);
+    }
     if let Some(r) = app.rects.request_format_button
         && contains(r, x, y)
     {

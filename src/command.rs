@@ -4336,6 +4336,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_format_body(),
         },
         Command {
+            id: "http.copy_ai_prompt",
+            title: "HTTP: copy AI-ready \"debug this failure\" prompt to clipboard",
+            group: "http",
+            // Structured markdown prompt with method / URL / status /
+            // headers / body / env context / schema errors, obvious
+            // sensitive-value redaction (Authorization, api-key,
+            // Cookie, *-secret). Paste into Claude / Codex / etc.
+            keys: &[],
+            run: |app| app.http_copy_ai_prompt(),
+        },
+        Command {
             id: "http.regenerate_body",
             title: "HTTP: regenerate body dynamic values (fresh timestamps + UUIDs)",
             group: "http",

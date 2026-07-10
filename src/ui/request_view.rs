@@ -1436,6 +1436,7 @@ pub fn draw(
         let mut type_chip: Option<Rect> = None;
         let mut copy_chip: Option<Rect> = None;
         let mut wrap_chip: Option<Rect> = None;
+        let mut ai_chip: Option<Rect> = None;
         app.rects.request_response_tabs = paint_response_tab_strip(
             frame,
             rp,
@@ -1444,10 +1445,12 @@ pub fn draw(
             &mut type_chip,
             &mut copy_chip,
             &mut wrap_chip,
+            &mut ai_chip,
         );
         app.rects.request_response_type_chip = type_chip;
         app.rects.request_response_copy_chip = copy_chip;
         app.rects.request_response_wrap_chip = wrap_chip;
+        app.rects.request_response_ai_prompt_chip = ai_chip;
         Rect {
             x: response_inner.x,
             y: response_inner.y.saturating_add(2),
@@ -1712,10 +1715,12 @@ fn paint_response_tab_strip(
     type_chip_out: &mut Option<Rect>,
     copy_chip_out: &mut Option<Rect>,
     wrap_chip_out: &mut Option<Rect>,
+    ai_chip_out: &mut Option<Rect>,
 ) -> Vec<(Rect, crate::request_pane::ResponseTab)> {
     *type_chip_out = None;
     *copy_chip_out = None;
     *wrap_chip_out = None;
+    *ai_chip_out = None;
     let mut rects = Vec::new();
     if response_inner.width == 0 || response_inner.height < 2 {
         return rects;
@@ -1898,8 +1903,57 @@ fn paint_response_tab_strip(
                 .style(Style::default().bg(t.bg_dark)),
             chip_rect,
         );
+        right_edge = chip_x.saturating_sub(1);
+    }
+    // `⚡ AI` chip — only when the response looks like a failure.
+    // 2xx passes hide it (nothing to ask an AI about). Painted to
+    // the LEFT of wrap, styled orange to draw the eye. Click →
+    // `http.copy_ai_prompt`.
+    if is_response_failure(rp) {
+        let ai_text = " \u{26A1} AI ".to_string();
+        let ai_w = ai_text.chars().count() as u16;
+        if right_edge > label_rect.x + ai_w + 2 {
+            let chip_x = right_edge.saturating_sub(ai_w);
+            let chip_rect = Rect {
+                x: chip_x,
+                y: label_rect.y,
+                width: ai_w,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(vec![Span::styled(
+                    ai_text,
+                    Style::default()
+                        .fg(t.orange)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::BOLD),
+                )])])
+                .style(Style::default().bg(t.bg_dark)),
+                chip_rect,
+            );
+            *ai_chip_out = Some(chip_rect);
+        }
     }
     rects
+}
+
+/// Response state that warrants the `⚡ AI` "explain this failure"
+/// chip. Mirrors `ai_prompt::build_prompt`'s failure detection so
+/// the chip only appears when there's something the prompt can
+/// actually surface.
+fn is_response_failure(rp: &crate::request_pane::RequestPane) -> bool {
+    use crate::http::schema::SchemaStatus;
+    use crate::request_pane::RunState;
+    match &rp.state {
+        RunState::Done(r) => {
+            !(200..300).contains(&r.status)
+                || r.schema_result
+                    .as_ref()
+                    .is_some_and(|s| matches!(s.status, SchemaStatus::Invalid))
+        }
+        RunState::Failed(_) => true,
+        _ => false,
+    }
 }
 
 /// Effective response-type label — override wins over auto-detect.

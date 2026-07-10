@@ -1764,6 +1764,33 @@ impl App {
         }
     }
 
+    /// `http.copy_ai_prompt` — when the active Request pane has a
+    /// failed response, build a structured markdown prompt (method
+    /// / URL / status / headers / body / env context / schema
+    /// errors, with obvious sensitive-value redaction) and copy it
+    /// to the system clipboard. Toast confirms; user pastes into
+    /// Claude / Codex / etc.
+    ///
+    /// 2026-07-09 user request.
+    pub fn http_copy_ai_prompt(&mut self) {
+        let Some(cur) = self.active else {
+            self.toast("http.copy_ai_prompt: no active Request pane");
+            return;
+        };
+        let env_name = self.http_env_override.clone();
+        let Some(Pane::Request(rp)) = self.panes.get(cur) else {
+            self.toast("http.copy_ai_prompt: active pane isn't a Request");
+            return;
+        };
+        let Some(prompt) = crate::http::ai_prompt::build_prompt(rp, env_name.as_deref()) else {
+            self.toast("http.copy_ai_prompt: no failure to explain (response is 2xx)");
+            return;
+        };
+        let mut clip = crate::clipboard::Clipboard::new();
+        clip.set(prompt, false);
+        self.toast("AI prompt copied — paste into Claude / Codex");
+    }
+
     /// `http.format_body` — parse the active Request pane's Body
     /// as JSON and rewrite with 2-space indent. No-op if Body
     /// isn't valid JSON (toasts the parse error).

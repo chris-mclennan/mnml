@@ -566,6 +566,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.http_toggle_response_wrap();
         return;
     }
+    // Click on the `⚡ AI` chip → copy AI-ready debug prompt.
+    if let Some(r) = app.rects.request_response_ai_prompt_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.http_copy_ai_prompt();
+        return;
+    }
     // Click on the split-orientation toggle chip → cycle
     // Vertical <-> Horizontal for the active Request pane. Same
     // as `Ctrl+\` chord.

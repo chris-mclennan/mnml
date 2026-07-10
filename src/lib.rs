@@ -444,6 +444,9 @@ pub enum HoverChip {
     RequestResponseCopy,
     /// #21 v8 — hover on the response bar's `wrap` chip.
     RequestResponseWrap,
+    /// 2026-07-09 — hover on the response bar's `⚡ AI` chip
+    /// (shown only when the response looks like a failure).
+    RequestResponseAiPrompt,
     /// #21 v8 — hover on the response bar's `{ } Format` chip.
     RequestResponseFormat,
     /// #21 v9 — hover on the pending-undo chip. Tooltip explains

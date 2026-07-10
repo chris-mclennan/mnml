@@ -944,6 +944,11 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: toggle body line wrap".into(),
             None,
         )),
+        HoverChip::RequestResponseAiPrompt => Some((
+            app.rects.request_response_ai_prompt_chip?,
+            "click: copy AI-ready \"debug this failure\" prompt".into(),
+            Some("headers redact secrets before copy".into()),
+        )),
         HoverChip::RequestResponseFormat => Some((
             app.rects.request_format_button?,
             "click: prettify JSON body".into(),

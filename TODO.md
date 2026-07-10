@@ -701,8 +701,42 @@ misreports 1959 files of drift on tattle-mnml-workspace almost
 entirely because of this feature regression. Once expansion is
 back, the drift number will collapse to actual API changes.
 
-### HTTP: "Generate AI prompt" button on failed requests
-**Status:** captured 2026-07-09 user request.
+### ~~HTTP: "Generate AI prompt" button on failed requests~~
+**Shipped 2026-07-09.** `⚡ AI` chip on the Response tab strip
+(only when the response is a failure — non-2xx status,
+schema-invalid, or transport error) copies a structured
+markdown prompt to the system clipboard. New palette command
+`http.copy_ai_prompt` for the same action. Hover tooltip
+explains the redaction. Prompt structure:
+
+    ## Request
+    METHOD URL
+    Headers (Authorization / *api-key* / Cookie / *secret*
+      redacted; scheme kept: `Bearer <redacted>`)
+    Body (truncated to 2KB with a marker if longer)
+
+    ## Response
+    HTTP <status>  (elapsed: <ms>ms)
+    Headers + Body (2KB cap)
+
+    ## Env / context
+    - active env: <name>
+    - defined vars used: …
+    - undefined vars: …
+
+    ## Schema validation
+    - <errors>
+
+    ## What I've tried
+    (fill me in)
+
+New module `src/http/ai_prompt.rs` — 8 unit tests (redaction
+variants, truncation, env-var classification, failure state
+detection). Right-click menu variants (Open in AI pane,
+Save to `.mnml/ai-prompts/`) not shipped yet — plain click
+covers the 90% case; extend later if the need surfaces.
+
+Original spec preserved:
 
 When a Request pane's response is a failure — non-2xx status,
 schema validation error, connection error, timeout — surface a

@@ -16,6 +16,7 @@
 //! Still to come (its own pass): editable request-pane field tabs (right now you
 //! edit the `.http` file in a normal editor).
 
+pub mod ai_prompt;
 pub mod bench;
 pub mod captured;
 pub mod chain;

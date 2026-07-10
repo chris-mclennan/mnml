@@ -2136,6 +2136,11 @@ pub struct PaneRects {
     /// Click rect over the "wrap" chip on the Response tab strip —
     /// toggles `rp.body_wrap`.
     pub request_response_wrap_chip: Option<Rect>,
+    /// Click rect over the `⚡ AI` chip on the Response tab strip —
+    /// only shown when the response is a failure (non-2xx status,
+    /// invalid schema, or transport error). Click → runs
+    /// `http.copy_ai_prompt`.
+    pub request_response_ai_prompt_chip: Option<Rect>,
     /// Click rect over the split-orientation toggle chip on the
     /// Request block's top border. Click cycles Vertical <->
     /// Horizontal split. Same as `Ctrl+\` chord.
