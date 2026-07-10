@@ -1,9 +1,11 @@
 ---
 title: Activity bar
-description: The vscode-style 4-cell icon strip on the far left of the rail — one icon per section (Explorer, Search, Git, Debug, Integrations). Click an icon to switch what fills the rest of the rail.
+description: The vscode-style icon strip on the far left of the rail — one icon per section (Explorer, Search, Git, Debug, Integrations, Sessions, Agents, Cloud agents, HTTP, Notes, TODOs, plus manifest Mounts). Click an icon to switch what fills the rest of the rail.
 ---
 
-mnml's rail opens with a **vscode-style activity bar** — a 4-cell vertical strip pinned to the far left, with one icon per top-level *section*. Click an icon to switch which content fills everything to the right of the strip. All five sections render real content: **Explorer** (file tree + GIT sub-section + integrations rows), **Search**, **Source control**, **Run and debug**, and **Integrations** each have a v1 surface with a clear v2 follow-up scoped per section.
+mnml's rail opens with a **vscode-style activity bar** — a 4-cell vertical strip pinned to the far left, with one icon per top-level *section*. Click an icon to switch which content fills everything to the right of the strip.
+
+The section inventory has grown well past the original five (Explorer, Search, Git, Debug, Integrations). The daily-driver additions — **Sessions** (Claude Code / Codex / shell pty tab strip), **Agents** and **Cloud agents** (dashboards for Claude Code sessions running here or in the cloud), **HTTP** (`.http` / `.curl` request browser), **Notes** (workspace scratch notes), and **TODOs** (comment marker scanner) — each get their own deep page.
 
 ## Layout
 
@@ -29,15 +31,24 @@ The strip is exactly **4 cells** wide (`ACTIVITY_BAR_WIDTH`) — 1 cell of left 
 
 ## Sections
 
-| Section | Nerd-font glyph | ASCII fallback | Command id | v1 content |
-|---|---|---|---|---|
-| Explorer | `nf-fa-folder_open` | `E` | `view.activity_explorer` | File tree + GIT sub-section + integrations rows |
-| Search | `nf-fa-search` | `S` | `view.activity_search` | Inline workspace grep — typed input + grouped per-file results |
-| Source control (Git) | `nf-md-source_branch` | `G` | `view.activity_git` | Live branch + ahead/behind + change-count chips + git command launchers |
-| Run and debug | `nf-fa-bug` | `D` | `view.activity_debug` | Session status + watch count + DAP command launchers |
-| Integrations | `nf-md-puzzle` | `I` | `view.activity_integrations` | Vertical clickable list of `[[ui.integration_icon]]` entries |
+| Section | ASCII fallback | Command id | Panel |
+|---|---|---|---|
+| Explorer | `E` | `view.activity_explorer` | File tree + GIT sub-section + integrations rows |
+| Search | `S` | `view.activity_search` | Inline workspace grep |
+| Source control (Git) | `G` | `view.activity_git` | Live branch + change chips + git launchers |
+| Run and debug | `D` | `view.activity_debug` | Session status + WATCHES + DAP launchers |
+| Sessions | `T` | `view.activity_sessions` | Vertical Pty tab strip (Claude / Codex / shells) — see [TODOs, Notes & Sessions panels](/manual/activity-panels) |
+| Agents | `A` | `view.activity_agents` | Cross-workspace Claude Code / Codex agents dashboard |
+| Cloud agents | `C` | `view.activity_cloud_agents` | ECS-runner cloud agents dashboard |
+| HTTP | `H` | `view.activity_http` | Request browser (`.http` / `.curl` files, chains, mocks, collections) — see [HTTP client](/manual/http) |
+| Notes | `N` | `view.activity_notes` | `.mnml/notes/*.md` workspace scratch notes — see [activity-panels](/manual/activity-panels) |
+| TODOs | `T` | `view.activity_todos` | Comment marker scan (TODO / FIXME / XXX / HACK / REVIEW) + Playwright test modifiers — see [activity-panels](/manual/activity-panels) |
+| Integrations | `I` | `view.activity_integrations` | Installed / Marketplace tabs over `[[ui.integration_icon]]` — see [Integrations](/manual/integrations/installing) |
+| Mount (dynamic) | manifest | `view.activity_mount:<id>` | Per-sibling activity section registered by a manifest with `activity_bar_section = true` |
 
-The fallback letter is what renders when `[ui] ascii_icons = true` (or when the terminal isn't running a Nerd Font); the glyph otherwise.
+The fallback letter is what renders when `[ui] ascii_icons = true` (or when the terminal isn't running a Nerd Font); the actual Nerd Font glyph otherwise. The exact codepoints are configurable in `[[ui.integration_icon]]` for manifest-registered sections; the built-in ones are defined in `ActivitySection::icon_glyph`.
+
+The **daily-driver panels** (Sessions, Agents, HTTP, Notes, TODOs, Integrations) all share the same idioms — a `/` filter row at the top, `(N of M)` count when the filter is active, and — for the list-shaped ones — `j`/`k`/`↑`/`↓` cursor nav with `Enter` to activate the focused row. See [activity-panels](/manual/activity-panels) for TODOs / Notes / Sessions, and the dedicated pages linked above for the others.
 
 Two notes on overlap with what already exists:
 
@@ -48,8 +59,9 @@ Two notes on overlap with what already exists:
 
 - **Click** any icon to switch to that section. If `Ctrl+B` had hidden the rail, switching re-opens it — every `view.activity_*` command calls `set_activity_section`, which first sets `tree_visible = true` if needed, then flips the active section.
 - Clicking the **already-active** icon is idempotent: it leaves the section showing rather than toggling it off. Use `Ctrl+B` to hide the rail entirely.
-- All five commands are **palette-runnable** (`Ctrl+P`-style) — type `Activity:` to see them grouped together.
-- No default keybindings ship with v1 — bind them yourself if you want chord access.
+- Every `view.activity_*` command is **palette-runnable** (`Ctrl+P`-style) — type `Activity:` to see them grouped together.
+- Switching sections **resets keyboard focus back to the tree** and clears any `_panel_filter_focused` flag on the previous panel — so `/` on the newly-active panel reaches the filter entry gate cleanly, and stale filter state can't silently capture keystrokes across a section change.
+- No default keybindings ship for the built-in sections — bind them yourself if you want chord access. Manifest-registered Mounts can request one via `activity_bar_chord = "<leader>xy"` in the sibling's manifest TOML.
 
 ## Section details
 

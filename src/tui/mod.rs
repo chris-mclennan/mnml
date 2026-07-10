@@ -1149,8 +1149,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
     // Cloud Agents quick-fire prompt input (hybrid UX — daily-driver
-    // path that uses the saved [cloud_run.defaults]).
-    if app.cloud_run_prompt_focused {
+    // path that uses the saved [cloud_run.defaults]). Absorb guard-
+    // hoisted 2026-07-10 to match the other panels — was capturing
+    // keys across section changes and picker opens (SEV-2 class).
+    if app.cloud_run_prompt_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::CloudAgents
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.cloud_run_prompt_input.clear();
@@ -1177,7 +1185,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
     }
     // Same idiom for the Cloud Agents panel filter.
-    if app.cloud_agents_filter_focused {
+    if app.cloud_agents_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::CloudAgents
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && app.prompt.is_none()
+    {
         match key.code {
             KeyCode::Esc => {
                 app.cloud_agents_filter.clear();

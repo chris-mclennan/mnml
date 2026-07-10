@@ -1889,6 +1889,11 @@ impl App {
             // class but missed in the initial guard-hoist.
             self.agents_panel_filter_focused = false;
             self.integrations_panel_filter_focused = false;
+            // 2026-07-10 audit: cloud agents' filter + quick-fire
+            // prompt were also missing from this reset — same
+            // class as the other 6.
+            self.cloud_agents_filter_focused = false;
+            self.cloud_run_prompt_focused = false;
             // Also snap focus back to Tree so `/` (and j/k nav)
             // on the newly-active panel land where the user
             // expects. HTTP auto-opens a Request pane and sets

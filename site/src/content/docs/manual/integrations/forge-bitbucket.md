@@ -33,13 +33,27 @@ Homebrew tap + binary releases will follow once the binary stabilises.
 
    Minimum scopes: **Pull requests: Read**. Add **Account: Read** if you want `mode = "mine"` / `mode = "reviewing"` tabs (those need `/2.0/user` to resolve your `account_id`) or the `a` approve toggle.
 
-2. **Save the app password** to `~/.config/mnml-forge-bitbucket/token` with `chmod 600`:
+2. **Point the tool at your app password.** Two options — env var or on-disk file.
+
+   **Env var** (preferred if your shell already exports Bitbucket credentials):
+
+   ```sh
+   export BITBUCKET_APP_PASSWORD="ATATT-…"              # bare app password
+   # OR
+   export BITBUCKET_PERSONAL_TOKEN="me@x.com:ATATT-…"     # email:token combined form
+   ```
+
+   `BITBUCKET_APP_PASSWORD` wins over `BITBUCKET_PERSONAL_TOKEN`; the latter accepts either the bare token or the `email:token` combined form (only the after-colon portion is used).
+
+   **On-disk file** (chmod 600):
 
    ```sh
    mkdir -p ~/.config/mnml-forge-bitbucket
    pbpaste > ~/.config/mnml-forge-bitbucket/token   # or paste it in $EDITOR
    chmod 600 ~/.config/mnml-forge-bitbucket/token
    ```
+
+   Resolution order at startup: `BITBUCKET_APP_PASSWORD` → `BITBUCKET_PERSONAL_TOKEN` → `~/.config/mnml-forge-bitbucket/token`.
 
 3. **Run once** to scaffold the config template:
 
@@ -57,7 +71,7 @@ Homebrew tap + binary releases will follow once the binary stabilises.
    mnml-forge-bitbucket --check
    ```
 
-   Hits `/2.0/user` to confirm the app password works.
+   Hits `/2.0/user` to confirm the app password works. The output reports the **token source** (`env: BITBUCKET_APP_PASSWORD` / `env: BITBUCKET_PERSONAL_TOKEN` / the file path) so you can confirm which credential path is authoritative when both a file and an env var are set.
 
 ## Tab kinds
 
@@ -110,7 +124,9 @@ name = "Mine"
 mode = "mine"
 ```
 
-Resolves to a workspace-spanning BBQL query — `author.account_id = "<your-id>"`. Requires **Account: Read** on the app password.
+Bitbucket Cloud has no workspace-scoped PR endpoint that accepts BBQL, so `mode = "mine"` enumerates every repo you have access to in the workspace and fans out per-repo BBQL queries (`author.account_id = "<your-id>"`) with a concurrency cap of 8. Results are merged + sorted by `updated_on` descending. On a 100-repo workspace this typically completes in a few seconds; per-repo errors (e.g. a 403 on an archived repo) are dropped silently rather than blanking the tab.
+
+Requires **Account: Read** on the app password. Same enumeration shape powers `mode = "reviewing"` — the per-repo BBQL swaps to `reviewers.account_id = "<your-id>"`.
 
 #### `mode = "reviewing"` — PRs you're a reviewer on
 
