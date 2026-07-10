@@ -1963,6 +1963,8 @@ pub struct PaneRects {
     /// the sessions panel. Click → spawns a Claude Code pane
     /// (most common case; a follow-up could open a picker).
     pub session_new_chip: Option<Rect>,
+    /// `/`-filter input row on the Sessions panel.
+    pub sessions_panel_filter_input: Option<Rect>,
     /// `(rect, row_idx)` per agent row in the rail Agents panel.
     /// Click → focus the row's session (resume / open transcript).
     pub agents_panel_rows: Vec<(Rect, usize)>,
@@ -3847,6 +3849,11 @@ pub struct App {
     /// against the note file name. Empty = show all.
     pub notes_panel_filter: String,
     pub notes_panel_filter_focused: bool,
+    /// `/`-style filter for the Sessions panel — case-insensitive
+    /// match against session display name, git branch, cwd basename,
+    /// and detected ticket. Empty = show all.
+    pub sessions_panel_filter: String,
+    pub sessions_panel_filter_focused: bool,
     /// Top-row scroll offset for the agents panel's content list (the
     /// session rows scroll; the filter + `+ New session` header stays put).
     /// Clamped to the content height each render.
@@ -4715,6 +4722,8 @@ impl App {
             todos_panel_filter_focused: false,
             notes_panel_filter: String::new(),
             notes_panel_filter_focused: false,
+            sessions_panel_filter: String::new(),
+            sessions_panel_filter_focused: false,
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
             integrations_panel_filter: String::new(),

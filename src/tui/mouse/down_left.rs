@@ -2068,6 +2068,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if app.git_palette_filter_focused {
         app.git_palette_filter_focused = false;
     }
+    // Sessions panel `/` filter row → focus. Checked BEFORE the
+    // chip / tab handlers below so it wins when the row overlaps.
+    if let Some(r) = app.rects.sessions_panel_filter_input
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.sessions_panel_filter_focused = true;
+        return;
+    }
     // Sessions panel `+ New session` chip → spawn a Claude
     // Code pane (the most common case). Checked BEFORE
     // tab clicks so a click on the chip wins.
@@ -2506,6 +2514,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     if app.notes_panel_filter_focused {
         app.notes_panel_filter_focused = false;
+    }
+    if app.sessions_panel_filter_focused {
+        app.sessions_panel_filter_focused = false;
     }
     // Sessions panel tab (vertical-tab strip shown when
     // `ActivitySection::Sessions` is active). Click →

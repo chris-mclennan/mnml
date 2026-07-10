@@ -32,9 +32,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     app.rects.session_tabs.clear();
     app.rects.session_new_chip = None;
+    app.rects.sessions_panel_filter_input = None;
 
-    // Header.
-    let header = Line::from(vec![
+    // Collect Pty panes first so the header can show the filtered
+    // count. Index in `app.panes` doubles as the focus target for
+    // the click handler.
+    let all_pty_indices: Vec<usize> = app
+        .panes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| matches!(p, Pane::Pty(_)).then_some(i))
+        .collect();
+    let filter_lc = app.sessions_panel_filter.to_ascii_lowercase();
+    let pty_indices: Vec<usize> = if filter_lc.is_empty() {
+        all_pty_indices.clone()
+    } else {
+        all_pty_indices
+            .iter()
+            .copied()
+            .filter(|pid| session_matches_filter(app, *pid, &filter_lc))
+            .collect()
+    };
+
+    // Header — appends `(N of M)` when the filter is active.
+    let mut header_spans = vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
             "SESSIONS",
@@ -43,9 +64,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 .bg(bg)
                 .add_modifier(Modifier::BOLD),
         ),
-    ]);
+    ];
+    if !filter_lc.is_empty() {
+        header_spans.push(Span::styled(
+            format!("  ({} of {})", pty_indices.len(), all_pty_indices.len()),
+            Style::default()
+                .fg(t.comment)
+                .bg(bg)
+                .add_modifier(Modifier::DIM),
+        ));
+    }
     frame.render_widget(
-        Paragraph::new(header),
+        Paragraph::new(Line::from(header_spans)),
         Rect {
             x: area.x,
             y: area.y,
@@ -53,21 +83,60 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         },
     );
-    let mut y = area.y + 2;
 
-    // Collect Pty panes — index in `app.panes` doubles as the
-    // focus target for the click handler.
-    let pty_indices: Vec<usize> = app
-        .panes
-        .iter()
-        .enumerate()
-        .filter_map(|(i, p)| matches!(p, Pane::Pty(_)).then_some(i))
-        .collect();
+    // Filter row (row 1). Same idiom as HTTP / Agents / TODOs /
+    // Notes — chip background, magnifier glyph, `/ filter`
+    // placeholder, `▏` cursor when focused.
+    {
+        let y_filter = area.y + 1;
+        if y_filter < area.y + area.height {
+            let focused = app.sessions_panel_filter_focused;
+            let bg_chip = t.bg2;
+            let fg_chip = if app.sessions_panel_filter.is_empty() && !focused {
+                t.comment
+            } else {
+                t.fg
+            };
+            let display = if app.sessions_panel_filter.is_empty() {
+                if focused {
+                    "type to filter\u{2026}".to_string()
+                } else {
+                    "/ filter".to_string()
+                }
+            } else {
+                app.sessions_panel_filter.clone()
+            };
+            let cursor = if focused { "\u{258F}" } else { " " };
+            let pad = (area.width as usize).saturating_sub(3 + display.chars().count() + 1 + 1);
+            let line = Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled("\u{F0349} ", Style::default().fg(t.comment).bg(bg_chip)),
+                Span::styled(display, Style::default().fg(fg_chip).bg(bg_chip)),
+                Span::styled(cursor, Style::default().fg(t.cyan).bg(bg_chip)),
+                Span::styled(" ".repeat(pad), Style::default().bg(bg_chip)),
+                Span::styled(" ", Style::default().bg(bg)),
+            ]);
+            let row_rect = Rect {
+                x: area.x,
+                y: y_filter,
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(line), row_rect);
+            app.rects.sessions_panel_filter_input = Some(row_rect);
+        }
+    }
+    let mut y = area.y + 3;
 
     if pty_indices.is_empty() {
+        let msg = if !filter_lc.is_empty() {
+            "No matches — clear the filter (Esc)."
+        } else {
+            "No sessions yet."
+        };
         let empty = Line::from(vec![
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled("No sessions yet.", Style::default().fg(t.comment).bg(bg)),
+            Span::styled(msg, Style::default().fg(t.comment).bg(bg)),
         ]);
         frame.render_widget(
             Paragraph::new(empty),
@@ -451,6 +520,39 @@ fn detect_ticket(
         }
     }
     None
+}
+
+/// True when the Pty pane at `pid` matches the (already-lowercased)
+/// `/`-filter — matched against the session's display name, its
+/// profile label, git branch of the cwd, cwd basename, and any
+/// detected Jira ticket. Substring match, case-insensitive on the
+/// haystack (caller lowercases the needle). Non-Pty ids return
+/// `false` so callers can trust the answer without checking again.
+fn session_matches_filter(app: &App, pid: usize, needle_lc: &str) -> bool {
+    let Some(Pane::Pty(s)) = app.panes.get(pid) else {
+        return false;
+    };
+    let cwd = s.profile.cwd.as_ref();
+    let branch = cwd.and_then(|p| current_branch(p));
+    let ticket = detect_ticket(
+        &app.config.ui.ticket_prefixes,
+        s.display_name.as_deref(),
+        branch.as_deref(),
+        &s.profile.label,
+    );
+    let cwd_basename = cwd
+        .and_then(|p| p.file_name().and_then(|n| n.to_str()))
+        .unwrap_or_default();
+    let candidates = [
+        s.display_name.as_deref().unwrap_or_default(),
+        s.profile.label.as_str(),
+        branch.as_deref().unwrap_or_default(),
+        cwd_basename,
+        ticket.as_deref().unwrap_or_default(),
+    ];
+    candidates
+        .iter()
+        .any(|c| !c.is_empty() && c.to_ascii_lowercase().contains(needle_lc))
 }
 
 /// Cheap git branch lookup — shells out to `git symbolic-ref --short HEAD`.

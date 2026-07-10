@@ -896,6 +896,45 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    if !app.sessions_panel_filter_focused
+        && app.focus == crate::focus::Focus::Tree
+        && app.active_section == crate::app::ActivitySection::Sessions
+        && app.picker.is_none()
+        && app.no_pane_cmdline.is_none()
+        && let KeyCode::Char('/') = key.code
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        app.sessions_panel_filter_focused = true;
+        return;
+    }
+    if app.sessions_panel_filter_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.sessions_panel_filter.clear();
+                app.sessions_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Backspace => {
+                app.sessions_panel_filter.pop();
+                return;
+            }
+            KeyCode::Enter => {
+                app.sessions_panel_filter_focused = false;
+                return;
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                app.sessions_panel_filter.push(c);
+                return;
+            }
+            _ => {}
+        }
+    }
     if !app.notes_panel_filter_focused
         && app.focus == crate::focus::Focus::Tree
         && app.active_section == crate::app::ActivitySection::Notes
