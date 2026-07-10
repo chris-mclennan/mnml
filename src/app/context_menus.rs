@@ -986,7 +986,7 @@ impl App {
                 self.open_integration_edit_by_id(&id);
             }
             RemoveIntegration(id) => {
-                self.remove_integration_by_id(&id);
+                self.open_integration_remove_confirm(id);
             }
             ToggleIntegrationEnabled(id) => {
                 if let Some(slot) = self

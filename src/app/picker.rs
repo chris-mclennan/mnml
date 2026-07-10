@@ -518,7 +518,7 @@ impl App {
                 } else if let Some(id) = item.id.strip_prefix("edit:") {
                     self.open_integration_edit_by_id(id);
                 } else if let Some(id) = item.id.strip_prefix("remove:") {
-                    self.remove_integration_by_id(id);
+                    self.open_integration_remove_confirm(id.to_string());
                 } else {
                     crate::command::run(&item.id, self);
                 }
@@ -1726,6 +1726,16 @@ impl App {
                     self.pending_kill_pid = None;
                     self.pending_kill_batch.clear();
                     self.toast("kill cancelled");
+                }
+            }
+            crate::prompt::PromptKind::IntegrationRemoveConfirm => {
+                if p.input.trim().eq_ignore_ascii_case("remove") {
+                    if let Some(id) = self.pending_integration_remove_id.take() {
+                        self.remove_integration_by_id(&id);
+                    }
+                } else {
+                    self.pending_integration_remove_id = None;
+                    self.toast("integration remove cancelled");
                 }
             }
             crate::prompt::PromptKind::NewFile => {

@@ -4293,6 +4293,11 @@ pub struct App {
     /// prompt. Set when the GitDeleteBranch picker accepts; resolved
     /// on the confirm prompt accept.
     pub pending_branch_delete: Option<String>,
+    /// Pending integration id for `IntegrationRemoveConfirm` — set
+    /// when the user picks Remove from a right-click context menu
+    /// (or the integrations.remove palette picker), resolved on
+    /// prompt accept.
+    pub pending_integration_remove_id: Option<String>,
     /// Pending worktree path for `:git.worktree_add` and
     /// `:git.worktree_remove` confirm prompts.
     pub pending_worktree_path: Option<std::path::PathBuf>,
@@ -4938,6 +4943,7 @@ impl App {
             pending_kill_pid: None,
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,
+            pending_integration_remove_id: None,
             pending_worktree_path: None,
             pending_merge_source: None,
             pending_rebase_onto: None,
@@ -5789,6 +5795,7 @@ impl App {
                 GitRebaseConfirm => "rebase".into(),
                 // Both install-confirm handlers just check `input.starts_with('y')`.
                 ToolInstallConfirm | SiblingInstallConfirm => "y".into(),
+                IntegrationRemoveConfirm => "remove".into(),
                 _ => return,
             }
         } else {
@@ -13371,6 +13378,59 @@ mod tests {
             pane,
             Pane::Editor(b) if b.is_at(&p)
         )));
+    }
+
+    #[test]
+    fn open_integration_remove_confirm_opens_prompt_instead_of_removing() {
+        // 2026-07-09 — user report: bumped Remove instead of Edit
+        // on the right-click menu, lost an integration. Both the
+        // context-menu and palette-picker Remove entries now route
+        // through this confirm helper, which stashes the id and
+        // opens a `[ Remove ] [ Cancel ]` button dialog rather
+        // than mutating the integration list directly.
+        let (_d, mut app) = app_with_files();
+        // Seed a fake integration so there's something to try to remove.
+        app.config
+            .ui
+            .integration_icons
+            .push(crate::config::IntegrationIcon {
+                id: "test_int".to_string(),
+                glyph: "T".to_string(),
+                fallback: "T".to_string(),
+                command: ":palette".to_string(),
+                color: "blue".to_string(),
+                tooltip: None,
+                enabled: true,
+                in_palette_bar: false,
+                manifest_can_override: false,
+            });
+        let before = app.config.ui.integration_icons.len();
+        app.open_integration_remove_confirm("test_int".to_string());
+        // Removal did NOT run yet — confirm dialog is what opened.
+        assert_eq!(app.config.ui.integration_icons.len(), before);
+        assert_eq!(
+            app.pending_integration_remove_id.as_deref(),
+            Some("test_int")
+        );
+        let p = app.prompt.as_ref().expect("confirm prompt opened");
+        assert!(matches!(
+            p.kind,
+            crate::prompt::PromptKind::IntegrationRemoveConfirm
+        ));
+        // Cancel is the default focus — user has to actively pick
+        // Remove to proceed. Matches the delete-confirm safety idiom.
+        assert_eq!(p.cursor, 1);
+    }
+
+    #[test]
+    fn open_integration_remove_confirm_no_op_when_id_missing() {
+        // If the id doesn't match any current integration, we skip
+        // the dialog entirely and toast — same UX as calling
+        // `remove_integration_by_id` on a missing id.
+        let (_d, mut app) = app_with_files();
+        app.open_integration_remove_confirm("ghost".to_string());
+        assert!(app.prompt.is_none());
+        assert!(app.pending_integration_remove_id.is_none());
     }
 
     #[test]

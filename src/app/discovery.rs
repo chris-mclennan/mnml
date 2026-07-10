@@ -247,6 +247,35 @@ impl App {
         ));
     }
 
+    /// Two-button confirm before actually removing an integration.
+    /// 2026-07-09 — user report: bumped Remove instead of Edit in
+    /// the right-click menu and lost a configured integration. The
+    /// underlying removal (`remove_integration_by_id`) still runs
+    /// unconditionally; this shim just guards the destructive
+    /// entry points (context menu + palette picker).
+    pub fn open_integration_remove_confirm(&mut self, id: String) {
+        // Fast-path: if the integration doesn't exist, skip the
+        // dialog and just toast — same UX as the direct-remove path.
+        if !self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .any(|ic| ic.id == id)
+        {
+            self.toast(format!("integration: {id} not in rail"));
+            return;
+        }
+        let title = format!("Remove integration '{id}' from the rail?");
+        self.pending_integration_remove_id = Some(id);
+        let mut p =
+            crate::prompt::Prompt::new(crate::prompt::PromptKind::IntegrationRemoveConfirm, title);
+        // Cancel default (safety first) — mirrors the delete-confirm
+        // pattern from `open_fs_delete_prompt`.
+        p.cursor = 1;
+        self.prompt = Some(p);
+    }
+
     /// Drop the integration with the given id from the rail and
     /// persist to TOML. Surfaced from the chip right-click menu's
     /// "Remove from rail" entry.

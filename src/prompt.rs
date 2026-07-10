@@ -302,6 +302,12 @@ pub enum PromptKind {
     /// `App::pending_install_family_id`. Used by the "X not
     /// installed — install? y/n" prompt.
     SiblingInstallConfirm,
+    /// Accept ⇒ actually run `remove_integration_by_id` on the
+    /// integration id stashed in `App::pending_integration_remove_id`.
+    /// Two-button confirm dialog — user reported bumping the
+    /// wrong context-menu entry on 2026-07-09 and losing an
+    /// integration.
+    IntegrationRemoveConfirm,
 }
 
 #[derive(Debug)]
