@@ -4837,6 +4837,65 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_codex_new(),
         },
+        // 2026-07-09 — placement variants dispatched from the tab
+        // strip's AI-chip right-click menu. Not registered on chords;
+        // pure palette / context-menu entries.
+        Command {
+            id: "ai.claude_code_new_left",
+            title: "AI: open a NEW Claude Code session in the left half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new_at(crate::app::ai::PanePlacement::LeftHalf),
+        },
+        Command {
+            id: "ai.claude_code_new_right",
+            title: "AI: open a NEW Claude Code session in the right half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new_at(crate::app::ai::PanePlacement::RightHalf),
+        },
+        Command {
+            id: "ai.claude_code_new_top",
+            title: "AI: open a NEW Claude Code session in the top half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new_at(crate::app::ai::PanePlacement::TopHalf),
+        },
+        Command {
+            id: "ai.claude_code_new_bottom",
+            title: "AI: open a NEW Claude Code session in the bottom half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_claude_code_new_at(crate::app::ai::PanePlacement::BottomHalf),
+        },
+        Command {
+            id: "ai.codex_new_left",
+            title: "AI: open a NEW Codex session in the left half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_codex_new_at(crate::app::ai::PanePlacement::LeftHalf),
+        },
+        Command {
+            id: "ai.codex_new_right",
+            title: "AI: open a NEW Codex session in the right half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_codex_new_at(crate::app::ai::PanePlacement::RightHalf),
+        },
+        Command {
+            id: "ai.codex_new_top",
+            title: "AI: open a NEW Codex session in the top half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_codex_new_at(crate::app::ai::PanePlacement::TopHalf),
+        },
+        Command {
+            id: "ai.codex_new_bottom",
+            title: "AI: open a NEW Codex session in the bottom half",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_codex_new_at(crate::app::ai::PanePlacement::BottomHalf),
+        },
         Command {
             id: "mixr.show",
             title: "Mixr: open the TUI DJ in a Pty pane",

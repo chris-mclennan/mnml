@@ -375,19 +375,13 @@ edit promotes to a permanent tab (existing
 tests (`entering_http_opens_...`, `leaving_http_drops_...`,
 `leaving_http_keeps_promoted_...`).
 
-### TODOs panel: 1-cell padding between rescan icon and label
-**Status:** captured 2026-07-08 — visual polish.
-
-One of the "Rescan" chips (need to identify which — TODOs
-section header most likely, matching what the user saw) is
-missing a cell of padding between the `↺`-in-circle icon and
-the "Rescan" text. Reads as glyph-kisses-word instead of clean
-chip.
-
-Fix: audit the section-header chip render for TODOs (and any
-sibling with the same pattern — CAPTURED refresh chip, Notes
-refresh chip if present) and ensure the format is `↺ Rescan`
-(1 space between).
+### ~~TODOs panel: 1-cell padding between rescan icon and label~~
+**Verified stale 2026-07-09.** Audit: `todos_panel.rs:266`
+renders `"⟳  Rescan"` with a 2-space gap (intentional —
+comment on-site explains `⟳` eats its right sidebearing in
+Nerd Font). HTTP panel refresh chips use icon-only codicons
+(no adjacent label to kiss). Notes panel has no Rescan chip.
+No `⟳` + adjacent word without a gap remains in the tree.
 
 ### ~~TODOs panel: add `/` filter row (parity with HTTP / Agents)~~
 **Shipped 2026-07-09.** `todos_panel_filter` state + filter row
@@ -416,7 +410,17 @@ MdPreview pane. Locked in by 2 unit tests
 The original report was stale; whatever regressed it was fixed
 in a prior session and no follow-up was needed.
 
-### Tab bar: add Claude Code + Codex launcher icons
+### ~~Tab bar: add Claude Code + Codex launcher icons~~
+**Shipped 2026-07-09.** Bumped the `[ui] tab_bar_ai_icon`
+default from `"none"` to `"both"` — every leaf's tab strip now
+shows Claude Code + Codex chips left of the terminal glyph:
+`[Claude][Codex][$][⊟][⊞]`. Chips were already implemented
+and the click handler already routes to
+`ai.claude_code_new` / `ai.codex_new`; only the default
+needed flipping. Users can still opt out with `tab_bar_ai_icon
+= "none"` (or `"claude_code"` / `"codex"` for one only).
+
+### ~~Tab bar: right-click on AI launcher chip → placement menu~~
 **Status:** captured 2026-07-08 user request.
 
 Extend the far-right cluster of icons on the per-leaf tab
@@ -437,32 +441,30 @@ tab bar, i.e. bump the default from `"none"` (current) to
 `"both"`, or add a new `[ui] tab_bar_ai_launchers = true`
 switch.
 
-### Tab bar: right-click on AI launcher chip → placement menu
-**Status:** captured 2026-07-08 user request. Depends on the
-launcher-icons TODO above.
+**Shipped 2026-07-09 (halves only).** Right-click on either
+tab-strip AI chip opens a context menu:
 
-Right-click on the Claude Code or Codex chip should open a
-context menu offering placement options for the new pane:
+    Claude Code launcher
+      Open new Claude Code session (right dock)
+      Toggle existing Claude Code pane
+      Place new session in left half
+      Place new session in right half
+      Place new session in top half
+      Place new session in bottom half
 
-  Place in half:
-    - Left half
-    - Right half
-    - Top half
-    - Bottom half
-  Place in quarter:
-    - Top-left
-    - Top-right
-    - Bottom-left
-    - Bottom-right
+The chip's Claude/Codex kind is picked up from the `tag` field
+already on `split_strip_ai_buttons`; the menu is symmetric.
 
-Halves are already reachable via the drag-to-split drop-zones
-(Left/Right/Top/Bottom); this makes them explicitly clickable
-without needing a drag gesture.
+New `crate::app::ai::PanePlacement` enum + `open_*_at`
+methods. 8 palette commands registered
+(`ai.claude_code_new_left/right/top/bottom`, ditto Codex) so
+users can bind them to chords too.
 
-Quarters are a new layout shape — requires either recursive
-splits (split horizontally, then split the resulting half
-vertically) or a real 4-way grid mode. Halves-only path is
-much cheaper to ship; consider phasing.
+**Deferred: quarters** (Top-left / Top-right / Bottom-left /
+Bottom-right). Would need recursive split (horizontal split →
+then vertical split on the chosen half → then move the new
+pane into position). Not enough demand vs. drag-drop parity to
+land in this pass.
 
 ### HTTP: dynamic + realistic request generation (roadmap)
 **Status:** roadmap captured 2026-07-09. User wants stubs that

@@ -24,7 +24,7 @@ use crate::tree::Tree;
 // `mod github` was split out to mnml-forge-github in 2026-06.
 // `mod gitlab` was split out to mnml-forge-gitlab in 2026-06.
 
-mod ai;
+pub mod ai;
 mod cdp;
 mod context_menus;
 mod dap;

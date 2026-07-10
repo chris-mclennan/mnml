@@ -790,10 +790,10 @@ pub struct UiConfig {
     /// a NEW Claude Code / Codex session (via `ai.claude_code_new` /
     /// `ai.codex_new` when available) and jumps focus into it — the
     /// session shows up in the Sessions activity panel. Four values:
-    ///   - `"none"` (default) — no AI button on the tab bar.
+    ///   - `"none"` — no AI button on the tab bar.
     ///   - `"claude_code"` — Claude Code launcher only.
     ///   - `"codex"` — Codex launcher only.
-    ///   - `"both"` — both Claude Code + Codex icons (#19).
+    ///   - `"both"` (default 2026-07-09) — Claude Code + Codex.
     ///
     /// ```toml
     /// [ui]
@@ -1515,7 +1515,7 @@ impl Default for Config {
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
                 top_bar_cluster_mode: "auto".to_string(),
-                tab_bar_ai_icon: "none".to_string(),
+                tab_bar_ai_icon: "both".to_string(),
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
                 hover_help: false,

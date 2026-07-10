@@ -779,7 +779,7 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     // between Claude / Codex without changing the configured
     // default. Tab-strip Term + Split buttons are single-
     // action so they don't need menus.
-    if let Some(&(_, leaf_active, _tag)) = app
+    if let Some(&(_, leaf_active, tag)) = app
         .rects
         .split_strip_ai_buttons
         .iter()
@@ -787,26 +787,59 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         app.active = Some(leaf_active);
+        // `tag == 1` = Codex chip; anything else (`0`) = Claude Code
+        // — matches the down_left click routing.
+        let is_codex = tag == 1;
+        let (kind_label, new_cmd, toggle_cmd, left_cmd, right_cmd, top_cmd, bottom_cmd) =
+            if is_codex {
+                (
+                    "Codex",
+                    "ai.codex_new",
+                    "ai.codex",
+                    "ai.codex_new_left",
+                    "ai.codex_new_right",
+                    "ai.codex_new_top",
+                    "ai.codex_new_bottom",
+                )
+            } else {
+                (
+                    "Claude Code",
+                    "ai.claude_code_new",
+                    "ai.claude_code",
+                    "ai.claude_code_new_left",
+                    "ai.claude_code_new_right",
+                    "ai.claude_code_new_top",
+                    "ai.claude_code_new_bottom",
+                )
+            };
         let items = vec![
             MenuItem::new(
-                "Open new Claude Code session",
-                MenuAction::Command("ai.claude_code_new"),
+                format!("Open new {kind_label} session (right dock)"),
+                MenuAction::Command(new_cmd),
             ),
             MenuItem::new(
-                "Open new Codex session",
-                MenuAction::Command("ai.codex_new"),
+                format!("Toggle existing {kind_label} pane"),
+                MenuAction::Command(toggle_cmd),
             ),
             MenuItem::new(
-                "Toggle existing Claude pane",
-                MenuAction::Command("ai.claude_code"),
+                "Place new session in left half",
+                MenuAction::Command(left_cmd),
             ),
             MenuItem::new(
-                "Toggle existing Codex pane",
-                MenuAction::Command("ai.codex"),
+                "Place new session in right half",
+                MenuAction::Command(right_cmd),
+            ),
+            MenuItem::new(
+                "Place new session in top half",
+                MenuAction::Command(top_cmd),
+            ),
+            MenuItem::new(
+                "Place new session in bottom half",
+                MenuAction::Command(bottom_cmd),
             ),
         ];
         app.context_menu = Some(ContextMenu::new(
-            Some("AI assistant".to_string()),
+            Some(format!("{kind_label} launcher")),
             (x, y),
             items,
         ));

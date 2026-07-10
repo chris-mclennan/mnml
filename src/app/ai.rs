@@ -8,6 +8,21 @@
 
 use super::*;
 
+/// Where to place a freshly-spawned AI pty pane relative to the
+/// current active leaf. Surfaced by the tab-strip AI-chip right-
+/// click menu (2026-07-09 — user request).
+///
+/// v1 is halves only. Quarters (top-left / top-right / bottom-left
+/// / bottom-right) would need a second nested split; deferred until
+/// there's a clear signal that users want them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanePlacement {
+    LeftHalf,
+    RightHalf,
+    TopHalf,
+    BottomHalf,
+}
+
 /// Strip wrappers Claude commonly emits around a single-line
 /// response: markdown fences, leading "Branch:" / "Name:" labels,
 /// surrounding quotes (single/double/backtick, nestable). Returns
@@ -631,6 +646,49 @@ impl App {
             crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
             crate::layout::SplitDir::Horizontal,
         );
+    }
+
+    /// Place a fresh Claude Code pane in a specific half of the
+    /// active leaf's containing split. Routed from the right-click
+    /// menu on the tab-strip `⚡ Claude` chip. `RightHalf` uses
+    /// `open_claude_code_new` verbatim; `LeftHalf` / `TopHalf` /
+    /// `BottomHalf` swap the newly-created split's sides so the new
+    /// pane ends up where the user expected.
+    pub fn open_claude_code_new_at(&mut self, placement: PanePlacement) {
+        self.open_pty_at_placement(
+            crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
+            placement,
+        );
+    }
+
+    /// Place a fresh Codex pane in a specific half. Mirror of
+    /// `open_claude_code_new_at`.
+    pub fn open_codex_new_at(&mut self, placement: PanePlacement) {
+        self.open_pty_at_placement(
+            crate::pty_pane::BinaryProfile::codex(self.workspace.clone()),
+            placement,
+        );
+    }
+
+    fn open_pty_at_placement(
+        &mut self,
+        profile: crate::pty_pane::BinaryProfile,
+        placement: PanePlacement,
+    ) {
+        use crate::layout::SplitDir;
+        let dir = match placement {
+            PanePlacement::LeftHalf | PanePlacement::RightHalf => SplitDir::Horizontal,
+            PanePlacement::TopHalf | PanePlacement::BottomHalf => SplitDir::Vertical,
+        };
+        self.open_pty_dir(profile, dir);
+        // `open_pty_dir` puts the new pane on the `second` side
+        // (right / bottom). Swap for LeftHalf / TopHalf so the new
+        // pane lands in the requested position.
+        if matches!(placement, PanePlacement::LeftHalf | PanePlacement::TopHalf)
+            && let Some(new_id) = self.active
+        {
+            self.layout_mut().swap_siblings_containing(new_id);
+        }
     }
 
     pub fn open_codex(&mut self) {
