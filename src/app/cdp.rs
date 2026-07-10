@@ -384,10 +384,17 @@ impl App {
     /// call restores. macOS-only; no-op with a toast elsewhere.
     /// Requires Accessibility permission on first run.
     pub fn browser_dock_toggle(&mut self) {
+        // CI on ubuntu fails on `clippy::needless_return` in this
+        // branch — on macOS `#[cfg(target_os = "macos")]` matches
+        // (below) so the return here is actually needed, but on
+        // ubuntu the non-macOS branch IS the whole function body
+        // and the `return` is redundant. Restructure so both
+        // targets see clean code — the non-macOS branch just
+        // toasts and falls through; the macOS branch is gated so
+        // its body only compiles when applicable.
         #[cfg(not(target_os = "macos"))]
         {
             self.toast("browser.dock: macOS only");
-            return;
         }
         #[cfg(target_os = "macos")]
         {
