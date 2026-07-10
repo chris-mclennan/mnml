@@ -39,7 +39,12 @@ write rename.txt "foo bar foo baz foo"
 open rename.txt
 # Place cursor inside the first `foo`.
 key l
-# Add cursors at the next two `foo` occurrences (after primary's foo).
+# VS Code-style Ctrl+D:
+#   press 1 → SELECT primary's foo (no extra cursor added)
+#   press 2 → add cursor at the second foo (2 cursors)
+# The old behavior added a cursor on the very first press;
+# updated 2026-07-10 to match VS Code (see AddCursorAtNextWord
+# in src/editor/mod.rs). Only 2 cursors → 2 X's landed.
 command editor.add_cursor_at_next_word
 command editor.add_cursor_at_next_word
 # Enter Insert at the cursors, type "X" — each is right after a `foo`.
@@ -47,10 +52,8 @@ key i
 key X
 key escape
 command file.save
-# Primary cursor was after "foo" (col 3), first add went to byte ~10 (after
-# the second foo, then add_cursor lands after the matched word), second to
-# ~18. Typing X at each ⇒ "fooX bar fooX baz fooX".
-expect file rename.txt contains "fooX bar fooX baz fooX"
+# The third foo is not selected — no X after it.
+expect file rename.txt contains "fooX bar fooX baz foo"
 
 # Word delete + newline insert fan out too. Cursors at end of "old" on
 # each row; Ctrl+W (insert-mode delete-prev-word) wipes it.

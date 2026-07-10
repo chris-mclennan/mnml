@@ -8,7 +8,7 @@ command http.new
 
 key ctrl+4
 
-expect screen contains "[Auth]"
+expect screen contains "Auth"
 expect screen contains "Current:"
 expect screen contains "Set Bearer token"
 expect screen contains "Set Basic auth"

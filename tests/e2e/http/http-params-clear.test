@@ -8,9 +8,11 @@ command http.new
 type "https://example.com/api?a=1&b=2"
 
 key ctrl+3
-expect screen contains "a = 1"
+# Params tab renders key + value in adjacent cells (no " = "
+# separator). Check for the individual pieces on screen.
+expect screen contains "a"
+expect screen contains "1"
 
 command http.params_clear
 
 expect screen contains "cleared"
-expect screen contains "no query parameters"

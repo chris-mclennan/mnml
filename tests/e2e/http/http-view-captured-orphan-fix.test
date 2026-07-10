@@ -14,8 +14,13 @@ expect screen contains "captured.example.com/api/items"
 
 key enter
 
-expect screen contains "curl -X GET"
+# Captured picker now opens a Request pane (method + URL fields)
+# instead of a scratch curl buffer. Check the pane title carries
+# the URL — and the orphan-scratch regression is guarded by
+# `expect screen lacks "captured.example.com/api/itemscaptured.example.com/api/items"`
+# (which would trigger if two panes opened for one accept).
+expect screen contains "GET"
 expect screen contains "captured.example.com/api/items"
-expect pane "[scratch]"
+expect pane "captured.example.com/api/items"
 
-expect screen lacks "[scratch][scratch]"
+expect screen lacks "api/itemscaptured.example.com"

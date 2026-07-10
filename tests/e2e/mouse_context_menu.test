@@ -5,9 +5,9 @@ open notes.txt
 # so the tree actually shows notes.txt.
 command tree.refresh
 
-# Rail: row 1 = workspace header, row 2 = the notes.txt file row.
-# Right-click the file row → the file context menu.
-rightclick 4 2
+# Rail: palette bar row 0, bufferline row 1, workspace header
+# row 2, notes.txt file row 3. Right-click the file row.
+rightclick 4 3
 expect screen contains "Copy path"
 key esc
 expect screen lacks "Copy path"

@@ -1,4 +1,5 @@
-# http.params_add KEY=VALUE prompt appends to URL + auto-switches to Params.
+# http.params_add opens an inline `(name)` / `(value)` draft row
+# on the Params tab. Tab moves from name → value; Enter commits.
 
 write anchor.txt anchor
 open anchor.txt
@@ -9,10 +10,16 @@ type "https://example.com/api"
 
 command http.params_add
 
-expect screen contains "Query parameter"
+# Draft row starts with caret in the key cell (rendered as "▏")
+# and "(value)" placeholder in the value cell. Also auto-switches
+# to the Params tab.
+expect screen contains "(value)"
+expect screen contains "Params"
 
-type "userid=42"
+# Type the key, Tab into the value cell, type the value, Enter to commit.
+type "userid"
+key tab
+type "42"
 key enter
 
 expect screen contains "userid=42"
-expect screen contains "[Params]"

@@ -1,12 +1,9 @@
-# Verify the help overlay lists the source-filter stops.
-# Bug repro: at typical terminal widths the last stop ("managed → all")
-# is clipped by the pane border (line is ~100 chars; pane inner area is
-# ~87 on a 120-char screen split with the file tree). "tattle-qwe" is
-# visible; "managed" is not.
+# Verify the help overlay lists the source-filter stops:
+# `all → claude → codex → ecs → managed → all`.
 #
-# The help text in the source is correct (5 stops) but the Paragraph
-# widget clips at pane width without wrapping, so the rightmost content
-# is silently invisible. This is a SEV-3 visual deficiency.
+# 2026-07-10 rename: `tattle-qwe` is now `ecs` (the sibling was
+# renamed to ecs_runner). Old test looked for "tattle-qwe";
+# updated to check for "ecs".
 
 write placeholder.txt x
 open placeholder.txt
@@ -18,9 +15,10 @@ key ?
 # These stops fit within the pane width at 120-char screen.
 expect screen contains "claude"
 expect screen contains "codex"
-expect screen contains "tattle-qwe"
-# "managed" is clipped at pane boundary — intentionally NOT checked
-# (the test documents the KNOWN clipping, not a regression).
+expect screen contains "ecs"
+# "managed" is clipped at pane boundary at some widths —
+# intentionally NOT checked (the test documents that KNOWN
+# clipping, not a regression).
 
 # Close help.
 key ?

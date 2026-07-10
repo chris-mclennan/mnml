@@ -5,22 +5,22 @@ open anchor.txt
 
 command http.new
 
-expect screen contains "[Body]"
+expect screen contains "Body"
 
 key ctrl+]
-expect screen contains "[Headers]"
+expect screen contains "Headers"
 
 key ctrl+]
-expect screen contains "[Params]"
+expect screen contains "Params"
 
 key ctrl+]
-expect screen contains "[Auth]"
+expect screen contains "Auth"
 
 key ctrl+]
-expect screen contains "[Vars]"
+expect screen contains "Vars"
 
 key ctrl+]
-expect screen contains "[Source]"
+expect screen contains "Script"
 
 key ctrl+]
-expect screen contains "[Body]"
+expect screen contains "Body"

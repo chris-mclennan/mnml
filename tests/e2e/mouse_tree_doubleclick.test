@@ -4,7 +4,8 @@ write aa.txt aa-content
 write bb.txt bb-content
 open aa.txt
 command tree.refresh
-# row 2 = aa.txt, row 3 = bb.txt
-doubleclick 5 3
+# Palette bar (row 0) + bufferline (row 1) push the tree down:
+# workspace header row 2, aa.txt row 3, bb.txt row 4.
+doubleclick 5 4
 expect pane "bb.txt"
 expect screen contains "bb-content"

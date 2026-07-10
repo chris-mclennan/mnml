@@ -2632,6 +2632,25 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_md_preview(),
         },
         Command {
+            id: "markdown.edit_raw",
+            title: "Markdown: swap the active preview for the raw editor",
+            group: "view",
+            // 2026-07-10 — palette-exposes the `md_preview_to_edit`
+            // path that used to be only reachable via clicking the
+            // preview banner's `✏ Edit` chip. Useful for chord
+            // access + for E2E tests that need to exercise the
+            // editor pane's tree-sitter highlighting on a `.md`
+            // file (opening `.md` routes to preview by default).
+            keys: &[],
+            run: |app| {
+                let Some(pid) = app.active else {
+                    app.toast("markdown.edit_raw: no active pane");
+                    return;
+                };
+                app.md_preview_to_edit(pid);
+            },
+        },
+        Command {
             id: "markdown.link_check",
             title: "Markdown: check all link targets (broken ones → Quickfix)",
             group: "view",

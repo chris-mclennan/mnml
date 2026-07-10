@@ -7,16 +7,16 @@ open anchor.txt
 command http.new
 
 key ctrl+3
-expect screen contains "[Params]"
+expect screen contains "Params"
 
 key ctrl+4
-expect screen contains "[Auth]"
+expect screen contains "Auth"
 
 key ctrl+6
-expect screen contains "[Source]"
+expect screen contains "Script"
 
 key ctrl+2
-expect screen contains "[Headers]"
+expect screen contains "Headers"
 
 key ctrl+1
-expect screen contains "[Body]"
+expect screen contains "Body"

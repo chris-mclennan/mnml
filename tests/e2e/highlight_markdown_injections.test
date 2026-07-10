@@ -8,6 +8,10 @@
 # a regression in any of them shows up as fewer total spans.
 write notes.md # Title\n\nThis is **bold** and *em* text.\n\n```rust\nfn main() { let x = 1; }\n```\n
 open notes.md
+# 2026-07 [ui] `.md` files route to MdPreview by default. Swap
+# to the raw editor so tree-sitter highlighting fires (preview
+# panes have no `highlights` field to count).
+command markdown.edit_raw
 expect pane "notes.md"
 expect screen contains "Title"
 expect screen contains "**bold**"

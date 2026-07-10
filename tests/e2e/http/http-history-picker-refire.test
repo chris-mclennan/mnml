@@ -15,4 +15,7 @@ expect screen contains "api.example.com/login"
 key enter
 
 expect screen contains "api.example.com/users"
-expect pane "[scratch]"
+# History picker now opens the row as a Request pane (titled
+# "<METHOD>  <URL>") rather than a scratch buffer. Check for
+# the URL in the pane title.
+expect pane "api.example.com/users"

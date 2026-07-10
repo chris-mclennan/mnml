@@ -6,11 +6,11 @@ write aa.txt aa-content
 open aa.txt
 command tree.refresh
 
-# After tree.refresh, ac96648 auto-expands top-level dirs, so the rail is
-# now: row 1 = workspace header, row 2 = sub/ (open), row 3 = cc.txt
-# (inside sub/), row 4 = aa.txt. Drag aa.txt (row 4) up onto sub/ (row 2)
-# → move prompt. multilang 2026-06-28 SEV-2 fix.
-drag 7 4 7 2
+# After tree.refresh, ac96648 auto-expands top-level dirs. Rail
+# after adding the palette bar (row 0) + bufferline (row 1):
+# workspace header row 2, sub/ (open) row 3, cc.txt row 4,
+# aa.txt row 5. Drag aa.txt (row 5) up onto sub/ (row 3).
+drag 7 5 7 3
 expect screen contains "Move to"
 key enter
 expect file sub/aa.txt contains "aa-content"

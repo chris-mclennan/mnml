@@ -7,6 +7,10 @@
 command http.new
 
 expect screen contains "GET"
-expect screen contains "response"
-expect screen contains "ai"
+# Response block dropped its title text — the sub-tab strip
+# (Body / Headers / Timeline / Tests) is the label now. Check
+# the tab-strip is present via its first tab.
+expect screen contains "Body"
+# AI section keeps its "AI" title (uppercase).
+expect screen contains "AI"
 expect pane "request"

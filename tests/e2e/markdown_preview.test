@@ -3,8 +3,13 @@
 # rendered body shows the heading + prose with markdown markers unwrapped.
 write doc.md "# Title Line\n\nSome body prose."
 open doc.md
+# 2026-07 [ui] auto_md_preview default: opening a .md file
+# routes through open_md_preview_for_path and shows the
+# rendered view (markers unwrapped). Raw `# Title Line` is
+# only visible in the editor view.
 expect pane "doc.md"
-expect screen contains "# Title Line"
+expect screen contains "Title Line"
+expect screen contains "Some body prose."
 
 command markdown.preview
 expect pane "doc.md"

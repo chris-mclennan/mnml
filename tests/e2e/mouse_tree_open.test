@@ -4,9 +4,10 @@ write bb.txt content-of-bb
 open aa.txt
 command tree.refresh
 
-# Rail after refresh: row 1 = workspace header, then the files sorted —
-# aa.txt on row 2, bb.txt on row 3. Click bb.txt's row.
+# Rail after refresh: with the palette bar on screen row 0 +
+# bufferline on row 1, the tree's workspace header lands on
+# row 2. Files: aa.txt on row 3, bb.txt on row 4. Click bb.txt.
 expect pane "aa.txt"
-click 5 3
+click 5 4
 expect pane "bb.txt"
 expect screen contains "content-of-bb"

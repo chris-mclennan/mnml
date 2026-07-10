@@ -16,9 +16,9 @@ expect screen contains "Cheatsheet"
 
 # Step 1: collapse the focused section with `C`.
 key C
-expect screen contains "(collapsed)"
+expect screen contains "· collapsed"
 
 # Step 2: `X` with one section collapsed → collapse_all (not expand_all),
 # so sections stay collapsed rather than the single collapse being wiped.
 key X
-expect screen contains "(collapsed)"
+expect screen contains "· collapsed"

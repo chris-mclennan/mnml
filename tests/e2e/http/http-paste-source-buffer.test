@@ -9,7 +9,7 @@ command http.new
 
 key ctrl+6
 
-expect screen contains "[Source]"
+expect screen contains "Script"
 
 type "curl 'https://api.example.com/users'"
 
@@ -17,4 +17,4 @@ command http.paste_source
 
 expect screen contains "api.example.com"
 expect screen contains "GET"
-expect screen contains "[Body]"
+expect screen contains "Body"

@@ -8,6 +8,11 @@
 
 write api.curl "curl 'http://127.0.0.1:1/a' -H 'accept: */*'\n\n### GetB\ncurl 'http://127.0.0.1:1/b' -H 'accept: */*'\n"
 open api.curl
+# 2026-07 .curl files auto-open as Request panes now (parse
+# block 1 into method + URL). To exercise `http.next_block`
+# on the raw source we need the editor view. `:e` on the
+# already-open file forces the editor path.
+ex e api.curl
 
 # Jump cursor to block 2 (the GetB line).
 command http.next_block

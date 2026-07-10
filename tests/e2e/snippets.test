@@ -28,6 +28,9 @@ expect screen contains "no snippet matches"
 snippet global ts 2026
 write notes.md ""
 open notes.md
+# `.md` files auto-open as preview; swap to editor so we can
+# type + run snippet expansion.
+command markdown.edit_raw
 type ts
 command snippet.expand
 expect screen contains "2026"

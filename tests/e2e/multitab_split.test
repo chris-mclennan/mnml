@@ -29,9 +29,8 @@ expect pane "c.txt"
 # Close the active pane → falls back to a sibling tab in the
 # same leaf (rightward neighbour preferred, else leftward).
 # After closing c.txt, b.txt or a.txt should remain active.
-key ctrl+w
-# `Ctrl+W` is a leader prefix in vim mode; use the palette in
-# standard mode. Use ex instead to be input-style-agnostic.
+# `ex bd` is input-style-agnostic (works in both vim + standard);
+# `key ctrl+w` was interfering as a vim leader prefix.
 ex bd
 # After close, the leaf still exists with the remaining tabs.
 expect screen lacks "c.txt"
