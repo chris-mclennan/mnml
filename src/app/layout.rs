@@ -1866,9 +1866,12 @@ impl App {
         // Track HTTP entry BEFORE we clobber `active_section` — the
         // "open HttpHome on entry" hook needs to distinguish an
         // idempotent re-click on an already-active HTTP icon (leave
-        // the main area alone) from a fresh entry.
+        // the main area alone) from a fresh entry. `leaving_http`
+        // is the mirror for the preview-tab cleanup below.
         let entering_http = self.active_section != crate::app::ActivitySection::Http
             && section == crate::app::ActivitySection::Http;
+        let leaving_http = self.active_section == crate::app::ActivitySection::Http
+            && section != crate::app::ActivitySection::Http;
         self.active_section = section;
         if entering_search {
             self.search_input_focused = true;
@@ -1910,6 +1913,10 @@ impl App {
         //   with source_path = None, so nothing gets persisted to
         //   disk until the user hits Save-As. Fixes the
         //   scratch-N.http workspace pileup.
+        // - 2026-07-09 — the auto-opened pane is a *preview* tab
+        //   (like editor tree-click preview). First edit promotes
+        //   to a permanent tab; navigating away without editing
+        //   closes it (see the "leaving HTTP" cleanup below).
         if entering_http {
             let has_active_request = self
                 .active
@@ -1918,6 +1925,32 @@ impl App {
                 .unwrap_or(false);
             if !has_active_request {
                 self.open_new_request_pane();
+                if let Some(cur) = self.active
+                    && let Some(crate::pane::Pane::Request(rp)) = self.panes.get_mut(cur)
+                {
+                    rp.is_preview = true;
+                }
+            }
+        }
+        // Leaving HTTP → drop any untouched preview Request pane
+        // so we don't accumulate scratch tabs the user just glanced
+        // at. `is_preview` gets flipped to false on the first edit
+        // (see `tui/handlers/pane.rs`), so what remains preview at
+        // this point is genuinely unused.
+        if leaving_http {
+            let to_close: Vec<usize> = self
+                .panes
+                .iter()
+                .enumerate()
+                .filter_map(|(i, p)| match p {
+                    crate::pane::Pane::Request(rp) if rp.is_preview => Some(i),
+                    _ => None,
+                })
+                .collect();
+            let mut to_close = to_close;
+            to_close.sort_unstable_by(|a, b| b.cmp(a));
+            for pid in to_close {
+                self.force_close_pane(pid);
             }
         }
     }
@@ -2235,6 +2268,61 @@ mod layout_tests {
             panic!("expected right leaf");
         };
         assert_eq!(right_tabs.len(), 1, "right leaf holds only the new pane");
+    }
+
+    #[test]
+    fn entering_http_opens_request_pane_as_preview() {
+        // 2026-07-09 — user report: activating the HTTP section
+        // auto-opens a fresh Request pane; if the user leaves
+        // without touching it, the empty tab should disappear.
+        let (_d, mut app) = app_with_files();
+        app.set_activity_section(crate::app::ActivitySection::Http);
+        let opened = app
+            .panes
+            .iter()
+            .any(|p| matches!(p, crate::pane::Pane::Request(rp) if rp.is_preview));
+        assert!(opened, "entering HTTP should create a preview Request pane");
+    }
+
+    #[test]
+    fn leaving_http_drops_untouched_preview_request_pane() {
+        let (_d, mut app) = app_with_files();
+        let before = app.panes.len();
+        app.set_activity_section(crate::app::ActivitySection::Http);
+        // A preview Request pane was pushed.
+        assert!(app.panes.len() > before);
+        app.set_activity_section(crate::app::ActivitySection::Explorer);
+        let remaining_preview = app
+            .panes
+            .iter()
+            .filter(|p| matches!(p, crate::pane::Pane::Request(rp) if rp.is_preview))
+            .count();
+        assert_eq!(remaining_preview, 0, "preview request should be closed");
+    }
+
+    #[test]
+    fn leaving_http_keeps_promoted_request_pane() {
+        // If the user edited the URL, the request stops being a
+        // preview — leaving HTTP must NOT close it. Verifies the
+        // is_preview guard on the cleanup pass.
+        let (_d, mut app) = app_with_files();
+        app.set_activity_section(crate::app::ActivitySection::Http);
+        // Promote out of preview by clearing the flag directly (a
+        // real edit would do the same via the pane key handler).
+        if let Some(cur) = app.active
+            && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
+        {
+            rp.is_preview = false;
+        }
+        app.set_activity_section(crate::app::ActivitySection::Explorer);
+        let promoted_still_alive = app
+            .panes
+            .iter()
+            .any(|p| matches!(p, crate::pane::Pane::Request(_)));
+        assert!(
+            promoted_still_alive,
+            "promoted request should survive section change"
+        );
     }
 
     #[test]

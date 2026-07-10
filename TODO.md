@@ -366,29 +366,14 @@ is worse than just keeping the Nerd Font icons.
 Pick up when the user has a few hours and an integration whose
 current glyph annoys them enough to drive the design.
 
-### HTTP: drop non-dirty "new request" tab on navigate-away
-**Status:** captured 2026-07-08 user report.
-
-When the user opens the HTTP activity section (rqst/http rail),
-mnml auto-opens a fresh Request pane so the URL/method fields
-are ready. If the user glances at it and navigates elsewhere
-without typing anything, the empty scratch tab hangs around in
-the bufferline forever.
-
-Shape:
-- On Request-pane open via the auto-path (not `+ New request`
-  click), start with a `is_preview = true` flag — VS Code's
-  preview-tab treatment. Same idiom already used for tree-click
-  editor previews.
-- Any user interaction (typing URL, changing method, editing
-  body, hitting `r` to fire) flips the preview flag off →
-  permanent tab.
-- Navigating to any other pane without interaction → close the
-  preview Request pane instead of leaving it as a ghost.
-
-Reuses `Buffer::is_preview` semantics if possible; if not, add
-`RequestPane::is_preview: bool` and mirror the promote-on-edit
-path.
+### ~~HTTP: drop non-dirty "new request" tab on navigate-away~~
+**Shipped 2026-07-09.** `set_activity_section` in `layout.rs`
+now marks the auto-opened Request pane `is_preview = true`
+and closes any preview Request pane on leaving HTTP. First
+edit promotes to a permanent tab (existing
+`tui/handlers/pane.rs` promotion path handles this). 3 unit
+tests (`entering_http_opens_...`, `leaving_http_drops_...`,
+`leaving_http_keeps_promoted_...`).
 
 ### TODOs panel: 1-cell padding between rescan icon and label
 **Status:** captured 2026-07-08 — visual polish.
