@@ -25,6 +25,10 @@ key tab
 # Same guard before filling stop $2.
 wait 150
 type items
+# Extra settle before the assertion — 150ms is enough
+# between edits but the final read needs more headroom on
+# loaded macOS CI runners.
+wait 250
 
 # Sanity: before Backtab the line is "for i in items {".
 expect screen contains "for i in items {"

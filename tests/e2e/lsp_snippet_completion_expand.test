@@ -40,6 +40,11 @@ key tab
 wait 150
 type println
 
+# Extra settle before the final assertion — loaded macOS CI
+# runners need render/tree-edit consumers to catch up after the
+# last type before we assert the buffer content matches.
+wait 250
+
 # Final state shows the filled-in template.
 expect screen contains "for i in items {"
 expect screen contains "println"
