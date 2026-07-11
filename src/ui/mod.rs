@@ -1421,12 +1421,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         && area.height >= 1
         && cmdline_bar_area.height >= 1
     {
+        // Position = which match we're currently looking at (1-based).
+        // Was `applied + 1` — but `applied` only increments on `y`;
+        // `n` (skip) advances the current match without applying, so
+        // the counter froze. nvchad-user SEV-3 2026-07-11 fix: use
+        // total - remaining.len() + 1 to reflect the CURRENT match
+        // regardless of accept/skip. Clamped to `total` for the
+        // terminal state (remaining is empty).
+        let position = (rc.total - rc.remaining.len() + 1).min(rc.total);
         let prompt = format!(
             " replace {} → {}? [{}/{}]  y · n · a · q ",
-            rc.find,
-            rc.replace,
-            rc.applied + 1,
-            rc.total,
+            rc.find, rc.replace, position, rc.total,
         );
         let t = theme::cur();
         let prompt_w = (prompt.chars().count() as u16).min(cmdline_bar_area.width);
