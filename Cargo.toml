@@ -79,7 +79,7 @@ serde = { version = "1", features = ["derive"] }
 # `{data, eventName}` in the output, which is neither what humans
 # expect nor what hand-authored stubs use. See 2026-07-09
 # `discover` rqst-parity port.
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 # System clipboard (best-effort; falls back to an internal register if unavailable).
 arboard = "3"
 # Signal handler for SIGTERM/SIGINT/SIGHUP — the IPC death certificate

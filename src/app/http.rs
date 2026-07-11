@@ -6497,6 +6497,43 @@ mod http_tests {
     }
 
     #[test]
+    fn auto_format_body_preserves_bigint_literals() {
+        // api-workflow SEV-2 2026-07-11: auto-format used to parse JSON
+        // through serde_json's default number handling, which stores
+        // any integer larger than u64 as f64 (lossy). `99999999999999999999`
+        // → `1e+20`. The `arbitrary_precision` feature routes numbers
+        // through a Number type that round-trips exactly.
+        let d = tempfile::tempdir().unwrap();
+        let mut config = crate::config::Config::default();
+        config.http.auto_format_body = true;
+        let mut app = App::new(d.path().to_path_buf(), config).unwrap();
+        app.open_new_request_pane();
+        let big = r#"{"orderId":"XYZ","amount":99999999999999999999,"pi":3.14159265358979}"#;
+        if let Some(cur) = app.active
+            && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
+        {
+            rp.request.body = Some(big.to_string());
+        }
+        app.maybe_auto_format_active_body();
+        let out = app
+            .active
+            .and_then(|i| app.panes.get(i))
+            .and_then(|p| match p {
+                crate::pane::Pane::Request(rp) => rp.request.body.clone(),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            out.contains("99999999999999999999"),
+            "bigint preserved: {out}"
+        );
+        assert!(
+            !out.contains("1e+20") && !out.contains("1e20"),
+            "no lossy float: {out}"
+        );
+    }
+
+    #[test]
     fn splice_http_block_preserves_other_blocks() {
         let src = "\
 ### one
