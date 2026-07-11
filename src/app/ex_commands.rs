@@ -332,46 +332,118 @@ impl App {
     /// vim's `:sort i`. `case_insensitive=true` compares lines via their
     /// lowercase form (ASCII; cheap, matches vim's default behavior).
     pub fn run_sort_lines_opts(&mut self, unique: bool, reverse: bool, case_insensitive: bool) {
+        self.run_sort_lines_full(unique, reverse, case_insensitive, false, None);
+    }
+
+    /// `:{start},{end}sort [flags]` — sort a specific line range.
+    /// nvchad-round-9 SEV-2 2026-07-11.
+    pub fn run_sort_lines_range(
+        &mut self,
+        start_line: usize,
+        end_line: usize,
+        unique: bool,
+        reverse: bool,
+        case_insensitive: bool,
+        numeric: bool,
+    ) {
+        self.run_sort_lines_full(
+            unique,
+            reverse,
+            case_insensitive,
+            numeric,
+            Some((start_line, end_line)),
+        );
+    }
+
+    fn run_sort_lines_full(
+        &mut self,
+        unique: bool,
+        reverse: bool,
+        case_insensitive: bool,
+        numeric: bool,
+        line_range: Option<(usize, usize)>,
+    ) {
         let Some(b) = self.active_editor_mut() else {
             self.toast("no active editor");
             return;
         };
         let text = b.editor.text();
-        // Determine the line range — selection if any, else whole buffer.
-        let (start_byte, end_byte, start_line, end_line) =
-            if let Some((sel_lo, sel_hi)) = b.editor.selection() {
-                let line_at = |byte: usize| text[..byte].bytes().filter(|&c| c == b'\n').count();
-                let lo_line = line_at(sel_lo);
-                let hi_line = line_at(sel_hi);
-                let line_start = |line: usize| -> usize {
-                    if line == 0 {
-                        return 0;
+        let line_start = |t: &str, line: usize| -> usize {
+            if line == 0 {
+                return 0;
+            }
+            let mut seen = 0;
+            for (i, ch) in t.bytes().enumerate() {
+                if ch == b'\n' {
+                    seen += 1;
+                    if seen == line {
+                        return i + 1;
                     }
-                    let mut seen = 0;
-                    for (i, ch) in text.bytes().enumerate() {
-                        if ch == b'\n' {
-                            seen += 1;
-                            if seen == line {
-                                return i + 1;
-                            }
-                        }
-                    }
-                    text.len()
-                };
-                let line_end = |line: usize| -> usize {
-                    let s = line_start(line);
-                    text[s..].find('\n').map(|i| s + i).unwrap_or(text.len())
-                };
-                (line_start(lo_line), line_end(hi_line), lo_line, hi_line)
-            } else {
-                let line_count = text.bytes().filter(|&c| c == b'\n').count() + 1;
-                (0, text.len(), 0, line_count.saturating_sub(1))
-            };
+                }
+            }
+            t.len()
+        };
+        let line_end = |t: &str, line: usize| -> usize {
+            let s = line_start(t, line);
+            t[s..].find('\n').map(|i| s + i).unwrap_or(t.len())
+        };
+        // Determine the line range — explicit range wins, else
+        // selection, else whole buffer.
+        let (start_byte, end_byte, start_line, end_line) = if let Some((sr, er)) = line_range {
+            (line_start(text, sr), line_end(text, er), sr, er)
+        } else if let Some((sel_lo, sel_hi)) = b.editor.selection() {
+            let line_at = |byte: usize| text[..byte].bytes().filter(|&c| c == b'\n').count();
+            let lo_line = line_at(sel_lo);
+            let hi_line = line_at(sel_hi);
+            (
+                line_start(text, lo_line),
+                line_end(text, hi_line),
+                lo_line,
+                hi_line,
+            )
+        } else {
+            let line_count = text.bytes().filter(|&c| c == b'\n').count() + 1;
+            (0, text.len(), 0, line_count.saturating_sub(1))
+        };
         if start_byte >= end_byte {
             return;
         }
-        let mut lines: Vec<&str> = text[start_byte..end_byte].split('\n').collect();
-        if case_insensitive {
+        // nvchad-round-9 SEV-2 2026-07-11 — the previous version's
+        // `split('\n').collect()` returned an empty trailing element
+        // when the range ended on a newline; that empty string sorted
+        // to the top and produced a phantom blank line.
+        let block = &text[start_byte..end_byte];
+        let trailing_nl = block.ends_with('\n');
+        let mut lines: Vec<&str> = if trailing_nl {
+            block[..block.len() - 1].split('\n').collect()
+        } else {
+            block.split('\n').collect()
+        };
+        if numeric {
+            // Vim `:sort n` sorts by the FIRST decimal number the line
+            // contains; lines with no number sort first (vim canonical).
+            let parse_num = |l: &str| -> Option<i64> {
+                let bytes = l.as_bytes();
+                let mut i = 0usize;
+                while i < bytes.len() {
+                    if bytes[i].is_ascii_digit() || bytes[i] == b'-' {
+                        let start = i;
+                        if bytes[i] == b'-' {
+                            i += 1;
+                        }
+                        while i < bytes.len() && bytes[i].is_ascii_digit() {
+                            i += 1;
+                        }
+                        if let Ok(n) = l[start..i].parse::<i64>() {
+                            return Some(n);
+                        }
+                    }
+                    i += 1;
+                }
+                None
+            };
+            lines.sort_by_key(|l| parse_num(l));
+        } else if case_insensitive {
             lines.sort_by_key(|l| l.to_ascii_lowercase());
         } else {
             lines.sort();
@@ -386,8 +458,11 @@ impl App {
         if reverse {
             lines.reverse();
         }
-        let new_block = lines.join("\n");
-        if new_block == text[start_byte..end_byte] {
+        let mut new_block = lines.join("\n");
+        if trailing_nl {
+            new_block.push('\n');
+        }
+        if new_block == block {
             return;
         }
         let ops = vec![crate::edit_op::EditOp::ReplaceRange {
@@ -398,8 +473,11 @@ impl App {
         let mut clip = crate::clipboard::Clipboard::new();
         b.apply_edit_ops(ops, &mut clip, 0);
         self.toast(format!(
-            ":sort{} — {} line(s)",
-            if unique { " (unique)" } else { "" },
+            ":sort{}{}{}{} — {} line(s)",
+            if unique { "u" } else { "" },
+            if reverse { "r" } else { "" },
+            if case_insensitive { "i" } else { "" },
+            if numeric { "n" } else { "" },
             end_line + 1 - start_line
         ));
     }
@@ -877,6 +955,30 @@ impl App {
                     self.toast(format!(":{start}..{end}s — unrecognized substitute"));
                     return;
                 }
+                // `:{range}sort [flags]` — sort the line range.
+                // nvchad-round-9 SEV-2 2026-07-11.
+                "sort" | "sor" => {
+                    let flags = arg;
+                    self.run_sort_lines_range(
+                        start,
+                        end,
+                        flags.contains('u'),
+                        flags.contains('r'),
+                        flags.contains('i'),
+                        flags.contains('n'),
+                    );
+                    return;
+                }
+                // `:{range}norm <keys>` — feed keys through the vim
+                // handler once per line in the range.
+                "norm" | "normal" => {
+                    if arg.is_empty() {
+                        self.toast(":norm — keys required");
+                        return;
+                    }
+                    self.run_norm_range(arg, start, end);
+                    return;
+                }
                 _ => { /* fall through to normal dispatcher */ }
             }
         }
@@ -1340,8 +1442,24 @@ impl App {
             // `:co N` / `:copy N` / `:t N` — duplicate the cursor's line and
             // place the copy after line N. Same destination semantics as `:m`.
             "co" | "copy" | "t" => self.run_move_or_copy_line(rest, true),
-            "sort" => self.run_sort_lines_opts(rest.contains('u'), false, rest.contains('i')),
-            "sort!" => self.run_sort_lines_opts(rest.contains('u'), true, rest.contains('i')),
+            // nvchad-round-9 SEV-2 2026-07-11 — `n` and `r` flags
+            // were previously unparsed. `n` = numeric sort, `r` =
+            // reverse. `sort!` (bang) still means reverse for the
+            // vim-canonical shape.
+            "sort" | "sor" => self.run_sort_lines_full(
+                rest.contains('u'),
+                rest.contains('r'),
+                rest.contains('i'),
+                rest.contains('n'),
+                None,
+            ),
+            "sort!" => self.run_sort_lines_full(
+                rest.contains('u'),
+                true,
+                rest.contains('i'),
+                rest.contains('n'),
+                None,
+            ),
             // `:retab` — replace tabs with `[editor] tab_width` spaces in
             // the whole buffer.
             "retab" => {
@@ -2816,15 +2934,19 @@ impl App {
             // `:e!` with no arg reloads the current buffer; `:e! path`
             // force-opens `path`, discarding any unsaved edits in the
             // current buffer. nvchad-round-7 SEV-3 2026-07-11.
+            //
+            // nvchad-round-9 SEV-1 2026-07-11 — earlier fix just
+            // cleared `dirty` before switching, which left the
+            // buffer's in-memory text still modified. When the user
+            // later `:b <name>` back to it, they saw modifications
+            // with `dirty:false`, and `:w` wrote phantom content to
+            // disk. Reload from disk BEFORE switching so the alt
+            // buffer's state matches disk.
             "e!" | "edit!" => {
                 if rest.is_empty() {
                     self.reload_active(true);
                 } else {
-                    // Mark active buffer clean so ex_edit doesn't stop
-                    // to prompt about unsaved changes. Vim's `!` = force.
-                    if let Some(b) = self.active_editor_mut() {
-                        b.dirty = false;
-                    }
+                    self.reload_active(true);
                     self.ex_edit(rest);
                 }
             }

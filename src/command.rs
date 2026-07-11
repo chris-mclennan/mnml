@@ -1844,7 +1844,12 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.focus_right_panel",
             title: "Focus the right side panel",
             group: "view",
-            keys: &["Ctrl+K r"],
+            // keyboard-round-8 SEV-2 2026-07-11 — was "Ctrl+K r"
+            // (uppercase K), which `Chord::of` re-normalized to
+            // Ctrl+Shift+K r. `Ctrl+K r` toasts "no leader
+            // mapping"; needs lowercase to match other Ctrl+K
+            // bindings.
+            keys: &["ctrl+k r"],
             run: |app| {
                 if !app.right_panel_visible {
                     app.right_panel_visible = true;
@@ -3617,7 +3622,9 @@ fn builtin_commands() -> Vec<Command> {
             id: "lsp.references",
             title: "LSP: find references (→ picker)",
             group: "lsp",
-            keys: &[],
+            // keyboard-round-8 SEV-2 2026-07-11 — VS Code's chord for
+            // "find all references". Was unbound; palette-only.
+            keys: &["shift+f12"],
             run: |app| app.lsp_references(),
         },
         Command {
@@ -3648,7 +3655,8 @@ fn builtin_commands() -> Vec<Command> {
             id: "lsp.signature_help",
             title: "LSP: signature help (param info popup at cursor)",
             group: "lsp",
-            keys: &[],
+            // keyboard-round-8 SEV-2 2026-07-11 — VS Code's chord.
+            keys: &["ctrl+shift+space"],
             run: |app| app.request_signature_help_at_cursor(),
         },
         Command {

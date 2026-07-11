@@ -2968,6 +2968,31 @@ impl VimInputHandler {
                             SelectInnerTag
                         }
                     }
+                    // Tree-sitter text objects — parity with the
+                    // operator-pending dispatch (line 1579+). Nvchad
+                    // users hit `vif` / `vac` / `via` constantly.
+                    // nvchad-round-9 SEV-2 2026-07-11.
+                    KeyCode::Char('f') => {
+                        if around {
+                            SelectAroundFunction
+                        } else {
+                            SelectInnerFunction
+                        }
+                    }
+                    KeyCode::Char('c') => {
+                        if around {
+                            SelectAroundClass
+                        } else {
+                            SelectInnerClass
+                        }
+                    }
+                    KeyCode::Char('a') => {
+                        if around {
+                            SelectAroundArgument
+                        } else {
+                            SelectInnerArgument
+                        }
+                    }
                     KeyCode::Char('i') if around => SelectAroundIndentBlock,
                     KeyCode::Char('i') => SelectInnerIndentBlock,
                     KeyCode::Char('I') if around => SelectOuterIndentBlock,

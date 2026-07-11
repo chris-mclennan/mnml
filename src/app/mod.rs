@@ -6701,10 +6701,18 @@ impl App {
     /// after Ctrl+O toast "nothing to go forward to" because the
     /// forward stack was reset before it could be popped.
     pub fn record_within_file_jump(&mut self, np: NavPoint) {
-        self.push_nav_back(np);
-        if !self.nav_jump_in_progress {
-            self.nav_forward.clear();
+        // nvchad-round-9 SEV-2 2026-07-11 — during a nav_back/forward
+        // jump, the destination fires post-dispatch big-jump
+        // recording, which re-pushed the destination onto the back
+        // stack — so `3G, 7G, 12G, <C-O>, <C-O>, <C-O>` produced
+        // `7, 12, 7` instead of `7, 3, 1`. Skip the push entirely
+        // during a jump-in-progress; the nav_back/forward helpers
+        // already handled the stack bookkeeping themselves.
+        if self.nav_jump_in_progress {
+            return;
         }
+        self.push_nav_back(np);
+        self.nav_forward.clear();
     }
 
     fn push_nav_back(&mut self, np: NavPoint) {
@@ -9945,6 +9953,44 @@ impl App {
     /// lines; `whole=false` + no selection ⇒ current line. Idempotent:
     /// the loop walks 0-based line indices captured up front (so edits
     /// that add/remove lines don't repeat-fire the new lines).
+    /// `:{start},{end}norm <keys>` — feed `<keys>` through the vim
+    /// handler once per line in the range. nvchad-round-9 SEV-2
+    /// 2026-07-11.
+    pub fn run_norm_range(&mut self, keys: &str, start_line: usize, end_line: usize) {
+        let keys = keys.trim();
+        if keys.is_empty() {
+            self.toast(":norm <keys>");
+            return;
+        }
+        let Some(idx) = self.active else {
+            return;
+        };
+        let key_events: Vec<ratatui::crossterm::event::KeyEvent> = keys
+            .chars()
+            .map(|c| {
+                ratatui::crossterm::event::KeyEvent::new(
+                    ratatui::crossterm::event::KeyCode::Char(c),
+                    ratatui::crossterm::event::KeyModifiers::NONE,
+                )
+            })
+            .collect();
+        for row in start_line..=end_line {
+            if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                if row >= b.editor.line_count() {
+                    break;
+                }
+                b.editor.place_cursor(row, 0);
+            }
+            for key in &key_events {
+                crate::tui::dispatch_key(self, *key);
+            }
+        }
+        self.toast(format!(
+            ":{start_line}..{end_line}norm — {} line(s)",
+            end_line - start_line + 1
+        ));
+    }
+
     pub fn run_norm(&mut self, keys: &str, whole: bool) {
         let keys = keys.trim();
         if keys.is_empty() {
