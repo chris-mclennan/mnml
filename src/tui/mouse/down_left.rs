@@ -160,7 +160,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(rect) = app.rects.right_panel_empty_test
         && crate::app::dispatch::contains(rect, x, y)
     {
-        crate::command::run("test.run", app);
+        // mouse-round-7 SEV-2 2026-07-11 — `test.run` didn't exist,
+        // so the click silently no-op'd. Fall through the `_file` /
+        // `_all` variants; `_file` toasts helpfully when no editor is
+        // open.
+        if crate::command::registry().get("test.run_file").is_some() {
+            crate::command::run("test.run_file", app);
+        } else {
+            crate::command::run("test.run_all", app);
+        }
         return;
     }
     // Right-panel v3 `×` on the header closes the active
