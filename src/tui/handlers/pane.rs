@@ -1149,12 +1149,20 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('>') => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     use crate::claude_agents::AgentSource;
+                    // claude-agents SEV-2 2026-07-10: Ecs / AnthropicManaged
+                    // are dead stops here — the dashboard's `rows` are
+                    // populated exclusively by collect_rows (Claude) +
+                    // collect_codex_rows (Codex). Cloud sources feed the
+                    // separate rail Cloud Agents panel via
+                    // App::refresh_agents_panel_if_due, so filtering to
+                    // ecs/managed here always showed 0/N with a misleading
+                    // "no Claude sessions" empty-state. Cycle just the
+                    // sources this pane actually knows about.
                     p.source_filter = match p.source_filter {
                         None => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => Some(AgentSource::Codex),
-                        Some(AgentSource::Codex) => Some(AgentSource::Ecs),
-                        Some(AgentSource::Ecs) => Some(AgentSource::AnthropicManaged),
-                        Some(AgentSource::AnthropicManaged) => None,
+                        Some(AgentSource::Codex) => None,
+                        Some(AgentSource::Ecs) | Some(AgentSource::AnthropicManaged) => None,
                     };
                     p.selected = 0;
                 }
@@ -1163,11 +1171,10 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(i) {
                     use crate::claude_agents::AgentSource;
                     p.source_filter = match p.source_filter {
-                        None => Some(AgentSource::AnthropicManaged),
-                        Some(AgentSource::AnthropicManaged) => Some(AgentSource::Ecs),
-                        Some(AgentSource::Ecs) => Some(AgentSource::Codex),
+                        None => Some(AgentSource::Codex),
                         Some(AgentSource::Codex) => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => None,
+                        Some(AgentSource::Ecs) | Some(AgentSource::AnthropicManaged) => None,
                     };
                     p.selected = 0;
                 }

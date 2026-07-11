@@ -297,12 +297,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             TopbarChipKind::Source => {
                 if let Some(Pane::ClaudeAgents(p)) = app.panes.get_mut(pid) {
                     use crate::claude_agents::AgentSource;
+                    // Skip dead Ecs / AnthropicManaged stops — dashboard's
+                    // rows are Claude+Codex only. See handlers/pane.rs.
+                    // claude-agents SEV-2 2026-07-10.
                     p.source_filter = match p.source_filter {
                         None => Some(AgentSource::Claude),
                         Some(AgentSource::Claude) => Some(AgentSource::Codex),
-                        Some(AgentSource::Codex) => Some(AgentSource::Ecs),
-                        Some(AgentSource::Ecs) => Some(AgentSource::AnthropicManaged),
-                        Some(AgentSource::AnthropicManaged) => None,
+                        Some(AgentSource::Codex) => None,
+                        Some(AgentSource::Ecs) | Some(AgentSource::AnthropicManaged) => None,
                     };
                     p.selected = 0;
                 }
