@@ -2732,6 +2732,32 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
 
     // Editor text in some split leaf? Focus that leaf and place the cursor.
+    // Left-click on an editor's gutter → select the whole line.
+    // Shift+gutter-click extends the selection down / up from
+    // the anchor to that line. VS Code's line-numbers convention.
+    // mouse-round-8 SEV-2 2026-07-11.
+    if let Some(&(gr, pid)) = app
+        .rects
+        .editor_gutters
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let row_in_pane = (y - gr.y) as usize;
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+            let line = b.scroll + row_in_pane;
+            let clamped = line.min(b.editor.line_count().saturating_sub(1));
+            let clip = &mut app.clipboard;
+            b.editor.place_cursor(clamped, 0);
+            if m.modifiers.contains(KeyModifiers::SHIFT) && b.editor.selection().is_some() {
+                // Extend existing selection to end of this line.
+                let (_lo, hi) = b.editor.line_byte_range(clamped);
+                b.editor.set_cursor_byte(hi);
+            } else {
+                b.apply_edit_ops(vec![crate::edit_op::EditOp::SelectLineToEnd], clip, 0);
+            }
+        }
+        return;
+    }
     // Track multi-click: 2 = select word, 3 = select line. The threshold
     // (450 ms, same cell) matches what most OSes use.
     if let Some(&(tr, pid)) = app
