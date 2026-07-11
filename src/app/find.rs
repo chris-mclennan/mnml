@@ -513,23 +513,24 @@ impl App {
             }
             Some(_) => self.toast("no matches to replace — refine the find query"),
             None => {
-                // vscode-user SEV-3 — Ctrl+H used to toast 'find first'
-                // and stop. VS Code opens the find bar directly with
-                // replace mode active. We don't have a separate
-                // 'replace mode' flag, but we can at least open the
-                // find prompt for the user so they don't have to hit
-                // Ctrl+F separately.
+                // vscode-user-keyboard SEV-2 2026-07-11: Ctrl+H with
+                // no active find used to open a plain Find prompt and
+                // toast "type a find pattern, then Ctrl+H to replace" —
+                // two chords for what VS Code does in one. Now open a
+                // Find prompt marked `chain_to_replace = true`, so the
+                // accept-find path in `accept_find` auto-opens the
+                // Replace prompt as soon as the query yields matches.
+                // Prior behavior of "Ctrl+H mid-Find opens Replace"
+                // (see tui/handlers/overlay.rs) still works — the chain
+                // flag just makes Enter do the same thing.
                 self.open_find_prompt();
-                // nvchad-user 2026-06-28 SEV-3: in vim mode Ctrl+H
-                // is INSERT-backspace, not the replace chord. Show
-                // the ex-command path instead.
                 if crate::input::is_vim_style(&self.config) {
+                    // In vim mode Ctrl+H is INSERT-backspace, not the
+                    // replace chord. Show the ex-command path.
                     self.toast(":%s/old/new/g — substitute across buffer");
-                } else {
-                    // Ctrl+H mid-Find now accepts the query + opens
-                    // Replace in one step (see tui/handlers/overlay.rs),
-                    // so a single chord finishes the flow.
-                    self.toast("Ctrl+H: type a find pattern, then Ctrl+H to replace");
+                } else if let Some(p) = self.prompt.as_mut() {
+                    p.chain_to_replace = true;
+                    p.title = "Find (Enter → Replace)".to_string();
                 }
             }
         }

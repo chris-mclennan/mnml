@@ -324,6 +324,13 @@ pub struct Prompt {
     /// `Some(i)` ⇒ the i-th suggestion is focused (↑/↓ navigation);
     /// `None` ⇒ no row focused (Enter accepts the typed input).
     pub selected_suggestion: Option<usize>,
+    /// vscode-user-keyboard SEV-2 2026-07-11: for `PromptKind::Find`
+    /// opened via Ctrl+H — set to `true` so Enter's accept-find path
+    /// also opens the Replace prompt automatically. VS Code parity:
+    /// `Ctrl+H` is one chord for the whole flow instead of two.
+    /// For every other invocation (`Ctrl+F`), stays `false` and Enter
+    /// just runs the search.
+    pub chain_to_replace: bool,
 }
 
 impl Prompt {
@@ -335,6 +342,7 @@ impl Prompt {
             cursor: 0,
             suggestions: Vec::new(),
             selected_suggestion: None,
+            chain_to_replace: false,
         };
         p.refresh_suggestions();
         p
@@ -352,6 +360,7 @@ impl Prompt {
             cursor,
             suggestions: Vec::new(),
             selected_suggestion: None,
+            chain_to_replace: false,
         };
         p.refresh_suggestions();
         p

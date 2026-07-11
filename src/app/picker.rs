@@ -1594,9 +1594,31 @@ impl App {
             }
             crate::prompt::PromptKind::Find => {
                 let q = p.input.clone();
+                let chain_to_replace = p.chain_to_replace;
                 // Live-preview is the new find state already; commit it.
                 self.find_preview_snapshot = None;
                 self.accept_find(q);
+                // vscode-user-keyboard SEV-2 2026-07-11: when the Find
+                // prompt was opened via Ctrl+H (chain flag), Enter's
+                // accept-find should immediately open Replace if the
+                // query produced matches. Matches VS Code's one-chord
+                // find+replace flow.
+                if chain_to_replace {
+                    let has_matches = self
+                        .active
+                        .and_then(|cur| self.panes.get(cur))
+                        .and_then(|pane| {
+                            if let Pane::Editor(b) = pane {
+                                b.find.as_ref().map(|f| !f.matches.is_empty())
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(false);
+                    if has_matches {
+                        self.open_replace_prompt();
+                    }
+                }
             }
             crate::prompt::PromptKind::Replace => {
                 let r = p.input.clone();
