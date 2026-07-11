@@ -224,6 +224,23 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                 }
                 Event::Resize(_, _) => {}
                 Event::Paste(text) => {
+                    // Priority 0 — glyph builder open: paste always
+                    // goes into the focused text field. Covers Ctrl+V
+                    // AND drag-drop of an SVG from Finder (terminals
+                    // translate the drop to a bracketed-paste of the
+                    // dropped path). 2026-07-11 user request. Trim
+                    // surrounding whitespace + strip quotes so a
+                    // shell-copied `'~/foo/bar.svg'` pastes clean.
+                    if app.glyph_builder.is_some() {
+                        let cleaned = text
+                            .trim()
+                            .trim_matches(|c| c == '\'' || c == '"')
+                            .to_string();
+                        if let Some(s) = app.glyph_builder.as_mut() {
+                            s.insert_str(&cleaned);
+                        }
+                        continue;
+                    }
                     // Priority 1 — drag-and-drop of external files
                     // (#7): terminals emit a bracketed-paste with a
                     // filesystem path when the user drops a file.

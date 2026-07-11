@@ -40,7 +40,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         return;
     }
     let t = theme::cur();
-    let width = 62.min(parent.width.saturating_sub(4));
+    // Widened 2026-07-11 (was 62). macOS paths (`/Users/<name>/…/foo.svg`)
+    // routinely blow past 60 chars; the previous width truncated with no
+    // way to see the rest. 96 is a comfortable ceiling and still leaves
+    // padding on a typical terminal window.
+    let width = 96.min(parent.width.saturating_sub(4));
     let height = 22.min(parent.height.saturating_sub(4));
     let x = parent.x + (parent.width.saturating_sub(width)) / 2;
     // Centered vertically — matches integration_edit + settings +
@@ -153,11 +157,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             info_rect,
         );
     }
-    // Hint line at bottom of inner.
+    // Hint line at bottom of inner. Reflects the 2026-07-11 edit-
+    // affordance polish: paste + cursor keys work on text fields;
+    // ←→ cycles values on non-text fields.
     crate::ui::design_tokens::paint_hint_row(
         frame,
         inner,
-        "Tab field · ←→ cycle value · ↵ bake · esc cancel",
+        "Tab field · text: ←→ Home End Ctrl+V paste · other: ←→ cycle · ↵ bake · esc",
     );
 }
 
@@ -190,27 +196,50 @@ fn value_span(
     let t = theme::cur();
     let normal = Style::default().fg(t.fg);
     let dim = Style::default().fg(t.comment);
+    let is_focused = state.focused_field == f;
+    // Cursor rendering — inverted cell at the byte offset. Only paint
+    // when focused AND the field is a text field (Path/Name/Codepoint).
+    // Empty-value focused paints a single caret cell before the
+    // placeholder. 2026-07-11.
+    let text_field_caret = |value: &str, placeholder: &str| -> Vec<Span<'static>> {
+        if !is_focused {
+            if value.is_empty() {
+                return vec![Span::styled(placeholder.to_string(), dim)];
+            }
+            return vec![Span::styled(value.to_string(), normal)];
+        }
+        let cur = state.active_text_cursor().unwrap_or(0).min(value.len());
+        let caret_style = Style::default().fg(t.bg_dark).bg(t.fg);
+        if value.is_empty() {
+            return vec![
+                Span::styled(" ".to_string(), caret_style),
+                Span::styled(placeholder.to_string(), dim),
+            ];
+        }
+        let (head, tail) = value.split_at(cur);
+        // Split the tail into "caret char" + "rest" so the caret
+        // occupies exactly one cell.
+        let (caret_ch, rest) = match tail.chars().next() {
+            Some(c) => {
+                let rest = &tail[c.len_utf8()..];
+                (c.to_string(), rest.to_string())
+            }
+            None => (" ".to_string(), String::new()),
+        };
+        vec![
+            Span::styled(head.to_string(), normal),
+            Span::styled(caret_ch, caret_style),
+            Span::styled(rest, normal),
+        ]
+    };
     match f {
-        BuilderField::Path => {
-            let v = state.svg_path.clone();
-            if v.is_empty() {
-                vec![Span::styled("(SVG file path)".to_string(), dim)]
-            } else {
-                vec![Span::styled(v, normal)]
-            }
+        BuilderField::Path => text_field_caret(&state.svg_path, "(SVG file path)"),
+        BuilderField::Name => text_field_caret(&state.name, "(auto from filename)"),
+        BuilderField::Codepoint => {
+            let mut spans = vec![Span::styled("U+".to_string(), dim)];
+            spans.extend(text_field_caret(&state.codepoint_hex, ""));
+            spans
         }
-        BuilderField::Name => {
-            let v = state.name.clone();
-            if v.is_empty() {
-                vec![Span::styled("(auto from filename)".to_string(), dim)]
-            } else {
-                vec![Span::styled(v, normal)]
-            }
-        }
-        BuilderField::Codepoint => vec![
-            Span::styled("U+".to_string(), dim),
-            Span::styled(state.codepoint_hex.clone(), normal),
-        ],
         BuilderField::Category => {
             let mut out: Vec<Span<'static>> = Vec::new();
             for c in BuilderCategory::ALL {

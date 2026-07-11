@@ -120,6 +120,14 @@ pub struct GlyphBuilderState {
     /// flows straight back into the edit panel's Glyph field so the
     /// user doesn't have to reopen the edit panel and paste.
     pub from_integration_edit: bool,
+    /// Byte-offset cursor into the currently-focused text field.
+    /// Kept per-field so switching back to a field lands where the
+    /// user left off. Clamped to the field's byte length on every
+    /// edit + on field switch. 2026-07-11 (fixes "can't arrow back
+    /// to fix mid-string typos" reported by the user).
+    pub svg_path_cursor: usize,
+    pub name_cursor: usize,
+    pub codepoint_hex_cursor: usize,
 }
 
 /// Hash-friendly snapshot of the fields the preview depends on.
@@ -146,6 +154,11 @@ impl Default for GlyphBuilderState {
             preview_signature: None,
             error: None,
             from_integration_edit: false,
+            svg_path_cursor: 0,
+            name_cursor: 0,
+            // Codepoint field defaults to the range-start hex; place
+            // cursor at end so typing/backspacing edits the tail.
+            codepoint_hex_cursor: 0,
         }
     }
 }
@@ -194,32 +207,158 @@ impl GlyphBuilderState {
     /// Append a char to the focused text field. No-op for non-text
     /// fields.
     pub fn type_char(&mut self, ch: char) {
-        let buf = match self.focused_field {
-            BuilderField::Path => &mut self.svg_path,
-            BuilderField::Name => &mut self.name,
-            BuilderField::Codepoint => &mut self.codepoint_hex,
+        // Cap at 4096 chars for path (macOS paths can hit 1024+),
+        // 128 for name, 5 hex digits for codepoint.
+        let (buf, cursor, cap): (&mut String, &mut usize, usize) = match self.focused_field {
+            BuilderField::Path => (&mut self.svg_path, &mut self.svg_path_cursor, 4096),
+            BuilderField::Name => (&mut self.name, &mut self.name_cursor, 128),
+            BuilderField::Codepoint => (&mut self.codepoint_hex, &mut self.codepoint_hex_cursor, 5),
             _ => return,
-        };
-        // Cap at 128 chars; codepoint at 5 hex digits.
-        let cap = if matches!(self.focused_field, BuilderField::Codepoint) {
-            5
-        } else {
-            128
         };
         if buf.chars().count() >= cap {
             return;
         }
-        buf.push(ch);
+        let cur = (*cursor).min(buf.len());
+        buf.insert(cur, ch);
+        *cursor = cur + ch.len_utf8();
+    }
+
+    /// Insert a full string at the cursor — used by Ctrl+V paste
+    /// (2026-07-11). Newlines and control chars are stripped so a
+    /// clipboard with a trailing newline doesn't break the
+    /// single-line field. Respects the field's char cap.
+    pub fn insert_str(&mut self, s: &str) {
+        let (buf, cursor, cap): (&mut String, &mut usize, usize) = match self.focused_field {
+            BuilderField::Path => (&mut self.svg_path, &mut self.svg_path_cursor, 4096),
+            BuilderField::Name => (&mut self.name, &mut self.name_cursor, 128),
+            BuilderField::Codepoint => (&mut self.codepoint_hex, &mut self.codepoint_hex_cursor, 5),
+            _ => return,
+        };
+        let cleaned: String = s
+            .chars()
+            .filter(|c| !c.is_control() && *c != '\r' && *c != '\n')
+            .collect();
+        if cleaned.is_empty() {
+            return;
+        }
+        // Cap = how many MORE chars we can accept.
+        let existing = buf.chars().count();
+        let allowed = cap.saturating_sub(existing);
+        if allowed == 0 {
+            return;
+        }
+        let to_insert: String = cleaned.chars().take(allowed).collect();
+        let cur = (*cursor).min(buf.len());
+        buf.insert_str(cur, &to_insert);
+        *cursor = cur + to_insert.len();
     }
 
     pub fn backspace(&mut self) {
-        let buf = match self.focused_field {
-            BuilderField::Path => &mut self.svg_path,
-            BuilderField::Name => &mut self.name,
-            BuilderField::Codepoint => &mut self.codepoint_hex,
+        let (buf, cursor) = match self.focused_field {
+            BuilderField::Path => (&mut self.svg_path, &mut self.svg_path_cursor),
+            BuilderField::Name => (&mut self.name, &mut self.name_cursor),
+            BuilderField::Codepoint => (&mut self.codepoint_hex, &mut self.codepoint_hex_cursor),
             _ => return,
         };
-        buf.pop();
+        let cur = (*cursor).min(buf.len());
+        if cur == 0 {
+            return;
+        }
+        let prev = buf[..cur]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        buf.replace_range(prev..cur, "");
+        *cursor = prev;
+    }
+
+    /// Forward-delete (Delete key) — remove the char AT the cursor.
+    pub fn delete_forward(&mut self) {
+        let (buf, cursor) = match self.focused_field {
+            BuilderField::Path => (&mut self.svg_path, &mut self.svg_path_cursor),
+            BuilderField::Name => (&mut self.name, &mut self.name_cursor),
+            BuilderField::Codepoint => (&mut self.codepoint_hex, &mut self.codepoint_hex_cursor),
+            _ => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        if cur >= buf.len() {
+            return;
+        }
+        let end = buf[cur..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| cur + i)
+            .unwrap_or(buf.len());
+        buf.replace_range(cur..end, "");
+        // cursor stays put
+    }
+
+    pub fn move_cursor_left(&mut self) {
+        let (buf, cursor) = match self.focused_field {
+            BuilderField::Path => (&self.svg_path, &mut self.svg_path_cursor),
+            BuilderField::Name => (&self.name, &mut self.name_cursor),
+            BuilderField::Codepoint => (&self.codepoint_hex, &mut self.codepoint_hex_cursor),
+            _ => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        if cur == 0 {
+            return;
+        }
+        let prev = buf[..cur]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        *cursor = prev;
+    }
+
+    pub fn move_cursor_right(&mut self) {
+        let (buf, cursor) = match self.focused_field {
+            BuilderField::Path => (&self.svg_path, &mut self.svg_path_cursor),
+            BuilderField::Name => (&self.name, &mut self.name_cursor),
+            BuilderField::Codepoint => (&self.codepoint_hex, &mut self.codepoint_hex_cursor),
+            _ => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        if cur >= buf.len() {
+            return;
+        }
+        let next = buf[cur..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| cur + i)
+            .unwrap_or(buf.len());
+        *cursor = next;
+    }
+
+    pub fn move_cursor_home(&mut self) {
+        match self.focused_field {
+            BuilderField::Path => self.svg_path_cursor = 0,
+            BuilderField::Name => self.name_cursor = 0,
+            BuilderField::Codepoint => self.codepoint_hex_cursor = 0,
+            _ => {}
+        }
+    }
+
+    pub fn move_cursor_end(&mut self) {
+        match self.focused_field {
+            BuilderField::Path => self.svg_path_cursor = self.svg_path.len(),
+            BuilderField::Name => self.name_cursor = self.name.len(),
+            BuilderField::Codepoint => self.codepoint_hex_cursor = self.codepoint_hex.len(),
+            _ => {}
+        }
+    }
+
+    /// Read-only cursor byte offset for the currently-focused text
+    /// field. Used by the renderer to draw the caret.
+    pub fn active_text_cursor(&self) -> Option<usize> {
+        Some(match self.focused_field {
+            BuilderField::Path => self.svg_path_cursor.min(self.svg_path.len()),
+            BuilderField::Name => self.name_cursor.min(self.name.len()),
+            BuilderField::Codepoint => self.codepoint_hex_cursor.min(self.codepoint_hex.len()),
+            _ => return None,
+        })
     }
 
     pub fn cycle_field(&mut self, delta: isize) {
@@ -234,6 +373,18 @@ impl GlyphBuilderState {
         let n = order.len() as isize;
         let next = (cur + delta).rem_euclid(n) as usize;
         self.focused_field = order[next];
+        // Clamp cursor to the new field's byte length so a stale
+        // out-of-bounds value from a longer field can't crash the
+        // insert path. Land the cursor at end-of-field so typing
+        // resumes at a natural place. 2026-07-11.
+        match self.focused_field {
+            Path => self.svg_path_cursor = self.svg_path_cursor.min(self.svg_path.len()),
+            Name => self.name_cursor = self.name_cursor.min(self.name.len()),
+            Codepoint => {
+                self.codepoint_hex_cursor = self.codepoint_hex_cursor.min(self.codepoint_hex.len())
+            }
+            _ => {}
+        }
     }
 }
 
@@ -605,4 +756,78 @@ pub fn maybe_refresh_preview(state: &mut GlyphBuilderState, target_w: u32, targe
         }
     }
     state.preview_signature = Some(sig);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_focused_on_path() -> GlyphBuilderState {
+        let mut s = GlyphBuilderState::new();
+        s.focused_field = BuilderField::Path;
+        s
+    }
+
+    #[test]
+    fn type_and_backspace_at_cursor() {
+        let mut s = state_focused_on_path();
+        s.type_char('a');
+        s.type_char('b');
+        s.type_char('c');
+        assert_eq!(s.svg_path, "abc");
+        assert_eq!(s.svg_path_cursor, 3);
+        s.move_cursor_left();
+        s.move_cursor_left();
+        assert_eq!(s.svg_path_cursor, 1);
+        s.type_char('X');
+        assert_eq!(s.svg_path, "aXbc");
+        assert_eq!(s.svg_path_cursor, 2);
+        s.backspace();
+        assert_eq!(s.svg_path, "abc");
+        assert_eq!(s.svg_path_cursor, 1);
+    }
+
+    #[test]
+    fn paste_inserts_at_cursor_stripping_control_chars() {
+        let mut s = state_focused_on_path();
+        s.type_char('/');
+        s.type_char('a');
+        s.type_char('/');
+        // Cursor at end. Paste a path with a trailing newline (typical
+        // shell/finder drag payload).
+        s.insert_str("Users/chris/foo.svg\n");
+        assert_eq!(s.svg_path, "/a/Users/chris/foo.svg");
+    }
+
+    #[test]
+    fn move_home_end_delete_forward() {
+        let mut s = state_focused_on_path();
+        for c in "hello".chars() {
+            s.type_char(c);
+        }
+        s.move_cursor_home();
+        assert_eq!(s.svg_path_cursor, 0);
+        s.delete_forward();
+        assert_eq!(s.svg_path, "ello");
+        s.move_cursor_end();
+        assert_eq!(s.svg_path_cursor, 4);
+    }
+
+    #[test]
+    fn cycle_field_clamps_cursor() {
+        let mut s = state_focused_on_path();
+        for c in "verylongpath".chars() {
+            s.type_char(c);
+        }
+        assert_eq!(s.svg_path_cursor, 12);
+        // Move to name field (empty). Cursor should be safe.
+        s.cycle_field(2); // Path -> Category -> Name
+        assert_eq!(s.focused_field, BuilderField::Name);
+        s.type_char('n');
+        assert_eq!(s.name, "n");
+        // Move back to path — cursor position is still at 12 (end).
+        s.cycle_field(-2);
+        assert_eq!(s.focused_field, BuilderField::Path);
+        assert_eq!(s.svg_path_cursor, 12);
+    }
 }

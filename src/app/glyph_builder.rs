@@ -76,6 +76,9 @@ impl App {
             };
 
         let s = GlyphBuilderState {
+            svg_path_cursor: svg.len(),
+            name_cursor: name.len(),
+            codepoint_hex_cursor: cp_hex.len(),
             svg_path: svg,
             category: category_for_codepoint(cp),
             name,
@@ -119,6 +122,54 @@ impl App {
     pub fn glyph_builder_backspace(&mut self) {
         if let Some(s) = self.glyph_builder.as_mut() {
             s.backspace();
+        }
+    }
+
+    pub fn glyph_builder_delete_forward(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.delete_forward();
+        }
+    }
+
+    pub fn glyph_builder_move_left(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.move_cursor_left();
+        }
+    }
+
+    pub fn glyph_builder_move_right(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.move_cursor_right();
+        }
+    }
+
+    pub fn glyph_builder_move_home(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.move_cursor_home();
+        }
+    }
+
+    pub fn glyph_builder_move_end(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.move_cursor_end();
+        }
+    }
+
+    /// Ctrl+V paste into the currently-focused text field. Reads from
+    /// the app's clipboard (which mirrors the OS clipboard on macOS).
+    /// Trims surrounding whitespace + strips quotes so a shell-copied
+    /// path like `'~/foo/bar.svg'` pastes as `~/foo/bar.svg`.
+    pub fn glyph_builder_paste(&mut self) {
+        let text = self.clipboard.text();
+        let cleaned = text
+            .trim()
+            .trim_matches(|c| c == '\'' || c == '"')
+            .to_string();
+        if cleaned.is_empty() {
+            return;
+        }
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.insert_str(&cleaned);
         }
     }
 

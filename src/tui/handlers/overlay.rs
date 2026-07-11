@@ -170,6 +170,27 @@ pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
         app.glyph_builder.as_ref().map(|s| s.focused_field),
         Some(BuilderField::Path) | Some(BuilderField::Name) | Some(BuilderField::Codepoint)
     );
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // Ctrl+V paste — user request 2026-07-11.
+    if ctrl && matches!(key.code, KeyCode::Char('v' | 'V')) && text_field {
+        app.glyph_builder_paste();
+        return;
+    }
+    // Ctrl+A / Ctrl+E — start / end of line, VS Code + shell muscle
+    // memory. Ctrl+U — delete to start.
+    if ctrl && text_field {
+        match key.code {
+            KeyCode::Char('a' | 'A') => {
+                app.glyph_builder_move_home();
+                return;
+            }
+            KeyCode::Char('e' | 'E') => {
+                app.glyph_builder_move_end();
+                return;
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Esc => app.close_glyph_builder(),
         KeyCode::Enter => app.glyph_builder_commit(),
@@ -178,10 +199,15 @@ pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up => app.glyph_builder_cycle_field(-1),
         KeyCode::Down => app.glyph_builder_cycle_field(1),
         // Left / Right cycle values on the non-text fields; on text
-        // fields they'd normally move the cursor but this panel keeps
-        // text single-line + append-only, so ignore.
+        // fields they move the caret one char (fixes the reported
+        // "can't arrow back to fix mid-string typos" — 2026-07-11).
         KeyCode::Left if !text_field => app.glyph_builder_cycle_value(-1),
         KeyCode::Right if !text_field => app.glyph_builder_cycle_value(1),
+        KeyCode::Left if text_field => app.glyph_builder_move_left(),
+        KeyCode::Right if text_field => app.glyph_builder_move_right(),
+        KeyCode::Home if text_field => app.glyph_builder_move_home(),
+        KeyCode::End if text_field => app.glyph_builder_move_end(),
+        KeyCode::Delete if text_field => app.glyph_builder_delete_forward(),
         KeyCode::Backspace => app.glyph_builder_backspace(),
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.glyph_builder_type_char(c);
