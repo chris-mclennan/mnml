@@ -533,6 +533,25 @@ impl App {
                 Some((h, a)) => (h, a.trim()),
                 None => (cmd, ""),
             };
+            // Substitute-shortcut: `s/foo/bar/g` has no whitespace,
+            // so the whole thing becomes `head`. Detect the
+            // `s`-followed-by-delim pattern and route to the
+            // substitute arm without the whitespace-split path.
+            // nvchad round 6 SEV-2 2026-07-11 regression fix.
+            let is_subst_shortcut = (head.starts_with("s/")
+                || head.starts_with("s#")
+                || head.starts_with("s!")
+                || head.starts_with("s|"))
+                && arg.is_empty();
+            if is_subst_shortcut {
+                let synthesized = head.to_string();
+                if let Some(mut sub) = parse_substitute(&synthesized) {
+                    sub.whole_buffer = false;
+                    sub.line_range = Some((start, end));
+                    self.run_substitute(sub);
+                    return;
+                }
+            }
             match head {
                 "d" | "delete" | "del" | "de" => {
                     if !arg.is_empty()

@@ -51,7 +51,9 @@ impl FindState {
         };
         let scope = if lo < hi { &text[lo..hi] } else { "" };
         let raw_matches = if self.regex {
-            find_all_regex(scope, &self.query)
+            // Honor `case_sensitive` in regex mode too — `:set noic`
+            // (vim) sets both flags on the FindState.
+            find_all_regex_cased(scope, &self.query, self.case_sensitive)
         } else if self.case_sensitive {
             find_all_case_sensitive(scope, &self.query)
         } else {
@@ -91,16 +93,30 @@ pub fn find_all_case_sensitive(text: &str, query: &str) -> Vec<(usize, usize)> {
 /// flagged case-insensitive (matching the literal mode's behavior). Invalid
 /// patterns return an empty list (caller handles "no matches" gracefully).
 pub fn find_all_regex(text: &str, pattern: &str) -> Vec<(usize, usize)> {
+    find_all_regex_cased(text, pattern, false)
+}
+
+/// Case-aware regex search. `case_sensitive=true` skips the `(?i)`
+/// prefix so `:set noic` in vim mode actually affects `/pattern`.
+/// nvchad round 6 SEV-2 2026-07-11 fix.
+pub fn find_all_regex_cased(
+    text: &str,
+    pattern: &str,
+    case_sensitive: bool,
+) -> Vec<(usize, usize)> {
     if pattern.is_empty() {
         return Vec::new();
     }
-    // `(?i)` inline flag keeps the build dependency-free of regex-builder API.
-    let prefixed = format!("(?i){pattern}");
+    let prefixed = if case_sensitive {
+        pattern.to_string()
+    } else {
+        format!("(?i){pattern}")
+    };
     let Ok(re) = regex::Regex::new(&prefixed) else {
         return Vec::new();
     };
     re.find_iter(text)
-        .filter(|m| m.start() != m.end()) // skip zero-width matches (would loop forever in `next`)
+        .filter(|m| m.start() != m.end()) // skip zero-width matches
         .map(|m| (m.start(), m.end()))
         .collect()
 }

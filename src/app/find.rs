@@ -467,14 +467,14 @@ impl App {
         let regex_default = regex_default || crate::input::is_vim_style(&self.config);
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
         // Same case-mode rule as `update_live_find_preview` — vim's
-        // `:set ic` / `:set noic` override smart-case.
-        let case_sensitive = if regex {
-            false
-        } else {
-            match case_mode {
-                Some(mode) => mode,
-                None => query.chars().any(|c| c.is_uppercase()),
-            }
+        // `:set ic` / `:set noic` override smart-case for both literal
+        // and regex modes. Regex-and-no-override falls back to
+        // case-insensitive (nvchad convention: `/foo` matches any
+        // case; escape with `\C` for case-sensitive in a single
+        // search — that inline flag isn't wired yet).
+        let case_sensitive = match case_mode {
+            Some(mode) => mode,
+            None => !regex && query.chars().any(|c| c.is_uppercase()),
         };
         let mut state = crate::buffer::FindState {
             query: query.clone(),

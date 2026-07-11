@@ -373,6 +373,12 @@ pub enum EditOp {
     SetRegisterHint(Option<char>),
     /// vim `yy`
     YankLine,
+    /// Yank N consecutive lines starting at the cursor's line into
+    /// the unnamed register, LINEWISE. Used by vim's `y{N}j` /
+    /// `y{N}k` / `Y{N}` — a naive `YankLine × N` overwrites the
+    /// register each time and only ever captures the cursor line.
+    /// nvchad round 6 SEV-2 2026-07-11 fix.
+    YankLinesCount(u32),
     /// vim `y` (visual) / standard Ctrl+C
     YankSelection,
     /// standard Ctrl+X

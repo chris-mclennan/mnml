@@ -2118,9 +2118,18 @@ impl VimInputHandler {
                         ops.push(MoveUp);
                     }
                 }
+                // Special-case yank — N × YankLine overwrites the
+                // clipboard each iteration, silently reducing `y{N}j`
+                // to `yy`. Use `YankLinesCount(N)` which does one
+                // multi-line linewise capture. nvchad round 6 SEV-2
+                // 2026-07-11 regression fix.
+                if matches!(op, PendingOp::Yank) {
+                    ops.push(YankLinesCount(total_lines));
+                    self.reset_pending();
+                    return InputResult::Ops(ops);
+                }
                 let linewise_op: Option<EditOp> = match op {
                     PendingOp::Delete => Some(DeleteLine),
-                    PendingOp::Yank => Some(YankLine),
                     PendingOp::Change => Some(DeleteLine),
                     PendingOp::Indent => Some(Indent),
                     PendingOp::Outdent => Some(Outdent),

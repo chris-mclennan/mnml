@@ -3748,6 +3748,32 @@ impl Editor {
                 let end = line_end + if line_end < self.text.len() { 1 } else { 0 };
                 out.yanked_range = Some((line_start, end));
             }
+            YankLinesCount(n) => {
+                if n == 0 {
+                    return;
+                }
+                let start_line = self.current_line();
+                let total_lines = self.line_count();
+                let end_line = (start_line + n as usize)
+                    .saturating_sub(1)
+                    .min(total_lines.saturating_sub(1));
+                let (start, _) = self.line_byte_range(start_line);
+                let (_, last_end) = self.line_byte_range(end_line);
+                // Include trailing newline if present so paste behaves
+                // linewise (drops onto a new line rather than the tail
+                // of an existing one).
+                let end = last_end + if last_end < self.text.len() { 1 } else { 0 };
+                let s = self.text[start..end].to_string();
+                let s = if s.ends_with('\n') {
+                    s
+                } else {
+                    format!("{s}\n")
+                };
+                clip.set_yank(s.clone(), true);
+                out.clipboard_set = Some(s);
+                out.clipboard_linewise = true;
+                out.yanked_range = Some((start, end));
+            }
             BlockSelectStart => {
                 self.block_anchor = Some(self.cursor);
                 // Block mode is independent of charwise; clear any
