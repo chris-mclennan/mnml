@@ -930,6 +930,15 @@ impl App {
                         panel.focused_field = crate::app::discovery::IntegrationEditField::Glyph;
                         panel.glyph.clear();
                         panel.glyph.push(ch);
+                        // crash-investigator SEV-1 2026-07-11: reset
+                        // glyph_cursor to match the new buffer length.
+                        // Nerd Font icons vary in UTF-8 width (3 bytes
+                        // for BMP private-use vs 4 bytes for MDI).
+                        // A stale cursor from the previous glyph could
+                        // land mid-codepoint, and the next backspace /
+                        // move_left / type_char would panic on the
+                        // byte-slice.
+                        panel.glyph_cursor = panel.glyph.len();
                         self.toast(format!("glyph: {ch}"));
                     } else {
                         // Bare palette-triggered picker still

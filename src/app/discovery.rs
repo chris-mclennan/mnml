@@ -912,6 +912,49 @@ fn toml_str(s: &str) -> String {
 mod tests {
     use super::*;
 
+    /// crash-investigator SEV-1 2026-07-11: Nerd Font BMP private-use
+    /// glyphs are 3 bytes UTF-8; Material Design Icons at U+F0000+
+    /// are 4 bytes. If the Glyph field previously held a 3-byte icon
+    /// with `glyph_cursor = 3` (end) and the user picks a 4-byte MDI
+    /// icon, cursor stays at 3 — mid-codepoint of the new glyph.
+    /// The next backspace / move_left / type_char would slice
+    /// mid-UTF-8 and panic. Fixed at picker.rs by resetting cursor
+    /// to `panel.glyph.len()` on the swap.
+    #[test]
+    fn integration_edit_backspace_after_glyph_width_swap_is_safe() {
+        let d = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config::default();
+        let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.integration_edit = Some(IntegrationEditState {
+            mode: IntegrationEditMode::Edit,
+            id: "test".to_string(),
+            command: String::new(),
+            glyph: "\u{F0001}".to_string(), // 4-byte MDI
+            fallback: String::new(),
+            color: "cyan".to_string(),
+            tooltip: String::new(),
+            focused_field: IntegrationEditField::Glyph,
+            id_cursor: 0,
+            command_cursor: 0,
+            glyph_cursor: 4, // end of 4-byte glyph
+            fallback_cursor: 0,
+            tooltip_cursor: 0,
+        });
+        // Simulate the picker swap: replace with a 3-byte BMP glyph.
+        // Old (buggy) behavior left glyph_cursor at 4, past the new
+        // 3-byte buffer — backspace would then panic on the byte
+        // slice. Fixed behavior resets cursor to len (3).
+        if let Some(p) = app.integration_edit.as_mut() {
+            p.glyph.clear();
+            p.glyph.push('\u{E000}'); // 3-byte BMP private use
+            p.glyph_cursor = p.glyph.len();
+        }
+        // Must not panic.
+        app.integration_edit_backspace();
+        assert_eq!(app.integration_edit.as_ref().unwrap().glyph, "");
+        assert_eq!(app.integration_edit.as_ref().unwrap().glyph_cursor, 0);
+    }
+
     #[test]
     fn strip_removes_block_and_leaves_other_sections() {
         let src = "\
