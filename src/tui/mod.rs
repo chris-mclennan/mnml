@@ -554,6 +554,27 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         let _ = crate::command::run("file.rename", app);
         return;
     }
+    // Same idiom for Ctrl+D → `file.duplicate` when Focus == Tree.
+    // The `editor.add_cursor_at_next_word` command owns `ctrl+d` in
+    // the standard keymap and gets dispatched by the chord chain
+    // BEFORE `handle_tree_key` runs — so its own Ctrl+D branch (which
+    // routes to `file.duplicate`) never fired. This special-case
+    // routes the key to the tree action first when tree is focused
+    // and no overlay is claiming input. vscode-user-keyboard
+    // 2026-07-10 SEV-2 fix.
+    if key.code == KeyCode::Char('d')
+        && key.modifiers == KeyModifiers::CONTROL
+        && app.picker.is_none()
+        && app.prompt.is_none()
+        && app.whichkey.is_none()
+        && app.context_menu.is_none()
+        && app.menu_open.is_none()
+        && app.focus == crate::focus::Focus::Tree
+        && app.tree.selected_file().is_some()
+    {
+        let _ = crate::command::run("file.duplicate", app);
+        return;
+    }
     // Zen-mode escape hatch: when zen is on and no overlay is
     // claiming Esc, treat Esc as "exit zen" so the user is never
     // trapped. Overlays (picker / prompt / which-key) get first
