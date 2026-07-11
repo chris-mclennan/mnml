@@ -224,13 +224,11 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                 }
                 Event::Resize(_, _) => {}
                 Event::Paste(text) => {
-                    // Priority 0 — glyph builder open: paste always
-                    // goes into the focused text field. Covers Ctrl+V
-                    // AND drag-drop of an SVG from Finder (terminals
-                    // translate the drop to a bracketed-paste of the
-                    // dropped path). 2026-07-11 user request. Trim
-                    // surrounding whitespace + strip quotes so a
-                    // shell-copied `'~/foo/bar.svg'` pastes clean.
+                    // Priority 0 — modal overlay open: paste routes
+                    // to the overlay's focused text field. Covers
+                    // Ctrl+V AND drag-drop from Finder (terminals
+                    // translate a drop into a bracketed-paste of the
+                    // dropped path). 2026-07-11 user request.
                     if app.glyph_builder.is_some() {
                         let cleaned = text
                             .trim()
@@ -239,6 +237,15 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                         if let Some(s) = app.glyph_builder.as_mut() {
                             s.insert_str(&cleaned);
                         }
+                        continue;
+                    }
+                    if app.integration_edit.is_some() {
+                        // integration_edit_paste reads the clipboard
+                        // rather than the event's text — synthesize by
+                        // setting the clipboard and calling it. Trim
+                        // there too.
+                        app.clipboard.set(text.trim().to_string(), false);
+                        app.integration_edit_paste();
                         continue;
                     }
                     // Priority 1 — drag-and-drop of external files

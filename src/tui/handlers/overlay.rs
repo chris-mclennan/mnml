@@ -128,10 +128,39 @@ pub(crate) fn handle_search_section_key(app: &mut App, key: KeyEvent) {
 /// cancels.
 pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
     use crate::app::discovery::IntegrationEditField;
-    let glyph_focused = app
-        .integration_edit
-        .as_ref()
-        .is_some_and(|p| matches!(p.focused_field, IntegrationEditField::Glyph));
+    let focused = app.integration_edit.as_ref().map(|p| p.focused_field);
+    let glyph_focused = matches!(focused, Some(IntegrationEditField::Glyph));
+    let color_focused = matches!(focused, Some(IntegrationEditField::Color));
+    // Text-editable field (not Color, not Glyph — Glyph is a
+    // menu-style single-char, not typed inline).
+    let text_field = matches!(
+        focused,
+        Some(IntegrationEditField::Id)
+            | Some(IntegrationEditField::Command)
+            | Some(IntegrationEditField::Fallback)
+            | Some(IntegrationEditField::Tooltip)
+    );
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // Ctrl+V paste (2026-07-11 user request — was missing).
+    if ctrl && matches!(key.code, KeyCode::Char('v' | 'V')) && text_field {
+        app.integration_edit_paste();
+        return;
+    }
+    // Ctrl+A / Ctrl+E — start / end of line (shell + VS Code
+    // muscle memory).
+    if ctrl && text_field {
+        match key.code {
+            KeyCode::Char('a' | 'A') => {
+                app.integration_edit_move_home();
+                return;
+            }
+            KeyCode::Char('e' | 'E') => {
+                app.integration_edit_move_end();
+                return;
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Esc => app.integration_edit_cancel(),
         // Enter on the Glyph field opens the 3-option chooser (Choose
@@ -141,21 +170,27 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => app.integration_edit_save(),
         // → on the Glyph field opens the picker (Glyph is a menu-style
         // choice, not a text field). → on Color cycles the palette.
+        // → on text fields moves the caret one char.
         KeyCode::Right if glyph_focused => app.open_icon_picker(),
-        KeyCode::Right => app.integration_edit_color_cycle(1),
+        KeyCode::Right if color_focused => app.integration_edit_color_cycle(1),
+        KeyCode::Right if text_field => app.integration_edit_move_right(),
         // Ctrl+N on the Glyph field opens the glyph builder — bake a
         // custom SVG into MnmlSymbols and route the codepoint back
         // into this edit panel's Glyph field on commit.
-        KeyCode::Char('n') if glyph_focused && key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('n') if glyph_focused && ctrl => {
             app.open_glyph_builder_from_edit();
         }
         KeyCode::Tab => app.integration_edit_cycle_field(1),
         KeyCode::BackTab => app.integration_edit_cycle_field(-1),
-        KeyCode::Left => app.integration_edit_color_cycle(-1),
+        KeyCode::Left if color_focused => app.integration_edit_color_cycle(-1),
+        KeyCode::Left if text_field => app.integration_edit_move_left(),
+        KeyCode::Home if text_field => app.integration_edit_move_home(),
+        KeyCode::End if text_field => app.integration_edit_move_end(),
+        KeyCode::Delete if text_field => app.integration_edit_delete_forward(),
         KeyCode::Up => app.integration_edit_cycle_field(-1),
         KeyCode::Down => app.integration_edit_cycle_field(1),
         KeyCode::Backspace => app.integration_edit_backspace(),
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char(c) if !ctrl => {
             app.integration_edit_type_char(c);
         }
         _ => {}

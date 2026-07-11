@@ -104,7 +104,59 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::styled(prefix, Style::default().fg(t.cyan)));
         spans.push(Span::styled(format!("{label:<12}"), label_style));
-        spans.push(Span::styled(value_text, value_style));
+        // Value with in-place caret when the field is focused, editable,
+        // and text-y (2026-07-11 — was a trailing "▏" appended after
+        // the value, which lied about caret position after mid-string
+        // Left/Right motions). Placeholder-value case still gets a
+        // caret cell before the placeholder.
+        let text_field = matches!(
+            field,
+            IntegrationEditField::Id
+                | IntegrationEditField::Command
+                | IntegrationEditField::Fallback
+                | IntegrationEditField::Tooltip
+        );
+        if is_focused && text_field && !readonly {
+            let caret_style = Style::default().fg(t.bg_dark).bg(t.cyan);
+            let raw = match field {
+                IntegrationEditField::Id => &panel.id,
+                IntegrationEditField::Command => &panel.command,
+                IntegrationEditField::Fallback => &panel.fallback,
+                IntegrationEditField::Tooltip => &panel.tooltip,
+                _ => "",
+            };
+            let cursor = match field {
+                IntegrationEditField::Id => panel.id_cursor,
+                IntegrationEditField::Command => panel.command_cursor,
+                IntegrationEditField::Fallback => panel.fallback_cursor,
+                IntegrationEditField::Tooltip => panel.tooltip_cursor,
+                _ => 0,
+            }
+            .min(raw.len());
+            if raw.is_empty() {
+                // Placeholder path — put a caret cell then dim
+                // "(empty)".
+                spans.push(Span::styled(" ".to_string(), caret_style));
+                spans.push(Span::styled(
+                    "(empty)".to_string(),
+                    Style::default().fg(t.comment),
+                ));
+            } else {
+                let (head, tail) = raw.split_at(cursor);
+                let (caret_ch, rest) = match tail.chars().next() {
+                    Some(c) => {
+                        let rest = &tail[c.len_utf8()..];
+                        (c.to_string(), rest.to_string())
+                    }
+                    None => (" ".to_string(), String::new()),
+                };
+                spans.push(Span::styled(head.to_string(), value_style));
+                spans.push(Span::styled(caret_ch, caret_style));
+                spans.push(Span::styled(rest, value_style));
+            }
+        } else {
+            spans.push(Span::styled(value_text, value_style));
+        }
         if is_focused && matches!(field, IntegrationEditField::Color) {
             spans.push(Span::styled(
                 "  ←→ cycle".to_string(),
@@ -115,9 +167,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 "  ↵ actions".to_string(),
                 Style::default().fg(t.cyan).add_modifier(Modifier::BOLD),
             ));
-        } else if is_focused && !readonly {
-            // Caret on the focused text field — a thin block at end.
-            spans.push(Span::styled("▏".to_string(), Style::default().fg(t.cyan)));
         }
         if readonly {
             spans.push(Span::styled(
@@ -129,7 +178,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     }
 
     // Hint row at the bottom.
-    crate::ui::design_tokens::paint_hint_row(frame, inner, "Tab field · ↵ save · esc cancel");
+    crate::ui::design_tokens::paint_hint_row(
+        frame,
+        inner,
+        "Tab · text: ←→ Home End Ctrl+V · Color: ←→ cycle · ↵ save · esc",
+    );
 }
 
 fn visible_fields(panel: &IntegrationEditState) -> Vec<IntegrationEditField> {

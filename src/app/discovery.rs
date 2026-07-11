@@ -49,6 +49,15 @@ pub struct IntegrationEditState {
     pub tooltip: String,
     /// Which field has the input cursor.
     pub focused_field: IntegrationEditField,
+    /// Per-field byte-offset cursor. Same shape as the glyph-builder
+    /// (2026-07-11) — enables Left/Right/Home/End caret motion and
+    /// mid-string paste. `None` (Color) has no cursor since it's a
+    /// menu-style choice, not a text field.
+    pub id_cursor: usize,
+    pub command_cursor: usize,
+    pub glyph_cursor: usize,
+    pub fallback_cursor: usize,
+    pub tooltip_cursor: usize,
 }
 
 /// Whether the panel is editing an existing entry or adding a fresh
@@ -98,6 +107,12 @@ impl App {
             self.toast(format!("integration: {id} not in rail"));
             return;
         };
+        let id_cursor = icon.id.len();
+        let command_cursor = icon.command.len();
+        let glyph_cursor = icon.glyph.len();
+        let fallback_cursor = icon.fallback.len();
+        let tooltip = icon.tooltip.unwrap_or_default();
+        let tooltip_cursor = tooltip.len();
         self.integration_edit = Some(IntegrationEditState {
             mode: IntegrationEditMode::Edit,
             id: icon.id,
@@ -105,8 +120,13 @@ impl App {
             glyph: icon.glyph,
             fallback: icon.fallback,
             color: icon.color,
-            tooltip: icon.tooltip.unwrap_or_default(),
+            tooltip,
             focused_field: IntegrationEditField::Glyph,
+            id_cursor,
+            command_cursor,
+            glyph_cursor,
+            fallback_cursor,
+            tooltip_cursor,
         });
     }
 
@@ -402,6 +422,17 @@ impl App {
         let n = order.len() as isize;
         let next = ((cur as isize + delta).rem_euclid(n)) as usize;
         panel.focused_field = order[next];
+        // Clamp the new field's cursor to its byte length so a stale
+        // out-of-bounds offset (e.g. long id, short glyph) can't crash
+        // the insert path.
+        match panel.focused_field {
+            Id => panel.id_cursor = panel.id_cursor.min(panel.id.len()),
+            Command => panel.command_cursor = panel.command_cursor.min(panel.command.len()),
+            Glyph => panel.glyph_cursor = panel.glyph_cursor.min(panel.glyph.len()),
+            Fallback => panel.fallback_cursor = panel.fallback_cursor.min(panel.fallback.len()),
+            Tooltip => panel.tooltip_cursor = panel.tooltip_cursor.min(panel.tooltip.len()),
+            Color => {}
+        }
     }
 
     /// ←→ cycle the Color field through `INTEGRATION_EDIT_COLORS`.
@@ -431,39 +462,183 @@ impl App {
         let Some(panel) = self.integration_edit.as_mut() else {
             return;
         };
-        let buf: &mut String = match panel.focused_field {
-            IntegrationEditField::Id => &mut panel.id,
-            IntegrationEditField::Command => &mut panel.command,
-            IntegrationEditField::Glyph => &mut panel.glyph,
-            IntegrationEditField::Fallback => &mut panel.fallback,
-            IntegrationEditField::Tooltip => &mut panel.tooltip,
+        let (buf, cursor, cap): (&mut String, &mut usize, usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&mut panel.id, &mut panel.id_cursor, 64),
+            IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor, 128),
+            IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor, 1),
+            IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor, 8),
+            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor, 128),
             IntegrationEditField::Color => return,
-        };
-        let cap = if matches!(panel.focused_field, IntegrationEditField::Glyph) {
-            1
-        } else {
-            64
         };
         if buf.chars().count() >= cap {
             return;
         }
-        buf.push(ch);
+        let cur = (*cursor).min(buf.len());
+        buf.insert(cur, ch);
+        *cursor = cur + ch.len_utf8();
     }
 
-    /// Backspace — delete one char from the focused field.
+    /// Paste the clipboard into the focused field at the cursor.
+    /// Trims quotes + surrounding whitespace, strips control chars,
+    /// respects the field cap. 2026-07-11 user request.
+    pub fn integration_edit_paste(&mut self) {
+        let text = self.clipboard.text();
+        let cleaned: String = text
+            .trim()
+            .trim_matches(|c| c == '\'' || c == '"')
+            .chars()
+            .filter(|c| !c.is_control() && *c != '\r' && *c != '\n')
+            .collect();
+        if cleaned.is_empty() {
+            return;
+        }
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        let (buf, cursor, cap): (&mut String, &mut usize, usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&mut panel.id, &mut panel.id_cursor, 64),
+            IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor, 128),
+            IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor, 1),
+            IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor, 8),
+            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor, 128),
+            IntegrationEditField::Color => return,
+        };
+        let existing = buf.chars().count();
+        let allowed = cap.saturating_sub(existing);
+        if allowed == 0 {
+            return;
+        }
+        let to_insert: String = cleaned.chars().take(allowed).collect();
+        let cur = (*cursor).min(buf.len());
+        buf.insert_str(cur, &to_insert);
+        *cursor = cur + to_insert.len();
+    }
+
+    /// Backspace — delete one char BEFORE the cursor.
     pub fn integration_edit_backspace(&mut self) {
         let Some(panel) = self.integration_edit.as_mut() else {
             return;
         };
-        let buf: &mut String = match panel.focused_field {
-            IntegrationEditField::Id => &mut panel.id,
-            IntegrationEditField::Command => &mut panel.command,
-            IntegrationEditField::Glyph => &mut panel.glyph,
-            IntegrationEditField::Fallback => &mut panel.fallback,
-            IntegrationEditField::Tooltip => &mut panel.tooltip,
+        let (buf, cursor): (&mut String, &mut usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&mut panel.id, &mut panel.id_cursor),
+            IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor),
+            IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor),
+            IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor),
+            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor),
             IntegrationEditField::Color => return,
         };
-        buf.pop();
+        let cur = (*cursor).min(buf.len());
+        if cur == 0 {
+            return;
+        }
+        let prev = buf[..cur]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        buf.replace_range(prev..cur, "");
+        *cursor = prev;
+    }
+
+    /// Forward-delete (Delete key) — remove the char AT the cursor.
+    pub fn integration_edit_delete_forward(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        let (buf, cursor): (&mut String, &mut usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&mut panel.id, &mut panel.id_cursor),
+            IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor),
+            IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor),
+            IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor),
+            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor),
+            IntegrationEditField::Color => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        if cur >= buf.len() {
+            return;
+        }
+        let end = buf[cur..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| cur + i)
+            .unwrap_or(buf.len());
+        buf.replace_range(cur..end, "");
+    }
+
+    pub fn integration_edit_move_left(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        let (buf, cursor): (&String, &mut usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&panel.id, &mut panel.id_cursor),
+            IntegrationEditField::Command => (&panel.command, &mut panel.command_cursor),
+            IntegrationEditField::Glyph => (&panel.glyph, &mut panel.glyph_cursor),
+            IntegrationEditField::Fallback => (&panel.fallback, &mut panel.fallback_cursor),
+            IntegrationEditField::Tooltip => (&panel.tooltip, &mut panel.tooltip_cursor),
+            IntegrationEditField::Color => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        if cur == 0 {
+            return;
+        }
+        let prev = buf[..cur]
+            .char_indices()
+            .next_back()
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        *cursor = prev;
+    }
+
+    pub fn integration_edit_move_right(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        let (buf, cursor): (&String, &mut usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&panel.id, &mut panel.id_cursor),
+            IntegrationEditField::Command => (&panel.command, &mut panel.command_cursor),
+            IntegrationEditField::Glyph => (&panel.glyph, &mut panel.glyph_cursor),
+            IntegrationEditField::Fallback => (&panel.fallback, &mut panel.fallback_cursor),
+            IntegrationEditField::Tooltip => (&panel.tooltip, &mut panel.tooltip_cursor),
+            IntegrationEditField::Color => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        if cur >= buf.len() {
+            return;
+        }
+        let next = buf[cur..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| cur + i)
+            .unwrap_or(buf.len());
+        *cursor = next;
+    }
+
+    pub fn integration_edit_move_home(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        match panel.focused_field {
+            IntegrationEditField::Id => panel.id_cursor = 0,
+            IntegrationEditField::Command => panel.command_cursor = 0,
+            IntegrationEditField::Glyph => panel.glyph_cursor = 0,
+            IntegrationEditField::Fallback => panel.fallback_cursor = 0,
+            IntegrationEditField::Tooltip => panel.tooltip_cursor = 0,
+            IntegrationEditField::Color => {}
+        }
+    }
+
+    pub fn integration_edit_move_end(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        match panel.focused_field {
+            IntegrationEditField::Id => panel.id_cursor = panel.id.len(),
+            IntegrationEditField::Command => panel.command_cursor = panel.command.len(),
+            IntegrationEditField::Glyph => panel.glyph_cursor = panel.glyph.len(),
+            IntegrationEditField::Fallback => panel.fallback_cursor = panel.fallback.len(),
+            IntegrationEditField::Tooltip => panel.tooltip_cursor = panel.tooltip.len(),
+            IntegrationEditField::Color => {}
+        }
     }
 }
 
