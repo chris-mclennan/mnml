@@ -521,6 +521,24 @@ pub fn draw_pane(
         let lo_diag = diag_sev
             .filter(|s| matches!(s, crate::lsp::Severity::Info | crate::lsp::Severity::Hint));
         let mut mark_kind: Option<crate::GutterMarkKind> = None;
+        // Fold state — computed up front so it can (a) always emit a
+        // click rect regardless of which sign wins the paint and
+        // (b) override lower-priority signs when the line is folded.
+        // design-critic 2026-07-11 (HIGH): previously the arrow only
+        // appeared when the sign column was empty — a folded line
+        // with an uncommitted git change (very common) never showed
+        // the arrow AND had no click rect, so unfolding was
+        // impossible via mouse.
+        let is_folded_line = buf.folds.contains_key(&line_no);
+        let is_hovered_line = matches!(
+            app.hover_editor_line,
+            Some((hp, hl)) if hp == pane_id && hl == line_no
+        );
+        let is_foldable_hover =
+            !is_folded_line && is_hovered_line && is_foldable_header(buf.editor.line_str(line_no));
+        if is_folded_line || is_foldable_hover {
+            fold_arrow_rows.push((r as u16, line_no));
+        }
         let sign_span = if is_continuation {
             Span::styled(" ", Style::default().bg(base_bg))
         } else if has_arrow {
@@ -534,6 +552,19 @@ pub fn draw_pane(
         } else if has_bp {
             mark_kind = Some(crate::GutterMarkKind::Breakpoint);
             Span::styled("●", Style::default().fg(theme::cur().red).bg(base_bg))
+        } else if is_folded_line {
+            // Folded state is critical navigation info — override
+            // anything below breakpoint priority so it's ALWAYS
+            // visible. Higher-priority marks (DAP arrow, breakpoint)
+            // still win — folded lines are rare mid-debug, and if
+            // both apply, the `⋯ N hidden` chip past EOL still
+            // signals the fold.
+            let glyph = if app.config.ui.ascii_icons {
+                ">"
+            } else {
+                "\u{25B8}" // ▸
+            };
+            Span::styled(glyph, Style::default().fg(theme::cur().purple).bg(base_bg))
         } else if let Some(s) = hi_diag {
             mark_kind = Some(crate::GutterMarkKind::Diagnostic(s));
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
@@ -543,38 +574,15 @@ pub fn draw_pane(
         } else if let Some(s) = lo_diag {
             mark_kind = Some(crate::GutterMarkKind::Diagnostic(s));
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
-        } else {
-            // VS Code-style fold arrow: replaces the empty sign cell
-            // for foldable / folded lines. Folded → `→` always. Foldable
-            // (has closing brace below) → `↓` only when the mouse is
-            // hovering this line, matching VS Code's "show on hover"
-            // affordance. 2026-07-11 user request.
-            let is_folded = buf.folds.contains_key(&line_no);
-            let is_hovered_line = matches!(
-                app.hover_editor_line,
-                Some((hp, hl)) if hp == pane_id && hl == line_no
-            );
-            let is_foldable =
-                !is_folded && is_hovered_line && is_foldable_header(buf.editor.line_str(line_no));
-            if is_folded {
-                fold_arrow_rows.push((r as u16, line_no));
-                let glyph = if app.config.ui.ascii_icons {
-                    ">"
-                } else {
-                    "\u{25B8}" // ▸
-                };
-                Span::styled(glyph, Style::default().fg(theme::cur().purple).bg(base_bg))
-            } else if is_foldable {
-                fold_arrow_rows.push((r as u16, line_no));
-                let glyph = if app.config.ui.ascii_icons {
-                    "v"
-                } else {
-                    "\u{25BE}" // ▾
-                };
-                Span::styled(glyph, Style::default().fg(theme::cur().comment).bg(base_bg))
+        } else if is_foldable_hover {
+            let glyph = if app.config.ui.ascii_icons {
+                "v"
             } else {
-                Span::styled(" ", Style::default().bg(base_bg))
-            }
+                "\u{25BE}" // ▾
+            };
+            Span::styled(glyph, Style::default().fg(theme::cur().comment).bg(base_bg))
+        } else {
+            Span::styled(" ", Style::default().bg(base_bg))
         };
         if let Some(k) = mark_kind {
             gutter_mark_rows.push((r as u16, line_no, k));
