@@ -3166,9 +3166,32 @@ impl App {
     fn parse_active_as_request(&mut self) -> Option<crate::http::Request> {
         use crate::http::{self, template::EnvSet};
         let cur = self.active?;
-        // From a Request pane, just clone the in-flight request.
+        // From a Request pane, clone the in-flight request AND run the
+        // same pre-script + template::expand triplet every other send
+        // path runs. api-workflow SEV-1 2026-07-11: was previously a
+        // bare clone → http.bench fired the pane's literal
+        // `{{BASE_URL}}/…` templates to reqwest N times, guaranteeing
+        // "bad request: builder error" and a degenerate all-zero
+        // percentile histogram. Request-pane sends work because they
+        // route through spawn_http_job which does the same expansion;
+        // bench went straight through this helper without it.
         if let Some(Pane::Request(rp)) = self.panes.get(cur) {
-            return Some(rp.request.clone());
+            let mut request = rp.request.clone();
+            let script = rp.script.clone();
+            let mut env = EnvSet::select_with_config_default(
+                &self.workspace,
+                self.http_env_override.as_deref(),
+                self.config.http.default_env.as_deref(),
+            );
+            http::script::apply_pre(&script, &mut request, &mut env);
+            request.url = http::template::expand(&request.url, &env);
+            for (_, v) in request.headers.iter_mut() {
+                *v = http::template::expand(v, &env);
+            }
+            if let Some(body) = request.body.as_mut() {
+                *body = http::template::expand(body, &env);
+            }
+            return Some(request);
         }
         let (ext, text, cursor_row) = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => (
