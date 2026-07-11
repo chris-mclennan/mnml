@@ -454,9 +454,12 @@ pub fn run_test(path: &Path) -> TestOutcome {
                 // idle gate is 120ms; if the harness's 50ms
                 // render sleep doesn't catch it, the expect runs
                 // before the screen settles). Polling for up to
-                // 750ms on FAILURE absorbs that residual jitter.
+                // 3000ms on FAILURE absorbs that residual jitter.
                 // Successful checks pass immediately — no slowdown.
-                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(750);
+                // Bumped from 750 → 3000 on 2026-07-11 after the
+                // snippet-expand tests kept flaking through
+                // multiple `wait <ms>` bumps in the callsites.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(3000);
                 let last_err: Option<String> = loop {
                     let screen = screen_text(term.backend().buffer());
                     match run_check(&app, &screen, check) {
