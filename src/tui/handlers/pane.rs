@@ -2200,7 +2200,21 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 && let Some(Pane::Editor(b)) = app.panes.get(i)
             {
                 let len = b.pending_tree_edits.len();
-                let (edits, new_consumed) = if len >= sess.edits_consumed {
+                // 2026-07-11 macOS-CI snippet flake fix — the check
+                // used to be `len >= edits_consumed`. In the
+                // drain-then-edit race (refresh_highlights drains
+                // pending_tree_edits between two feed_keys, then the
+                // next feed_key adds one edit back), `len ==
+                // edits_consumed` on entry — the slice `[len..len]`
+                // is empty and the just-added edit's shift is
+                // silently DROPPED, leaving the next stop's byte
+                // position stale. Result on the failing snippet
+                // test: `Tab → type items` inserts at $2's
+                // pre-typing byte offset, producing
+                // `for i initems  {` instead of `for i in items {`.
+                // Under `>` the equal case correctly falls into the
+                // whole-vec branch and the shift fires.
+                let (edits, new_consumed) = if len > sess.edits_consumed {
                     (b.pending_tree_edits[sess.edits_consumed..].to_vec(), len)
                 } else {
                     (b.pending_tree_edits.to_vec(), len)
