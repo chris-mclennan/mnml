@@ -1025,6 +1025,31 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.lsp_fold_all(),
         },
+        // nvchad-round-7 SEV-2 2026-07-11 — `zM` used to fire only
+        // `lsp.fold_all` which no-op'd without an attached LSP. This
+        // scans the buffer for every {…}/[…]/(…) that spans more
+        // than one line and closes it.
+        Command {
+            id: "editor.fold_all_brackets",
+            title: "Fold every multi-line bracket pair (`zM` fallback)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.fold_all_brackets_in_active(),
+        },
+        Command {
+            id: "editor.fold_next",
+            title: "Jump to next fold (`zj`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.fold_next_in_active(),
+        },
+        Command {
+            id: "editor.fold_prev",
+            title: "Jump to previous fold (`zk`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.fold_prev_in_active(),
+        },
         Command {
             id: "lsp.selection_expand",
             title: "LSP: expand selection to next semantic range",

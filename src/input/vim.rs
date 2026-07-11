@@ -1042,11 +1042,13 @@ impl VimInputHandler {
                         InputResult::App(AppCommand::RunCommand("editor.unfold_all".into()))
                     }
                     // `zM` — fold all (mnml uses server-suggested ranges via
-                    // textDocument/foldingRange; falls back to no-op when no
-                    // LSP). Vim's `zM` closes every fold; ours installs +
-                    // closes the server's recommended set.
+                    // textDocument/foldingRange; falls back to bracket-scan
+                    // when no LSP). Vim's `zM` closes every fold; ours
+                    // first runs the bracket-scan fallback (so folds
+                    // exist even without LSP) and then also asks the
+                    // server. nvchad-round-7 SEV-2 2026-07-11.
                     KeyCode::Char('M') => {
-                        InputResult::App(AppCommand::RunCommand("lsp.fold_all".into()))
+                        InputResult::App(AppCommand::RunCommand("editor.fold_all_brackets".into()))
                     }
                     // vim cursor-position scroll chords: `zz` (center),
                     // `zt` (top), `zb` (bottom). Keep the cursor put,
@@ -1073,6 +1075,15 @@ impl VimInputHandler {
                     }
                     KeyCode::Char('L') => {
                         InputResult::App(AppCommand::RunCommand("view.hscroll_right_half".into()))
+                    }
+                    // nvchad-round-7 SEV-3 2026-07-11 — inter-fold nav.
+                    // `zj` jumps to the start of the next fold; `zk` to
+                    // the end of the previous.
+                    KeyCode::Char('j') => {
+                        InputResult::App(AppCommand::RunCommand("editor.fold_next".into()))
+                    }
+                    KeyCode::Char('k') => {
+                        InputResult::App(AppCommand::RunCommand("editor.fold_prev".into()))
                     }
                     _ => InputResult::Consumed,
                 };

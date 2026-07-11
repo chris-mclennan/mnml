@@ -9333,6 +9333,95 @@ impl App {
         }
     }
 
+    /// `editor.fold_all_brackets` — vim `zM` when no LSP folds are
+    /// available. Walks the active buffer, finds every `{…}`/`[…]`/
+    /// `(…)` pair that spans more than one line, and adds it to
+    /// `b.folds`. Skips nested pairs that would produce identical
+    /// ranges. nvchad-round-7 SEV-2 2026-07-11.
+    pub fn fold_all_brackets_in_active(&mut self) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let text = b.editor.text().to_string();
+        let mut new_folds: std::collections::BTreeMap<usize, usize> = b.folds.clone();
+        // For each bracket family, do a one-pass stack scan.
+        for &(open, close) in &[('{', '}'), ('[', ']'), ('(', ')')] {
+            let mut stack: Vec<usize> = Vec::new();
+            let bytes = text.as_bytes();
+            let mut i = 0usize;
+            let open_byte = open as u8;
+            let close_byte = close as u8;
+            while i < bytes.len() {
+                let ch = bytes[i];
+                if ch == open_byte {
+                    stack.push(i);
+                } else if ch == close_byte
+                    && let Some(o) = stack.pop()
+                {
+                    let start_line = b.editor.line_at_byte(o);
+                    let end_line = b.editor.line_at_byte(i);
+                    if end_line > start_line {
+                        new_folds.entry(start_line).or_insert(end_line);
+                    }
+                }
+                i += 1;
+            }
+        }
+        let synced_path = b.path.clone();
+        let added = new_folds
+            .len()
+            .saturating_sub(self.active_editor().map(|b| b.folds.len()).unwrap_or(0));
+        if let Some(b) = self.active_editor_mut() {
+            b.folds = new_folds;
+        }
+        if added > 0 {
+            self.toast(format!("zM — folded {added} block(s)"));
+        } else {
+            self.toast("zM — no more foldable blocks");
+        }
+        if let Some(p) = synced_path {
+            let entries: Vec<(usize, usize)> = self
+                .active_editor()
+                .map(|b| b.folds.iter().map(|(&s, &e)| (s, e)).collect())
+                .unwrap_or_default();
+            self.note_file_folds(&p, entries);
+        }
+    }
+
+    /// `zj` — jump the cursor to the start of the next fold (relative
+    /// to current row). No-op when there are no folds after the cursor.
+    /// nvchad-round-7 SEV-3 2026-07-11.
+    pub fn fold_next_in_active(&mut self) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let cur_row = b.editor.row_col().0;
+        let next: Option<usize> = b.folds.keys().copied().find(|&s| s > cur_row);
+        if let Some(target) = next
+            && let Some(b) = self.active_editor_mut()
+        {
+            b.editor.place_cursor(target, 0);
+        } else {
+            self.toast("zj — no fold after cursor");
+        }
+    }
+
+    /// `zk` — jump to the start of the previous fold.
+    pub fn fold_prev_in_active(&mut self) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let cur_row = b.editor.row_col().0;
+        let prev: Option<usize> = b.folds.keys().copied().filter(|&s| s < cur_row).max();
+        if let Some(target) = prev
+            && let Some(b) = self.active_editor_mut()
+        {
+            b.editor.place_cursor(target, 0);
+        } else {
+            self.toast("zk — no fold before cursor");
+        }
+    }
+
     /// `editor.unfold_all` — drop every fold from the active buffer.
     pub fn unfold_all_in_active(&mut self) {
         let mut synced: Option<PathBuf> = None;
