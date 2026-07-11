@@ -307,6 +307,13 @@ impl App {
             panel.focused_field = crate::app::discovery::IntegrationEditField::Glyph;
             panel.glyph.clear();
             panel.glyph.push(c);
+            // Sibling of the picker.rs SEV-1 fix 2026-07-11: reset the
+            // Glyph field cursor so a stale byte-offset from a
+            // previously-typed / previously-picked glyph of a different
+            // UTF-8 width doesn't land mid-codepoint on the newly-baked
+            // one. Next backspace / arrow would then panic on the
+            // byte-slice.
+            panel.glyph_cursor = panel.glyph.len();
         }
         self.open_pty(profile);
         if route_to_edit {
