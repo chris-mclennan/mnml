@@ -284,7 +284,30 @@ impl InputHandler for StandardInputHandler {
             // MoveBufferEnd is vim G semantics (start of last
             // line, intentional). Compose with MoveLineEnd for the
             // standard-mode meaning.
-            KeyCode::End if ctrl && !alt => InputResult::Ops(vec![MoveBufferEnd, MoveLineEnd]),
+            //
+            // vscode-user 2026-07-10 SEV-2 follow-up: this branch
+            // used to bypass the `mv` helper entirely, so
+            // Ctrl+Shift+End didn't extend the selection (missing
+            // SelectStart) and plain Ctrl+End didn't clear a
+            // pre-existing selection (missing SelectClear). Mirror
+            // `mv`'s shift/has_selection logic but keep the two-op
+            // motion composition.
+            KeyCode::End if ctrl && !alt => {
+                let motion = vec![MoveBufferEnd, MoveLineEnd];
+                if shift {
+                    if ctx.has_selection {
+                        InputResult::Ops(motion)
+                    } else {
+                        let mut ops = vec![SelectStart];
+                        ops.extend(motion);
+                        InputResult::Ops(ops)
+                    }
+                } else {
+                    let mut ops = vec![SelectClear];
+                    ops.extend(motion);
+                    InputResult::Ops(ops)
+                }
+            }
             KeyCode::Home => mv(MoveLineStart),
             KeyCode::End => mv(MoveLineEnd),
             KeyCode::PageUp => mv(PageUp),
