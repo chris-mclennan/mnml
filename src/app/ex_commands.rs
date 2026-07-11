@@ -2537,6 +2537,32 @@ impl App {
                 self.toast(format!(":b · {}", names.join("  ")));
             }
         } else {
+            // nvchad-user SEV-2 2026-07-10: try numeric arg first
+            // (`:b 1` is the vim-canonical form; `:ls` shows numbers,
+            // NvChad's tab-line also uses 1-based indices). Only fall
+            // through to name matching when it's not a number. Index
+            // counts EDITOR panes only, in registration order — same
+            // order the ":b" listing above prints.
+            if let Ok(n) = q.parse::<usize>() {
+                if n == 0 {
+                    self.toast(":b — buffer numbers are 1-based");
+                    return;
+                }
+                let editor_panes: Vec<usize> = self
+                    .panes
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, p)| matches!(p, Pane::Editor(_)).then_some(idx))
+                    .collect();
+                match editor_panes.get(n - 1) {
+                    Some(&pid) => self.reveal_pane(pid),
+                    None => self.toast(format!(
+                        ":b — {n} out of range (1..={})",
+                        editor_panes.len()
+                    )),
+                }
+                return;
+            }
             let qlc = q.to_lowercase();
             let mut hits: Vec<(usize, String)> = Vec::new();
             for (idx, p) in self.panes.iter().enumerate() {
