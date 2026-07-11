@@ -26,6 +26,7 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
     let mut body: Option<String> = None;
     let mut cookies: Vec<String> = Vec::new();
     let mut insecure = false;
+    let mut multipart_parts: Vec<MultipartPart> = Vec::new();
 
     let mut i = start;
     while i < tokens.len() {
@@ -85,28 +86,29 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
                     advance = 2;
                 }
             }
-            // `-F field=value` / `-F field=@file` builds multipart
-            // form data. We don't have a full multipart encoder yet;
-            // collect field=value pairs into an
-            // `application/x-www-form-urlencoded` body as a
-            // pragmatic approximation. Same code path used for
-            // `--form-string` (never file-loads).
+            // `-F field=value` / `-F field=@file` / `-F field=<file`
+            // → collect into `multipart_parts` and encode as
+            // `multipart/form-data` with a boundary at the end. This
+            // is the CORRECT vim: previously we accumulated the raw
+            // `key=value&key=@path` string into a
+            // `application/x-www-form-urlencoded` body, so file
+            // uploads posted the literal `@path` string, which is
+            // silent corruption for anyone using `-F name=@…`.
+            // `--form-string` never loads files (the vim's
+            // documented promise); collect it as a plain-text part.
+            //
+            // Path resolution: `@` / `<` prefixed paths are read
+            // relative to CWD at parse time. `.curl` files opened
+            // from a Request pane don't reach here with a source-dir
+            // hint; that's a follow-up. For the CLI (`mnml run FILE`)
+            // CWD is typically the workspace, which is the right
+            // base for relative uploads.
+            // api-workflow round-7 SEV-1 partial fix 2026-07-11.
             "-F" | "--form" | "--form-string" => {
                 if let Some(v) = tokens.get(i + 1) {
-                    let form_line = if body.is_none() {
-                        v.clone()
-                    } else {
-                        format!("{}&{v}", body.as_deref().unwrap_or(""))
-                    };
-                    body = Some(form_line);
-                    if !headers
-                        .iter()
-                        .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
-                    {
-                        headers.push((
-                            "content-type".to_string(),
-                            "application/x-www-form-urlencoded".to_string(),
-                        ));
+                    let allow_file = t != "--form-string";
+                    if let Some((name, spec)) = v.split_once('=') {
+                        multipart_parts.push(parse_multipart_spec(name, spec, allow_file));
                     }
                     advance = 2;
                 }
@@ -151,6 +153,23 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
         headers.push(("cookie".to_string(), cookies.join("; ")));
     }
 
+    // Multipart body assembly — takes precedence over `-d` (curl
+    // canonical: `-F` implies `POST` multipart). Non-empty
+    // `multipart_parts` overrides `body`.
+    if !multipart_parts.is_empty() {
+        let boundary = format!(
+            "----mnmlBoundary{}",
+            multipart_parts.len() * 7919 + url.len()
+        );
+        body = Some(encode_multipart(&boundary, &multipart_parts));
+        // Overwrite / add the Content-Type header.
+        headers.retain(|(k, _)| !k.eq_ignore_ascii_case("content-type"));
+        headers.push((
+            "content-type".to_string(),
+            format!("multipart/form-data; boundary={boundary}"),
+        ));
+    }
+
     let method = method.unwrap_or_else(|| {
         if body.is_some() {
             "POST".to_string()
@@ -166,6 +185,161 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
         body,
         insecure,
     })
+}
+
+/// One part of a `multipart/form-data` body assembled from `-F` flags.
+#[derive(Debug, Clone)]
+struct MultipartPart {
+    name: String,
+    /// The value to send. `filename` is set when the source spec used
+    /// `@path` (file-attachment form) — curl sends
+    /// `filename="basename"` on that Content-Disposition.
+    value: String,
+    filename: Option<String>,
+    /// Optional `;type=…` override from the spec. Defaults are chosen
+    /// based on whether the part is a file (application/octet-stream)
+    /// or a text field (no explicit content-type).
+    content_type: Option<String>,
+    /// True when we attempted a file load but failed (missing file,
+    /// or non-UTF-8 for now). Kept in the parts list so `encode_multipart`
+    /// can surface a clear inline error placeholder rather than silently
+    /// dropping the field.
+    load_error: Option<String>,
+}
+
+/// Parse a `-F name=spec` payload. Handles:
+/// - `spec = "value"` → plain text part
+/// - `spec = "@path"` → file attachment (Content-Disposition filename=basename)
+/// - `spec = "<path"` → file contents as the value (no filename)
+/// - `spec = "…;type=X"` suffix → sets Content-Type on the part
+///
+/// When `allow_file` is false (i.e. `--form-string`) the `@`/`<` prefix
+/// is treated as literal text.
+fn parse_multipart_spec(name: &str, spec: &str, allow_file: bool) -> MultipartPart {
+    // Peel off an optional `;type=…` trailer.
+    let (body_spec, content_type) = if let Some((left, right)) = spec.split_once(';') {
+        let ct = right
+            .trim()
+            .strip_prefix("type=")
+            .map(|s| s.trim().to_string());
+        (left, ct)
+    } else {
+        (spec, None)
+    };
+    let name = name.to_string();
+    if !allow_file {
+        return MultipartPart {
+            name,
+            value: body_spec.to_string(),
+            filename: None,
+            content_type,
+            load_error: None,
+        };
+    }
+    if let Some(path) = body_spec.strip_prefix('@') {
+        return load_multipart_file_part(&name, path, true, content_type);
+    }
+    if let Some(path) = body_spec.strip_prefix('<') {
+        return load_multipart_file_part(&name, path, false, content_type);
+    }
+    MultipartPart {
+        name,
+        value: body_spec.to_string(),
+        filename: None,
+        content_type,
+        load_error: None,
+    }
+}
+
+/// Read `path` (relative to CWD, or absolute), returning a
+/// `MultipartPart`. Files whose contents aren't valid UTF-8 are
+/// tagged with a `load_error` so `encode_multipart` can surface a
+/// clear message instead of silent corruption. When `attach_filename`
+/// is true, the Content-Disposition gets `filename="basename"` (curl's
+/// `@` form); false = `<` form (contents-as-value, no filename).
+fn load_multipart_file_part(
+    name: &str,
+    path: &str,
+    attach_filename: bool,
+    content_type: Option<String>,
+) -> MultipartPart {
+    let name = name.to_string();
+    let basename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .to_string();
+    let ct = content_type.or_else(|| {
+        if attach_filename {
+            Some("application/octet-stream".to_string())
+        } else {
+            None
+        }
+    });
+    match std::fs::read(path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => MultipartPart {
+                name,
+                value: text,
+                filename: attach_filename.then_some(basename),
+                content_type: ct,
+                load_error: None,
+            },
+            Err(_) => MultipartPart {
+                name,
+                value: String::new(),
+                filename: attach_filename.then_some(basename),
+                content_type: ct,
+                load_error: Some(format!("binary file {path} — mnml multipart is text-only")),
+            },
+        },
+        Err(e) => MultipartPart {
+            name,
+            value: String::new(),
+            filename: attach_filename.then_some(basename),
+            content_type: ct,
+            load_error: Some(format!("can't read {path}: {e}")),
+        },
+    }
+}
+
+/// Assemble the RFC-2046 multipart body. Text-only; binary files land
+/// as an inline `[LOAD-ERROR: …]` placeholder so the failure is
+/// visible in the request rather than silently absent.
+fn encode_multipart(boundary: &str, parts: &[MultipartPart]) -> String {
+    let mut out = String::new();
+    for part in parts {
+        out.push_str("--");
+        out.push_str(boundary);
+        out.push_str("\r\n");
+        out.push_str("Content-Disposition: form-data; name=\"");
+        out.push_str(&part.name);
+        out.push('"');
+        if let Some(fname) = &part.filename {
+            out.push_str("; filename=\"");
+            out.push_str(fname);
+            out.push('"');
+        }
+        out.push_str("\r\n");
+        if let Some(ct) = &part.content_type {
+            out.push_str("Content-Type: ");
+            out.push_str(ct);
+            out.push_str("\r\n");
+        }
+        out.push_str("\r\n");
+        if let Some(err) = &part.load_error {
+            out.push_str("[LOAD-ERROR: ");
+            out.push_str(err);
+            out.push(']');
+        } else {
+            out.push_str(&part.value);
+        }
+        out.push_str("\r\n");
+    }
+    out.push_str("--");
+    out.push_str(boundary);
+    out.push_str("--\r\n");
+    out
 }
 
 /// Strip anything that isn't part of the curl command — tools (Playwright, …)
@@ -333,16 +507,69 @@ mod tests {
     }
 
     #[test]
-    fn dash_capital_f_form_creates_urlencoded_body_and_preserves_url() {
+    fn dash_capital_f_form_produces_multipart_body() {
+        // api-workflow round-7 SEV-1 2026-07-11 — `-F` now builds
+        // proper `multipart/form-data` (was: naive `a=1&b=2` under
+        // `application/x-www-form-urlencoded`, which silently
+        // corrupted `@file` uploads).
         let r = parse_curl("curl -F 'a=1' -F 'b=2' 'https://x/form'").unwrap();
         assert_eq!(r.url, "https://x/form");
-        assert_eq!(r.body.as_deref(), Some("a=1&b=2"));
         let ct = r
             .headers
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
-            .map(|(_, v)| v.as_str());
-        assert_eq!(ct, Some("application/x-www-form-urlencoded"));
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert!(
+            ct.starts_with("multipart/form-data; boundary="),
+            "got: {ct}"
+        );
+        let body = r.body.expect("multipart body must be present");
+        assert!(body.contains("name=\"a\""), "part a missing: {body}");
+        assert!(body.contains("name=\"b\""), "part b missing: {body}");
+        assert!(body.contains("\r\n\r\n1\r\n"), "value 1 missing");
+        assert!(body.contains("\r\n\r\n2\r\n"), "value 2 missing");
+    }
+
+    #[test]
+    fn dash_capital_f_at_file_reads_content() {
+        // `-F name=@path` reads the file bytes (UTF-8) and includes
+        // them as an attachment with filename set.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hello.txt");
+        std::fs::write(&path, "hello world").unwrap();
+        let cmd = format!("curl -F 'file=@{}' 'https://x/upload'", path.display());
+        let r = parse_curl(&cmd).unwrap();
+        let body = r.body.unwrap();
+        assert!(body.contains("name=\"file\""), "field name missing");
+        assert!(
+            body.contains("filename=\"hello.txt\""),
+            "filename missing: {body}"
+        );
+        assert!(body.contains("hello world"), "file contents missing");
+        assert!(
+            body.contains("Content-Type: application/octet-stream"),
+            "default content-type missing"
+        );
+    }
+
+    #[test]
+    fn dash_capital_f_lt_file_with_type_override() {
+        // `-F name=<path;type=X` reads file contents (no filename)
+        // and sets the part Content-Type from the trailer.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("meta.json");
+        std::fs::write(&path, r#"{"a":1}"#).unwrap();
+        let cmd = format!(
+            "curl -F 'json=<{};type=application/json' 'https://x/upload'",
+            path.display()
+        );
+        let r = parse_curl(&cmd).unwrap();
+        let body = r.body.unwrap();
+        assert!(body.contains("name=\"json\""));
+        assert!(!body.contains("filename=\""), "should not attach filename");
+        assert!(body.contains("Content-Type: application/json"));
+        assert!(body.contains(r#"{"a":1}"#));
     }
 
     #[test]
