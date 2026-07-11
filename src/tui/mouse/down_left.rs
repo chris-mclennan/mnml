@@ -462,6 +462,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_send_button
         && crate::app::dispatch::contains(r, x, y)
     {
+        // vscode-user-mouse SEV-2 2026-07-10: a click on any Request-
+        // pane chrome (send/save/clear/…) fires the action but never
+        // switched focus to the pane, so the follow-up keystroke
+        // routed to wherever focus WAS (usually Tree, after opening
+        // via the file browser). Snap focus so `r` / typing lands
+        // where the user just clicked.
+        app.focus_pane();
         let is_sending = matches!(
             app.active.and_then(|i| app.panes.get(i)),
             Some(crate::pane::Pane::Request(rp))
@@ -480,6 +487,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_save_button
         && crate::app::dispatch::contains(r, x, y)
     {
+        app.focus_pane();
         app.http_save_or_prompt_save_as();
         return;
     }
@@ -489,6 +497,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_clear_button
         && crate::app::dispatch::contains(r, x, y)
     {
+        app.focus_pane();
         // #20 v2 — snapshot the pane before clearing so `↶ Undo`
         // can restore the URL / body / headers / etc. Skips the
         // snapshot when the active pane isn't a Request (no-op
@@ -519,6 +528,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_format_button
         && crate::app::dispatch::contains(r, x, y)
     {
+        app.focus_pane();
         app.http_format_body();
         return;
     }
@@ -526,6 +536,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_regenerate_button
         && crate::app::dispatch::contains(r, x, y)
     {
+        app.focus_pane();
         app.http_regenerate_body();
         return;
     }
@@ -534,6 +545,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_code_button
         && crate::app::dispatch::contains(r, x, y)
     {
+        app.focus_pane();
         app.http_generate_code_prompt();
         return;
     }
@@ -541,6 +553,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.request_env_button
         && crate::app::dispatch::contains(r, x, y)
     {
+        app.focus_pane();
         app.open_http_env_picker();
         return;
     }
