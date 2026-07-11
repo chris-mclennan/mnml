@@ -3685,6 +3685,13 @@ pub struct App {
     /// trace string (multi-line summary the user will see in a
     /// toast preview + paste from clipboard for the full thing).
     pub http_bench_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// Async worker channel for `:ai.session_search`. The search
+    /// walks 3000+ transcripts (3-4 GB) on macOS; running it on
+    /// the main thread froze the UI for 1.4-1.8s per query
+    /// (claude-agents-power-user SEV-2 2026-07-11). Now spawned;
+    /// drained from `App::tick`.
+    pub ai_session_search_rx:
+        Option<std::sync::mpsc::Receiver<(String, Vec<crate::claude_agents::SearchHit>)>>,
     /// 2026-06-19 polish — when these async ops are in flight,
     /// stash an Instant so the cmdline_bar can show elapsed time
     /// next to the `⟳ running…` indicator.
@@ -4898,6 +4905,7 @@ impl App {
             http_sync_rx: None,
             http_sync_check_rx: None,
             http_bench_rx: None,
+            ai_session_search_rx: None,
             http_bench_started: None,
             http_bench_progress: None,
             http_sync_started: None,
@@ -12462,6 +12470,7 @@ impl App {
             self.lookup_fire_started = None;
         }
         self.drain_ai_jobs();
+        self.drain_ai_session_search();
         self.drain_suggestions();
         self.maybe_fire_suggestion();
         self.drain_tests_jobs();

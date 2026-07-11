@@ -1097,38 +1097,70 @@ impl App {
     /// enough for a few hundred MB; if it ever gets too slow we can
     /// move to a worker).
     pub fn ai_session_search_run(&mut self, query: String) {
-        let hits = crate::claude_agents::search_all_transcripts(&query);
-        if hits.is_empty() {
-            self.toast(format!("no matches for {query:?}"));
+        // claude-agents SEV-2 2026-07-11: spawn the search on a
+        // background thread — a synchronous walk over 3000+ jsonl
+        // transcripts (3-4 GB) blocked the UI for 1.4-1.8s. `App::tick`
+        // drains the result via `ai_session_search_rx`.
+        if self.ai_session_search_rx.is_some() {
+            self.toast("session-search: already running…");
             return;
         }
-        let mut body = String::new();
-        body.push_str(&format!(
-            "# {} hits for {:?} across ~/.claude/projects/\n\n",
-            hits.len(),
-            query
-        ));
-        // Group by workspace so the scratch reads top-down.
-        use std::collections::BTreeMap;
-        let mut grouped: BTreeMap<String, Vec<&crate::claude_agents::SearchHit>> = BTreeMap::new();
-        for h in &hits {
-            grouped.entry(h.workspace.clone()).or_default().push(h);
-        }
-        for (ws, hs) in grouped {
-            body.push_str(&format!("\n## {ws}\n\n"));
-            for h in hs {
-                let sid_short: String = h.session_id.chars().take(8).collect();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let q = query;
+        std::thread::spawn(move || {
+            let hits = crate::claude_agents::search_all_transcripts(&q);
+            let _ = tx.send((q, hits));
+        });
+        self.ai_session_search_rx = Some(rx);
+        self.toast("session-search: scanning transcripts…");
+    }
+
+    /// Drain the in-flight session-search result. Called from `App::tick`.
+    pub fn drain_ai_session_search(&mut self) {
+        let Some(rx) = self.ai_session_search_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok((query, hits)) => {
+                self.ai_session_search_rx = None;
+                if hits.is_empty() {
+                    self.toast(format!("no matches for {query:?}"));
+                    return;
+                }
+                let mut body = String::new();
                 body.push_str(&format!(
-                    "- [{}] {sid_short}  ·  {}\n  {}\n  {}\n",
-                    h.role.glyph(),
-                    h.transcript_path.display(),
-                    h.snippet,
-                    "",
+                    "# {} hits for {:?} across ~/.claude/projects/\n\n",
+                    hits.len(),
+                    query
                 ));
+                use std::collections::BTreeMap;
+                let mut grouped: BTreeMap<String, Vec<&crate::claude_agents::SearchHit>> =
+                    BTreeMap::new();
+                for h in &hits {
+                    grouped.entry(h.workspace.clone()).or_default().push(h);
+                }
+                for (ws, hs) in grouped {
+                    body.push_str(&format!("\n## {ws}\n\n"));
+                    for h in hs {
+                        let sid_short: String = h.session_id.chars().take(8).collect();
+                        body.push_str(&format!(
+                            "- [{}] {sid_short}  ·  {}\n  {}\n  {}\n",
+                            h.role.glyph(),
+                            h.transcript_path.display(),
+                            h.snippet,
+                            "",
+                        ));
+                    }
+                }
+                self.open_scratch_with_text("[session-search]".to_string(), body);
+                self.toast(format!("{} hits → [session-search]", hits.len()));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.ai_session_search_rx = None;
+                self.toast("session-search: worker died");
             }
         }
-        self.open_scratch_with_text("[session-search]".to_string(), body);
-        self.toast(format!("{} hits → [session-search]", hits.len()));
     }
 
     /// Tick hook — two refresh rates:
