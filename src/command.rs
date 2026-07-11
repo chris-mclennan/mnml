@@ -2120,6 +2120,74 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.navigate_workspace_up(),
         },
+        // vscode-user-keyboard SEV-2 2026-07-11 — Ctrl+1..Ctrl+9
+        // focus the Nth bufferline tab (Ctrl+9 = last tab, VS Code
+        // convention). Non-existent tabs are silent no-ops. Each
+        // number gets its own command so keymap serialization stays
+        // simple (no dynamic keybindings).
+        Command {
+            id: "view.focus_tab_1",
+            title: "Focus tab 1",
+            group: "view",
+            keys: &["ctrl+1"],
+            run: |app| app.focus_bufferline_tab(1),
+        },
+        Command {
+            id: "view.focus_tab_2",
+            title: "Focus tab 2",
+            group: "view",
+            keys: &["ctrl+2"],
+            run: |app| app.focus_bufferline_tab(2),
+        },
+        Command {
+            id: "view.focus_tab_3",
+            title: "Focus tab 3",
+            group: "view",
+            keys: &["ctrl+3"],
+            run: |app| app.focus_bufferline_tab(3),
+        },
+        Command {
+            id: "view.focus_tab_4",
+            title: "Focus tab 4",
+            group: "view",
+            keys: &["ctrl+4"],
+            run: |app| app.focus_bufferline_tab(4),
+        },
+        Command {
+            id: "view.focus_tab_5",
+            title: "Focus tab 5",
+            group: "view",
+            keys: &["ctrl+5"],
+            run: |app| app.focus_bufferline_tab(5),
+        },
+        Command {
+            id: "view.focus_tab_6",
+            title: "Focus tab 6",
+            group: "view",
+            keys: &["ctrl+6"],
+            run: |app| app.focus_bufferline_tab(6),
+        },
+        Command {
+            id: "view.focus_tab_7",
+            title: "Focus tab 7",
+            group: "view",
+            keys: &["ctrl+7"],
+            run: |app| app.focus_bufferline_tab(7),
+        },
+        Command {
+            id: "view.focus_tab_8",
+            title: "Focus tab 8",
+            group: "view",
+            keys: &["ctrl+8"],
+            run: |app| app.focus_bufferline_tab(8),
+        },
+        Command {
+            id: "view.focus_tab_last",
+            title: "Focus last tab (VS Code Ctrl+9 convention)",
+            group: "view",
+            keys: &["ctrl+9"],
+            run: |app| app.focus_bufferline_tab(9),
+        },
         Command {
             id: "file.move_to",
             title: "Move the selected tree file to a chosen folder…",
@@ -5498,7 +5566,10 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.split_down",
             title: "Split editor down (stacked)",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard SEV-2 2026-07-11: VS Code binds
+            // Ctrl+Shift+\ to split-down (stacked). Sibling of
+            // Ctrl+\ (split right).
+            keys: &["ctrl+shift+\\"],
             run: |app| app.split_active(crate::layout::SplitDir::Vertical),
         },
         Command {

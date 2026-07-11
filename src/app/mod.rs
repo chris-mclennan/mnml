@@ -6578,6 +6578,36 @@ impl App {
     /// MRU two-buffer toggle (vim's `Ctrl+^`); pressing it twice oscillates
     /// between the two most recently focused panes. No-op if there's no
     /// recorded prior active or if it's been closed.
+    /// vscode-user-keyboard SEV-2 2026-07-11 — Ctrl+1..Ctrl+9 focus
+    /// the Nth bufferline tab (1-based, VS Code convention: Ctrl+1 =
+    /// group 1, Ctrl+9 = last group; mnml maps this to bufferline
+    /// tabs so it works with tab-only usage OR splits). Non-existent
+    /// tabs are silent no-ops. Right-panel-hosted panes are excluded
+    /// from the count (they aren't in the bufferline).
+    pub fn focus_bufferline_tab(&mut self, one_based: usize) {
+        if one_based == 0 {
+            return;
+        }
+        // Build the visible bufferline index list: every pane that
+        // isn't currently hosted in the right panel.
+        let mut visible: Vec<usize> = Vec::new();
+        for (i, _) in self.panes.iter().enumerate() {
+            if !self.right_panel_panes.contains(&i) {
+                visible.push(i);
+            }
+        }
+        // Ctrl+9 = LAST tab (VS Code convention: last group, not
+        // literal 9th). Every other N = the Nth tab if it exists.
+        let target = if one_based == 9 {
+            visible.last().copied()
+        } else {
+            visible.get(one_based - 1).copied()
+        };
+        if let Some(pid) = target {
+            self.reveal_pane(pid);
+        }
+    }
+
     pub fn switch_to_last_buffer(&mut self) {
         let Some(target) = self.last_active else {
             self.toast("no previous buffer");
