@@ -1082,6 +1082,7 @@ fn mode_chip(app: &App) -> (&'static str, Color) {
                     ("EDIT", theme::cur().green)
                 }
             }
+            Focus::RightPanel => ("PANEL", theme::cur().cyan),
         },
     }
 }

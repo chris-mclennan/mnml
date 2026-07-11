@@ -102,6 +102,9 @@ fn pick_help_text(app: &App) -> (String, Option<String>) {
         crate::focus::Focus::Pane => {
             "hover a chip / tab / tree row for help · Ctrl+Shift+P palette"
         }
+        crate::focus::Focus::RightPanel => {
+            "right panel focus — arrows walk rows · Enter jumps · Ctrl+E cycles focus"
+        }
     };
     (hint.to_string(), None)
 }

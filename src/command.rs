@@ -1784,6 +1784,29 @@ fn builtin_commands() -> Vec<Command> {
                 // outline.show / lsp.diagnostics creates fresh.
                 if !app.right_panel_visible {
                     app.close_right_panel_hosted_panes();
+                    if app.focus == crate::focus::Focus::RightPanel {
+                        app.focus = crate::focus::Focus::Pane;
+                    }
+                }
+            },
+        },
+        // keyboard-round-7 SEV-2 #1 — keyboard chord to focus the
+        // right side panel. Ctrl+K r mirrors VS Code's Ctrl+K Ctrl+Q
+        // idiom (Focus panel-of-kind chord). If the panel is
+        // currently invisible, this opens it too.
+        Command {
+            id: "view.focus_right_panel",
+            title: "Focus the right side panel",
+            group: "view",
+            keys: &["Ctrl+K r"],
+            run: |app| {
+                if !app.right_panel_visible {
+                    app.right_panel_visible = true;
+                }
+                if app.right_panel_active_pane_id().is_some() {
+                    app.focus = crate::focus::Focus::RightPanel;
+                } else {
+                    app.toast("right panel is empty — open Outline / Problems first");
                 }
             },
         },

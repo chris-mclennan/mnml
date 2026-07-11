@@ -1807,7 +1807,8 @@ impl App {
 
     pub fn cycle_focus(&mut self) {
         let was_pane = self.focus == Focus::Pane;
-        self.focus = self.focus.next(self.active.is_some());
+        let has_right_panel = self.right_panel_visible && !self.right_panel_panes.is_empty();
+        self.focus = self.focus.next(self.active.is_some(), has_right_panel);
         if was_pane
             && self.focus != Focus::Pane
             && let Some(b) = self.active_editor_mut()

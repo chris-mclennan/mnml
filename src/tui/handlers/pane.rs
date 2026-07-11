@@ -248,7 +248,17 @@ fn is_view_only_pane(pane: Option<&Pane>) -> bool {
 
 pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
     let viewport = crate::app::dispatch::pane_viewport(app);
-    let Some(i) = app.active else { return };
+    // keyboard-round-7 SEV-2 #1 — when focus is on the right panel,
+    // route keys to the right-panel's active pane instead of the
+    // main pane. The main pane index (`app.active`) is left alone
+    // so Ctrl+E can cycle back.
+    let Some(i) = (if app.focus == crate::focus::Focus::RightPanel {
+        app.right_panel_active_pane_id().or(app.active)
+    } else {
+        app.active
+    }) else {
+        return;
+    };
     // 2026-06-21 — nvchad SEV-1: every special-purpose pane has its
     // own `_ => {}` fall-through that ate Ctrl+W (vim window prefix)
     // and `:` (ex cmdline), so vim users lost both reflexes anywhere

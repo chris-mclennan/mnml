@@ -2060,6 +2060,10 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     match app.focus {
         Focus::Tree => handle_tree_key(app, key),
         Focus::Pane => handle_pane_key(app, key),
+        // Right panel behaves like a pane for key routing — the
+        // pane handler already reads `app.right_panel_focus_active`
+        // when dispatching outline/diag/grep keys.
+        Focus::RightPanel => handle_pane_key(app, key),
     }
     if let Some(before) = before
         && let Some(after) = app.current_nav_point()

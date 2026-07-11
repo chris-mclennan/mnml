@@ -1600,6 +1600,7 @@ pub fn status_json(app: &App) -> String {
     let focus = match app.focus {
         crate::focus::Focus::Tree => "tree",
         crate::focus::Focus::Pane => "pane",
+        crate::focus::Focus::RightPanel => "right_panel",
     };
     let active_file = app
         .active_editor()
