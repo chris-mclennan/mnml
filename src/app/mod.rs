@@ -9820,10 +9820,21 @@ impl App {
             self.toast(":g — no active editor");
             return;
         };
-        // Capture matching row indices (top-to-bottom).
+        // Capture matching row indices (top-to-bottom). Pattern is a
+        // vim regex — translate `\(…\)`/`\|`/`\<`/`\>` first, then
+        // compile. Falls back to literal substring when the pattern
+        // fails to compile as regex (so `:g/foo/` still works if
+        // `foo` isn't a valid regex somehow). nvchad-round-8 SEV-2
+        // 2026-07-11 — was literal substring only.
+        let translated = crate::app::ex_commands::vim_pattern_to_regex_public(pattern);
+        let re = regex::Regex::new(&translated).ok();
         let mut rows: Vec<usize> = Vec::new();
         for (i, line) in b.editor.text().split('\n').enumerate() {
-            let matched = line.contains(pattern);
+            let matched = if let Some(re) = &re {
+                re.is_match(line)
+            } else {
+                line.contains(pattern)
+            };
             if matched != invert {
                 rows.push(i);
             }

@@ -2882,6 +2882,77 @@ impl VimInputHandler {
                 }
                 return InputResult::Consumed;
             }
+            // Visual text objects — `viw`, `viW`, `vip`, `vi(`, `va[`,
+            // `vi"`, `vit`, etc. Selection stays live; the op just
+            // sets anchor+cursor to the object's range. Stay in
+            // Visual mode after. nvchad-round-8 SEV-2 2026-07-11.
+            Prefix::TextObjectInner | Prefix::TextObjectAround => {
+                let around = matches!(self.prefix, Prefix::TextObjectAround);
+                self.reset_pending();
+                let select_op = match key.code {
+                    KeyCode::Char('w') => {
+                        if around {
+                            SelectAroundWord
+                        } else {
+                            SelectInnerWord
+                        }
+                    }
+                    KeyCode::Char('W') => {
+                        if around {
+                            SelectAroundBigWord
+                        } else {
+                            SelectInnerBigWord
+                        }
+                    }
+                    KeyCode::Char(q @ ('"' | '\'' | '`')) => {
+                        if around {
+                            SelectAroundQuote(q)
+                        } else {
+                            SelectInnerQuote(q)
+                        }
+                    }
+                    KeyCode::Char('q') => {
+                        if around {
+                            SelectAroundSmartQuote
+                        } else {
+                            SelectInnerSmartQuote
+                        }
+                    }
+                    KeyCode::Char('p') => {
+                        if around {
+                            SelectAroundParagraph
+                        } else {
+                            SelectInnerParagraph
+                        }
+                    }
+                    KeyCode::Char('t') => {
+                        if around {
+                            SelectAroundTag
+                        } else {
+                            SelectInnerTag
+                        }
+                    }
+                    KeyCode::Char('i') if around => SelectAroundIndentBlock,
+                    KeyCode::Char('i') => SelectInnerIndentBlock,
+                    KeyCode::Char('I') if around => SelectOuterIndentBlock,
+                    KeyCode::Char(c @ ('(' | ')' | '[' | ']' | '{' | '}' | '<' | '>')) => {
+                        let open = match c {
+                            ')' => '(',
+                            ']' => '[',
+                            '}' => '{',
+                            '>' => '<',
+                            other => other,
+                        };
+                        if around {
+                            SelectAroundBracket(open)
+                        } else {
+                            SelectInnerBracket(open)
+                        }
+                    }
+                    _ => return InputResult::Consumed,
+                };
+                return InputResult::Ops(vec![select_op]);
+            }
             _ => {}
         }
 
@@ -2928,6 +2999,18 @@ impl VimInputHandler {
                     self.mode = VimMode::VisualLine;
                     InputResult::Ops(vec![SelectLine])
                 }
+            }
+            // Visual text-object prefix — `i`/`a` in Visual opens the
+            // TextObject dispatch (`viw`, `vip`, `vi(`, etc.). Handled
+            // in the top-of-fn prefix arm on the next key. Vim canonical.
+            // nvchad-round-8 SEV-2 2026-07-11.
+            KeyCode::Char('i') => {
+                self.prefix = Prefix::TextObjectInner;
+                InputResult::Consumed
+            }
+            KeyCode::Char('a') => {
+                self.prefix = Prefix::TextObjectAround;
+                InputResult::Consumed
             }
             KeyCode::Char('d') | KeyCode::Char('x') => {
                 self.enter_normal();
@@ -3033,6 +3116,21 @@ impl VimInputHandler {
     fn handle_visual_block(&mut self, key: KeyEvent, _ctx: &EditCtx) -> InputResult {
         use EditOp::*;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // V-BLOCK `r<c>` prefix — next key is the fill char. Dispatched
+        // here (not the normal-mode prefix arm) because pressing `r` in
+        // V-BLOCK doesn't enter Normal mode; the follow-up char stays
+        // in `handle_visual_block`. nvchad-round-8 regression fix
+        // 2026-07-11 — round-7 wired the prefix but not this dispatch.
+        if matches!(self.prefix, Prefix::BlockReplaceChar) {
+            self.prefix = Prefix::None;
+            return match key.code {
+                KeyCode::Char(c) => {
+                    self.enter_normal();
+                    InputResult::App(AppCommand::BlockReplaceWith { ch: c })
+                }
+                _ => InputResult::Consumed,
+            };
+        }
         // count prefix
         if let KeyCode::Char(c @ '1'..='9') = key.code {
             let d = c as u32 - '0' as u32;

@@ -104,6 +104,14 @@ fn shellexpand_tilde(s: &str) -> String {
     s.to_string()
 }
 
+/// Public re-export of [`vim_pattern_to_regex`] for
+/// `App::accept_find` / `update_live_find_preview` — vim regex
+/// grammar in the `/search` prompt, not just `:s`.
+/// nvchad-round-8 SEV-2 2026-07-11.
+pub(crate) fn vim_pattern_to_regex_public(input: &str) -> String {
+    vim_pattern_to_regex(input)
+}
+
 /// Translate vim's `:s/PATTERN/…/` grammar (the find side) to the
 /// `regex` crate's grammar. Vim uses `\(…\)` for capture groups,
 /// `\|` for alternation, `\<`/`\>` for word boundaries. The `regex`

@@ -409,7 +409,8 @@ impl App {
         // prev-find persistence path), so `foo.bar` typed into the
         // Find prompt showed "no matches" even though accept-time
         // would have used regex.
-        let regex_default = self.find_regex_default || crate::input::is_vim_style(&self.config);
+        let is_vim = crate::input::is_vim_style(&self.config);
+        let regex_default = self.find_regex_default || is_vim;
         let case_mode = self.search_case_mode;
         let pending_range = self.find_pending_range;
         let Some(cur) = self.active else { return };
@@ -421,6 +422,14 @@ impl App {
             return;
         }
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
+        // Same vim-grammar translation as `accept_find` so the live
+        // preview matches what Enter will land on. nvchad-round-8
+        // SEV-2 2026-07-11.
+        let query = if regex && is_vim {
+            crate::app::ex_commands::vim_pattern_to_regex_public(&query)
+        } else {
+            query
+        };
         // Case rule: `search_case_mode` overrides smart-case (vim's
         // `:set ic` / `:set noic` / `:set smartcase`). None →
         // historical smart-case default (case-sensitive iff query has
@@ -503,8 +512,18 @@ impl App {
         // literal chars are the special case that require escaping.
         // nvchad-user SEV-2 2026-07-10 fix (previously literal-only for
         // both search and :%s/…/…/g).
-        let regex_default = regex_default || crate::input::is_vim_style(&self.config);
+        let is_vim = crate::input::is_vim_style(&self.config);
+        let regex_default = regex_default || is_vim;
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
+        // nvchad-round-8 SEV-2 2026-07-11 — translate vim regex
+        // metachars (`\(…\)`, `\|`, `\<`/`\>`) to the `regex` crate's
+        // grammar for the search prompt too. Round-7 wired this only
+        // in `:s`, so `/foo\|bar` still failed on the search prompt.
+        let query = if regex && is_vim {
+            crate::app::ex_commands::vim_pattern_to_regex_public(&query)
+        } else {
+            query
+        };
         // Same case-mode rule as `update_live_find_preview` — vim's
         // `:set ic` / `:set noic` override smart-case for both literal
         // and regex modes. Regex-and-no-override falls back to
