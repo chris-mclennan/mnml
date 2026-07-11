@@ -519,6 +519,39 @@ impl App {
                     self.open_integration_edit_by_id(id);
                 } else if let Some(id) = item.id.strip_prefix("remove:") {
                     self.open_integration_remove_confirm(id.to_string());
+                } else if let Some(id) = item.id.strip_prefix("copy_id:") {
+                    // vscode-user-keyboard SEV-2 fix 2026-07-10 —
+                    // Copy id palette-reachable (was mouse-only via
+                    // the chip's right-click context menu).
+                    let mut clip = crate::clipboard::Clipboard::new();
+                    clip.set(id.to_string(), false);
+                    self.toast(format!("copied `{id}` to clipboard"));
+                } else if let Some(id) = item.id.strip_prefix("show_manifest:") {
+                    // vscode-user-keyboard SEV-2 fix — Show manifest…
+                    // via palette. Reuses the context-menu handler's
+                    // path-resolution logic.
+                    let ws_path = self
+                        .workspace
+                        .join(".mnml")
+                        .join("integrations")
+                        .join(format!("{id}.toml"));
+                    let home = std::env::var_os("HOME")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+                    let user_path = home
+                        .join(".config")
+                        .join("mnml")
+                        .join("integrations")
+                        .join(format!("{id}.toml"));
+                    if ws_path.exists() {
+                        self.open_path(&ws_path);
+                    } else if user_path.exists() {
+                        self.open_path(&user_path);
+                    } else {
+                        self.toast(format!(
+                            "no manifest file for `{id}` — it's a built-in default"
+                        ));
+                    }
                 } else {
                     crate::command::run(&item.id, self);
                 }
@@ -940,6 +973,14 @@ impl App {
             .collect();
         let p = Picker::new(PickerKind::Commands, title.to_string(), items);
         self.open_picker(p);
+    }
+
+    pub fn open_integration_copy_id_picker(&mut self) {
+        self.open_integration_chip_picker("Integrations: copy id", "copy_id");
+    }
+
+    pub fn open_integration_show_manifest_picker(&mut self) {
+        self.open_integration_chip_picker("Integrations: show manifest…", "show_manifest");
     }
 
     pub fn open_integration_toggle_picker(&mut self) {

@@ -2464,6 +2464,31 @@ fn handle_diff_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -> b
 }
 
 fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -> bool {
+    // nvchad SEV-1 fix 2026-07-10 — vim users hit `:` for ex-cmd
+    // (`:w`, `:bn`, `:q`). The Request pane's URL/Method fields
+    // ate the `:` literally; a subsequent Enter fired a real
+    // network request against the mangled URL. Route `:` to the
+    // ex-cmd prompt when the input style is vim + the pane's
+    // active edit field is URL or Method (single-line "chip"
+    // fields where colon-typing is rare) — Body / Headers /
+    // Vars / Auth still accept literal `:` because those are
+    // multi-line prose fields where a colon is expected
+    // syntax.
+    if app.config.editor.input_style == "vim"
+        && key.code == KeyCode::Char(':')
+        && !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && let Some(Pane::Request(rp)) = app.panes.get(i)
+        && matches!(rp.view, crate::request_pane::ViewMode::Edit)
+        && matches!(
+            rp.focus,
+            crate::request_pane::EditField::Url | crate::request_pane::EditField::Method
+        )
+    {
+        app.open_ex_command_prompt();
+        return true;
+    }
     if let Some(Pane::Request(rp)) = app.panes.get_mut(i) {
         use crate::request_pane::ViewMode;
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);

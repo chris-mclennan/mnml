@@ -67,8 +67,17 @@ pub fn build_prompt(rp: &RequestPane, env: &EnvSet) -> Option<String> {
         && !body.is_empty()
     {
         out.push('\n');
-        out.push_str(&truncate_with_marker(body, 2048));
-        if !body.ends_with('\n') {
+        // api-workflow SEV-2 fix 2026-07-10 — module doc promised
+        // body redaction; only header redaction was implemented.
+        // JSON secrets like `"apiKey": "sk-live-..."`,
+        // `"password": "..."`, `"secret": "..."`, and
+        // `"token": "..."` now get their VALUES replaced with
+        // `"<redacted>"` in the copied prompt. Structural shape
+        // (keys, indentation) is preserved so the AI can still
+        // reason about the body.
+        let redacted_body = redact_body_secrets(body);
+        out.push_str(&truncate_with_marker(&redacted_body, 2048));
+        if !redacted_body.ends_with('\n') {
             out.push('\n');
         }
     }
@@ -164,6 +173,74 @@ pub fn redact_header_value(name: &str, value: &str) -> String {
         return "<redacted>".to_string();
     }
     value.to_string()
+}
+
+/// Rewrite JSON `"key": "value"` pairs so that secret-shaped keys
+/// have their values replaced with `"<redacted>"`. Regex-based
+/// substitution so we don't need serde_json parsing at this layer
+/// — the body might not be valid JSON, and structural preservation
+/// is more valuable than perfect parsing here.
+///
+/// Rules:
+/// - Key match is case-insensitive on a snake/camel-collapsed form.
+/// - Secret keys: `apiKey`, `api_key`, `apikey`, `password`,
+///   `passwd`, `secret`, `token`, `access_token`, `refresh_token`,
+///   `client_secret`, `authorization`, `x-api-key`, `credentials`,
+///   `private_key`.
+/// - Value match is any double-quoted string (JSON) — captures
+///   escaped quotes via a `\\.` alternation.
+///
+/// Non-JSON body shapes (form-encoded, multipart, raw text) get no
+/// redaction. That's a known gap; JSON is the 90% case for API bodies.
+pub fn redact_body_secrets(body: &str) -> String {
+    use std::sync::OnceLock;
+    static RX: OnceLock<regex::Regex> = OnceLock::new();
+    // Match `"key": "value"` where value may contain \" escapes.
+    // Capture group 1 = the key (with quotes), group 2 = the value.
+    let rx = RX.get_or_init(|| {
+        regex::Regex::new(r#"("([^"\\]|\\.)+")(\s*:\s*)"(([^"\\]|\\.)*)""#)
+            .expect("redact_body regex")
+    });
+    let mut out = String::with_capacity(body.len());
+    let mut last_end = 0;
+    for cap in rx.captures_iter(body) {
+        let m = cap.get(0).unwrap();
+        let key_with_quotes = cap.get(1).unwrap().as_str();
+        let colon_sep = cap.get(3).unwrap().as_str();
+        // Strip surrounding quotes + normalize for lookup.
+        let key = key_with_quotes.trim_matches('"');
+        let key_norm: String = key
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .flat_map(|c| c.to_lowercase())
+            .collect();
+        let is_secret = matches!(
+            key_norm.as_str(),
+            "apikey"
+                | "password"
+                | "passwd"
+                | "secret"
+                | "token"
+                | "accesstoken"
+                | "refreshtoken"
+                | "clientsecret"
+                | "authorization"
+                | "xapikey"
+                | "credentials"
+                | "privatekey"
+        );
+        out.push_str(&body[last_end..m.start()]);
+        if is_secret {
+            out.push_str(key_with_quotes);
+            out.push_str(colon_sep);
+            out.push_str("\"<redacted>\"");
+        } else {
+            out.push_str(m.as_str());
+        }
+        last_end = m.end();
+    }
+    out.push_str(&body[last_end..]);
+    out
 }
 
 fn truncate_with_marker(s: &str, max_bytes: usize) -> String {
@@ -355,6 +432,37 @@ mod tests {
     fn truncate_with_marker_passthrough_when_within_limit() {
         let s = "short";
         assert_eq!(truncate_with_marker(s, 2048), "short");
+    }
+
+    #[test]
+    fn redact_body_covers_common_secret_keys() {
+        // api-workflow SEV-2 regression lock 2026-07-10.
+        let body =
+            r#"{"user": "alice", "apiKey": "sk-live-abc123", "password": "hunter2", "note": "ok"}"#;
+        let out = redact_body_secrets(body);
+        assert!(out.contains(r#""apiKey": "<redacted>""#));
+        assert!(out.contains(r#""password": "<redacted>""#));
+        assert!(out.contains(r#""user": "alice""#));
+        assert!(out.contains(r#""note": "ok""#));
+        assert!(!out.contains("sk-live-abc123"));
+        assert!(!out.contains("hunter2"));
+    }
+
+    #[test]
+    fn redact_body_handles_snake_and_kebab_key_variants() {
+        let body =
+            r#"{"access_token":"t1","refresh_token":"t2","client_secret":"s","x-api-key":"k"}"#;
+        let out = redact_body_secrets(body);
+        assert!(out.contains(r#""access_token":"<redacted>""#));
+        assert!(out.contains(r#""refresh_token":"<redacted>""#));
+        assert!(out.contains(r#""client_secret":"<redacted>""#));
+        assert!(out.contains(r#""x-api-key":"<redacted>""#));
+    }
+
+    #[test]
+    fn redact_body_leaves_non_json_untouched() {
+        let body = "not a json body, just prose";
+        assert_eq!(redact_body_secrets(body), body);
     }
 
     #[test]

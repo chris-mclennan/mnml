@@ -1861,6 +1861,23 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_integration_remove_picker(),
         },
+        Command {
+            // vscode-user-keyboard SEV-2 fix 2026-07-10 —
+            // context-menu-only actions get palette twins so
+            // keyboard-purists can reach them without Shift+F10.
+            id: "integrations.copy_id",
+            title: "Integrations: copy an id to clipboard (picker)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.open_integration_copy_id_picker(),
+        },
+        Command {
+            id: "integrations.show_manifest",
+            title: "Integrations: open a chip's manifest file (picker)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.open_integration_show_manifest_picker(),
+        },
         // External-tool launchers: run if installed, else toast
         // `brew install <pkg>`. Match the integration_icon commands
         // (`:tools.htop` etc. — see config.rs default seeds).

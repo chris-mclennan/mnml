@@ -710,21 +710,57 @@ impl App {
                 return;
             }
         };
-        let request = match crate::http::parse(&text) {
-            Ok(r) => r,
+        // api-workflow SEV-1 fix 2026-07-10 — parse_all so we can
+        // capture the FIRST block's name into `source_block_name`.
+        // Without this, `file.save` on a multi-block .http file
+        // falls through the named-block splice and CLOBBERS the
+        // whole file with a single curl line — silently deleting
+        // blocks 2, 3, N. Same regression class the
+        // `http_multi_block_writeback` test used to catch, via a
+        // new entry point (auto-open on tree click).
+        let blocks = match crate::http::file::parse_all(&text) {
+            Ok(bs) => bs,
             Err(_) => {
-                // Bad parse — open as plain editor so the user can
-                // fix the file. Toast so they know why.
-                self.toast(format!(
-                    "http: parse failed for {}, opened as text",
-                    path.display()
-                ));
-                self.open_path_as_editor(path);
-                return;
+                // parse_all failed — try the single-request path
+                // (curl / rest / http) as a fallback.
+                match crate::http::parse(&text) {
+                    Ok(_) => {
+                        // Non-empty parse but parse_all rejected —
+                        // treat as a single-block file with no
+                        // block name.
+                        Vec::new()
+                    }
+                    Err(_) => {
+                        self.toast(format!(
+                            "http: parse failed for {}, opened as text",
+                            path.display()
+                        ));
+                        self.open_path_as_editor(path);
+                        return;
+                    }
+                }
+            }
+        };
+        let (request, source_block_name) = if let Some(first) = blocks.first() {
+            (first.request.clone(), first.name.clone())
+        } else {
+            // Fallback single-parse path (parse_all returned Empty
+            // but the standalone `parse` succeeded above).
+            match crate::http::parse(&text) {
+                Ok(r) => (r, None),
+                Err(_) => {
+                    self.toast(format!(
+                        "http: parse failed for {}, opened as text",
+                        path.display()
+                    ));
+                    self.open_path_as_editor(path);
+                    return;
+                }
             }
         };
         let script = crate::http::script::parse(&text);
         let mut pane = RequestPane::new(Some(path.to_path_buf()), request, script, 0);
+        pane.source_block_name = source_block_name;
         // Pull the tab summary from the file's leading `# ...`
         // comment. Discover-generated stubs put the swagger
         // operation's `summary` on the first line; matching format
@@ -3750,7 +3786,7 @@ impl App {
         // direct ### scan; parse_all rejects curl-syntax bodies
         // so it can't dispatch .curl on its own.
         let lines: Vec<&str> = text.split('\n').collect();
-        let (mut request, script_src, source_block_name): (http::Request, String, Option<String>) = {
+        let (request, script_src, source_block_name): (http::Request, String, Option<String>) = {
             // .http/.rest still use parse_all for rich metadata.
             if matches!(ext.as_str(), "http" | "rest")
                 && let Ok(blocks) = http::file::parse_all(&text)
@@ -3811,16 +3847,24 @@ impl App {
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         );
-        http::script::apply_pre(&script, &mut request, &mut env);
-        request.url = http::template::expand(&request.url, &env);
-        for (_, v) in &mut request.headers {
+        // api-workflow SEV-1 fix 2026-07-10 — expand `{{VAR}}` on a
+        // CLONE and send that; the pane keeps the templated version.
+        // Prior code mutated `request` in place then stored it on
+        // the pane, so a later `file.save` wrote resolved values
+        // (`Bearer devtoken123`) back to disk where the source had
+        // `Bearer {{TOKEN}}` — leaking secrets to git. `refire_request`
+        // already does this correctly; matched its pattern here.
+        let mut resolved = request.clone();
+        http::script::apply_pre(&script, &mut resolved, &mut env);
+        resolved.url = http::template::expand(&resolved.url, &env);
+        for (_, v) in &mut resolved.headers {
             *v = http::template::expand(v, &env);
         }
-        if let Some(b) = &mut request.body {
+        if let Some(b) = &mut resolved.body {
             *b = http::template::expand(b, &env);
         }
 
-        let job_id = self.spawn_http_job(request.clone(), script.clone(), path.clone());
+        let job_id = self.spawn_http_job(resolved, script.clone(), path.clone());
         let mut rp = crate::request_pane::RequestPane::new(path, request, script, job_id);
         rp.source_block_name = source_block_name;
         let new_id =
