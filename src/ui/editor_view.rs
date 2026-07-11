@@ -1297,12 +1297,16 @@ pub fn draw_pane(
         ));
     }
     // VS Code-style fold arrows — 1-cell rect at the sign column
-    // position for each foldable / folded line rendered above.
-    // Sign column sits at `text_x - 1` (last cell of the gutter).
+    // position for each foldable / folded line rendered above. The
+    // sign_span is the FIRST span in the row (line 1035), so it
+    // paints at column 0 of the pane (`area.x`), not the previously
+    // assumed `text_x - 1`. vscode-user-mouse round 2 (2026-07-11)
+    // caught the visible-vs-clickable mismatch — visible ▾ at area.x,
+    // click rect was 4+ cells to the right.
     for (visual_row, line_no) in fold_arrow_rows {
         app.rects.fold_arrows.push((
             Rect {
-                x: text_x.saturating_sub(1),
+                x: area.x,
                 y: area.y + visual_row,
                 width: 1,
                 height: 1,
