@@ -12770,6 +12770,73 @@ mod tests {
         (d, app)
     }
 
+    /// nvchad-user SEV-2 2026-07-10 — `.` should repeat text-object
+    /// ops like `di(` / `da{` / `di"`. Regression against a bug that
+    /// dropped the `i<c>` suffix from `dot_keys`.
+    #[test]
+    fn dot_replay_repeats_text_object_delete() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("t.txt");
+        fs::write(&path, "(foo) (bar) (baz)").unwrap();
+        let mut cfg = Config::default();
+        cfg.editor.input_style = "vim".to_string();
+        let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+        app.open_path(&path);
+        let pid = app.active.expect("active pane");
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+            b.editor.place_cursor(0, 2); // inside "foo"
+        }
+        // `di(` — delete inner parens content.
+        let k = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty());
+        crate::tui::dispatch_key(&mut app, k('d'));
+        crate::tui::dispatch_key(&mut app, k('i'));
+        crate::tui::dispatch_key(&mut app, k('('));
+        let text_after_first = if let Some(Pane::Editor(b)) = app.panes.get(pid) {
+            b.editor.text().to_string()
+        } else {
+            String::new()
+        };
+        assert_eq!(
+            text_after_first, "() (bar) (baz)",
+            "di( deleted the foo body"
+        );
+        // Move cursor inside "bar" and press `.` — should delete "bar".
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+            b.editor.place_cursor(0, 4); // inside "bar"
+        }
+        crate::tui::dispatch_key(&mut app, k('.'));
+        let text_after_dot = if let Some(Pane::Editor(b)) = app.panes.get(pid) {
+            b.editor.text().to_string()
+        } else {
+            String::new()
+        };
+        assert_eq!(text_after_dot, "() () (baz)", ". repeated the di(");
+
+        // Also verify di{ and di" — the finding claimed both fail;
+        // regression against future re-breaks.
+        let path2 = d.path().join("t2.txt");
+        fs::write(&path2, "{foo} {bar}").unwrap();
+        app.open_path(&path2);
+        let pid2 = app.active.expect("active");
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid2) {
+            b.editor.place_cursor(0, 2);
+        }
+        crate::tui::dispatch_key(&mut app, k('d'));
+        crate::tui::dispatch_key(&mut app, k('i'));
+        crate::tui::dispatch_key(&mut app, k('{'));
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid2) {
+            b.editor.place_cursor(0, 4);
+        }
+        crate::tui::dispatch_key(&mut app, k('.'));
+        let after = if let Some(Pane::Editor(b)) = app.panes.get(pid2) {
+            b.editor.text().to_string()
+        } else {
+            String::new()
+        };
+        assert_eq!(after, "{} {}", ". repeated di-brace");
+    }
+
     #[test]
     fn switch_to_last_buffer_toggles_with_previous_active() {
         // vscode-user 2026-06-28 SEV-3: Ctrl+Tab → buffer.last
