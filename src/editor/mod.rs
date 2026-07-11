@@ -3930,8 +3930,19 @@ impl Editor {
                 if s.is_empty() {
                     return;
                 }
-                self.delete_selection_if_any(out);
-                self.checkpoint();
+                // vscode-user SEV-2 2026-07-10: paste-over-selection
+                // used to split into two undo steps because
+                // `delete_selection_if_any` calls `checkpoint()` when
+                // it deletes, and Paste then called `checkpoint()`
+                // again before the insert. First Ctrl+Z rewound only
+                // the insert, leaving the buffer showing the delete
+                // half (looked like the file was wiped). Skip our own
+                // checkpoint when the delete already made one; only
+                // paste-without-selection needs its own.
+                let deleted = self.delete_selection_if_any(out);
+                if !deleted {
+                    self.checkpoint();
+                }
                 self.text.insert_str(self.cursor, &s);
                 self.cursor += s.len();
                 self.anchor = None;
@@ -4836,6 +4847,25 @@ mod tests {
         for op in ops {
             e.apply(op.clone(), 10, c);
         }
+    }
+
+    /// vscode-user SEV-2 2026-07-10 — paste-over-selection was split
+    /// into two undo checkpoints (one for the delete inside
+    /// `delete_selection_if_any`, one at the top of the `Paste` arm),
+    /// so a single Ctrl+Z only rewound the insert half — leaving the
+    /// buffer showing the empty post-delete state.
+    #[test]
+    fn paste_over_selection_undoes_atomically() {
+        let (mut e, mut c) = ed("hello world");
+        c.set("REPLACED", false);
+        // Select "hello" (bytes 0..5).
+        e.cursor = 0;
+        e.anchor = Some(5);
+        e.apply(EditOp::Paste, 10, &mut c);
+        assert_eq!(e.text(), "REPLACED world");
+        // ONE undo restores everything.
+        e.apply(EditOp::Undo, 10, &mut c);
+        assert_eq!(e.text(), "hello world");
     }
 
     /// vscode-user SEV-2 2026-07-10 — Ctrl+D on `foo bar foo` selects
