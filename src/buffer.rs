@@ -846,6 +846,24 @@ impl Buffer {
                 // deltas and folds can shift instead of being dropped.
                 for op in ops {
                     let is_close_angle = matches!(op, crate::edit_op::EditOp::InsertChar('>'));
+                    // Direction hint for post-move fold-snap. Same shape as
+                    // `apply_edit_ops` below — needed on the key-driven
+                    // path too so vim `j`/`k`/PageDown/etc. skip over a
+                    // closed fold instead of landing inside it. nvchad
+                    // SEV-2 2026-07-10.
+                    use crate::edit_op::EditOp as E;
+                    let fold_snap_dir = match &op {
+                        E::MoveDown | E::PageDown | E::HalfPageDown | E::MoveBufferEnd => {
+                            Some(true)
+                        }
+                        E::MoveUp | E::PageUp | E::HalfPageUp | E::MoveBufferStart => Some(false),
+                        E::Repeat(_, inner) => match inner.as_ref() {
+                            E::MoveDown | E::PageDown | E::HalfPageDown => Some(true),
+                            E::MoveUp | E::PageUp | E::HalfPageUp => Some(false),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
                     let cursor_line_before = self.editor.row_col().0;
                     let lines_before = self.editor.line_count();
                     let out = self.editor.apply(op, viewport_rows, clipboard);
@@ -875,6 +893,9 @@ impl Buffer {
                         self.try_autoclose_tag();
                     }
                     changed |= out.buffer_changed;
+                    if let Some(going_down) = fold_snap_dir {
+                        self.snap_cursor_out_of_fold(going_down);
+                    }
                 }
                 if changed {
                     self.recompute_dirty();
