@@ -943,10 +943,7 @@ const HELP_LINES: &[HelpEntry] = &[
         "0 / 1 / 2 / 3 / 4",
         "filter by state (all / live / tool / idle / ended)",
     ),
-    HelpEntry::Row(
-        "> / <",
-        "cycle source filter (all → claude → codex → ecs → managed → all)",
-    ),
+    HelpEntry::Row("> / <", "cycle source filter (all → claude → codex → all)"),
     HelpEntry::Row(
         "W",
         "toggle workspace-only filter (capital — bare w is vim word-motion)",

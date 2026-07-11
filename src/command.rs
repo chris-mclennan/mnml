@@ -2836,11 +2836,11 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.activity_git",
             title: "Activity: open git graph",
             group: "view",
-            keys: &[],
-            // The git-graph pane is mnml's "all git ops live here"
-            // surface, so the activity-bar Git icon now jumps
-            // straight there instead of switching to the placeholder
-            // sub-panel that used to render at `ActivitySection::Git`.
+            // vscode-user-keyboard SEV-2 2026-07-11: VS Code Source
+            // Control chord. mnml jumps straight to the git graph
+            // pane (documented as the "all git ops live here"
+            // surface).
+            keys: &["ctrl+shift+g"],
             run: |app| {
                 crate::command::run("git.graph", app);
             },
@@ -2849,14 +2849,21 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.activity_debug",
             title: "Activity: show Debug",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard SEV-2 2026-07-11: VS Code Run and
+            // Debug chord. Previously `Ctrl+Shift+D` silently
+            // duplicated the current line (removed in 7f1e9a7);
+            // rebind to the debug activity section for VS Code parity.
+            keys: &["ctrl+shift+d"],
             run: |app| app.set_activity_section(crate::app::ActivitySection::Debug),
         },
         Command {
             id: "view.activity_integrations",
             title: "Activity: show Integrations",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard SEV-2 2026-07-11: VS Code
+            // Extensions chord — mnml's closest analogue is the
+            // Integrations activity section.
+            keys: &["ctrl+shift+x"],
             run: |app| app.set_activity_section(crate::app::ActivitySection::Integrations),
         },
         Command {
