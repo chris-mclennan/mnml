@@ -62,6 +62,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     let rect = edit_rect(parent, &panel.mode);
     let t = theme::cur();
     frame.render_widget(Clear, rect);
+    // Modal-block rect — the mouse dispatcher guards on this to
+    // prevent clicks from leaking to the tree/pane below. 2026-07-11.
+    app.rects.integration_edit_overlay_rect = Some(rect);
+    app.rects.integration_edit_field_rows.clear();
     let title = match panel.mode {
         IntegrationEditMode::Edit => format!(" edit · {} ", panel.id),
         IntegrationEditMode::AddCustom => " + add custom integration ".to_string(),
@@ -83,6 +87,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             width: inner.width,
             height: 1,
         };
+        // Emit a click rect for the whole row so the mouse handler
+        // can focus this field on click. 2026-07-11.
+        app.rects
+            .integration_edit_field_rows
+            .push((row_rect, *field));
         let is_focused = panel.focused_field == *field;
         let prefix = if is_focused { "▸ " } else { "  " };
         let label = field_label(*field);

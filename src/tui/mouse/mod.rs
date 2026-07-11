@@ -620,6 +620,91 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         return;
     }
 
+    // Integration_edit modal overlay — vscode-user-mouse round 2
+    // (2026-07-11) found clicks were leaking to the tree/pane under
+    // it. Route field-row clicks to focus that field; swallow all
+    // other mouse events inside the overlay footprint. Outside-panel
+    // click cancels the edit (same "click-out = dismiss" idiom
+    // Settings uses).
+    if let Some(area) = app.rects.integration_edit_overlay_rect {
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(&(_, field)) = app
+                    .rects
+                    .integration_edit_field_rows
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                {
+                    if let Some(panel) = app.integration_edit.as_mut() {
+                        panel.focused_field = field;
+                        // Clamp new field's cursor to its byte length.
+                        use crate::app::discovery::IntegrationEditField as F;
+                        match field {
+                            F::Id => panel.id_cursor = panel.id_cursor.min(panel.id.len()),
+                            F::Command => {
+                                panel.command_cursor = panel.command_cursor.min(panel.command.len())
+                            }
+                            F::Glyph => {
+                                panel.glyph_cursor = panel.glyph_cursor.min(panel.glyph.len())
+                            }
+                            F::Fallback => {
+                                panel.fallback_cursor =
+                                    panel.fallback_cursor.min(panel.fallback.len())
+                            }
+                            F::Tooltip => {
+                                panel.tooltip_cursor = panel.tooltip_cursor.min(panel.tooltip.len())
+                            }
+                            F::Color => {}
+                        }
+                    }
+                } else if !crate::app::dispatch::contains(area, x, y) {
+                    // Click outside the panel — cancel.
+                    app.integration_edit_cancel();
+                }
+                // Any click while the overlay is up is swallowed here.
+                return;
+            }
+            _ => {
+                // Non-left mouse events (scroll, right-click, middle,
+                // moved) are swallowed too — don't leak.
+                return;
+            }
+        }
+    }
+    // Glyph_builder modal overlay — same click-guard idiom.
+    if let Some(area) = app.rects.glyph_builder_overlay_rect {
+        match m.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if let Some(&(_, field)) = app
+                    .rects
+                    .glyph_builder_field_rows
+                    .iter()
+                    .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                {
+                    if let Some(state) = app.glyph_builder.as_mut() {
+                        state.focused_field = field;
+                        use crate::glyph_builder::BuilderField as F;
+                        match field {
+                            F::Path => {
+                                state.svg_path_cursor =
+                                    state.svg_path_cursor.min(state.svg_path.len())
+                            }
+                            F::Name => state.name_cursor = state.name_cursor.min(state.name.len()),
+                            F::Codepoint => {
+                                state.codepoint_hex_cursor =
+                                    state.codepoint_hex_cursor.min(state.codepoint_hex.len())
+                            }
+                            _ => {}
+                        }
+                    }
+                } else if !crate::app::dispatch::contains(area, x, y) {
+                    app.close_glyph_builder();
+                }
+                return;
+            }
+            _ => return,
+        }
+    }
     // Welcome overlay — any left-click dismisses + persists the marker.
     if app.show_welcome && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
         app.dismiss_welcome();

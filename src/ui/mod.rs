@@ -235,6 +235,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.settings_row_options.clear();
         app.rects.settings_save_button = None;
         app.rects.settings_cancel_button = None;
+        app.rects.integration_edit_overlay_rect = None;
+        app.rects.integration_edit_field_rows.clear();
+        app.rects.glyph_builder_overlay_rect = None;
+        app.rects.glyph_builder_field_rows.clear();
         app.rects.tree = None;
         app.rects.tree_toggle = None;
         app.rects.bufferline = None;

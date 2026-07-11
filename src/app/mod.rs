@@ -2260,6 +2260,20 @@ pub struct PaneRects {
     /// detect click-outside-to-close. `None` when the overlay isn't
     /// open. Repopulated by `ui::settings_overlay::draw`.
     pub settings_overlay_rect: Option<Rect>,
+    /// Modal-block rect for the integration_edit overlay. Any click
+    /// while this is set MUST route through the overlay's dispatch
+    /// path (never leak to the tree/pane underneath). Cleared per
+    /// frame in ui::draw. vscode-user-mouse round 2 (2026-07-11)
+    /// caught the leak-through.
+    pub integration_edit_overlay_rect: Option<Rect>,
+    /// Per-field click rects for integration_edit (row, field). Click
+    /// to focus.
+    pub integration_edit_field_rows: Vec<(Rect, crate::app::discovery::IntegrationEditField)>,
+    /// Modal-block rect for the glyph_builder overlay. Same purpose
+    /// as `integration_edit_overlay_rect`.
+    pub glyph_builder_overlay_rect: Option<Rect>,
+    /// Per-field click rects for glyph_builder (row, field). Click to focus.
+    pub glyph_builder_field_rows: Vec<(Rect, crate::glyph_builder::BuilderField)>,
     /// `(rect, row_counter_idx)` per visible Row in the settings
     /// overlay — left-click moves the focus to that row (so the user
     /// can drive settings entirely by mouse: click row to focus +

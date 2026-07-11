@@ -57,6 +57,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         height,
     };
     frame.render_widget(Clear, area);
+    // Modal-block rect — same click-guard idiom as
+    // integration_edit_overlay. 2026-07-11.
+    app.rects.glyph_builder_overlay_rect = Some(area);
+    app.rects.glyph_builder_field_rows.clear();
 
     let block = crate::ui::design_tokens::modal_panel("+ Add custom glyph");
     let inner = block.inner(area);
@@ -97,6 +101,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         if row_y >= inner.y + inner.height {
             break;
         }
+        let row_rect = Rect {
+            x: inner.x,
+            y: row_y,
+            width: inner.width,
+            height: 1,
+        };
+        app.rects.glyph_builder_field_rows.push((row_rect, *field));
         let row_rect = Rect {
             x: inner.x,
             y: row_y,
