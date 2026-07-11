@@ -2805,7 +2805,21 @@ impl App {
                 }
             }
             "e" | "edit" => self.ex_edit(rest),
-            "e!" | "edit!" => self.reload_active(true),
+            // `:e!` with no arg reloads the current buffer; `:e! path`
+            // force-opens `path`, discarding any unsaved edits in the
+            // current buffer. nvchad-round-7 SEV-3 2026-07-11.
+            "e!" | "edit!" => {
+                if rest.is_empty() {
+                    self.reload_active(true);
+                } else {
+                    // Mark active buffer clean so ex_edit doesn't stop
+                    // to prompt about unsaved changes. Vim's `!` = force.
+                    if let Some(b) = self.active_editor_mut() {
+                        b.dirty = false;
+                    }
+                    self.ex_edit(rest);
+                }
+            }
             // `:r !cmd` / `:read !cmd` — fire `cmd` through the shell, splice
             // its stdout into the active editor below the cursor's line.
             // Vim convention: line is added below the *current* line, not at

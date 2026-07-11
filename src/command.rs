@@ -1356,6 +1356,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.insert_bigword_under_cursor(),
         },
         Command {
+            id: "editor.insert_current_filename",
+            title: "Insert current buffer's path (vim insert `Ctrl+R %`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.insert_special_register('%'),
+        },
+        Command {
+            id: "editor.insert_last_search",
+            title: "Insert last search query (vim insert `Ctrl+R /`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.insert_special_register('/'),
+        },
+        Command {
             id: "qf.next",
             title: "Quickfix: next grep result (`:cnext`)",
             group: "go",

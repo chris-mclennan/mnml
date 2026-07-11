@@ -156,6 +156,45 @@ impl App {
         }
     }
 
+    /// Insert-mode `Ctrl+R <reg>` for vim's special registers:
+    /// - `%` = current buffer's workspace-relative path
+    /// - `/` = last search query on the active buffer
+    /// nvchad-round-7 SEV-3 2026-07-11. `#`/`:`/`.`/`=` still fall
+    /// through the register-paste arm (they need alt-buffer /
+    /// cmdline-history / dot-replay state that isn't threaded here yet).
+    pub fn insert_special_register(&mut self, reg: char) {
+        let text = match reg {
+            '%' => self
+                .active_editor()
+                .and_then(|b| b.path.as_ref())
+                .map(|p| crate::app::rel_path(&self.workspace, p))
+                .unwrap_or_default(),
+            '/' => self
+                .active_editor()
+                .and_then(|b| b.find.as_ref())
+                .map(|f| f.query.clone())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        if text.is_empty() {
+            self.toast(format!("Ctrl+R \"{reg} — empty"));
+            return;
+        }
+        let Some(idx) = self.active else { return };
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            let cur = b.editor.cursor();
+            b.apply_edit_ops(
+                vec![crate::edit_op::EditOp::ReplaceRange {
+                    start: cur,
+                    end: cur,
+                    text,
+                }],
+                &mut self.clipboard,
+                0,
+            );
+        }
+    }
+
     /// vim `Ctrl+R Ctrl+W` (insert) — insert the identifier under the
     /// cursor at the cursor position.
     pub fn insert_word_under_cursor(&mut self) {

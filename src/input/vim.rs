@@ -860,6 +860,21 @@ impl VimInputHandler {
                         "editor.insert_bigword_under_cursor".into(),
                     ));
                 }
+                // nvchad-round-7 SEV-3 2026-07-11: special registers
+                // `%` (current file), `/` (last search). `#`, `:`,
+                // `.`, `=` fall through to the register-paste arm
+                // below and toast "empty" (their state isn't threaded
+                // yet).
+                if c == '%' {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_current_filename".into(),
+                    ));
+                }
+                if c == '/' {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_last_search".into(),
+                    ));
+                }
                 // nvchad-2nd 2026-06-28 SEV-2: `"` (unnamed register)
                 // is the most-used INSERT-mode paste target and was
                 // missing from the accepted list. Vim users reflexively
