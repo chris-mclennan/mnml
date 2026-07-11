@@ -2070,6 +2070,58 @@ impl VimInputHandler {
             } else {
                 key.code
             };
+            // nvchad-user SEV-2 2026-07-11: vertical motion under an
+            // operator is LINEWISE per vim convention. `dj` from
+            // line 5 deletes lines 5 AND 6; `dk` deletes 4 AND 5;
+            // `d3j` deletes 4 lines (cursor + 3 below). The generic
+            // SelectStart + MoveDown + DeleteSelection path made a
+            // charwise selection at cursor column, which for equal-
+            // length lines silently produced "delete cursor line
+            // only". Convert to N × DeleteLine (with a preceding
+            // MoveUp × n for k-direction) so the operation is
+            // genuinely linewise. Handles d/y/c/>/< over j/k/+/-/Enter.
+            let vertical_dir: Option<i32> = match effective_code {
+                KeyCode::Char('j') | KeyCode::Down => Some(1),
+                KeyCode::Char('k') | KeyCode::Up => Some(-1),
+                KeyCode::Char('+') | KeyCode::Enter => Some(1),
+                KeyCode::Char('-') => Some(-1),
+                _ => None,
+            };
+            if let Some(dir) = vertical_dir {
+                let count = n;
+                let total_lines = count + 1;
+                let mut ops: Vec<EditOp> = Vec::new();
+                if dir < 0 {
+                    // Move up to the start of the affected block.
+                    for _ in 0..count {
+                        ops.push(MoveUp);
+                    }
+                }
+                let linewise_op: Option<EditOp> = match op {
+                    PendingOp::Delete => Some(DeleteLine),
+                    PendingOp::Yank => Some(YankLine),
+                    PendingOp::Change => Some(DeleteLine),
+                    PendingOp::Indent => Some(Indent),
+                    PendingOp::Outdent => Some(Outdent),
+                    _ => None,
+                };
+                if let Some(line_op) = linewise_op {
+                    for _ in 0..total_lines {
+                        ops.push(line_op.clone());
+                    }
+                    if matches!(op, PendingOp::Change) {
+                        // c<vertical> ends in Insert mode on a fresh
+                        // line at the cursor position (vim
+                        // convention: opens a blank line for typing).
+                        ops.push(InsertNewline);
+                        ops.push(MoveUp);
+                        self.mode = VimMode::Insert;
+                    }
+                    self.reset_pending();
+                    return InputResult::Ops(ops);
+                }
+                // Unsupported op falls through to the generic path.
+            }
             if let Some(m) = Self::motion(effective_code) {
                 let mut ops = vec![SelectStart];
                 if n > 1 {

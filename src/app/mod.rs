@@ -12809,6 +12809,56 @@ mod tests {
         (d, app)
     }
 
+    /// nvchad-user SEV-2 2026-07-11 — `dj` / `dk` / `d3j` are linewise
+    /// per vim convention: cursor line + N destination lines are all
+    /// deleted. The prior charwise selection path silently deleted
+    /// only the cursor line.
+    #[test]
+    fn dj_dk_and_count_are_linewise() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let k = |c: char| KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty());
+        let run = |keys: &[KeyEvent], cursor_line: usize| -> String {
+            let d = tempfile::tempdir().unwrap();
+            let path = d.path().join("t.txt");
+            fs::write(&path, "one\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
+            let mut cfg = Config::default();
+            cfg.editor.input_style = "vim".to_string();
+            let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
+            app.open_path(&path);
+            let pid = app.active.expect("active pane");
+            if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                b.editor.place_cursor(cursor_line, 0);
+            }
+            for key in keys {
+                crate::tui::dispatch_key(&mut app, *key);
+            }
+            if let Some(Pane::Editor(b)) = app.panes.get(pid) {
+                b.editor.text().to_string()
+            } else {
+                String::new()
+            }
+        };
+
+        // dj from line 1 (two) — delete "two" and "three"
+        assert_eq!(
+            run(&[k('d'), k('j')], 1),
+            "one\nfour\nfive\nsix\n",
+            "dj deletes 2 lines"
+        );
+        // 3dj from line 1 — delete cursor + 3 = 4 lines
+        assert_eq!(
+            run(&[k('3'), k('d'), k('j')], 1),
+            "one\nsix\n",
+            "3dj deletes 4 lines"
+        );
+        // dk from line 3 (four) — delete "three" and "four"
+        assert_eq!(
+            run(&[k('d'), k('k')], 3),
+            "one\ntwo\nfive\nsix\n",
+            "dk deletes 2 lines"
+        );
+    }
+
     /// nvchad-user SEV-2 2026-07-10 — `.` should repeat text-object
     /// ops like `di(` / `da{` / `di"`. Regression against a bug that
     /// dropped the `i<c>` suffix from `dot_keys`.
