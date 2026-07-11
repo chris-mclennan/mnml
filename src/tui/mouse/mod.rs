@@ -646,6 +646,29 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     app.close_settings_overlay_cancel();
                     return;
                 }
+                // vscode-user-mouse SEV-2 2026-07-10: per-option
+                // sub-rect wins over the row-level rect so a click on
+                // a specific value (e.g. `relative` in Line numbers)
+                // jumps to it instead of cycling forward. Also moves
+                // focus to that row as a side-effect.
+                if let Some(&(_, rc_idx, opt_idx)) = app
+                    .rects
+                    .settings_row_options
+                    .iter()
+                    .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+                {
+                    let cur = app
+                        .settings_overlay
+                        .as_ref()
+                        .map(|s| s.selected_row)
+                        .unwrap_or(0);
+                    let delta = rc_idx as isize - cur as isize;
+                    if delta != 0 {
+                        app.settings_move_row(delta);
+                    }
+                    app.settings_set_row_option(rc_idx, opt_idx);
+                    return;
+                }
                 if let Some(&(_, rc_idx)) = app
                     .rects
                     .settings_rows
@@ -662,11 +685,12 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                         .unwrap_or(0);
                     let delta = rc_idx as isize - cur as isize;
                     if delta == 0 {
-                        // Already focused — click cycles the value
-                        // forward (vscode-mouse SEV-2 2026-06-10:
-                        // "row title click moves the focus arrow;
-                        // clicking value glyphs themselves does
-                        // nothing. Only ← / → keys mutate"). Per-chip
+                        // Already focused, click was NOT on a specific
+                        // option value (handled above). Cycle the value
+                        // forward as a fallback (vscode-mouse SEV-2
+                        // 2026-06-10: "row title click moves the focus
+                        // arrow; clicking value glyphs themselves does
+                        // nothing"). Per-chip
                         // hit-rects would be ideal, but click-to-
                         // advance is the small interaction win that
                         // makes the overlay feel responsive without

@@ -39,6 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // overlay is open — they'd otherwise survive between opens.
     app.rects.settings_overlay_rect = None;
     app.rects.settings_rows.clear();
+    app.rects.settings_row_options.clear();
     // qa-7th code-review W-4 2026-06-30 — clear Save/Cancel chip
     // rects too so the mouse handler can't pick up stale coords.
     app.rects.settings_save_button = None;
@@ -154,8 +155,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // vector so the windowing loop below can map a visible line back
     // to its 0-based row index — what `settings_move_row` /
     // `apply_setting` use. Section headers get `None`.
+    //
+    // Also track per-option column ranges within each row so the
+    // click handler can jump-to-value instead of just cycling. Each
+    // entry: (row_counter_idx, option_idx, col_start, col_end) with
+    // columns relative to the start of the row line.
+    // vscode-user-mouse SEV-2 2026-07-10.
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(items.len());
     let mut line_row_counter: Vec<Option<usize>> = Vec::with_capacity(items.len());
+    let mut option_col_ranges: Vec<(usize, usize, usize, usize)> = Vec::new();
     let mut rc = 0usize;
     for (i, item) in items.iter().enumerate() {
         match item {
@@ -194,11 +202,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                         }),
                     ));
                 } else {
+                    // Column ruler: marker (2) + label ("{:30}  " = 32).
+                    let mut col: usize = 2 + 32;
                     for (j, opt) in row.options.iter().enumerate() {
                         let is_current = j == row.current_idx;
                         if j > 0 {
                             spans.push(Span::styled(" / ", Style::default().fg(t.bg2)));
+                            col += 3;
                         }
+                        let opt_width = opt.chars().count() + if is_current { 2 } else { 0 };
+                        // Include the surrounding brackets in the click
+                        // rect so clicking `[on]` counts the same as
+                        // clicking `on`.
+                        option_col_ranges.push((rc, j, col, col + opt_width));
+                        col += opt_width;
                         if is_current {
                             spans.push(Span::styled(
                                 format!("[{opt}]"),
@@ -385,15 +402,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     // Section-header lines are excluded (None in line_row_counter).
     for (visible_y, line_idx) in (scroll..scroll + window.len()).enumerate() {
         if let Some(Some(rc_idx)) = line_row_counter.get(line_idx).copied() {
+            let row_y = body_rect.y + visible_y as u16;
             app.rects.settings_rows.push((
                 Rect {
                     x: body_rect.x,
-                    y: body_rect.y + visible_y as u16,
+                    y: row_y,
                     width: body_rect.width,
                     height: 1,
                 },
                 rc_idx,
             ));
+            // Per-option sub-rects for this visible row. Cull ones
+            // that are wholly outside the panel width — the row
+            // clips at `body_rect.width` and clicks past it belong
+            // to no option.
+            for &(orc, opt_idx, c0, c1) in &option_col_ranges {
+                if orc != rc_idx {
+                    continue;
+                }
+                let width = c1.saturating_sub(c0) as u16;
+                if width == 0 || c0 as u16 >= body_rect.width {
+                    continue;
+                }
+                let visible_width = width.min(body_rect.width - c0 as u16);
+                app.rects.settings_row_options.push((
+                    Rect {
+                        x: body_rect.x + c0 as u16,
+                        y: row_y,
+                        width: visible_width,
+                        height: 1,
+                    },
+                    rc_idx,
+                    opt_idx,
+                ));
+            }
         }
     }
     frame.render_widget(Paragraph::new(window), body_rect);

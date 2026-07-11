@@ -2267,6 +2267,13 @@ pub struct PaneRects {
     /// `row_counter_idx` is the same 0-based index `settings_move_row`
     /// uses (skips section headers). Repopulated per render.
     pub settings_rows: Vec<(Rect, usize)>,
+    /// vscode-user-mouse SEV-2 2026-07-10: per-option sub-rect within
+    /// a discrete-choice row, so a click on `[relative]` or `off` in
+    /// the "Line numbers" row jumps directly to that option instead
+    /// of cycling by +1. Tuple: (rect, row_counter_idx, option_idx).
+    /// Populated only for `SettingItem::Row` (skips Number rows —
+    /// those use ← / → chevrons).
+    pub settings_row_options: Vec<(Rect, usize, usize)>,
     /// qa-6th mouse SEV-3 2026-06-29: visible Save / Cancel chips
     /// at the bottom-right of the settings overlay so mouse-only
     /// users can commit without typing Enter / Esc.

@@ -1271,6 +1271,27 @@ impl App {
         }
     }
 
+    /// Set a discrete-choice row's `current_idx` directly. Used by
+    /// mouse clicks on per-option sub-rects — matches VS Code /
+    /// macOS radio-button semantics where clicking a specific value
+    /// jumps to it instead of cycling. vscode-user-mouse SEV-2
+    /// 2026-07-10. No-op on number / text / color / reset-all rows
+    /// (those don't have discrete option indices).
+    pub fn settings_set_row_option(&mut self, row_idx: usize, option_idx: usize) {
+        let items = self.filtered_settings_items();
+        let rows: Vec<&SettingItem> = items.iter().filter(|i| i.is_row()).collect();
+        let Some(SettingItem::Row(r)) = rows.get(row_idx) else {
+            return;
+        };
+        if r.key == RESET_ALL_KEY || option_idx >= r.options.len() || option_idx == r.current_idx {
+            return;
+        }
+        let key = r.key;
+        if apply_setting(&mut self.config, key, option_idx) {
+            self.persist_setting_to_workspace(key);
+        }
+    }
+
     /// `Enter` on the focused row. For the reset-all sentinel, resets
     /// every setting to its default. For normal rows, cycles forward
     /// (equivalent to `→`).

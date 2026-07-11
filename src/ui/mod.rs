@@ -232,6 +232,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // save / cancel handler invisibly.
         app.rects.settings_overlay_rect = None;
         app.rects.settings_rows.clear();
+        app.rects.settings_row_options.clear();
         app.rects.settings_save_button = None;
         app.rects.settings_cancel_button = None;
         app.rects.tree = None;
