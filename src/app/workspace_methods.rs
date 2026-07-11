@@ -201,6 +201,14 @@ impl App {
         // dot, active repo) map to the right rows.
         self.tree = tree;
         self.repos = found;
+        // api-workflow SEV-2 2026-07-11: `http_env_override` used to
+        // survive workspace swaps. A user picking `dev` in workspace
+        // A, then jumping to workspace B, silently resolved B's
+        // requests against `.mnml/env/dev.env` there — either
+        // masking B's real defaults or blowing up on a missing file.
+        // Reset per-workspace state that doesn't make sense
+        // cross-workspace.
+        self.http_env_override = None;
         let mut extras_by_pos: Vec<&ExtraWorkspace> = self.extra_workspaces.iter().collect();
         extras_by_pos.sort_by_key(|w| w.position);
         let extra_roots: Vec<PathBuf> = extras_by_pos.iter().map(|w| w.root.clone()).collect();
