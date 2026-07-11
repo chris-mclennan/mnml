@@ -3973,6 +3973,32 @@ impl Editor {
                 self.text.replace_range(lo..hi, "");
                 self.cursor = lo;
                 self.anchor = None;
+                // vscode-user SEV-1 2026-07-10 fix: extra_cursors /
+                // extra_anchors used to be left at their pre-delete byte
+                // offsets, so any extra cursor past `lo` pointed past
+                // the deleted range's new end — or, on non-ASCII text,
+                // into the middle of a multibyte codepoint. A follow-on
+                // multi-cursor InsertChar then hit
+                // `insert_str(p, …)`'s `is_char_boundary` assertion and
+                // panicked. Shift all extras: unchanged if <= lo, clamp
+                // to lo if inside the deleted range, subtract (hi-lo)
+                // if past hi.
+                let removed = hi - lo;
+                let shift = |b: usize| -> usize {
+                    if b <= lo {
+                        b
+                    } else if b >= hi {
+                        b - removed
+                    } else {
+                        lo
+                    }
+                };
+                for c in &mut self.extra_cursors {
+                    *c = shift(*c);
+                }
+                for b in self.extra_anchors.iter_mut().flatten() {
+                    *b = shift(*b);
+                }
                 out.buffer_changed = true;
                 return true;
             }
@@ -4796,6 +4822,55 @@ mod tests {
         for op in ops {
             e.apply(op.clone(), 10, c);
         }
+    }
+
+    /// vscode-user SEV-1 2026-07-10 — `is_char_boundary` panic in
+    /// multi-cursor typing after a selection-delete on the primary
+    /// cursor. `delete_selection_if_any` shrunk `self.text` but left
+    /// `extra_cursors` at their pre-delete byte offsets; the next
+    /// InsertChar's multi-cursor branch then called
+    /// `insert_str(stale_offset, …)`, which either wrote to the wrong
+    /// place (ASCII) or panicked mid-codepoint (UTF-8). This test
+    /// covers both shapes: an ASCII buffer to verify positions, and a
+    /// UTF-8 buffer to verify no panic.
+    #[test]
+    fn selection_delete_shifts_extra_cursors_before_multi_insert() {
+        // ASCII: "abcdefgh". Primary selects "cd" (bytes 2..4), extra
+        // cursor at 6 (between "f" and "g"). After delete_selection +
+        // insert 'X', both cursors should insert 'X' at their now-valid
+        // positions.
+        let (mut e, mut c) = ed("abcdefgh");
+        e.cursor = 2;
+        e.anchor = Some(4); // selection [2..4] = "cd"
+        e.extra_cursors = vec![6];
+        e.extra_anchors = vec![None];
+        e.apply(EditOp::InsertChar('X'), 10, &mut c);
+        // After delete, text was "abefgh"; extra cursor 6 shifted to 4
+        // (past the removed range). Multi-cursor insert wrote 'X' at
+        // both 2 and 4 → "abXefXgh".
+        assert_eq!(e.text(), "abXefXgh");
+
+        // UTF-8: "aébécédé" — 8 chars, 12 bytes (each é = 2 bytes).
+        // Byte layout: a(0) é(1-2) b(3) é(4-5) c(6) é(7-8) d(9) é(10-11).
+        // Selection deletes the first é (bytes 1..3). Extra cursor at
+        // byte 6 (start of 'c', a valid boundary). WITHOUT the shift
+        // fix, byte 6 would remain at 6 after the delete, but the
+        // buffer contracted by 2 bytes so byte 6 is now mid-'é'
+        // (which is now at bytes 5-6). The next multi-cursor
+        // insert would then hit `insert_str`'s `is_char_boundary`
+        // assertion and panic. With the fix, extras shift 6→4
+        // (past hi=3, shift by removed=2), which lands on the new
+        // 'c' — still a valid boundary.
+        let (mut e, mut c) = ed("aébécédé");
+        e.cursor = 1;
+        e.anchor = Some(3);
+        e.extra_cursors = vec![6];
+        e.extra_anchors = vec![None];
+        e.apply(EditOp::InsertChar('X'), 10, &mut c); // must not panic
+        // After delete: "abécédé" (10 bytes). Extra shifted 6→4 (valid
+        // — 'c'). Primary at 1. Multi-insert (descending order): 'X' at
+        // 4 (before 'c') then at 1 (before 'b') → "aXbéXcédé".
+        assert_eq!(e.text(), "aXbéXcédé");
     }
 
     /// Regression for the 2026-06-07 bug-hunt SEV-3 finding:
