@@ -155,6 +155,15 @@ pub enum EditOp {
     /// from the cursor outward.
     SelectInnerBracket(char),
     SelectAroundBracket(char),
+    /// HTML/XML/JSX tag text objects (`it` / `at`). `SelectInnerTag`
+    /// selects the body between the opening and closing tag (excludes
+    /// both `<TagName>` and `</TagName>`); `SelectAroundTag` includes
+    /// both tags. Uses `enclosing_tag_pair` to find the innermost
+    /// enclosing pair around the cursor. No-op when the cursor isn't
+    /// inside a matched tag pair (self-closing / void / top-level
+    /// text). nvchad-user SEV-2 2026-07-10.
+    SelectInnerTag,
+    SelectAroundTag,
     /// vim paragraph text object: `ip` selects the cursor's paragraph
     /// (the run of non-blank lines bounded by blank lines or buffer
     /// edges). `ap` extends to include trailing blank lines.

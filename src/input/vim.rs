@@ -1531,6 +1531,17 @@ impl VimInputHandler {
                             SelectInnerIndentBlock
                         }
                     }
+                    // `it` / `at` — HTML/XML/JSX tag text objects.
+                    // Inner: body between `<Foo>` and `</Foo>`.
+                    // Around: includes both tags.
+                    // nvchad-user SEV-2 2026-07-10.
+                    KeyCode::Char('t') => {
+                        if around {
+                            SelectAroundTag
+                        } else {
+                            SelectInnerTag
+                        }
+                    }
                     // `aI` — indent block + header line above *and* the
                     // line below. (`iI` isn't a vim-indent-object verb.)
                     KeyCode::Char('I') if around => SelectOuterIndentBlock,

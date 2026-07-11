@@ -424,6 +424,68 @@ fn find_closing_tag(text: &str, name: &str, after_byte: usize) -> Option<usize> 
     None
 }
 
+/// Find the innermost enclosing HTML/XML/JSX tag pair around `cursor`.
+/// Returns `(open_lt, open_gt, close_lt, close_gt)` — the byte offsets
+/// of the opening `<` and `>` of the open tag, and the `<` and `>` of
+/// the matching close tag. `open_gt` is the byte AFTER the open's `>`
+/// (exclusive end); same for `close_gt`. Returns `None` when the
+/// cursor isn't inside a tag pair (top-level text) or a matching
+/// close tag can't be found (self-closing / void / malformed).
+///
+/// Used by vim's `dit` / `dat` / `cit` / `cat` / etc. text objects.
+/// nvchad-user SEV-2 2026-07-10 fix.
+pub fn enclosing_tag_pair(text: &str, cursor: usize) -> Option<(usize, usize, usize, usize)> {
+    let bytes = text.as_bytes();
+    let cursor = cursor.min(bytes.len());
+    // Walk backward from `cursor` looking for `<TagName>` opens whose
+    // matching `</TagName>` sits AT OR AFTER the cursor. First match
+    // wins (innermost).
+    let mut i = cursor;
+    loop {
+        // Find the previous `<`.
+        let mut lt = None;
+        let mut j = i;
+        while j > 0 {
+            j -= 1;
+            if bytes[j] == b'<' {
+                lt = Some(j);
+                break;
+            }
+        }
+        let lt = lt?;
+        // Find the matching `>` for this open. If none, stop.
+        let after = &text[lt + 1..];
+        let gt_rel = after.find('>')?;
+        let gt = lt + 1 + gt_rel;
+        // Skip closing tags (`</Foo>`) — we want open tags.
+        // Skip self-closing tags (`<Foo />`) — no matching close.
+        let is_closing = bytes.get(lt + 1) == Some(&b'/');
+        let is_self_closing = gt > lt && text[lt..gt].ends_with('/');
+        if !is_closing && !is_self_closing {
+            let inside = &text[lt + 1..gt];
+            if let Some(name) = extract_tag_name(inside)
+                && let Some(close_lt) = find_closing_tag(text, name, gt + 1)
+            {
+                // Only accept when the cursor falls between the two.
+                // Vim's dit/dat wants "enclosing" — cursor sits in
+                // the body OR on either tag's cells.
+                let close_gt_rel = text[close_lt..].find('>');
+                if let Some(cgr) = close_gt_rel {
+                    let close_gt = close_lt + cgr;
+                    if cursor >= lt && cursor <= close_gt {
+                        return Some((lt, gt + 1, close_lt, close_gt + 1));
+                    }
+                }
+            }
+        }
+        // No match at this `<` — keep walking further back.
+        if lt == 0 {
+            return None;
+        }
+        i = lt;
+    }
+}
+
 pub fn find_whole_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)> {
     if word.is_empty() || word.len() > text.len() {
         return Vec::new();
@@ -2372,6 +2434,18 @@ impl Editor {
                 if let Some((o, c)) = self.enclosing_bracket_pair(open, close) {
                     self.anchor = Some(o + open.len_utf8());
                     self.cursor = c;
+                }
+            }
+            SelectInnerTag => {
+                if let Some((_ol, og, cl, _cg)) = enclosing_tag_pair(&self.text, self.cursor) {
+                    self.anchor = Some(og);
+                    self.cursor = cl;
+                }
+            }
+            SelectAroundTag => {
+                if let Some((ol, _og, _cl, cg)) = enclosing_tag_pair(&self.text, self.cursor) {
+                    self.anchor = Some(ol);
+                    self.cursor = cg;
                 }
             }
             RestoreLastSelection => {
@@ -4847,6 +4921,40 @@ mod tests {
         for op in ops {
             e.apply(op.clone(), 10, c);
         }
+    }
+
+    /// nvchad-user SEV-2 2026-07-10 — dit/dat HTML tag text objects.
+    #[test]
+    fn tag_text_object_selects_inner_and_around() {
+        // Simple pair: `<div>hello</div>`. Cursor inside "hello".
+        let (mut e, mut c) = ed("<div>hello</div>");
+        e.cursor = 7; // in "hello"
+        e.apply(EditOp::SelectInnerTag, 10, &mut c);
+        assert_eq!(e.selected_text(), "hello");
+
+        let (mut e, mut c) = ed("<div>hello</div>");
+        e.cursor = 7;
+        e.apply(EditOp::SelectAroundTag, 10, &mut c);
+        assert_eq!(e.selected_text(), "<div>hello</div>");
+
+        // Nested: cursor in inner-most.
+        let (mut e, mut c) = ed("<a><b>nested</b></a>");
+        e.cursor = 8; // in "nested"
+        e.apply(EditOp::SelectInnerTag, 10, &mut c);
+        assert_eq!(e.selected_text(), "nested");
+
+        // Self-closing is skipped: cursor after `<br/>` should walk
+        // out to the outer tag pair.
+        let (mut e, mut c) = ed("<p>line<br/>more</p>");
+        e.cursor = 12; // in "more"
+        e.apply(EditOp::SelectInnerTag, 10, &mut c);
+        assert_eq!(e.selected_text(), "line<br/>more");
+
+        // No enclosing tag: no-op.
+        let (mut e, mut c) = ed("just plain text");
+        e.cursor = 5;
+        e.apply(EditOp::SelectInnerTag, 10, &mut c);
+        assert_eq!(e.selected_text(), "");
     }
 
     /// vscode-user SEV-2 2026-07-10 — paste-over-selection was split
