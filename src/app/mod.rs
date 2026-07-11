@@ -9333,6 +9333,55 @@ impl App {
         }
     }
 
+    /// Vim `zf` in Visual mode — create a fold spanning the selected
+    /// row range. Selection is remembered, then cleared. If the
+    /// selection is single-line, toasts a hint. nvchad-round-8 SEV-3
+    /// 2026-07-11.
+    pub fn fold_selection_in_active(&mut self) {
+        let Some(idx) = self.active else {
+            return;
+        };
+        let Some(Pane::Editor(b)) = self.panes.get(idx) else {
+            return;
+        };
+        let Some((lo, hi)) = b.editor.selection() else {
+            self.toast("zf — no selection");
+            return;
+        };
+        let text = b.editor.text();
+        let start_line = text[..lo].bytes().filter(|&b| b == b'\n').count();
+        let hi_line = text[..hi].bytes().filter(|&b| b == b'\n').count();
+        // End-of-selection at column 0 doesn't count the last line
+        // (matches YankLines / other linewise selection semantics).
+        let end_line = if hi > lo
+            && hi > 0
+            && text.as_bytes()[hi.saturating_sub(1)] == b'\n'
+            && hi_line > start_line
+        {
+            hi_line - 1
+        } else {
+            hi_line
+        };
+        if end_line <= start_line {
+            self.toast("zf — need multi-line selection");
+            return;
+        }
+        let synced_path = b.path.clone();
+        if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+            b.folds.insert(start_line, end_line);
+            b.editor
+                .apply(crate::edit_op::EditOp::SelectClear, 0, &mut self.clipboard);
+            self.toast(format!("folded lines {}..{}", start_line + 1, end_line + 1));
+        }
+        if let Some(p) = synced_path {
+            let entries: Vec<(usize, usize)> = self
+                .active_editor()
+                .map(|b| b.folds.iter().map(|(&s, &e)| (s, e)).collect())
+                .unwrap_or_default();
+            self.note_file_folds(&p, entries);
+        }
+    }
+
     /// `editor.fold_all_brackets` — vim `zM` when no LSP folds are
     /// available. Walks the active buffer, finds every `{…}`/`[…]`/
     /// `(…)` pair that spans more than one line, and adds it to
@@ -9844,6 +9893,36 @@ impl App {
             return;
         }
         let count = rows.len();
+        // `:g/pat/p` — print each matching line to a toast + append
+        // to the `message_log` (accessible via `:messages`). Vim
+        // canonical shows matches in the command-line area; mnml's
+        // toast queue is close enough for scan-through workflows.
+        // nvchad-round-8 SEV-3 2026-07-11.
+        let cmd_trimmed = cmd.trim();
+        if cmd_trimmed == "p" || cmd_trimmed == "print" {
+            let lines: Vec<String> = rows
+                .iter()
+                .filter_map(|&r| b.editor.text().split('\n').nth(r).map(|s| s.to_string()))
+                .collect();
+            for line in &lines {
+                self.message_log.push(line.clone());
+            }
+            if self.message_log.len() > MESSAGE_LOG_MAX {
+                let drop = self.message_log.len() - MESSAGE_LOG_MAX;
+                self.message_log.drain(..drop);
+            }
+            // Toast the first line as a quick preview + a hint.
+            let preview = lines.first().map(|s| s.as_str()).unwrap_or("");
+            self.toast(format!(
+                ":g/p — {count} line(s); first: {} · `:messages`",
+                if preview.len() > 60 {
+                    &preview[..60]
+                } else {
+                    preview
+                }
+            ));
+            return;
+        }
         let cmd = cmd.to_string();
         // Walk in reverse so `:d`-style line removals don't shift later
         // row indices.

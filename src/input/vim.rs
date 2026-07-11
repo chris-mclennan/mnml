@@ -1085,6 +1085,16 @@ impl VimInputHandler {
                     KeyCode::Char('k') => {
                         InputResult::App(AppCommand::RunCommand("editor.fold_prev".into()))
                     }
+                    // nvchad-round-8 SEV-3 2026-07-11 — `zf` creates a
+                    // fold. `zff` closes the enclosing bracket pair
+                    // (same as `zc` on the header line — mnml's fold
+                    // model treats "fold-here" and "close-fold" as one
+                    // operation). Motion-based `zf<motion>` is a
+                    // follow-up (needs motion parsing to get an end
+                    // line); the common case is covered.
+                    KeyCode::Char('f') => {
+                        InputResult::App(AppCommand::RunCommand("editor.toggle_fold".into()))
+                    }
                     _ => InputResult::Consumed,
                 };
             }
@@ -2882,6 +2892,32 @@ impl VimInputHandler {
                 }
                 return InputResult::Consumed;
             }
+            // Visual `z*` prefix — `zf` folds the selection, other
+            // `z*` chords delegate to their normal-mode meaning
+            // (they all end visual mode). nvchad-round-8 SEV-3
+            // 2026-07-11.
+            Prefix::ZFold => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char('f') => {
+                        self.enter_normal();
+                        InputResult::App(AppCommand::RunCommand("editor.fold_selection".into()))
+                    }
+                    KeyCode::Char('c' | 'a' | 'A' | 'C') => {
+                        self.enter_normal();
+                        InputResult::App(AppCommand::RunCommand("editor.toggle_fold".into()))
+                    }
+                    KeyCode::Char('M') => {
+                        self.enter_normal();
+                        InputResult::App(AppCommand::RunCommand("editor.fold_all_brackets".into()))
+                    }
+                    KeyCode::Char('R' | 'E') => {
+                        self.enter_normal();
+                        InputResult::App(AppCommand::RunCommand("editor.unfold_all".into()))
+                    }
+                    _ => InputResult::Consumed,
+                };
+            }
             // Visual text objects — `viw`, `viW`, `vip`, `vi(`, `va[`,
             // `vi"`, `vit`, etc. Selection stays live; the op just
             // sets anchor+cursor to the object's range. Stay in
@@ -3010,6 +3046,13 @@ impl VimInputHandler {
             }
             KeyCode::Char('a') => {
                 self.prefix = Prefix::TextObjectAround;
+                InputResult::Consumed
+            }
+            // Visual `z` — enter ZFold prefix (matches normal mode).
+            // Notably `zf` here folds the selection, `zc`/`zo` toggle,
+            // etc. nvchad-round-8 SEV-3 2026-07-11.
+            KeyCode::Char('z') => {
+                self.prefix = Prefix::ZFold;
                 InputResult::Consumed
             }
             KeyCode::Char('d') | KeyCode::Char('x') => {

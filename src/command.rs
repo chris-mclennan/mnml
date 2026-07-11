@@ -1044,6 +1044,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.fold_next_in_active(),
         },
         Command {
+            id: "editor.fold_selection",
+            title: "Fold the visual selection (`zf` in Visual)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.fold_selection_in_active(),
+        },
+        Command {
             id: "editor.fold_prev",
             title: "Jump to previous fold (`zk`)",
             group: "editor",
