@@ -859,20 +859,22 @@ impl RequestPane {
 
     /// Render this request as a `curl` command line (for `http.copy_curl`).
     pub fn as_curl(&self) -> String {
-        let mut out = format!("curl '{}'", self.request.url);
+        // Header and body sides already POSIX-escape single quotes
+        // (`'\''` closes+injects+reopens the string). The URL side
+        // was NOT escaped — a URL containing an apostrophe produced
+        // shell-broken curl. api-workflow SEV-2 2026-07-11.
+        let esc = |s: &str| s.replace('\'', "'\\''");
+        let mut out = format!("curl '{}'", esc(&self.request.url));
         if self.request.method != "GET"
             && !(self.request.method == "POST" && self.request.body.is_some())
         {
             out.push_str(&format!(" -X {}", self.request.method));
         }
         for (k, v) in &self.request.headers {
-            out.push_str(&format!(" \\\n  -H '{}: {}'", k, v.replace('\'', "'\\''")));
+            out.push_str(&format!(" \\\n  -H '{}: {}'", k, esc(v)));
         }
         if let Some(body) = &self.request.body {
-            out.push_str(&format!(
-                " \\\n  --data-raw '{}'",
-                body.replace('\'', "'\\''")
-            ));
+            out.push_str(&format!(" \\\n  --data-raw '{}'", esc(body)));
         }
         out
     }

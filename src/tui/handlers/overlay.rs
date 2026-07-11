@@ -180,6 +180,13 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('n') if glyph_focused && ctrl => {
             app.open_glyph_builder_from_edit();
         }
+        // Some terminals emit Shift+Tab as `Tab` + SHIFT modifier
+        // instead of `BackTab` (crossterm normalization varies by
+        // terminal). Treat both as reverse cycling. vscode-user-kb
+        // round 4 (2026-07-11).
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.integration_edit_cycle_field(-1)
+        }
         KeyCode::Tab => app.integration_edit_cycle_field(1),
         KeyCode::BackTab => app.integration_edit_cycle_field(-1),
         KeyCode::Left if color_focused => app.integration_edit_color_cycle(-1),
@@ -229,6 +236,10 @@ pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.close_glyph_builder(),
         KeyCode::Enter => app.glyph_builder_commit(),
+        // Shift+Tab normalization — same as integration_edit above.
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.glyph_builder_cycle_field(-1)
+        }
         KeyCode::Tab => app.glyph_builder_cycle_field(1),
         KeyCode::BackTab => app.glyph_builder_cycle_field(-1),
         KeyCode::Up => app.glyph_builder_cycle_field(-1),

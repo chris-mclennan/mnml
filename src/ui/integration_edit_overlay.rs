@@ -25,8 +25,13 @@ fn edit_rect(parent: Rect, mode: &IntegrationEditMode) -> Rect {
     let row_count = match mode {
         // 6 field rows + 2 spacer/hint rows + 2 border rows = 10.
         IntegrationEditMode::AddCustom => 10,
-        // 4 field rows + 2 spacer/hint rows + 2 border rows = 8.
-        IntegrationEditMode::Edit => 8,
+        // Edit mode ALSO renders 6 field rows (Id + Command show as
+        // `[fixed]` but still occupy a line, per `visible_fields`).
+        // Prior sizing "4 field rows + hint + border = 8" clipped
+        // the last two rows so `tooltip` was unreachable AND
+        // invisible even after Tab landed on it. vscode-user-kb
+        // round 4 (2026-07-11) fix.
+        IntegrationEditMode::Edit => 10,
     };
     let width = 60.min(parent.width.saturating_sub(4));
     let height = (row_count as u16).min(parent.height.saturating_sub(4));

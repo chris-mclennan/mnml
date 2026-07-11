@@ -10044,14 +10044,26 @@ impl App {
     /// `s` (clamped to the buffer). Empty / non-numeric input is a no-op
     /// (the prompt accept always trims, but it might still be empty).
     pub fn goto_line_str(&mut self, s: &str) {
-        let Ok(n) = s.parse::<usize>() else {
+        // VS Code convention: `10:5` = line 10, col 5. vscode-user-kb
+        // round 4 (2026-07-11) — the prior parse rejected `LINE:COL`
+        // even though the goto prompt naturally invites the two-part
+        // form. Split on `:` if present; both halves are 1-based.
+        let (line_str, col_str) = match s.split_once(':') {
+            Some((l, c)) => (l.trim(), Some(c.trim())),
+            None => (s.trim(), None),
+        };
+        let Ok(n) = line_str.parse::<usize>() else {
             if !s.is_empty() {
                 self.toast(format!("not a number: {s:?}"));
             }
             return;
         };
+        let col = col_str
+            .and_then(|c| c.parse::<usize>().ok())
+            .map(|c| c.saturating_sub(1))
+            .unwrap_or(0);
         if let Some(b) = self.active_editor_mut() {
-            b.editor.place_cursor(n.saturating_sub(1), 0);
+            b.editor.place_cursor(n.saturating_sub(1), col);
         }
     }
 

@@ -2608,9 +2608,12 @@ fn builtin_commands() -> Vec<Command> {
             id: "buffer.last",
             title: "Switch to previously-active buffer (vim `Ctrl+^`)",
             group: "buffer",
-            // `Ctrl+Tab` for VSCode/IDE muscle memory; `ctrl+6` is a vim
-            // alias (Ctrl+^ is hard to type on most keyboards).
-            keys: &["ctrl+tab", "ctrl+6"],
+            // `Ctrl+Tab` for VSCode/IDE muscle memory. `ctrl+6` was
+            // an old vim-alias (Ctrl+^) but it now collides with
+            // `view.focus_tab_6` (Ctrl+1..9 focus-tab). VS Code
+            // parity wins — Ctrl+^ is still available via the
+            // vim-mode chord chain. Dropped 2026-07-11.
+            keys: &["ctrl+tab"],
             run: |app| app.switch_to_last_buffer(),
         },
         Command {
