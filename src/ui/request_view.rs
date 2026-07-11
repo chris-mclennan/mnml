@@ -297,40 +297,59 @@ fn colored_line_with_vars(
             ));
         }
     }
+    // Two-pointer walk over sorted tokens + sorted spans so per-char
+    // lookup is amortized O(1) instead of O(n_tokens + n_spans).
+    // 2026-07-11 perf follow-up from the earlier render review —
+    // minified single-line JSON with dozens of tree-sitter spans + a
+    // handful of `{{VAR}}` tokens went quadratic in char count.
     let mut byte = 0usize;
+    let mut tok_idx = 0usize; // next token whose end might still be reached
+    let mut span_scan_idx = 0usize; // next span whose start might still be reached
     while byte < src.len() {
         let ch = src[byte..].chars().next().unwrap();
         let ch_bytes = ch.len_utf8();
-        // Is this byte inside a var token? Var wins.
-        let mut style = None;
-        for tok in &tokens {
-            if byte >= tok.start && byte < tok.end {
-                style = Some(if tok.resolved {
-                    resolved_style
-                } else {
-                    unresolved_style
-                });
-                break;
-            }
+        // Advance tok_idx past tokens that end at-or-before this byte.
+        // Tokens are non-overlapping, produced in start-order.
+        while tok_idx < tokens.len() && tokens[tok_idx].end <= byte {
+            tok_idx += 1;
         }
-        // Otherwise, look up the JSON span covering `byte`. Later
-        // matches (deeper nesting) win.
-        if style.is_none() {
+        let style = if tok_idx < tokens.len()
+            && byte >= tokens[tok_idx].start
+            && byte < tokens[tok_idx].end
+        {
+            if tokens[tok_idx].resolved {
+                resolved_style
+            } else {
+                unresolved_style
+            }
+        } else {
+            // Walk spans starting at-or-before byte. Later match wins
+            // (innermost-nest). `span_scan_idx` advances as `byte`
+            // moves; but a nested span from an earlier start may still
+            // be "open" at this byte, so we can't strictly monotone
+            // the walk without an active-set. Compromise: keep the
+            // early-exit on `s > byte` (spans past cursor stop the
+            // walk), and start each byte's walk from
+            // `span_scan_idx` (spans that end at-or-before us are
+            // permanently done). Preserves correctness; amortized
+            // ~O(1) per byte on non-nested spans.
+            while span_scan_idx < ordered.len() && ordered[span_scan_idx].1 <= byte {
+                span_scan_idx += 1;
+            }
             let mut winning_color = None;
-            for (s, e, color) in &ordered {
-                if byte >= *s && byte < *e {
-                    winning_color = Some(*color);
-                }
+            for (s, e, color) in &ordered[span_scan_idx..] {
                 if *s > byte {
                     break;
                 }
+                if byte >= *s && byte < *e {
+                    winning_color = Some(*color);
+                }
             }
-            style = Some(match winning_color {
+            match winning_color {
                 Some(c) => Style::default().fg(c).bg(t.bg_dark),
                 None => base_style,
-            });
-        }
-        let style = style.unwrap();
+            }
+        };
         if !first && style != run_style {
             out.push(Span::styled(std::mem::take(&mut run), run_style));
         }
