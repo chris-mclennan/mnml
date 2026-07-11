@@ -774,8 +774,11 @@ impl ClaudeAgentsPane {
         let prior_sid = self.selected_row().map(|r| r.session_id.clone());
         let claude_pids = scan_running_pids(AgentSource::Claude);
         let codex_pids = scan_running_pids(AgentSource::Codex);
-        let mut rows = collect_rows(&claude_pids);
-        rows.extend(collect_codex_rows(&codex_pids));
+        // claude-agents SEV-2 2026-07-11: pass the current AgeFilter's
+        // max so `All` genuinely means all (no scan-time cap).
+        let max_age = self.age_filter.max_age_secs();
+        let mut rows = collect_rows_with_max_age(&claude_pids, max_age);
+        rows.extend(collect_codex_rows_with_max_age(&codex_pids, max_age));
         rows.sort_by(|a, b| {
             state_rank(a.state)
                 .cmp(&state_rank(b.state))
@@ -988,6 +991,11 @@ impl ClaudeAgentsPane {
         self.state_filter = None;
         self.source_filter = None;
         self.workspace_only = false;
+        // claude-agents SEV-3 2026-07-11: age_filter used to survive
+        // "clear filters" silently. Reset to the default (Week — same
+        // as `#[default]` on AgeFilter). Ctrl+L now genuinely clears
+        // everything filtering the visible row set.
+        self.age_filter = AgeFilter::default();
         self.selected = 0;
     }
 
@@ -998,6 +1006,7 @@ impl ClaudeAgentsPane {
             || self.state_filter.is_some()
             || self.source_filter.is_some()
             || self.workspace_only
+            || self.age_filter != AgeFilter::default()
     }
 
     /// Toggle the focused row's session id into `multi_selected`.
@@ -1150,6 +1159,22 @@ pub fn prefetch_rows() -> Vec<AgentRow> {
 }
 
 fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
+    // Default cap for callers that don't ask for a specific window
+    // (initial prefetch, older callers). AgeFilter-aware paths use
+    // `collect_rows_with_max_age` directly.
+    collect_rows_with_max_age(pids, Some(7 * 24 * 3600))
+}
+
+/// claude-agents SEV-2 2026-07-11: `collect_rows` used to hard-drop
+/// any transcript >7 days old at scan time, so `AgeFilter::All`
+/// ("no limit" per the label) never surfaced older sessions. The
+/// finding: a 200-hour-old (>8d) session was invisible even under
+/// `All`. Split the cap out so the pane's active filter controls
+/// visibility. `None` = load everything under `~/.claude/projects/`.
+fn collect_rows_with_max_age(
+    pids: &[(String, u32, String)],
+    max_age_secs: Option<u64>,
+) -> Vec<AgentRow> {
     let Some(root) = home_projects_dir() else {
         return Vec::new();
     };
@@ -1182,12 +1207,15 @@ fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
             // Skip files we don't care about right now.
             let Ok(meta) = f.metadata() else { continue };
             let mtime = meta.modified().ok();
-            // Last 7 days only — keeps the dashboard from
-            // ballooning. The user can scroll older transcripts via
-            // :ai.session_picker.
-            if let Some(t) = mtime
+            // Age cap — passed by the caller so `AgeFilter::All`
+            // (None) surfaces every transcript on disk. Older
+            // filters (Today/Week/Month) narrow scan-time to avoid
+            // parsing thousands of stale transcripts for a "recent"
+            // view. claude-agents SEV-2 2026-07-11.
+            if let Some(cap) = max_age_secs
+                && let Some(t) = mtime
                 && let Ok(age) = SystemTime::now().duration_since(t)
-                && age.as_secs() > 7 * 24 * 3600
+                && age.as_secs() > cap
             {
                 continue;
             }
@@ -1271,6 +1299,15 @@ fn collect_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
 /// (v0.141.0); the drill-down's Files/Bash views stay empty for
 /// codex rows until that lands.
 fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
+    collect_codex_rows_with_max_age(pids, Some(7 * 24 * 3600))
+}
+
+/// AgeFilter-aware sibling of `collect_codex_rows` — same rationale
+/// as `collect_rows_with_max_age`. claude-agents SEV-2 2026-07-11.
+fn collect_codex_rows_with_max_age(
+    pids: &[(String, u32, String)],
+    max_age_secs: Option<u64>,
+) -> Vec<AgentRow> {
     let mut rows: Vec<AgentRow> = Vec::new();
     let sessions_dir = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".codex/sessions"));
 
@@ -1315,9 +1352,10 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
                 continue;
             };
             let mtime = meta.modified().ok();
-            if let Some(t) = mtime
+            if let Some(cap) = max_age_secs
+                && let Some(t) = mtime
                 && let Ok(age) = SystemTime::now().duration_since(t)
-                && age.as_secs() > 7 * 24 * 3600
+                && age.as_secs() > cap
             {
                 continue;
             }
