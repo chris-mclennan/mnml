@@ -3173,7 +3173,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // Empty-state per tab.
     if icons.is_empty() {
         let msg = if !app.integrations_panel_filter.is_empty() {
-            format!(" No matches for “{}”", app.integrations_panel_filter)
+            format!(
+                " No matches for \"{}\" — Esc clears",
+                app.integrations_panel_filter
+            )
         } else {
             match active_tab {
                 crate::app::IntegrationsPanelTab::Installed => {

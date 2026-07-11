@@ -861,6 +861,37 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
+    /// Right-click on the statusline file chip — buffer-scoped menu
+    /// promised by `HoverChip::StatuslineFile`'s tooltip.
+    /// design-critic round-3 finding #3 2026-07-11.
+    pub fn open_statusline_file_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(path) = self.active_editor().and_then(|b| b.path.clone()) else {
+            self.toast("no saved file");
+            return;
+        };
+        let ws = self.workspace.clone();
+        let abs = path.to_string_lossy().into_owned();
+        let rel = crate::app::rel_path(&ws, &path);
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut items = vec![
+            MenuItem::new("Reveal in tree", MenuAction::Command("view.reveal_active")),
+            MenuItem::new("Copy path (absolute)", MenuAction::CopyPath(abs)),
+            MenuItem::new("Copy path (relative)", MenuAction::CopyPath(rel)),
+        ];
+        if !name.is_empty() {
+            items.push(MenuItem::new("Copy filename", MenuAction::CopyPath(name)));
+        }
+        items.push(MenuItem::new(
+            "Close buffer",
+            MenuAction::Command("buffer.close"),
+        ));
+        self.context_menu = Some(ContextMenu::new(Some("Buffer".into()), anchor, items));
+    }
+
     /// Right-click on the statusline mode chip — exposes the input-style
     /// switcher.
     pub fn open_statusline_mode_context_menu(&mut self, anchor: (u16, u16)) {

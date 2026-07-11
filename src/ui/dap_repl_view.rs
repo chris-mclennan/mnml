@@ -96,7 +96,7 @@ fn draw_history(frame: &mut Frame, app: &App, p: &DapReplPane, area: Rect) {
         )));
     } else if visible_count == 0 {
         lines.push(Line::from(Span::styled(
-            format!("  (no matches for \"{}\")", p.filter),
+            format!("  No matches for \"{}\" — Esc clears", p.filter),
             Style::default().fg(t.comment).bg(t.bg_dark),
         )));
     } else {

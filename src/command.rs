@@ -3950,7 +3950,10 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "snippet.pick_all",
             title: "Snippets: list ALL (every scope)…",
-            group: "editor",
+            // design-critic round-3 finding #1 2026-07-11: was
+            // group: "editor" — the outlier vs 4 sibling
+            // `snippet.*` commands all filed under "edit".
+            group: "edit",
             keys: &[],
             run: |app| app.snippet_pick_all(),
         },
@@ -4103,7 +4106,10 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "browser.autocapture_toggle",
             title: "Browser: toggle auto-append network entries to captured log",
-            group: "http",
+            // design-critic round-3 finding #1 2026-07-11: was
+            // group: "http" — the outlier vs 26 sibling
+            // `browser.*` commands all filed under "browser".
+            group: "browser",
             // Runtime override for `[browser] autocapture_to_log` —
             // affects every Browser pane in this session until restart.
             keys: &[],

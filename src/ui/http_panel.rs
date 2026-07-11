@@ -769,7 +769,7 @@ fn draw_files(
                 Paragraph::new(Line::from(vec![
                     Span::styled("   ", Style::default().bg(bg)),
                     Span::styled(
-                        "No .http / .curl files.",
+                        "No .http / .curl files yet — save one to see it here.",
                         Style::default().fg(t.comment).bg(bg),
                     ),
                 ])),

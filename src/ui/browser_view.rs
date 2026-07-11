@@ -194,7 +194,7 @@ pub fn draw(
             )));
         } else if visible.is_empty() {
             lines.push(Line::from(Span::styled(
-                format!("  (no matches for '{}')", b.dom_filter),
+                format!("  No matches for '{}' — Esc clears", b.dom_filter),
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
         } else {
@@ -260,7 +260,7 @@ pub fn draw(
             )));
         } else if visible.is_empty() {
             lines.push(Line::from(Span::styled(
-                format!("  (no matches for '{}')", b.cookies_filter),
+                format!("  No matches for '{}' — Esc clears", b.cookies_filter),
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
         } else {
@@ -433,7 +433,7 @@ pub fn draw(
             )));
         } else if visible.is_empty() {
             lines.push(Line::from(Span::styled(
-                format!("  (no matches for '{}')", b.storage_filter),
+                format!("  No matches for '{}' — Esc clears", b.storage_filter),
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
         } else {
@@ -530,7 +530,7 @@ pub fn draw(
             )));
         } else if visible.is_empty() {
             lines.push(Line::from(Span::styled(
-                format!("  (no matches for '{}')", b.net_filter),
+                format!("  No matches for '{}' — Esc clears", b.net_filter),
                 Style::default().fg(t.comment).bg(t.bg_dark),
             )));
         } else {

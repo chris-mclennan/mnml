@@ -666,6 +666,16 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_mode_context_menu((x, y));
         return;
     }
+    // design-critic round-3 finding #3 2026-07-11 — the file chip's
+    // tooltip promised a "buffer menu" on right-click but nothing
+    // was wired. Fulfill the promise with a compact menu that
+    // covers the common needs: reveal in tree, copy paths, close.
+    if let Some(r) = app.rects.statusline_file_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_file_context_menu((x, y));
+        return;
+    }
     // #21 v2 — right-click coverage for the remaining statusline
     // chips (WRAP / LSP / Autosave / Test). Small menus that
     // surface the underlying palette commands so users can
