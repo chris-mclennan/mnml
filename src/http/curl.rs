@@ -25,6 +25,7 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
     let mut headers: Vec<(String, String)> = Vec::new();
     let mut body: Option<String> = None;
     let mut cookies: Vec<String> = Vec::new();
+    let mut insecure = false;
 
     let mut i = start;
     while i < tokens.len() {
@@ -71,6 +72,45 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
                     advance = 2;
                 }
             }
+            // api-workflow round 6 SEV-2 2026-07-11 — `-u user:pass`
+            // used to fall through the unknown-flag branch and the
+            // next token `user:pass` was mis-parsed as the URL,
+            // silently discarding the real URL. Convert to a
+            // base64 Basic Authorization header.
+            "-u" | "--user" => {
+                if let Some(v) = tokens.get(i + 1) {
+                    use base64::{Engine, engine::general_purpose::STANDARD};
+                    let encoded = STANDARD.encode(v.as_bytes());
+                    headers.push(("authorization".to_string(), format!("Basic {encoded}")));
+                    advance = 2;
+                }
+            }
+            // `-F field=value` / `-F field=@file` builds multipart
+            // form data. We don't have a full multipart encoder yet;
+            // collect field=value pairs into an
+            // `application/x-www-form-urlencoded` body as a
+            // pragmatic approximation. Same code path used for
+            // `--form-string` (never file-loads).
+            "-F" | "--form" | "--form-string" => {
+                if let Some(v) = tokens.get(i + 1) {
+                    let form_line = if body.is_none() {
+                        v.clone()
+                    } else {
+                        format!("{}&{v}", body.as_deref().unwrap_or(""))
+                    };
+                    body = Some(form_line);
+                    if !headers
+                        .iter()
+                        .any(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                    {
+                        headers.push((
+                            "content-type".to_string(),
+                            "application/x-www-form-urlencoded".to_string(),
+                        ));
+                    }
+                    advance = 2;
+                }
+            }
             "--url" => {
                 if let Some(v) = tokens.get(i + 1) {
                     if url.is_none() {
@@ -79,10 +119,16 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
                     advance = 2;
                 }
             }
+            // `-k` / `--insecure` — skip TLS certificate verification.
+            // api-workflow round 6 SEV-2 2026-07-11: was previously
+            // a documented no-op; now sets a flag that http::send()
+            // wires into reqwest's `danger_accept_invalid_certs`.
+            "-k" | "--insecure" => {
+                insecure = true;
+            }
             // Flags we accept and ignore.
-            "--compressed" | "--location" | "-L" | "--insecure" | "-k" | "--silent" | "-s"
-            | "--fail" | "-f" | "-i" | "--include" | "-#" | "--progress-bar" | "-v"
-            | "--verbose" => {}
+            "--compressed" | "--location" | "-L" | "--silent" | "-s" | "--fail" | "-f" | "-i"
+            | "--include" | "-#" | "--progress-bar" | "-v" | "--verbose" => {}
             _ => {
                 // An unknown `-flag` is skipped without eating the next token (we
                 // can't know if it takes an argument; over-eating loses the URL
@@ -118,6 +164,7 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
         url,
         headers: dedupe_keep_last(headers),
         body,
+        insecure,
     })
 }
 
@@ -269,6 +316,34 @@ fn split_header(s: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// api-workflow round 6 SEV-2 2026-07-11 — `-u user:pass` used
+    /// to fall through the unknown-flag arm and the token after got
+    /// mis-claimed as the URL, silently discarding the real URL.
+    #[test]
+    fn dash_u_creates_basic_auth_header_and_preserves_url() {
+        let r = parse_curl("curl -u alice:s3cr3t 'https://x/a'").unwrap();
+        assert_eq!(r.url, "https://x/a");
+        let auth = r
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+            .map(|(_, v)| v.as_str());
+        assert_eq!(auth, Some("Basic YWxpY2U6czNjcjN0"));
+    }
+
+    #[test]
+    fn dash_capital_f_form_creates_urlencoded_body_and_preserves_url() {
+        let r = parse_curl("curl -F 'a=1' -F 'b=2' 'https://x/form'").unwrap();
+        assert_eq!(r.url, "https://x/form");
+        assert_eq!(r.body.as_deref(), Some("a=1&b=2"));
+        let ct = r
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+            .map(|(_, v)| v.as_str());
+        assert_eq!(ct, Some("application/x-www-form-urlencoded"));
+    }
 
     #[test]
     fn chrome_get_with_headers() {

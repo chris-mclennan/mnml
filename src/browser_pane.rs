@@ -149,6 +149,7 @@ impl NetEntry {
                 .cloned()
                 .collect(),
             body: self.post_data.clone(),
+            insecure: false,
         }
     }
 }

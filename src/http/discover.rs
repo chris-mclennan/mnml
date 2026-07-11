@@ -59,6 +59,7 @@ pub fn run(opts: &Options) -> Result<usize, String> {
             url: opts.spec.clone(),
             headers: vec![("accept".to_string(), "application/json".to_string())],
             body: None,
+            insecure: false,
         };
         super::send(&req).and_then(|r| {
             if (200..300).contains(&r.status) {

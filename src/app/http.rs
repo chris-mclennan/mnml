@@ -860,6 +860,7 @@ impl App {
             url: String::new(),
             headers: Vec::new(),
             body: None,
+            insecure: false,
         };
         // Pick the next unused req-N.http slot in the collection.
         let mut n = 1usize;
@@ -5793,6 +5794,7 @@ impl App {
             url: String::new(),
             headers: Vec::new(),
             body: None,
+            insecure: false,
         };
         let mut pane = RequestPane::new(None, request, crate::http::script::Script::default(), 0);
         pane.view = ViewMode::Edit;
@@ -6479,6 +6481,7 @@ mod http_tests {
             url: "https://example.test/v1".into(),
             headers: vec![("Accept".into(), "application/json".into())],
             body: Some(r#"{"q":1}"#.into()),
+            insecure: false,
         };
         let pane = Pane::Request(crate::request_pane::RequestPane::new(
             Some(src.clone()),

@@ -258,6 +258,7 @@ fn dispatch(
         url,
         headers: backend.headers(),
         body,
+        insecure: false,
     };
     let resp = send(&req).map_err(|e| format!("send: {e}"))?;
     Ok((resp.status, resp.body))

@@ -191,6 +191,7 @@ fn parse_block(block: &str) -> Result<Request, ParseError> {
         url,
         headers,
         body,
+        insecure: false,
     })
 }
 

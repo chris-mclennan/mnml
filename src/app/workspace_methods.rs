@@ -808,6 +808,7 @@ impl App {
                 url: String::new(),
                 headers: Vec::new(),
                 body: None,
+                insecure: false,
             };
             rp.headers_buffer = String::new();
             rp.headers_cursor = 0;

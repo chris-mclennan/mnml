@@ -392,6 +392,7 @@ pub fn spawn_bitbucket_pr_fetcher(repo_slug: String) -> Receiver<PrListEvent> {
                 ("Accept".to_string(), "application/json".to_string()),
             ],
             body: None,
+            insecure: false,
         };
         let resp = match crate::http::send(&req) {
             Ok(r) => r,

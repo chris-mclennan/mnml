@@ -664,6 +664,7 @@ impl App {
                 url: String::new(),
                 headers: Vec::new(),
                 body: None,
+                insecure: false,
             };
             let mut rp = crate::request_pane::RequestPane::new(
                 None,

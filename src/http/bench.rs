@@ -193,6 +193,7 @@ mod tests {
             url: "https://example.invalid/".into(),
             headers: Vec::new(),
             body: None,
+            insecure: false,
         };
         let out = format_summary(&req, 0, 1, 0, &[], &[]);
         assert!(out.contains("bench summary"));
@@ -206,6 +207,7 @@ mod tests {
             url: "https://x/y".into(),
             headers: Vec::new(),
             body: None,
+            insecure: false,
         };
         let samples: Vec<Sample> = vec![(10, 200), (20, 200), (30, 500), (40, 200), (50, 200)];
         let out = format_summary(&req, 5, 1, 100, &samples, &[]);

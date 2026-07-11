@@ -681,6 +681,7 @@ mod tests {
             url: "https://x/u".into(),
             headers: vec![("Authorization".into(), "stale".into())],
             body: None,
+            insecure: false,
         };
         apply_pre(&s, &mut req, &mut env);
         assert_eq!(

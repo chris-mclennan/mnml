@@ -1006,6 +1006,7 @@ mod tests {
                 url: "https://x.com/a".into(),
                 headers: Vec::new(),
                 body: None,
+                insecure: false,
             },
             Script::default(),
             1,
@@ -1078,6 +1079,7 @@ mod tests {
                 ("Authorization".into(), "Bearer xyz".into()),
             ],
             body: None,
+            insecure: false,
         };
         let mut p = RequestPane::new(None, req, Script::default(), 1);
         assert_eq!(

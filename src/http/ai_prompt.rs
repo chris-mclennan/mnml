@@ -334,6 +334,7 @@ mod tests {
                 ("X-Merchant-Id".to_string(), "42".to_string()),
             ],
             body: Some(r#"{"amount":10.0,"merchantId":"{{MERCHANT_ID}}"}"#.to_string()),
+            insecure: false,
         };
         let mut rp = RequestPane::new(None, req, crate::http::script::Script::default(), 0);
         rp.state = RunState::Done(Box::new(ResponseView {

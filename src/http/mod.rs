@@ -37,12 +37,18 @@ use std::time::{Duration, Instant};
 
 /// A request, independent of where it was parsed from. Header names keep their
 /// source casing; order is preserved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Request {
     pub method: String,
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<String>,
+    /// `-k` / `--insecure` — skip TLS certificate verification.
+    /// api-workflow round 6 SEV-2 2026-07-11: was previously
+    /// parsed and thrown away, so users with self-signed hosts
+    /// got a generic transport error instead of the connection
+    /// they explicitly asked for.
+    pub insecure: bool,
 }
 
 /// Why parsing a request from text failed.
@@ -159,8 +165,11 @@ impl Response {
 /// Send `req` synchronously and capture the response. `Err` carries a one-line
 /// description of a transport / build failure (DNS, TLS, connect, timeout, …).
 pub fn send(req: &Request) -> Result<Response, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(30))
+    let mut client_builder = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30));
+    if req.insecure {
+        client_builder = client_builder.danger_accept_invalid_certs(true);
+    }
+    let client = client_builder
         .build()
         .map_err(|e| format!("client build failed: {e}"))?;
 
