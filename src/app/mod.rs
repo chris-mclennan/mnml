@@ -3404,6 +3404,14 @@ pub struct App {
     /// Browser-style navigation forward-stack — only populated after Alt+Left.
     /// Cleared on any fresh jump (you can't go forward after taking a new turn).
     pub nav_forward: Vec<NavPoint>,
+    /// True while `nav_back_jump` / `nav_forward_jump` are executing.
+    /// The post-dispatch big-jump recorder in `dispatch_key` calls
+    /// `record_within_file_jump` on every big cursor move, which
+    /// unconditionally cleared `nav_forward` — wiping the entry the
+    /// caller just pushed. Consulted by `record_within_file_jump` to
+    /// skip that clear when the "big jump" IS the nav call itself.
+    /// nvchad SEV-2 2026-07-10 fix (Ctrl+I / Ctrl+O round-trip).
+    pub nav_jump_in_progress: bool,
     /// Last mouse left-click for double/triple-click detection — `(when, x,
     /// y, count)`. Reset to count=1 when a click lands too late or in a
     /// different cell. Read by `dispatch_mouse` to upgrade count==2 → word
@@ -4703,6 +4711,7 @@ impl App {
             global_marks: std::collections::HashMap::new(),
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
+            nav_jump_in_progress: false,
             last_click: None,
             last_list_scroll_at: None,
             scroll_bucket: 25.0,
@@ -6573,9 +6582,18 @@ impl App {
     /// moves (`G` / `gg` / `{N}G` / `/pattern` / LSP goto / etc.).
     /// Also clears the forward stack — matches vim's behavior of
     /// "any new jump wipes the redo lane." 2026-07-07.
+    ///
+    /// EXCEPTION: when `nav_jump_in_progress` is set, the big jump
+    /// IS `nav_back_jump` / `nav_forward_jump` itself. Clearing the
+    /// forward stack there would wipe the entry those functions
+    /// just pushed. nvchad SEV-2 2026-07-10 — was making Ctrl+I
+    /// after Ctrl+O toast "nothing to go forward to" because the
+    /// forward stack was reset before it could be popped.
     pub fn record_within_file_jump(&mut self, np: NavPoint) {
         self.push_nav_back(np);
-        self.nav_forward.clear();
+        if !self.nav_jump_in_progress {
+            self.nav_forward.clear();
+        }
     }
 
     fn push_nav_back(&mut self, np: NavPoint) {
@@ -6604,6 +6622,11 @@ impl App {
         if let Some(here) = self.current_nav_point() {
             self.push_nav_forward(here);
         }
+        // Set BEFORE the jump so the post-dispatch big-jump recorder
+        // in `dispatch_key` sees the flag when it fires after the
+        // key handler returns. Reset in `dispatch_key` after the
+        // recorder runs.
+        self.nav_jump_in_progress = true;
         self.jump_to_nav_point(prev);
     }
 
@@ -6616,6 +6639,7 @@ impl App {
         if let Some(here) = self.current_nav_point() {
             self.push_nav_back(here);
         }
+        self.nav_jump_in_progress = true;
         self.jump_to_nav_point(next);
     }
 

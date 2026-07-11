@@ -2048,6 +2048,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             app.record_within_file_jump(before);
         }
     }
+    // Reset AFTER the recorder runs. `record_within_file_jump`
+    // consults this flag to decide whether to clear nav_forward;
+    // leaving it stale would suppress the clear on the NEXT key's
+    // fresh jump. nvchad SEV-2 2026-07-10.
+    app.nav_jump_in_progress = false;
 }
 
 // T-1: chord-chain dispatch + tick + timeout const moved to src/tui/chord.rs.
