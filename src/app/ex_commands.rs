@@ -104,6 +104,90 @@ fn shellexpand_tilde(s: &str) -> String {
     s.to_string()
 }
 
+/// Translate vim's `:s/PATTERN/…/` grammar (the find side) to the
+/// `regex` crate's grammar. Vim uses `\(…\)` for capture groups,
+/// `\|` for alternation, `\<`/`\>` for word boundaries. The `regex`
+/// crate uses `(…)`, `|`, `\b`. Keys we do NOT rewrite (they already
+/// mean the same thing): `\d`, `\w`, `\s`, `\D`, `\W`, `\S`, `\b`.
+///
+/// nvchad-round-7 SEV-2 2026-07-11.
+fn vim_pattern_to_regex(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('(') => out.push('('),
+                Some(')') => out.push(')'),
+                Some('|') => out.push('|'),
+                Some('<') | Some('>') => out.push_str("\\b"),
+                Some('{') => out.push('{'),
+                Some('}') => out.push('}'),
+                Some('+') => out.push('+'),
+                Some('?') => out.push('?'),
+                Some('=') => out.push('?'), // vim `\=` = optional (regex `?`)
+                Some(next) => {
+                    out.push('\\');
+                    out.push(next);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Translate vim's `:s/…/REPLACEMENT/` grammar to the `regex` crate's
+/// [`Replacer`] grammar. Vim uses `\1..\9` for capture groups, `&` /
+/// `\0` for the whole match, and `\\` for a literal backslash. The
+/// crate uses `$1..$9`, `$0`, and treats a bare `$` as the start of a
+/// group reference — so literal `$` in the input must double as `$$`.
+///
+/// Grammar handled:
+/// - `\0`  → `$0`
+/// - `\1..\9` → `$1..$9`
+/// - `\\`  → `\`
+/// - `\&`  → `&` (literal)
+/// - `&`   → `$0`  (whole match)
+/// - `$`   → `$$` (escape crate's own metachar)
+/// - `\n`  → `\n` newline (vim uses `\r` for newline in replacement,
+///   but users routinely type `\n`; support both for tolerance)
+/// - `\r`  → `\n` newline (vim canonical — `\n` in replacement means
+///   NUL in strict vim, but every nvchad user types `\n` meaning
+///   newline; we honor both)
+/// - `\t`  → tab
+/// - other `\X` → `X` literal
+///
+/// nvchad-round-7 SEV-1 2026-07-11.
+fn vim_replacement_to_regex(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 8);
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some(next) => match next {
+                    '0'..='9' => {
+                        out.push('$');
+                        out.push(next);
+                    }
+                    '\\' => out.push('\\'),
+                    '&' => out.push('&'),
+                    'n' | 'r' => out.push('\n'),
+                    't' => out.push('\t'),
+                    other => out.push(other),
+                },
+                None => out.push('\\'),
+            },
+            '&' => out.push_str("$0"),
+            '$' => out.push_str("$$"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// `*` matches any run (incl. empty), `?` matches one char. No brace
 /// or bracket expansion. Case-sensitive.
 fn simple_glob_match(pat: &str, name: &str) -> bool {
@@ -523,8 +607,14 @@ impl App {
         // fall back to the old literal path only when regex compile
         // fails (so a stray unbalanced `[` still doesn't panic — it
         // just falls to literal, matching prior behavior).
-        let regex_matches = crate::buffer::find_all_regex(scope, &sub.find);
-        let matches: Vec<(usize, usize)> = if !regex_matches.is_empty() {
+        // Translate vim regex grammar → regex-crate grammar on the
+        // find side too: `\(…\)` → `(…)`, `\|` → `|`, `\<`/`\>` → `\b`.
+        // Nvchad users type these routinely and the old code treated
+        // them as literal. nvchad-round-7 SEV-2.
+        let translated_find = vim_pattern_to_regex(&sub.find);
+        let regex_matches = crate::buffer::find_all_regex(scope, &translated_find);
+        let regex_used = !regex_matches.is_empty();
+        let matches: Vec<(usize, usize)> = if regex_used {
             regex_matches
         } else if sub.case_insensitive {
             crate::buffer::find_all_ci_ascii(scope, &sub.find)
@@ -569,16 +659,58 @@ impl App {
             self.replace_confirm_jump_to_current();
             return;
         }
-        // Descending order so each replace keeps earlier byte offsets valid.
-        let ops: Vec<crate::edit_op::EditOp> = matches
-            .into_iter()
-            .rev()
-            .map(|(s, e)| crate::edit_op::EditOp::ReplaceRange {
-                start: s,
-                end: e,
-                text: sub.replace.clone(),
-            })
-            .collect();
+        // Choose the replacement strategy. If the regex matcher won,
+        // rebuild the scope via `Regex::replace_all` so `\1`, `\2`,
+        // `&`, `\0` in the replacement text expand against the capture
+        // groups. nvchad-round-7 SEV-1 2026-07-11 — before this
+        // fix, `\1` etc. were literal text on the wire, silently
+        // destroying the match (e.g. `%s/\(foo\) \(bar\)/\2 \1/g`
+        // wrote `\2 \1` on every line — actual data loss).
+        //
+        // Non-regex (literal / ci-ascii) matchers keep the old
+        // per-match ReplaceRange fan-out — they have no capture
+        // groups to expand, so the raw `sub.replace` is the right
+        // text.
+        let ops: Vec<crate::edit_op::EditOp> = if !regex_used {
+            matches
+                .into_iter()
+                .rev()
+                .map(|(s, e)| crate::edit_op::EditOp::ReplaceRange {
+                    start: s,
+                    end: e,
+                    text: sub.replace.clone(),
+                })
+                .collect()
+        } else {
+            // Translate vim replacement grammar → regex-crate grammar,
+            // then run one `replace_all` over the scope. Splice into
+            // the buffer as a single ReplaceRange covering [lo..hi].
+            let prefixed = if sub.case_insensitive {
+                format!("(?i){translated_find}")
+            } else {
+                translated_find.clone()
+            };
+            match regex::Regex::new(&prefixed) {
+                Ok(re) => {
+                    let replacement = vim_replacement_to_regex(&sub.replace);
+                    let replaced = re.replace_all(scope, replacement.as_str()).into_owned();
+                    vec![crate::edit_op::EditOp::ReplaceRange {
+                        start: lo,
+                        end: hi,
+                        text: replaced,
+                    }]
+                }
+                Err(_) => matches
+                    .into_iter()
+                    .rev()
+                    .map(|(s, e)| crate::edit_op::EditOp::ReplaceRange {
+                        start: s,
+                        end: e,
+                        text: sub.replace.clone(),
+                    })
+                    .collect(),
+            }
+        };
         // Wrap the whole run in a single undo group so `u` reverts
         // all replacements in one step. nvchad-user SEV-2 S2-02
         // ("`:%s/.../.../g` is not a single undo step — needs one
@@ -4202,6 +4334,39 @@ impl App {
 mod ex_commands_tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn vim_replacement_backrefs_swap() {
+        // Vim `\1`, `\2`, `&`, `\\` map to regex-crate grammar.
+        assert_eq!(vim_replacement_to_regex("\\2 \\1"), "$2 $1");
+        assert_eq!(vim_replacement_to_regex("<&>"), "<$0>");
+        assert_eq!(vim_replacement_to_regex("\\&"), "&");
+        assert_eq!(vim_replacement_to_regex("cost $5"), "cost $$5");
+        assert_eq!(vim_replacement_to_regex("a\\\\b"), "a\\b");
+        assert_eq!(vim_replacement_to_regex("line\\none"), "line\none");
+    }
+
+    #[test]
+    fn vim_pattern_capture_groups_and_alternation() {
+        // Vim `\(a\|b\)` → `(a|b)` for the regex crate.
+        assert_eq!(vim_pattern_to_regex("\\(foo\\)"), "(foo)");
+        assert_eq!(vim_pattern_to_regex("\\(foo\\|bar\\)"), "(foo|bar)");
+        assert_eq!(vim_pattern_to_regex("\\<word\\>"), "\\bword\\b");
+        // `\d`, `\w`, `\s`, `\b` unchanged.
+        assert_eq!(vim_pattern_to_regex("\\d+"), "\\d+");
+    }
+
+    #[test]
+    fn substitute_backref_swap_actually_swaps() {
+        // End-to-end: `\(foo\) \(bar\)` + `\2 \1` swaps every pair.
+        let (_d, mut app) = app_with_buffer("foo bar\nfoo bar\n");
+        app.run_ex_command("%s/\\(foo\\) \\(bar\\)/\\2 \\1/g");
+        let text = app
+            .active_editor()
+            .map(|b| b.editor.text().to_string())
+            .unwrap();
+        assert_eq!(text, "bar foo\nbar foo\n", "got: {text:?}");
+    }
 
     fn app_with_buffer(text: &str) -> (tempfile::TempDir, App) {
         let d = tempfile::tempdir().unwrap();
