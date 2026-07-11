@@ -985,7 +985,14 @@ impl VimInputHandler {
             Prefix::ZFold => {
                 self.reset_pending();
                 return match key.code {
-                    KeyCode::Char('a') | KeyCode::Char('o') | KeyCode::Char('c') => {
+                    // za / zo / zc → toggle at cursor. `zA` was
+                    // previously unbound — nvchad round 5 SEV-3
+                    // 2026-07-11. mnml folds are line-based (single
+                    // level per header), so `zA` (toggle recursive)
+                    // reduces to the same toggle in practice — bind
+                    // it to the same action rather than leaving a
+                    // dead chord that silently no-ops.
+                    KeyCode::Char('a' | 'A' | 'o' | 'O' | 'c' | 'C') => {
                         InputResult::App(AppCommand::RunCommand("editor.toggle_fold".into()))
                     }
                     // `zR` opens all folds; `zE` removes every fold (vim

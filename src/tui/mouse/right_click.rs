@@ -931,6 +931,25 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_editor_gutter_context_menu(pid, line as u32, (x, y));
         return;
     }
+    // Right-click on a fold arrow (visible `▾` on hover or `▸` when
+    // folded) → seek cursor to that line and open the editor body
+    // menu with Toggle Fold at the ready. vscode-user-mouse round 2
+    // SEV-3 2026-07-11 — was routing to the editor line menu which
+    // still has Toggle Fold but buried under 10+ items.
+    if let Some(&(_, pid, line_no)) = app
+        .rects
+        .fold_arrows
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+            b.editor.place_cursor(line_no, 0);
+        }
+        app.open_editor_body_context_menu(pid, line_no, 0, (x, y));
+        return;
+    }
     // Right-click on the editor BODY → text-scoped menu.
     if let Some(&(tr, pid)) = app
         .rects

@@ -2827,6 +2827,10 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
             KeyCode::Down | KeyCode::Char('j') => rp.scroll += 1,
             KeyCode::PageUp => rp.scroll = rp.scroll.saturating_sub(viewport),
             KeyCode::PageDown => rp.scroll += viewport,
+            // Half-page motions — vim-consistent with editor + AI pane.
+            // api-workflow round 5 SEV-3 2026-07-11.
+            KeyCode::Char('d') if ctrl => rp.scroll += viewport / 2,
+            KeyCode::Char('u') if ctrl => rp.scroll = rp.scroll.saturating_sub(viewport / 2),
             KeyCode::Home | KeyCode::Char('g') => rp.scroll = 0,
             KeyCode::End | KeyCode::Char('G') => rp.scroll = usize::MAX, // clamped on draw
             // 2026-06-21 nvchad SEV-2: bare `r` re-fired the
