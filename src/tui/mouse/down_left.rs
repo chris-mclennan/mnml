@@ -2110,6 +2110,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         use crate::app::HttpChipKind;
         match kind {
             HttpChipKind::Filter => {
+                // Same focus + section snap as the filter-input rect
+                // click above — otherwise keystrokes route to the
+                // previously-focused pane. vscode-user-mouse SEV-2
+                // 2026-07-10.
+                app.focus = crate::focus::Focus::Tree;
+                app.active_section = crate::app::ActivitySection::Http;
                 app.http_panel_filter_focused = true;
             }
             HttpChipKind::Refresh => {
@@ -2175,6 +2181,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.http_panel_filter_input
         && crate::app::dispatch::contains(r, x, y)
     {
+        // vscode-user-mouse SEV-2 2026-07-10 fix: setting the panel
+        // filter focus flag alone wasn't enough — the keystroke
+        // absorber in `dispatch_key` also gates on `app.focus ==
+        // Focus::Tree` + `app.active_section == Http`. Without also
+        // moving focus + section, typing after the click still
+        // routed to whatever pane last had focus. Snap both to
+        // match the visual focus indicator.
+        app.focus = crate::focus::Focus::Tree;
+        app.active_section = crate::app::ActivitySection::Http;
         app.http_panel_filter_focused = true;
         return;
     }
