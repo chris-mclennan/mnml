@@ -68,11 +68,30 @@ pub struct Registry {
 impl Registry {
     fn build() -> Self {
         let commands = builtin_commands();
-        let by_id = commands
-            .iter()
-            .enumerate()
-            .map(|(i, c)| (c.id, i))
-            .collect();
+        let mut by_id: HashMap<&'static str, usize> = HashMap::new();
+        // Guard against silent last-writer-wins duplicates. Both
+        // `Command` structs stay in `commands` (so the palette shows
+        // both distinct titles), but a HashMap collect would let one
+        // shadow the other for every id-based dispatch path (IPC,
+        // :ex, keybindings). api-workflow SEV-2 2026-07-11 caught
+        // `integrations.refresh` registered with two different
+        // handlers this way; the binary-detection variant was
+        // permanently unreachable. debug_assert lets tests catch
+        // future duplicates immediately.
+        for (i, c) in commands.iter().enumerate() {
+            if let Some(&prev) = by_id.get(c.id) {
+                debug_assert!(
+                    false,
+                    "duplicate command id {:?}: first at index {}, then at {}",
+                    c.id, prev, i
+                );
+                // Release: keep the FIRST registration (source-order
+                // priority) so a re-registration doesn't silently
+                // shadow the original.
+                continue;
+            }
+            by_id.insert(c.id, i);
+        }
         Registry { commands, by_id }
     }
 
@@ -1285,13 +1304,6 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.adjust_split(crate::layout::SplitDir::Horizontal, -5),
         },
         Command {
-            id: "view.close_others",
-            title: "Close every pane except the active one (vim `:only`)",
-            group: "view",
-            keys: &[],
-            run: |app| app.close_other_panes(),
-        },
-        Command {
             id: "editor.file_info",
             title: "Toast file info: <path> · Ln N/M · X% (vim `Ctrl+G`)",
             group: "editor",
@@ -1676,7 +1688,7 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.run_ex_command("term mnml-aws-sns"),
         },
         Command {
-            id: "integrations.refresh",
+            id: "integrations.refresh_binary_cache",
             title: "Integrations: refresh installed-binary detection",
             group: "integrations",
             keys: &[],
