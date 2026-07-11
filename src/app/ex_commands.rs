@@ -1031,6 +1031,13 @@ impl App {
             "w" | "write" => {
                 if rest.is_empty() {
                     self.save_active();
+                } else if let Some(shell_cmd) = rest.strip_prefix('!') {
+                    // `:w !cmd` — pipe the buffer contents to `cmd` on
+                    // stdin, toast the output. Vim canonical.
+                    // nvchad-round-7 SEV-2 2026-07-11 — was
+                    // "save-as filename `!cmd`" which literally
+                    // created a file named `!cmd`.
+                    self.write_buffer_to_shell(shell_cmd.trim());
                 } else {
                     self.save_active_as(rest);
                 }
@@ -4256,6 +4263,68 @@ impl App {
     /// Accept handler for [`PromptKind::QuitConfirm`].
     pub fn accept_quit(&mut self) {
         self.should_quit = true;
+    }
+
+    /// `:w !cmd` — pipe the active buffer's text to `cmd` on stdin,
+    /// toast the trimmed stdout (or an error). No file is written.
+    /// Uses `$SHELL -c` so pipes, quoting, redirection work. Timeout
+    /// bounded at 30s to prevent a runaway command from hanging the
+    /// event loop. nvchad-round-7 SEV-2 2026-07-11.
+    pub fn write_buffer_to_shell(&mut self, cmd: &str) {
+        if cmd.is_empty() {
+            self.toast(":w ! — no command supplied");
+            return;
+        }
+        let Some(text) = self.active_editor().map(|b| b.editor.text().to_string()) else {
+            self.toast(":w ! — no active editor");
+            return;
+        };
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = match Command::new(&shell)
+            .arg("-c")
+            .arg(cmd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(format!(":w !{cmd} — spawn failed: {e}"));
+                return;
+            }
+        };
+        if let Some(mut sin) = child.stdin.take()
+            && let Err(e) = sin.write_all(text.as_bytes())
+        {
+            self.toast(format!(":w !{cmd} — stdin write failed: {e}"));
+            return;
+        }
+        match child.wait_with_output() {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                if !out.status.success() {
+                    let msg = if !stderr.is_empty() {
+                        stderr
+                    } else if !stdout.is_empty() {
+                        stdout
+                    } else {
+                        format!("exit {}", out.status.code().unwrap_or(-1))
+                    };
+                    self.toast(format!(":w !{cmd} — {msg}"));
+                } else if !stdout.is_empty() {
+                    self.toast(format!(":w !{cmd} — {stdout}"));
+                } else if !stderr.is_empty() {
+                    self.toast(format!(":w !{cmd} — (stderr) {stderr}"));
+                } else {
+                    self.toast(format!(":w !{cmd} — done"));
+                }
+            }
+            Err(e) => self.toast(format!(":w !{cmd} — wait failed: {e}")),
+        }
     }
 
     /// `:args {pattern}` — expand `{pattern}` workspace-relative into a

@@ -3316,6 +3316,10 @@ pub struct App {
     /// consumed by [`Self::macro_toggle`] / [`Self::macro_replay`] on the
     /// very next call. `None` ⇒ use the anonymous `'@'` register.
     pub pending_macro_register: Option<char>,
+    /// The register of the macro most recently replayed via `@<reg>`.
+    /// `@@` uses this instead of literally looking up register `'@'`
+    /// (vim canonical). nvchad-round-7 SEV-2 2026-07-11.
+    pub last_replayed_macro_reg: Option<char>,
     /// Throttle stamp for `check_external_file_changes` — stat'ing every
     /// open file on every tick is overkill; we cap the cadence to ~2s.
     last_external_check: Option<std::time::Instant>,
@@ -4763,6 +4767,7 @@ impl App {
             cmdline_popup_selected: 0,
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
+            last_replayed_macro_reg: None,
             last_external_check: None,
             arglist: Vec::new(),
             arglist_index: None,
@@ -11453,6 +11458,47 @@ impl App {
     /// The actual multi-row replay happens in
     /// [`Self::block_insert_replay_if_done`] when the handler returns to
     /// Normal mode (typically Esc out of Insert).
+    /// V-BLOCK `r<c>` — fill every cell in the block rectangle with
+    /// `<c>`. Each row's column range is clamped to the row's actual
+    /// end, so short lines don't get padded. Single atomic undo step.
+    /// nvchad-round-7 SEV-2 2026-07-11.
+    pub fn block_replace_with(&mut self, ch: char) {
+        let Some(idx) = self.active else { return };
+        let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {
+            return;
+        };
+        let Some((rmin, cmin, rmax, cmax)) = b.editor.block_selection() else {
+            b.editor.block_anchor = None;
+            return;
+        };
+        let clip = &mut self.clipboard;
+        b.editor.atomic_undo(|ed| {
+            for row in (rmin..=rmax).rev() {
+                let line_len_chars = ed.line_str(row).chars().count();
+                let start_col = cmin.min(line_len_chars);
+                let end_col = (cmax + 1).min(line_len_chars);
+                if end_col <= start_col {
+                    continue;
+                }
+                let start_byte = ed.byte_at_col_pub(row, start_col);
+                let end_byte = ed.byte_at_col_pub(row, end_col);
+                let width = end_col - start_col;
+                let repl: String = std::iter::repeat_n(ch, width).collect();
+                ed.apply(
+                    crate::edit_op::EditOp::ReplaceRange {
+                        start: start_byte,
+                        end: end_byte,
+                        text: repl,
+                    },
+                    0,
+                    clip,
+                );
+            }
+        });
+        b.editor.block_anchor = None;
+        b.dirty = true;
+    }
+
     pub fn block_insert_start(&mut self, append: bool) {
         let Some(idx) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(idx) else {

@@ -2312,6 +2312,12 @@ impl Editor {
                 self.anchor = Some(lo);
                 self.cursor = hi;
             }
+            SelectInnerBigWord => {
+                // vim `iW` — whitespace-delimited big WORD.
+                let (lo, hi) = self.big_word_bounds_at(self.cursor);
+                self.anchor = Some(lo);
+                self.cursor = hi;
+            }
             SelectInnerQuote(q) => {
                 if let Some((open, close)) = self.enclosing_quote_pair_on_line(q) {
                     // Inner range: between the two quotes.
@@ -2595,6 +2601,25 @@ impl Editor {
                     self.anchor = Some(lo);
                     self.cursor = hi;
                 }
+            }
+            SelectAroundBigWord => {
+                // vim `aW` — big WORD + trailing whitespace (or leading
+                // when EOL). Same shape as SelectAroundWord.
+                let (lo, mut hi) = self.big_word_bounds_at(self.cursor);
+                let bytes = self.text.as_bytes();
+                let mut hi_extended = false;
+                while hi < self.text.len() && matches!(bytes[hi], b' ' | b'\t') {
+                    hi += 1;
+                    hi_extended = true;
+                }
+                let mut lo_new = lo;
+                if !hi_extended {
+                    while lo_new > 0 && matches!(bytes[lo_new - 1], b' ' | b'\t') {
+                        lo_new -= 1;
+                    }
+                }
+                self.anchor = Some(lo_new);
+                self.cursor = hi;
             }
             SelectAroundWord => {
                 // vim `aw` — `iw` extended to include trailing whitespace,
@@ -4433,6 +4458,35 @@ impl Editor {
         while hi < self.text.len() {
             match self.char_at(hi) {
                 Some(c) if class_of(c) == cls => hi = self.next_char_boundary(hi),
+                _ => break,
+            }
+        }
+        (lo, hi)
+    }
+
+    /// Vim WORD (big-word) bounds: whitespace is the only boundary.
+    /// Cursor on any non-whitespace char returns the maximal run of
+    /// non-whitespace surrounding it; cursor on whitespace returns
+    /// the whitespace run. Used by `iW`/`aW` text objects.
+    /// nvchad-round-7 SEV-2 2026-07-11.
+    fn big_word_bounds_at(&self, byte: usize) -> (usize, usize) {
+        let is_ws = |c: char| c.is_whitespace();
+        let center = self
+            .char_at(byte)
+            .or_else(|| self.char_before(byte))
+            .map(is_ws)
+            .unwrap_or(true);
+        let mut lo = byte;
+        while lo > 0 {
+            match self.char_before(lo) {
+                Some(c) if is_ws(c) == center => lo = self.prev_char_boundary(lo),
+                _ => break,
+            }
+        }
+        let mut hi = byte;
+        while hi < self.text.len() {
+            match self.char_at(hi) {
+                Some(c) if is_ws(c) == center => hi = self.next_char_boundary(hi),
                 _ => break,
             }
         }

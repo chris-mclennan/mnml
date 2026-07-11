@@ -121,6 +121,12 @@ pub enum EditOp {
     /// semantics). The cursor lands at the end of the selected range.
     SelectInnerWord,
     SelectAroundWord,
+    /// vim WORD (big-word) text object: `iW` / `aW`. Whitespace-only
+    /// boundary — hyphens, dots, punctuation are all part of the WORD.
+    /// Nvchad users hit this constantly on filenames, URLs, kebab-case,
+    /// snake_case identifiers. nvchad-round-7 SEV-2 2026-07-11 fix.
+    SelectInnerBigWord,
+    SelectAroundBigWord,
     /// vim quote text object: `i"`, `i'`, `` i` `` (inner — between the
     /// quotes), `a"` etc (around — including the quote chars). Scans the
     /// current line for the surrounding pair; no-op when the cursor isn't
@@ -469,6 +475,8 @@ impl EditOp {
             | SelectWord
             | SelectInnerWord
             | SelectAroundWord
+            | SelectInnerBigWord
+            | SelectAroundBigWord
             | SelectInnerQuote(_)
             | SelectAroundQuote(_)
             | SelectInnerSmartQuote

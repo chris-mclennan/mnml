@@ -63,7 +63,21 @@ impl App {
     /// pending register letter (set by the vim handler when the user typed
     /// `@<reg>`), uses that register's macro; else replays `'@'`.
     pub fn macro_replay(&mut self) {
-        let target = std::mem::take(&mut self.pending_macro_register).unwrap_or('@');
+        // Vim `@@` semantics: repeat the LAST macro replay (whatever
+        // register it was), not literally register `'@'`. When
+        // `pending_macro_register` is `Some('@')`, redirect to
+        // `last_replayed_macro_reg` if set. Otherwise the very first
+        // `@@` before any `@<reg>` still falls back to the literal `@`
+        // register (parity with unset last-replayed).
+        // nvchad-round-7 SEV-2 2026-07-11.
+        let raw_target = std::mem::take(&mut self.pending_macro_register).unwrap_or('@');
+        let target = if raw_target == '@'
+            && let Some(prev) = self.last_replayed_macro_reg
+        {
+            prev
+        } else {
+            raw_target
+        };
         let Some(keys) = self.macro_buffer.get(&target).cloned() else {
             if target == '@' {
                 self.toast("no macro to replay");
@@ -72,6 +86,11 @@ impl App {
             }
             return;
         };
+        // Persist for the next `@@`. Only remember explicit registers;
+        // `@` itself is the sentinel.
+        if target != '@' {
+            self.last_replayed_macro_reg = Some(target);
+        }
         if keys.is_empty() {
             self.toast("no macro to replay");
             return;

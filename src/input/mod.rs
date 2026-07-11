@@ -143,6 +143,12 @@ pub enum AppCommand {
     /// column (now collapsed since the slice is gone). On Esc the typed run
     /// is replayed on every other row.
     BlockChangeStart,
+    /// vim visual-block `r<c>` — fill every cell in the rectangular
+    /// selection with `<c>` (single character replacement). Returns to
+    /// Normal mode after. nvchad-round-7 SEV-2 2026-07-11.
+    BlockReplaceWith {
+        ch: char,
+    },
     /// vim `<count>o` / `<count>O` — open `count` new lines below / above,
     /// enter Insert at the first one; on Esc, replicate the typed text on
     /// the remaining (count - 1) lines.

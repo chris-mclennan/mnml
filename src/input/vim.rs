@@ -83,6 +83,9 @@ enum Prefix {
     ZFold,
     /// Saw `r` — replace the char under the cursor with the next typed char.
     Replace,
+    /// V-BLOCK `r` — replace every cell in the block rectangle with
+    /// the next typed char. nvchad-round-7 SEV-2 2026-07-11.
+    BlockReplaceChar,
     /// Saw `m` — expecting a letter to **set** a buffer-local mark.
     MarkSet,
     /// Saw `'` — expecting a letter to jump to a mark's **line**.
@@ -994,6 +997,16 @@ impl VimInputHandler {
                     _ => InputResult::Consumed,
                 };
             }
+            Prefix::BlockReplaceChar => {
+                self.reset_pending();
+                return match key.code {
+                    KeyCode::Char(c) => {
+                        self.enter_normal();
+                        InputResult::App(AppCommand::BlockReplaceWith { ch: c })
+                    }
+                    _ => InputResult::Consumed,
+                };
+            }
             Prefix::ZFold => {
                 self.reset_pending();
                 return match key.code {
@@ -1491,6 +1504,13 @@ impl VimInputHandler {
                             SelectAroundWord
                         } else {
                             SelectInnerWord
+                        }
+                    }
+                    KeyCode::Char('W') => {
+                        if around {
+                            SelectAroundBigWord
+                        } else {
+                            SelectInnerBigWord
                         }
                     }
                     KeyCode::Char(q @ ('"' | '\'' | '`')) => {
@@ -3072,6 +3092,12 @@ impl VimInputHandler {
                 self.open_cmdline_visual_range();
                 InputResult::Ops(vec![RememberSelection])
             }
+            // V-BLOCK `r<c>` — replace every cell in the rectangle with
+            // `<c>`. nvchad-round-7 SEV-2 2026-07-11.
+            KeyCode::Char('r') => {
+                self.prefix = Prefix::BlockReplaceChar;
+                InputResult::Consumed
+            }
             _ => InputResult::Consumed,
         }
     }
@@ -3204,6 +3230,7 @@ impl InputHandler for VimInputHandler {
             Prefix::Z => s.push('Z'),
             Prefix::ZFold => s.push('z'),
             Prefix::Replace => s.push('r'),
+            Prefix::BlockReplaceChar => s.push('r'),
             Prefix::MarkSet => s.push('m'),
             Prefix::MarkJumpLine => s.push('\''),
             Prefix::MarkJumpExact => s.push('`'),
