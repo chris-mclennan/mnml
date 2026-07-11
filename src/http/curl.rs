@@ -7,7 +7,21 @@
 use super::{ParseError, Request, dedupe_keep_last};
 
 /// Parse a cURL command. The leading `curl` token is optional.
+/// `-F name=@relpath` uses the process's CWD as the base for relative
+/// paths — use [`parse_curl_with_base`] to override for `.curl` files
+/// opened via the request pane, where the `.curl` file's own dir is
+/// the canonical base.
 pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
+    parse_curl_with_base(input, None)
+}
+
+/// Same as [`parse_curl`] but resolves `@relpath` / `<relpath` on
+/// `-F` against `base_dir` when supplied. Absolute paths always
+/// bypass this. api-workflow round-8 SEV-2 2026-07-11.
+pub fn parse_curl_with_base(
+    input: &str,
+    base_dir: Option<&std::path::Path>,
+) -> Result<Request, ParseError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(ParseError::Empty);
@@ -108,7 +122,8 @@ pub fn parse_curl(input: &str) -> Result<Request, ParseError> {
                 if let Some(v) = tokens.get(i + 1) {
                     let allow_file = t != "--form-string";
                     if let Some((name, spec)) = v.split_once('=') {
-                        multipart_parts.push(parse_multipart_spec(name, spec, allow_file));
+                        multipart_parts
+                            .push(parse_multipart_spec(name, spec, allow_file, base_dir));
                     }
                     advance = 2;
                 }
@@ -215,17 +230,28 @@ struct MultipartPart {
 ///
 /// When `allow_file` is false (i.e. `--form-string`) the `@`/`<` prefix
 /// is treated as literal text.
-fn parse_multipart_spec(name: &str, spec: &str, allow_file: bool) -> MultipartPart {
-    // Peel off an optional `;type=…` trailer.
-    let (body_spec, content_type) = if let Some((left, right)) = spec.split_once(';') {
-        let ct = right
-            .trim()
-            .strip_prefix("type=")
-            .map(|s| s.trim().to_string());
-        (left, ct)
-    } else {
-        (spec, None)
-    };
+fn parse_multipart_spec(
+    name: &str,
+    spec: &str,
+    allow_file: bool,
+    base_dir: Option<&std::path::Path>,
+) -> MultipartPart {
+    // Peel off an optional `;type=…` trailer. Only fires for `@file` or
+    // `<file` specs — inline text values like `notes=Height: 5;Width: 10`
+    // must keep their literal `;`. api-workflow round-8 SEV-2
+    // 2026-07-11 — previous version split unconditionally on `;`,
+    // silently truncating anywhere the user's payload contained one.
+    let looks_file_ref = allow_file && (spec.starts_with('@') || spec.starts_with('<'));
+    let (body_spec, content_type) =
+        if looks_file_ref && let Some((left, right)) = spec.split_once(';') {
+            let ct = right
+                .trim()
+                .strip_prefix("type=")
+                .map(|s| s.trim().to_string());
+            (left, ct)
+        } else {
+            (spec, None)
+        };
     let name = name.to_string();
     if !allow_file {
         return MultipartPart {
@@ -237,10 +263,10 @@ fn parse_multipart_spec(name: &str, spec: &str, allow_file: bool) -> MultipartPa
         };
     }
     if let Some(path) = body_spec.strip_prefix('@') {
-        return load_multipart_file_part(&name, path, true, content_type);
+        return load_multipart_file_part(&name, path, true, content_type, base_dir);
     }
     if let Some(path) = body_spec.strip_prefix('<') {
-        return load_multipart_file_part(&name, path, false, content_type);
+        return load_multipart_file_part(&name, path, false, content_type, base_dir);
     }
     MultipartPart {
         name,
@@ -262,9 +288,21 @@ fn load_multipart_file_part(
     path: &str,
     attach_filename: bool,
     content_type: Option<String>,
+    base_dir: Option<&std::path::Path>,
 ) -> MultipartPart {
     let name = name.to_string();
-    let basename = std::path::Path::new(path)
+    let raw_path = std::path::PathBuf::from(path);
+    // Resolve relative paths against base_dir (the .curl file's own
+    // dir, or the workspace) when provided; else use path as-is
+    // (relative to the process's CWD — the CLI's behavior).
+    let resolved_path: std::path::PathBuf = if raw_path.is_absolute() {
+        raw_path
+    } else if let Some(dir) = base_dir {
+        dir.join(&raw_path)
+    } else {
+        raw_path
+    };
+    let basename = resolved_path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(path)
@@ -276,7 +314,7 @@ fn load_multipart_file_part(
             None
         }
     });
-    match std::fs::read(path) {
+    match std::fs::read(&resolved_path) {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(text) => MultipartPart {
                 name,
@@ -551,6 +589,39 @@ mod tests {
             body.contains("Content-Type: application/octet-stream"),
             "default content-type missing"
         );
+    }
+
+    #[test]
+    fn dash_capital_f_inline_value_keeps_literal_semicolons() {
+        // api-workflow round-8 SEV-2 2026-07-11 — inline `-F name=value`
+        // must NOT split on `;` (the `;type=` trailer syntax only applies
+        // to `@file` / `<file` specs). Was: `"Height: 5;Width: 10"` got
+        // truncated at the first `;`.
+        let r = parse_curl("curl -F 'notes=Height: 5;Width: 10' 'https://x/echo'").unwrap();
+        let body = r.body.unwrap();
+        assert!(
+            body.contains("Height: 5;Width: 10"),
+            "value truncated: {body}"
+        );
+    }
+
+    #[test]
+    fn dash_capital_f_at_file_resolves_relative_to_base_dir() {
+        // api-workflow round-8 SEV-2 — relative paths were resolved
+        // against the process CWD (fine for CLI, broken for the
+        // request pane). `parse_curl_with_base` uses `base_dir`.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("payload.txt");
+        std::fs::write(&file, "hi").unwrap();
+        let cmd = "curl -F 'file=@payload.txt' 'https://x/upload'";
+        let r = parse_curl_with_base(cmd, Some(dir.path())).unwrap();
+        let body = r.body.unwrap();
+        assert!(
+            body.contains("hi"),
+            "relative path didn't resolve against base_dir: {body}"
+        );
+        assert!(body.contains("filename=\"payload.txt\""));
+        assert!(!body.contains("LOAD-ERROR"));
     }
 
     #[test]

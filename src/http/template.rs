@@ -289,7 +289,12 @@ fn parse_env_line(line: &str) -> Option<(String, String)> {
     if trimmed.is_empty() || trimmed.starts_with('#') {
         return None;
     }
-    let (k, v) = trimmed.split_once('=')?;
+    // api-workflow round-8 SEV-2 2026-07-11 — accept `export KEY=value`
+    // so `.env` files sourced from shell (`source .env` idiom) also
+    // parse cleanly. Without this the key becomes "export KEY" (with
+    // the space embedded) and `{{KEY}}` never resolves.
+    let payload = trimmed.strip_prefix("export ").unwrap_or(trimmed);
+    let (k, v) = payload.split_once('=')?;
     let key = k.trim().to_string();
     if key.is_empty() {
         return None;
@@ -451,6 +456,22 @@ mod tests {
         assert_eq!(parse_env_line("# comment"), None);
         assert_eq!(parse_env_line("=oops"), None);
         assert_eq!(parse_env_line(""), None);
+    }
+
+    #[test]
+    fn parse_env_line_accepts_export_prefix() {
+        // api-workflow round-8 SEV-2 2026-07-11 — `.env` files
+        // authored for `source .env` in a shell prefix keys with
+        // `export`. Was: key became "export FOO" with a literal
+        // space, breaking every var lookup.
+        assert_eq!(
+            parse_env_line("export FOO=bar"),
+            Some(("FOO".into(), "bar".into()))
+        );
+        assert_eq!(
+            parse_env_line("  export API_KEY=\"abc\""),
+            Some(("API_KEY".into(), "abc".into()))
+        );
     }
 
     /// test-writer 2026-06-28 coverage gap: EnvSet's four-tier

@@ -728,8 +728,12 @@ impl App {
             .extension()
             .and_then(|s| s.to_str())
             .is_some_and(|ext| ext.eq_ignore_ascii_case("curl"));
+        // api-workflow round-8 SEV-2 2026-07-11 — pass the .curl file's
+        // own dir as the multipart base_dir so `-F name=@relpath` finds
+        // sibling files without depending on the process's CWD.
+        let source_dir = path.parent();
         let blocks = if is_curl_ext {
-            match crate::http::parse(&text) {
+            match crate::http::parse_with_base(&text, source_dir) {
                 Ok(r) => {
                     let end = text.matches('\n').count();
                     vec![crate::http::file::Block {

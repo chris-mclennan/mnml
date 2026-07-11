@@ -76,6 +76,16 @@ impl std::error::Error for ParseError {}
 /// case for pasted requests — unless the text unambiguously looks like an `.http`
 /// file (a leading HTTP-method line), then falls back to the `.http` parser.
 pub fn parse(input: &str) -> Result<Request, ParseError> {
+    parse_with_base(input, None)
+}
+
+/// Same as [`parse`] but resolves `-F name=@relpath` against `base_dir`
+/// when supplied. Non-curl paths ignore `base_dir`. api-workflow
+/// round-8 SEV-2 2026-07-11.
+pub fn parse_with_base(
+    input: &str,
+    base_dir: Option<&std::path::Path>,
+) -> Result<Request, ParseError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(ParseError::Empty);
@@ -83,7 +93,7 @@ pub fn parse(input: &str) -> Result<Request, ParseError> {
     if looks_like_http_file(trimmed) {
         return file::parse(trimmed);
     }
-    match curl::parse_curl(trimmed) {
+    match curl::parse_curl_with_base(trimmed, base_dir) {
         Ok(r) => Ok(r),
         Err(curl_err) => file::parse(trimmed).map_err(|_| curl_err),
     }
