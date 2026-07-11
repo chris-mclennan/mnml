@@ -440,7 +440,12 @@ impl App {
             return;
         }
         // Preserve the existing find's regex flag if any, else use the App
-        // default so the toggle is sticky.
+        // default so the toggle is sticky. Vim mode overrides the default
+        // to `true` — vim's `/pattern` and `?pattern` are regex-first;
+        // literal chars are the special case that require escaping.
+        // nvchad-user SEV-2 2026-07-10 fix (previously literal-only for
+        // both search and :%s/…/…/g).
+        let regex_default = regex_default || crate::input::is_vim_style(&self.config);
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
         let case_sensitive = !regex && query.chars().any(|c| c.is_uppercase());
         let mut state = crate::buffer::FindState {

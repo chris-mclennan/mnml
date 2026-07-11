@@ -366,7 +366,17 @@ impl App {
             (bol, eol)
         };
         let scope = &text[lo..hi];
-        let matches: Vec<(usize, usize)> = if sub.case_insensitive {
+        // nvchad-user SEV-2 2026-07-10: `:%s/…/…/g` used to be pure
+        // literal — `.`, `\d`, `\w`, `(…)`, `|` were all treated as
+        // ordinary chars. Vim's `:s` is regex-first (any of those
+        // meta-chars are meaningful unless escaped). Try regex first;
+        // fall back to the old literal path only when regex compile
+        // fails (so a stray unbalanced `[` still doesn't panic — it
+        // just falls to literal, matching prior behavior).
+        let regex_matches = crate::buffer::find_all_regex(scope, &sub.find);
+        let matches: Vec<(usize, usize)> = if !regex_matches.is_empty() {
+            regex_matches
+        } else if sub.case_insensitive {
             crate::buffer::find_all_ci_ascii(scope, &sub.find)
         } else {
             find_all_case_sensitive(scope, &sub.find)
