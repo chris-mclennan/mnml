@@ -108,6 +108,20 @@ impl Clipboard {
             Some(c) if c.is_ascii_alphabetic() && c.is_ascii_lowercase() => {
                 self.named.insert(c, (text, linewise));
             }
+            // nvchad-user SEV-2 2026-07-11: uppercase register letter
+            // `"A`..`"Z` = same slot as `"a`..`"z` but APPEND on write
+            // instead of overwrite. Vim canonical for accumulating a
+            // chain of yanks under one register handle. Linewise flag
+            // follows the LAST written yank (vim convention).
+            Some(c) if c.is_ascii_alphabetic() && c.is_ascii_uppercase() => {
+                let slot = c.to_ascii_lowercase();
+                let existing = self.named.remove(&slot);
+                let merged = match existing {
+                    Some((prev, _)) => format!("{prev}{text}"),
+                    None => text,
+                };
+                self.named.insert(slot, (merged, linewise));
+            }
             Some('0') => {
                 self.named.insert('0', (text, linewise));
             }
@@ -147,8 +161,12 @@ impl Clipboard {
                 self.effective_linewise = false;
                 String::new()
             }
-            Some(c) if c.is_ascii_alphabetic() && c.is_ascii_lowercase() => {
-                if let Some((t, linewise)) = self.named.get(&c) {
+            // `"a`-`"z` AND `"A`-`"Z` — both address the same slot for
+            // reads (uppercase-append only affects writes). Normalize
+            // to lowercase before the map lookup.
+            Some(c) if c.is_ascii_alphabetic() => {
+                let slot = c.to_ascii_lowercase();
+                if let Some((t, linewise)) = self.named.get(&slot) {
                     self.effective_linewise = *linewise;
                     return t.clone();
                 }

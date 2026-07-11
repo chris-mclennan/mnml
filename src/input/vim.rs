@@ -1668,8 +1668,14 @@ impl VimInputHandler {
                 // are preserved so `"a3yy` works.
                 self.prefix = Prefix::None;
                 if let KeyCode::Char(c) = key.code {
+                    // Vim allows uppercase register letters (A-Z) — they
+                    // reference the SAME slot as their lowercase pair
+                    // but APPEND on write instead of overwriting.
+                    // Downstream yank code checks `c.is_ascii_uppercase()`
+                    // to decide append vs overwrite; the validator just
+                    // needs to accept them. nvchad-user SEV-2 2026-07-11.
                     let valid =
-                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '+' || c == '_';
+                        c.is_ascii_alphabetic() || c.is_ascii_digit() || c == '+' || c == '_';
                     if valid {
                         self.pending_register = Some(c);
                     }
