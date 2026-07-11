@@ -4367,15 +4367,56 @@ impl App {
             &self.workspace,
             self.http_env_override.as_deref(),
         );
+        // Resolve the target env name. If there's an active env, use it.
+        // Otherwise (vscode-mouse SEV-2 #6 2026-07-10) fall back to the
+        // sole env file when there's exactly one — a click on a var in
+        // a workspace with just `dev.env` should Just Work without
+        // forcing the user to select an active env first.
         let env_name = match envset.name() {
             Some(n) => n.to_string(),
             None => {
-                self.toast(format!(
-                    "no active env — set MNML_ENV or click env chip to define {name}"
-                ));
-                return;
+                let mut env_files = Vec::new();
+                for dir in [
+                    self.workspace.join(".mnml").join("env"),
+                    self.workspace.join(".rqst").join("env"),
+                ] {
+                    if let Ok(rd) = std::fs::read_dir(&dir) {
+                        for e in rd.flatten() {
+                            let p = e.path();
+                            if p.extension().and_then(|s| s.to_str()) == Some("env")
+                                && let Some(stem) = p.file_stem().and_then(|s| s.to_str())
+                                && !env_files.iter().any(|s: &String| s == stem)
+                            {
+                                env_files.push(stem.to_string());
+                            }
+                        }
+                    }
+                }
+                match env_files.as_slice() {
+                    [only] => only.clone(),
+                    [] => {
+                        self.toast(format!(
+                            "no env files under .mnml/env or .rqst/env — create one to define {name}"
+                        ));
+                        return;
+                    }
+                    _ => {
+                        self.toast(format!(
+                            "no active env selected ({} envs) — click env chip to pick one, then click {name} again",
+                            env_files.len()
+                        ));
+                        return;
+                    }
+                }
             }
         };
+        // Candidate files in preference order — .mnml/env wins on new-var
+        // creation (higher-priority overlay), .rqst/env is the legacy
+        // fallback. For jump-to-def, prefer the file that ACTUALLY
+        // defines the var, not just the first that exists — api-workflow
+        // SEV-2 2026-07-10: a var defined only in .rqst/ was silently
+        // reported "not defined" because `.mnml/env/<n>.env` existed
+        // (empty or with other vars).
         let candidates = [
             self.workspace
                 .join(".mnml")
@@ -4386,24 +4427,43 @@ impl App {
                 .join("env")
                 .join(format!("{env_name}.env")),
         ];
-        let Some(env_file) = candidates.iter().find(|p| p.exists()).cloned() else {
+        let find_definition = |path: &std::path::Path| -> Option<usize> {
+            let text = std::fs::read_to_string(path).ok()?;
+            for (idx, line) in text.lines().enumerate() {
+                let stripped = line.trim_start();
+                let stripped = stripped.strip_prefix("export ").unwrap_or(stripped);
+                if let Some(rest) = stripped.strip_prefix(name)
+                    && rest.trim_start().starts_with('=')
+                {
+                    return Some(idx);
+                }
+            }
+            None
+        };
+        // First pass: prefer a candidate that defines the var.
+        let mut chosen: Option<(std::path::PathBuf, Option<usize>)> = None;
+        for c in &candidates {
+            if let Some(line) = find_definition(c) {
+                chosen = Some((c.clone(), Some(line)));
+                break;
+            }
+        }
+        // Second pass: fall back to the first existing candidate so
+        // "jump to end so I can add it" still works.
+        if chosen.is_none() {
+            for c in &candidates {
+                if c.exists() {
+                    chosen = Some((c.clone(), None));
+                    break;
+                }
+            }
+        }
+        let Some((env_file, target_line)) = chosen else {
             self.toast(format!(
                 "env file {env_name}.env not found in .mnml/env or .rqst/env"
             ));
             return;
         };
-        let text = std::fs::read_to_string(&env_file).unwrap_or_default();
-        let mut target_line = None;
-        for (idx, line) in text.lines().enumerate() {
-            let stripped = line.trim_start();
-            let stripped = stripped.strip_prefix("export ").unwrap_or(stripped);
-            if let Some(rest) = stripped.strip_prefix(name)
-                && rest.trim_start().starts_with('=')
-            {
-                target_line = Some(idx);
-                break;
-            }
-        }
         self.open_path(&env_file);
         if let Some(row) = target_line {
             if let Some(b) = self.active_editor_mut() {
