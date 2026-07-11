@@ -12896,6 +12896,15 @@ mod tests {
             "one\nsix\n",
             "3dj deletes 4 lines"
         );
+        // d3j from line 1 (COUNT BETWEEN OP AND MOTION) — same effect
+        // as 3dj per vim's `:h count` (count multiplies motion).
+        // nvchad-user round 5 SEV-2 2026-07-11 — was silently dropping
+        // the operator when the digit arrived in op-pending.
+        assert_eq!(
+            run(&[k('d'), k('3'), k('j')], 1),
+            "one\nsix\n",
+            "d3j deletes 4 lines"
+        );
         // dk from line 3 (four) — delete "three" and "four"
         assert_eq!(
             run(&[k('d'), k('k')], 3),

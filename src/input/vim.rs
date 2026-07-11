@@ -1906,6 +1906,20 @@ impl VimInputHandler {
 
         // ── operator-pending (we already saw d / c / y / > / <) ──────
         if let Some(op) = self.op {
+            // A count between op and motion (`d3j`, `y5w`, `c2b`)
+            // multiplies the motion. Accumulate into `self.count`
+            // without touching `self.op` so the next keypress still
+            // sees us in operator-pending. nvchad-user round 5
+            // SEV-2 2026-07-11 — was falling through to
+            // `reset_pending()` and dropping the operator entirely.
+            if let KeyCode::Char(c @ '0'..='9') = key.code {
+                let count_started = self.count.is_some();
+                if !(c == '0' && !count_started) {
+                    let d = c as u32 - '0' as u32;
+                    self.count = Some(self.count.unwrap_or(0).saturating_mul(10).saturating_add(d));
+                    return InputResult::Consumed;
+                }
+            }
             // A second copy of the operator key ⇒ linewise (`dd`, `yy`, `cc`, `>>`, `<<`).
             let doubled = matches!(
                 (op, key.code),
