@@ -1431,6 +1431,28 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, id) in &app.rects.bufferline_tabs {
         push_rect(&mut out, &mut first, &format!("bufferline_tab:{id}"), *r);
     }
+    // vscode-user-mouse SEV-2 2026-07-10: per-leaf tabs after a
+    // horizontal/vertical split live in `split_tab_chips`, not in
+    // `bufferline_tabs`. Without dumping them here, tooling could
+    // only find (and click) top-level bufferline tabs — split-pane
+    // tabs looked like they'd disappeared. Same close-rect story
+    // for `split_tab_close`.
+    for (r, _, tab_pane) in &app.rects.split_tab_chips {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("split_tab_chip:{tab_pane}"),
+            *r,
+        );
+    }
+    for (r, _, tab_pane) in &app.rects.split_tab_close {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("split_tab_close:{tab_pane}"),
+            *r,
+        );
+    }
     // 2026-07-08 — expose pane body rects for tree-drag-to-split
     // debugging. If pane_bodies is empty, drag-to-split can't hit-
     // test a target and the drop overlay never appears.

@@ -928,6 +928,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.close_pane(id);
         return;
     }
+    // vscode-user-mouse SEV-2 2026-07-10: after a split, per-leaf
+    // tabs live in `split_tab_chips` (not `bufferline_tabs`), so
+    // middle-click on a split-pane tab did nothing. Same close
+    // semantics as the top-level bufferline tab. `split_tab_chips`
+    // stores (_, leaf_active_pane, tab_pane) — close the tab_pane.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle))
+        && let Some(&(_, _, tab_pane)) = app
+            .rects
+            .split_tab_chips
+            .iter()
+            .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.close_pane(tab_pane);
+        return;
+    }
 
     // #polish 2026-07-06 — middle-click on a tab-page chip
     // closes that tab page (parity with tab middle-click).
