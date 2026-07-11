@@ -715,21 +715,32 @@ impl App {
         // Without this, `file.save` on a multi-block .http file
         // falls through the named-block splice and CLOBBERS the
         // whole file with a single curl line — silently deleting
-        // blocks 2, 3, N. Same regression class the
-        // `http_multi_block_writeback` test used to catch, via a
-        // new entry point (auto-open on tree click).
-        let blocks = match crate::http::file::parse_all(&text) {
-            Ok(bs) => bs,
-            Err(_) => {
-                // parse_all failed — try the single-request path
-                // (curl / rest / http) as a fallback.
-                match crate::http::parse(&text) {
-                    Ok(_) => {
-                        // Non-empty parse but parse_all rejected —
-                        // treat as a single-block file with no
-                        // block name.
-                        Vec::new()
-                    }
+        // blocks 2, 3, N.
+        //
+        // api-workflow SEV-1 round-7 2026-07-11 — .curl files must
+        // route to the curl parser FIRST. `parse_all` is a naive
+        // `.http`-file line splitter; on `curl {{BASE_URL}}/echo …`
+        // it happily accepts "CURL" as an HTTP method because
+        // `{{BASE_URL}}/echo` matches its `looks_like_url` check,
+        // silently corrupting every flag on the line. Check the
+        // extension to pick the right primary parser.
+        let is_curl_ext = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("curl"));
+        let blocks = if is_curl_ext {
+            match crate::http::parse(&text) {
+                Ok(r) => {
+                    let end = text.matches('\n').count();
+                    vec![crate::http::file::Block {
+                        name: None,
+                        start_line: 0,
+                        end_line: end,
+                        request: r,
+                    }]
+                }
+                Err(_) => match crate::http::file::parse_all(&text) {
+                    Ok(bs) => bs,
                     Err(_) => {
                         self.toast(format!(
                             "http: parse failed for {}, opened as text",
@@ -738,7 +749,22 @@ impl App {
                         self.open_path_as_editor(path);
                         return;
                     }
-                }
+                },
+            }
+        } else {
+            match crate::http::file::parse_all(&text) {
+                Ok(bs) => bs,
+                Err(_) => match crate::http::parse(&text) {
+                    Ok(_) => Vec::new(),
+                    Err(_) => {
+                        self.toast(format!(
+                            "http: parse failed for {}, opened as text",
+                            path.display()
+                        ));
+                        self.open_path_as_editor(path);
+                        return;
+                    }
+                },
             }
         };
         let (request, source_block_name) = if let Some(first) = blocks.first() {
@@ -3974,6 +4000,10 @@ impl App {
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         );
+        // Merge the file's running env (@capture-populated) so a
+        // login → orders flow inside one file resolves `{{TOKEN}}`.
+        // Later entries win over base env values.
+        self.merge_http_running_env(path.as_deref(), &mut env);
         // api-workflow SEV-1 fix 2026-07-10 — expand `{{VAR}}` on a
         // CLONE and send that; the pane keeps the templated version.
         // Prior code mutated `request` in place then stored it on
@@ -4028,6 +4058,7 @@ impl App {
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
         );
+        self.merge_http_running_env(source_path.as_deref(), &mut env);
         crate::http::script::apply_pre(&script, &mut request, &mut env);
         request.url = crate::http::template::expand(&request.url, &env);
         for (_, v) in &mut request.headers {
@@ -6102,6 +6133,43 @@ impl App {
         }
     }
 
+    /// Copy `http_running_env[key]` (if any) into `env.vars`. The
+    /// key is `source_path` when present, else an empty PathBuf (so
+    /// paneless flows still get carry-over within a session).
+    /// Running-env values WIN over base-env values on the same key —
+    /// captures are the freshest snapshot.
+    pub(super) fn merge_http_running_env(
+        &self,
+        source_path: Option<&std::path::Path>,
+        env: &mut crate::http::template::EnvSet,
+    ) {
+        let key = source_path.map(|p| p.to_path_buf()).unwrap_or_default();
+        if let Some(entries) = self.http_running_env.get(&key) {
+            for (k, v) in entries {
+                env.vars.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    /// Persist captures from a successful send into `http_running_env`
+    /// under `source_path` (empty PathBuf when the request came from
+    /// a paneless flow). Called from `drain_http_jobs` after each Ok
+    /// result.
+    pub(super) fn persist_http_captures(
+        &mut self,
+        source_path: Option<&std::path::Path>,
+        captures: &[(String, String)],
+    ) {
+        if captures.is_empty() {
+            return;
+        }
+        let key = source_path.map(|p| p.to_path_buf()).unwrap_or_default();
+        let bucket = self.http_running_env.entry(key).or_default();
+        for (k, v) in captures {
+            bucket.insert(k.clone(), v.clone());
+        }
+    }
+
     pub(super) fn drain_http_jobs(&mut self) {
         use crate::request_pane::RunState;
         let Some((_, rx)) = &self.http_chan else {
@@ -6110,6 +6178,9 @@ impl App {
         let done: Vec<HttpJobDone> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
         let workspace = self.workspace.clone();
+        // Deferred captures to persist after the mut-borrow loop.
+        let mut carry_forward: Vec<(Option<std::path::PathBuf>, Vec<(String, String)>)> =
+            Vec::new();
         for (job_id, result) in done {
             let Some(Pane::Request(rp)) = self.panes.iter_mut().find(
                 |p| matches!(p, Pane::Request(rp) if rp.job_id == job_id && matches!(rp.state, RunState::Sending)),
@@ -6118,6 +6189,14 @@ impl App {
             };
             match result {
                 Ok(rv) => {
+                    // Carry-forward: any @capture-d values persist to
+                    // the file's running env so the next request in
+                    // the same file resolves `{{TOKEN}}` etc. (docs:
+                    // `manual/http.md:126`). api-workflow round-7
+                    // SEV-1 fix — previously chain-only.
+                    if !rv.captures.is_empty() {
+                        carry_forward.push((rp.source_path.clone(), rv.captures.clone()));
+                    }
                     let failed = rv.assertions.iter().filter(|a| !a.passed).count();
                     let total = rv.assertions.len();
                     toasts.push(if total > 0 {
@@ -6176,6 +6255,11 @@ impl App {
                     rp.state = RunState::Failed(e);
                 }
             }
+        }
+        // Persist captures after the mut-borrow loop so the running-env
+        // update doesn't fight `self.panes.iter_mut()`.
+        for (path, caps) in carry_forward {
+            self.persist_http_captures(path.as_deref(), &caps);
         }
         for t in toasts {
             self.toast(t);

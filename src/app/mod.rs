@@ -3741,6 +3741,16 @@ pub struct App {
     /// at App init; written by `:cookies.persist`. Auto-injected
     /// into Request pane sends via `spawn_http_job`.
     pub cookie_jar: std::sync::Arc<std::sync::Mutex<crate::cookie_jar::CookieJar>>,
+    /// `@capture`d vars persisted across `:http.send` fires so a
+    /// login → orders → … flow works from an `.http`/`.curl` file
+    /// without wrapping the whole thing in a `.chain.json`. Keyed by
+    /// source path (empty PathBuf for pane-only requests with no
+    /// backing file). Merged into each fire's `EnvSet` before the
+    /// worker thread expands templates. api-workflow round-7 SEV-1
+    /// 2026-07-11 — the docs promised this but only chain steps
+    /// actually threaded a running env.
+    pub http_running_env:
+        std::collections::HashMap<std::path::PathBuf, std::collections::HashMap<String, String>>,
     /// Snapshot of `.rqst/captured/log.jsonl` for the current
     /// captured-viewer picker (`PickerKind::CapturedRows`). The
     /// picker's `id` field is a string index into this. Cleared
@@ -4946,6 +4956,7 @@ impl App {
             lookup_fire_started: None,
             http_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cookie_jar: cookie_jar_init,
+            http_running_env: std::collections::HashMap::new(),
             pending_captured_rows: Vec::new(),
             pending_history_rows: Vec::new(),
             pending_lookup_items: Vec::new(),
