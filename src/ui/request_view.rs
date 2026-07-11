@@ -3015,14 +3015,28 @@ fn draw_edit(
             // every iteration, making Body-tab render O(n²) in a JSON
             // body. Doubles cost on the [⇔] edit-split (two body paints
             // per frame). 2026-07-11 perf fix.
+            let body_bytes = body.as_bytes();
             let mut line_start_offset: usize = 0;
             for (i, line) in body.lines().enumerate() {
                 let row_y = rows.len() as u16;
                 let n = i + 1;
                 let body_offset_of_line_start = line_start_offset;
                 let body_offset_of_line_end = line_start_offset + line.len();
-                // Advance past this line + its trailing newline (if any).
-                line_start_offset = body_offset_of_line_end + 1;
+                // Advance past this line's trailing separator. `str::lines()`
+                // strips both `\n` and `\r\n`, but `line.len()` returns the
+                // length WITHOUT the separator, so we have to consume both
+                // bytes on CRLF or the offset drifts by 1 per line —
+                // cursor placement then lands on the wrong row for
+                // pasted-from-Windows / Postman bodies. code-reviewer
+                // catch, 2026-07-11.
+                let sep_len = if body_bytes.get(body_offset_of_line_end).copied() == Some(b'\r')
+                    && body_bytes.get(body_offset_of_line_end + 1).copied() == Some(b'\n')
+                {
+                    2
+                } else {
+                    1
+                };
+                line_start_offset = body_offset_of_line_end + sep_len;
                 // 2026-06-19 — keyboard hunt SEV-3 v2: when
                 // [ui] show_whitespace is on, render `\t` as `→` and
                 // leading spaces as `·` (matching the editor view) so
@@ -3357,7 +3371,8 @@ fn draw_edit(
             }
         } else {
             // Running byte offset — same O(n²) → O(n) fix as the Body
-            // tab above. 2026-07-11.
+            // tab above. CRLF-safe (code-reviewer catch 2026-07-11).
+            let src_bytes = src.as_bytes();
             let mut src_line_start_offset: usize = 0;
             for line in src.lines() {
                 let y = rows.len() as u16;
@@ -3368,7 +3383,14 @@ fn draw_edit(
                 )]));
                 let start = src_line_start_offset;
                 let end = src_line_start_offset + line.len();
-                src_line_start_offset = end + 1;
+                let sep_len = if src_bytes.get(end).copied() == Some(b'\r')
+                    && src_bytes.get(end + 1).copied() == Some(b'\n')
+                {
+                    2
+                } else {
+                    1
+                };
+                src_line_start_offset = end + sep_len;
                 if s_focus
                     && focused
                     && caret.is_none()
