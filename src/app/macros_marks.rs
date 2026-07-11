@@ -105,10 +105,16 @@ impl App {
         if self.is_replaying_dot {
             return;
         }
+        // nvchad-user SEV-3 2026-07-10 fix: `3.` should replay the
+        // last change three times. Count is armed by the vim `.`
+        // handler before dispatching this command; consumed here.
+        let n = self.pending_dot_count.take().unwrap_or(1).max(1);
         let keys = self.dot_keys.clone();
         self.is_replaying_dot = true;
-        for key in keys {
-            crate::tui::dispatch_key(self, key);
+        for _ in 0..n {
+            for key in &keys {
+                crate::tui::dispatch_key(self, *key);
+            }
         }
         self.is_replaying_dot = false;
     }

@@ -223,6 +223,10 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         RunCommand(id) => {
             command::run(&id, app);
         }
+        DotRepeat(n) => {
+            app.pending_dot_count = Some(n);
+            app.dot_replay();
+        }
         SetMark(c) => app.set_mark_at_cursor(c),
         JumpToMarkLine(c) => app.jump_to_mark(c, false),
         JumpToMarkExact(c) => app.jump_to_mark(c, true),

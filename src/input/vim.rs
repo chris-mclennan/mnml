@@ -2450,10 +2450,14 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::Ops(Self::repeated(ToggleCaseChar, n))
             }
-            // vim `.` — repeat the last change.
+            // vim `.` — repeat the last change. `3.` runs it 3 times
+            // (count REPLACES the count of the original op per
+            // `:h .`). Read the count BEFORE reset_pending so a bare
+            // `.` (no count typed) gets n=1.
             KeyCode::Char('.') => {
+                let n = self.count1();
                 self.reset_pending();
-                InputResult::App(AppCommand::RunCommand("vim.dot_repeat".into()))
+                InputResult::App(AppCommand::DotRepeat(n))
             }
             // vim `&` — repeat the last :s on the cursor's current line.
             KeyCode::Char('&') => {

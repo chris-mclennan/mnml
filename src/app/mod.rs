@@ -3380,6 +3380,13 @@ pub struct App {
     /// True while `.` is replaying. Suppresses re-recording (so a `.`
     /// replay doesn't capture itself) and prevents nested replay.
     pub is_replaying_dot: bool,
+    /// Count-prefix armed for the next `.` (dot-repeat). Vim's `3.`
+    /// runs the last change 3 times — the count REPLACES the count
+    /// of the original op, matching `:h .`. Set by the vim `.`
+    /// handler before dispatching `vim.dot_repeat`; consumed by
+    /// `dot_replay`. Reset to `None` after each replay.
+    /// nvchad-user SEV-3 2026-07-10 fix.
+    pub pending_dot_count: Option<u32>,
     /// Last `:s` / `:%s` payload, parsed. Vim `&` re-runs it on the cursor's
     /// current line (vim convention: `&` always uses line scope, regardless
     /// of whether the original was buffer-wide). `c` (confirm) flag is
@@ -4718,6 +4725,7 @@ impl App {
             dot_recording: None,
             dot_recording_saw_edit: false,
             is_replaying_dot: false,
+            pending_dot_count: None,
             last_substitute: None,
             file_cursors: std::collections::HashMap::new(),
             file_folds: std::collections::HashMap::new(),

@@ -104,6 +104,12 @@ pub enum AppCommand {
     ExCommand(String),
     /// Bridge into the command registry by id (e.g. vim `gd` → `"lsp.goto_definition"`).
     RunCommand(String),
+    /// vim `.` (dot-repeat) with an armed count. Distinct from
+    /// RunCommand("vim.dot_repeat") because the count needs to reach
+    /// `dot_replay` — which the RunCommand-by-id path can't do.
+    /// `n` = 1 for a bare `.`, higher for `3.`, `10.`, etc.
+    /// nvchad-user SEV-3 2026-07-10 fix.
+    DotRepeat(u32),
     /// vim `m<letter>` — remember the cursor as a buffer-local mark named
     /// `letter` (`a`-`z`). Subsequent jumps via `'<letter>` / `` `<letter>``.
     SetMark(char),
