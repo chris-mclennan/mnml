@@ -11813,7 +11813,16 @@ impl App {
             });
         }
         // Single coalesced edit so one Undo reverts the whole block insert.
-        b.apply_edit_ops(ops, &mut self.clipboard, 20);
+        // nvchad-round-7 SEV-2 2026-07-11 — apply_edit_ops opens a
+        // fresh checkpoint per op, so N rows became N undo entries.
+        // Wrap the loop in atomic_undo instead.
+        let clip = &mut self.clipboard;
+        b.editor.atomic_undo(|ed| {
+            for op in ops {
+                ed.apply(op, 20, clip);
+            }
+        });
+        b.dirty = true;
         // Cursor returns to the insert origin (vim convention).
         b.editor.set_cursor_byte(state.start_byte);
         b.recompute_dirty();
