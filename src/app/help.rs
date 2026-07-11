@@ -57,10 +57,33 @@ pub fn build_help(keymap: &Keymap) -> Vec<HelpRow> {
         chords.sort();
     }
 
+    // design-critic round-3 finding #7 2026-07-11 — mode-chip
+    // legend is only reachable via mouse hover. Prepend a "modes"
+    // section so the ? overlay documents the color coding
+    // + chip labels.
+    let mut rows: Vec<HelpRow> = Vec::new();
+    rows.push(HelpRow::Section("modes"));
+    for (chip, meaning) in [
+        ("NORMAL", "vim normal mode (red)"),
+        ("INSERT", "vim/standard editable (green)"),
+        ("VISUAL", "vim visual — charwise (purple)"),
+        ("V-LINE", "vim visual — linewise (purple)"),
+        ("V-BLOCK", "vim visual — block/column (purple)"),
+        ("REPLACE", "vim replace mode (orange)"),
+        ("TREE", "file tree focused (blue)"),
+        ("VIEW", "read-only pane focused (cyan)"),
+        ("EDIT", "standard mode editing (green)"),
+        ("PANEL", "right side panel focused (cyan)"),
+    ] {
+        rows.push(HelpRow::Binding {
+            keys: chip.to_string(),
+            title: meaning,
+        });
+    }
+
     // Stable section order — the registry yields commands in source
     // order so the same group's commands cluster naturally. We just
     // emit a section header the first time a new group appears.
-    let mut rows: Vec<HelpRow> = Vec::new();
     let mut last_group: &str = "";
     for cmd in registry().all() {
         if cmd.group != last_group {
