@@ -513,6 +513,10 @@ pub struct ResponseView {
     pub status_text: String,
     pub headers: Vec<(String, String)>,
     pub body: String,
+    /// Raw response bytes — the round-trip-safe source of truth for
+    /// disk writes (`http.save_response` on binary payloads).
+    /// api-workflow SEV-1 2026-07-11.
+    pub body_bytes: Vec<u8>,
     pub elapsed: Duration,
     /// Per-phase timing carried through from `http::Response`.
     /// Currently split into `wait` (send → headers received) and

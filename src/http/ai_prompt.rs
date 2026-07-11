@@ -341,6 +341,7 @@ mod tests {
             status_text: "Bad Request".to_string(),
             headers: vec![("content-type".to_string(), "application/json".to_string())],
             body: body.to_string(),
+            body_bytes: body.as_bytes().to_vec(),
             elapsed: Duration::from_millis(123),
             timing: crate::http::Timing::default(),
             assertions: Vec::new(),

@@ -104,7 +104,15 @@ pub struct Response {
     pub status: u16,
     pub status_text: String,
     pub headers: Vec<(String, String)>,
+    /// Best-effort UTF-8 view of the body for the response viewer
+    /// (invalid bytes replaced with U+FFFD). Displays HTML / JSON /
+    /// text correctly.
     pub body: String,
+    /// Raw response bytes — the authoritative source of truth. Use
+    /// this when writing the response to disk (e.g. saving a PNG or
+    /// PDF) so binary payloads aren't corrupted by `body`'s lossy
+    /// UTF-8 replacement. api-workflow SEV-1 2026-07-11.
+    pub body_bytes: Vec<u8>,
     pub elapsed: Duration,
     /// Best-effort per-phase timing. reqwest::blocking exposes two
     /// natural boundaries: `builder.send()` returning means DNS +
@@ -185,7 +193,7 @@ pub fn send(req: &Request) -> Result<Response, String> {
     // HTTP pane; anything past gets truncated with a marker.
     // untouched-surfaces-hunt-2026-06-08 SEV-2 #11.
     const MAX_BODY: usize = 16 * 1024 * 1024;
-    let body = {
+    let (body, body_bytes) = {
         use std::io::Read;
         let mut buf = Vec::with_capacity(64 * 1024);
         let mut reader = resp.take(MAX_BODY as u64 + 1);
@@ -196,13 +204,18 @@ pub fn send(req: &Request) -> Result<Response, String> {
         if truncated {
             buf.truncate(MAX_BODY);
         }
-        let mut s = String::from_utf8_lossy(&buf).into_owned();
+        // `body` is the display-safe UTF-8 view; `body_bytes` is the
+        // raw payload for round-trip-safe disk writes. api-workflow
+        // SEV-1 2026-07-11 — `save_response` used to write `body`
+        // to disk, corrupting binary payloads (PNG/PDF/zip) at the
+        // moment the response landed.
+        let mut display = String::from_utf8_lossy(&buf).into_owned();
         if truncated {
-            s.push_str(
+            display.push_str(
                 "\n\n[mnml: response body truncated at 16 MiB — drop to curl for the full payload]",
             );
         }
-        s
+        (display, buf)
     };
     let receive = recv_start.elapsed();
     let elapsed = start.elapsed();
@@ -212,6 +225,7 @@ pub fn send(req: &Request) -> Result<Response, String> {
         status_text,
         headers,
         body,
+        body_bytes,
         elapsed,
         timing: Timing { wait, receive },
     })

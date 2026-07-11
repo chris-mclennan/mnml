@@ -1169,9 +1169,13 @@ impl App {
             return;
         }
         let Some(cur) = self.active else { return };
-        let body = match self.panes.get(cur) {
+        // api-workflow SEV-1 2026-07-11: use body_bytes (raw payload)
+        // instead of body (UTF-8-lossy display view). Saving a PNG /
+        // PDF / zip used to write the U+FFFD-replaced view to disk,
+        // corrupting the file byte-for-byte.
+        let body_bytes = match self.panes.get(cur) {
             Some(Pane::Request(rp)) => match &rp.state {
-                RunState::Done(r) => r.body.clone(),
+                RunState::Done(r) => r.body_bytes.clone(),
                 _ => return,
             },
             _ => return,
@@ -1187,10 +1191,10 @@ impl App {
             self.toast(format!("save: mkdir {}: {e}", parent.display()));
             return;
         }
-        match std::fs::write(&p, &body) {
+        match std::fs::write(&p, &body_bytes) {
             Ok(()) => self.toast(format!(
                 "save: wrote {} bytes → {}",
-                body.len(),
+                body_bytes.len(),
                 p.display()
             )),
             Err(e) => self.toast(format!("save: write {}: {e}", p.display())),
@@ -3072,6 +3076,7 @@ impl App {
                     status: mock.status,
                     status_text: mock.status_text,
                     headers: mock.headers,
+                    body_bytes: mock.body.as_bytes().to_vec(),
                     body: mock.body,
                     elapsed: std::time::Duration::ZERO,
                     timing: crate::http::Timing::default(),
@@ -3110,6 +3115,7 @@ impl App {
                     status: mock.status,
                     status_text: mock.status_text,
                     headers: mock.headers,
+                    body_bytes: mock.body.as_bytes().to_vec(),
                     body: mock.body,
                     elapsed: std::time::Duration::ZERO,
                     timing: crate::http::Timing::default(),
@@ -4106,6 +4112,7 @@ impl App {
                     status_text: resp.status_text,
                     headers: resp.headers,
                     body: resp.body,
+                    body_bytes: resp.body_bytes,
                     elapsed: resp.elapsed,
                     timing: resp.timing,
                     assertions,
@@ -6019,6 +6026,7 @@ impl App {
                             status_text,
                             headers,
                             body: String::new(),
+                            body_bytes: Vec::new(),
                             elapsed: started.elapsed(),
                             timing: crate::http::Timing::default(),
                             assertions: Vec::new(),
