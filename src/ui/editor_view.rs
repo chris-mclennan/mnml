@@ -380,6 +380,10 @@ pub fn draw_pane(
     // the hover-tooltip layer can point-in-rect the sign column.
     // Continuation rows + blank sign cells are skipped.
     let mut gutter_mark_rows: Vec<(u16, usize, crate::GutterMarkKind)> = Vec::new();
+    // VS Code-style fold-arrow cells — `(visual_row, line_no)`.
+    // Pushed to `app.rects.fold_arrows` after the borrow ends.
+    // 2026-07-11.
+    let mut fold_arrow_rows: Vec<(u16, usize)> = Vec::new();
     // Build the per-visual-row plan: each entry is (line_no, char_start,
     // is_continuation). With wrap off, every file-line takes exactly one
     // visual row; with wrap on, long lines emit multiple rows where each
@@ -540,7 +544,37 @@ pub fn draw_pane(
             mark_kind = Some(crate::GutterMarkKind::Diagnostic(s));
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
         } else {
-            Span::styled(" ", Style::default().bg(base_bg))
+            // VS Code-style fold arrow: replaces the empty sign cell
+            // for foldable / folded lines. Folded → `→` always. Foldable
+            // (has closing brace below) → `↓` only when the mouse is
+            // hovering this line, matching VS Code's "show on hover"
+            // affordance. 2026-07-11 user request.
+            let is_folded = buf.folds.contains_key(&line_no);
+            let is_hovered_line = matches!(
+                app.hover_editor_line,
+                Some((hp, hl)) if hp == pane_id && hl == line_no
+            );
+            let is_foldable =
+                !is_folded && is_hovered_line && is_foldable_header(buf.editor.line_str(line_no));
+            if is_folded {
+                fold_arrow_rows.push((r as u16, line_no));
+                let glyph = if app.config.ui.ascii_icons {
+                    ">"
+                } else {
+                    "\u{25B8}" // ▸
+                };
+                Span::styled(glyph, Style::default().fg(theme::cur().purple).bg(base_bg))
+            } else if is_foldable {
+                fold_arrow_rows.push((r as u16, line_no));
+                let glyph = if app.config.ui.ascii_icons {
+                    "v"
+                } else {
+                    "\u{25BE}" // ▾
+                };
+                Span::styled(glyph, Style::default().fg(theme::cur().comment).bg(base_bg))
+            } else {
+                Span::styled(" ", Style::default().bg(base_bg))
+            }
         };
         if let Some(k) = mark_kind {
             gutter_mark_rows.push((r as u16, line_no, k));
@@ -1262,6 +1296,21 @@ pub fn draw_pane(
             line_no,
         ));
     }
+    // VS Code-style fold arrows — 1-cell rect at the sign column
+    // position for each foldable / folded line rendered above.
+    // Sign column sits at `text_x - 1` (last cell of the gutter).
+    for (visual_row, line_no) in fold_arrow_rows {
+        app.rects.fold_arrows.push((
+            Rect {
+                x: text_x.saturating_sub(1),
+                y: area.y + visual_row,
+                width: 1,
+                height: 1,
+            },
+            pane_id,
+            line_no,
+        ));
+    }
     // Per-render gutter mark rects (sign column). One 1×1 cell per
     // painted mark; hover picks the tooltip via `HoverChip::GutterMark`.
     for (visual_row, line_no, kind) in gutter_mark_rows {
@@ -1339,6 +1388,26 @@ pub fn draw_pane(
 }
 
 /// Local alias so the per-render bg paint still calls into the public helper.
+/// True when `line` looks like a fold-header: its trimmed-right form
+/// ends with an open bracket (`{`, `[`, `(`) or a colon (Python-style
+/// blocks). Cheap trailing-char check — the actual fold semantics
+/// (matching close, block span) run at click time via
+/// `toggle_fold_at_line`. Deliberately permissive: a false positive
+/// only means the hover arrow appears on a line that doesn't
+/// actually toggle-fold anything, which is a mild UX cost. A false
+/// negative would hide the affordance entirely.
+fn is_foldable_header(line: &str) -> bool {
+    // Strip trailing whitespace + trailing line comment. Comments
+    // vary per language (// / # / --). Cheap common-case check:
+    // find the last non-space char and see if it's a fold trigger.
+    let trimmed = line.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let last = trimmed.chars().next_back().unwrap_or(' ');
+    matches!(last, '{' | '[' | '(' | ':')
+}
+
 fn find_word_occurrences(text: &str, word: &str) -> Vec<(usize, usize)> {
     crate::editor::find_whole_word_occurrences(text, word)
 }
@@ -1545,6 +1614,19 @@ fn draw_breadcrumb(frame: &mut Frame, area: Rect, label: &str) {
 mod tests {
     use super::*;
     use ratatui::style::Modifier;
+
+    #[test]
+    fn foldable_header_detects_common_shapes() {
+        assert!(is_foldable_header("fn foo() {"));
+        assert!(is_foldable_header("  let x = ["));
+        assert!(is_foldable_header("def foo():"));
+        assert!(is_foldable_header("if True:  "));
+        assert!(is_foldable_header("array.map((x) => ("));
+        assert!(!is_foldable_header("let x = 1;"));
+        assert!(!is_foldable_header(""));
+        assert!(!is_foldable_header("    "));
+        assert!(!is_foldable_header("return x + 1"));
+    }
 
     #[test]
     fn semantic_token_modifier_maps_known_names() {

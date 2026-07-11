@@ -2362,6 +2362,12 @@ pub struct PaneRects {
     /// chip — click on one to unfold that block. Cleared + rebuilt per
     /// editor render.
     pub fold_chips: Vec<(Rect, PaneId, usize)>,
+    /// VS Code-style fold-toggle arrows painted in the sign column.
+    /// `(cell_rect, pane_id, line_no)`. Foldable lines render `↓`
+    /// on hover; folded lines render `→` persistently. Click on
+    /// one → `toggle_fold_at_line`. Cleared + rebuilt per editor
+    /// render. 2026-07-11.
+    pub fold_arrows: Vec<(Rect, PaneId, usize)>,
     /// #polish 2026-07-06 — per-cell rect for every glyph rendered into
     /// the gutter's sign column (git change marks, LSP + linter
     /// diagnostic dots, breakpoint dots, DAP execution arrow). Hover
@@ -3997,6 +4003,13 @@ pub struct App {
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
     pub hover_chip: Option<(crate::HoverChip, std::time::Instant)>,
+    /// Which editor line is currently under the mouse cursor
+    /// (`(pane_id, 0-based line_no)`). Drives the VS Code-style
+    /// fold-arrow indicator: foldable lines show a `↓` in the
+    /// sign column only when hovered; folded lines show a `→`
+    /// persistently. Cleared on mouse-leave / mouse-out of any
+    /// editor pane. 2026-07-11.
+    pub hover_editor_line: Option<(crate::layout::PaneId, usize)>,
     /// Index into `rects.split_dividers` of the divider the mouse is currently
     /// hovering. Drives the per-divider yellow tint that advertises drag-
     /// resizability. Cleared on click + on hover-leave.
@@ -4892,6 +4905,7 @@ impl App {
             debug_rects: false,
             no_pane_cmdline: None,
             hover_chip: None,
+            hover_editor_line: None,
             hover_divider_idx: None,
             hover_tree_edge: false,
             hover_right_panel_edge: false,

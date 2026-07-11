@@ -253,6 +253,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.pane_bodies.clear();
         app.rects.editor_gutters.clear();
         app.rects.fold_chips.clear();
+        app.rects.fold_arrows.clear();
         app.rects.gutter_marks.clear();
         app.rects.code_lens_chips.clear();
         app.rects.wip_buttons.clear();
@@ -1290,6 +1291,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.pane_bodies.clear();
     app.rects.editor_gutters.clear();
     app.rects.fold_chips.clear();
+    app.rects.fold_arrows.clear();
     app.rects.pty_exit_close_buttons.clear();
     app.rects.code_lens_chips.clear();
     app.rects.wip_buttons.clear();

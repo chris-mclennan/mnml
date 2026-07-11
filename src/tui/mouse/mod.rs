@@ -471,6 +471,37 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         if new_chip != prev_chip {
             app.hover_chip = new_chip.map(|c| (c, now));
         }
+        // VS Code-style fold-arrow tracking. When the mouse is over
+        // an editor pane's body OR gutter, compute the file line
+        // under the cursor and stash it so the next render can paint
+        // a `↓` in the sign column for foldable lines on THAT line.
+        // Clears otherwise so leaving the pane hides the arrows.
+        // 2026-07-11.
+        {
+            let mut hit: Option<(crate::layout::PaneId, usize)> = None;
+            let hit_body = app
+                .rects
+                .editor_panes
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|&(r, pid)| (r, pid));
+            let hit_gutter = app
+                .rects
+                .editor_gutters
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+                .map(|&(r, pid)| (r, pid));
+            if let Some((tr, pid)) = hit_body.or(hit_gutter)
+                && let Some(crate::pane::Pane::Editor(b)) = app.panes.get(pid)
+            {
+                let wrap = app.config.ui.wrap;
+                let (row, _) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
+                hit = Some((pid, row));
+            }
+            if app.hover_editor_line != hit {
+                app.hover_editor_line = hit;
+            }
+        }
         // 2026-06-19 polish — cmdline popup row hover highlights
         // without requiring a click. Move into the row → that
         // row becomes the selected highlight. Move OFF the popup

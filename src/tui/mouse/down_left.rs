@@ -234,6 +234,25 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // VS Code-style fold arrow in the sign column → toggle the fold
+    // at that line. `toggle_fold_at_cursor` uses the cursor's
+    // position, so seek the cursor to the clicked line first
+    // (its first non-whitespace char, matching how vim's `za` on a
+    // header line behaves). 2026-07-11.
+    if let Some(&(_, pid, line_no)) = app
+        .rects
+        .fold_arrows
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+            b.editor.place_cursor(line_no, 0);
+        }
+        app.toggle_fold_at_cursor();
+        return;
+    }
     // Click on a code-lens chip → fire its `workspace/executeCommand`.
     // Same priority as fold chips — chip owns the click.
     if let Some(&(_, pid, lens_idx)) = app
