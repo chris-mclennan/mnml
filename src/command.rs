@@ -418,7 +418,10 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.zen",
             title: "Zen mode (hide tree + bufferline + statusline)",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard SEV-2 2026-07-11 — VS Code's
+            // Ctrl+K Z toggles zen. F11 also falls back to Zen when
+            // there's no active DAP session (e35a295).
+            keys: &["ctrl+k z"],
             run: |app| app.toggle_zen_mode(),
         },
         Command {
@@ -2830,7 +2833,9 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.switch_workspace",
             title: "Switch workspace (primary ↔ extras)",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard SEV-2 2026-07-11 — VS Code's
+            // Ctrl+K Ctrl+O opens a folder / recent workspace.
+            keys: &["ctrl+k ctrl+o"],
             run: |app| app.open_workspace_picker(),
         },
         Command {
