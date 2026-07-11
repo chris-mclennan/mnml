@@ -223,7 +223,15 @@ impl InputHandler for StandardInputHandler {
                 'y' => InputResult::Ops(vec![Redo]),
                 '/' => InputResult::Ops(vec![ToggleLineComment]),
                 's' => InputResult::App(AppCommand::Save),
-                'd' if shift => InputResult::Ops(vec![DuplicateLine]),
+                // vscode-user-keyboard SEV-2 2026-07-11: Ctrl+Shift+D
+                // used to silently duplicate the current line. VS Code
+                // binds Ctrl+Shift+D to "Show Run and Debug view" —
+                // a reflexive user got a stealth line-duplicate on
+                // their file. Shift+Alt+↓ already covers DuplicateLine
+                // (line 272 below), so the Ctrl+Shift+D alias is
+                // redundant. Ignore it and let the palette own the
+                // "run and debug" action for now.
+                'd' if shift => InputResult::Ignored,
                 'd' => InputResult::Ops(vec![SelectWord]), // closest we have to "select occurrence" for now
                 // qa-7th vscode SEV-2 2026-06-30 — was SelectLine
                 // (vim V semantics — cursor stays put, only
@@ -587,17 +595,19 @@ mod tests {
             )),
             vec![EditOp::Redo]
         );
-        // Ctrl+Shift+D → DuplicateLine
-        assert_eq!(
-            ops(h().handle_key(
+        // Ctrl+Shift+D → Ignored (vscode-user-keyboard SEV-2 2026-07-11
+        // — used to duplicate the line, but VS Code binds it to
+        // "Show Run and Debug view." Shift+Alt+↓ keeps DuplicateLine).
+        assert!(matches!(
+            h().handle_key(
                 key(
                     KeyCode::Char('d'),
                     KeyModifiers::CONTROL | KeyModifiers::SHIFT
                 ),
                 &ctx(false)
-            )),
-            vec![EditOp::DuplicateLine]
-        );
+            ),
+            InputResult::Ignored
+        ));
     }
 
     // ── [keys.standard] config overrides ──────────────────────────
