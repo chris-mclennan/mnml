@@ -572,6 +572,11 @@ pub(crate) struct Substitute {
     confirm: bool,
     /// `n` flag — only count matches, don't replace (vim canonical).
     count_only: bool,
+    /// Optional inclusive line range `(start_line, end_line)`. Used
+    /// by `:5,10s/…/…/g` where a specific range is given (not `%`
+    /// and not bare `:s`). Overrides both `whole_buffer` and the
+    /// bare-line default. nvchad-user SEV-2 2026-07-11.
+    pub(crate) line_range: Option<(usize, usize)>,
 }
 
 /// In-flight `:%s/.../.../c` (interactive replace) state. The user steps
@@ -4248,6 +4253,13 @@ pub struct App {
     /// it; `find.toggle_regex` flips it AND updates any open find state on
     /// the active buffer.
     pub find_regex_default: bool,
+    /// Case-sensitivity mode for search. `None` = smart-case
+    /// (mnml's historical default: case-sensitive iff the query has
+    /// an uppercase letter). `Some(false)` = case-INSENSITIVE
+    /// always (`:set ic`). `Some(true)` = case-SENSITIVE always
+    /// (`:set noic`). Toggled by the `:set` handlers.
+    /// nvchad-user SEV-2 2026-07-11.
+    pub search_case_mode: Option<bool>,
     /// Snapshot of the active buffer's find state when the Find prompt
     /// opened — restored on Esc-cancel so incremental find doesn't leak
     /// matches when the user bails. `Some(None)` ⇒ "previously cleared";
@@ -4994,6 +5006,7 @@ impl App {
             pending_workspace_symbols: Vec::new(),
             pending_workspace_symbol_query: None,
             find_regex_default: false,
+            search_case_mode: None,
             find_preview_snapshot: None,
             find_pending_range: None,
             find_pending_reverse: false,
@@ -9590,7 +9603,11 @@ impl App {
         let end_line = end_line.min(line_count.saturating_sub(1));
         let start_line = start_line.min(end_line);
         // Place cursor at start of start_line, then SelectLine + extend
-        // by (end - start) MoveDown's. Operator emits Indent/Outdent.
+        // by (end - start) MoveDown's + MoveLineEnd. Operator emits
+        // Indent/Outdent. nvchad-user SEV-2 2026-07-11 fix: without
+        // the trailing MoveLineEnd the selection stopped at column 0
+        // of end_line — Indent then applied to lines start..end_line-1
+        // (off by one), so `:5,10>` indented 5 lines instead of 6.
         b.editor.place_cursor(start_line, 0);
         b.editor
             .apply(crate::edit_op::EditOp::SelectLine, 20, &mut self.clipboard);
@@ -9598,6 +9615,8 @@ impl App {
             b.editor
                 .apply(crate::edit_op::EditOp::MoveDown, 20, &mut self.clipboard);
         }
+        b.editor
+            .apply(crate::edit_op::EditOp::MoveLineEnd, 20, &mut self.clipboard);
         let op = if indent {
             crate::edit_op::EditOp::Indent
         } else {

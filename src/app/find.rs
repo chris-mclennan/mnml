@@ -371,6 +371,7 @@ impl App {
         // Find prompt showed "no matches" even though accept-time
         // would have used regex.
         let regex_default = self.find_regex_default || crate::input::is_vim_style(&self.config);
+        let case_mode = self.search_case_mode;
         let pending_range = self.find_pending_range;
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
@@ -381,9 +382,19 @@ impl App {
             return;
         }
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
-        // Smart-case: any uppercase letter in the query ⇒ case-sensitive.
-        // Only meaningful for literal mode (regex carries its own `(?i)`).
-        let case_sensitive = !regex && query.chars().any(|c| c.is_uppercase());
+        // Case rule: `search_case_mode` overrides smart-case (vim's
+        // `:set ic` / `:set noic` / `:set smartcase`). None →
+        // historical smart-case default (case-sensitive iff query has
+        // an uppercase letter). Only meaningful for literal mode
+        // (regex carries its own `(?i)`).
+        let case_sensitive = if regex {
+            false
+        } else {
+            match case_mode {
+                Some(mode) => mode,
+                None => query.chars().any(|c| c.is_uppercase()),
+            }
+        };
         let mut state = crate::buffer::FindState {
             query,
             regex,
@@ -438,6 +449,7 @@ impl App {
         // Consume the in-flight scope range — accept_find is one-shot.
         let pending_range = self.find_pending_range.take();
         let regex_default = self.find_regex_default;
+        let case_mode = self.search_case_mode;
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {
             return;
@@ -454,7 +466,16 @@ impl App {
         // both search and :%s/…/…/g).
         let regex_default = regex_default || crate::input::is_vim_style(&self.config);
         let regex = b.find.as_ref().map(|f| f.regex).unwrap_or(regex_default);
-        let case_sensitive = !regex && query.chars().any(|c| c.is_uppercase());
+        // Same case-mode rule as `update_live_find_preview` — vim's
+        // `:set ic` / `:set noic` override smart-case.
+        let case_sensitive = if regex {
+            false
+        } else {
+            match case_mode {
+                Some(mode) => mode,
+                None => query.chars().any(|c| c.is_uppercase()),
+            }
+        };
         let mut state = crate::buffer::FindState {
             query: query.clone(),
             regex,

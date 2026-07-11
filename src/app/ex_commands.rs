@@ -352,9 +352,30 @@ impl App {
         // Remember for vim `&` (re-run on the cursor's current line).
         self.last_substitute = Some(sub.clone());
         let text = b.editor.text().to_string();
-        // Compute the byte range to operate on. `:%s` ⇒ whole buffer; bare
-        // `:s` ⇒ the cursor's current line (no trailing newline).
-        let (lo, hi) = if sub.whole_buffer {
+        // Compute the byte range to operate on:
+        //   - explicit `line_range` (`:5,10s/…/…/`) wins
+        //   - `:%s` ⇒ whole buffer
+        //   - bare `:s` ⇒ cursor's current line (vim canonical)
+        let (lo, hi) = if let Some((sr, er)) = sub.line_range {
+            let lines: Vec<&str> = text.split('\n').collect();
+            let sr = sr.min(lines.len().saturating_sub(1));
+            let er = er.min(lines.len().saturating_sub(1));
+            let mut byte_off = 0usize;
+            let mut start = 0usize;
+            let mut end = text.len();
+            for (i, line) in lines.iter().enumerate() {
+                if i == sr {
+                    start = byte_off;
+                }
+                byte_off += line.len();
+                if i == er {
+                    end = byte_off;
+                    break;
+                }
+                byte_off += 1; // trailing '\n'
+            }
+            (start, end)
+        } else if sub.whole_buffer {
             (0usize, text.len())
         } else {
             let cur = b.editor.cursor();
@@ -505,12 +526,33 @@ impl App {
             parse_line_range(&expanded, active_row, active_line_count)
         {
             let cmd = remainder.trim();
-            match cmd {
+            // Split into head + arg (`:5,10y a` → "y" + "a"). Vim
+            // allows an optional register letter as the argument for
+            // y / d. nvchad-user SEV-2 2026-07-11.
+            let (head, arg) = match cmd.split_once(char::is_whitespace) {
+                Some((h, a)) => (h, a.trim()),
+                None => (cmd, ""),
+            };
+            match head {
                 "d" | "delete" | "del" | "de" => {
+                    if !arg.is_empty()
+                        && arg.len() == 1
+                        && let Some(reg) = arg.chars().next()
+                        && reg.is_ascii_alphabetic()
+                    {
+                        self.clipboard.set_pending_register(Some(reg));
+                    }
                     self.delete_lines(start, end);
                     return;
                 }
                 "y" | "yank" | "ya" => {
+                    if !arg.is_empty()
+                        && arg.len() == 1
+                        && let Some(reg) = arg.chars().next()
+                        && reg.is_ascii_alphabetic()
+                    {
+                        self.clipboard.set_pending_register(Some(reg));
+                    }
                     self.yank_lines(start, end);
                     return;
                 }
@@ -524,6 +566,27 @@ impl App {
                 }
                 "<" | "<<" => {
                     self.indent_lines_range(start, end, false);
+                    return;
+                }
+                // `:{range}s/…/…/[flags]` — substitute within a range.
+                // Vim's canonical form. Previously only `:%s` worked.
+                // nvchad-user SEV-2 2026-07-11.
+                "s" | "sub" | "substitute" => {
+                    // Reconstruct as `:%s<rest>` where <rest> is the
+                    // /old/new/flags payload, then walk it through
+                    // parse_substitute and clamp the byte range to
+                    // [start_line..=end_line] inside run_substitute.
+                    if let Some(sub_body) = remainder.trim().strip_prefix(head) {
+                        // parse_substitute expects the leading `s`.
+                        let synthesized = format!("s{sub_body}");
+                        if let Some(mut sub) = parse_substitute(&synthesized) {
+                            sub.whole_buffer = false;
+                            sub.line_range = Some((start, end));
+                            self.run_substitute(sub);
+                            return;
+                        }
+                    }
+                    self.toast(format!(":{start}..{end}s — unrecognized substitute"));
                     return;
                 }
                 _ => { /* fall through to normal dispatcher */ }
@@ -3739,32 +3802,36 @@ impl App {
         // either always-honors or doesn't implement yet. Toast the
         // current state instead of "unknown option" so muscle memory
         // doesn't get punished.
+        } else if matches!(opt, "ignorecase" | "ic") {
+            // Force case-INSENSITIVE. nvchad-user SEV-2 2026-07-11
+            // fix — used to just toast "already on"; now actually
+            // sets the search_case_mode override so search paths
+            // ignore case regardless of query capitalization.
+            self.search_case_mode = Some(false);
+            self.toast(":set ignorecase — on");
+        } else if matches!(opt, "noignorecase" | "noic") {
+            // Force case-SENSITIVE. Was toasting "not supported".
+            self.search_case_mode = Some(true);
+            self.toast(":set noignorecase — on (case-sensitive)");
+        } else if matches!(opt, "smartcase" | "scs") {
+            // Smart-case = mnml's historical default (None → detect
+            // from query capitalization). Same reset if user
+            // previously typed `:set ic` / `:set noic`.
+            self.search_case_mode = None;
+            self.toast(":set smartcase — on (case-sensitive iff query has uppercase)");
+        } else if matches!(opt, "nosmartcase" | "noscs") {
+            // Vim: disabling smartcase falls back to global `ignorecase`.
+            // mnml maps to case-INSENSITIVE (matches nvchad default).
+            self.search_case_mode = Some(false);
+            self.toast(":set nosmartcase — on (always case-insensitive)");
         } else if matches!(
             opt,
-            "expandtab"
-                | "et"
-                | "ignorecase"
-                | "ic"
-                | "smartcase"
-                | "scs"
-                | "hlsearch"
-                | "hls"
-                | "incsearch"
-                | "is"
+            "expandtab" | "et" | "hlsearch" | "hls" | "incsearch" | "is"
         ) {
             self.toast(format!(":set {opt} — already on (mnml default)"));
         } else if matches!(
             opt,
-            "noexpandtab"
-                | "noet"
-                | "noignorecase"
-                | "noic"
-                | "nosmartcase"
-                | "noscs"
-                | "nohlsearch"
-                | "nohls"
-                | "noincsearch"
-                | "nois"
+            "noexpandtab" | "noet" | "nohlsearch" | "nohls" | "noincsearch" | "nois"
         ) {
             self.toast(format!(":set {opt} — not supported in mnml"));
         } else if opt == "wrap" {

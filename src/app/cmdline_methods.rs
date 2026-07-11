@@ -344,6 +344,7 @@ pub(crate) fn parse_substitute(line: &str) -> Option<Substitute> {
         whole_buffer,
         confirm,
         count_only,
+        line_range: None,
     })
 }
 
