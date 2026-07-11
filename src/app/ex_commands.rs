@@ -2165,6 +2165,15 @@ impl App {
                     self.toast(":put — no active editor");
                     return;
                 };
+                // Optional register letter — `:put a` reads from
+                // `"a`. nvchad round 5 SEV-2 2026-07-11.
+                if !rest.is_empty()
+                    && rest.len() == 1
+                    && let Some(reg) = rest.chars().next()
+                    && reg.is_ascii_alphabetic()
+                {
+                    self.clipboard.set_pending_register(Some(reg));
+                }
                 let s = self.clipboard.text();
                 if s.is_empty() {
                     self.toast(":put — clipboard empty");
@@ -2521,6 +2530,42 @@ impl App {
             // file-specific overrides without touching the global config.
             "setlocal" | "setl" => self.ex_setlocal(rest),
             "set" => self.ex_set(rest),
+            // `:let @<reg> = "text"` — set a named register's contents.
+            // Vim canonical. nvchad round 5 SEV-2 2026-07-11 fix.
+            // Only the `@<reg>` form is implemented; general vim `let`
+            // (variable assignment) isn't wired.
+            "let" | "l" => {
+                let r = rest.trim();
+                if let Some(rest) = r.strip_prefix('@')
+                    && let Some((reg_str, val_str)) = rest.split_once('=')
+                {
+                    let reg_str = reg_str.trim();
+                    let val_str = val_str.trim();
+                    // Strip surrounding matched quotes.
+                    let value = val_str
+                        .strip_prefix('"')
+                        .and_then(|s| s.strip_suffix('"'))
+                        .or_else(|| {
+                            val_str
+                                .strip_prefix('\'')
+                                .and_then(|s| s.strip_suffix('\''))
+                        })
+                        .unwrap_or(val_str)
+                        .to_string();
+                    if reg_str.len() == 1
+                        && let Some(reg) = reg_str.chars().next()
+                        && reg.is_ascii_alphabetic()
+                    {
+                        self.clipboard.set_pending_register(Some(reg));
+                        self.clipboard.set(value, false);
+                        self.toast(format!(":let @{reg} — set ({} bytes)", val_str.len()));
+                    } else {
+                        self.toast(format!(":let @{reg_str} — only single-letter registers"));
+                    }
+                } else {
+                    self.toast(":let — expected `:let @<reg> = \"text\"`");
+                }
+            }
             // `:noh` / `:nohlsearch` — clear the active buffer's find state
             // (drops the highlights). Vim convention.
             "noh" | "nohl" | "nohlsearch" => {
