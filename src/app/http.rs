@@ -2397,6 +2397,13 @@ impl App {
     }
 
     fn move_to_http_block(&mut self, forward: bool) {
+        // Request-pane path first — .http/.curl/.rest files auto-open
+        // as Pane::Request (2026-07-06), so the old active_editor()
+        // gate made ]/[ a silent no-op for the standard flow.
+        // api-workflow SEV-1 2026-07-10 fix.
+        if self.move_request_pane_to_next_block(forward) {
+            return;
+        }
         let Some(b) = self.active_editor() else {
             self.toast("http.next/prev_block: no active editor");
             return;
@@ -2468,6 +2475,96 @@ impl App {
         if let Some(id) = self.active {
             self.reveal_pane(id);
         }
+    }
+
+    /// Move an active `Pane::Request` to the next/prev `###` block in its
+    /// source file, in place (does NOT spawn a new pane). Returns `true`
+    /// when the active pane is a Request pane and navigation was
+    /// attempted (even if it failed / toasted); `false` when there's no
+    /// Request-pane path, so the caller can fall through to the editor
+    /// path. `.http`/`.curl`/`.rest` files auto-open as `Pane::Request`
+    /// since 2026-07-06, so this is the standard-flow path — the
+    /// editor branch only runs when the user forced "Open as text".
+    ///
+    /// api-workflow SEV-1 fix 2026-07-10 — was previously a silent
+    /// no-op through `active_editor()`, making `]`/`[` unreachable in
+    /// the default open flow.
+    fn move_request_pane_to_next_block(&mut self, forward: bool) -> bool {
+        use crate::pane::Pane;
+        use crate::request_pane::{EditField, RunState, ViewMode};
+        let Some(active) = self.active else {
+            return false;
+        };
+        let Some(Pane::Request(rp)) = self.panes.get(active) else {
+            return false;
+        };
+        let Some(path) = rp.source_path.clone() else {
+            self.toast("http.next/prev_block: request has no source file");
+            return true;
+        };
+        let current_block_name = rp.source_block_name.clone();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                self.toast(format!("http.next/prev_block: {}: {e}", path.display()));
+                return true;
+            }
+        };
+        let blocks = match crate::http::file::parse_all(&text) {
+            Ok(bs) => bs,
+            Err(_) => {
+                self.toast("http.next/prev_block: no ### blocks in file");
+                return true;
+            }
+        };
+        if blocks.len() < 2 {
+            self.toast("http.next/prev_block: only one block in file");
+            return true;
+        }
+        // Locate current block index. Match on `source_block_name` first
+        // (Some("foo") ↔ block.name == Some("foo"), None ↔ block.name
+        // is None for the leading-unnamed block). Fall back to 0 if no
+        // match — e.g. the pane was opened before the block was
+        // renamed/removed.
+        let cur_idx = blocks
+            .iter()
+            .position(|b| b.name == current_block_name)
+            .unwrap_or(0);
+        let n = blocks.len();
+        let next_idx = if forward {
+            (cur_idx + 1) % n
+        } else {
+            (cur_idx + n - 1) % n
+        };
+        let next = &blocks[next_idx];
+        let request = next.request.clone();
+        let block_name = next.name.clone();
+        let script = crate::http::script::parse(&text);
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(active) {
+            rp.request = request;
+            rp.source_block_name = block_name.clone();
+            rp.script = script;
+            rp.view = ViewMode::Edit;
+            rp.focus = EditField::Url;
+            rp.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
+            rp.url_cursor = rp.request.url.len();
+            rp.body_cursor = 0;
+            rp.headers_cursor = 0;
+            rp.scroll = 0;
+            // Rebuild the headers text buffer from the freshly-loaded request.
+            rp.headers_buffer = rp
+                .request
+                .headers
+                .iter()
+                .map(|(k, v)| format!("{k}: {v}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        self.maybe_auto_format_active_body();
+        self.reveal_pane(active);
+        let label = block_name.unwrap_or_else(|| format!("#{}", next_idx + 1));
+        self.toast(format!("block: {label} ({}/{})", next_idx + 1, n));
+        true
     }
 
     /// `http.lookup` — open the lookup picker (stage 1: pick a
@@ -6088,6 +6185,64 @@ mod http_tests {
     use super::*;
 
     // ── extract_summary — drives the bufferline tab label ──
+
+    #[test]
+    fn http_next_block_navigates_request_pane_in_place() {
+        // api-workflow SEV-1 2026-07-10: `.http`/`.curl`/`.rest` files
+        // auto-open as Pane::Request, but `]`/`[` (http_next_block /
+        // http_prev_block) previously went through `active_editor()`,
+        // which is None for Request panes → silent no-op. This
+        // regression test drives the same path: open a multi-block
+        // .http as a Request pane, call http_next_block, assert the
+        // SAME pane is now showing block 2.
+        let d = tempfile::tempdir().unwrap();
+        let mut app = App::new(d.path().to_path_buf(), crate::config::Config::default()).unwrap();
+        let file = d.path().join("multi.http");
+        std::fs::write(
+            &file,
+            "### one\nGET https://example.com/one\n\n### two\nGET https://example.com/two\n\n### three\nGET https://example.com/three\n",
+        )
+        .unwrap();
+        app.open_request_pane_from_file(&file);
+        let pane_count_before = app.panes.len();
+        let active_before = app.active;
+
+        let assert_block = |app: &App, expected_name: &str, expected_url_suffix: &str| {
+            let idx = app.active.expect("active pane");
+            match app.panes.get(idx).expect("pane exists") {
+                crate::pane::Pane::Request(rp) => {
+                    assert_eq!(
+                        rp.source_block_name.as_deref(),
+                        Some(expected_name),
+                        "block name for expected {expected_name}"
+                    );
+                    assert!(
+                        rp.request.url.ends_with(expected_url_suffix),
+                        "url {} ends with {expected_url_suffix}",
+                        rp.request.url
+                    );
+                }
+                _ => panic!("expected Request pane"),
+            }
+        };
+        assert_block(&app, "one", "/one");
+
+        app.http_next_block();
+        assert_eq!(app.panes.len(), pane_count_before, "no new pane spawned");
+        assert_eq!(app.active, active_before, "same pane");
+        assert_block(&app, "two", "/two");
+
+        app.http_next_block();
+        assert_block(&app, "three", "/three");
+
+        // Wrap forward.
+        app.http_next_block();
+        assert_block(&app, "one", "/one");
+
+        // Wrap backward.
+        app.http_prev_block();
+        assert_block(&app, "three", "/three");
+    }
 
     #[test]
     fn regenerate_body_rerolls_concrete_timestamps_and_uuids() {
