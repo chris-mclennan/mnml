@@ -165,6 +165,83 @@ impl App {
     /// Lowercase letters are buffer-local (`Buffer.marks`); uppercase
     /// letters are global (`App.global_marks`, persisted in session.json).
     /// Bound to vim normal-mode `m<letter>` (via [`AppCommand::SetMark`]).
+    /// `:delmarks a`, `:delmarks aBc`, `:delmarks!` — vim canonical
+    /// delete-marks. Lowercase letters delete per-buffer marks;
+    /// uppercase delete global marks. `!` (as the whole arg) means
+    /// "all lowercase local marks + all buffer-scoped state". Emits
+    /// a single toast summarising what was cleared.
+    /// nvchad-round-7 SEV-3 2026-07-11.
+    pub fn delete_marks(&mut self, spec: &str) {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            self.toast(":delmarks — usage: `:delmarks <letters>` or `:delmarks!`");
+            return;
+        }
+        // `:delmarks!` — wipe every buffer's local marks.
+        if spec == "!" {
+            let mut count = 0usize;
+            for pane in self.panes.iter_mut() {
+                if let crate::pane::Pane::Editor(b) = pane {
+                    count += b.marks.len();
+                    b.marks.clear();
+                }
+            }
+            self.toast(format!(":delmarks! — cleared {count} local mark(s)"));
+            return;
+        }
+        // Parse spec: letters + `X-Y` ranges. Whitespace ignored.
+        let mut targets: Vec<char> = Vec::new();
+        let mut prev: Option<char> = None;
+        let mut range_pending = false;
+        for ch in spec.chars() {
+            if ch.is_whitespace() {
+                prev = None;
+                range_pending = false;
+                continue;
+            }
+            if ch == '-' && prev.is_some() {
+                range_pending = true;
+                continue;
+            }
+            if !ch.is_ascii_alphanumeric() {
+                continue;
+            }
+            if range_pending && let Some(start) = prev {
+                let (a, b) = if start <= ch {
+                    (start, ch)
+                } else {
+                    (ch, start)
+                };
+                for c in (a as u32)..=(b as u32) {
+                    if let Some(c) = char::from_u32(c) {
+                        targets.push(c);
+                    }
+                }
+                range_pending = false;
+                prev = Some(ch);
+                continue;
+            }
+            targets.push(ch);
+            prev = Some(ch);
+        }
+        let mut local_removed = 0usize;
+        let mut global_removed = 0usize;
+        for c in &targets {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                if let Some(b) = self.active_editor_mut()
+                    && b.marks.remove(c).is_some()
+                {
+                    local_removed += 1;
+                }
+            } else if c.is_ascii_uppercase() && self.global_marks.remove(c).is_some() {
+                global_removed += 1;
+            }
+        }
+        self.toast(format!(
+            ":delmarks — {local_removed} local, {global_removed} global"
+        ));
+    }
+
     pub fn set_mark_at_cursor(&mut self, letter: char) {
         let Some(b) = self.active_editor() else {
             self.toast("no active editor");

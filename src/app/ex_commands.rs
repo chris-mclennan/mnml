@@ -2875,6 +2875,8 @@ impl App {
                     self.arglist_set(rest);
                 }
             }
+            "delmarks" | "delm" => self.delete_marks(rest),
+            "delmarks!" | "delm!" => self.delete_marks("!"),
             "next" | "ne" => self.arglist_step(1),
             "prev" | "previous" | "Ne" => self.arglist_step(-1),
             "first" | "fir" | "rew" | "rewind" => self.arglist_goto(0),
