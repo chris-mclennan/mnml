@@ -367,8 +367,28 @@ fn chain_subcommand(argv: Vec<String>) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // api-workflow SEV-2 2026-07-11: walk up from the chain file's
+    // directory to find a `.mnml/` marker (same rationale as
+    // `do_run` in the sibling `run` command). Without this,
+    // `mnml chain run .mnml/chains/oauth.chain.json` from the
+    // project root defaulted the workspace to `.mnml/chains/` and
+    // couldn't find `auth/login.curl` (which resolves against
+    // `<workspace>/.mnml/requests/`).
     let ws = workspace
-        .or_else(|| file.parent().map(Path::to_path_buf))
+        .or_else(|| {
+            let start = file.parent()?;
+            let mut cur: &Path = start;
+            loop {
+                if cur.join(".mnml").is_dir() || cur.join(".rqst").is_dir() {
+                    return Some(cur.to_path_buf());
+                }
+                let Some(parent) = cur.parent() else {
+                    break;
+                };
+                cur = parent;
+            }
+            Some(start.to_path_buf())
+        })
         .unwrap_or_else(|| PathBuf::from("."));
     let mut out = String::new();
     let result = mnml::http::chain::run(&file, &ws, env_name.as_deref(), &mut out, None);
@@ -622,10 +642,28 @@ fn do_run(file: &Path, env_name: Option<&str>, workspace: Option<&Path>) -> Resu
     let raw = std::fs::read_to_string(file)
         .map_err(|e| format!("cannot read {}: {e}", file.display()))?;
 
-    // Workspace for env-file resolution: explicit, else the file's directory.
+    // Workspace for env-file resolution: explicit, else walk up from
+    // the file's directory looking for a `.mnml/` or `.rqst/` marker.
+    // Prior behavior defaulted to the file's PARENT dir, which broke
+    // `mnml run .mnml/requests/health.curl` from the project root
+    // because the workspace became `.mnml/requests/` — no env files
+    // there. api-workflow SEV-2 2026-07-11.
     let ws = workspace
         .map(Path::to_path_buf)
-        .or_else(|| file.parent().map(Path::to_path_buf))
+        .or_else(|| {
+            let start = file.parent()?;
+            let mut cur: &Path = start;
+            loop {
+                if cur.join(".mnml").is_dir() || cur.join(".rqst").is_dir() {
+                    return Some(cur.to_path_buf());
+                }
+                let Some(parent) = cur.parent() else {
+                    break;
+                };
+                cur = parent;
+            }
+            Some(start.to_path_buf())
+        })
         .unwrap_or_else(|| PathBuf::from("."));
     let mut env = EnvSet::select(&ws, env_name);
     if let Some(name) = &env.name {
