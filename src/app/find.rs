@@ -363,7 +363,14 @@ impl App {
     /// prompt's query so the user sees matches as they type. Cursor isn't
     /// moved — just the highlight set + match index. Empty query clears.
     pub fn update_live_find_preview(&mut self, query: String) {
-        let regex_default = self.find_regex_default;
+        // Vim mode: force regex-default so live preview matches the
+        // eventual accept_find behavior. nvchad round 3 2026-07-11
+        // follow-up — `:%s` was already regex, but `/pattern`'s live
+        // preview seeded `regex = false` (bug entered via the
+        // prev-find persistence path), so `foo.bar` typed into the
+        // Find prompt showed "no matches" even though accept-time
+        // would have used regex.
+        let regex_default = self.find_regex_default || crate::input::is_vim_style(&self.config);
         let pending_range = self.find_pending_range;
         let Some(cur) = self.active else { return };
         let Some(Pane::Editor(b)) = self.panes.get_mut(cur) else {

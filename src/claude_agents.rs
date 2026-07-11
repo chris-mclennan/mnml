@@ -2732,8 +2732,19 @@ fn estimate_cost(model: &str, input: u64, output: u64, cache_create: u64, cache_
 ///     id (Codex — usually no session arg).
 fn scan_running_pids(source: AgentSource) -> Vec<(String, u32, String)> {
     let exe = source.exe_name();
-    let out = std::process::Command::new("pgrep")
-        .args(["-af", exe])
+    // claude-agents SEV-1 2026-07-11: `pgrep -af <exe>` is
+    // GNU-pgrep syntax (linux: `-a` = "print full args"). On
+    // macOS/BSD `-a` means "include ancestors" and does NOT
+    // print the cmdline at all — the parser below then split on
+    // whitespace inside a bare pid list, dropped every entry, and
+    // returned `Vec::new()`. Live-detection was silently broken on
+    // the primary dev platform.
+    //
+    // Portable: `ps -axo pid=,command=` (POSIX-standard) prints
+    // pid + full command on both macOS and Linux. Filter by exe
+    // name in Rust so we don't need pgrep's regex matching.
+    let out = std::process::Command::new("ps")
+        .args(["-axo", "pid=,command="])
         .output();
     let Ok(o) = out else {
         return Vec::new();
@@ -2743,7 +2754,8 @@ fn scan_running_pids(source: AgentSource) -> Vec<(String, u32, String)> {
     }
     let text = String::from_utf8_lossy(&o.stdout);
     let mut found: Vec<(String, u32, String)> = Vec::new();
-    for line in text.lines() {
+    for raw_line in text.lines() {
+        let line = raw_line.trim_start();
         let mut parts = line.splitn(2, ' ');
         let Some(pid_str) = parts.next() else {
             continue;
@@ -2751,9 +2763,17 @@ fn scan_running_pids(source: AgentSource) -> Vec<(String, u32, String)> {
         let Some(cmdline) = parts.next() else {
             continue;
         };
+        let cmdline = cmdline.trim_start();
         let Ok(pid) = pid_str.parse::<u32>() else {
             continue;
         };
+        // Skip processes that don't reference the target exe name at
+        // all (ps returns EVERY running process; we only want ones
+        // whose cmdline contains `exe`). Case-sensitive to match the
+        // original pgrep behavior.
+        if !cmdline.contains(exe) {
+            continue;
+        }
         // Defensive: pgrep -af "claude" hits any cmdline containing
         // "claude" — filter to ones where the binary actually
         // matches. The first token is the exe path.
