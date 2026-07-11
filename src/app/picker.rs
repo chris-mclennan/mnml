@@ -1597,12 +1597,15 @@ impl App {
                 let chain_to_replace = p.chain_to_replace;
                 // Live-preview is the new find state already; commit it.
                 self.find_preview_snapshot = None;
-                self.accept_find(q);
+                self.accept_find(q.clone());
                 // vscode-user-keyboard SEV-2 2026-07-11: when the Find
                 // prompt was opened via Ctrl+H (chain flag), Enter's
                 // accept-find should immediately open Replace if the
                 // query produced matches. Matches VS Code's one-chord
-                // find+replace flow.
+                // find+replace flow. If NO matches, keep the Find
+                // prompt up so the user can refine without hitting
+                // Ctrl+F again — vscode-user-keyboard SEV-3 follow-up
+                // 2026-07-11.
                 if chain_to_replace {
                     let has_matches = self
                         .active
@@ -1617,6 +1620,16 @@ impl App {
                         .unwrap_or(false);
                     if has_matches {
                         self.open_replace_prompt();
+                    } else {
+                        // No matches — re-open the Find prompt with the
+                        // typed query preserved so the user can adjust.
+                        let mut fresh = crate::prompt::Prompt::seeded(
+                            crate::prompt::PromptKind::Find,
+                            "Find (Enter → Replace)",
+                            q,
+                        );
+                        fresh.chain_to_replace = true;
+                        self.prompt = Some(fresh);
                     }
                 }
             }
