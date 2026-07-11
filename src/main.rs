@@ -666,7 +666,48 @@ fn do_run(file: &Path, env_name: Option<&str>, workspace: Option<&Path>) -> Resu
     }
 
     println!("→ {} {}", req.method, req.url);
-    let resp = http::send(&req)?;
+    let send_result = http::send(&req);
+    // api-workflow SEV-2 2026-07-11: CLI `mnml run` used to skip
+    // history.jsonl entirely (only the TUI send path called
+    // history::append). Log both success and failure so
+    // `:http.history` in the TUI can recall CLI runs and
+    // ad-hoc `jq` queries over `.rqst/history.jsonl` see them.
+    // Global mirror (~/.config/mnml/history-global.jsonl) makes
+    // cross-workspace search work too.
+    match &send_result {
+        Ok(resp) => {
+            let body_bytes = resp.body.len();
+            http::history::append_with_global_mirror(
+                &ws,
+                &http::history::Entry {
+                    method: &req.method,
+                    url: &req.url,
+                    status: Some(resp.status),
+                    duration_ms: Some(resp.elapsed.as_millis()),
+                    body_bytes: Some(body_bytes),
+                    error: None,
+                    headers: Some(&req.headers),
+                    request_body: req.body.as_deref(),
+                },
+            );
+        }
+        Err(e) => {
+            http::history::append_with_global_mirror(
+                &ws,
+                &http::history::Entry {
+                    method: &req.method,
+                    url: &req.url,
+                    status: None,
+                    duration_ms: None,
+                    body_bytes: None,
+                    error: Some(e.as_str()),
+                    headers: Some(&req.headers),
+                    request_body: req.body.as_deref(),
+                },
+            );
+        }
+    }
+    let resp = send_result?;
     println!(
         "← {} {}  ({} ms)",
         resp.status,
