@@ -3966,45 +3966,59 @@ impl Editor {
 
     /// Delete the active selection if there is one. Returns true if it deleted.
     fn delete_selection_if_any(&mut self, out: &mut EditOutcome) -> bool {
-        if let Some((lo, hi)) = self.selection() {
-            if hi > lo {
-                self.remember_selection();
-                self.checkpoint();
-                self.text.replace_range(lo..hi, "");
-                self.cursor = lo;
-                self.anchor = None;
-                // vscode-user SEV-1 2026-07-10 fix: extra_cursors /
-                // extra_anchors used to be left at their pre-delete byte
-                // offsets, so any extra cursor past `lo` pointed past
-                // the deleted range's new end — or, on non-ASCII text,
-                // into the middle of a multibyte codepoint. A follow-on
-                // multi-cursor InsertChar then hit
-                // `insert_str(p, …)`'s `is_char_boundary` assertion and
-                // panicked. Shift all extras: unchanged if <= lo, clamp
-                // to lo if inside the deleted range, subtract (hi-lo)
-                // if past hi.
-                let removed = hi - lo;
-                let shift = |b: usize| -> usize {
-                    if b <= lo {
-                        b
-                    } else if b >= hi {
-                        b - removed
-                    } else {
-                        lo
-                    }
-                };
-                for c in &mut self.extra_cursors {
-                    *c = shift(*c);
-                }
-                for b in self.extra_anchors.iter_mut().flatten() {
-                    *b = shift(*b);
-                }
-                out.buffer_changed = true;
-                return true;
-            }
+        let primary_has_sel = self.selection().is_some_and(|(lo, hi)| hi > lo);
+        // vscode-user SEV-2 2026-07-10: an extra cursor added by
+        // AddCursorAtNextWord (Ctrl+D) carries its own anchor pointing
+        // at the start of its match — so the extra has its own
+        // selection that ALSO needs deleting before the follow-on
+        // insert. Old path only handled the primary; typing after
+        // Ctrl+D N times left every non-primary selected word
+        // untouched and inserted the new text at the wrong offset.
+        let extras_have_sel = self
+            .extra_cursors
+            .iter()
+            .zip(self.extra_anchors.iter())
+            .any(|(&c, a)| a.is_some_and(|av| av != c));
+        if !primary_has_sel && !extras_have_sel {
             self.anchor = None;
+            return false;
         }
-        false
+        self.remember_selection();
+        self.checkpoint();
+        if self.extra_cursors.is_empty() {
+            let (lo, hi) = self.selection().expect("primary_has_sel implies Some");
+            self.text.replace_range(lo..hi, "");
+            self.cursor = lo;
+            self.anchor = None;
+            out.buffer_changed = true;
+            return true;
+        }
+        // Multi-cursor: delete each cursor's OWN (anchor, cursor) range
+        // via the existing per-cursor delete helper. Cursors without
+        // their own selection get a no-op (p, p) range so they still
+        // ride the shared shift logic and stay char-boundary-valid.
+        // vscode-user SEV-1 (`is_char_boundary` panic) + SEV-2
+        // (wrong-position insert) both close via this route.
+        self.multi_delete_range_per_cursor(|ed, p| {
+            let anchor = if p == ed.cursor {
+                ed.anchor
+            } else {
+                ed.extra_cursors
+                    .iter()
+                    .position(|&c| c == p)
+                    .and_then(|i| ed.extra_anchors.get(i).copied().flatten())
+            };
+            match anchor {
+                Some(a) if a != p => (a.min(p), a.max(p)),
+                _ => (p, p),
+            }
+        });
+        self.anchor = None;
+        for a in self.extra_anchors.iter_mut() {
+            *a = None;
+        }
+        out.buffer_changed = true;
+        true
     }
 
     // ─── motion internals ───────────────────────────────────────────
@@ -4822,6 +4836,30 @@ mod tests {
         for op in ops {
             e.apply(op.clone(), 10, c);
         }
+    }
+
+    /// vscode-user SEV-2 2026-07-10 — Ctrl+D on `foo bar foo` selects
+    /// `foo`, second Ctrl+D adds an extra at the second `foo` with
+    /// its own anchor+cursor selection. Typing `X` should delete both
+    /// selections and insert `X` at both positions.
+    #[test]
+    fn ctrl_d_add_cursor_to_next_word_typing_replaces_both_matches() {
+        let (mut e, mut c) = ed("foo bar foo baz");
+        // Cursor inside first "foo".
+        e.cursor = 1;
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c); // selects "foo"
+        assert_eq!(e.selected_text(), "foo");
+        assert!(e.extra_cursors.is_empty());
+        e.apply(EditOp::AddCursorAtNextWord, 10, &mut c); // adds extra at 2nd "foo"
+        assert_eq!(e.extra_cursors.len(), 1);
+        // Both cursors have their own selection.
+        assert!(e.anchor.is_some());
+        assert!(e.extra_anchors[0].is_some());
+        e.apply(EditOp::InsertChar('X'), 10, &mut c);
+        // Both "foo"s become "X" — the SEV-2 fix. Pre-fix: the extra's
+        // selection was left in place ("foo") and the insert happened
+        // at a stale offset, producing "X bar Xfoo baz" or similar.
+        assert_eq!(e.text(), "X bar X baz");
     }
 
     /// vscode-user SEV-1 2026-07-10 — `is_char_boundary` panic in
