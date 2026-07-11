@@ -656,7 +656,12 @@ pub struct Editor {
     text: String,
     cursor: usize,
     anchor: Option<usize>,
-    goal_col: usize,
+    /// Sticky column for vertical motion. `None` = "recompute from current
+    /// cursor position when a vertical motion reads it." Marking dirty
+    /// (`None`) is O(1); [`Self::col_at_byte`] is O(n), so recomputing
+    /// eagerly on every edit dominated the hot path on 5 MB files
+    /// (~2.9 ms/keystroke → sub-µs after lazification).
+    goal_col: Option<usize>,
     tab_width: usize,
     comment_token: String,
     /// Closing token for block-comment-style line toggling (HTML's `-->`,
@@ -721,7 +726,7 @@ impl Editor {
             text: text.into(),
             cursor: 0,
             anchor: None,
-            goal_col: 0,
+            goal_col: None,
             tab_width: tab_width.max(1),
             comment_token: "// ".to_string(),
             comment_token_close: String::new(),
@@ -1215,7 +1220,7 @@ impl Editor {
         }
         self.anchor = Some(s);
         self.cursor = e;
-        self.goal_col = self.col_at_byte(self.cursor);
+        self.goal_col = None;
     }
 
     /// Used for click-to-place.
@@ -1223,7 +1228,7 @@ impl Editor {
         let row = row.min(self.line_count().saturating_sub(1));
         self.cursor = self.byte_at_col(row, col);
         self.anchor = None;
-        self.goal_col = self.col_at_byte(self.cursor);
+        self.goal_col = None;
         self.in_insert_run = false;
     }
     /// Like [`Self::place_cursor`] but preserves the active selection
@@ -1236,7 +1241,7 @@ impl Editor {
     pub fn extend_cursor_to(&mut self, row: usize, col: usize) {
         let row = row.min(self.line_count().saturating_sub(1));
         self.cursor = self.byte_at_col(row, col);
-        self.goal_col = self.col_at_byte(self.cursor);
+        self.goal_col = None;
         self.in_insert_run = false;
     }
     /// `(row, col)` of the cursor, 0-based, col in chars.
@@ -1292,7 +1297,7 @@ impl Editor {
             b += 1;
         }
         self.cursor = b;
-        self.goal_col = self.col_at_byte(self.cursor);
+        self.goal_col = None;
     }
     /// Char-column count of `text[..byte_offset_within_line]` relative to the
     /// start of the line that contains `byte`. Public so the view can map a
@@ -1501,6 +1506,21 @@ impl Editor {
     fn col_at_byte(&self, byte: usize) -> usize {
         let line = self.text[..byte].bytes().filter(|&b| b == b'\n').count();
         self.text[self.line_start(line)..byte].chars().count()
+    }
+
+    /// Resolve `goal_col` for a read (a vertical motion) and cache it. First
+    /// call after a non-vertical op computes from the cursor position; every
+    /// subsequent vertical motion (which preserves goal_col via
+    /// `op_preserves_goal_col`) reuses the cached value so it "sticks" past
+    /// clamped shorter lines. `None` = "dirty, recompute" — most edits mark
+    /// dirty in constant time and never pay the O(n) cost.
+    fn goal_col(&mut self) -> usize {
+        if let Some(c) = self.goal_col {
+            return c;
+        }
+        let c = self.col_at_byte(self.cursor);
+        self.goal_col = Some(c);
+        c
     }
 
     /// True when auto-pair should fire — i.e. the next char is "empty space"
@@ -1762,7 +1782,7 @@ impl Editor {
         out.buffer_changed |= self.text.len() != before_len;
         // Goal column tracks horizontal intent; vertical motions deliberately keep it.
         if !keep_goal_col {
-            self.goal_col = self.col_at_byte(self.cursor);
+            self.goal_col = None;
         }
 
         // Tracked text-edit hint for incremental tree-sitter reparse.
@@ -1946,17 +1966,17 @@ impl Editor {
                     // Forward `w` chars on the same line — under wrap this
                     // is the next visual row of the same file line.
                     self.cursor = self.byte_at_col(line, col + w);
-                    self.goal_col = self.col_at_byte(self.cursor);
+                    self.goal_col = None;
                 } else if line + 1 < self.line_count() {
                     // Past the line's last visual row — jump down one file
                     // line at `col % w`.
                     let target_col = col % w;
                     self.cursor = self.byte_at_col(line + 1, target_col);
-                    self.goal_col = self.col_at_byte(self.cursor);
+                    self.goal_col = None;
                 } else {
                     // Already on last line's last visual row — end of file.
                     self.cursor = self.line_end(line);
-                    self.goal_col = self.col_at_byte(self.cursor);
+                    self.goal_col = None;
                 }
             }
             MoveVisualUp(width) => {
@@ -1965,7 +1985,7 @@ impl Editor {
                 let col = self.col_at_byte(self.cursor);
                 if col >= w {
                     self.cursor = self.byte_at_col(line, col - w);
-                    self.goal_col = self.col_at_byte(self.cursor);
+                    self.goal_col = None;
                 } else if line > 0 {
                     // Up one file line, landing on its last visual row at
                     // the same intra-row column.
@@ -1974,10 +1994,10 @@ impl Editor {
                     let last_segment_start = (prev_chars / w) * w;
                     let target_col = (last_segment_start + col).min(prev_chars);
                     self.cursor = self.byte_at_col(prev, target_col);
-                    self.goal_col = self.col_at_byte(self.cursor);
+                    self.goal_col = None;
                 } else {
                     self.cursor = self.line_start(line);
-                    self.goal_col = 0;
+                    self.goal_col = Some(0);
                 }
             }
             MoveVisualLineStart(width) => {
@@ -1986,7 +2006,7 @@ impl Editor {
                 let col = self.col_at_byte(self.cursor);
                 let target_col = (col / w) * w;
                 self.cursor = self.byte_at_col(line, target_col);
-                self.goal_col = target_col;
+                self.goal_col = Some(target_col);
             }
             MoveVisualLineEnd(width) => {
                 let w = width.max(1);
@@ -1996,7 +2016,7 @@ impl Editor {
                 let segment_start = (col / w) * w;
                 let target_col = (segment_start + w - 1).min(line_chars.saturating_sub(1));
                 self.cursor = self.byte_at_col(line, target_col);
-                self.goal_col = target_col;
+                self.goal_col = Some(target_col);
             }
             MoveParagraph { forward } => {
                 let cur_row = self.current_line();
@@ -2153,7 +2173,7 @@ impl Editor {
                     b -= 1;
                 }
                 self.cursor = b;
-                self.goal_col = self.col_at_byte(b);
+                self.goal_col = None;
             }
 
             // ── selection ──
@@ -2366,7 +2386,7 @@ impl Editor {
                 if let Some(a) = self.anchor {
                     self.anchor = Some(self.cursor);
                     self.cursor = a;
-                    self.goal_col = self.col_at_byte(self.cursor);
+                    self.goal_col = None;
                 }
             }
             FindCharOnLine {
@@ -2398,7 +2418,7 @@ impl Editor {
                         } else {
                             base
                         };
-                        self.goal_col = self.col_at_byte(self.cursor);
+                        self.goal_col = None;
                     }
                 } else {
                     // Backward scan from start-of-line up to (but not
@@ -2418,7 +2438,7 @@ impl Editor {
                         // not before it; for `t`, one past).
                         let _ = inclusive;
                         self.cursor = base;
-                        self.goal_col = self.col_at_byte(self.cursor);
+                        self.goal_col = None;
                     }
                 }
             }
@@ -2531,7 +2551,8 @@ impl Editor {
                 }
                 let lc = self.line_count();
                 if bottom_row + 1 < lc {
-                    let target = self.byte_at_col(bottom_row + 1, self.goal_col);
+                    let gc = self.goal_col();
+                    let target = self.byte_at_col(bottom_row + 1, gc);
                     self.add_extra_cursor(target);
                 }
             }
@@ -2544,7 +2565,8 @@ impl Editor {
                     }
                 }
                 if top_row > 0 {
-                    let target = self.byte_at_col(top_row - 1, self.goal_col);
+                    let gc = self.goal_col();
+                    let target = self.byte_at_col(top_row - 1, gc);
                     self.add_extra_cursor(target);
                 }
             }
@@ -3298,7 +3320,7 @@ impl Editor {
                 }
                 let cur_line = self.current_line();
                 let new_line = cur_line.saturating_sub(1);
-                let col = self.goal_col;
+                let col = self.goal_col();
                 self.cursor = self.byte_at_col(new_line, col);
                 // Shift the anchor too so the selection follows.
                 if let Some(a) = self.anchor {
@@ -3333,7 +3355,7 @@ impl Editor {
                 }
                 let cur_line = self.current_line();
                 let new_line = (cur_line + 1).min(self.line_count().saturating_sub(1));
-                let col = self.goal_col;
+                let col = self.goal_col();
                 self.cursor = self.byte_at_col(new_line, col);
                 if let Some(a) = self.anchor {
                     let (ar, ac) = self.row_col_at(a);
@@ -3981,7 +4003,8 @@ impl Editor {
             }
             line + 1
         };
-        self.cursor = self.byte_at_col(target, self.goal_col);
+        let gc = self.goal_col();
+        self.cursor = self.byte_at_col(target, gc);
     }
 
     fn move_word_right(&mut self) {
@@ -6031,5 +6054,181 @@ mod tests {
         // ONE undo reverts everything.
         e.apply(EditOp::Undo, 10, &mut c);
         assert_eq!(e.text(), initial);
+    }
+
+    /// Bench: measure per-edit latency on a real ~600 KB / 14k line
+    /// file. Guarded by `#[ignore]` so it doesn't run in the normal
+    /// `cargo test` sweep; invoke explicitly:
+    ///
+    /// ```sh
+    /// export PATH="/opt/homebrew/opt/zig@0.15/bin:$PATH"
+    /// cargo test --release editor::tests::bench_large_file_edits -- --ignored --nocapture
+    /// ```
+    ///
+    /// Prints the elapsed time for each scenario. Compare across
+    /// commits by running this before + after a change.
+    #[test]
+    #[ignore]
+    fn bench_large_file_edits() {
+        use std::time::Instant;
+        // Read the source file, then repeat it to reach ~5 MB so we exercise
+        // the "gets slow with bigger files" regime the user reported. If the
+        // env var MNML_BENCH_ONESHOT is set, use the file as-is (small mode).
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/mod.rs");
+        let base = std::fs::read_to_string(&path).expect("read app/mod.rs");
+        let text = if std::env::var_os("MNML_BENCH_ONESHOT").is_some() {
+            base
+        } else {
+            let mut t = String::with_capacity(5 * 1024 * 1024 + base.len());
+            while t.len() < 5 * 1024 * 1024 {
+                t.push_str(&base);
+            }
+            t
+        };
+        println!(
+            "\nfile: {} bytes, {} lines\n",
+            text.len(),
+            text.lines().count()
+        );
+        let bench = |label: &str, f: &mut dyn FnMut()| {
+            let start = Instant::now();
+            f();
+            println!("  {label:<40} {:?}", start.elapsed());
+        };
+
+        // 1. INSERT at position 0 — worst case for String::insert_str
+        //    (shifts the entire buffer each time).
+        {
+            let mut e = Editor::new(&text, 4);
+            let mut c = Clipboard::detached();
+            bench("insert at start (100 chars, worst case)", &mut || {
+                for _ in 0..100 {
+                    e.cursor = 0;
+                    e.apply(EditOp::InsertChar('x'), 10, &mut c);
+                }
+            });
+        }
+
+        // 2. INSERT at middle — half the buffer shifts.
+        {
+            let mut e = Editor::new(&text, 4);
+            let mut c = Clipboard::detached();
+            let mid_byte = text.len() / 2;
+            bench("insert at middle (100 chars)", &mut || {
+                for _ in 0..100 {
+                    e.cursor = mid_byte;
+                    e.apply(EditOp::InsertChar('y'), 10, &mut c);
+                }
+            });
+        }
+
+        // 3. INSERT at end — should be near-free (no shift).
+        {
+            let mut e = Editor::new(&text, 4);
+            let mut c = Clipboard::detached();
+            bench("insert at end (100 chars, best case)", &mut || {
+                for _ in 0..100 {
+                    e.cursor = e.text.len();
+                    e.apply(EditOp::InsertChar('z'), 10, &mut c);
+                }
+            });
+        }
+
+        // 4. DELETE at start — worst case for String::replace_range.
+        {
+            let mut e = Editor::new(&text, 4);
+            let mut c = Clipboard::detached();
+            bench("delete at start (100 chars, worst case)", &mut || {
+                for _ in 0..100 {
+                    e.cursor = 0;
+                    e.apply(EditOp::DeleteForward, 10, &mut c);
+                }
+            });
+        }
+
+        // 5. Line-count computation — proxy for byte→row/col conversions
+        //    that fire on every render.
+        {
+            let e = Editor::new(&text, 4);
+            bench("line_count (1000 calls)", &mut || {
+                for _ in 0..1000 {
+                    let _ = e.line_count();
+                }
+            });
+        }
+
+        // 6. Read `text()` 1000 times — proxy for hot-path readers.
+        {
+            let e = Editor::new(&text, 4);
+            bench("text() (1000 calls, len)", &mut || {
+                for _ in 0..1000 {
+                    std::hint::black_box(e.text().len());
+                }
+            });
+        }
+
+        // 7. HIGHLIGHT — tree-sitter first parse on a fresh buffer.
+        //    This is what the render path does when a file opens.
+        {
+            use tree_sitter::Tree;
+            let mut tree: Option<Tree> = None;
+            bench("highlight first parse (rs)", &mut || {
+                let _ = crate::highlight::highlight_lines_with_cache(
+                    &text,
+                    "rs",
+                    &mut tree,
+                    &[],
+                    &[],
+                    Vec::new(),
+                );
+            });
+        }
+
+        // 8. HIGHLIGHT — incremental parse after one char inserted at end.
+        //    Simulates what typing does to the highlight pipeline. Must feed
+        //    prev_highlights back in — that's what production does via
+        //    Buffer::refresh_highlights, and it's what gates the incremental
+        //    fast path (see `do_incremental` in highlight.rs).
+        {
+            use crate::edit_op::TextEdit;
+            use tree_sitter::Tree;
+            let mut tree: Option<Tree> = None;
+            let prev_h = crate::highlight::highlight_lines_with_cache(
+                &text,
+                "rs",
+                &mut tree,
+                &[],
+                &[],
+                Vec::new(),
+            );
+            let mut modified = text.clone();
+            modified.push('x');
+            let edit = TextEdit {
+                start_byte: text.len(),
+                old_end_byte: text.len(),
+                new_end_byte: text.len() + 1,
+            };
+            let prev_line_starts: Vec<usize> = std::iter::once(0)
+                .chain(
+                    text.as_bytes()
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, &b)| (b == b'\n').then_some(i + 1)),
+                )
+                .collect();
+            bench("highlight incremental (rs, 100 edits)", &mut || {
+                let mut prev = prev_h.clone();
+                for _ in 0..100 {
+                    prev = crate::highlight::highlight_lines_with_cache(
+                        &modified,
+                        "rs",
+                        &mut tree,
+                        std::slice::from_ref(&edit),
+                        &prev_line_starts,
+                        prev,
+                    );
+                }
+            });
+        }
     }
 }
