@@ -1192,8 +1192,10 @@ impl Editor {
 
     /// Capture the current selection as `last_selection` (the buffer's "gv
     /// memory"). Called by `Editor::apply` on ops that close the selection
-    /// — Yank, Cut, ReplaceSelection, DeleteSelection, SelectClear.
-    fn remember_selection(&mut self) {
+    /// — Yank, Cut, ReplaceSelection, DeleteSelection, SelectClear. Also
+    /// callable by the input layer when the user opens `:` from visual
+    /// mode so `'<,'>` resolves against the still-live selection.
+    pub fn remember_selection(&mut self) {
         if let Some(anchor) = self.anchor
             && anchor != self.cursor
         {
@@ -2246,6 +2248,9 @@ impl Editor {
                 for i in 0..self.extra_cursors.len() {
                     self.extra_anchors[i] = Some(self.extra_cursors[i]);
                 }
+            }
+            RememberSelection => {
+                self.remember_selection();
             }
             SelectClear => {
                 self.remember_selection();

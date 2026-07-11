@@ -9,6 +9,135 @@
 
 use super::*;
 
+/// Expand `:args {pattern}` under `ws` into a list of absolute paths.
+/// Supports:
+/// - literal (no wildcards): treated as a single path (skipped if not
+///   an existing file).
+/// - `*.EXT` / `foo*bar.rs`: basename glob at workspace root (non-
+///   recursive).
+/// - `dir/**/*.EXT` or plain `**/*.EXT`: recursive walk under `dir`
+///   (or workspace root), matching the trailing `*.EXT` pattern.
+///
+/// Not vim-complete (no `[abc]`, no `{a,b}`) but covers `:args *.rs`
+/// and `:args src/**/*.rs` — the two forms nvchad users hit ~always.
+/// Uses `ignore::WalkBuilder` so `.gitignore` is respected during
+/// recursive scans.
+fn arglist_expand(ws: &std::path::Path, pattern: &str) -> Vec<std::path::PathBuf> {
+    let expanded = shellexpand_tilde(pattern);
+    let has_wildcard = expanded.contains('*') || expanded.contains('?');
+    if !has_wildcard {
+        let p = if std::path::Path::new(&expanded).is_absolute() {
+            std::path::PathBuf::from(&expanded)
+        } else {
+            ws.join(&expanded)
+        };
+        return if p.is_file() { vec![p] } else { Vec::new() };
+    }
+    // Split into root + relative pattern. If `**` is present, walk
+    // recursively from the leading literal segment.
+    let (walk_root, glob_tail) = if let Some(pos) = expanded.find("**") {
+        let head = &expanded[..pos];
+        let tail = &expanded[pos + 2..];
+        let tail = tail.trim_start_matches('/');
+        let head_trim = head.trim_end_matches('/');
+        let root = if head_trim.is_empty() {
+            ws.to_path_buf()
+        } else if std::path::Path::new(head_trim).is_absolute() {
+            std::path::PathBuf::from(head_trim)
+        } else {
+            ws.join(head_trim)
+        };
+        (root, tail.to_string())
+    } else {
+        // Non-recursive: split on last `/` if any.
+        let (dir, base) = expanded
+            .rsplit_once('/')
+            .map(|(d, b)| (d.to_string(), b.to_string()))
+            .unwrap_or_else(|| (String::new(), expanded.clone()));
+        let root = if dir.is_empty() {
+            ws.to_path_buf()
+        } else if std::path::Path::new(&dir).is_absolute() {
+            std::path::PathBuf::from(&dir)
+        } else {
+            ws.join(&dir)
+        };
+        (root, base)
+    };
+    let mut out: Vec<std::path::PathBuf> = Vec::new();
+    let recursive = glob_tail.is_empty() || pattern.contains("**");
+    for entry in ignore::WalkBuilder::new(&walk_root)
+        .max_depth(if recursive { None } else { Some(1) })
+        .build()
+        .flatten()
+    {
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let name = match p.file_name().and_then(|n| n.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let pat_for_match = if glob_tail.is_empty() {
+            &pattern[pattern.rfind('/').map(|i| i + 1).unwrap_or(0)..]
+        } else {
+            glob_tail.as_str()
+        };
+        if simple_glob_match(pat_for_match, name) {
+            out.push(p.to_path_buf());
+        }
+    }
+    out.sort();
+    out
+}
+
+/// `~` → `$HOME` prefix expansion. No env-var support (vim's `$VAR`
+/// syntax); nvchad users just type paths.
+fn shellexpand_tilde(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let mut p = std::path::PathBuf::from(home);
+        p.push(rest);
+        return p.to_string_lossy().into_owned();
+    }
+    s.to_string()
+}
+
+/// `*` matches any run (incl. empty), `?` matches one char. No brace
+/// or bracket expansion. Case-sensitive.
+fn simple_glob_match(pat: &str, name: &str) -> bool {
+    let pat = pat.as_bytes();
+    let name = name.as_bytes();
+    fn inner(pat: &[u8], name: &[u8]) -> bool {
+        let mut pi = 0;
+        let mut ni = 0;
+        let mut star = None;
+        let mut star_ni = 0;
+        while ni < name.len() {
+            if pi < pat.len() && pat[pi] == b'*' {
+                star = Some(pi);
+                star_ni = ni;
+                pi += 1;
+            } else if pi < pat.len() && (pat[pi] == b'?' || pat[pi] == name[ni]) {
+                pi += 1;
+                ni += 1;
+            } else if let Some(sp) = star {
+                pi = sp + 1;
+                star_ni += 1;
+                ni = star_ni;
+            } else {
+                return false;
+            }
+        }
+        while pi < pat.len() && pat[pi] == b'*' {
+            pi += 1;
+        }
+        pi == pat.len()
+    }
+    inner(pat, name)
+}
+
 impl App {
     /// `:%!cmd` / `:'<,'>!cmd` — pipe the whole buffer (or the active
     /// selection if `selection_only=true`) through `cmd` via `$SHELL -c`,
@@ -1720,10 +1849,11 @@ impl App {
                     .unwrap_or_else(|| "(unsaved buffer)".into());
                 self.toast(name);
             }
-            // `:Args` / `:Files` — list every open editor pane's
-            // workspace-relative path. Vim canonical `:args` shows the
-            // arglist; mnml has buffers, so we just list them.
-            "Args" | "args" => {
+            // `:Args` — mnml extension: list every open editor pane's
+            // workspace-relative path. Lowercase `:args` is handled
+            // further below as the real vim arglist (`:args`/`:next`/
+            // `:prev`/`:first`/`:last`).
+            "Args" => {
                 let mut names: Vec<String> = self
                     .panes
                     .iter()
@@ -2592,6 +2722,24 @@ impl App {
                     b.find = None;
                 }
             }
+            // vim arglist family (`:args` / `:next` / `:prev` / `:first` /
+            // `:last`). Prior to the round-7 fix `:next` fell through to
+            // registered-command lookup and hit `find.next` — a footgun
+            // for muscle-memory nvchad users. Implementation lives on
+            // App::{arglist,arglist_index}. `:args {glob}` sets the
+            // arglist; `:args` prints it; `:next`/`:prev` step; `:first`/
+            // `:last` jump to endpoints.
+            "args" | "ar" => {
+                if rest.is_empty() {
+                    self.arglist_show();
+                } else {
+                    self.arglist_set(rest);
+                }
+            }
+            "next" | "ne" => self.arglist_step(1),
+            "prev" | "previous" | "Ne" => self.arglist_step(-1),
+            "first" | "fir" | "rew" | "rewind" => self.arglist_goto(0),
+            "last" | "la" => self.arglist_step(isize::MAX),
             other => {
                 // Last resort: maybe it names a registered command.
                 if crate::command::registry().get(other).is_some() {
@@ -3976,6 +4124,77 @@ impl App {
     /// Accept handler for [`PromptKind::QuitConfirm`].
     pub fn accept_quit(&mut self) {
         self.should_quit = true;
+    }
+
+    /// `:args {pattern}` — expand `{pattern}` workspace-relative into a
+    /// fresh arglist and open the first entry. Supported forms:
+    /// `foo/bar.rs` (literal), `*.rs` (basename glob at workspace root),
+    /// `src/**/*.rs` (recursive glob with double-star). If the pattern
+    /// matches nothing the arglist is left alone and a toast fires.
+    pub fn arglist_set(&mut self, pattern: &str) {
+        let ws = self.workspace.clone();
+        let paths = arglist_expand(&ws, pattern);
+        if paths.is_empty() {
+            self.toast(format!(":args {pattern} — no matches"));
+            return;
+        }
+        let count = paths.len();
+        self.arglist = paths;
+        self.arglist_index = Some(0);
+        self.arglist_goto(0);
+        self.toast(format!(":args — {count} file(s), showing 1/{count}"));
+    }
+
+    /// `:args` (no arg) — print the arglist with `[current]` markers.
+    pub fn arglist_show(&mut self) {
+        if self.arglist.is_empty() {
+            self.toast(":args — arglist is empty (`:args {glob}` to set)");
+            return;
+        }
+        let cur = self.arglist_index.unwrap_or(usize::MAX);
+        let ws = self.workspace.clone();
+        let items: Vec<String> = self
+            .arglist
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let rel = crate::app::rel_path(&ws, p);
+                if i == cur { format!("[{rel}]") } else { rel }
+            })
+            .collect();
+        self.toast(format!(":args · {}", items.join("  ")));
+    }
+
+    /// `:next` (`delta=1`) / `:prev` (`delta=-1`) / `:last` (`delta=MAX`).
+    /// Clamped at both ends; wraps NO — vim canonical.
+    pub fn arglist_step(&mut self, delta: isize) {
+        if self.arglist.is_empty() {
+            self.toast(":next — arglist is empty");
+            return;
+        }
+        let cur = self.arglist_index.unwrap_or(0) as isize;
+        let last = (self.arglist.len() - 1) as isize;
+        let target = if delta == isize::MAX {
+            last
+        } else {
+            (cur + delta).clamp(0, last)
+        };
+        self.arglist_goto(target as usize);
+    }
+
+    /// `:first` / opens `arglist[i]`, sets `arglist_index = Some(i)`, and
+    /// toasts the position. Clamped; caller ensures `i < len()`.
+    pub fn arglist_goto(&mut self, i: usize) {
+        if self.arglist.is_empty() {
+            return;
+        }
+        let i = i.min(self.arglist.len() - 1);
+        let path = self.arglist[i].clone();
+        self.arglist_index = Some(i);
+        let total = self.arglist.len();
+        self.open_path(&path);
+        let rel = crate::app::rel_path(&self.workspace, &path);
+        self.toast(format!(":args {}/{total} · {rel}", i + 1));
     }
 }
 

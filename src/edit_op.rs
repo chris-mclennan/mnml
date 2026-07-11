@@ -95,6 +95,13 @@ pub enum EditOp {
     SelectStart,
     /// Forget the selection.
     SelectClear,
+    /// Snapshot the current selection into `Editor::last_selection`
+    /// (the `'<`/`'>` mark backing store) WITHOUT clearing the
+    /// anchor. Vim emits this when `:` is pressed from Visual mode —
+    /// the selection stays live on-screen while the cmdline is
+    /// entered, but `'<,'>` in the cmdline resolves against the
+    /// still-live rows.
+    RememberSelection,
     /// Select the current line (including its trailing newline if present).
     /// Vim `V` semantics: anchor at line_start, cursor stays put — the
     /// selection MODEL is line-wise so visual rendering shows the full

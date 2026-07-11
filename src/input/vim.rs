@@ -469,6 +469,18 @@ impl VimInputHandler {
         self.cmdline_cursor = 0;
     }
 
+    /// `:` pressed from Visual/VisualLine/VisualBlock — vim canonically
+    /// prefixes the cmdline with `'<,'>` so the ex command targets the
+    /// current visual selection. `'<`/`'>` resolves against
+    /// `Editor::last_selection`, so the caller must have captured the
+    /// live selection to that field before the mark parser runs. We
+    /// can't do that from the input handler (no editor mut here), so
+    /// we emit `RememberSelection` alongside the cmdline seed.
+    fn open_cmdline_visual_range(&mut self) {
+        self.cmdline = Some("'<,'>".to_string());
+        self.cmdline_cursor = "'<,'>".len();
+    }
+
     fn enter_normal(&mut self) {
         self.mode = VimMode::Normal;
         self.reset_pending();
@@ -2950,8 +2962,10 @@ impl VimInputHandler {
                 InputResult::App(AppCommand::RunCommand("find.selection_backward".into()))
             }
             KeyCode::Char(':') => {
-                self.open_cmdline();
-                InputResult::Consumed
+                // Save the live selection to `'<`/`'>` before the cmdline
+                // parser resolves the pre-filled `'<,'>`.
+                self.open_cmdline_visual_range();
+                InputResult::Ops(vec![RememberSelection])
             }
             // Visual `S<c>` — vim-surround "wrap selection with <c>". The
             // selection is already live, so no prefix ops are needed; we
@@ -3053,8 +3067,10 @@ impl VimInputHandler {
                 InputResult::Consumed
             }
             KeyCode::Char(':') => {
-                self.open_cmdline();
-                InputResult::Consumed
+                // Save the live selection to `'<`/`'>` before the cmdline
+                // parser resolves the pre-filled `'<,'>`.
+                self.open_cmdline_visual_range();
+                InputResult::Ops(vec![RememberSelection])
             }
             _ => InputResult::Consumed,
         }

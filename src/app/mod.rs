@@ -3360,6 +3360,12 @@ pub struct App {
     /// at render time. 2026-06-19 — paired with the floating popup
     /// (see `cmdline_popup_view`).
     pub cmdline_popup_selected: usize,
+    /// Vim's arglist — the list of files targeted by `:args {glob}`,
+    /// `:next`, `:prev`, `:first`, `:last`. Paths are absolute (the
+    /// glob is expanded workspace-relative). `arglist_index` tracks
+    /// the current entry (0-based); `None` means arglist is empty.
+    pub arglist: Vec<std::path::PathBuf>,
+    pub arglist_index: Option<usize>,
     /// Recent toasts (oldest first, capped at `MESSAGE_LOG_MAX`). Vim
     /// `:messages` shows them. Keeps a history beyond the live toast
     /// (which expires after `TOAST_TTL`).
@@ -4748,6 +4754,8 @@ impl App {
             macro_buffer: std::collections::HashMap::new(),
             pending_macro_register: None,
             last_external_check: None,
+            arglist: Vec::new(),
+            arglist_index: None,
             message_log: Vec::new(),
             silent_depth: 0,
             recent_commands: Vec::new(),
