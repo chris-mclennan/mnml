@@ -2990,9 +2990,20 @@ fn draw_edit(
                     Style::default().fg(t.comment).bg(t.bg_dark),
                 )
             };
+            // Track a running byte offset so nth_line_start/end are O(1)
+            // per row instead of O(n). Was profiled by the render-review
+            // 2026-07-10 — the previous impl walked `body` from byte 0 on
+            // every iteration, making Body-tab render O(n²) in a JSON
+            // body. Doubles cost on the [⇔] edit-split (two body paints
+            // per frame). 2026-07-11 perf fix.
+            let mut line_start_offset: usize = 0;
             for (i, line) in body.lines().enumerate() {
                 let row_y = rows.len() as u16;
                 let n = i + 1;
+                let body_offset_of_line_start = line_start_offset;
+                let body_offset_of_line_end = line_start_offset + line.len();
+                // Advance past this line + its trailing newline (if any).
+                line_start_offset = body_offset_of_line_end + 1;
                 // 2026-06-19 — keyboard hunt SEV-3 v2: when
                 // [ui] show_whitespace is on, render `\t` as `→` and
                 // leading spaces as `·` (matching the editor view) so
@@ -3049,21 +3060,20 @@ fn draw_edit(
                 };
                 rows.push(content_line);
                 register_field(fields, row_y, EditField::Body);
-                if b_focus && focused && caret.is_none() {
-                    let body_offset_of_line_start = nth_line_start(body, i);
-                    let body_offset_of_line_end = nth_line_end(body, i);
-                    if rp.body_cursor >= body_offset_of_line_start
-                        && rp.body_cursor <= body_offset_of_line_end
-                    {
-                        let col_in_line = body
-                            [body_offset_of_line_start..rp.body_cursor.min(body.len())]
-                            .chars()
-                            .count() as u16;
-                        let y = (rows.len() - 1) as u16;
-                        // Caret sits after the gutter: " NN " = gutter_w + 2 cols.
-                        let prefix_cols = (gutter_w as u16).saturating_add(2);
-                        *caret = Some((area.x + prefix_cols + col_in_line, y));
-                    }
+                if b_focus
+                    && focused
+                    && caret.is_none()
+                    && rp.body_cursor >= body_offset_of_line_start
+                    && rp.body_cursor <= body_offset_of_line_end
+                {
+                    let col_in_line = body
+                        [body_offset_of_line_start..rp.body_cursor.min(body.len())]
+                        .chars()
+                        .count() as u16;
+                    let y = (rows.len() - 1) as u16;
+                    // Caret sits after the gutter: " NN " = gutter_w + 2 cols.
+                    let prefix_cols = (gutter_w as u16).saturating_add(2);
+                    *caret = Some((area.x + prefix_cols + col_in_line, y));
                 }
             }
             // Trailing newline ⇒ caret on an empty line at the end.
@@ -3327,22 +3337,28 @@ fn draw_edit(
                 *caret = Some((area.x + 4, y));
             }
         } else {
-            for (i, line) in src.lines().enumerate() {
+            // Running byte offset — same O(n²) → O(n) fix as the Body
+            // tab above. 2026-07-11.
+            let mut src_line_start_offset: usize = 0;
+            for line in src.lines() {
                 let y = rows.len() as u16;
                 register_tab_row(fields, y);
                 rows.push(Line::from(vec![Span::styled(
                     format!("    {line}"),
                     val_style,
                 )]));
-                if s_focus && focused && caret.is_none() {
-                    let start = nth_line_start(src, i);
-                    let end = nth_line_end(src, i);
-                    if rp.source_cursor >= start && rp.source_cursor <= end {
-                        let col =
-                            src[start..rp.source_cursor.min(src.len())].chars().count() as u16;
-                        let yy = (rows.len() - 1) as u16;
-                        *caret = Some((area.x + 4 + col, yy));
-                    }
+                let start = src_line_start_offset;
+                let end = src_line_start_offset + line.len();
+                src_line_start_offset = end + 1;
+                if s_focus
+                    && focused
+                    && caret.is_none()
+                    && rp.source_cursor >= start
+                    && rp.source_cursor <= end
+                {
+                    let col = src[start..rp.source_cursor.min(src.len())].chars().count() as u16;
+                    let yy = (rows.len() - 1) as u16;
+                    *caret = Some((area.x + 4 + col, yy));
                 }
             }
             if s_focus && focused && caret.is_none() && src.ends_with('\n') {
@@ -3440,23 +3456,10 @@ fn url_chars_before_cursor(text: &str, byte_cursor: usize) -> usize {
     text[..byte_cursor.min(text.len())].chars().count()
 }
 
-fn nth_line_start(text: &str, n: usize) -> usize {
-    let mut idx = 0usize;
-    for _ in 0..n {
-        match text[idx..].find('\n') {
-            Some(off) => idx += off + 1,
-            None => return text.len(),
-        }
-    }
-    idx
-}
-fn nth_line_end(text: &str, n: usize) -> usize {
-    let start = nth_line_start(text, n);
-    match text[start..].find('\n') {
-        Some(off) => start + off,
-        None => text.len(),
-    }
-}
+// `nth_line_start` / `nth_line_end` removed 2026-07-11 — Body-tab
+// and Source-tab renderers now maintain a running byte offset in
+// their loops. Was O(n) per call inside an O(n) loop → O(n²) per
+// paint.
 
 fn draw_response(
     rp: &crate::request_pane::RequestPane,
