@@ -2769,25 +2769,38 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         // Ctrl+click → place cursor + fire `lsp.goto_definition`
         // (VS Code convention — "click through" identifiers).
         let ctrl_click = m.modifiers.contains(KeyModifiers::CONTROL);
+        // Shift+click → extend the current selection to the click.
+        // mouse-round-8 SEV-2 2026-07-11.
+        let shift_click = m.modifiers.contains(KeyModifiers::SHIFT) && !ctrl_click;
         let wrap = app.config.ui.wrap;
         if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
             let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
-            b.editor.place_cursor(row, col);
-            if count >= 2 {
+            if shift_click {
+                // Establish anchor at current cursor first (if not
+                // already selecting), then move cursor to click.
                 let clip = &mut app.clipboard;
-                if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
-                    let op = if count == 2 {
-                        crate::edit_op::EditOp::SelectWord
-                    } else {
-                        crate::edit_op::EditOp::SelectLine
-                    };
-                    b.apply_edit_ops(vec![op], clip, 0);
+                if b.editor.selection().is_none() {
+                    b.apply_edit_ops(vec![crate::edit_op::EditOp::SelectStart], clip, 0);
                 }
+                b.editor.place_cursor(row, col);
             } else {
-                // Arm a potential drag-select. If the user actually
-                // drags, the first Drag event will SelectStart at
-                // the origin and move the cursor.
-                app.drag_select = Some((pid, row, col, false));
+                b.editor.place_cursor(row, col);
+                if count >= 2 {
+                    let clip = &mut app.clipboard;
+                    if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                        let op = if count == 2 {
+                            crate::edit_op::EditOp::SelectWord
+                        } else {
+                            crate::edit_op::EditOp::SelectLine
+                        };
+                        b.apply_edit_ops(vec![op], clip, 0);
+                    }
+                } else {
+                    // Arm a potential drag-select. If the user actually
+                    // drags, the first Drag event will SelectStart at
+                    // the origin and move the cursor.
+                    app.drag_select = Some((pid, row, col, false));
+                }
             }
         }
         if ctrl_click {

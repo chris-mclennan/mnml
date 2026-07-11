@@ -1344,7 +1344,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 } else {
                     format!("language: {lang}")
                 },
-                Some("detected from file extension".into()),
+                Some("click for details · detected from file extension".into()),
             ))
         }
         HoverChip::GutterMark {
