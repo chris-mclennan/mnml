@@ -295,10 +295,19 @@ impl App {
     }
 
     pub fn dap_step_in(&mut self) {
+        // vscode-user-keyboard SEV-2 2026-07-10: F11 is bound to
+        // `dap.step_in`, but out of a debug session that used to be
+        // a silent no-op. Both mnml (no full-screen host control) and
+        // VS Code fall back to a Zen-style "hide chrome" toggle for
+        // F11 when there's no debug context. Route through
+        // `view.zen` when no DAP session is active so muscle memory
+        // still lands somewhere useful.
         let Some(mgr) = self.dap.as_mut() else {
+            self.toggle_zen_mode();
             return;
         };
         let Some(tid) = self.dap_thread else {
+            self.toggle_zen_mode();
             return;
         };
         if let Err(e) = mgr.client.step_in(tid) {

@@ -3472,7 +3472,10 @@ fn builtin_commands() -> Vec<Command> {
             id: "lsp.diagnostics",
             title: "LSP: diagnostics list (project problems)",
             group: "lsp",
-            keys: &[],
+            // vscode-user-keyboard SEV-2 2026-07-10: was palette-only.
+            // Ctrl+Shift+M is VS Code's Problems view chord and free
+            // in mnml's global keymap.
+            keys: &["ctrl+shift+m"],
             run: |app| app.open_diagnostics_pane(),
         },
         Command {
