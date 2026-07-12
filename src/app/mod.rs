@@ -2082,6 +2082,10 @@ pub struct PaneRects {
     /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
     pub statusline_clock_chip: Option<Rect>,
     pub statusline_stress_chip: Option<Rect>,
+    /// Stress meter chip in the top-right bufferline cluster (mirror
+    /// of the statusline chip). User request 2026-07-12 for eyes-on
+    /// signal without needing to look at the bottom row.
+    pub palette_stress_chip: Option<Rect>,
     /// The now-playing track-text segment of the bottom statusline
     /// transport cluster — `[play/pause] [ffwd] [track]`. Click
     /// opens / cycles the mixr panel (`mixr.show`). When idle

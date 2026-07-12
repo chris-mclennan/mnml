@@ -358,6 +358,11 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineStress);
     }
+    if let Some(r) = app.rects.palette_stress_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::PaletteStress);
+    }
     if let Some(r) = app.rects.statusline_mode_chip
         && contains(r, x, y)
     {

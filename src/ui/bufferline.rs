@@ -1139,6 +1139,7 @@ pub fn paint_right_cluster(
     app.rects.bufferline_tabs_label = None;
     app.rects.bufferline_theme_toggle = None;
     app.rects.bufferline_window_close = None;
+    app.rects.palette_stress_chip = None;
 
     if area.width == 0 {
         return;
@@ -1238,6 +1239,39 @@ pub fn paint_right_cluster(
                 cluster_x += 2;
             }
         }
+    }
+    // Stress meter chip — user request 2026-07-12. Same 4-block bar
+    // as the statusline chip, sitting to the LEFT of the theme
+    // toggle. Hidden entirely when stress = 0 (fresh session with
+    // no samples yet) so idle sessions don't gain a phantom chip.
+    // Right-click opens the meter's context menu (reset window /
+    // dump / hide).
+    let stress = app.stress_score();
+    if stress > 0 {
+        let (filled, color) = if stress >= 70 {
+            (4, t.red)
+        } else if stress >= 40 {
+            (3, t.orange)
+        } else if stress >= 20 {
+            (2, t.yellow)
+        } else {
+            (1, t.green)
+        };
+        let mut bar = String::from(" ");
+        for i in 0..4 {
+            bar.push(if i < filled { '\u{2588}' } else { '\u{2591}' });
+        }
+        bar.push(' ');
+        spans.push(Span::styled(bar, Style::default().fg(color).bg(t.bg2)));
+        app.rects.palette_stress_chip = Some(Rect {
+            x: cluster_x,
+            y: area.y,
+            width: 6,
+            height: 1,
+        });
+        cluster_x += 6;
+    } else {
+        app.rects.palette_stress_chip = None;
     }
     // Theme toggle pill — always visible. Click behavior adapts:
     // if `[ui] theme_toggle` is set, swap between primary and alt;

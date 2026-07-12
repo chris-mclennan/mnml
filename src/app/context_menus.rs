@@ -962,6 +962,53 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some("Size".into()), anchor, items));
     }
 
+    /// Right-click on the stress meter (either the statusline or
+    /// top-right variant). Shows current numbers, a reset action,
+    /// and a copy-summary action so users can drop the stats into
+    /// an issue report. 2026-07-12 user request.
+    pub fn open_stress_meter_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let score = self.stress_score();
+        let mut sorted: Vec<u16> = self.frame_times_ms.iter().copied().collect();
+        sorted.sort_unstable();
+        let (p50, p95, max) = if sorted.is_empty() {
+            (0, 0, 0)
+        } else {
+            (
+                sorted[sorted.len() / 2],
+                sorted[(sorted.len() * 95) / 100],
+                sorted.last().copied().unwrap_or(0),
+            )
+        };
+        let sample_count = self.frame_times_ms.len();
+        let summary = format!(
+            "stress {score}/100 · p50 {p50}ms · p95 {p95}ms · max {max}ms · {sample_count} samples"
+        );
+        let items = vec![
+            MenuItem::new(
+                format!("Score: {score}/100"),
+                MenuAction::Command("noop.info"),
+            ),
+            MenuItem::new(
+                format!("p50 {p50}ms · p95 {p95}ms · max {max}ms"),
+                MenuAction::Command("noop.info"),
+            ),
+            MenuItem::new(
+                "Reset the frame-time window",
+                MenuAction::Command("perf.reset_stress"),
+            ),
+            MenuItem::new(
+                "Copy the summary to clipboard",
+                MenuAction::CopyPath(summary),
+            ),
+            MenuItem::new(
+                "Toast the current numbers",
+                MenuAction::Command("perf.toast_stress"),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Stress meter".into()), anchor, items));
+    }
+
     /// Right-click on the palette bar's back/forward buttons — lists
     /// the buffer MRU (top of stack), plus "Clear MRU". `forward` picks
     /// the direction to bias toward. mouse-round-9 SEV-3 2026-07-11.

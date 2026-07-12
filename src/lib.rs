@@ -240,6 +240,10 @@ pub enum HoverChip {
     /// Stress meter — 4-block bar that fills as p95 frame time
     /// climbs. Tooltip shows the actual numbers. 2026-07-11.
     StatuslineStress,
+    /// Mirror stress meter in the top-right cluster. Same tooltip
+    /// content; kept as a separate variant so `hover_chip_at` can
+    /// route each rect independently. 2026-07-12.
+    PaletteStress,
     /// A `> GIT` rail-header chip (one per action enum).
     RailHeaderChip(GitRailHeaderAction),
     /// A bufferline tab (carries the pane id). Tooltip shows the full path

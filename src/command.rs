@@ -2469,6 +2469,41 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.clear_pane_mru(),
         },
         Command {
+            id: "perf.reset_stress",
+            title: "Perf: reset the stress meter's frame-time window",
+            group: "perf",
+            keys: &[],
+            run: |app| {
+                app.frame_times_ms.clear();
+                app.toast("stress meter: window cleared");
+            },
+        },
+        Command {
+            id: "perf.toast_stress",
+            title: "Perf: toast the current stress numbers",
+            group: "perf",
+            keys: &[],
+            run: |app| {
+                let score = app.stress_score();
+                let mut sorted: Vec<u16> = app.frame_times_ms.iter().copied().collect();
+                sorted.sort_unstable();
+                let p50 = sorted.get(sorted.len() / 2).copied().unwrap_or(0);
+                let p95 = sorted.get((sorted.len() * 95) / 100).copied().unwrap_or(0);
+                let max = sorted.last().copied().unwrap_or(0);
+                let n = app.frame_times_ms.len();
+                app.toast(format!(
+                    "stress {score}/100 · p50 {p50}ms · p95 {p95}ms · max {max}ms · {n} samples"
+                ));
+            },
+        },
+        Command {
+            id: "noop.info",
+            title: "(info row · no action)",
+            group: "misc",
+            keys: &[],
+            run: |_app| {},
+        },
+        Command {
             id: "buffer.pin_toggle",
             title: "Pin / Unpin the active tab (sticks to front of strip)",
             group: "buffer",

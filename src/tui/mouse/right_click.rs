@@ -701,6 +701,20 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_palette_nav_context_menu(true, (x, y));
         return;
     }
+    // Stress meter — both the statusline chip and the top-right
+    // mirror show the same menu. 2026-07-12 user request.
+    if let Some(r) = app.rects.palette_stress_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_stress_meter_context_menu((x, y));
+        return;
+    }
+    if let Some(r) = app.rects.statusline_stress_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_stress_meter_context_menu((x, y));
+        return;
+    }
     // design-critic round-3 finding #6 batch 2 — remaining statusline
     // chips gain right-click menus.
     if let Some(r) = app.rects.statusline_diagnostics_chip

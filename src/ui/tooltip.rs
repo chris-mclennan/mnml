@@ -442,8 +442,12 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: toggle right side panel (Ctrl+Shift+B)".into()),
             ))
         }
-        HoverChip::StatuslineStress => {
-            let rect = app.rects.statusline_stress_chip?;
+        HoverChip::StatuslineStress | HoverChip::PaletteStress => {
+            let rect = if matches!(chip, HoverChip::StatuslineStress) {
+                app.rects.statusline_stress_chip?
+            } else {
+                app.rects.palette_stress_chip?
+            };
             let score = app.stress_score();
             let mut sorted: Vec<u16> = app.frame_times_ms.iter().copied().collect();
             sorted.sort_unstable();
@@ -462,7 +466,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 rect,
                 format!("stress: {score}/100 · p50 {p50}ms · p95 {p95}ms · max {max}ms"),
                 Some(format!(
-                    "{} recent frame samples · high = mnml is stressed",
+                    "{} samples · right-click for actions",
                     app.frame_times_ms.len()
                 )),
             ))
