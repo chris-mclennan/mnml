@@ -77,20 +77,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
     } else {
         String::new()
     };
-    // 2026-07-12 user request — style the hover to match the
-    // menu-bar dropdown (see `popup_menu`): square border, `t.bg2`
-    // fill, default fg. Same visual vocabulary as every other
-    // overlay in mnml (menu bar, context menus, pickers) instead
-    // of inventing a per-popup style.
+    // Build the block inline so both the border AND the inner
+    // content share the same lighter `t.bg` fill — VS Code's
+    // hover is a subtly-lifted panel above the editor body, not
+    // the dark overlay `popup_panel`'s bg_darker gives. Subtle
+    // grey border keeps the frame quiet. 2026-07-12 — reverted
+    // the menu-bar match at user request; the VS Code style
+    // (rounded border, `t.bg` fill) reads better for docs than
+    // the menu-bar square-bg2 chrome.
     let mut block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Plain)
-        .style(Style::default().fg(t.fg).bg(t.bg2));
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(t.grey).bg(t.bg))
+        .style(Style::default().fg(t.fg).bg(t.bg));
     let title_trim = title.trim();
     if !title_trim.is_empty() {
         block = block.title(Span::styled(
             format!(" {title_trim} "),
-            Style::default().fg(t.comment).bg(t.bg2),
+            Style::default().fg(t.comment).bg(t.bg),
         ));
     }
     let inner = block.inner(area);
@@ -111,10 +115,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
         .take(inner.height as usize)
         .map(|l| highlight_hover_line(l, &t))
         .collect();
-    frame.render_widget(
-        Paragraph::new(view).style(Style::default().bg(t.bg2)),
-        inner,
-    );
+    frame.render_widget(Paragraph::new(view).style(Style::default().bg(t.bg)), inner);
 }
 
 /// Highlight a single hover-content line with per-token color.
@@ -124,12 +125,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
 /// double-quotes, and comments starting with `//`. Unknown shapes
 /// fall through as plain fg.
 fn highlight_hover_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static> {
-    let plain = Style::default().fg(t.fg).bg(t.bg2);
-    let kw = Style::default().fg(t.purple).bg(t.bg2);
-    let ident = Style::default().fg(t.fg).bg(t.bg2);
-    let ty = Style::default().fg(t.cyan).bg(t.bg2);
-    let string_st = Style::default().fg(t.green).bg(t.bg2);
-    let comment = Style::default().fg(t.comment).bg(t.bg2);
+    let plain = Style::default().fg(t.fg).bg(t.bg);
+    let kw = Style::default().fg(t.purple).bg(t.bg);
+    let ident = Style::default().fg(t.fg).bg(t.bg);
+    let ty = Style::default().fg(t.cyan).bg(t.bg);
+    let string_st = Style::default().fg(t.green).bg(t.bg);
+    let comment = Style::default().fg(t.comment).bg(t.bg);
 
     // Comment line? Return as-is in comment color.
     if line.trim_start().starts_with("//") {
@@ -250,19 +251,19 @@ fn highlight_hover_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static
 /// verbatim in the hover popup.
 fn render_markdown_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static> {
     use ratatui::style::Modifier;
-    let plain = Style::default().fg(t.fg).bg(t.bg2);
+    let plain = Style::default().fg(t.fg).bg(t.bg);
     let bold = Style::default()
         .fg(t.fg)
-        .bg(t.bg2)
+        .bg(t.bg)
         .add_modifier(Modifier::BOLD);
     let italic = Style::default()
         .fg(t.fg)
-        .bg(t.bg2)
+        .bg(t.bg)
         .add_modifier(Modifier::ITALIC);
     // Inline code — cyan on the same bg as the popup so it lifts
     // subtly without breaking the panel's low-contrast feel.
-    let code = Style::default().fg(t.cyan).bg(t.bg2);
-    let bullet = Style::default().fg(t.comment).bg(t.bg2);
+    let code = Style::default().fg(t.cyan).bg(t.bg);
+    let bullet = Style::default().fg(t.comment).bg(t.bg);
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut rest = line.to_string();
