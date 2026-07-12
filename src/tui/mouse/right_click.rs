@@ -1169,6 +1169,37 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_http_panel_section_context_menu(section, (x, y));
         return;
     }
+    // mouse-round-11 SEV-3 2026-07-12 — right-click on the tree's
+    // `..` up-nav row → workspace-navigation menu (up one, project
+    // root, copy current path, open externally). Left-click still
+    // navigates up one level.
+    if let Some(r) = app.rects.tree_up_row
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let cur = app.workspace.display().to_string();
+        let items = vec![
+            MenuItem::new(
+                "Navigate up one level",
+                MenuAction::Command("view.workspace_up"),
+            ),
+            MenuItem::new("Copy current path", MenuAction::CopyPath(cur.clone())),
+            MenuItem::new(
+                crate::app::reveal_in_files_label(),
+                MenuAction::RevealInFinder(app.workspace.clone()),
+            ),
+            MenuItem::new(
+                "Open in terminal here",
+                MenuAction::OpenTerminal(app.workspace.clone()),
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(
+            Some("Workspace".to_string()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
     if let Some(tr) = app.rects.tree
         && crate::app::dispatch::contains(tr, x, y)
     {
