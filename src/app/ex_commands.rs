@@ -4462,6 +4462,25 @@ impl App {
             self.toast("sticky context: off");
         } else if matches!(opt, "stickycontext!" | "invstickycontext") {
             self.toggle_sticky_context();
+        } else if matches!(opt, "foldarrows" | "showfoldarrows") {
+            // mouse-round-8 SEV-2 2026-07-12 — persistent fold-arrow
+            // gutter marker so foldability is discoverable without
+            // hover. Matches VS Code's "Show Folding Controls: always".
+            self.config.ui.always_show_fold_arrows = true;
+            self.toast("fold arrows: always");
+        } else if matches!(opt, "nofoldarrows" | "noshowfoldarrows") {
+            self.config.ui.always_show_fold_arrows = false;
+            self.toast("fold arrows: on hover only");
+        } else if matches!(opt, "foldarrows!" | "invfoldarrows") {
+            self.config.ui.always_show_fold_arrows = !self.config.ui.always_show_fold_arrows;
+            self.toast(format!(
+                "fold arrows: {}",
+                if self.config.ui.always_show_fold_arrows {
+                    "always"
+                } else {
+                    "on hover only"
+                }
+            ));
         } else if matches!(opt, "bufferline" | "bl") {
             self.bufferline_visible = true;
             self.toast("bufferline: on");

@@ -374,6 +374,12 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         d.ui.render_markdown,
     ));
     out.push(bool_row(
+        "ui.always_show_fold_arrows",
+        "Persistent fold arrows",
+        cfg.ui.always_show_fold_arrows,
+        d.ui.always_show_fold_arrows,
+    ));
+    out.push(bool_row(
         "ui.auto_md_preview",
         "Auto-open markdown preview",
         cfg.ui.auto_md_preview,
@@ -757,6 +763,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.wrap" => set_bool(&mut cfg.ui.wrap, opt_idx),
         "ui.sticky_context" => set_bool(&mut cfg.ui.sticky_context, opt_idx),
         "ui.render_markdown" => set_bool(&mut cfg.ui.render_markdown, opt_idx),
+        "ui.always_show_fold_arrows" => set_bool(&mut cfg.ui.always_show_fold_arrows, opt_idx),
         "ui.auto_md_preview" => set_bool(&mut cfg.ui.auto_md_preview, opt_idx),
         "ui.picker_position" => {
             let new = if opt_idx == 1 { "top" } else { "center" };
@@ -985,6 +992,11 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
         "ui.wrap" => vec![("ui", "wrap", b(cfg.ui.wrap))],
         "ui.sticky_context" => vec![("ui", "sticky_context", b(cfg.ui.sticky_context))],
         "ui.render_markdown" => vec![("ui", "render_markdown", b(cfg.ui.render_markdown))],
+        "ui.always_show_fold_arrows" => vec![(
+            "ui",
+            "always_show_fold_arrows",
+            b(cfg.ui.always_show_fold_arrows),
+        )],
         "ui.auto_md_preview" => vec![("ui", "auto_md_preview", b(cfg.ui.auto_md_preview))],
         // ── ui (string) ──
         "ui.picker_position" => vec![("ui", "picker_position", q(&cfg.ui.picker_position))],

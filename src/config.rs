@@ -653,6 +653,14 @@ pub struct UiConfig {
     /// markdown preview pane (`Pane::MdPreview`) is the canonical
     /// rendering. `:set [no]rendermarkdown` / `view.toggle_render_markdown`.
     pub render_markdown: bool,
+    /// When true, paint a dim fold-arrow (`▾`) in the gutter for every
+    /// foldable header line, not just on hover. Matches VS Code's
+    /// "Editor › Show Folding Controls: always" default. Off by default
+    /// — the sign column is 1 cell, so persistent arrows compete with
+    /// git-change bars and diagnostic dots; the persistent arrow
+    /// renders at LOWEST priority so higher-signal marks still win.
+    /// mouse-round-8 SEV-2 2026-07-12.
+    pub always_show_fold_arrows: bool,
     /// Sticky scope context — when on, paints the enclosing scope chain
     /// (functions / classes / methods that contain the cursor's line) as
     /// dim header rows at the top of each editor pane. Reuses
@@ -1000,6 +1008,7 @@ impl Default for Config {
                 wrap: false,
                 highlight_todo_keywords: false,
                 render_markdown: false,
+                always_show_fold_arrows: false,
                 sticky_context: false,
                 md_image_rows: 12,
                 git_graph_branch_col: None,
@@ -1781,6 +1790,7 @@ struct RawUi {
     wrap: Option<bool>,
     highlight_todo_keywords: Option<bool>,
     render_markdown: Option<bool>,
+    always_show_fold_arrows: Option<bool>,
     sticky_context: Option<bool>,
     md_image_rows: Option<u16>,
     git_graph_branch_col: Option<usize>,
@@ -2021,6 +2031,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.render_markdown {
             self.ui.render_markdown = v;
+        }
+        if let Some(v) = raw.ui.always_show_fold_arrows {
+            self.ui.always_show_fold_arrows = v;
         }
         if let Some(v) = raw.ui.sticky_context {
             self.ui.sticky_context = v;

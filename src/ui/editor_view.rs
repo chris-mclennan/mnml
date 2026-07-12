@@ -534,9 +534,16 @@ pub fn draw_pane(
             app.hover_editor_line,
             Some((hp, hl)) if hp == pane_id && hl == line_no
         );
-        let is_foldable_hover =
-            !is_folded_line && is_hovered_line && is_foldable_header(buf.editor.line_str(line_no));
-        if is_folded_line || is_foldable_hover {
+        // mouse-round-8 SEV-2 2026-07-12 — when the always-show
+        // config is on, treat every foldable header as "as if
+        // hovered" so a persistent dim arrow sits in the gutter
+        // and the click rect is always registered.
+        let always_show = app.config.ui.always_show_fold_arrows;
+        let is_foldable_line = !is_folded_line
+            && (is_hovered_line || always_show)
+            && is_foldable_header(buf.editor.line_str(line_no));
+        let is_foldable_hover = is_foldable_line;
+        if is_folded_line || is_foldable_line {
             fold_arrow_rows.push((r as u16, line_no));
         }
         let sign_span = if is_continuation {
