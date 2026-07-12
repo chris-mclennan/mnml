@@ -24,15 +24,15 @@ use crate::ui::{icons, theme};
 // U+25B6) — the black-solid variants render at font-cap height
 // (vs the smaller `▾ / ▸` U+25BE/U+25B8) so they read more
 // clearly next to the folder icons at typical rail widths.
-// 2026-07-12 user feedback — even those read as small at
-// tight rail widths. Nerd Font `menu-down` / `menu-right`
-// (MDI F01F5 / F01F6) are chunky filled triangles designed
-// for UI at font-cap height and land visibly larger than the
-// Unicode BLACK DOWN-POINTING TRIANGLE while keeping the
-// same folder-open/folder-closed metaphor. Falls back to the
-// unicode triangles under `[ui] ascii_icons`.
-const CHEVRON_OPEN: &str = "\u{F01F5}";
-const CHEVRON_CLOSED: &str = "\u{F01F6}";
+// 2026-07-12 user feedback rounds:
+// r1: swap to MDI menu-down / menu-right (F01F5 / F01F6) —
+//     rendered as fallback emojis in the user's Nerd Font.
+// r2: user wants CHEVRONS, not arrows. Codicon chevron-down
+//     (EAB4) is already verified working in mnml's palette
+//     dropdown chip; pair with codicon chevron-right (EAA0)
+//     for the collapsed state.
+const CHEVRON_OPEN: &str = "\u{EAB4}";
+const CHEVRON_CLOSED: &str = "\u{EAA0}";
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks

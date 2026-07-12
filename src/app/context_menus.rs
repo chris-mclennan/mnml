@@ -533,10 +533,23 @@ impl App {
         } else {
             "Set as default workspace"
         };
+        // 2026-07-12 user request — recursive expand / collapse
+        // were only on individual dir-row menus; the workspace
+        // header should get them too since it IS a directory (the
+        // top one). Cheap since the same MenuAction fires.
+        let ws_root = self.workspace.clone();
         let mut items = vec![
             MenuItem::new(
                 "Toggle expand",
                 MenuAction::Command("view.toggle_tree_section"),
+            ),
+            MenuItem::new(
+                "Expand recursively",
+                MenuAction::TreeExpandRecursive(ws_root.clone()),
+            ),
+            MenuItem::new(
+                "Collapse recursively",
+                MenuAction::TreeCollapseRecursive(ws_root),
             ),
             MenuItem::new(
                 "Switch workspace…",
