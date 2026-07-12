@@ -686,6 +686,44 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_pr_context_menu((x, y));
         return;
     }
+    // design-critic round-3 finding #6 batch 2 — remaining statusline
+    // chips gain right-click menus.
+    if let Some(r) = app.rects.statusline_diagnostics_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_diagnostics_context_menu((x, y));
+        return;
+    }
+    if let Some(r) = app.rects.statusline_language_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_language_context_menu((x, y));
+        return;
+    }
+    if let Some(r) = app.rects.statusline_lncol_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_lncol_context_menu((x, y));
+        return;
+    }
+    if let Some(r) = app.rects.statusline_find_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_find_context_menu((x, y));
+        return;
+    }
+    if let Some(r) = app.rects.statusline_sel_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_sel_context_menu((x, y));
+        return;
+    }
+    if let Some(r) = app.rects.statusline_filesize_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_filesize_context_menu((x, y));
+        return;
+    }
     // #21 v2 — right-click coverage for the remaining statusline
     // chips (WRAP / LSP / Autosave / Test). Small menus that
     // surface the underlying palette commands so users can

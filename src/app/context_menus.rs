@@ -861,6 +861,101 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
+    /// Right-click on the statusline diagnostics chip — jump to
+    /// next / prev / show all. design-critic round-3 #6 2026-07-11.
+    pub fn open_statusline_diagnostics_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Next problem", MenuAction::Command("lsp.next_diagnostic")),
+            MenuItem::new(
+                "Previous problem",
+                MenuAction::Command("lsp.prev_diagnostic"),
+            ),
+            MenuItem::new("Show all in panel", MenuAction::Command("lsp.diagnostics")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Problems".into()), anchor, items));
+    }
+
+    /// Right-click on the language chip — override / copy language.
+    pub fn open_statusline_language_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let lang = self
+            .active_editor()
+            .and_then(|b| b.language_ext.clone())
+            .unwrap_or_else(|| "—".to_string());
+        let items = vec![MenuItem::new(
+            "Copy language name",
+            MenuAction::CopyPath(lang.clone()),
+        )];
+        self.context_menu = Some(ContextMenu::new(
+            Some(format!("Language: {lang}")),
+            anchor,
+            items,
+        ));
+    }
+
+    /// Right-click on the lncol chip — go-to-line / copy pos.
+    pub fn open_statusline_lncol_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let pos = self
+            .active_editor()
+            .map(|b| {
+                let (r, c) = b.editor.row_col();
+                format!("{}:{}", r + 1, c + 1)
+            })
+            .unwrap_or_default();
+        let items = vec![
+            MenuItem::new("Go to line…", MenuAction::Command("editor.goto_line")),
+            MenuItem::new(format!("Copy position ({pos})"), MenuAction::CopyPath(pos)),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Cursor".into()), anchor, items));
+    }
+
+    /// Right-click on the find chip — repeat / clear / open prompt.
+    pub fn open_statusline_find_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Next match", MenuAction::Command("find.next")),
+            MenuItem::new("Previous match", MenuAction::Command("find.prev")),
+            MenuItem::new("Clear (`:noh`)", MenuAction::Command("find.clear")),
+            MenuItem::new("Open find prompt…", MenuAction::Command("find.find")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Find".into()), anchor, items));
+    }
+
+    /// Right-click on the sel chip — copy / cut.
+    pub fn open_statusline_sel_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Copy selection", MenuAction::Command("editor.copy")),
+            MenuItem::new("Cut selection", MenuAction::Command("editor.cut")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Selection".into()), anchor, items));
+    }
+
+    /// Right-click on the filesize chip — copy bytes / open in OS.
+    pub fn open_statusline_filesize_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let (size_bytes, path) = match self.active_editor() {
+            Some(b) => (
+                b.editor.text().len(),
+                b.path.as_ref().map(|p| p.display().to_string()),
+            ),
+            None => (0, None),
+        };
+        let mut items = vec![MenuItem::new(
+            format!("Copy size ({size_bytes} B)"),
+            MenuAction::CopyPath(size_bytes.to_string()),
+        )];
+        if let Some(p) = path {
+            items.push(MenuItem::new(
+                "Open in system app",
+                MenuAction::OpenExternally(p.into()),
+            ));
+        }
+        self.context_menu = Some(ContextMenu::new(Some("Size".into()), anchor, items));
+    }
+
     /// Right-click on the statusline PR chip — offers copy URL /
     /// number / open in browser. design-critic round-3 #6 2026-07-11.
     pub fn open_statusline_pr_context_menu(&mut self, anchor: (u16, u16)) {
