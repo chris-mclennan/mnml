@@ -818,7 +818,17 @@ impl Editor {
         while b < self.text.len() && !self.text.is_char_boundary(b) {
             b += 1;
         }
-        if b == self.cursor || self.extra_cursors.contains(&b) {
+        // Alt+click at the primary cursor's position is a no-op — the
+        // user can't remove the primary from an editor pane. Alt+click
+        // at an EXISTING extra cursor REMOVES that extra (VS Code
+        // convention: alt+click toggles). mouse-round-10 SEV-3
+        // 2026-07-12.
+        if b == self.cursor {
+            return;
+        }
+        if let Some(pos) = self.extra_cursors.iter().position(|&c| c == b) {
+            self.extra_cursors.remove(pos);
+            self.extra_anchors.remove(pos);
             return;
         }
         let anchor_for_new = if self.anchor.is_some() { Some(b) } else { None };
