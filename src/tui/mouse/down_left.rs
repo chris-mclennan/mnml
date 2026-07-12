@@ -2876,8 +2876,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 if count >= 2 {
                     let clip = &mut app.clipboard;
                     if let Some(Pane::Editor(b)) = app.panes.get_mut(pid) {
+                        // mouse-round-8 SEV-3 2026-07-12 — triple-click
+                        // in STANDARD mode fires SelectLineToEnd so
+                        // typing replaces the whole line (matches
+                        // VS Code / Sublime / GUI-editor convention).
+                        // In vim mode, keep SelectLine (V-visual line)
+                        // so muscle memory still yields the vim shape.
                         let op = if count == 2 {
                             crate::edit_op::EditOp::SelectWord
+                        } else if b.editing_mode() == crate::input::EditingMode::None {
+                            crate::edit_op::EditOp::SelectLineToEnd
                         } else {
                             crate::edit_op::EditOp::SelectLine
                         };
