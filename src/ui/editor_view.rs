@@ -566,10 +566,15 @@ pub fn draw_pane(
             // still win — folded lines are rare mid-debug, and if
             // both apply, the `⋯ N hidden` chip past EOL still
             // signals the fold.
+            // 2026-07-12 user feedback — the `▸` / `▾` unicode
+            // triangles read as tiny in the gutter. Swap to the
+            // codicon chevrons already verified working in the tree
+            // header + palette dropdown for visual continuity
+            // (chevron-down for expanded, chevron-right for folded).
             let glyph = if app.config.ui.ascii_icons {
                 ">"
             } else {
-                "\u{25B8}" // ▸
+                "\u{EAA0}" // codicon chevron-right
             };
             Span::styled(glyph, Style::default().fg(theme::cur().purple).bg(base_bg))
         } else if let Some(s) = hi_diag {
@@ -582,10 +587,13 @@ pub fn draw_pane(
             mark_kind = Some(crate::GutterMarkKind::Diagnostic(s));
             Span::styled("●", Style::default().fg(diag_color(s)).bg(base_bg))
         } else if is_foldable_hover {
+            // Same codicon chevron as the folded state for visual
+            // continuity — expanded uses chevron-down. 2026-07-12
+            // user feedback (see the fold-arrow comment above).
             let glyph = if app.config.ui.ascii_icons {
                 "v"
             } else {
-                "\u{25BE}" // ▾
+                "\u{EAB4}" // codicon chevron-down
             };
             Span::styled(glyph, Style::default().fg(theme::cur().comment).bg(base_bg))
         } else {
