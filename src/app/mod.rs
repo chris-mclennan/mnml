@@ -4046,6 +4046,12 @@ pub struct App {
     /// `accept_filter_lines_shell_cmd` on prompt accept.
     /// nvchad-round-9 SEV-2 2026-07-11.
     pub pending_filter_range: Option<(usize, usize)>,
+    /// In-flight pty drag-select. `(pane_id, origin_cell, current_cell)`
+    /// where cells are (col, row) in pane-body coordinates. The pty
+    /// renderer inverts cells inside the range; mouse-up extracts the
+    /// text and copies it to the clipboard. Only armed on the first
+    /// drag (not a click). mouse-round-9 SEV-2 2026-07-11.
+    pub pty_drag_select: Option<(PaneId, (u16, u16), (u16, u16))>,
     /// `:rename`'d Claude session names from a previous launch, keyed
     /// by `--session-id`. Restored from `SavedSession.pty_session_names`;
     /// re-applied to a Claude pane whose session id matches when it's
@@ -4991,6 +4997,7 @@ impl App {
             tree_drag: None,
             pending_tree_move: None,
             pending_filter_range: None,
+            pty_drag_select: None,
             saved_pty_session_names: std::collections::HashMap::new(),
             git_undo_stack: Vec::new(),
             git_redo_stack: Vec::new(),
@@ -8256,6 +8263,63 @@ impl App {
             seed,
         );
         self.prompt = Some(prompt);
+    }
+
+    /// Extract text from the Pty pane's render grid between two cell
+    /// coords (col, row) and copy to the system clipboard. Uses
+    /// row-major linear cell order — for multi-row selections, joins
+    /// with `\n` at row boundaries. mouse-round-9 SEV-2 2026-07-11.
+    pub fn copy_pty_selection_to_clipboard(
+        &mut self,
+        pane_id: PaneId,
+        origin: (u16, u16),
+        cur: (u16, u16),
+    ) {
+        let Some(Pane::Pty(session)) = self.panes.get_mut(pane_id) else {
+            return;
+        };
+        let grid = session.render_grid();
+        let (cols, rows) = (grid.cols, grid.rows);
+        // Order origin/cur in row-major reading order.
+        let (start, end) = {
+            let a_idx = origin.1 as usize * cols as usize + origin.0 as usize;
+            let b_idx = cur.1 as usize * cols as usize + cur.0 as usize;
+            if a_idx <= b_idx {
+                (origin, cur)
+            } else {
+                (cur, origin)
+            }
+        };
+        let mut out = String::new();
+        for r in start.1..=end.1 {
+            if r >= rows {
+                break;
+            }
+            let col_lo = if r == start.1 { start.0 } else { 0 };
+            let col_hi = if r == end.1 { end.0 } else { cols - 1 };
+            let mut row_text = String::new();
+            for c in col_lo..=col_hi {
+                if let Some(cell) = grid.cell(r, c) {
+                    if cell.text.is_empty() {
+                        row_text.push(' ');
+                    } else {
+                        row_text.push_str(&cell.text);
+                    }
+                }
+            }
+            // Trim trailing spaces per row so selections that cross
+            // whitespace-padded rows don't paste with a huge tail.
+            let trimmed = row_text.trim_end();
+            out.push_str(trimmed);
+            if r < end.1 {
+                out.push('\n');
+            }
+        }
+        if out.is_empty() {
+            return;
+        }
+        self.clipboard.set(out, false);
+        self.toast("pty: selection copied");
     }
 
     /// `term.paste` — paste the system clipboard into the active Pty

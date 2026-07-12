@@ -70,6 +70,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // focus, scrollback). This unblocks click / right-click /
     // wheel inside every mouse-aware sibling (mnml-aws-amplify
     // and friends).
+    // Left-click on a Pty pane WITHOUT mouse-tracking → arm a
+    // drag-select. Origin cell captured in pane-relative coords
+    // (col, row). The drag handler updates the current cell; mouse-up
+    // extracts the text between origin/current and copies it to the
+    // clipboard. mouse-round-9 SEV-2 2026-07-11.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left))
+        && let Some(&(rect, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
+            crate::app::dispatch::contains(*r, x, y)
+                && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
+        })
+        && let Some(Pane::Pty(session)) = app.panes.get(pid)
+        && !session.is_mouse_tracking()
+    {
+        let col = x.saturating_sub(rect.x);
+        let row = y.saturating_sub(rect.y);
+        app.pty_drag_select = Some((pid, (col, row), (col, row)));
+        // Don't return — let the click also focus the pane below.
+    }
     // Middle-click on a Pty pane → paste from clipboard (X11 primary-
     // selection convention). Runs even when the child has mouse
     // tracking; the paste is the natural user intent. mouse-round-9

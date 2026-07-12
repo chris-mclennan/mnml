@@ -78,6 +78,21 @@ pub fn draw(
 
     let def_fg = theme::cur().fg;
     let def_bg = theme::cur().bg_dark;
+    // mouse-round-9 SEV-2 2026-07-11 — pty drag-select. If a drag is
+    // in flight over THIS pane, precompute the row-major linear range
+    // once so the inner loop can invert cells in constant time.
+    let sel_range: Option<(usize, usize)> = match app.pty_drag_select {
+        Some((sel_pid, origin, cur)) if sel_pid == pane_id => {
+            let a_idx = origin.1 as usize * cols as usize + origin.0 as usize;
+            let b_idx = cur.1 as usize * cols as usize + cur.0 as usize;
+            if a_idx <= b_idx {
+                Some((a_idx, b_idx))
+            } else {
+                Some((b_idx, a_idx))
+            }
+        }
+        _ => None,
+    };
     let mut lines: Vec<Line> = Vec::with_capacity(rows as usize);
     for r in 0..rows {
         let mut spans: Vec<Span> = Vec::new();
@@ -88,7 +103,13 @@ pub fn draw(
                 push_run(&mut spans, &mut text, &mut style, " ", Style::default());
                 continue;
             };
-            let s = cell_style(cell, def_fg, def_bg, &grid.ansi_palette);
+            let mut s = cell_style(cell, def_fg, def_bg, &grid.ansi_palette);
+            if let Some((lo, hi)) = sel_range {
+                let idx = r as usize * cols as usize + c as usize;
+                if idx >= lo && idx <= hi {
+                    s = s.add_modifier(Modifier::REVERSED);
+                }
+            }
             let g: &str = if cell.text.is_empty() {
                 " "
             } else {

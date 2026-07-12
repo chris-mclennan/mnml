@@ -44,6 +44,18 @@ pub(super) fn handle_drag_left(app: &mut App, x: u16, y: u16) {
             }
         }
     }
+    // Pty drag-select — update the current-cell tail so the pty
+    // renderer can invert the range. mouse-round-9 SEV-2 2026-07-11.
+    if let Some((pid, origin, _prev)) = app.pty_drag_select
+        && let Some(&(rect, target_pid)) =
+            app.rects.editor_panes.iter().find(|(_, tid)| *tid == pid)
+        && let Some(Pane::Pty(_)) = app.panes.get(target_pid)
+    {
+        let col = x.saturating_sub(rect.x);
+        let row = y.saturating_sub(rect.y);
+        app.pty_drag_select = Some((pid, origin, (col, row)));
+        return;
+    }
     // Tab-page chip drag-to-reorder. If the user pressed on a
     // chip and is dragging across another chip's rect, swap
     // the two tabs. Update dragging_tab_page so the cursor

@@ -18,6 +18,15 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
     app.end_divider_drag();
     app.drag_select = None;
     app.dragging_tab_page = None;
+    // Pty drag-select — extract the text between origin and current
+    // cell, copy to clipboard, clear the state. Only copies if the
+    // range has size (single click just arms + releases without a
+    // drag doesn't copy). mouse-round-9 SEV-2 2026-07-11.
+    if let Some((pid, origin, cur)) = app.pty_drag_select.take()
+        && origin != cur
+    {
+        app.copy_pty_selection_to_clipboard(pid, origin, cur);
+    }
     // Dock widget drag — resolve the final cursor position.
     //
     // Magnetic snap first: if the cursor is near another
