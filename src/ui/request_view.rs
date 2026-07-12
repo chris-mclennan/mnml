@@ -2028,6 +2028,30 @@ fn detect_response_content_type(rp: &crate::request_pane::RequestPane) -> String
             if vlow.contains("css") {
                 return "CSS".to_string();
             }
+            // api-round-9 SEV-3 2026-07-11 — detect binary media
+            // types so the body renderer can show a placeholder
+            // instead of raw byte garbage.
+            if vlow.starts_with("image/") {
+                return "IMAGE".to_string();
+            }
+            if vlow.starts_with("video/") {
+                return "VIDEO".to_string();
+            }
+            if vlow.starts_with("audio/") {
+                return "AUDIO".to_string();
+            }
+            if vlow.contains("pdf") {
+                return "PDF".to_string();
+            }
+            if vlow.contains("octet-stream")
+                || vlow.contains("zip")
+                || vlow.contains("gzip")
+                || vlow.contains("tar")
+                || vlow.contains("protobuf")
+                || vlow.contains("msgpack")
+            {
+                return "BINARY".to_string();
+            }
             if vlow.contains("plain") || vlow.contains("text/") {
                 return "TEXT".to_string();
             }
@@ -3702,6 +3726,47 @@ fn draw_response(
             // Body tab (default) — the pretty JSON body flows below
             // starting fresh at row 0 (no header echo).
             rows.push(plain(String::new(), body_style));
+            // api-round-9 SEV-3 2026-07-11 — detect binary media
+            // types and render a placeholder instead of raw bytes.
+            let ct_lower = r
+                .headers
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
+                .map(|(_, v)| v.to_ascii_lowercase())
+                .unwrap_or_default();
+            let is_binary_ct = ct_lower.starts_with("image/")
+                || ct_lower.starts_with("video/")
+                || ct_lower.starts_with("audio/")
+                || ct_lower.contains("octet-stream")
+                || ct_lower.contains("pdf")
+                || ct_lower.contains("zip")
+                || ct_lower.contains("gzip")
+                || ct_lower.contains("tar")
+                || ct_lower.contains("protobuf")
+                || ct_lower.contains("msgpack");
+            let size = r.body_bytes.len().max(r.body.len());
+            if is_binary_ct {
+                let kind = if ct_lower.starts_with("image/") {
+                    "image"
+                } else if ct_lower.starts_with("video/") {
+                    "video"
+                } else if ct_lower.starts_with("audio/") {
+                    "audio"
+                } else if ct_lower.contains("pdf") {
+                    "pdf"
+                } else {
+                    "binary"
+                };
+                rows.push(plain(
+                    format!(" [binary {kind} · {size} bytes · Ctrl+S to save the raw body]"),
+                    body_style,
+                ));
+                rows.push(plain(
+                    format!(" content-type: {}", ct_lower.trim()),
+                    body_style,
+                ));
+                return;
+            }
             let pretty = pretty_body(&r.body, &r.headers);
             // Pick the syntax-highlighter language. Override wins
             // over auto-detect. XML aliases to HTML (same grammar).

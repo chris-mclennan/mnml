@@ -31,11 +31,22 @@ pub struct Step {
     pub extract: Vec<(String, String)>,
 }
 
-/// Parse a `.chain.json` file body into steps.
+/// Parse a `.chain.json` file body into steps. Returns
+/// `(steps, unknown_keys)` where `unknown_keys` names any per-step
+/// keys the parser doesn't understand — `if`, `retry`, `parallel`,
+/// etc. Runtime callers surface these to the user so the silent
+/// no-op behaviour is at least visible. api-workflow round-9 SEV-3
+/// 2026-07-11.
 pub fn parse(text: &str) -> Result<Vec<Step>, String> {
+    parse_verbose(text).map(|(steps, _)| steps)
+}
+
+pub fn parse_verbose(text: &str) -> Result<(Vec<Step>, Vec<String>), String> {
     let v: Value = serde_json::from_str(text).map_err(|e| format!("parse chain: {e}"))?;
     let arr = v.as_array().ok_or("chain must be a JSON array")?;
     let mut out = Vec::new();
+    let mut unknown_keys: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    const KNOWN_KEYS: &[&str] = &["request", "extract"];
     for (i, step) in arr.iter().enumerate() {
         let request = step
             .get("request")
@@ -51,12 +62,19 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
                     .collect()
             })
             .unwrap_or_default();
+        if let Some(obj) = step.as_object() {
+            for k in obj.keys() {
+                if !KNOWN_KEYS.contains(&k.as_str()) {
+                    unknown_keys.insert(k.clone());
+                }
+            }
+        }
         out.push(Step {
             request: PathBuf::from(request),
             extract,
         });
     }
-    Ok(out)
+    Ok((out, unknown_keys.into_iter().collect()))
 }
 
 /// Resolve `step.request` against, in order: absolute path → relative to
@@ -96,9 +114,18 @@ pub fn run(
 ) -> Result<(), String> {
     let text = std::fs::read_to_string(chain_file)
         .map_err(|e| format!("read {}: {e}", chain_file.display()))?;
-    let steps = parse(&text)?;
+    let (steps, unknown_keys) = parse_verbose(&text)?;
     if steps.is_empty() {
         return Err("chain has no steps".into());
+    }
+    // api-workflow round-9 SEV-3 2026-07-11 — chain step keys that
+    // the parser doesn't understand (`if`, `retry`, `parallel`, ...)
+    // used to be silently accepted. Surface them at trace-line time.
+    if !unknown_keys.is_empty() {
+        out.push_str(&format!(
+            "[chain] WARNING: ignored keys not yet implemented: {}\n",
+            unknown_keys.join(", ")
+        ));
     }
     let chain_dir = chain_file.parent().unwrap_or(Path::new("."));
     let mut env = EnvSet::select(workspace, env_name);
