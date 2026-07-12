@@ -718,6 +718,30 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_new_tab_context_menu((x, y));
         return;
     }
+    // Right-click on the bufferline theme-toggle chip → theme menu.
+    // Left-click already toggles primary ↔ configured alt; right-click
+    // gives access to the picker + default reset. mouse-round-8 SEV-3
+    // 2026-07-12.
+    if let Some(r) = app.rects.bufferline_theme_toggle
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let cur = crate::ui::theme::cur().name;
+        let items = vec![
+            MenuItem::new(format!("Theme: {cur}"), MenuAction::Command("noop.info")),
+            MenuItem::new("Pick theme…", MenuAction::Command("theme.pick")),
+            MenuItem::new(
+                "Toggle (primary ↔ alt)",
+                MenuAction::Command("theme.toggle"),
+            ),
+            MenuItem::new(
+                "Reset to config default",
+                MenuAction::Command("theme.reset"),
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Theme".to_string()), (x, y), items));
+        return;
+    }
     // Undo chip right-click — dismiss without committing. Left-click
     // commits; right-click cancels. mouse-round-10 SEV-3 2026-07-12.
     if let Some(r) = app.rects.pending_undo_chip

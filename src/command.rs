@@ -2921,6 +2921,22 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.toggle_theme(),
         },
+        // mouse-round-8 SEV-3 2026-07-12 — theme-toggle chip
+        // right-click "Reset to config default" verb.
+        Command {
+            id: "theme.reset",
+            title: "Theme: reset to config default",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let default_name = app.config.ui.theme.clone();
+                if crate::ui::theme::set(&default_name).is_some() {
+                    app.toast(format!("theme: {default_name}"));
+                } else {
+                    app.toast(format!("theme: unknown \"{default_name}\""));
+                }
+            },
+        },
         Command {
             id: "markdown.preview",
             title: "Markdown: open rendered preview (split)",
