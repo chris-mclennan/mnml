@@ -6034,6 +6034,21 @@ impl App {
     /// Removes any open editor buffer for the file; for a directory,
     /// removes every editor buffer under it. `rm` for a file,
     /// `rm -rf` for a dir.
+    /// Refresh the primary file tree PLUS every extra workspace whose
+    /// root is an ancestor of `path`. Use this after any filesystem
+    /// mutation (delete / rename / paste / duplicate) so a change
+    /// inside an extra workspace refreshes THAT extra's tree, not
+    /// just the primary one. 2026-07-12 fix for stale row after
+    /// delete-in-extra-workspace.
+    pub fn refresh_trees_for_path(&mut self, path: &Path) {
+        self.tree.refresh();
+        for extra in self.extra_workspaces.iter_mut() {
+            if path.starts_with(&extra.root) {
+                extra.tree.refresh();
+            }
+        }
+    }
+
     pub fn execute_delete_fs_entry(&mut self, path: &Path) {
         let is_dir = path.is_dir();
         let res = if is_dir {
@@ -6068,7 +6083,11 @@ impl App {
         // Trim out of recent_files.
         self.recent_files
             .retain(|p| p != path && !(is_dir && p.starts_with(path)));
-        self.tree.refresh();
+        // 2026-07-12 — refresh the extra workspace's tree too if
+        // the deleted path lived inside one; previously only the
+        // primary tree rescanned, so extra-workspace rows for the
+        // deleted file hung around until a manual refresh.
+        self.refresh_trees_for_path(path);
         // Bug 2026-07-06: right-click Delete on an HTTP-sidebar file
         // row was refreshing the file tree but NOT the HTTP panel's
         // own cache — the row stayed visible until the user closed +
@@ -6134,7 +6153,12 @@ impl App {
                 *p = to.clone();
             }
         }
-        self.tree.refresh();
+        // 2026-07-12 — refresh whichever tree owns the source /
+        // destination path so an extra-workspace rename doesn't leave
+        // a stale row. `from` and `to` share a parent, so refreshing
+        // either root is enough — refresh from `from` to cover the
+        // "source moves out" case.
+        self.refresh_trees_for_path(from);
         self.toast(format!(
             "renamed {} → {}",
             rel_path(&self.workspace, from),
