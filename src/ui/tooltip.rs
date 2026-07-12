@@ -1052,6 +1052,15 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             ))
         }
         HoverChip::MenuBarWord(idx) => {
+            // mouse-round-8 SEV-3 2026-07-12 — suppress the hover
+            // tooltip while any menu-bar menu is already open. The
+            // open dropdown paints below the bar row and the tooltip
+            // would render on top, covering the first item of the
+            // open menu. Hover-switch already handles moving between
+            // menus (round-10 SEV-2 fix).
+            if app.menu_open.is_some() {
+                return None;
+            }
             let &(rect, _) = app.rects.menu_bar_words.iter().find(|(_, i)| *i == idx)?;
             let menus = crate::menu_bar::bar();
             let menu = menus.get(idx)?;
