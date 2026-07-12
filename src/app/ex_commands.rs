@@ -4611,6 +4611,32 @@ impl App {
         ));
     }
 
+    /// vim `!ip` / `!ap` — filter the inner-/around-paragraph
+    /// containing the cursor through a shell command. Reuses the same
+    /// prompt pipeline as `!!` after computing the paragraph's line
+    /// range. nvchad-round-10 SEV-3 2026-07-12.
+    pub fn begin_filter_paragraph_from_cursor(&mut self, around: bool) {
+        let Some(b) = self.active_editor() else {
+            self.toast(":! — no active editor");
+            return;
+        };
+        let (start_byte, end_byte) = b.editor.paragraph_bounds_public(around);
+        // Translate byte offsets → 0-based line indices.
+        let text = b.editor.text();
+        let start_line = text[..start_byte].bytes().filter(|&c| c == b'\n').count();
+        let end_line = text[..end_byte].bytes().filter(|&c| c == b'\n').count();
+        self.pending_filter_range = Some((start_line, end_line));
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::FilterLinesShellCmd,
+            format!(
+                "Filter {} paragraph (lines {}..{}) through:",
+                if around { "around" } else { "inner" },
+                start_line + 1,
+                end_line + 1
+            ),
+        ));
+    }
+
     /// Accept handler for `PromptKind::FilterLinesShellCmd`. Pipes
     /// the stashed range through the typed command.
     pub fn accept_filter_lines_shell_cmd(&mut self, cmd: String) {

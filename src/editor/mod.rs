@@ -4509,6 +4509,13 @@ impl Editor {
     /// lines that immediately follow the paragraph (vim's `ap` semantic).
     /// If the cursor is on a blank line, returns the range of that blank
     /// run instead (graceful no-op for the operator).
+    /// Public alias for `paragraph_bounds` so the App layer can use
+    /// it (currently: `begin_filter_paragraph_from_cursor` for `!ip`
+    /// / `!ap`). nvchad-round-10 SEV-3 2026-07-12.
+    pub fn paragraph_bounds_public(&self, around: bool) -> (usize, usize) {
+        self.paragraph_bounds(around)
+    }
+
     fn paragraph_bounds(&self, around: bool) -> (usize, usize) {
         let n = self.line_count();
         let cur_line = self.current_line();

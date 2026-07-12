@@ -1762,12 +1762,23 @@ impl VimInputHandler {
                         ops.push(SelectClear);
                     }
                     PendingOp::Filter => {
-                        // `!ip` / `!ap` — text-object filter. Complete
-                        // via App: compute line range from the
-                        // eventual selection at the App layer.
-                        // Simpler MVP: no-op for text objects; users
-                        // can drive via `!<motion>` (linewise motion
-                        // path). Follow-up would extend to text objs.
+                        // `!ip` / `!ap` — text-object filter. Route to
+                        // the App layer with the around/inner bit so
+                        // it can compute the paragraph line-range via
+                        // `paragraph_bounds` and open the same filter
+                        // prompt `!!` uses. Only paragraph text
+                        // objects are supported; other objects (word
+                        // / block / etc.) fall through to a no-op
+                        // that still resets pending state so the next
+                        // key can't leak into Insert. nvchad-round-10
+                        // SEV-3 2026-07-12 — was a silent Consumed
+                        // that left the operator state alive.
+                        self.reset_pending();
+                        if matches!(key.code, KeyCode::Char('p')) {
+                            return InputResult::App(AppCommand::FilterParagraphFromCursor {
+                                around,
+                            });
+                        }
                         return InputResult::Consumed;
                     }
                 }

@@ -157,6 +157,14 @@ pub enum AppCommand {
     FilterLinesFromCursor {
         count: u32,
     },
+    /// vim `!ip` / `!ap` — filter the inner-/around-paragraph
+    /// containing the cursor through a shell command. Same prompt
+    /// pipeline as `!!`; the paragraph line-range is computed at the
+    /// App layer via `paragraph_bounds`. nvchad-round-10 SEV-3
+    /// 2026-07-12.
+    FilterParagraphFromCursor {
+        around: bool,
+    },
     /// vim `<count>o` / `<count>O` — open `count` new lines below / above,
     /// enter Insert at the first one; on Esc, replicate the typed text on
     /// the remaining (count - 1) lines.
