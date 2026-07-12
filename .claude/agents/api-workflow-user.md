@@ -53,7 +53,7 @@ Pattern-match real workflow breakages:
 
 ## Reporting
 
-Stage findings under `~/Projects/tattle-claude-knowledge/artifacts/api-workflow-hunt/<timestamp>/findings/` as one markdown file per finding:
+Stage findings under `$TATTLE_ARTIFACTS_ROOT/api-workflow-hunt/<timestamp>/findings/` as one markdown file per finding:
 
 ```
 ---
