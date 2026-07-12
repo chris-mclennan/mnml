@@ -5,7 +5,33 @@
 //! The panel state itself lives in `crate::glyph_builder`.
 
 use crate::app::App;
-use crate::glyph_builder::{BuilderField, GlyphBuilderState};
+use crate::glyph_builder::{BUILTIN_GLYPHS, BuilderField, GlyphBuilderState, GlyphMetaFile};
+
+/// Pick the next free codepoint in mnml's PUA range (0xF1B00+) that
+/// isn't already occupied by a shipped built-in OR a user-baked
+/// custom glyph. Scans linearly — the range is small (~256 slots).
+/// 2026-07-11 user request — the "Edit current" flow for Nerd Font
+/// glyphs bakes a scaled replacement at a new custom codepoint,
+/// leaving the original Nerd Font entry untouched.
+fn next_free_mnml_pua_codepoint(meta: &GlyphMetaFile) -> u32 {
+    let taken: std::collections::HashSet<u32> = BUILTIN_GLYPHS
+        .iter()
+        .map(|b| b.codepoint)
+        .chain(
+            meta.glyphs
+                .iter()
+                .filter_map(|g| u32::from_str_radix(&g.codepoint, 16).ok()),
+        )
+        .collect();
+    for cp in 0xF1B00..=0xF1BFF {
+        if !taken.contains(&cp) {
+            return cp;
+        }
+    }
+    // Fall back at the top of the range if the tuning band is
+    // somehow saturated (never happens in practice).
+    0xF1BFF
+}
 
 impl App {
     /// Open a fresh glyph builder panel. Cursor lands on the SVG path
@@ -37,10 +63,16 @@ impl App {
     ///   2. `BUILTIN_GLYPHS` shipped list (the AWS set + future
     ///      built-ins). The SVG is resolved from the mnml install
     ///      or dev tree; if it's not found on disk, we can't render
-    ///      a preview and fall through to `false`.
+    ///      a preview and fall through to a fresh-start blank
+    ///      builder for that codepoint (user request 2026-07-11 —
+    ///      the previous "unavailable" no-op was frustrating).
+    ///   3. Nerd Font glyphs (E000-F1AFF and 0xF0000+ ranges outside
+    ///      mnml's private-use band) — open a blank builder with
+    ///      the next-free mnml PUA codepoint pre-filled and the
+    ///      icon-catalog name copied as the suggested name, so the
+    ///      user can paste an SVG and bake a scaled replacement.
     ///
-    /// Returns `false` when neither source has an entry — caller
-    /// toasts that the glyph wasn't built via mnml.
+    /// Always returns `true` now.
     pub fn open_glyph_builder_for_edit_cp(&mut self, cp: u32) -> bool {
         use crate::glyph_builder::{
             BuilderField, GlyphBuilderState, builtin_for_codepoint, category_for_codepoint,
@@ -50,43 +82,83 @@ impl App {
 
         // 1. User meta — most recent per-bake state wins.
         let meta = load_meta();
-        let (svg, name, width, height, center) =
+        let (svg, name, codepoint_hex, width, height, center, focused_field) =
             if let Some(entry) = meta.glyphs.iter().find(|g| g.codepoint == cp_hex) {
                 (
                     entry.svg.clone(),
                     entry.name.clone(),
+                    cp_hex.clone(),
                     entry.width_frac,
                     entry.height_frac,
                     entry.center_frac,
+                    BuilderField::WidthFrac,
                 )
             } else if let Some(bi) = builtin_for_codepoint(cp) {
-                // 2. Fall back to the built-in catalog.
-                let Some(svg_path) = resolve_builtin_svg(bi.svg_relpath) else {
-                    return false;
-                };
-                (
-                    svg_path.to_string_lossy().into_owned(),
-                    bi.name.to_string(),
-                    bi.width_frac,
-                    bi.height_frac,
-                    bi.center_frac,
-                )
+                // 2. Fall back to the built-in catalog. If the SVG isn't
+                //    resolvable on disk (rare — usually only when running
+                //    from an install without the assets), still open a
+                //    blank builder pre-filled with the codepoint + name
+                //    so the user has SOMETHING to work with.
+                match resolve_builtin_svg(bi.svg_relpath) {
+                    Some(svg_path) => (
+                        svg_path.to_string_lossy().into_owned(),
+                        bi.name.to_string(),
+                        cp_hex.clone(),
+                        bi.width_frac,
+                        bi.height_frac,
+                        bi.center_frac,
+                        BuilderField::WidthFrac,
+                    ),
+                    None => (
+                        String::new(),
+                        bi.name.to_string(),
+                        cp_hex.clone(),
+                        bi.width_frac,
+                        bi.height_frac,
+                        bi.center_frac,
+                        BuilderField::Path,
+                    ),
+                }
             } else {
-                return false;
+                // 3. Nerd Font / unknown glyph. Open the builder with a
+                //    NEW mnml PUA codepoint so baking creates a scaled
+                //    replacement (leaving the Nerd Font entry untouched
+                //    but letting the integration edit panel commit the
+                //    new codepoint). Copy the icon-catalog name as a
+                //    starting suggestion.
+                let name = crate::icon_catalog::ICON_CATALOG
+                    .iter()
+                    .find(|e| u32::from_str_radix(e.codepoint, 16).ok() == Some(cp))
+                    .map(|e| format!("custom-{}", e.name))
+                    .unwrap_or_else(|| format!("custom-{cp_hex}"));
+                let next_cp = next_free_mnml_pua_codepoint(&meta);
+                (
+                    String::new(),
+                    name,
+                    format!("{next_cp:04X}"),
+                    1.20,
+                    0.85,
+                    0.36,
+                    BuilderField::Path,
+                )
             };
-
+        let category = if codepoint_hex == cp_hex {
+            category_for_codepoint(cp)
+        } else {
+            category_for_codepoint(u32::from_str_radix(&codepoint_hex, 16).unwrap_or(cp))
+        };
         let s = GlyphBuilderState {
             svg_path_cursor: svg.len(),
             name_cursor: name.len(),
-            codepoint_hex_cursor: cp_hex.len(),
+            codepoint_hex_cursor: codepoint_hex.len(),
             svg_path: svg,
-            category: category_for_codepoint(cp),
+            category,
             name,
-            codepoint_hex: cp_hex,
+            codepoint_hex,
             width_frac: width,
             height_frac: height,
             center_frac: center,
-            focused_field: BuilderField::WidthFrac,
+            focused_field,
             preview_png: None,
             preview_signature: None,
             error: None,
@@ -339,65 +411,63 @@ impl App {
     /// Ctrl+N = new, or that the picker has an edit-existing key.
     pub fn open_glyph_action_menu(&mut self) {
         use crate::picker::{Picker, PickerItem, PickerKind};
-        // Only offer "Edit current glyph" when the current Glyph field
-        // has a codepoint we can actually load (custom U+F1B00+ range,
-        // and there's meta OR a shipped built-in for it).
         let cur_cp: Option<u32> = self
             .integration_edit
             .as_ref()
             .and_then(|p| p.glyph.chars().next().map(|c| c as u32));
-        let has_editable = cur_cp.is_some_and(|cp| {
+        let mut items = vec![PickerItem {
+            id: "library".to_string(),
+            label: "󰉦  Choose from library".to_string(),
+            detail: "browse all glyphs".to_string(),
+            priority: 0,
+        }];
+        // Edit current — always offered when there IS a current glyph.
+        // For shipped/user-baked glyphs, opens the tuning panel with
+        // the existing SVG loaded. For Nerd Font glyphs (no SVG on
+        // hand), opens the builder pointed at a fresh mnml PUA
+        // codepoint so the user can paste an SVG and bake a scaled
+        // replacement. The integration edit panel picks up the new
+        // codepoint on commit. 2026-07-11 user request — was
+        // greyed-out "unavailable" for Nerd Font glyphs, which was
+        // frustrating since the underlying capability (bake a
+        // scaled SVG) has always been there.
+        if let Some(cp) = cur_cp {
             let cp_hex = format!("{cp:04X}");
             let meta = crate::glyph_builder::load_meta();
-            meta.glyphs.iter().any(|g| g.codepoint == cp_hex)
-                || crate::glyph_builder::builtin_for_codepoint(cp).is_some()
-        });
-        let mut items = vec![
-            PickerItem {
-                id: "library".to_string(),
-                label: "󰉦  Choose from library".to_string(),
-                detail: "browse all glyphs".to_string(),
+            let is_editable = meta.glyphs.iter().any(|g| g.codepoint == cp_hex)
+                || crate::glyph_builder::builtin_for_codepoint(cp).is_some();
+            let (label, detail) = if is_editable {
+                let name = crate::glyph_builder::builtin_for_codepoint(cp)
+                    .map(|b| b.name)
+                    .unwrap_or("current glyph");
+                (
+                    format!("  Edit current ({name})"),
+                    "re-tune size / alignment".to_string(),
+                )
+            } else {
+                let name = crate::icon_catalog::ICON_CATALOG
+                    .iter()
+                    .find(|e| u32::from_str_radix(e.codepoint, 16).ok() == Some(cp))
+                    .map(|e| e.name)
+                    .unwrap_or("current glyph");
+                (
+                    format!("  Edit current ({name})"),
+                    "bake a scaled replacement at a new codepoint".to_string(),
+                )
+            };
+            items.push(PickerItem {
+                id: "edit".to_string(),
+                label,
+                detail,
                 priority: 0,
-            },
-            PickerItem {
-                id: "new".to_string(),
-                label: "  Create custom glyph…".to_string(),
-                // Copy hints at when Edit isn't available — Nerd Font
-                // glyphs (E000-F1AFF) come from the FONT itself, so
-                // mnml can't scale them. Users who want to resize /
-                // re-center a Nerd Font icon bake their own SVG at a
-                // new codepoint via this action. 2026-07-11.
-                detail: "bake an SVG · use this to resize a Nerd Font glyph".to_string(),
-                priority: 0,
-            },
-        ];
-        if has_editable {
-            let name = cur_cp
-                .and_then(|cp| crate::glyph_builder::builtin_for_codepoint(cp).map(|b| b.name))
-                .unwrap_or("current glyph");
-            items.insert(
-                1,
-                PickerItem {
-                    id: "edit".to_string(),
-                    label: format!("  Edit current ({name})"),
-                    detail: "re-tune size / alignment".to_string(),
-                    priority: 0,
-                },
-            );
-        } else if cur_cp.is_some() {
-            // Show a disabled-looking hint row explaining why Edit
-            // isn't offered — the user's asked for it multiple times
-            // now, and the silence read as a missing feature. 2026-07-11.
-            items.insert(
-                1,
-                PickerItem {
-                    id: "edit_unavailable".to_string(),
-                    label: "  Edit current (unavailable)".to_string(),
-                    detail: "Nerd Font glyph — scale via `Create custom glyph…`".to_string(),
-                    priority: 0,
-                },
-            );
+            });
         }
+        items.push(PickerItem {
+            id: "new".to_string(),
+            label: "  Create custom glyph…".to_string(),
+            detail: "bake an SVG at a fresh codepoint".to_string(),
+            priority: 0,
+        });
         let picker = Picker::new(PickerKind::GlyphAction, "Glyph action", items);
         self.open_picker(picker);
     }
@@ -427,16 +497,6 @@ impl App {
                         "glyph U+{cp:04X} not editable — no metadata + not shipped"
                     ));
                 }
-            }
-            "edit_unavailable" => {
-                // No-op selection — the row exists purely to
-                // surface WHY Edit isn't available. Close the menu
-                // and toast the workaround one more time so the
-                // user has the hint even after picking blindly.
-                self.close_picker();
-                self.toast(
-                    "Nerd Font glyphs can't be scaled — use `Create custom glyph…` to bake an SVG at a new codepoint",
-                );
             }
             _ => {}
         }
