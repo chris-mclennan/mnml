@@ -256,6 +256,19 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_tree_visibility(),
         },
         Command {
+            id: "view.reset_tree_width",
+            title: "Reset file tree width to the config default",
+            group: "view",
+            // mouse-round-7 SEV-2 2026-07-12 — surfaced from the
+            // sidebar toggle chip's right-click menu so users can
+            // undo an accidental drag-resize.
+            keys: &[],
+            run: |app| {
+                app.tree_width = app.config.ui.tree_width;
+                app.toast(format!("tree width: {}", app.tree_width));
+            },
+        },
+        Command {
             id: "view.discovery",
             title: "Click discovery overlay (palette: 'view: discovery')",
             group: "view",

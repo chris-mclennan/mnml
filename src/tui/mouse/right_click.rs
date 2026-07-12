@@ -701,6 +701,77 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_palette_nav_context_menu(true, (x, y));
         return;
     }
+    // mouse-round-7 SEV-2 2026-07-12 — sidebar / right-panel
+    // toggle chips + dropdown chevron gained right-click menus so
+    // the "chips have menus" mental model isn't broken on the
+    // built-in chrome chips. Left-click on each is unchanged.
+    if let Some(r) = app.rects.palette_sidebar_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let visible = app.tree_visible;
+        let items = vec![
+            MenuItem::new(
+                if visible {
+                    "Hide sidebar"
+                } else {
+                    "Show sidebar"
+                },
+                MenuAction::Command("view.toggle_tree"),
+            ),
+            MenuItem::new(
+                "Reset sidebar width",
+                MenuAction::Command("view.reset_tree_width"),
+            ),
+            MenuItem::new("Focus sidebar", MenuAction::Command("view.focus_tree")),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Sidebar".to_string()), (x, y), items));
+        return;
+    }
+    if let Some(r) = app.rects.palette_right_panel_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let visible = app.right_panel_visible;
+        let items = vec![
+            MenuItem::new(
+                if visible {
+                    "Hide right panel"
+                } else {
+                    "Show right panel"
+                },
+                MenuAction::Command("view.toggle_right_panel"),
+            ),
+            MenuItem::new(
+                "Focus right panel",
+                MenuAction::Command("view.focus_right_panel"),
+            ),
+            MenuItem::new("Add Outline", MenuAction::Command("outline.show")),
+            MenuItem::new("Add Problems", MenuAction::Command("lsp.diagnostics")),
+        ];
+        app.context_menu = Some(ContextMenu::new(
+            Some("Right panel".to_string()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
+    if let Some(r) = app.rects.palette_dropdown_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
+            MenuItem::new(
+                "Recent commands",
+                MenuAction::Command("picker.recent_commands"),
+            ),
+            MenuItem::new("All files", MenuAction::Command("picker.files")),
+            MenuItem::new("Command palette", MenuAction::Command("palette")),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Open…".to_string()), (x, y), items));
+        return;
+    }
     // Stress meter — both the statusline chip and the top-right
     // mirror show the same menu. 2026-07-12 user request.
     if let Some(r) = app.rects.palette_stress_chip
