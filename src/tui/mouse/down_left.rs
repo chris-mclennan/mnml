@@ -2759,8 +2759,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     // Double-click on a split divider → equalize splits (VS Code
     // convention — double-click a resize handle to reset the ratio).
-    // mouse-round-9 SEV-2 2026-07-11.
-    if app.hover_divider_idx.is_some() {
+    // mouse-round-9 SEV-2 2026-07-11. mouse-round-11 SEV-2
+    // 2026-07-12 — was gated on `hover_divider_idx` which never
+    // gets set under IPC-driven click-only sequences (no Moved
+    // events precede the click). Fall back to a direct hit-test
+    // against `split_dividers` so the IPC harness + real mouse
+    // both work.
+    let over_divider = app.hover_divider_idx.is_some()
+        || app
+            .rects
+            .split_dividers
+            .iter()
+            .any(|d| crate::app::dispatch::contains(d.rect, x, y));
+    if over_divider {
         let now = std::time::Instant::now();
         let is_double = matches!(
             app.last_click,

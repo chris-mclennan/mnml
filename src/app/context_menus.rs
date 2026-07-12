@@ -962,6 +962,71 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some("Size".into()), anchor, items));
     }
 
+    /// Right-click on an HTTP-panel section header (COLLECTIONS /
+    /// FILES / ENVS / CHAINS / MOCKS / RECENT / CAPTURED). Offers
+    /// the section-level verbs the individual-row menus miss.
+    /// Left-click already toggles the specific section, so the
+    /// menu focuses on "what else can I do with this whole group?".
+    /// mouse-round-11 SEV-2 2026-07-12.
+    pub fn open_http_panel_section_context_menu(&mut self, section: u8, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let (title, mut items): (&str, Vec<MenuItem>) = match section {
+            0 => (
+                "FILES",
+                vec![MenuItem::new(
+                    "New request…",
+                    MenuAction::Command("http.new_request"),
+                )],
+            ),
+            1 => (
+                "RECENT",
+                vec![MenuItem::new(
+                    "Clear recent history",
+                    MenuAction::Command("http.clear_recent"),
+                )],
+            ),
+            2 => (
+                "CAPTURED",
+                vec![
+                    MenuItem::new("Start capture", MenuAction::Command("http.capture_start")),
+                    MenuItem::new("Clear captured", MenuAction::Command("http.clear_captured")),
+                ],
+            ),
+            3 => (
+                "ENVS",
+                vec![MenuItem::new(
+                    "New env…",
+                    MenuAction::Command("http.new_env"),
+                )],
+            ),
+            4 => (
+                "CHAINS",
+                vec![MenuItem::new(
+                    "New chain…",
+                    MenuAction::Command("http.new_chain"),
+                )],
+            ),
+            5 => ("MOCKS", vec![]),
+            6 => (
+                "COLLECTIONS",
+                vec![MenuItem::new(
+                    "New collection…",
+                    MenuAction::Command("http.new_collection"),
+                )],
+            ),
+            _ => ("HTTP", vec![]),
+        };
+        items.push(MenuItem::new(
+            "Toggle all sections",
+            MenuAction::Command("http.toggle_collapse_all"),
+        ));
+        items.push(MenuItem::new(
+            "Refresh HTTP panel",
+            MenuAction::Command("http.refresh"),
+        ));
+        self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
+    }
+
     /// Right-click on the bufferline `+` new-tab button. Offers
     /// alternate new-tab flows (blank / recent / reopen closed).
     /// mouse-round-10 SEV-3 2026-07-12 — the mouse-discoverable

@@ -4431,6 +4431,31 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.http_new_collection_prompt(),
         },
+        // mouse-round-11 SEV-2 2026-07-12 — HTTP-panel section header
+        // right-click menus need palette-command counterparts for the
+        // FILES/RECENT/CAPTURED verbs so both surfaces route through
+        // the same handler.
+        Command {
+            id: "http.new_request",
+            title: "HTTP: create a new blank .http request",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_panel_new_request(),
+        },
+        Command {
+            id: "http.clear_recent",
+            title: "HTTP: clear the RECENT history (truncates history.jsonl)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_panel_clear_recent(),
+        },
+        Command {
+            id: "http.clear_captured",
+            title: "HTTP: clear the CAPTURED log (truncates captured.jsonl)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_panel_clear_captured(),
+        },
         Command {
             id: "http.ai_build",
             title: "HTTP: build a request from a natural-language description (Claude)",

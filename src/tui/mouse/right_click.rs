@@ -1157,6 +1157,18 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_tab_context_menu(tab_pane, (x, y));
         return;
     }
+    // mouse-round-11 SEV-2 2026-07-12 — right-click on an
+    // HTTP-panel section header (COLLECTIONS / FILES / ENVS /
+    // CHAINS / MOCKS / RECENT / CAPTURED). Section-level verbs.
+    if let Some(&(_, section)) = app
+        .rects
+        .http_panel_section_headers
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.open_http_panel_section_context_menu(section, (x, y));
+        return;
+    }
     if let Some(tr) = app.rects.tree
         && crate::app::dispatch::contains(tr, x, y)
     {
