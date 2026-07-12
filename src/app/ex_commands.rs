@@ -2557,13 +2557,30 @@ impl App {
             // task (or the named task) in a pty pane. Vim canonical for
             // "build / test from inside the editor".
             "make" | "mak" => {
-                let task = if rest.trim().is_empty() {
-                    "make".to_string()
+                // Vim canonical: `:make [args]` shells out to the
+                // `makeprg` (default `make`) and populates quickfix.
+                // mnml preserves the [tasks.<name>] override for
+                // richer flows (custom cwd/env). Fallback: run
+                // `make <args>` via $SHELL so vim users get the
+                // expected behavior even without a config entry.
+                // nvchad-round-10 SEV-2 2026-07-12.
+                let args = rest.trim();
+                let task_key = if args.is_empty() { "make" } else { args };
+                if self.config.tasks.contains_key(task_key) {
+                    self.run_task(task_key);
                 } else {
-                    rest.trim().to_string()
-                };
-                if !self.run_task(&task) {
-                    self.toast(format!(":make — no [tasks.{task}] in config"));
+                    let cmdline = if args.is_empty() {
+                        "make".to_string()
+                    } else {
+                        format!("make {args}")
+                    };
+                    let cwd = self.workspace.clone();
+                    let label = if args.is_empty() {
+                        "make".to_string()
+                    } else {
+                        format!("make {args}")
+                    };
+                    self.open_pty(crate::pty_pane::BinaryProfile::task(&label, &cmdline, cwd));
                 }
             }
             "marks" => {
