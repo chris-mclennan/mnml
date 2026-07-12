@@ -2715,6 +2715,17 @@ impl VimInputHandler {
                 self.reset_pending();
                 InputResult::Ops(vec![HalfPageUp])
             }
+            // vim full-page scroll: Ctrl+F (forward) / Ctrl+B (back).
+            // nvchad-round-10 SEV-2 follow-up 2026-07-12 — Ctrl+F is
+            // now vim-owned in Normal mode (was falling to find.find);
+            // this restores the canonical page-down. Ctrl+B stays
+            // bound globally (sidebar) so page-up via Ctrl+B skips
+            // this arm — use the PageUp key or `Ctrl+U` (half-page)
+            // in vim mode.
+            KeyCode::Char('f') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![PageDown])
+            }
             KeyCode::Char('r') => {
                 self.prefix = Prefix::Replace;
                 InputResult::Consumed
