@@ -709,6 +709,15 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_stress_meter_context_menu((x, y));
         return;
     }
+    // Right-click on the bufferline `+` new-tab button — offer a
+    // "New tab" menu with the reopen-closed action so users have a
+    // mouse path to Ctrl+Shift+T. mouse-round-10 SEV-3 2026-07-12.
+    if let Some(r) = app.rects.bufferline_new_tab_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_new_tab_context_menu((x, y));
+        return;
+    }
     // Undo chip right-click — dismiss without committing. Left-click
     // commits; right-click cancels. mouse-round-10 SEV-3 2026-07-12.
     if let Some(r) = app.rects.pending_undo_chip

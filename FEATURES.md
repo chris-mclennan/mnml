@@ -369,6 +369,18 @@ The complete, organised feature inventory. For the front-door overview see
   Click handlers run before the header's drag detector so the chips don't
   get eaten by a window-drag start. The minimize chip releases focus back
   to the editor; grow and shrink keep focus on the panel.
+- **Stress meter** — a small 4-block bar in both the top-right
+  bufferline cluster and the bottom-right statusline that fills as
+  mnml's p95 frame time climbs (green under 20/100, yellow to 40,
+  orange to 70, red above). Hidden when idle. Hover shows exact
+  `p50 / p95 / max` in ms plus the sample count; right-click opens
+  Reset / Copy summary / Toast the numbers. Backed by a rolling
+  120-sample window (`App.frame_times_ms`) populated by the main
+  loop after each tick+draw+event-wait cycle.
+- **Click-to-dismiss toasts** — click a toast to remove it; right-
+  click for a menu with dismiss-this / dismiss-all / copy-text.
+  The Undo chip beside the toast stack commits on left-click and
+  cancels on right-click.
 - **Zen mode**, **stacked notifications**, a clickable statusline.
 
 ## Headless, IPC & extensibility

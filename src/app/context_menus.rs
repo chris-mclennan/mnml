@@ -962,6 +962,21 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some("Size".into()), anchor, items));
     }
 
+    /// Right-click on the bufferline `+` new-tab button. Offers
+    /// alternate new-tab flows (blank / recent / reopen closed).
+    /// mouse-round-10 SEV-3 2026-07-12 — the mouse-discoverable
+    /// path to Ctrl+Shift+T.
+    pub fn open_new_tab_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("New blank tab", MenuAction::Command("tab.new")),
+            MenuItem::new("Reopen last closed", MenuAction::Command("buffer.reopen")),
+            MenuItem::new("Open recent…", MenuAction::Command("picker.recent")),
+            MenuItem::new("Open file…", MenuAction::Command("picker.files")),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("New tab".into()), anchor, items));
+    }
+
     /// Right-click on a specific toast box. Offers dismiss for this
     /// one, dismiss-all, and (for the Undo case) commit. Index is
     /// into `App.toast_stack`. mouse-round-10 SEV-2 2026-07-12.
