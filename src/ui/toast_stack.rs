@@ -228,7 +228,11 @@ fn draw_undo_chip(
     t: &crate::ui::theme::Theme,
 ) -> Option<Rect> {
     let label: String = u.label.chars().take(MAX_WIDTH as usize - 20).collect();
-    let suffix = "  \u{21B6} Undo (⇧⌃Z) ";
+    // keyboard-round-8 SEV-3 2026-07-11 — was "(⇧⌃Z)" which
+    // implied a chord that doesn't fire the undo action. `u` is
+    // the actual key that fires it (vim-mode); mouse users click
+    // the chip. Neutral hint.
+    let suffix = "  \u{21B6} Undo (click) ";
     let inner_text = format!(" {label}{suffix}");
     let inner_w = inner_text.chars().count() as u16;
     let box_w = (inner_w + 2)
@@ -266,7 +270,7 @@ fn draw_undo_chip(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "(⇧⌃Z) ",
+            "(click) ",
             Style::default()
                 .fg(t.comment)
                 .bg(t.bg_darker)

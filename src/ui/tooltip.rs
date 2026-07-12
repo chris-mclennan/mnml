@@ -1004,7 +1004,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .unwrap_or_default();
             Some((
                 rect,
-                "click: undo the last destructive action (⇧⌃Z)".into(),
+                "click to undo the last destructive action · `u` in vim mode".into(),
                 if action_hint.is_empty() {
                     None
                 } else {

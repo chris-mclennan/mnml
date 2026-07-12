@@ -2747,12 +2747,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             let line = b.scroll + row_in_pane;
             let clamped = line.min(b.editor.line_count().saturating_sub(1));
             let clip = &mut app.clipboard;
-            b.editor.place_cursor(clamped, 0);
-            if m.modifiers.contains(KeyModifiers::SHIFT) && b.editor.selection().is_some() {
-                // Extend existing selection to end of this line.
+            let shift = m.modifiers.contains(KeyModifiers::SHIFT);
+            // For shift+gutter-click: DON'T place_cursor first (it
+            // wipes the anchor); jump the cursor byte directly.
+            if shift && b.editor.selection().is_some() {
                 let (_lo, hi) = b.editor.line_byte_range(clamped);
                 b.editor.set_cursor_byte(hi);
             } else {
+                // Non-shift path: place cursor at line start, then
+                // fire SelectLineToEnd — matches Ctrl+L semantics.
+                b.editor.place_cursor(clamped, 0);
                 b.apply_edit_ops(vec![crate::edit_op::EditOp::SelectLineToEnd], clip, 0);
             }
         }
@@ -2803,12 +2807,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             let (row, col) = crate::app::dispatch::click_to_file_pos(b, tr, wrap, x, y);
             if shift_click {
                 // Establish anchor at current cursor first (if not
-                // already selecting), then move cursor to click.
+                // already selecting), then extend cursor to click.
+                // mouse-round-9 fix: was using place_cursor which
+                // wipes the anchor immediately — use extend_cursor_to
+                // for the click destination.
                 let clip = &mut app.clipboard;
                 if b.editor.selection().is_none() {
                     b.apply_edit_ops(vec![crate::edit_op::EditOp::SelectStart], clip, 0);
                 }
-                b.editor.place_cursor(row, col);
+                b.editor.extend_cursor_to(row, col);
             } else {
                 b.editor.place_cursor(row, col);
                 if count >= 2 {
