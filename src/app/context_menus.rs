@@ -861,6 +861,35 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
+    /// Right-click on the statusline PR chip — offers copy URL /
+    /// number / open in browser. design-critic round-3 #6 2026-07-11.
+    pub fn open_statusline_pr_context_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let Some(pr) = self
+            .git_rail
+            .pulls
+            .iter()
+            .find(|p| p.is_current_branch)
+            .cloned()
+        else {
+            self.toast("no PR for this branch");
+            return;
+        };
+        let items = vec![
+            MenuItem::new(
+                "Open in browser",
+                MenuAction::OpenExternally(pr.web_url.clone().into()),
+            ),
+            MenuItem::new("Copy URL", MenuAction::CopyPath(pr.web_url.clone())),
+            MenuItem::new("Copy number", MenuAction::CopyPath(pr.number_label.clone())),
+        ];
+        self.context_menu = Some(ContextMenu::new(
+            Some(format!("PR {}", pr.number_label)),
+            anchor,
+            items,
+        ));
+    }
+
     /// Right-click on the statusline file chip — buffer-scoped menu
     /// promised by `HoverChip::StatuslineFile`'s tooltip.
     /// design-critic round-3 finding #3 2026-07-11.

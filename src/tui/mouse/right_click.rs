@@ -676,6 +676,16 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_file_context_menu((x, y));
         return;
     }
+    // design-critic round-3 finding #6 2026-07-11 — PR chip
+    // right-click. Left-click already opens the URL; right-click
+    // exposes copy actions so users can paste the URL / number into
+    // a commit body, PR description, or chat message.
+    if let Some(r) = app.rects.statusline_pr_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_statusline_pr_context_menu((x, y));
+        return;
+    }
     // #21 v2 — right-click coverage for the remaining statusline
     // chips (WRAP / LSP / Autosave / Test). Small menus that
     // surface the underlying palette commands so users can
