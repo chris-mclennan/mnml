@@ -219,8 +219,11 @@ fn extract_summary(text: &str) -> Option<String> {
         if trimmed.is_empty() {
             continue;
         }
-        let body = if let Some(rest) = trimmed.strip_prefix('#') {
-            rest.trim()
+        let body = if trimmed.starts_with('#') {
+            // Strip ALL leading `#`s so `### block-name` becomes
+            // `block-name`, not `## block-name`. api-workflow round-9
+            // SEV-2 2026-07-11 — was leaving one `#` in the summary.
+            trimmed.trim_start_matches('#').trim()
         } else if let Some(rest) = trimmed.strip_prefix("//") {
             rest.trim()
         } else {
@@ -2594,6 +2597,19 @@ impl App {
                 .map(|(k, v)| format!("{k}: {v}"))
                 .collect::<Vec<_>>()
                 .join("\n");
+            // api-workflow round-9 SEV-2 2026-07-11 — refresh the
+            // tab title's summary from the newly-active block's own
+            // leading `# ...` comment. Was stale on the tab strip
+            // after `http.next_block`.
+            let block_source_start = next.start_line;
+            let block_source_end = next.end_line.min(text.lines().count().saturating_sub(1));
+            let block_source: String = text
+                .lines()
+                .skip(block_source_start)
+                .take(block_source_end - block_source_start + 1)
+                .collect::<Vec<_>>()
+                .join("\n");
+            rp.summary = extract_summary(&block_source);
         }
         self.maybe_auto_format_active_body();
         self.reveal_pane(active);
