@@ -2090,6 +2090,15 @@ pub struct PaneRects {
     /// render. Click on one dismisses that specific toast; hover
     /// pauses its TTL. mouse-round-10 SEV-2 2026-07-12.
     pub toast_stack_rects: Vec<Rect>,
+    /// Screen rect of the LSP hover popup while it's open. Set by
+    /// `ui::hover::draw`, cleared each frame at the top of ui::draw.
+    /// Consulted by the mouse handler so:
+    /// - `Moved` events over the popup don't dismiss it (was
+    ///   closing the moment the mouse left the symbol).
+    /// - `ScrollUp` / `ScrollDown` over the popup scrolls the
+    ///   content (was keyboard-only).
+    /// 2026-07-12 user report — couldn't scroll a tall hover.
+    pub hover_popup_rect: Option<Rect>,
     /// The now-playing track-text segment of the bottom statusline
     /// transport cluster — `[play/pause] [ffwd] [track]`. Click
     /// opens / cycles the mixr panel (`mixr.show`). When idle

@@ -13,6 +13,10 @@ use crate::app::App;
 use crate::ui::theme;
 
 pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16, u16)>) {
+    // Clear the popup rect every frame so a stale rect from the
+    // previous frame's `hover` state can't survive a dismiss.
+    // 2026-07-12 mouse-scroll fix.
+    app.rects.hover_popup_rect = None;
     let Some(h) = &mut app.hover else {
         return;
     };
@@ -53,6 +57,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
     }
 
     frame.render_widget(Clear, area);
+    // Track the popup rect so the mouse handler can (a) skip
+    // dismissing when the pointer moves onto the popup and
+    // (b) route wheel-scroll events into `HoverPopup::scroll_by`.
+    app.rects.hover_popup_rect = Some(area);
     // 2026-07-12 user feedback — VS Code's hover popup has no
     // "hover" label; the box is anchored directly at the cursor
     // and the content itself carries the signal. Drop the title

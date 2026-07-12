@@ -62,6 +62,33 @@ pub(crate) use coalesce::{coalesce_scroll, take_coalesce_leftover, take_scroll_b
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
+    // LSP hover popup takes precedence when the pointer is over
+    // it: wheel scrolls the content, Moved is a no-op (so hover
+    // doesn't dismiss just because the pointer walked onto the
+    // popup itself). Click still dismisses via the generic
+    // Down(_) handler below. 2026-07-12 user report — couldn't
+    // scroll a tall hover.
+    if let Some(rect) = app.rects.hover_popup_rect
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        match m.kind {
+            MouseEventKind::ScrollUp => {
+                if let Some(h) = app.hover.as_mut() {
+                    h.scroll_by(-2);
+                }
+                return;
+            }
+            MouseEventKind::ScrollDown => {
+                if let Some(h) = app.hover.as_mut() {
+                    h.scroll_by(2);
+                }
+                return;
+            }
+            MouseEventKind::Moved => return,
+            _ => {}
+        }
+    }
+
     // 2026-07-03 — mouse-forwarding to Pty children. When the
     // child inside a Pty pane has enabled terminal-mouse
     // tracking (any of X10 / normal / button / any-event), the
