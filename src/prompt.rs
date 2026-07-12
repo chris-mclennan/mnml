@@ -270,6 +270,10 @@ pub enum PromptKind {
     /// `Ctrl+Q` doesn't kill the session unexpectedly. Esc cancels via
     /// the standard prompt machinery.
     QuitConfirm,
+    /// Accept ⇒ pipe the pending filter range (staged on
+    /// `App::pending_filter_range`) through the typed shell command.
+    /// Vim `!{motion}` / `!!`. nvchad-round-9 SEV-2 2026-07-11.
+    FilterLinesShellCmd,
     /// Accept ⇒ context-aware Claude Code dispatch (`App::dispatch_ai_chat`).
     /// The wrapper formulates file + selection context and either seeds a
     /// fresh interactive Claude pane or types into an already-open one.

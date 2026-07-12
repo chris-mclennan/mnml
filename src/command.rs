@@ -1423,11 +1423,25 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.insert_special_register('%'),
         },
         Command {
+            id: "editor.insert_alt_filename",
+            title: "Insert alt-buffer path (vim insert `Ctrl+R #`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.insert_special_register('#'),
+        },
+        Command {
             id: "editor.insert_last_search",
             title: "Insert last search query (vim insert `Ctrl+R /`)",
             group: "editor",
             keys: &[],
             run: |app| app.insert_special_register('/'),
+        },
+        Command {
+            id: "editor.insert_last_cmdline",
+            title: "Insert last ex-command (vim insert `Ctrl+R :`)",
+            group: "editor",
+            keys: &[],
+            run: |app| app.insert_special_register(':'),
         },
         Command {
             id: "qf.next",

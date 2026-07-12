@@ -154,22 +154,28 @@ impl App {
     /// "before the first chip whose center is to the right of x"
     /// (or `tabs.len()` if no such chip — i.e. append).
     pub(crate) fn tab_strip_insert_idx(&self, leaf_active: PaneId, x: u16) -> usize {
+        // mouse-round-9 SEV-2 2026-07-11 — was `r.x + r.width / 2`
+        // (midpoint). Dropping in the RIGHT HALF of a chip's rect
+        // treated the pointer as "past" that chip and returned the
+        // next slot, so a drop inside notes.md's rect landed at
+        // slot 4 (past notes.md) instead of slot 3 (notes.md's own).
+        // Use 3/4 of the width: dropping in the last quarter still
+        // means "insert after"; dropping in the first three quarters
+        // means "insert at this chip's slot" (which for a same-leaf
+        // reorder pushes the chip right — the expected VS Code feel).
         let mut chips: Vec<(u16, PaneId)> = self
             .rects
             .split_tab_chips
             .iter()
             .filter_map(|(r, leaf, pane)| {
                 if *leaf == leaf_active {
-                    Some((r.x + r.width / 2, *pane))
+                    Some((r.x + (r.width * 3 / 4), *pane))
                 } else {
                     None
                 }
             })
             .collect();
         chips.sort_by_key(|(cx, _)| *cx);
-        // Find the leaf's actual tab order so insert_idx maps to
-        // the right position. The chips are stored in render
-        // order which matches the tab vec.
         let mut idx = 0;
         for (cx, _pid) in &chips {
             if x < *cx {

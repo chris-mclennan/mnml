@@ -158,10 +158,11 @@ impl App {
 
     /// Insert-mode `Ctrl+R <reg>` for vim's special registers:
     /// - `%` = current buffer's workspace-relative path
+    /// - `#` = alt buffer's workspace-relative path (MRU[1])
     /// - `/` = last search query on the active buffer
-    /// nvchad-round-7 SEV-3 2026-07-11. `#`/`:`/`.`/`=` still fall
-    /// through the register-paste arm (they need alt-buffer /
-    /// cmdline-history / dot-replay state that isn't threaded here yet).
+    /// - `:` = last executed ex-command
+    /// nvchad-round-7 SEV-3 + round-9 SEV-3 2026-07-11. `.`/`=`
+    /// still fall through the register-paste arm.
     pub fn insert_special_register(&mut self, reg: char) {
         let text = match reg {
             '%' => self
@@ -169,11 +170,22 @@ impl App {
                 .and_then(|b| b.path.as_ref())
                 .map(|p| crate::app::rel_path(&self.workspace, p))
                 .unwrap_or_default(),
+            '#' => {
+                // MRU[0] is the current pane; MRU[1] is the alt.
+                let alt = self.pane_mru.get(1).copied();
+                alt.and_then(|pid| match self.panes.get(pid) {
+                    Some(Pane::Editor(b)) => b.path.as_ref(),
+                    _ => None,
+                })
+                .map(|p| crate::app::rel_path(&self.workspace, p))
+                .unwrap_or_default()
+            }
             '/' => self
                 .active_editor()
                 .and_then(|b| b.find.as_ref())
                 .map(|f| f.query.clone())
                 .unwrap_or_default(),
+            ':' => self.ex_history.last().cloned().unwrap_or_default(),
             _ => String::new(),
         };
         if text.is_empty() {

@@ -4411,6 +4411,125 @@ impl App {
         self.should_quit = true;
     }
 
+    /// Vim `!{motion}` / `!!` — stash the line range and open the
+    /// shell-command prompt. Range is `[cursor_row..=cursor_row +
+    /// count - 1]`; the prompt's accept path pipes it through the
+    /// typed command and replaces with stdout.
+    /// nvchad-round-9 SEV-2 2026-07-11.
+    pub fn begin_filter_lines_from_cursor(&mut self, count: u32) {
+        let Some(b) = self.active_editor() else {
+            self.toast(":! — no active editor");
+            return;
+        };
+        let start = b.editor.row_col().0;
+        let end = start.saturating_add(count.max(1) as usize - 1);
+        let line_count = b.editor.line_count();
+        let end = end.min(line_count.saturating_sub(1));
+        self.pending_filter_range = Some((start, end));
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::FilterLinesShellCmd,
+            format!("Filter lines {}..{} through:", start + 1, end + 1),
+        ));
+    }
+
+    /// Accept handler for `PromptKind::FilterLinesShellCmd`. Pipes
+    /// the stashed range through the typed command.
+    pub fn accept_filter_lines_shell_cmd(&mut self, cmd: String) {
+        let Some((start_line, end_line)) = self.pending_filter_range.take() else {
+            return;
+        };
+        let cmd = cmd.trim();
+        if cmd.is_empty() {
+            self.toast(":! — no command");
+            return;
+        }
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let text = b.editor.text().to_string();
+        let (start_byte, end_byte) = {
+            let mut byte_off = 0usize;
+            let mut start_byte = 0usize;
+            let mut end_byte = text.len();
+            let mut found_start = false;
+            for (i, line) in text.split('\n').enumerate() {
+                if i == start_line {
+                    start_byte = byte_off;
+                    found_start = true;
+                }
+                byte_off += line.len();
+                if i == end_line {
+                    end_byte = byte_off;
+                    break;
+                }
+                byte_off += 1;
+            }
+            if !found_start {
+                return;
+            }
+            (start_byte, end_byte)
+        };
+        let slice = text[start_byte..end_byte].to_string();
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let mut child = match Command::new(&shell)
+            .arg("-c")
+            .arg(cmd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(format!(":!{cmd} — spawn failed: {e}"));
+                return;
+            }
+        };
+        if let Some(mut sin) = child.stdin.take()
+            && let Err(e) = sin.write_all(slice.as_bytes())
+        {
+            self.toast(format!(":!{cmd} — stdin: {e}"));
+            return;
+        }
+        match child.wait_with_output() {
+            Ok(out) => {
+                if !out.status.success() {
+                    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+                    self.toast(format!(
+                        ":!{cmd} — exit {}: {}",
+                        out.status.code().unwrap_or(-1),
+                        if err.is_empty() { "no stderr" } else { &err }
+                    ));
+                    return;
+                }
+                let mut replacement = String::from_utf8_lossy(&out.stdout).into_owned();
+                // Vim canonical: filter output replaces the range
+                // exactly. Strip a single trailing `\n` since the
+                // range already ends before its `\n`.
+                if replacement.ends_with('\n') {
+                    replacement.pop();
+                }
+                let Some(idx) = self.active else { return };
+                if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
+                    b.apply_edit_ops(
+                        vec![crate::edit_op::EditOp::ReplaceRange {
+                            start: start_byte,
+                            end: end_byte,
+                            text: replacement,
+                        }],
+                        &mut self.clipboard,
+                        0,
+                    );
+                }
+                let n = end_line - start_line + 1;
+                self.toast(format!(":!{cmd} — {n} line(s) filtered"));
+            }
+            Err(e) => self.toast(format!(":!{cmd} — wait: {e}")),
+        }
+    }
+
     /// `:w !cmd` — pipe the active buffer's text to `cmd` on stdin,
     /// toast the trimmed stdout (or an error). No file is written.
     /// Uses `$SHELL -c` so pipes, quoting, redirection work. Timeout

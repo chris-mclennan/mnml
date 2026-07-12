@@ -4040,6 +4040,12 @@ pub struct App {
     /// Pending tree move — set when the user releases a drag on a different
     /// directory; the prompt accept reads from here and runs the rename.
     pub pending_tree_move: Option<(std::path::PathBuf, std::path::PathBuf)>,
+    /// Stashed (start_line, end_line) for the vim `!{motion}` filter.
+    /// Set by `App::begin_filter_lines_from_cursor` before opening
+    /// the `FilterLinesShellCmd` prompt; consumed by
+    /// `accept_filter_lines_shell_cmd` on prompt accept.
+    /// nvchad-round-9 SEV-2 2026-07-11.
+    pub pending_filter_range: Option<(usize, usize)>,
     /// `:rename`'d Claude session names from a previous launch, keyed
     /// by `--session-id`. Restored from `SavedSession.pty_session_names`;
     /// re-applied to a Claude pane whose session id matches when it's
@@ -4984,6 +4990,7 @@ impl App {
             scratch_term: None,
             tree_drag: None,
             pending_tree_move: None,
+            pending_filter_range: None,
             saved_pty_session_names: std::collections::HashMap::new(),
             git_undo_stack: Vec::new(),
             git_redo_stack: Vec::new(),

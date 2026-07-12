@@ -61,6 +61,12 @@ enum PendingOp {
     /// on `<char>`. Like `SurroundAdd`, the alignment char arrives *after*
     /// the motion completes (handler transitions to `Prefix::AlignCharWait`).
     Align,
+    /// vim `!{motion}` — filter the motion's line range through a shell
+    /// command. Motion completes → prompt for the command → pipe the
+    /// range's text on stdin, replace with stdout. Line-oriented
+    /// (motion is expanded to whole lines like `>`/`<` `gc`).
+    /// nvchad-round-9 SEV-2 2026-07-11.
+    Filter,
 }
 
 /// A multi-key prefix that isn't an operator (`g…`, `Z…`, `r…`).
@@ -870,9 +876,19 @@ impl VimInputHandler {
                         "editor.insert_current_filename".into(),
                     ));
                 }
+                if c == '#' {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_alt_filename".into(),
+                    ));
+                }
                 if c == '/' {
                     return InputResult::App(AppCommand::RunCommand(
                         "editor.insert_last_search".into(),
+                    ));
+                }
+                if c == ':' {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_last_cmdline".into(),
                     ));
                 }
                 // nvchad-2nd 2026-06-28 SEV-2: `"` (unnamed register)
@@ -1316,7 +1332,8 @@ impl VimInputHandler {
                                 | PendingOp::Reflow
                                 | PendingOp::SurroundAdd
                                 | PendingOp::Align
-                                | PendingOp::Comment => {
+                                | PendingOp::Comment
+                                | PendingOp::Filter => {
                                     // Not meaningful for a find-match
                                     // range — drop silently.
                                     return InputResult::Consumed;
@@ -1524,6 +1541,11 @@ impl VimInputHandler {
                         ops.push(ToggleLineComment);
                         ops.push(SelectClear);
                     }
+                    PendingOp::Filter => {
+                        // `!f<c>` — find-char span is a single row.
+                        // Filter is linewise; drop.
+                        return InputResult::Consumed;
+                    }
                 }
                 return InputResult::Ops(ops);
             }
@@ -1721,6 +1743,15 @@ impl VimInputHandler {
                         // lines to comment. 2026-07-07 fix.
                         ops.push(ToggleLineComment);
                         ops.push(SelectClear);
+                    }
+                    PendingOp::Filter => {
+                        // `!ip` / `!ap` — text-object filter. Complete
+                        // via App: compute line range from the
+                        // eventual selection at the App layer.
+                        // Simpler MVP: no-op for text objects; users
+                        // can drive via `!<motion>` (linewise motion
+                        // path). Follow-up would extend to text objs.
+                        return InputResult::Consumed;
                     }
                 }
                 return InputResult::Ops(ops);
@@ -2017,6 +2048,7 @@ impl VimInputHandler {
                     | (PendingOp::ToggleCase, KeyCode::Char('~'))
                     | (PendingOp::SurroundAdd, KeyCode::Char('s'))
                     | (PendingOp::Align, KeyCode::Char('A'))
+                    | (PendingOp::Filter, KeyCode::Char('!'))
             );
             let n = self.count1();
             self.reset_pending();
@@ -2095,6 +2127,11 @@ impl VimInputHandler {
                         // `gcgc` (unusual but syntactically valid)
                         // fires ToggleLineComment on the current line.
                         InputResult::Ops(vec![ToggleLineComment])
+                    }
+                    PendingOp::Filter => {
+                        // `!!` — filter the current line (n lines when
+                        // count present). nvchad-round-9 SEV-2.
+                        InputResult::App(AppCommand::FilterLinesFromCursor { count: n })
                     }
                 };
             }
@@ -2205,6 +2242,16 @@ impl VimInputHandler {
                     self.reset_pending();
                     return InputResult::Ops(ops);
                 }
+                // `!{motion}` filter — walk the motion's line range
+                // to fire an AppCommand that opens the shell prompt.
+                // Line count captured before we reset. nvchad-round-9
+                // SEV-2 2026-07-11.
+                if matches!(op, PendingOp::Filter) {
+                    self.reset_pending();
+                    return InputResult::App(AppCommand::FilterLinesFromCursor {
+                        count: total_lines,
+                    });
+                }
                 let linewise_op: Option<EditOp> = match op {
                     PendingOp::Delete => Some(DeleteLine),
                     PendingOp::Change => Some(DeleteLine),
@@ -2306,6 +2353,12 @@ impl VimInputHandler {
                     PendingOp::Comment => {
                         ops.push(ToggleLineComment);
                         ops.push(SelectClear);
+                    }
+                    PendingOp::Filter => {
+                        // Charwise motions don't map cleanly to a line
+                        // filter. Callers should use `!<vertical>`
+                        // (handled in the linewise branch above).
+                        return InputResult::Consumed;
                     }
                 }
                 return InputResult::Ops(ops);
@@ -2708,6 +2761,14 @@ impl VimInputHandler {
             }
             KeyCode::Char('<') => {
                 self.op = Some(PendingOp::Outdent);
+                self.count = if n > 1 { Some(n) } else { None };
+                InputResult::Consumed
+            }
+            // `!{motion}` — filter operator. Wait for motion, then
+            // prompt for the shell command. nvchad-round-9 SEV-2
+            // 2026-07-11.
+            KeyCode::Char('!') => {
+                self.op = Some(PendingOp::Filter);
                 self.count = if n > 1 { Some(n) } else { None };
                 InputResult::Consumed
             }
@@ -3422,6 +3483,7 @@ impl InputHandler for VimInputHandler {
                 PendingOp::SurroundAdd => s.push_str("ys"),
                 PendingOp::Align => s.push_str("gA"),
                 PendingOp::Comment => s.push_str("gc"),
+                PendingOp::Filter => s.push('!'),
             }
         }
         match self.prefix {

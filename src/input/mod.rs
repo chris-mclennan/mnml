@@ -149,6 +149,14 @@ pub enum AppCommand {
     BlockReplaceWith {
         ch: char,
     },
+    /// vim `!{motion}` / `!!` — filter `count` lines starting at the
+    /// cursor through a shell command. Opens a prompt for the command;
+    /// on accept, pipes the range through `$SHELL -c` and replaces it
+    /// with stdout. `count == 1` = current line only (`!!`).
+    /// nvchad-round-9 SEV-2 2026-07-11.
+    FilterLinesFromCursor {
+        count: u32,
+    },
     /// vim `<count>o` / `<count>O` — open `count` new lines below / above,
     /// enter Insert at the first one; on Esc, replicate the typed text on
     /// the remaining (count - 1) lines.

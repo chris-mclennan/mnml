@@ -1896,6 +1896,10 @@ impl App {
             crate::prompt::PromptKind::QuitConfirm => {
                 self.accept_quit();
             }
+            crate::prompt::PromptKind::FilterLinesShellCmd => {
+                let cmd = p.input.clone();
+                self.accept_filter_lines_shell_cmd(cmd);
+            }
             crate::prompt::PromptKind::AiToolConfirm => {
                 self.resolve_tool_confirm(true);
             }
