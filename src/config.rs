@@ -512,6 +512,11 @@ pub struct EditorConfig {
     /// LSP request is fired on open + save; hints persist on the buffer
     /// until refreshed.
     pub inlay_hints: bool,
+    /// Blink the terminal cursor. Off by default — many terminals'
+    /// default cursor is already blinking, so leaving mnml's request
+    /// as SteadyBar lets the terminal decide. `true` requests
+    /// BlinkingBar explicitly. mouse-round-9 SEV-3 2026-07-11.
+    pub cursor_blink: bool,
     /// Use `semanticTokens/range` for just the visible viewport (instead
     /// of `full` / `full/delta` for the whole file). Off by default — only
     /// useful for very large files where full / delta is expensive. When
@@ -963,6 +968,7 @@ impl Default for Config {
                 format_on_type: false,
                 autosave_on_focus_loss: false,
                 inlay_hints: true,
+                cursor_blink: false,
                 semantic_tokens_viewport: false,
                 code_lens: true,
                 text_width: 80,
@@ -1741,6 +1747,7 @@ struct RawEditor {
     format_on_type: Option<bool>,
     autosave_on_focus_loss: Option<bool>,
     inlay_hints: Option<bool>,
+    cursor_blink: Option<bool>,
     semantic_tokens_viewport: Option<bool>,
     code_lens: Option<bool>,
     text_width: Option<usize>,
@@ -1919,6 +1926,9 @@ impl Config {
         }
         if let Some(v) = raw.editor.inlay_hints {
             self.editor.inlay_hints = v;
+        }
+        if let Some(v) = raw.editor.cursor_blink {
+            self.editor.cursor_blink = v;
         }
         if let Some(v) = raw.editor.semantic_tokens_viewport {
             self.editor.semantic_tokens_viewport = v;

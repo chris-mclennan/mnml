@@ -72,7 +72,9 @@ pub fn run(mut app: App) -> Result<bool, String> {
         Some(name) if !name.is_empty() => format!("mnml — {name}"),
         _ => "mnml".to_string(),
     };
-    let mut term = setup_terminal(&title).map_err(|e| format!("terminal setup failed: {e}"))?;
+    let blink = app.config.editor.cursor_blink;
+    let mut term =
+        setup_terminal(&title, blink).map_err(|e| format!("terminal setup failed: {e}"))?;
     let result = run_loop(&mut term, &mut app);
     let _ = restore_terminal(&mut term);
     result
@@ -80,9 +82,18 @@ pub fn run(mut app: App) -> Result<bool, String> {
         .map_err(|e| format!("{e}"))
 }
 
-fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
+fn setup_terminal(
+    title: &str,
+    cursor_blink: bool,
+) -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut out = io::stdout();
+    // mouse-round-9 SEV-3 2026-07-11 — was hardcoded SteadyBar.
+    let cursor_style = if cursor_blink {
+        SetCursorStyle::BlinkingBar
+    } else {
+        SetCursorStyle::SteadyBar
+    };
     if let Err(e) = execute!(
         out,
         EnterAlternateScreen,
@@ -96,7 +107,7 @@ fn setup_terminal(title: &str) -> io::Result<Terminal<CrosstermBackend<Stdout>>>
         // as `Event::Paste(text)` instead of typed-through characters.
         // Powers external drag-and-drop (#7).
         ratatui::crossterm::event::EnableBracketedPaste,
-        SetCursorStyle::SteadyBar,
+        cursor_style,
         // OSC 0/2 — sets the terminal window/tab title.
         SetTitle(title),
     ) {
