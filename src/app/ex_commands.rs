@@ -2853,6 +2853,24 @@ impl App {
                     self.toast(":cd — workspace is per-session; not changed");
                 }
             }
+            // `:lcd` — window-local :cd in vim. mnml has one workspace
+            // per session, so both scopes collapse to the same
+            // read-only acknowledgement. Aliased so vim users don't
+            // hit "unknown command" every other line. nvchad-round-10
+            // SEV-3 2026-07-12.
+            "lcd" | "lchdir" | "tcd" | "tchdir" => {
+                let path = rest.trim();
+                if path.is_empty() {
+                    self.toast(format!(
+                        ":{cmd} — workspace is {}",
+                        self.workspace.display()
+                    ));
+                } else {
+                    self.toast(format!(
+                        ":{cmd} — mnml uses one workspace per session; not changed"
+                    ));
+                }
+            }
             // `:command <Name> <expansion>` — register a user-defined ex
             // command. `:Name <args>` runs `<expansion> <args>`. Bare
             // `:command` lists. `:delcommand <Name>` (alias `:delc`)
