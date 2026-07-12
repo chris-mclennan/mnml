@@ -23,31 +23,31 @@ fn rows(app: &App) -> Vec<(DiscoveryCategory, &'static str, &'static str, usize)
         (
             StatuslineMode,
             "Mode chip",
-            "click: toggle vim/standard · right: input menu",
+            "click: toggle vim/standard · right-click: input menu",
             usize::from(app.rects.statusline_mode_chip.is_some()),
         ),
         (
             StatuslineBranch,
             "Branch chip",
-            "click: commit graph · right: git ops menu",
+            "click: commit graph · right-click: git ops menu",
             usize::from(app.rects.statusline_branch_chip.is_some()),
         ),
         (
             StatuslineWorkspace,
             "Workspace chip",
-            "click: switch repo · right: workspace menu",
+            "click: switch repo · right-click: workspace menu",
             usize::from(app.rects.statusline_workspace_chip.is_some()),
         ),
         (
             StatuslineClock,
             "Clock chip",
-            "click: local↔UTC · right: clock menu",
+            "click: local↔UTC · right-click: clock menu",
             usize::from(app.rects.statusline_clock_chip.is_some()),
         ),
         (
             BufferlineTabs,
             "Bufferline tabs",
-            "click: focus · middle: close · right: tab menu",
+            "click: focus · middle: close · right-click: tab menu",
             app.rects.bufferline_tabs.len(),
         ),
         (

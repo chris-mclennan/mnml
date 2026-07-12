@@ -1934,7 +1934,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.context_menu_at_focus",
             title: "Open the context menu for the focused element (Shift+F10)",
             group: "view",
-            keys: &["Shift+F10"],
+            keys: &["shift+f10"],
             run: |app| {
                 app.open_context_menu_at_focus();
             },
@@ -2167,9 +2167,14 @@ fn builtin_commands() -> Vec<Command> {
                 app.open_new_folder_prompt(ws);
             },
         },
+        // design-critic-round-5 SEV-2 2026-07-12 — dispatch is a
+        // hard-coded `Ctrl+X/C/V/D` in `tui/handlers/pane.rs` (not
+        // via the keymap table), so `bindings.get(cmd.id)` in
+        // `help.rs` finds nothing. Mirror `file.rename`'s pattern
+        // and put the chord in the title so `?` help shows it.
         Command {
             id: "file.cut",
-            title: "Cut selected tree file (paste = move)",
+            title: "Cut selected tree file (Ctrl+X, tree focus · paste = move)",
             group: "file",
             keys: &[],
             run: |app| {
@@ -2180,7 +2185,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "file.copy",
-            title: "Copy selected tree file (paste = duplicate)",
+            title: "Copy selected tree file (Ctrl+C, tree focus · paste = duplicate)",
             group: "file",
             keys: &[],
             run: |app| {
@@ -2191,7 +2196,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "file.paste",
-            title: "Paste the file clipboard into the selected tree row's dir",
+            title: "Paste the file clipboard into the tree row's dir (Ctrl+V, tree focus)",
             group: "file",
             keys: &[],
             run: |app| {
@@ -2205,7 +2210,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "file.duplicate",
-            title: "Duplicate the selected tree file in place (name-copy.ext)",
+            title: "Duplicate the selected tree file in place (Ctrl+D, tree focus · name-copy.ext)",
             group: "file",
             keys: &[],
             run: |app| {
