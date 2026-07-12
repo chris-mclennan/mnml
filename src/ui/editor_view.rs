@@ -574,7 +574,7 @@ pub fn draw_pane(
             let glyph = if app.config.ui.ascii_icons {
                 ">"
             } else {
-                "\u{F0142}" // mdi chevron-right (EAA0 rendered as chevron-UP)
+                "▶" // U+25B6 — Nerd Font chevrons rendered as tofu (see tree_view.rs)
             };
             Span::styled(glyph, Style::default().fg(theme::cur().purple).bg(base_bg))
         } else if let Some(s) = hi_diag {
@@ -593,7 +593,7 @@ pub fn draw_pane(
             let glyph = if app.config.ui.ascii_icons {
                 "v"
             } else {
-                "\u{EAB4}" // codicon chevron-down
+                "▼" // U+25BC — matches the tree section chevrons
             };
             Span::styled(glyph, Style::default().fg(theme::cur().comment).bg(base_bg))
         } else {

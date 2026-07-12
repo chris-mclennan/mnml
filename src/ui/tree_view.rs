@@ -24,19 +24,19 @@ use crate::ui::{icons, theme};
 // U+25B6) — the black-solid variants render at font-cap height
 // (vs the smaller `▾ / ▸` U+25BE/U+25B8) so they read more
 // clearly next to the folder icons at typical rail widths.
-// 2026-07-12 user feedback rounds:
-// r1: swap to MDI menu-down / menu-right (F01F5 / F01F6) —
-//     rendered as fallback emojis in the user's Nerd Font.
-// r2: use codicon chevron-down (EAB4, verified) + chevron-right
-//     (EAA0, guessed) — EAA0 rendered as chevron-UP in the
-//     user's font (same class of misalignment as the EAA1
-//     comment at src/ui/mod.rs:2323).
-// r3: keep EAB4 for chevron-down (verified) but swap collapsed
-//     state to MDI chevron-right (F0142) since MDI's F014x
-//     chevron block is well-established and rendered normally
-//     when we last tried F0140-family icons.
-const CHEVRON_OPEN: &str = "\u{EAB4}";
-const CHEVRON_CLOSED: &str = "\u{F0142}";
+// 2026-07-12 user feedback rounds — several attempts to get to
+// a Nerd Font chevron pair failed in the user's actual font:
+//   r1: MDI menu-down / menu-right (F01F5 / F01F6) → smileys.
+//   r2: codicon EAB4 / EAA0 → EAA0 rendered chevron-UP (same
+//       class as the EAA1 note at src/ui/mod.rs:2323).
+//   r3: EAB4 + MDI F0142 → F0142 rendered as huge tofu boxes.
+// Give up on Nerd Font chevrons — the Unicode BLACK triangles
+// (U+25BC / U+25B6) render everywhere. The tree section rows
+// are 1-cell wide so "bigger" glyphs are impossible without
+// changing the cell layout; users on a font with actual
+// chevrons can opt into ascii_icons variants.
+const CHEVRON_OPEN: &str = "▼";
+const CHEVRON_CLOSED: &str = "▶";
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks
