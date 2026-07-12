@@ -42,7 +42,13 @@ const SPINNER_FRAME_MS: u128 = 100;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let has_persistent = !app.persistent_toasts.is_empty();
-    let has_stack = app.toast_stack.len() > 1;
+    // mouse-round-10 SEV-3 2026-07-12 — was `> 1` so a solo toast
+    // only echoed on the cmdline bar (single-line, dim). That made
+    // single important notifications LESS prominent than a burst of
+    // trivial ones. Threshold is now `>= 1` — every toast paints as
+    // a top-right box; the cmdline echo persists below as the "log
+    // tail" for context.
+    let has_stack = !app.toast_stack.is_empty();
     let has_progress = !app.progress_items.is_empty();
     let has_undo = app.pending_undo.is_some();
     if !has_persistent && !has_stack && !has_progress && !has_undo {
