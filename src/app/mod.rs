@@ -2086,6 +2086,10 @@ pub struct PaneRects {
     /// of the statusline chip). User request 2026-07-12 for eyes-on
     /// signal without needing to look at the bottom row.
     pub palette_stress_chip: Option<Rect>,
+    /// Rects of visible toast boxes (newest first) captured during
+    /// render. Click on one dismisses that specific toast; hover
+    /// pauses its TTL. mouse-round-10 SEV-2 2026-07-12.
+    pub toast_stack_rects: Vec<Rect>,
     /// The now-playing track-text segment of the bottom statusline
     /// transport cluster — `[play/pause] [ffwd] [track]`. Click
     /// opens / cycles the mixr panel (`mixr.show`). When idle
@@ -4083,6 +4087,10 @@ pub struct App {
     /// text and copies it to the clipboard. Only armed on the first
     /// drag (not a click). mouse-round-9 SEV-2 2026-07-11.
     pub pty_drag_select: Option<(PaneId, (u16, u16), (u16, u16))>,
+    /// Stashed by the toast right-click menu so the "Dismiss this
+    /// toast" action knows which index to remove. Cleared on
+    /// commit / cancel. mouse-round-10 SEV-2 2026-07-12.
+    pub pending_toast_dismiss_idx: Option<usize>,
     /// `:rename`'d Claude session names from a previous launch, keyed
     /// by `--session-id`. Restored from `SavedSession.pty_session_names`;
     /// re-applied to a Claude pane whose session id matches when it's
@@ -5030,6 +5038,7 @@ impl App {
             pending_filter_range: None,
             pty_drag_select: None,
             frame_times_ms: std::collections::VecDeque::with_capacity(128),
+            pending_toast_dismiss_idx: None,
             saved_pty_session_names: std::collections::HashMap::new(),
             git_undo_stack: Vec::new(),
             git_redo_stack: Vec::new(),

@@ -66,6 +66,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.pending_undo_chip = Some(chip_rect);
     }
 
+    // Reset rect cache; renderer re-populates below. mouse-round-10
+    // SEV-2 2026-07-12 — click-on-toast dismisses.
+    app.rects.toast_stack_rects.clear();
     // Ephemeral toasts (newest first — closest to statusline).
     // Cap the visible count; if there are more than MAX_VISIBLE_TOASTS,
     // reserve the last visible slot for a "+K more…" chip so we never
@@ -78,8 +81,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         MAX_VISIBLE_TOASTS
     };
     for entry in app.toast_stack.iter().take(visible_take) {
+        let before = y_bottom;
         if !draw_toast_box(frame, entry, &mut y_bottom, max_x_right, area, &t) {
             break;
+        }
+        // draw_toast_box moves y_bottom to the new top edge; the
+        // rendered box occupies rows [y_bottom..before). Register
+        // for click-to-dismiss.
+        let box_h = before.saturating_sub(y_bottom);
+        if box_h > 0 {
+            let box_w = 40u16.min(area.width);
+            let rect = ratatui::layout::Rect {
+                x: max_x_right.saturating_sub(box_w),
+                y: y_bottom,
+                width: box_w,
+                height: box_h,
+            };
+            app.rects.toast_stack_rects.push(rect);
         }
     }
     if show_more_chip {

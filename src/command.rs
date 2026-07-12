@@ -2504,6 +2504,33 @@ fn builtin_commands() -> Vec<Command> {
             run: |_app| {},
         },
         Command {
+            id: "toast.dismiss_current",
+            title: "Toast: dismiss the right-clicked toast",
+            group: "toast",
+            keys: &[],
+            run: |app| {
+                if let Some(idx) = app.pending_toast_dismiss_idx.take() {
+                    if idx < app.toast_stack.len() {
+                        app.toast_stack.remove(idx);
+                    }
+                    if idx == 0 {
+                        app.toast = None;
+                    }
+                }
+            },
+        },
+        Command {
+            id: "toast.dismiss_all",
+            title: "Toast: dismiss every ephemeral toast",
+            group: "toast",
+            keys: &[],
+            run: |app| {
+                app.toast_stack.clear();
+                app.toast = None;
+                app.pending_toast_dismiss_idx = None;
+            },
+        },
+        Command {
             id: "buffer.pin_toggle",
             title: "Pin / Unpin the active tab (sticks to front of strip)",
             group: "buffer",

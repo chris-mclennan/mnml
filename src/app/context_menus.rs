@@ -962,6 +962,51 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some("Size".into()), anchor, items));
     }
 
+    /// Right-click on a specific toast box. Offers dismiss for this
+    /// one, dismiss-all, and (for the Undo case) commit. Index is
+    /// into `App.toast_stack`. mouse-round-10 SEV-2 2026-07-12.
+    pub fn open_toast_context_menu(&mut self, idx: usize, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let text: String = self
+            .toast_stack
+            .get(idx)
+            .map(|e| {
+                let t = e.text.chars().take(40).collect::<String>();
+                if e.text.chars().count() > 40 {
+                    format!("{t}…")
+                } else {
+                    t
+                }
+            })
+            .unwrap_or_else(|| "(gone)".into());
+        // Stash target index so the "dismiss" MenuAction knows
+        // which toast it belongs to. `App.pending_toast_dismiss_idx`
+        // is single-slot — the menu closes on any action so races
+        // aren't possible.
+        self.pending_toast_dismiss_idx = Some(idx);
+        let items = vec![
+            MenuItem::new(format!("Toast: {text}"), MenuAction::Command("noop.info")),
+            MenuItem::new(
+                "Dismiss this toast",
+                MenuAction::Command("toast.dismiss_current"),
+            ),
+            MenuItem::new(
+                "Dismiss all toasts",
+                MenuAction::Command("toast.dismiss_all"),
+            ),
+            MenuItem::new(
+                "Copy text to clipboard",
+                MenuAction::CopyPath(
+                    self.toast_stack
+                        .get(idx)
+                        .map(|e| e.text.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+        ];
+        self.context_menu = Some(ContextMenu::new(Some("Toast".into()), anchor, items));
+    }
+
     /// Right-click on the stress meter (either the statusline or
     /// top-right variant). Shows current numbers, a reset action,
     /// and a copy-summary action so users can drop the stats into

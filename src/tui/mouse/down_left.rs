@@ -2736,6 +2736,27 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
 
     // Editor text in some split leaf? Focus that leaf and place the cursor.
+    // Click on a toast box → dismiss that toast. mouse-round-10
+    // SEV-2 2026-07-12 — was silent fall-through into the pane
+    // beneath.
+    if let Some((idx, _)) = app
+        .rects
+        .toast_stack_rects
+        .iter()
+        .enumerate()
+        .find(|(_, r)| crate::app::dispatch::contains(**r, x, y))
+    {
+        if idx < app.toast_stack.len() {
+            app.toast_stack.remove(idx);
+            // The primary `App.toast` field mirrors the newest
+            // stack entry; if we just dismissed it, clear the
+            // legacy slot too so the fade-out picks up.
+            if idx == 0 {
+                app.toast = None;
+            }
+        }
+        return;
+    }
     // Double-click on a split divider → equalize splits (VS Code
     // convention — double-click a resize handle to reset the ratio).
     // mouse-round-9 SEV-2 2026-07-11.

@@ -709,6 +709,28 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_stress_meter_context_menu((x, y));
         return;
     }
+    // Undo chip right-click — dismiss without committing. Left-click
+    // commits; right-click cancels. mouse-round-10 SEV-3 2026-07-12.
+    if let Some(r) = app.rects.pending_undo_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.pending_undo = None;
+        app.toast("undo chip dismissed");
+        return;
+    }
+    // Right-click on a toast body — offer a dismiss / dismiss-all
+    // menu instead of falling through into the pane below.
+    // mouse-round-10 SEV-2 2026-07-12.
+    if let Some((idx, r)) = app
+        .rects
+        .toast_stack_rects
+        .iter()
+        .enumerate()
+        .find(|(_, r)| crate::app::dispatch::contains(**r, x, y))
+    {
+        app.open_toast_context_menu(idx, (r.x, r.y));
+        return;
+    }
     if let Some(r) = app.rects.statusline_stress_chip
         && crate::app::dispatch::contains(r, x, y)
     {
