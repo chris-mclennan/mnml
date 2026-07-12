@@ -142,7 +142,7 @@ fn highlight_hover_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static
     // markers and route through the prose renderer; anything
     // else falls through to the code-shape highlighter below.
     // 2026-07-12 user report — was rendering markers literally.
-    if line.contains("**") || line.contains('`') || line.starts_with("- ") {
+    if line.contains('*') || line.contains('`') || line.starts_with("- ") {
         return render_markdown_line(line, t);
     }
 
@@ -255,6 +255,10 @@ fn render_markdown_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static
         .fg(t.fg)
         .bg(t.bg2)
         .add_modifier(Modifier::BOLD);
+    let italic = Style::default()
+        .fg(t.fg)
+        .bg(t.bg2)
+        .add_modifier(Modifier::ITALIC);
     // Inline code — cyan on the same bg as the popup so it lifts
     // subtly without breaking the panel's low-contrast feel.
     let code = Style::default().fg(t.cyan).bg(t.bg2);
@@ -271,8 +275,9 @@ fn render_markdown_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static
         rest = after.to_string();
     }
 
-    // Walk the rest and split on `**…**` (bold) and `` `…` ``
-    // (inline code). Unclosed markers render as literal text.
+    // Walk the rest and split on `**…**` (bold), `*…*` (italic),
+    // and `` `…` `` (inline code). Unclosed markers render as
+    // literal text.
     let mut chars = rest.chars().peekable();
     let mut buf = String::new();
     while let Some(c) = chars.next() {
@@ -297,6 +302,40 @@ fn render_markdown_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static
             } else {
                 // No matching close — emit `**` + inner literally.
                 buf.push_str("**");
+                buf.push_str(&inner);
+            }
+        } else if c == '*' {
+            // Opener `*` (single) — italic. Look for a matching
+            // single `*` that isn't part of a `**` pair.
+            // 2026-07-12 user report — `*@param*` rendered
+            // literally in TSDoc hover content.
+            let mut inner = String::new();
+            let mut closed = false;
+            while let Some(&pc) = chars.peek() {
+                if pc == '*' {
+                    // Peek ahead — if it's `**` we abort this
+                    // italic and treat the leading `*` as literal.
+                    let mut lookahead = chars.clone();
+                    lookahead.next();
+                    if lookahead.peek() == Some(&'*') {
+                        // Bail out — this `*` starts a bold pair,
+                        // not our italic close.
+                        break;
+                    }
+                    chars.next();
+                    closed = true;
+                    break;
+                }
+                inner.push(pc);
+                chars.next();
+            }
+            if closed && !inner.is_empty() {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut buf), plain));
+                }
+                spans.push(Span::styled(inner, italic));
+            } else {
+                buf.push('*');
                 buf.push_str(&inner);
             }
         } else if c == '`' {
