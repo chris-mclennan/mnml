@@ -574,7 +574,7 @@ pub fn draw_pane(
             let glyph = if app.config.ui.ascii_icons {
                 ">"
             } else {
-                "\u{EAA0}" // codicon chevron-right
+                "\u{F0142}" // mdi chevron-right (EAA0 rendered as chevron-UP)
             };
             Span::styled(glyph, Style::default().fg(theme::cur().purple).bg(base_bg))
         } else if let Some(s) = hi_diag {
