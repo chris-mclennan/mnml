@@ -3246,11 +3246,12 @@ impl App {
             }
             return Some(request);
         }
-        let (ext, text, cursor_row) = match self.panes.get(cur) {
+        let (ext, text, cursor_row, source_path) = match self.panes.get(cur) {
             Some(Pane::Editor(b)) => (
                 b.language_ext.clone().unwrap_or_default(),
                 b.editor.text().to_string(),
                 b.editor.row_col().0,
+                b.path.clone(),
             ),
             _ => return None,
         };
@@ -3298,12 +3299,16 @@ impl App {
                 Some(lines[block_start..=block_end].join("\n"))
             }
         };
+        // api-workflow round-8 SEV-2 2026-07-12 — resolve `-F @relpath`
+        // against the source file's parent so bench-style helpers
+        // don't hit the process-CWD bug either.
+        let base_dir = source_path.as_deref().and_then(|p| p.parent());
         let (mut request, script_src) = match block_src {
-            Some(src) => match http::parse(&src) {
+            Some(src) => match http::parse_with_base(&src, base_dir) {
                 Ok(r) => (r, src),
                 Err(_) => return None,
             },
-            None => match http::parse(&text) {
+            None => match http::parse_with_base(&text, base_dir) {
                 Ok(r) => (r, text.clone()),
                 Err(_) => return None,
             },
@@ -4005,7 +4010,12 @@ impl App {
                     };
                     (lines[block_start..=block_end].join("\n"), name)
                 };
-                match http::parse(&slice) {
+                // api-workflow round-8 SEV-2 2026-07-12 — pass the
+                // .curl file's own dir so `-F name=@relpath` uploads
+                // resolve against the workspace layout, not the mnml
+                // process's CWD.
+                let base_dir = path.as_deref().and_then(|p| p.parent());
+                match http::parse_with_base(&slice, base_dir) {
                     Ok(r) => (r, slice, block_name),
                     Err(e) => {
                         self.toast(format!("can't parse request: {e}"));
