@@ -162,6 +162,9 @@ pub fn check_sync_with_normalize(
             base_url: s.base_url_override.clone(),
             normalize,
             edge_cases: false,
+            // Sources-sync writes into a fresh tempdir every run,
+            // so nothing to preserve; force overwrite.
+            force: true,
         };
         if let Err(e) = discover::run(&dargs) {
             trace.push_str(&format!("  ERR: discover: {e}\n\n"));
@@ -299,9 +302,12 @@ pub fn run_sync_with_normalize(
             base_url: s.base_url_override.clone(),
             normalize,
             edge_cases: false,
+            // Sync IS the "regenerate from spec" workflow — overwrite
+            // by design so the sources always mirror the spec.
+            force: true,
         };
         match discover::run(&dargs) {
-            Ok(n) => {
+            Ok((n, _skipped)) => {
                 trace.push_str(&format!("[sync] {}: wrote {n} stub(s)\n", s.name));
                 total += n;
                 ran += 1;

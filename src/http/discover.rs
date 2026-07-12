@@ -49,10 +49,17 @@ pub struct Options {
     /// last enum values). Skipped for operations without a JSON
     /// body schema. Tier 7 of the dynamic-realistic roadmap.
     pub edge_cases: bool,
+    /// When `false` (default), skip writing files that already exist —
+    /// prevents silent overwrite of hand-edits. `true` restores the
+    /// old always-overwrite behavior. api-workflow round-9 SEV-2
+    /// 2026-07-11.
+    pub force: bool,
 }
 
-/// Returns the number of `.curl` files written.
-pub fn run(opts: &Options) -> Result<usize, String> {
+/// Returns `(written, skipped)` — files skipped because they already
+/// exist and `--force` wasn't set. api-workflow round-9 SEV-2
+/// 2026-07-11 — was Result<usize, String> (only wrote count).
+pub fn run(opts: &Options) -> Result<(usize, usize), String> {
     let text = if opts.spec.starts_with("http://") || opts.spec.starts_with("https://") {
         let req = super::Request {
             method: "GET".to_string(),
@@ -110,6 +117,7 @@ pub fn run(opts: &Options) -> Result<usize, String> {
     // (containing a login endpoint) can be emitted after the main
     // loop as a starter chain.
     let mut count = 0usize;
+    let mut skipped = 0usize;
     let mut login_by_tag: std::collections::BTreeMap<String, ChainStep> =
         std::collections::BTreeMap::new();
     let mut requests_by_tag: std::collections::BTreeMap<String, Vec<ChainStep>> =
@@ -162,8 +170,12 @@ pub fn run(opts: &Options) -> Result<usize, String> {
                     None,
                 );
                 let file = dir.join(format!("{file_base}.curl"));
-                std::fs::write(&file, curl)
-                    .map_err(|e| format!("write {}: {e}", file.display()))?;
+                if !opts.force && file.exists() {
+                    skipped += 1;
+                } else {
+                    std::fs::write(&file, curl)
+                        .map_err(|e| format!("write {}: {e}", file.display()))?;
+                }
                 let rel = format!("{folder}/{file_base}.curl");
                 let step = ChainStep {
                     request: rel,
@@ -193,9 +205,13 @@ pub fn run(opts: &Options) -> Result<usize, String> {
                             Some(*edge),
                         );
                         let file = dir.join(format!("{file_base}.{label}.curl"));
-                        std::fs::write(&file, curl)
-                            .map_err(|e| format!("write {}: {e}", file.display()))?;
-                        count += 1;
+                        if !opts.force && file.exists() {
+                            skipped += 1;
+                        } else {
+                            std::fs::write(&file, curl)
+                                .map_err(|e| format!("write {}: {e}", file.display()))?;
+                            count += 1;
+                        }
                     }
                 }
             } else {
@@ -212,8 +228,12 @@ pub fn run(opts: &Options) -> Result<usize, String> {
                         None,
                     );
                     let file = dir.join(format!("{file_base}.{safe}.curl"));
-                    std::fs::write(&file, curl)
-                        .map_err(|e| format!("write {}: {e}", file.display()))?;
+                    if !opts.force && file.exists() {
+                        skipped += 1;
+                    } else {
+                        std::fs::write(&file, curl)
+                            .map_err(|e| format!("write {}: {e}", file.display()))?;
+                    }
                     let rel = format!("{folder}/{file_base}.{safe}.curl");
                     let step = ChainStep {
                         request: rel,
@@ -238,7 +258,7 @@ pub fn run(opts: &Options) -> Result<usize, String> {
     // move to `.mnml/chains/` (or run sync, which handles the move
     // for them) and edit from there.
     emit_chain_templates(&opts.out, &login_by_tag, &requests_by_tag)?;
-    Ok(count)
+    Ok((count, skipped))
 }
 
 #[derive(Clone)]
@@ -1404,9 +1424,10 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
-        assert_eq!(n, 3);
+        assert_eq!(n.0, 3);
         let get = std::fs::read_to_string(out.join("users/getUser.curl")).unwrap();
         assert!(get.contains("curl 'https://api.example.com/v1/users/{{id}}'"));
         assert!(get.contains("# Get a user"));
@@ -1469,9 +1490,10 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
-        assert_eq!(n, 2, "should emit one stub per named example");
+        assert_eq!(n.0, 2, "should emit one stub per named example");
         let created =
             std::fs::read_to_string(out.join("Admin/TriggerEvent.OrderCreated.curl")).unwrap();
         // 2026-07-09 — with serde_json's `preserve_order` feature
@@ -1535,6 +1557,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/CreateThing.curl")).unwrap();
@@ -1602,6 +1625,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("nodes/PostNode.curl")).unwrap();
@@ -1673,6 +1697,7 @@ mod tests {
             base_url: None,
             normalize: true,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("p/Ping.curl")).unwrap();
@@ -1728,10 +1753,11 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: true,
+            force: true,
         })
         .unwrap();
         // 1 happy for POST + 2 edge for POST + 1 happy for GET = 4.
-        assert_eq!(n, 4);
+        assert_eq!(n.0, 4);
         let happy = std::fs::read_to_string(out.join("things/createThing.curl")).unwrap();
         let emin = std::fs::read_to_string(out.join("things/createThing.edge-min.curl")).unwrap();
         let emax = std::fs::read_to_string(out.join("things/createThing.edge-max.curl")).unwrap();
@@ -1800,6 +1826,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: true,
+            force: true,
         })
         .unwrap();
         let emin = std::fs::read_to_string(out.join("things/createThing.edge-min.curl")).unwrap();
@@ -1854,6 +1881,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         assert!(out.join("things/createThing.curl").exists());
@@ -1972,6 +2000,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let login_body = std::fs::read_to_string(out.join("auth/login.curl")).unwrap();
@@ -2029,6 +2058,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("auth/signIn.curl")).unwrap();
@@ -2064,6 +2094,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let has_chain = std::fs::read_dir(&out)
@@ -2103,6 +2134,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/getThing.curl")).unwrap();
@@ -2166,6 +2198,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("customers/createCustomer.curl")).unwrap();
@@ -2218,6 +2251,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
@@ -2258,6 +2292,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
@@ -2300,6 +2335,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         let body = std::fs::read_to_string(out.join("things/listThings.curl")).unwrap();
@@ -2334,6 +2370,7 @@ mod tests {
             base_url: None,
             normalize: false,
             edge_cases: false,
+            force: true,
         })
         .unwrap();
         // 2026-07-09 — hyphens (matches rqst-parity `sanitize`).

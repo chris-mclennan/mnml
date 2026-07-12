@@ -575,10 +575,11 @@ fn sync_check_subcommand(argv: Vec<String>) -> ExitCode {
 }
 
 fn discover_subcommand(argv: Vec<String>) -> ExitCode {
-    let usage = "usage: mnml discover SPEC [--out DIR] [--base-url URL] [--normalize] [--edge-cases]\n  SPEC is a local OpenAPI/Swagger JSON file or an http(s):// URL";
+    let usage = "usage: mnml discover SPEC [--out DIR] [--base-url URL] [--normalize] [--edge-cases] [--force]\n  SPEC is a local OpenAPI/Swagger JSON file or an http(s):// URL\n  --force overwrites existing .curl files (default: skip existing)";
     let (mut spec, mut out, mut base_url) = (None::<String>, None::<PathBuf>, None::<String>);
     let mut normalize = false;
     let mut edge_cases = false;
+    let mut force = false;
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -598,6 +599,7 @@ fn discover_subcommand(argv: Vec<String>) -> ExitCode {
             },
             "--normalize" | "-n" => normalize = true,
             "--edge-cases" | "-e" => edge_cases = true,
+            "--force" | "-f" => force = true,
             "-h" | "--help" => {
                 println!("{usage}");
                 return ExitCode::SUCCESS;
@@ -624,9 +626,17 @@ fn discover_subcommand(argv: Vec<String>) -> ExitCode {
         base_url,
         normalize,
         edge_cases,
+        force,
     }) {
-        Ok(n) => {
-            println!("wrote {n} .curl stub(s) under {}", out.display());
+        Ok((written, skipped)) => {
+            if skipped > 0 {
+                println!(
+                    "wrote {written} .curl stub(s) under {} ({skipped} existing skipped — use --force to overwrite)",
+                    out.display()
+                );
+            } else {
+                println!("wrote {written} .curl stub(s) under {}", out.display());
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
