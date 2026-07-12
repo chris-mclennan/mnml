@@ -3482,6 +3482,13 @@ pub struct App {
     /// skip that clear when the "big jump" IS the nav call itself.
     /// nvchad SEV-2 2026-07-10 fix (Ctrl+I / Ctrl+O round-trip).
     pub nav_jump_in_progress: bool,
+    /// Vim's `'` and `` ` `` marks — the SINGLE position we were at
+    /// before the most recent big jump. Distinct from `nav_back`
+    /// (which is a stack Alt+Left walks through). `` ` ` `` (backtick
+    /// backtick) toggles between this and the current position. Set
+    /// by `record_within_file_jump` on every big jump.
+    /// nvchad-round-11 SEV-2 2026-07-12.
+    pub prev_jump_pos: Option<NavPoint>,
     /// Last mouse left-click for double/triple-click detection — `(when, x,
     /// y, count)`. Reset to count=1 when a click lands too late or in a
     /// different cell. Read by `dispatch_mouse` to upgrade count==2 → word
@@ -4840,6 +4847,7 @@ impl App {
             nav_back: Vec::new(),
             nav_forward: Vec::new(),
             nav_jump_in_progress: false,
+            prev_jump_pos: None,
             last_click: None,
             last_list_scroll_at: None,
             scroll_bucket: 25.0,
@@ -6795,6 +6803,10 @@ impl App {
         if self.nav_jump_in_progress {
             return;
         }
+        // Vim's `'` / `` ` `` mark — the position we WERE at before
+        // this big jump. `` ` ` `` toggles between it and current.
+        // nvchad-round-11 SEV-2 2026-07-12.
+        self.prev_jump_pos = Some(np.clone());
         self.push_nav_back(np);
         self.nav_forward.clear();
     }
@@ -6817,6 +6829,23 @@ impl App {
 
     /// Alt+Left — jump to the last position on the back-stack. The current
     /// position goes onto the forward-stack so Alt+Right can return.
+    /// Vim `` ` ` `` (backtick backtick) / `''` (single-quote pair)
+    /// — swap current position with `prev_jump_pos`. First press
+    /// jumps to the position we were at before the last big jump;
+    /// a second press jumps back. Toggle, not stack walk.
+    /// nvchad-round-11 SEV-2 2026-07-12.
+    pub fn jump_toggle_prev_pos(&mut self) {
+        let Some(target) = self.prev_jump_pos.take() else {
+            self.toast("nothing to toggle to");
+            return;
+        };
+        if let Some(here) = self.current_nav_point() {
+            self.prev_jump_pos = Some(here);
+        }
+        self.nav_jump_in_progress = true;
+        self.jump_to_nav_point(target);
+    }
+
     pub fn nav_back_jump(&mut self) {
         let Some(prev) = self.nav_back.pop() else {
             self.toast("nothing to go back to");

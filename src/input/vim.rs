@@ -1454,10 +1454,12 @@ impl VimInputHandler {
                     KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                         InputResult::App(AppCommand::JumpToMarkLine(c))
                     }
-                    // `''` — jump to the previous cursor position (vim
-                    // convention; alias of `nav.back`).
+                    // vim `''` — toggle to the previous jump position
+                    // (line-wise flavor of `` ` ` ``). Same single-slot
+                    // semantic. nvchad-round-11 SEV-2 2026-07-12 — was
+                    // aliasing to `nav.back` which walked the stack.
                     KeyCode::Char('\'') => {
-                        InputResult::App(AppCommand::RunCommand("nav.back".into()))
+                        InputResult::App(AppCommand::RunCommand("nav.jump_toggle_prev".into()))
                     }
                     _ => InputResult::Consumed,
                 };
@@ -1468,9 +1470,15 @@ impl VimInputHandler {
                     KeyCode::Char(c) if c.is_ascii_alphabetic() => {
                         InputResult::App(AppCommand::JumpToMarkExact(c))
                     }
-                    // `` `` `` — exact jump to previous cursor position.
+                    // vim `` ` ` `` — toggle to the previous jump
+                    // position (single-slot, not stack walk). Vim's
+                    // `'` and `` ` `` marks track ONE position, and
+                    // `` ` ` `` swaps between it and the current pos.
+                    // Was routing to `nav.back` which walked the
+                    // jumplist backward one step per press. nvchad-
+                    // round-11 SEV-2 2026-07-12.
                     KeyCode::Char('`') => {
-                        InputResult::App(AppCommand::RunCommand("nav.back".into()))
+                        InputResult::App(AppCommand::RunCommand("nav.jump_toggle_prev".into()))
                     }
                     _ => InputResult::Consumed,
                 };

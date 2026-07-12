@@ -2375,6 +2375,16 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_keys_config(),
         },
         Command {
+            id: "nav.jump_toggle_prev",
+            // nvchad-round-11 SEV-2 2026-07-12 — vim `` ` ` `` /
+            // `''`: swap current position with the previous "big
+            // jump" origin (SINGLE slot, not a stack walk).
+            title: "Vim: toggle to previous jump position (`` ` ` ``)",
+            group: "go",
+            keys: &[],
+            run: |app| app.jump_toggle_prev_pos(),
+        },
+        Command {
             id: "nav.back",
             title: "Go back (previous cursor / file; in Browser pane: history.back)",
             group: "go",
