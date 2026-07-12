@@ -232,7 +232,19 @@ impl InputHandler for StandardInputHandler {
                 // redundant. Ignore it and let the palette own the
                 // "run and debug" action for now.
                 'd' if shift => InputResult::Ignored,
-                'd' => InputResult::Ops(vec![SelectWord]), // closest we have to "select occurrence" for now
+                // keyboard-round-9 SEV-2 2026-07-12 — was
+                // `SelectWord` unconditionally, which shadowed the
+                // registered `editor.add_cursor_at_next_word`
+                // command's `ctrl+d` binding. VS Code's canonical
+                // behavior: first Ctrl+D selects the word; every
+                // subsequent Ctrl+D adds a cursor at the next
+                // occurrence. Route to the palette command so both
+                // presses do the right thing — command dispatch
+                // handles the "first vs subsequent" state via
+                // Editor.multi_cursor state.
+                'd' => InputResult::App(AppCommand::RunCommand(
+                    "editor.add_cursor_at_next_word".into(),
+                )),
                 // qa-7th vscode SEV-2 2026-06-30 — was SelectLine
                 // (vim V semantics — cursor stays put, only
                 // line_start..cursor highlights). Standard mode

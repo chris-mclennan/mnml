@@ -1854,8 +1854,22 @@ impl App {
     /// …) to the last-active editor pane if one exists, otherwise fall
     /// back to the file tree. Matches VS Code's Esc-from-panel semantic.
     /// keyboard-round-8 SEV-3 2026-07-12.
+    /// keyboard-round-9 SEV-2 2026-07-12 — was checking
+    /// `self.active.is_some()` which is trivially true because the
+    /// Outline / Problems pane IS the active pane. Result: Esc did
+    /// nothing. Look for an EDITOR pane specifically; if none open,
+    /// fall back to the tree.
     pub fn focus_pane_or_tree(&mut self) {
-        if self.active.is_some() {
+        // Find a live editor pane (excluding the side-panel type
+        // panes the user is currently escaping from).
+        let editor_target = self
+            .panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| matches!(p, Pane::Editor(_)).then_some(i))
+            .next();
+        if let Some(pid) = editor_target {
+            self.active = Some(pid);
             self.focus_pane();
         } else {
             self.focus_tree();
