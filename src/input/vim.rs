@@ -1629,7 +1629,13 @@ impl VimInputHandler {
                             SelectInnerClass
                         }
                     }
-                    KeyCode::Char('a') => {
+                    // `ia` / `aa` — inner/around argument
+                    // (mnml canonical). Plus `,` as a shortcut alias
+                    // for compatibility with the `targits.vim` /
+                    // nvim-treesitter-textobjects convention some
+                    // nvchad users have wired in. nvchad-round-9
+                    // SEV-2 2026-07-12.
+                    KeyCode::Char('a') | KeyCode::Char(',') => {
                         if around {
                             SelectAroundArgument
                         } else {
@@ -3095,7 +3101,7 @@ impl VimInputHandler {
                             SelectInnerClass
                         }
                     }
-                    KeyCode::Char('a') => {
+                    KeyCode::Char('a') | KeyCode::Char(',') => {
                         if around {
                             SelectAroundArgument
                         } else {
