@@ -4460,6 +4460,65 @@ impl App {
                 }
             }
             self.toast(":set nosemantictokensviewport");
+        } else if matches!(opt, "autoread" | "ar") {
+            // mnml auto-reloads on external file changes by default.
+            // Vim users expect `:set autoread` to enable it; we
+            // acknowledge instead of refusing. nvchad-round-10 SEV-3
+            // 2026-07-12.
+            self.toast(":set autoread — already on (mnml default)");
+        } else if matches!(opt, "noautoread" | "noar") {
+            self.toast(":set noautoread — mnml always auto-reloads");
+        } else if matches!(opt, "laststatus" | "ls") {
+            self.toast(":set laststatus=2 — statusline always on in mnml");
+        } else if matches!(opt, "foldenable" | "fen") {
+            self.toast(":set foldenable — already on (mnml has folds)");
+        } else if matches!(opt, "nofoldenable" | "nofen") {
+            self.toast(":set nofoldenable — mnml folds are not toggleable per-file");
+        } else if opt == "tabstop" || opt == "ts" {
+            self.toast(format!(
+                ":set tabstop — read from config ({} · use `:set tab_width=N`)",
+                self.config.editor.tab_width
+            ));
+        } else if opt == "shiftwidth" || opt == "sw" {
+            self.toast(format!(
+                ":set shiftwidth — mirrors tab_width ({} · use `:set tab_width=N`)",
+                self.config.editor.tab_width
+            ));
+        } else if opt == "textwidth" || opt == "tw" {
+            self.toast(":set textwidth — use `:set text_width=N` (mnml naming)");
+        } else if let Some(v) = rest
+            .strip_prefix("tabstop=")
+            .or_else(|| rest.strip_prefix("ts="))
+        {
+            let vs = v.trim();
+            if let Ok(n) = vs.parse::<usize>() {
+                self.set_tab_width(n);
+                self.toast(format!(":set tabstop={n} (mnml: tab_width)"));
+            } else {
+                self.toast(format!(":set tabstop={vs} — not a number"));
+            }
+        } else if let Some(v) = rest
+            .strip_prefix("shiftwidth=")
+            .or_else(|| rest.strip_prefix("sw="))
+        {
+            let vs = v.trim();
+            if let Ok(n) = vs.parse::<usize>() {
+                self.set_tab_width(n);
+                self.toast(format!(":set shiftwidth={n} (mnml: mirrors tab_width)"));
+            } else {
+                self.toast(format!(":set shiftwidth={vs} — not a number"));
+            }
+        } else if let Some(v) = rest
+            .strip_prefix("textwidth=")
+            .or_else(|| rest.strip_prefix("tw="))
+        {
+            let vs = v.trim();
+            if let Ok(n) = vs.parse::<usize>() {
+                self.config.editor.text_width = n;
+                self.toast(format!(":set textwidth={n} (mnml: text_width)"));
+            } else {
+                self.toast(format!(":set textwidth={vs} — not a number"));
+            }
         } else {
             self.toast(format!(":set {rest} — not supported"));
         }
