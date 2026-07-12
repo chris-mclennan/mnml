@@ -168,6 +168,7 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
     app.start_now_playing_poller();
 
     loop {
+        let frame_start = std::time::Instant::now();
         app.tick();
         // Chord-chain timeout — fires the pending fallback (if any)
         // when the user pauses past `CHORD_CHAIN_TIMEOUT_MS`. Must run
@@ -288,6 +289,8 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                 _ => {}
             }
         }
+        // Frame-duration sample for the stress meter.
+        app.record_frame_duration(frame_start.elapsed().as_millis());
     }
 
     if let Some(ipc) = ipc.as_mut() {

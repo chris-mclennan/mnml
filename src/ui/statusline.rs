@@ -576,6 +576,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // AppleScript routing, but the render side doesn't need it.
     let _ = mixr_is_source;
     let mut clock_seg_idx: Option<usize> = None;
+    let mut stress_seg_idx: Option<usize> = None;
     let mut lsp_seg_idx: Option<usize> = None;
     let mut wrap_seg_idx: Option<usize> = None;
     let mut autosave_seg_idx: Option<usize> = None;
@@ -709,6 +710,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 theme::cur().yellow,
             ));
         }
+    }
+    // Stress meter — visible signal of how loaded mnml is.
+    // 4-block bar that fills as the p95 frame time climbs:
+    //   0-20  score → 1 block (dim, green-ish)
+    //   20-40 → 2 blocks (yellow)
+    //   40-70 → 3 blocks (orange)
+    //   70+   → 4 blocks (red, bold)
+    // Hidden entirely when the score is exactly 0 (fresh boot with
+    // no samples yet) so it doesn't clutter idle sessions. User
+    // request 2026-07-11.
+    let stress = app.stress_score();
+    if stress > 0 {
+        let (filled, color) = if stress >= 70 {
+            (4, theme::cur().red)
+        } else if stress >= 40 {
+            (3, theme::cur().orange)
+        } else if stress >= 20 {
+            (2, theme::cur().yellow)
+        } else {
+            (1, theme::cur().green)
+        };
+        let mut bar = String::from(" ");
+        for i in 0..4 {
+            bar.push(if i < filled { '\u{2588}' } else { '\u{2591}' });
+        }
+        bar.push(' ');
+        stress_seg_idx = Some(right.len());
+        right.push(Seg::new(bar, color, theme::cur().bg2));
     }
     // Optional clock chip (HH:MM, local time). On by default — costs
     // ~0 (a single SystemTime call per render + one cached offset lookup).
@@ -866,6 +895,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         });
     }
     app.rects.statusline_lncol_chip = to_rect(lncol_seg_idx, &right_rects);
+    app.rects.statusline_stress_chip = to_rect(stress_seg_idx, &right_rects);
 
     // Register the git-branch chip's click rect for `git.graph` routing.
     // `left_rects[i] = (start_col_within_left_lane, width_in_cols)` — translate

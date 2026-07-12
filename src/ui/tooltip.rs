@@ -442,6 +442,31 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: toggle right side panel (Ctrl+Shift+B)".into()),
             ))
         }
+        HoverChip::StatuslineStress => {
+            let rect = app.rects.statusline_stress_chip?;
+            let score = app.stress_score();
+            let mut sorted: Vec<u16> = app.frame_times_ms.iter().copied().collect();
+            sorted.sort_unstable();
+            let p50 = if sorted.is_empty() {
+                0
+            } else {
+                sorted[sorted.len() / 2]
+            };
+            let p95 = if sorted.is_empty() {
+                0
+            } else {
+                sorted[(sorted.len() * 95) / 100]
+            };
+            let max = sorted.last().copied().unwrap_or(0);
+            Some((
+                rect,
+                format!("stress: {score}/100 · p50 {p50}ms · p95 {p95}ms · max {max}ms"),
+                Some(format!(
+                    "{} recent frame samples · high = mnml is stressed",
+                    app.frame_times_ms.len()
+                )),
+            ))
+        }
         HoverChip::SplitDivider => {
             let idx = app.hover_divider_idx?;
             let d = app.rects.split_dividers.get(idx)?;

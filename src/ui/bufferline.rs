@@ -617,33 +617,74 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             Pane::Pty(s) => {
                 // 2026-07-03 — sibling integrations that run as
-                // Pty panes (mnml-aws-amplify etc.) inherit their
-                // integration's chip glyph so the tab icon
-                // matches the rail chip the user clicked. Match
-                // the profile label ("amplify" / "lambda" / …)
-                // against the label of any known integration_icon
-                // whose `run` command mentions the same binary.
-                // Falls back to the generic terminal glyph when
-                // the Pty isn't a sibling (shell, npm run, etc).
+                // Pty panes (mnml-aws-amplify, mnml-forge-bitbucket,
+                // etc.) inherit their integration's chip glyph so
+                // the tab icon matches the rail chip the user
+                // clicked. Match the profile label ("amplify" /
+                // "bitbucket" / …) against known integration_icons
+                // by both:
+                //   1. Command binary's last hyphen-segment
+                //      (`:term mnml-forge-bitbucket` → `bitbucket`)
+                //   2. Integration id (`ic.id == "bitbucket"`) —
+                //      catches manifest-overridden commands where
+                //      the derivation heuristic fails
+                //   3. Command args (for `:term ` commands where
+                //      the label was derived elsewhere)
+                //
+                // Real terminals (shell / npm run / codex / etc.)
+                // that don't match any integration fall through to
+                // the ghost glyph (mnml runs in ghostty; the ghost
+                // is the natural "this is a shell" marker).
+                // 2026-07-11 — was terminal-caret \u{f489}; the
+                // matching logic was also too narrow (id fallback
+                // was missing), so Bitbucket-style integrations got
+                // the terminal glyph even though they should have
+                // gotten their own icon.
                 let profile_label = s.profile.label.as_str();
+                let profile_label_lower = profile_label.to_ascii_lowercase();
+                let profile_args = s.profile.args.join(" ").to_ascii_lowercase();
                 let sibling_glyph = app
                     .config
                     .ui
                     .integration_icons
                     .iter()
                     .find(|ic| {
+                        // Match 2: integration id equals profile label
+                        // (case-insensitive) — the most reliable form
+                        // when the derivation heuristic would fail.
+                        if ic.id.eq_ignore_ascii_case(profile_label) {
+                            return true;
+                        }
                         let cmd = ic.command.as_str();
-                        cmd.starts_with(":term ")
-                            && cmd
-                                .strip_prefix(":term ")
-                                .and_then(|bin| bin.split('-').next_back())
-                                .map(|last| last == profile_label)
-                                .unwrap_or(false)
+                        if !cmd.starts_with(":term ") {
+                            return false;
+                        }
+                        let bin = match cmd.strip_prefix(":term ") {
+                            Some(b) => b.trim(),
+                            None => return false,
+                        };
+                        // Match 1: bin's last hyphen-segment.
+                        if bin.split('-').next_back() == Some(profile_label) {
+                            return true;
+                        }
+                        // Match 3: the profile's args contain the
+                        // command binary (belt-and-suspenders for
+                        // Pty spawns that used `open_pty` with the
+                        // full cmdline directly).
+                        if profile_args.contains(&bin.to_ascii_lowercase())
+                            || profile_args.contains(&profile_label_lower)
+                        {
+                            return true;
+                        }
+                        false
                     })
                     .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)));
                 match sibling_glyph {
                     Some((g, c)) if nerd => (g, c),
-                    _ => ((if nerd { "\u{f489}" } else { "▶" }).to_string(), tt.teal),
+                    // Ghost — mnml runs in ghostty, and users asked
+                    // for "not the generic terminal glyph" for real
+                    // shells. \u{F001D} = nf-md-ghost (nerd-font).
+                    _ => ((if nerd { "\u{F001D}" } else { "▶" }).to_string(), tt.teal),
                 }
             }
             Pane::Ai(_) => (

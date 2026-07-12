@@ -2081,6 +2081,7 @@ pub struct PaneRects {
     pub statusline_workspace_chip: Option<Rect>,
     /// Statusline clock chip — clickable shortcut to toggle local ↔ UTC.
     pub statusline_clock_chip: Option<Rect>,
+    pub statusline_stress_chip: Option<Rect>,
     /// The now-playing track-text segment of the bottom statusline
     /// transport cluster — `[play/pause] [ffwd] [track]`. Click
     /// opens / cycles the mixr panel (`mixr.show`). When idle
@@ -4065,6 +4066,13 @@ pub struct App {
     /// `accept_filter_lines_shell_cmd` on prompt accept.
     /// nvchad-round-9 SEV-2 2026-07-11.
     pub pending_filter_range: Option<(usize, usize)>,
+    /// Rolling window of recent frame durations (tick + draw + event
+    /// wait) in milliseconds. Populated by the main loop in
+    /// `tui::mod::run_loop`; consumed by the `stress` statusline
+    /// chip to give the user a live signal of how loaded mnml is.
+    /// Ring buffer: newest at the back, capped at ~120 samples
+    /// (~2s at 60Hz idle, longer under load).
+    pub frame_times_ms: std::collections::VecDeque<u16>,
     /// In-flight pty drag-select. `(pane_id, origin_cell, current_cell)`
     /// where cells are (col, row) in pane-body coordinates. The pty
     /// renderer inverts cells inside the range; mouse-up extracts the
@@ -5017,6 +5025,7 @@ impl App {
             pending_tree_move: None,
             pending_filter_range: None,
             pty_drag_select: None,
+            frame_times_ms: std::collections::VecDeque::with_capacity(128),
             saved_pty_session_names: std::collections::HashMap::new(),
             git_undo_stack: Vec::new(),
             git_redo_stack: Vec::new(),
@@ -8282,6 +8291,35 @@ impl App {
             seed,
         );
         self.prompt = Some(prompt);
+    }
+
+    /// Push a frame-duration sample into the rolling window used by
+    /// the `stress` statusline chip. Called by the main loop after
+    /// each tick+draw+event-wait cycle. Cap at 120 samples so the
+    /// window covers ~2s at 60Hz.
+    pub fn record_frame_duration(&mut self, ms: u128) {
+        let clamped: u16 = ms.min(u16::MAX as u128) as u16;
+        self.frame_times_ms.push_back(clamped);
+        while self.frame_times_ms.len() > 120 {
+            self.frame_times_ms.pop_front();
+        }
+    }
+
+    /// Compute a 0-100 "stress" score from the recent frame window.
+    /// 0 = idle (every frame under ~10ms). 100 = every recent frame
+    /// hit or exceeded 200ms. Uses p95 so a single laggy frame from
+    /// a git stat doesn't dominate but a sustained slowdown does.
+    pub fn stress_score(&self) -> u8 {
+        if self.frame_times_ms.is_empty() {
+            return 0;
+        }
+        let mut sorted: Vec<u16> = self.frame_times_ms.iter().copied().collect();
+        sorted.sort_unstable();
+        let p95 = sorted[(sorted.len() * 95) / 100] as f32;
+        // 10ms is "smooth", 200ms is "very stressed"; log-ish scale.
+        // score = (p95 - 10) / (200 - 10) * 100, clamped.
+        let score = ((p95 - 10.0) / 190.0 * 100.0).clamp(0.0, 100.0);
+        score as u8
     }
 
     /// `buffer.clear_mru` — wipe the pane MRU stack (nav back/forward

@@ -362,7 +362,12 @@ impl App {
             PickerItem {
                 id: "new".to_string(),
                 label: "  Create custom glyph…".to_string(),
-                detail: "bake an SVG".to_string(),
+                // Copy hints at when Edit isn't available — Nerd Font
+                // glyphs (E000-F1AFF) come from the FONT itself, so
+                // mnml can't scale them. Users who want to resize /
+                // re-center a Nerd Font icon bake their own SVG at a
+                // new codepoint via this action. 2026-07-11.
+                detail: "bake an SVG · use this to resize a Nerd Font glyph".to_string(),
                 priority: 0,
             },
         ];
@@ -376,6 +381,19 @@ impl App {
                     id: "edit".to_string(),
                     label: format!("  Edit current ({name})"),
                     detail: "re-tune size / alignment".to_string(),
+                    priority: 0,
+                },
+            );
+        } else if cur_cp.is_some() {
+            // Show a disabled-looking hint row explaining why Edit
+            // isn't offered — the user's asked for it multiple times
+            // now, and the silence read as a missing feature. 2026-07-11.
+            items.insert(
+                1,
+                PickerItem {
+                    id: "edit_unavailable".to_string(),
+                    label: "  Edit current (unavailable)".to_string(),
+                    detail: "Nerd Font glyph — scale via `Create custom glyph…`".to_string(),
                     priority: 0,
                 },
             );
@@ -409,6 +427,16 @@ impl App {
                         "glyph U+{cp:04X} not editable — no metadata + not shipped"
                     ));
                 }
+            }
+            "edit_unavailable" => {
+                // No-op selection — the row exists purely to
+                // surface WHY Edit isn't available. Close the menu
+                // and toast the workaround one more time so the
+                // user has the hint even after picking blindly.
+                self.close_picker();
+                self.toast(
+                    "Nerd Font glyphs can't be scaled — use `Create custom glyph…` to bake an SVG at a new codepoint",
+                );
             }
             _ => {}
         }

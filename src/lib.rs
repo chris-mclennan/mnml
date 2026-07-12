@@ -237,6 +237,9 @@ pub enum HoverChip {
     StatuslineWorkspace,
     /// Statusline clock chip (HH:MM or HH:MMZ).
     StatuslineClock,
+    /// Stress meter — 4-block bar that fills as p95 frame time
+    /// climbs. Tooltip shows the actual numbers. 2026-07-11.
+    StatuslineStress,
     /// A `> GIT` rail-header chip (one per action enum).
     RailHeaderChip(GitRailHeaderAction),
     /// A bufferline tab (carries the pane id). Tooltip shows the full path
