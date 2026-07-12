@@ -118,8 +118,21 @@ impl App {
             MenuAction::SplitTabInto(id, DropZone::Top),
         ));
         // Claude / Codex / shell tabs can be renamed from here too.
+        // mouse-round-7 SEV-3 2026-07-12 — plus the terminal-native
+        // Restart (kill+respawn) / Clear (Ctrl+L) / Interrupt (Ctrl+C)
+        // verbs a mouse user would reach for on a hung `btop` / `htop`
+        // pane. `term.*` commands act on `App.active`; the menu opener
+        // sets active to this tab first (see the RenameSession
+        // handler pattern) so the right-click never acts on the
+        // wrong session.
         if matches!(self.panes.get(id), Some(Pane::Pty(_))) {
             items.push(MenuItem::new("Rename…", MenuAction::RenameSession(id)));
+            items.push(MenuItem::new("Restart", MenuAction::PtyRestart(id)));
+            items.push(MenuItem::new(
+                "Interrupt (Ctrl+C)",
+                MenuAction::PtyInterrupt(id),
+            ));
+            items.push(MenuItem::new("Clear (Ctrl+L)", MenuAction::PtyClear(id)));
         }
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }

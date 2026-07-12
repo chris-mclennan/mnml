@@ -95,6 +95,17 @@ pub enum MenuAction {
     /// Rename a pty session (Claude / Codex / shell) — reveals the
     /// pane, then opens the session-name prompt.
     RenameSession(PaneId),
+    /// mouse-round-7 SEV-3 2026-07-12 — right-click on a Pty tab
+    /// → kill + respawn the underlying process. Handler switches
+    /// `App.active` to the target pane and calls `term.restart` so
+    /// the menu can't act on the wrong session.
+    PtyRestart(PaneId),
+    /// mouse-round-7 SEV-3 2026-07-12 — send Ctrl+C to the pty.
+    /// Same routing pattern as `PtyRestart`.
+    PtyInterrupt(PaneId),
+    /// mouse-round-7 SEV-3 2026-07-12 — send Ctrl+L (clear screen)
+    /// to the pty. Same routing pattern as `PtyRestart`.
+    PtyClear(PaneId),
     /// Prompt for a name and create an empty file in `parent_dir`.
     NewFile(PathBuf),
     /// Prompt for a name and create an empty directory in `parent_dir`.

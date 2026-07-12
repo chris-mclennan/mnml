@@ -1618,6 +1618,23 @@ impl App {
                 self.reveal_pane(id);
                 self.open_rename_session_prompt();
             }
+            PtyRestart(id) => {
+                // mouse-round-7 SEV-3 2026-07-12 — snap active first
+                // so `term.restart` (which reads App.active) targets
+                // the tab the user right-clicked.
+                self.reveal_pane(id);
+                crate::command::run("term.restart", self);
+            }
+            PtyInterrupt(id) => {
+                self.reveal_pane(id);
+                if let Some(crate::pane::Pane::Pty(session)) = self.panes.get_mut(id) {
+                    session.write_bytes(b"\x03");
+                }
+            }
+            PtyClear(id) => {
+                self.reveal_pane(id);
+                crate::command::run("term.clear", self);
+            }
             NewFile(parent) => self.open_new_file_prompt(parent),
             NewFolder(parent) => self.open_new_folder_prompt(parent),
             Rename(path) => self.open_fs_rename_prompt(path),
