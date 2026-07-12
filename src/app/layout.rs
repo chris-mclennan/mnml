@@ -1837,6 +1837,18 @@ impl App {
         }
     }
 
+    /// Return focus from a docked side panel (Outline / Problems / Grep /
+    /// …) to the last-active editor pane if one exists, otherwise fall
+    /// back to the file tree. Matches VS Code's Esc-from-panel semantic.
+    /// keyboard-round-8 SEV-3 2026-07-12.
+    pub fn focus_pane_or_tree(&mut self) {
+        if self.active.is_some() {
+            self.focus_pane();
+        } else {
+            self.focus_tree();
+        }
+    }
+
     /// Toggle the file-tree rail in/out entirely (`Ctrl+B`). When the user
     /// hides it while focused there, focus snaps to the active pane.
     pub fn toggle_tree_visibility(&mut self) {

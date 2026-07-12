@@ -791,7 +791,8 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Esc => {
                 // Esc when an inactive filter is held clears it first; a second
-                // Esc returns focus to the tree (the standard "narrow → exit").
+                // Esc returns focus to the last editor pane (VS Code convention
+                // — keyboard-round-8 SEV-3 2026-07-12) or the tree if none.
                 let had_filter =
                     matches!(app.panes.get(i), Some(Pane::Outline(o)) if !o.query.is_empty());
                 if had_filter {
@@ -799,7 +800,7 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         o.filter_clear_and_exit();
                     }
                 } else {
-                    app.focus_tree();
+                    app.focus_pane_or_tree();
                 }
             }
             _ => {}
@@ -1610,7 +1611,10 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     d.cycle_severity_filter();
                 }
             }
-            KeyCode::Esc => app.focus_tree(),
+            // keyboard-round-8 SEV-3 2026-07-12 — was focus_tree.
+            // Esc from a docked panel returns focus to the last
+            // editor (VS Code convention), tree only as fallback.
+            KeyCode::Esc => app.focus_pane_or_tree(),
             _ => {}
         }
         return;
