@@ -464,6 +464,31 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             s.item_idx = item_idx;
             return;
         }
+        // Menu-bar hover-switch (mouse-round-10 SEV-2 → round-8
+        // SEV-2). When a menu is open and the cursor hovers a
+        // DIFFERENT top-level menu title, switch to that menu
+        // without requiring a click. macOS / GTK / VS Code all do
+        // this so keyboard-free menu-bar navigation works. Preserve
+        // `keyboard_opened` so the highlight-on-open state matches
+        // how the current menu was summoned.
+        if app.menu_open.is_some()
+            && let Some(&(_, hovered_idx)) = app
+                .rects
+                .menu_bar_words
+                .iter()
+                .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            let current = app.menu_open.as_ref().map(|s| s.menu_idx);
+            if current != Some(hovered_idx) {
+                let keyboard = app.menu_open.as_ref().is_some_and(|s| s.keyboard_opened);
+                app.menu_open = Some(if keyboard {
+                    crate::menu_bar::MenuOpenState::new_keyboard(hovered_idx)
+                } else {
+                    crate::menu_bar::MenuOpenState::new_mouse(hovered_idx)
+                });
+            }
+            return;
+        }
         let now = std::time::Instant::now();
         // 2026-06-22 — some terminals report Moved (no button)
         // even while a button is held during a drag. If
