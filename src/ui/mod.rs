@@ -1904,8 +1904,23 @@ fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
     // 2026-06-22 — ghost chip: ` ⤴ <icon> <name> ` (5 + name cells).
     // The ⤴ "moving" arrow makes it instantly read as a drag,
     // and the bright bg means the user can't miss it.
-    let prefix = if drag.src_is_dir { "📁 " } else { "📄 " };
-    let chip_w = label_w + 5; // " 📄 <name> "
+    // mouse-round-7 SEV-2 2026-07-12 — Alt-drag copies instead of
+    // moves (Finder/VS Code convention). The label was identical
+    // to a plain move-drag, so the user had no confirmation the
+    // Alt modifier had registered until the file appeared in two
+    // places. Prefix with a `⧉ COPY` badge when copying.
+    let prefix = if drag.copy_instead_of_move {
+        if drag.src_is_dir {
+            "\u{29C9} 📁 "
+        } else {
+            "\u{29C9} 📄 "
+        }
+    } else if drag.src_is_dir {
+        "📁 "
+    } else {
+        "📄 "
+    };
+    let chip_w = label_w + prefix.chars().count() as u16 + 2;
     let area = frame.area();
     // Paint the chip RIGHT next to the cursor (1 cell offset to
     // avoid covering the cursor itself). User-feedback 2026-06-22
@@ -1926,8 +1941,13 @@ fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
         height: 1,
     };
     let t = theme::cur();
-    // Bright accent bg + dark fg so the chip really pops.
-    let bg = t.blue;
+    // Bright accent bg + dark fg so the chip really pops. Copy
+    // (Alt-drag) uses green to further signal "non-destructive".
+    let bg = if drag.copy_instead_of_move {
+        t.green
+    } else {
+        t.blue
+    };
     let fg = t.bg_darker;
     let line = Line::from(vec![
         Span::styled(" ".to_string(), Style::default().bg(bg)),
