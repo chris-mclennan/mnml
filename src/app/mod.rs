@@ -5419,6 +5419,16 @@ impl App {
             return;
         };
         if target_dir == src_parent {
+            // mouse-round-7 SEV-2 2026-07-12 — file dropped onto a
+            // sibling file in the same directory used to be a
+            // silent no-op. VS Code visually rejects with a "no"
+            // cursor badge; TUI can't do that, so toast instead.
+            let dropped_name = drag
+                .src_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("item");
+            self.toast(format!("no-op: {dropped_name} is already in this folder"));
             return;
         }
         if drag.src_is_dir && target_dir.starts_with(&drag.src_path) {
