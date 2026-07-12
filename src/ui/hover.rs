@@ -134,6 +134,16 @@ fn highlight_hover_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static
         return Line::from(Span::styled(line.to_string(), comment));
     }
 
+    // Markdown-lite: LSP hover text often carries `**bold**`
+    // (`**Usage**`, `**Example**`), inline `` `code` `` for
+    // API names, and prose sentences. Detect any markdown
+    // markers and route through the prose renderer; anything
+    // else falls through to the code-shape highlighter below.
+    // 2026-07-12 user report — was rendering markers literally.
+    if line.contains("**") || line.contains('`') || line.starts_with("- ") {
+        return render_markdown_line(line, t);
+    }
+
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut rest = line.to_string();
 
@@ -221,6 +231,92 @@ fn highlight_hover_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static
                 chars.next();
             }
             spans.push(Span::styled(type_str, ty));
+        } else {
+            buf.push(c);
+        }
+    }
+    if !buf.is_empty() {
+        spans.push(Span::styled(buf, plain));
+    }
+    Line::from(spans)
+}
+
+/// Render a line that carries markdown markers — `**bold**` and
+/// `` `inline code` `` become styled spans; a leading `- ` list
+/// marker gets a subtle bullet. Everything else renders as plain
+/// prose. 2026-07-12 user report — `**Usage**` was appearing
+/// verbatim in the hover popup.
+fn render_markdown_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static> {
+    use ratatui::style::Modifier;
+    let plain = Style::default().fg(t.fg).bg(t.bg);
+    let bold = Style::default()
+        .fg(t.fg)
+        .bg(t.bg)
+        .add_modifier(Modifier::BOLD);
+    // Inline code — cyan on the same bg as the popup so it lifts
+    // subtly without breaking the panel's low-contrast feel.
+    let code = Style::default().fg(t.cyan).bg(t.bg);
+    let bullet = Style::default().fg(t.comment).bg(t.bg);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut rest = line.to_string();
+    // Leading `- ` → `• `.
+    if let Some(after) = rest.strip_prefix("- ") {
+        spans.push(Span::styled("• ".to_string(), bullet));
+        rest = after.to_string();
+    } else if let Some(after) = rest.strip_prefix("* ") {
+        spans.push(Span::styled("• ".to_string(), bullet));
+        rest = after.to_string();
+    }
+
+    // Walk the rest and split on `**…**` (bold) and `` `…` ``
+    // (inline code). Unclosed markers render as literal text.
+    let mut chars = rest.chars().peekable();
+    let mut buf = String::new();
+    while let Some(c) = chars.next() {
+        if c == '*' && chars.peek() == Some(&'*') {
+            // Opener `**` — try to find a closing `**`.
+            chars.next(); // consume second *
+            let mut inner = String::new();
+            let mut closed = false;
+            while let Some(nc) = chars.next() {
+                if nc == '*' && chars.peek() == Some(&'*') {
+                    chars.next();
+                    closed = true;
+                    break;
+                }
+                inner.push(nc);
+            }
+            if closed && !inner.is_empty() {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut buf), plain));
+                }
+                spans.push(Span::styled(inner, bold));
+            } else {
+                // No matching close — emit `**` + inner literally.
+                buf.push_str("**");
+                buf.push_str(&inner);
+            }
+        } else if c == '`' {
+            // Opener `` ` `` — try to find a matching close.
+            let mut inner = String::new();
+            let mut closed = false;
+            for nc in chars.by_ref() {
+                if nc == '`' {
+                    closed = true;
+                    break;
+                }
+                inner.push(nc);
+            }
+            if closed && !inner.is_empty() {
+                if !buf.is_empty() {
+                    spans.push(Span::styled(std::mem::take(&mut buf), plain));
+                }
+                spans.push(Span::styled(inner, code));
+            } else {
+                buf.push('`');
+                buf.push_str(&inner);
+            }
         } else {
             buf.push(c);
         }
