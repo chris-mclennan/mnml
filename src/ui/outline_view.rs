@@ -103,10 +103,25 @@ pub fn draw(
         ),
         Span::styled(count_label, Style::default().fg(t.comment).bg(t.bg_dark)),
     ]));
+    // design-critic-round-5 SEV-2 2026-07-12 — was a single fixed
+    // hint (~44 chars) that clipped mid-word at the right-panel
+    // default width of 32. Port the width-tiered pattern from
+    // `diagnostics_view` so the pane degrades gracefully in the
+    // Right Panel host.
     let hint = if o.filter_mode {
-        "  filter — type to narrow, ⏎ apply, esc clear"
-    } else {
+        if area.width >= 52 {
+            "  filter — type to narrow, ⏎ apply, esc clear"
+        } else if area.width >= 30 {
+            "  type · ⏎ apply · esc clear"
+        } else {
+            "  ⏎ / esc"
+        }
+    } else if area.width >= 52 {
         "  ⏎ jump   r refresh   / filter   esc back"
+    } else if area.width >= 30 {
+        "  ⏎ jump · / filter · esc back"
+    } else {
+        "  ⏎ / r / esc"
     };
     lines.push(Line::from(Span::styled(
         hint,

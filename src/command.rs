@@ -2895,10 +2895,16 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.toggle_input_style(),
         },
+        // design-critic-round-5 SEV-3 2026-07-12 — was `group: "view"`
+        // for the three clock action commands while `clock.menu` sat
+        // alone in `group: "clock"`. Move them all to the same group
+        // so the `?` help overlay's `Command.group`-sectioned view
+        // renders one 4-item "clock" section instead of splitting
+        // three into the 133-item "view" section.
         Command {
             id: "clock.local",
             title: "Clock: show local time",
-            group: "view",
+            group: "clock",
             keys: &[],
             run: |app| {
                 app.clock_show_utc = false;
@@ -2908,7 +2914,7 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "clock.utc",
             title: "Clock: show UTC",
-            group: "view",
+            group: "clock",
             keys: &[],
             run: |app| {
                 app.clock_show_utc = true;
@@ -2918,7 +2924,7 @@ fn builtin_commands() -> Vec<Command> {
         Command {
             id: "clock.hide",
             title: "Clock: hide statusline clock chip",
-            group: "view",
+            group: "clock",
             keys: &[],
             run: |app| {
                 app.config.ui.clock = false;

@@ -1236,13 +1236,26 @@ impl App {
     }
 
     /// Right-click on the statusline mode chip — exposes the input-style
-    /// switcher.
+    /// switcher. design-critic-round-5 SEV-3 2026-07-12 — mark the
+    /// currently-active input style with the `✓ ` prefix used by
+    /// the top-bar-cluster menu, so users can tell at a glance
+    /// which mode is on without reading the mode chip itself.
     pub fn open_statusline_mode_context_menu(&mut self, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let is_vim = self.config.editor.input_style == "vim";
+        let vim_label = if is_vim { "✓ Use vim" } else { "  Use vim" };
+        let std_label = if !is_vim {
+            "✓ Use standard"
+        } else {
+            "  Use standard"
+        };
         let items = vec![
-            MenuItem::new("Use vim", MenuAction::Command("editor.use_vim")),
-            MenuItem::new("Use standard", MenuAction::Command("editor.use_standard")),
-            MenuItem::new("Toggle keymap", MenuAction::Command("editor.toggle_keymap")),
+            MenuItem::new(vim_label, MenuAction::Command("editor.use_vim")),
+            MenuItem::new(std_label, MenuAction::Command("editor.use_standard")),
+            MenuItem::new(
+                "  Toggle keymap",
+                MenuAction::Command("editor.toggle_keymap"),
+            ),
         ];
         self.context_menu = Some(ContextMenu::new(Some("Input style".into()), anchor, items));
     }
