@@ -3142,14 +3142,23 @@ fn builtin_commands() -> Vec<Command> {
             id: "git.blame_toggle",
             title: "Git: toggle blame gutter",
             group: "git",
-            keys: &[],
+            // keyboard-round-8 SEV-2 2026-07-11 — was palette-only.
+            // VS Code's git-blame extension conventionally uses
+            // Ctrl+Shift+G B; mnml's Ctrl+Shift+G opens the graph
+            // (matches VS Code Source Control), so the follow-up B
+            // needs to be a leader chord instead.
+            keys: &["ctrl+k b"],
             run: |app| app.toggle_blame(),
         },
         Command {
             id: "git.commit",
             title: "Git: commit staged changes",
             group: "git",
-            keys: &[],
+            // keyboard-round-8 SEV-2 2026-07-11 — VS Code's built-in
+            // commit chord (Ctrl+Enter in the Source Control input
+            // box) doesn't apply here since mnml commits from a
+            // prompt overlay. Use leader `<leader>gc` (Ctrl+K g c).
+            keys: &["ctrl+k g c"],
             run: |app| app.open_commit_prompt(),
         },
         Command {
