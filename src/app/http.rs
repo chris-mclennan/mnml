@@ -243,8 +243,12 @@ fn extract_summary(text: &str) -> Option<String> {
         if trimmed.is_empty() {
             continue;
         }
-        let body = if let Some(rest) = trimmed.strip_prefix('#') {
-            rest.trim()
+        // api-workflow round-9 SEV-2 2026-07-12 — was `strip_prefix('#')`
+        // (one `#` only), so `### block-name` in a multi-block .http
+        // file returned `## block-name` as the summary. Strip all
+        // leading `#`s so `### get` → `get`.
+        let body = if trimmed.starts_with('#') {
+            trimmed.trim_start_matches('#').trim()
         } else if let Some(rest) = trimmed.strip_prefix("//") {
             rest.trim()
         } else {
