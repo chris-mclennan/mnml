@@ -24,8 +24,15 @@ use crate::ui::{icons, theme};
 // U+25B6) — the black-solid variants render at font-cap height
 // (vs the smaller `▾ / ▸` U+25BE/U+25B8) so they read more
 // clearly next to the folder icons at typical rail widths.
-const CHEVRON_OPEN: &str = "▼";
-const CHEVRON_CLOSED: &str = "▶";
+// 2026-07-12 user feedback — even those read as small at
+// tight rail widths. Nerd Font `menu-down` / `menu-right`
+// (MDI F01F5 / F01F6) are chunky filled triangles designed
+// for UI at font-cap height and land visibly larger than the
+// Unicode BLACK DOWN-POINTING TRIANGLE while keeping the
+// same folder-open/folder-closed metaphor. Falls back to the
+// unicode triangles under `[ui] ascii_icons`.
+const CHEVRON_OPEN: &str = "\u{F01F5}";
+const CHEVRON_CLOSED: &str = "\u{F01F6}";
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks
@@ -758,12 +765,16 @@ fn draw_integration_section(
 }
 
 fn section_chev(expanded: bool, nerd: bool) -> &'static str {
+    // 2026-07-12 — the Unicode fallback also upgrades to the
+    // BLACK triangles (`▼` / `▶`) so the ascii_icons path stays
+    // visibly larger than the small `▾` / `▸` variants when the
+    // Nerd Font's `menu-down` / `menu-right` isn't available.
     if expanded {
-        if nerd { CHEVRON_OPEN } else { "▾" }
+        if nerd { CHEVRON_OPEN } else { "▼" }
     } else if nerd {
         CHEVRON_CLOSED
     } else {
-        "▸"
+        "▶"
     }
 }
 
