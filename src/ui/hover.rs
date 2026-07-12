@@ -77,7 +77,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
     } else {
         String::new()
     };
-    let block = crate::ui::design_tokens::popup_panel(title);
+    // Build the block inline so both the border AND the inner
+    // content share the same lighter `t.bg` fill — VS Code's
+    // hover is a subtly-lifted panel above the editor body, not
+    // the dark overlay `popup_panel`'s bg_darker gives. Subtle
+    // grey border keeps the frame quiet.
+    let mut block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(t.grey).bg(t.bg))
+        .style(Style::default().fg(t.fg).bg(t.bg));
+    let title_trim = title.trim();
+    if !title_trim.is_empty() {
+        block = block.title(Span::styled(
+            format!(" {title_trim} "),
+            Style::default().fg(t.comment).bg(t.bg),
+        ));
+    }
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
@@ -96,10 +112,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
         .take(inner.height as usize)
         .map(|l| highlight_hover_line(l, &t))
         .collect();
-    frame.render_widget(
-        Paragraph::new(view).style(Style::default().bg(t.bg_darker)),
-        inner,
-    );
+    frame.render_widget(Paragraph::new(view).style(Style::default().bg(t.bg)), inner);
 }
 
 /// Highlight a single hover-content line with per-token color.
@@ -109,12 +122,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect, cursor: Option<(u16,
 /// double-quotes, and comments starting with `//`. Unknown shapes
 /// fall through as plain fg.
 fn highlight_hover_line(line: &str, t: &crate::ui::theme::Theme) -> Line<'static> {
-    let plain = Style::default().fg(t.fg).bg(t.bg_darker);
-    let kw = Style::default().fg(t.purple).bg(t.bg_darker);
-    let ident = Style::default().fg(t.fg).bg(t.bg_darker);
-    let ty = Style::default().fg(t.cyan).bg(t.bg_darker);
-    let string_st = Style::default().fg(t.green).bg(t.bg_darker);
-    let comment = Style::default().fg(t.comment).bg(t.bg_darker);
+    let plain = Style::default().fg(t.fg).bg(t.bg);
+    let kw = Style::default().fg(t.purple).bg(t.bg);
+    let ident = Style::default().fg(t.fg).bg(t.bg);
+    let ty = Style::default().fg(t.cyan).bg(t.bg);
+    let string_st = Style::default().fg(t.green).bg(t.bg);
+    let comment = Style::default().fg(t.comment).bg(t.bg);
 
     // Comment line? Return as-is in comment color.
     if line.trim_start().starts_with("//") {
