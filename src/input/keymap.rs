@@ -204,9 +204,14 @@ impl Keymap {
             // prev via `Ctrl+X Ctrl+P` (omni) which is unbound globally.
             // Ctrl+S stays bound (save) — vim users save in insert too.
             // Ctrl+B stays bound (sidebar) — no canonical vim meaning.
+            // nvchad-round-10 SEV-2 2026-07-12 — `ctrl+f` also
+            // removed so the vim insert-mode Ctrl+F handler
+            // (routes to picker.files as the `Ctrl+X Ctrl+F` file-
+            // path completion analogue) can fire without the global
+            // find.find binding stealing the chord first.
             for spec in [
                 "ctrl+w", "ctrl+g", "ctrl+d", "ctrl+u", "ctrl+e", "ctrl+y", "ctrl+r", "ctrl+n",
-                "ctrl+h", "ctrl+j", "ctrl+t",
+                "ctrl+h", "ctrl+j", "ctrl+t", "ctrl+f",
             ] {
                 if let Some(seq) = parse_key_seq(spec) {
                     km.map.remove(&seq);

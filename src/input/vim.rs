@@ -934,6 +934,18 @@ impl VimInputHandler {
             KeyCode::Char('p') if ctrl => InputResult::App(AppCommand::RunCommand(
                 "editor.keyword_complete_back".into(),
             )),
+            // vim insert `Ctrl+F` — mnml maps this to the file picker
+            // so vim's `Ctrl+X Ctrl+F` (file-path completion under the
+            // cursor) has a discoverable mnml equivalent. Standard vim
+            // gates this behind Ctrl+X first, but Ctrl+X in mnml's
+            // Insert mode is a passthrough (see the docstring at
+            // ex-cmd `Ctrl+X`), so `Ctrl+F` alone reaches the picker.
+            // Without this arm the global find.find binding intercepts
+            // Ctrl+F in Insert mode too and vim users have no path to
+            // file completion. nvchad-round-10 SEV-2 2026-07-12.
+            KeyCode::Char('f') if ctrl => {
+                InputResult::App(AppCommand::RunCommand("picker.files".into()))
+            }
             // vim insert `Ctrl+Y` / `Ctrl+E` — insert the char from the
             // line above / below at the same column. Useful for "copy this
             // structure" gestures.
