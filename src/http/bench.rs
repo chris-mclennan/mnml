@@ -165,12 +165,25 @@ fn format_summary(
             counts[pos.min(BUCKETS - 1)] += 1;
         }
         let peak = counts.iter().copied().max().unwrap_or(1).max(1);
+        // api-workflow round-9 SEV-3 2026-07-11 — when `max - min <
+        // BUCKETS` (very common for fast local APIs), integer division
+        // `range * i / BUCKETS` truncates to 0 for every bucket, so
+        // every row labelled itself `min–min ms`. Compute bucket
+        // boundaries in floating-point and pick `.1` decimals when the
+        // range is smaller than BUCKETS so users get distinct labels.
+        let use_decimals = range < BUCKETS as u64;
+        let bucket_w = range as f64 / BUCKETS as f64;
         for (i, &c) in counts.iter().enumerate() {
-            let lo = min + range * i as u64 / BUCKETS as u64;
-            let hi = min + range * (i + 1) as u64 / BUCKETS as u64;
+            let lo_f = min as f64 + bucket_w * i as f64;
+            let hi_f = min as f64 + bucket_w * (i + 1) as f64;
             let bar_len = (c as usize * BAR_W) / peak as usize;
             let bar: String = std::iter::repeat_n('█', bar_len).collect();
-            out.push_str(&format!("    {lo:>4}–{hi:<4} ms │{bar:<BAR_W$}│ {c}\n"));
+            let label = if use_decimals {
+                format!("{lo_f:>5.1}–{hi_f:<5.1} ms")
+            } else {
+                format!("{:>4}–{:<4} ms", lo_f as u64, hi_f as u64)
+            };
+            out.push_str(&format!("    {label} │{bar:<BAR_W$}│ {c}\n"));
         }
     }
     if !errs.is_empty() {
