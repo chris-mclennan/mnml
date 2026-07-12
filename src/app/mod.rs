@@ -8265,6 +8265,18 @@ impl App {
         self.prompt = Some(prompt);
     }
 
+    /// `buffer.clear_mru` — wipe the pane MRU stack (nav back/forward
+    /// history). Keeps the current active pane at the head so
+    /// buffer.last isn't broken. mouse-round-9 SEV-3 2026-07-11.
+    pub fn clear_pane_mru(&mut self) {
+        let head = self.active;
+        self.pane_mru.clear();
+        if let Some(pid) = head {
+            self.pane_mru.push(pid);
+        }
+        self.toast("buffer MRU cleared");
+    }
+
     /// Extract text from the Pty pane's render grid between two cell
     /// coords (col, row) and copy to the system clipboard. Uses
     /// row-major linear cell order — for multi-row selections, joins

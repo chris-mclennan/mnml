@@ -1548,12 +1548,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
-    // Gear icon at the bottom of the activity bar → pop the
-    // VS Code-style settings menu.
+    // Gear icon at the bottom of the activity bar → open the
+    // Settings overlay directly (VS Code convention: gear left-click
+    // opens Settings; right-click gives the fuller menu).
+    // mouse-round-9 SEV-3 2026-07-11 — was routing to the same
+    // context menu as right-click; that's still available via
+    // right-click.
     if let Some(r) = app.rects.activity_bar_gear
         && crate::app::dispatch::contains(r, x, y)
     {
-        app.open_gear_context_menu((x, y));
+        app.open_settings_overlay();
         return;
     }
     // Search activity-bar section result rows — click → open

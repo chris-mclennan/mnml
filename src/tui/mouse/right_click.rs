@@ -686,6 +686,21 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_statusline_pr_context_menu((x, y));
         return;
     }
+    // mouse-round-9 SEV-3 2026-07-11 — palette back/forward buttons
+    // right-click. Left-click steps buffer MRU; right-click shows
+    // a picker of nav history + a "clear" option.
+    if let Some(r) = app.rects.palette_back_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_palette_nav_context_menu(false, (x, y));
+        return;
+    }
+    if let Some(r) = app.rects.palette_forward_button
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_palette_nav_context_menu(true, (x, y));
+        return;
+    }
     // design-critic round-3 finding #6 batch 2 — remaining statusline
     // chips gain right-click menus.
     if let Some(r) = app.rects.statusline_diagnostics_chip

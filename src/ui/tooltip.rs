@@ -448,12 +448,15 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             // #polish 2026-07-06 — hint at what "back" cycles through
             // (previous open buffer in MRU order) + note when there's
             // nothing to cycle to.
+            // mouse-round-9 SEV-3 2026-07-11 — add `click:` / `right-click:`
+            // prefixes so the tooltip reads as affordances, not
+            // status text.
             let primary = if n <= 1 {
                 "no other buffers".to_string()
             } else {
-                format!("prev buffer (MRU) · {n} open")
+                format!("click: prev buffer (MRU) · {n} open")
             };
-            Some((rect, primary, None))
+            Some((rect, primary, Some("right-click: nav history menu".into())))
         }
         HoverChip::PaletteForwardButton => {
             let rect = app.rects.palette_forward_button?;
@@ -461,9 +464,9 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             let primary = if n <= 1 {
                 "no other buffers".to_string()
             } else {
-                format!("next buffer (MRU) · {n} open")
+                format!("click: next buffer (MRU) · {n} open")
             };
-            Some((rect, primary, None))
+            Some((rect, primary, Some("right-click: nav history menu".into())))
         }
         HoverChip::PaletteSearchChip => {
             let rect = app.rects.palette_search_chip?;

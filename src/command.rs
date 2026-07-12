@@ -2455,6 +2455,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.reopen_closed_buffer(),
         },
         Command {
+            id: "buffer.clear_mru",
+            title: "Clear the buffer MRU (nav back/forward history)",
+            group: "buffer",
+            keys: &[],
+            run: |app| app.clear_pane_mru(),
+        },
+        Command {
             id: "buffer.pin_toggle",
             title: "Pin / Unpin the active tab (sticks to front of strip)",
             group: "buffer",

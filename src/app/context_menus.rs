@@ -962,6 +962,54 @@ impl App {
         self.context_menu = Some(ContextMenu::new(Some("Size".into()), anchor, items));
     }
 
+    /// Right-click on the palette bar's back/forward buttons — lists
+    /// the buffer MRU (top of stack), plus "Clear MRU". `forward` picks
+    /// the direction to bias toward. mouse-round-9 SEV-3 2026-07-11.
+    pub fn open_palette_nav_context_menu(&mut self, forward: bool, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let title = if forward { "Nav Forward" } else { "Nav Back" };
+        let ws = self.workspace.clone();
+        // Show up to 8 most-recent panes with their names.
+        let entries: Vec<(usize, String)> = self
+            .pane_mru
+            .iter()
+            .filter_map(|&pid| {
+                let p = self.panes.get(pid)?;
+                let label = match p {
+                    crate::pane::Pane::Editor(b) => b
+                        .path
+                        .as_ref()
+                        .map(|pp| crate::app::rel_path(&ws, pp))
+                        .unwrap_or_else(|| b.display_name().to_string()),
+                    other => other.title().to_string(),
+                };
+                Some((pid, label))
+            })
+            .take(8)
+            .collect();
+        let mut items: Vec<MenuItem> = Vec::new();
+        if entries.is_empty() {
+            // Nothing to navigate; skip the disabled row and just show
+            // the Clear entry below.
+        } else {
+            for (_pid, label) in &entries {
+                items.push(MenuItem::new(
+                    label.clone(),
+                    MenuAction::Command(if forward {
+                        "buffer.next"
+                    } else {
+                        "buffer.prev"
+                    }),
+                ));
+            }
+        }
+        items.push(MenuItem::new(
+            "Clear buffer MRU",
+            MenuAction::Command("buffer.clear_mru"),
+        ));
+        self.context_menu = Some(ContextMenu::new(Some(title.into()), anchor, items));
+    }
+
     /// Right-click on the statusline PR chip — offers copy URL /
     /// number / open in browser. design-critic round-3 #6 2026-07-11.
     pub fn open_statusline_pr_context_menu(&mut self, anchor: (u16, u16)) {
