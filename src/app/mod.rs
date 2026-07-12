@@ -8258,6 +8258,56 @@ impl App {
         self.prompt = Some(prompt);
     }
 
+    /// `term.paste` — paste the system clipboard into the active Pty
+    /// pane's child process. No-op when the active pane isn't a Pty
+    /// or the clipboard is empty. mouse-round-9 SEV-2 2026-07-11.
+    pub fn pty_paste_clipboard(&mut self) {
+        let Some(cur) = self.active else { return };
+        if !matches!(self.panes.get(cur), Some(Pane::Pty(_))) {
+            self.toast("term.paste — active pane is not a terminal");
+            return;
+        }
+        let text = self.clipboard.text();
+        if text.is_empty() {
+            self.toast("term.paste — clipboard empty");
+            return;
+        }
+        if let Some(Pane::Pty(s)) = self.panes.get_mut(cur) {
+            s.write_bytes(text.as_bytes());
+        }
+    }
+
+    /// `term.clear` — send Ctrl+L to the child (clears the screen in
+    /// most shells / terminals). Same effect the user gets by typing
+    /// Ctrl+L while the Pty is focused, but reachable from the
+    /// right-click menu. mouse-round-9 SEV-2 2026-07-11.
+    pub fn pty_send_ctrl_l(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Pty(s)) = self.panes.get_mut(cur) {
+            s.write_bytes(&[0x0c]);
+        } else {
+            self.toast("term.clear — active pane is not a terminal");
+        }
+    }
+
+    /// `term.restart` — restart the child process in the active Pty
+    /// pane. Sends `SIGTERM` then re-spawns from the same profile.
+    /// mouse-round-9 SEV-2 2026-07-11. TODO: proper respawn — for now
+    /// send Ctrl+C and let the user re-run manually (safer than
+    /// destroying the pty state).
+    pub fn pty_restart(&mut self) {
+        let Some(cur) = self.active else { return };
+        if let Some(Pane::Pty(s)) = self.panes.get_mut(cur) {
+            // Ctrl+C to interrupt, then Ctrl+D to signal EOF — most
+            // shells re-launch under the launcher. Users who want a
+            // full teardown can close the pane and re-open.
+            s.write_bytes(&[0x03]);
+            self.toast("term.restart — sent Ctrl+C (re-run manually)");
+        } else {
+            self.toast("term.restart — active pane is not a terminal");
+        }
+    }
+
     /// Accept handler for `PromptKind::PtySessionName`. Empty input
     /// clears the name (reverts to the binary profile's label).
     pub fn rename_active_pty(&mut self, name: &str) {

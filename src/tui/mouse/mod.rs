@@ -70,6 +70,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // focus, scrollback). This unblocks click / right-click /
     // wheel inside every mouse-aware sibling (mnml-aws-amplify
     // and friends).
+    // Middle-click on a Pty pane → paste from clipboard (X11 primary-
+    // selection convention). Runs even when the child has mouse
+    // tracking; the paste is the natural user intent. mouse-round-9
+    // SEV-2 2026-07-11.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle))
+        && let Some(&(_, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
+            crate::app::dispatch::contains(*r, x, y)
+                && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
+        })
+    {
+        app.active = Some(pid);
+        app.focus_pane();
+        app.pty_paste_clipboard();
+        return;
+    }
     if let Some(&(rect, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
         crate::app::dispatch::contains(*r, x, y)
             && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))

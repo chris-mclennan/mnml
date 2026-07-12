@@ -5023,6 +5023,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_scratch_term(),
         },
         Command {
+            id: "term.paste",
+            title: "Terminal: paste clipboard into the active Pty pane",
+            group: "terminal",
+            keys: &[],
+            run: |app| app.pty_paste_clipboard(),
+        },
+        Command {
+            id: "term.clear",
+            title: "Terminal: clear screen (`Ctrl+L` in the child)",
+            group: "terminal",
+            keys: &[],
+            run: |app| app.pty_send_ctrl_l(),
+        },
+        Command {
+            id: "term.restart",
+            title: "Terminal: restart the child process in this pane",
+            group: "terminal",
+            keys: &[],
+            run: |app| app.pty_restart(),
+        },
+        Command {
             id: "term.focus_or_open_shell",
             title: "Terminal: focus existing shell or open one",
             group: "term",

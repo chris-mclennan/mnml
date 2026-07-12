@@ -785,6 +785,12 @@ impl App {
             .map(|p| p.title())
             .unwrap_or_else(|| "terminal".into());
         let items = vec![
+            // mouse-round-9 SEV-2 2026-07-11 — terminal-native ops
+            // at the top (users expect these first from a pty
+            // right-click).
+            MenuItem::new("Paste", MenuAction::Command("term.paste")),
+            MenuItem::new("Clear (Ctrl+L)", MenuAction::Command("term.clear")),
+            MenuItem::new("Restart (Ctrl+C)", MenuAction::Command("term.restart")),
             MenuItem::new("Dock left", MenuAction::Command("view.move_split_left")),
             MenuItem::new("Dock right", MenuAction::Command("view.move_split_right")),
             MenuItem::new("Dock top", MenuAction::Command("view.move_split_up")),
