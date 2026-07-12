@@ -315,6 +315,17 @@ pub(crate) fn click_to_file_pos(
 /// Used by the hover-tooltip system; right-click + left-click handlers do their
 /// own per-chip rect checks since they need to act, not just identify.
 pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChip> {
+    // mouse-round-9 SEV-2 2026-07-11 — divider hover. Checked
+    // early so it wins over any coarser pane-body chip check
+    // (though dividers don't overlap panes so this is safe).
+    if app.rects.split_dividers.iter().any(|d| {
+        x >= d.rect.x
+            && x < d.rect.x + d.rect.width
+            && y >= d.rect.y
+            && y < d.rect.y + d.rect.height
+    }) {
+        return Some(crate::HoverChip::SplitDivider);
+    }
     // #polish 2026-07-06 — gutter sign-column marks (git change,
     // diagnostic, breakpoint, DAP arrow). Checked FIRST so a mark in
     // an editor pane wins over the coarser editor-pane hover

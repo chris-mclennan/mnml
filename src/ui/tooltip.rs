@@ -442,6 +442,19 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: toggle right side panel (Ctrl+Shift+B)".into()),
             ))
         }
+        HoverChip::SplitDivider => {
+            let idx = app.hover_divider_idx?;
+            let d = app.rects.split_dividers.get(idx)?;
+            let dir_label = match d.dir {
+                crate::layout::SplitDir::Horizontal => "horizontal split",
+                crate::layout::SplitDir::Vertical => "vertical split",
+            };
+            Some((
+                d.rect,
+                format!("{dir_label} divider"),
+                Some("drag to resize · double-click to equalize".into()),
+            ))
+        }
         HoverChip::PaletteBackButton => {
             let rect = app.rects.palette_back_button?;
             let n = app.panes.len();

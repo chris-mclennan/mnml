@@ -249,6 +249,10 @@ pub enum HoverChip {
     /// A code-lens chip (`⚡ <title>`) — tooltip shows the full title in case
     /// the rendered chip got truncated.
     CodeLensChip,
+    /// A split-pane divider — the resize handle between two panes.
+    /// Tooltip explains the drag + double-click affordances.
+    /// mouse-round-9 SEV-2 2026-07-11.
+    SplitDivider,
     StatuslineLsp,
     StatuslineWrap,
     StatuslineAutosave,
