@@ -119,16 +119,21 @@ pub enum PromptKind {
     /// Request pane populated with the parsed request. Useful for
     /// "get me the top 5 users from prod" → fully-formed POST.
     HttpAiBuild,
-    /// Accept (any non-empty input ⇒ proceed) ⇒ SIGTERM the PID
-    /// stashed in `App.pending_kill_pid`. Prompt copy is
-    /// "type 'kill' to terminate PID N · esc cancels".
+    /// Accept ⇒ SIGTERM the PID stashed in `App.pending_kill_pid`.
+    /// design-critic round-3 #4 2026-07-11: was a typed-confirm
+    /// (input == "kill") but the button-dialog migration converted
+    /// every remaining destructive prompt to a 2-button
+    /// `[Kill] [Cancel]` dialog. The typed-word gating is gone.
     ClaudeKillConfirm,
     /// Accept ⇒ grep every transcript under ~/.claude/projects/
     /// for the typed substring (case-insensitive). Results land in
     /// a `[session-search]` scratch buffer.
     ClaudeSessionSearch,
-    /// Accept (input == "delete") ⇒ force-delete the branch
-    /// stashed in `App.pending_branch_delete`.
+    /// Accept ⇒ force-delete the branch stashed in
+    /// `App.pending_branch_delete`. design-critic round-3 #4
+    /// 2026-07-11: was a typed-word confirm; now a 2-button
+    /// `[Delete] [Cancel]` dialog like every other destructive
+    /// action.
     GitDeleteBranchConfirm,
     /// Accept ⇒ pass the typed natural-language description to
     /// Claude one-shot; the reply (a branch name) gets seeded
@@ -149,14 +154,15 @@ pub enum PromptKind {
     /// before the prompt opens. Input is the branch name to check
     /// out in the new worktree.
     WorktreeBranchName,
-    /// Accept (input == "remove") ⇒ `git worktree remove <pending_path>`.
-    /// Confirm prompt for the GitWorktreeRemove picker.
+    /// Accept ⇒ `git worktree remove <pending_path>`. Confirm prompt
+    /// for the GitWorktreeRemove picker. design-critic round-3 #4
+    /// 2026-07-11: was typed-word gated; now a 2-button dialog.
     WorktreeRemoveConfirm,
-    /// Accept (input starts with 'y') ⇒ spawn `brew install <pkg>`
-    /// in a Pty pane. Used by `run_external_tool` when the binary
-    /// isn't on PATH, so chip clicks offer install instead of just
-    /// toasting a hint. The pending package name lives on
-    /// `App::pending_tool_install`.
+    /// Accept ⇒ spawn `brew install <pkg>` in a Pty pane. Used by
+    /// `run_external_tool` when the binary isn't on PATH. The pending
+    /// package name lives on `App::pending_tool_install`.
+    /// design-critic round-3 #4 2026-07-11: was `input starts with 'y'`
+    /// gated; now a 2-button dialog.
     ToolInstallConfirm,
     /// Accept ⇒ `npm run <input>` in a pty pane. Used by
     /// `:npm.run_script` so polyglot projects with non-`dev`
@@ -168,11 +174,13 @@ pub enum PromptKind {
     /// layout can pick the right package without `:go.run` being
     /// hardcoded to `.`.
     GoRunPath,
-    /// Accept (input == "merge") ⇒ `git merge <pending_merge_source>`.
-    /// Confirm prompt for the GitMergeInto picker.
+    /// Accept ⇒ `git merge <pending_merge_source>`. Confirm prompt for
+    /// the GitMergeInto picker. design-critic round-3 #4 2026-07-11:
+    /// was typed-word gated; now a 2-button dialog.
     GitMergeConfirm,
-    /// Accept (input == "rebase") ⇒ `git rebase <pending_rebase_onto>`.
-    /// Confirm prompt for the GitRebaseOnto picker.
+    /// Accept ⇒ `git rebase <pending_rebase_onto>`. Confirm prompt for
+    /// the GitRebaseOnto picker. design-critic round-3 #4 2026-07-11:
+    /// was typed-word gated; now a 2-button dialog.
     GitRebaseConfirm,
     /// Accept ⇒ patch the typed SVG path into the user's Nerd Font at
     /// the next free PUA codepoint, then yank the assigned glyph as a
@@ -188,19 +196,22 @@ pub enum PromptKind {
     NewFolder,
     /// Accept ⇒ rename the held path to `<dir>/<input>` (same parent).
     Rename,
-    /// Accept ⇒ delete the held path *iff* the typed text matches its
-    /// filename exactly (confirmation guard).
+    /// Accept ⇒ delete the held path. design-critic round-3 #4
+    /// 2026-07-11: was a typed-filename confirm; now a 2-button
+    /// `[Delete] [Cancel]` dialog per the button-dialog migration.
     DeleteConfirm,
-    /// Accept ⇒ `git stash drop <held ref>` *iff* the typed text matches
-    /// the literal word `drop` exactly. Same gating shape as
-    /// `DiffDiscardHunk` — drop is reflog-recoverable only until the
-    /// next `git gc` (~30 days), so a hard typed confirm is the right
-    /// floor. Ref + a short label held in `App.pending_stash_drop`.
-    /// untouched-surfaces-hunt-2026-06-08 SEV-2 #8.
+    /// Accept ⇒ `git stash drop <held ref>`. Ref + a short label held
+    /// in `App.pending_stash_drop`. design-critic round-3 #4
+    /// 2026-07-11: was a typed-word confirm (drop is reflog-recoverable
+    /// only until `git gc`, so the harder gate had a rationale). The
+    /// button-dialog migration converted it to a 2-button dialog like
+    /// every other destructive prompt — the extra friction is gone,
+    /// documented here so future readers don't rebuild the old shape
+    /// by accident.
     GitStashDrop,
-    /// Accept ⇒ run `git tag -d <name>` *iff* the typed text
-    /// matches the tag's name exactly. Tag name held in
-    /// `App.pending_tag_delete`.
+    /// Accept ⇒ run `git tag -d <name>`. Tag name held in
+    /// `App.pending_tag_delete`. design-critic round-3 #4 2026-07-11:
+    /// was typed-word gated; now a 2-button dialog.
     GitTagDelete,
     /// Workspaces editor — apply the typed value to
     /// `config.workspaces[App::workspaces_edit_target_name].name`
@@ -212,14 +223,17 @@ pub enum PromptKind {
     /// Workspaces editor — apply group label edit (empty = ungrouped).
     WorkspaceGroupEdit,
     /// Accept ⇒ reverse-apply the hunk against the working tree
-    /// (`crate::git::diff::discard_hunk`) *iff* the typed text matches
-    /// the literal word `discard` exactly. Hunk identity is held in
+    /// (`crate::git::diff::discard_hunk`). Hunk identity is held in
     /// `App.pending_discard_hunk = Some((pane_id, hunk_index))`.
+    /// design-critic round-3 #4 2026-07-11: was a typed-word
+    /// "discard" confirm — arguably the safest gate since a discarded
+    /// hunk is NOT reflog-recoverable. The button-dialog migration
+    /// dropped that extra friction; the outcome remains destructive.
     DiffDiscardHunk,
-    /// Accept ⇒ `git restore -- <held rel>` *iff* the typed text
-    /// matches the file's basename. Opened by GitStatus's
+    /// Accept ⇒ `git restore -- <held rel>`. Opened by GitStatus's
     /// right-click menu's "Discard changes" entry; path held in
-    /// `App.pending_discard_file`.
+    /// `App.pending_discard_file`. design-critic round-3 #4 2026-07-11:
+    /// was a typed-basename confirm; now a 2-button dialog.
     GitDiscardFile,
     /// Accept ⇒ `workspace/symbol` with the typed query; the reply lands as
     /// `LspEvent::WorkspaceSymbols` and opens a `Locations` picker.
