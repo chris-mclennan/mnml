@@ -808,8 +808,28 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     if let Some(r) = app.rects.statusline_lsp_chip
         && crate::app::dispatch::contains(r, x, y)
     {
+        // mouse-round-8 SEV-3 2026-07-12 — was a single "Status" row
+        // with a phantom empty row below. Now offers the LSP verbs a
+        // user actually reaches for from the chip: symbols/references,
+        // hover, code-actions, diagnostics, plus the raw status.
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![MenuItem::new("Status", MenuAction::Command("LspStatus"))];
+        let items = vec![
+            MenuItem::new("Status", MenuAction::Command("LspStatus")),
+            MenuItem::new("Symbols in file", MenuAction::Command("lsp.symbols")),
+            MenuItem::new(
+                "Symbols in workspace",
+                MenuAction::Command("lsp.workspace_symbols"),
+            ),
+            MenuItem::new("Diagnostics list", MenuAction::Command("lsp.diagnostics")),
+            MenuItem::new("Find references", MenuAction::Command("lsp.references")),
+            MenuItem::new("Rename symbol", MenuAction::Command("lsp.rename")),
+            MenuItem::new("Format file", MenuAction::Command("lsp.format")),
+            MenuItem::new("Code actions", MenuAction::Command("lsp.code_action")),
+            MenuItem::new(
+                "Toggle inlay hints",
+                MenuAction::Command("lsp.inlay_hints_toggle"),
+            ),
+        ];
         app.context_menu = Some(ContextMenu::new(Some("LSP".to_string()), (x, y), items));
         return;
     }
