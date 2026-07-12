@@ -2394,23 +2394,38 @@ impl App {
             self.toast("no branches (not a git repo?)");
             return;
         }
+        // design-critic-round-5 SEV-3 2026-07-12 — same "why is
+        // this row up top" problem the palette recents fix
+        // (mouse-round-11 SEV-3) solved. Prefix the top rows with
+        // an ordinal so the recency-sort is self-explanatory
+        // without requiring the user to already know that
+        // `git.recent_branches` sorts by committerdate.
         let items: Vec<PickerItem> = branches
             .iter()
-            .map(|b| {
+            .enumerate()
+            .map(|(i, b)| {
                 let detail = if Some(b) == cur.as_ref() {
                     "current"
+                } else if i < 5 {
+                    "recent"
                 } else {
                     "local"
                 };
                 let label = if Some(b) == cur.as_ref() {
                     format!("● {b}")
+                } else if i < 5 {
+                    format!("{}. {b}", i + 1)
                 } else {
                     format!("  {b}")
                 };
                 PickerItem::new(format!("local:{b}"), label, detail)
             })
             .collect();
-        self.open_picker(Picker::new(PickerKind::Branches, "Recent branches", items));
+        self.open_picker(Picker::new(
+            PickerKind::Branches,
+            "Recent branches (sorted by activity)",
+            items,
+        ));
     }
 
     /// `:git.copy_current_branch` — copy the active repo's current
