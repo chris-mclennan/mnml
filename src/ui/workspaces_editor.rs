@@ -147,9 +147,14 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         } else {
             t.comment
         };
-        // `★` between the dot and the name marks the persisted
-        // default. Empty space keeps the column alignment.
-        let star_glyph = if is_default { "★" } else { " " };
+        // `⌂` (home) between the dot and the name marks the
+        // persisted default. Empty space keeps the column
+        // alignment. design-critic-round-5 SEV-3 2026-07-12 —
+        // was `★` which now conflicts app-wide with the palette
+        // recents marker (mouse-round-11 SEV-3). `⌂` reads
+        // clearly as "the default that loads on startup" without
+        // any ambiguity vs the recency signal.
+        let star_glyph = if is_default { "⌂" } else { " " };
         let star_fg = if is_sel {
             t.bg
         } else if is_default {
