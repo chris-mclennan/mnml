@@ -1045,20 +1045,21 @@ impl App {
     /// Right-click on a specific toast box. Offers dismiss for this
     /// one, dismiss-all, and (for the Undo case) commit. Index is
     /// into `App.toast_stack`. mouse-round-10 SEV-2 2026-07-12.
+    /// mouse-round-11 SEV-3 2026-07-12 — bail if the toast has
+    /// already expired instead of opening a `Toast: (gone)` menu.
     pub fn open_toast_context_menu(&mut self, idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let text: String = self
-            .toast_stack
-            .get(idx)
-            .map(|e| {
-                let t = e.text.chars().take(40).collect::<String>();
-                if e.text.chars().count() > 40 {
-                    format!("{t}…")
-                } else {
-                    t
-                }
-            })
-            .unwrap_or_else(|| "(gone)".into());
+        let Some(full_text) = self.toast_stack.get(idx).map(|e| e.text.clone()) else {
+            return;
+        };
+        let text: String = {
+            let t = full_text.chars().take(40).collect::<String>();
+            if full_text.chars().count() > 40 {
+                format!("{t}…")
+            } else {
+                t
+            }
+        };
         // Stash target index so the "dismiss" MenuAction knows
         // which toast it belongs to. `App.pending_toast_dismiss_idx`
         // is single-slot — the menu closes on any action so races
@@ -1074,15 +1075,7 @@ impl App {
                 "Dismiss all toasts",
                 MenuAction::Command("toast.dismiss_all"),
             ),
-            MenuItem::new(
-                "Copy text to clipboard",
-                MenuAction::CopyPath(
-                    self.toast_stack
-                        .get(idx)
-                        .map(|e| e.text.clone())
-                        .unwrap_or_default(),
-                ),
-            ),
+            MenuItem::new("Copy text to clipboard", MenuAction::CopyPath(full_text)),
         ];
         self.context_menu = Some(ContextMenu::new(Some("Toast".into()), anchor, items));
     }

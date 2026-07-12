@@ -412,6 +412,11 @@ impl App {
         // matches VS Code's "recents at top" convention. The user
         // can still find every command via fuzzy — recents just
         // save the fresh-open Enter.
+        //
+        // mouse-round-11 SEV-3 2026-07-12 — mark recents with a
+        // leading `★` glyph on the label so users see WHY those
+        // rows are at the top; without the marker the reorder
+        // looked like the palette had shuffled at random.
         if !self.recent_commands.is_empty() {
             let order: std::collections::HashMap<String, usize> = self
                 .recent_commands
@@ -419,6 +424,11 @@ impl App {
                 .enumerate()
                 .map(|(i, id)| (id.clone(), i))
                 .collect();
+            for item in items.iter_mut() {
+                if order.contains_key(&item.id) {
+                    item.label = format!("★ {}", item.label);
+                }
+            }
             items.sort_by(|a, b| {
                 let ai = order.get(&a.id).copied();
                 let bi = order.get(&b.id).copied();

@@ -41,6 +41,12 @@ const SPINNER_FRAMES: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "�
 const SPINNER_FRAME_MS: u128 = 100;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    // mouse-round-11 SEV-3 2026-07-12 — clear the click-target
+    // rects BEFORE any early return so a stale rect from a
+    // previous frame can't outlive the toast box that painted it.
+    // Otherwise a right-click on the box's ghost coord opens a
+    // "Toast: (gone)" menu.
+    app.rects.toast_stack_rects.clear();
     let has_persistent = !app.persistent_toasts.is_empty();
     // mouse-round-10 SEV-3 2026-07-12 — was `> 1` so a solo toast
     // only echoed on the cmdline bar (single-line, dim). That made
@@ -72,9 +78,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.pending_undo_chip = Some(chip_rect);
     }
 
-    // Reset rect cache; renderer re-populates below. mouse-round-10
-    // SEV-2 2026-07-12 — click-on-toast dismisses.
-    app.rects.toast_stack_rects.clear();
+    // (Rects cleared at the top of `draw` — see mouse-round-11
+    // SEV-3.) Renderer re-populates below. mouse-round-10 SEV-2
+    // 2026-07-12 — click-on-toast dismisses.
     // Ephemeral toasts (newest first — closest to statusline).
     // Cap the visible count; if there are more than MAX_VISIBLE_TOASTS,
     // reserve the last visible slot for a "+K more…" chip so we never

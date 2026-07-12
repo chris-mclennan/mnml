@@ -13072,8 +13072,17 @@ impl App {
     pub fn take_pending_os_notifications(&mut self) -> Vec<(String, String, bool)> {
         std::mem::take(&mut self.pending_os_notifications)
     }
-    /// Current toast text if it hasn't expired.
+    /// Current toast text if it hasn't expired AND there's no live
+    /// top-right toast box painting the same message. mouse-round-11
+    /// SEV-3 2026-07-12 — solo toasts now always render as a box
+    /// (round-10 SEV-3 fix), so echoing the same string on the
+    /// cmdline row while the box is up double-renders. Cmdline
+    /// echo returns only once every box has faded (log-tail
+    /// semantic) so the message still persists past the box's TTL.
     pub fn live_toast(&self) -> Option<&str> {
+        if !self.toast_stack.is_empty() || !self.persistent_toasts.is_empty() {
+            return None;
+        }
         self.toast
             .as_ref()
             .filter(|(_, t)| t.elapsed() < TOAST_TTL)
