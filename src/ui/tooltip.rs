@@ -493,34 +493,58 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             // mouse-round-9 SEV-3 2026-07-11 — add `click:` / `right-click:`
             // prefixes so the tooltip reads as affordances, not
             // status text.
+            // mouse-round-7 SEV-3 2026-07-12 — was pure status text
+            // when n<=1; now leads with the click hint and adds a
+            // disabled-state subtitle so users see the intent even
+            // when nothing to cycle to.
             let primary = if n <= 1 {
-                "no other buffers".to_string()
+                "back to previous buffer (Ctrl+[)".to_string()
             } else {
                 format!("click: prev buffer (MRU) · {n} open")
             };
-            Some((rect, primary, Some("right-click: nav history menu".into())))
+            let subtitle = if n <= 1 {
+                "disabled — no other buffers · right-click: nav history menu".to_string()
+            } else {
+                "right-click: nav history menu".to_string()
+            };
+            Some((rect, primary, Some(subtitle)))
         }
         HoverChip::PaletteForwardButton => {
             let rect = app.rects.palette_forward_button?;
             let n = app.panes.len();
+            // mouse-round-7 SEV-3 2026-07-12 — mirror of back button.
             let primary = if n <= 1 {
-                "no other buffers".to_string()
+                "forward to next buffer (Ctrl+])".to_string()
             } else {
                 format!("click: next buffer (MRU) · {n} open")
             };
-            Some((rect, primary, Some("right-click: nav history menu".into())))
+            let subtitle = if n <= 1 {
+                "disabled — no other buffers · right-click: nav history menu".to_string()
+            } else {
+                "right-click: nav history menu".to_string()
+            };
+            Some((rect, primary, Some(subtitle)))
         }
         HoverChip::PaletteSearchChip => {
             let rect = app.rects.palette_search_chip?;
+            // mouse-round-7 SEV-3 2026-07-12 — was `Cmd+P` (macOS-
+            // only leak from the copy). mnml's primary modifier is
+            // Ctrl everywhere.
             Some((
                 rect,
                 "command palette".to_string(),
-                Some("click: open files, commands, recent (Cmd+P)".into()),
+                Some("click: open files, commands, recent (Ctrl+P)".into()),
             ))
         }
         HoverChip::PaletteDropdownButton => {
             let rect = app.rects.palette_dropdown_button?;
-            Some((rect, "recent files".to_string(), None))
+            // mouse-round-7 SEV-3 2026-07-12 — was bare "recent
+            // files"; now a full click hint + right-click subtitle.
+            Some((
+                rect,
+                "recent files".to_string(),
+                Some("click: open recent · right-click: open menu".into()),
+            ))
         }
         HoverChip::PaletteAddIntegration => {
             let rect = app.rects.palette_add_integration_button?;
@@ -1142,15 +1166,29 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         }
         HoverChip::TreeUpRow => {
             let rect = app.rects.tree_up_row?;
-            let parent = app
-                .workspace
-                .parent()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "/".to_string());
+            // mouse-round-7 SEV-3 2026-07-12 — used to render the
+            // full absolute path (108 chars in a tempdir), stretching
+            // the tooltip box to the terminal width. Show just the
+            // last segment (or short-form middle-ellipsis) so the
+            // user sees "which parent" without the 100-char noise.
+            let parent = app.workspace.parent();
+            let display: String = match parent {
+                Some(p) => {
+                    let last = p.file_name().and_then(|n| n.to_str()).map(str::to_string);
+                    let full = p.display().to_string();
+                    match last {
+                        Some(name) if !name.is_empty() && full.chars().count() > 40 => {
+                            format!("…/{name}")
+                        }
+                        _ => full,
+                    }
+                }
+                None => "/".to_string(),
+            };
             Some((
                 rect,
                 "Open parent as workspace".into(),
-                Some(format!("click: {parent}")),
+                Some(format!("click: {display}")),
             ))
         }
         HoverChip::HttpToolbarChip(idx) => {
