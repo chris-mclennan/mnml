@@ -407,6 +407,29 @@ impl App {
                 dc.keys.join(" / "),
             ));
         }
+        // keyboard-round-8 SEV-3 2026-07-12 — bubble the last
+        // few power-actions to the top so an empty-query palette
+        // matches VS Code's "recents at top" convention. The user
+        // can still find every command via fuzzy — recents just
+        // save the fresh-open Enter.
+        if !self.recent_commands.is_empty() {
+            let order: std::collections::HashMap<String, usize> = self
+                .recent_commands
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.clone(), i))
+                .collect();
+            items.sort_by(|a, b| {
+                let ai = order.get(&a.id).copied();
+                let bi = order.get(&b.id).copied();
+                match (ai, bi) {
+                    (Some(x), Some(y)) => x.cmp(&y),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+            });
+        }
         self.open_picker(Picker::new(PickerKind::Commands, "Command palette", items));
     }
 
