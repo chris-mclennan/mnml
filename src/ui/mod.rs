@@ -804,8 +804,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 // tooltips, whichkey, context menu, toast. Bold
                 // modifier alone preserves visual hierarchy without
                 // shouting.
+                // mouse-round-7 SEV-3 2026-07-12 — narrow-panel
+                // truncation used to render as bare `right p` with
+                // no ellipsis. Clip with `…` so the truncation
+                // reads as intentional, and swap to the FEATURES-
+                // documented "too narrow" hint below 16 cells.
+                let label = if header_rect.width < 16 {
+                    " tight"
+                } else {
+                    " right panel"
+                };
+                let clipped = clip_to_cells(label, header_rect.width as usize);
                 frame.render_widget(
-                    ratatui::widgets::Paragraph::new(" right panel").style(
+                    ratatui::widgets::Paragraph::new(clipped).style(
                         Style::default()
                             .fg(t.comment)
                             .bg(t.bg_darker)
