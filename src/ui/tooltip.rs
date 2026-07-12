@@ -1233,10 +1233,39 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| b.display_name().to_string());
+            // mouse-round-8 SEV-3 2026-07-12 — long absolute paths
+            // stretched the tooltip box to the full terminal width.
+            // Prefer the workspace-relative path when the file is
+            // inside the workspace (short, unambiguous); fall back
+            // to the absolute path abbreviated with a middle
+            // ellipsis when the absolute is >64 chars.
+            let ws = app.workspace.display().to_string();
+            let display_path: String = if let Some(rest) = path.strip_prefix(&ws) {
+                let rest = rest.trim_start_matches('/');
+                if rest.is_empty() {
+                    path.clone()
+                } else {
+                    rest.to_string()
+                }
+            } else if path.chars().count() > 64 {
+                let chars: Vec<char> = path.chars().collect();
+                let head: String = chars.iter().take(24).collect();
+                let tail: String = chars
+                    .iter()
+                    .rev()
+                    .take(32)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                format!("{head}…{tail}")
+            } else {
+                path.clone()
+            };
             let dirty = if b.dirty { " · unsaved" } else { "" };
             Some((
                 rect,
-                format!("{path}{dirty}"),
+                format!("{display_path}{dirty}"),
                 Some("click: reveal in tree · right-click: buffer menu".into()),
             ))
         }
