@@ -3927,6 +3927,26 @@ impl Editor {
                     self.remember_selection();
                 }
             }
+            YankSelectionLinewise => {
+                // Mirror of `YankSelection` for V-mode. Marks the
+                // clipboard linewise so `p` puts the yank onto a new
+                // line below the cursor rather than gluing onto the
+                // current line's tail. nvchad-round-11 SEV-2
+                // 2026-07-12.
+                if let Some((lo, hi)) = self.selection() {
+                    let mut s = self.text[lo..hi].to_string();
+                    // Ensure the payload ends in `\n` so PasteAfter's
+                    // linewise-shape assumption holds.
+                    if !s.ends_with('\n') {
+                        s.push('\n');
+                    }
+                    clip.set_yank(s.clone(), true);
+                    out.clipboard_set = Some(s);
+                    out.clipboard_linewise = true;
+                    out.yanked_range = Some((lo, hi));
+                    self.remember_selection();
+                }
+            }
             CutSelection => {
                 if let Some((lo, hi)) = self.selection() {
                     let s = self.text[lo..hi].to_string();

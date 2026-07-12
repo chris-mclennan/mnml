@@ -3216,8 +3216,13 @@ impl VimInputHandler {
                 // Push cursor to the END of the current line BEFORE
                 // YankSelection so the saved selection ends mid-row;
                 // last_selection_rows's rollback skips it.
+                // nvchad-round-11 SEV-2 2026-07-12 — V-mode uses
+                // `YankSelectionLinewise` so paste puts on a new
+                // line below (was `YankSelection` which stored
+                // characterwise; `p` then glued onto the current
+                // line's tail).
                 if linewise {
-                    InputResult::Ops(vec![MoveLineEnd, YankSelection, SelectClear])
+                    InputResult::Ops(vec![MoveLineEnd, YankSelectionLinewise, SelectClear])
                 } else {
                     InputResult::Ops(vec![YankSelection, SelectClear])
                 }

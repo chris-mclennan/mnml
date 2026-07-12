@@ -1460,22 +1460,38 @@ impl App {
             // arm, `:new` fuzzy-fell into `agents.new_from_pr`
             // because "new" is a substring of both the id and the
             // title of that command. nvchad-round-10 SEV-2 2026-07-12.
+            // nvchad-round-11 SEV-2 2026-07-12 — was calling
+            // `view.split_down` AND `view.split_new_scratch`, which
+            // both split, producing 4 panes (3 duplicates + 1
+            // scratch). `split_new_scratch` already splits (Vertical
+            // = horizontal split visually) so drop the outer split.
+            // With `[file]`, use `view.split_down` + `open_path`
+            // since the split shouldn't produce a scratch first.
             "new" => {
                 let path = rest.trim();
-                crate::command::run("view.split_down", self);
                 if path.is_empty() {
                     crate::command::run("view.split_new_scratch", self);
                 } else {
+                    crate::command::run("view.split_down", self);
                     let p = self.workspace.join(path);
                     self.open_path(&p);
                 }
             }
             "vnew" => {
                 let path = rest.trim();
-                crate::command::run("view.split_right", self);
                 if path.is_empty() {
-                    crate::command::run("view.split_new_scratch", self);
+                    // split_new_scratch defaults to a Vertical
+                    // split (horizontal visually — top/bottom); for
+                    // `:vnew` the vim canonical is a vertical
+                    // (side-by-side) split, so split_right first
+                    // then swap the scratch into that leaf.
+                    crate::command::run("view.split_right", self);
+                    let buf = crate::buffer::Buffer::scratch(&self.config);
+                    self.panes.push(Pane::Editor(buf));
+                    let new_id = self.panes.len() - 1;
+                    self.reveal_pane(new_id);
                 } else {
+                    crate::command::run("view.split_right", self);
                     let p = self.workspace.join(path);
                     self.open_path(&p);
                 }

@@ -394,6 +394,12 @@ pub enum EditOp {
     YankLinesCount(u32),
     /// vim `y` (visual) / standard Ctrl+C
     YankSelection,
+    /// vim V-mode `y` (visual-line yank). Same range capture as
+    /// [`Self::YankSelection`] but marks the clipboard as linewise
+    /// so a subsequent `p` puts on a new line below rather than
+    /// gluing onto the current line's tail. nvchad-round-11 SEV-2
+    /// 2026-07-12.
+    YankSelectionLinewise,
     /// standard Ctrl+X
     CutSelection,
     /// vim `p`
@@ -500,6 +506,7 @@ impl EditOp {
             | SetRegisterHint(_)
             | YankLine
             | YankSelection
+            | YankSelectionLinewise
             | YankBlock
             | Undo
             | Redo => false,
