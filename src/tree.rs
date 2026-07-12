@@ -422,6 +422,17 @@ impl Tree {
 
     /// Expand this dir and every descendant dir. No-op if `target` isn't a
     /// known dir. Used by the tree dir right-click "Expand recursively".
+    /// Expand a single directory (add it to the expanded set) without
+    /// touching its descendants. Used by `App::accept_tree_move` /
+    /// similar flows that need to reveal a deep path after mutation.
+    /// mouse-round-10 SEV-3 2026-07-12.
+    pub fn expand_dir(&mut self, target: &Path) {
+        let is_known_dir = self.entries.iter().any(|e| e.is_dir && e.path == target);
+        if is_known_dir {
+            self.expanded.insert(target.to_path_buf());
+        }
+    }
+
     pub fn expand_subtree(&mut self, target: &Path) {
         let dirs: Vec<PathBuf> = self
             .entries

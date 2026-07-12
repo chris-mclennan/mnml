@@ -5491,6 +5491,25 @@ impl App {
                         .display()
                 ));
                 self.tree.refresh();
+                // mouse-round-10 SEV-3 2026-07-12 — leave the tree
+                // cursor on the moved item so the user can
+                // immediately act on it (VS Code / Finder pattern).
+                // Also expand every ancestor dir so the row is
+                // visible in the collapsed tree.
+                let mut cur = dest.parent();
+                while let Some(p) = cur {
+                    if !p.starts_with(&self.workspace) {
+                        break;
+                    }
+                    self.tree.expand_dir(p);
+                    cur = p.parent();
+                    if cur.map(|c| c == self.workspace).unwrap_or(false) {
+                        break;
+                    }
+                }
+                if let Some(idx) = self.tree.visible_rows().iter().position(|r| r.path == dest) {
+                    self.tree.set_cursor(idx);
+                }
                 self.after_git_change();
             }
             Err(e) => {
@@ -12984,8 +13003,23 @@ impl App {
     ) {
         let title: String = title.into();
         let body: String = body.into();
-        // In-app toast always fires.
-        self.toast_leveled(format!("{title}: {body}"), level);
+        // In-app toast — `level=error` pins to the persistent slot
+        // so critical notifications don't expire on TTL. `warn`
+        // and `info` stay ephemeral like before. mouse-round-10
+        // SEV-3 2026-07-12.
+        if matches!(level, ToastLevel::Error) {
+            // Use the source id when provided so a follow-up
+            // notify(same source) updates the existing pinned
+            // slot in place rather than stacking a duplicate. Fall
+            // back to a title-derived id so at least the same title
+            // deduplicates.
+            let id = source
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("notify:{title}"));
+            self.toast_persistent(id, format!("{title}: {body}"), level);
+        } else {
+            self.toast_leveled(format!("{title}: {body}"), level);
+        }
         // OS notification is opt-in per integration.
         let (os_ok, rate_secs) = match source {
             None => (true, 0), // no source → no policy → fire
