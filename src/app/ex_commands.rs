@@ -1455,6 +1455,31 @@ impl App {
                     self.open_path(&p);
                 }
             }
+            // Vim `:new [file]` / `:vnew [file]` — open a new scratch
+            // buffer in a horizontal / vertical split. Without this
+            // arm, `:new` fuzzy-fell into `agents.new_from_pr`
+            // because "new" is a substring of both the id and the
+            // title of that command. nvchad-round-10 SEV-2 2026-07-12.
+            "new" => {
+                let path = rest.trim();
+                crate::command::run("view.split_down", self);
+                if path.is_empty() {
+                    crate::command::run("view.split_new_scratch", self);
+                } else {
+                    let p = self.workspace.join(path);
+                    self.open_path(&p);
+                }
+            }
+            "vnew" => {
+                let path = rest.trim();
+                crate::command::run("view.split_right", self);
+                if path.is_empty() {
+                    crate::command::run("view.split_new_scratch", self);
+                } else {
+                    let p = self.workspace.join(path);
+                    self.open_path(&p);
+                }
+            }
             // Vim tab pages — open a fresh tab; optional path opens it in the
             // new tab's first leaf.
             "tabnew" | "tabe" | "tabedit" => {
