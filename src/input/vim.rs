@@ -891,6 +891,11 @@ impl VimInputHandler {
                         "editor.insert_last_cmdline".into(),
                     ));
                 }
+                if c == '.' {
+                    return InputResult::App(AppCommand::RunCommand(
+                        "editor.insert_last_inserted".into(),
+                    ));
+                }
                 // nvchad-2nd 2026-06-28 SEV-2: `"` (unnamed register)
                 // is the most-used INSERT-mode paste target and was
                 // missing from the accepted list. Vim users reflexively

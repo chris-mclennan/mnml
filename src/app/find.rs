@@ -161,8 +161,11 @@ impl App {
     /// - `#` = alt buffer's workspace-relative path (MRU[1])
     /// - `/` = last search query on the active buffer
     /// - `:` = last executed ex-command
-    /// nvchad-round-7 SEV-3 + round-9 SEV-3 2026-07-11. `.`/`=`
-    /// still fall through the register-paste arm.
+    /// - `.` = the last inserted text (extracted from `dot_keys`
+    ///   by keeping only the printable `Char(c)` events — good
+    ///   enough for the common case of typing a word/phrase; motion
+    ///   / escape / backspace events are dropped)
+    /// nvchad-round-7 + round-9 SEV-3 2026-07-11.
     pub fn insert_special_register(&mut self, reg: char) {
         let text = match reg {
             '%' => self
@@ -186,6 +189,33 @@ impl App {
                 .map(|f| f.query.clone())
                 .unwrap_or_default(),
             ':' => self.ex_history.last().cloned().unwrap_or_default(),
+            '.' => {
+                // Best-effort: keep only Char(c) events. Insert-mode
+                // typing lands here as `Char('c')` per key; escape /
+                // motion / count / operator keys are skipped.
+                let mut s = String::new();
+                for key in &self.dot_keys {
+                    if let ratatui::crossterm::event::KeyCode::Char(c) = key.code
+                        && !key
+                            .modifiers
+                            .contains(ratatui::crossterm::event::KeyModifiers::CONTROL)
+                        && !key
+                            .modifiers
+                            .contains(ratatui::crossterm::event::KeyModifiers::ALT)
+                    {
+                        s.push(c);
+                    }
+                }
+                // Strip a leading operator letter (i/a/o/O/A/I/s/S/c)
+                // that opens Insert. The dot_keys sequence always
+                // starts with one of these for an insert-run change.
+                if let Some(first) = s.chars().next()
+                    && matches!(first, 'i' | 'a' | 'o' | 'O' | 'A' | 'I' | 's' | 'S' | 'c')
+                {
+                    s.remove(0);
+                }
+                s
+            }
             _ => String::new(),
         };
         if text.is_empty() {

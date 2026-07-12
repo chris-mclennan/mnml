@@ -406,7 +406,40 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Backspace => picker.backspace(),
-        KeyCode::Char(c) if !ctrl => picker.type_char(c),
+        KeyCode::Char(c) if !ctrl => {
+            // keyboard-round-8 SEV-3 2026-07-11 — VS Code Ctrl+P
+            // mode-switch prefixes when the query is empty and the
+            // picker kind is Files/Recent:
+            //   `>` → command palette
+            //   `@` → LSP document symbols (current file)
+            //   `#` → LSP workspace symbols
+            if picker.query.is_empty()
+                && matches!(
+                    picker.kind,
+                    crate::picker::PickerKind::Files | crate::picker::PickerKind::Recent
+                )
+            {
+                match c {
+                    '>' => {
+                        app.close_picker();
+                        crate::command::run("palette", app);
+                        return;
+                    }
+                    '@' => {
+                        app.close_picker();
+                        crate::command::run("lsp.symbols", app);
+                        return;
+                    }
+                    '#' => {
+                        app.close_picker();
+                        crate::command::run("lsp.workspace_symbols", app);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            picker.type_char(c);
+        }
         _ => {}
     }
 }
