@@ -9445,6 +9445,77 @@ impl App {
         }
     }
 
+    /// Vim `]]` / `[[` — jump to the next / previous section start.
+    /// A "section" boundary is a line whose first char is `{` (C-like)
+    /// or matches a top-level scope opener (`fn`, `class`, `struct`,
+    /// etc. at column 0). Falls back to a heuristic: any non-blank
+    /// line starting at column 0 that is preceded by a blank line.
+    /// nvchad-round-9 SEV-2 2026-07-11.
+    pub fn jump_section(&mut self, forward: bool, land_on_end: bool) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let cur_row = b.editor.row_col().0;
+        let line_count = b.editor.line_count();
+        let is_section_start = |line_str: &str| -> bool {
+            let bytes = line_str.as_bytes();
+            if bytes.is_empty() {
+                return false;
+            }
+            // A brace-start line or a top-level keyword — both signal
+            // a section boundary.
+            let first = bytes[0];
+            if first == b'{' {
+                return true;
+            }
+            let trimmed = line_str.trim_start();
+            for kw in &[
+                "fn ",
+                "class ",
+                "struct ",
+                "impl ",
+                "trait ",
+                "enum ",
+                "def ",
+                "function ",
+                "async ",
+            ] {
+                if trimmed.starts_with(kw) && first == trimmed.as_bytes()[0] {
+                    return true;
+                }
+            }
+            false
+        };
+        let range: Box<dyn Iterator<Item = usize>> = if forward {
+            Box::new((cur_row + 1)..line_count)
+        } else {
+            Box::new((0..cur_row).rev())
+        };
+        for row in range {
+            let line = b.editor.line_str(row);
+            if is_section_start(line) {
+                let target = if land_on_end {
+                    if forward {
+                        row.saturating_sub(1)
+                    } else {
+                        (row + 1).min(line_count.saturating_sub(1))
+                    }
+                } else {
+                    row
+                };
+                if let Some(b) = self.active_editor_mut() {
+                    b.editor.place_cursor(target, 0);
+                }
+                return;
+            }
+        }
+        self.toast(if forward {
+            "]] — no section forward"
+        } else {
+            "[[ — no section back"
+        });
+    }
+
     /// `zj` — jump the cursor to the start of the next fold (relative
     /// to current row). No-op when there are no folds after the cursor.
     /// nvchad-round-7 SEV-3 2026-07-11.

@@ -1732,6 +1732,12 @@ impl VimInputHandler {
                     KeyCode::Char('d') => "lsp.prev_diagnostic",
                     KeyCode::Char('q') => "qf.prev",
                     KeyCode::Char('t') => "project.prev_todo",
+                    // nvchad-round-9 SEV-2 2026-07-11 — vim section
+                    // navigation. `[[` = prev section (top-level
+                    // header — first char at column 0 that opens
+                    // a scope). `[]` = end of prev section.
+                    KeyCode::Char('[') => "editor.section_prev_start",
+                    KeyCode::Char(']') => "editor.section_prev_end",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
@@ -1743,6 +1749,9 @@ impl VimInputHandler {
                     KeyCode::Char('d') => "lsp.next_diagnostic",
                     KeyCode::Char('q') => "qf.next",
                     KeyCode::Char('t') => "project.next_todo",
+                    // `]]` = next section, `][` = end of next section.
+                    KeyCode::Char(']') => "editor.section_next_start",
+                    KeyCode::Char('[') => "editor.section_next_end",
                     _ => return InputResult::Consumed,
                 };
                 return InputResult::App(AppCommand::RunCommand(cmd.into()));
