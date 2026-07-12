@@ -1476,5 +1476,26 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, primary, secondary))
         }
+        HoverChip::ToastBox(idx) => {
+            let rect = *app.rects.toast_stack_rects.get(idx)?;
+            let text = app
+                .toast_stack
+                .get(idx)
+                .map(|e| e.text.clone())
+                .unwrap_or_default();
+            // Truncate for the tooltip primary but keep the full text
+            // available via the secondary line.
+            let primary = if text.chars().count() > 40 {
+                let short: String = text.chars().take(40).collect();
+                format!("{short}…")
+            } else {
+                text.clone()
+            };
+            Some((
+                rect,
+                primary,
+                Some("click to dismiss · right-click for menu · hover pauses TTL".into()),
+            ))
+        }
     }
 }

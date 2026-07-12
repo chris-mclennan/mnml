@@ -13195,6 +13195,26 @@ impl App {
         self.refresh_stale_highlights();
         self.refresh_scroll_semantic_tokens();
         self.maybe_fire_mouse_hover();
+        // mouse-round-10 SEV-2 2026-07-12 — hover on a toast pauses
+        // its TTL so the user has time to read a long message
+        // before it fades. The mouse handler sets
+        // `hover_chip = ToastBox(idx)` when the cursor is over a
+        // toast rect; here we bump the entry's `created_at` so its
+        // age effectively stays at whatever it was when the hover
+        // began. Also refreshes `App.toast`'s legacy timestamp
+        // when the newest stack entry is under the cursor.
+        if let Some((crate::HoverChip::ToastBox(hover_idx), _)) = self.hover_chip
+            && hover_idx < self.toast_stack.len()
+        {
+            if let Some(entry) = self.toast_stack.get_mut(hover_idx) {
+                entry.created_at = std::time::Instant::now();
+            }
+            if hover_idx == 0
+                && let Some((_, t)) = self.toast.as_mut()
+            {
+                *t = std::time::Instant::now();
+            }
+        }
         if let Some((_, t)) = &self.toast
             && t.elapsed() >= TOAST_TTL
         {

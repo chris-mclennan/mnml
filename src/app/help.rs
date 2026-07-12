@@ -80,6 +80,32 @@ pub fn build_help(keymap: &Keymap) -> Vec<HelpRow> {
             title: meaning,
         });
     }
+    // stress meter section — new users won't discover the chip
+    // since it's hidden on idle. Document it here + name the two
+    // spots it shows so users know where to look. 2026-07-12.
+    rows.push(HelpRow::Section("stress meter"));
+    for (chip, meaning) in [
+        (
+            "0-20",
+            "1 block, green — idle / smooth (hidden at exactly 0)",
+        ),
+        ("20-40", "2 blocks, yellow — slight load"),
+        ("40-70", "3 blocks, orange — noticeable slowdown"),
+        ("70-100", "4 blocks, red — mnml is stressed"),
+        (
+            "chip location",
+            "top-right cluster + bottom-right statusline (twin bars)",
+        ),
+        (
+            "right-click",
+            "reset window · copy summary · toast the numbers",
+        ),
+    ] {
+        rows.push(HelpRow::Binding {
+            keys: chip.to_string(),
+            title: meaning,
+        });
+    }
 
     // Stable section order — the registry yields commands in source
     // order so the same group's commands cluster naturally. We just

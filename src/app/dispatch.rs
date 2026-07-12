@@ -363,6 +363,15 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::PaletteStress);
     }
+    if let Some((idx, _)) = app
+        .rects
+        .toast_stack_rects
+        .iter()
+        .enumerate()
+        .find(|(_, r)| contains(**r, x, y))
+    {
+        return Some(crate::HoverChip::ToastBox(idx));
+    }
     if let Some(r) = app.rects.statusline_mode_chip
         && contains(r, x, y)
     {

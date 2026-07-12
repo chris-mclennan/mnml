@@ -244,6 +244,10 @@ pub enum HoverChip {
     /// content; kept as a separate variant so `hover_chip_at` can
     /// route each rect independently. 2026-07-12.
     PaletteStress,
+    /// A specific toast box in the stack. `usize` indexes into
+    /// `App.toast_stack`. Setting this hover chip pauses the toast's
+    /// TTL so users can read it without it aging out. 2026-07-12.
+    ToastBox(usize),
     /// A `> GIT` rail-header chip (one per action enum).
     RailHeaderChip(GitRailHeaderAction),
     /// A bufferline tab (carries the pane id). Tooltip shows the full path
