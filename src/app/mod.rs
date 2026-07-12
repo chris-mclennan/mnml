@@ -11033,17 +11033,23 @@ impl App {
         if src == dst || src >= self.panes.len() || dst >= self.panes.len() {
             return;
         }
+        // nvchad-round-10 SEV-3 2026-07-12 — condition was
+        // `cur + 1 < dst` (and `cur > dst + 1`), which stopped ONE
+        // swap short and left the source adjacent to dst instead of
+        // taking dst's slot. VS Code / Chrome / most bufferlines
+        // splice-drop: A dropped ON B moves A into B's slot and
+        // shifts B out. For [A, B, C] with src=0, dst=2 the persona
+        // expects [B, C, A]; the old code produced [B, A, C] (one
+        // fewer swap). Loop to `cur < dst` so src actually reaches
+        // dst's position.
         let mut cur = src;
         if cur < dst {
-            // Walk src rightward, one adjacent swap at a time, so
-            // it lands adjacent to dst (just before dst's current
-            // position).
-            while cur + 1 < dst {
+            while cur < dst {
                 self.swap_bufferline_tabs(cur, cur + 1);
                 cur += 1;
             }
         } else {
-            while cur > dst + 1 {
+            while cur > dst {
                 self.swap_bufferline_tabs(cur, cur - 1);
                 cur -= 1;
             }
