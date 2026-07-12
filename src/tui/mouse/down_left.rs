@@ -2732,6 +2732,25 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
 
     // Editor text in some split leaf? Focus that leaf and place the cursor.
+    // Double-click on a split divider → equalize splits (VS Code
+    // convention — double-click a resize handle to reset the ratio).
+    // mouse-round-9 SEV-2 2026-07-11.
+    if app.hover_divider_idx.is_some() {
+        let now = std::time::Instant::now();
+        let is_double = matches!(
+            app.last_click,
+            Some((prev, px, py, c))
+                if px == x
+                    && py == y
+                    && c >= 1
+                    && now.duration_since(prev) < std::time::Duration::from_millis(450)
+        );
+        app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
+        if is_double {
+            app.equalize_splits();
+            return;
+        }
+    }
     // Left-click on an editor's gutter → select the whole line.
     // Shift+gutter-click extends the selection down / up from
     // the anchor to that line. VS Code's line-numbers convention.

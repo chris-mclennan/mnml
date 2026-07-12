@@ -1068,6 +1068,34 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.close_pane(id);
         return;
     }
+    // Middle-click on a tree row closes the file if it's currently
+    // open (VS Code convention: middle-click on file explorer entry
+    // closes the tab). No-op if the file isn't open. mouse-round-9
+    // SEV-2 2026-07-11.
+    if matches!(m.kind, MouseEventKind::Down(MouseButton::Middle))
+        && let Some(tr) = app.rects.tree
+        && crate::app::dispatch::contains(tr, x, y)
+    {
+        let idx = (y - tr.y) as usize + app.rects.tree_scroll;
+        let target_path = app.tree.visible_rows().get(idx).and_then(|row| {
+            if row.is_dir {
+                None
+            } else {
+                Some(row.path.clone())
+            }
+        });
+        if let Some(path) = target_path {
+            let pane_id = app.panes.iter().position(|p| match p {
+                crate::pane::Pane::Editor(b) => b.path.as_deref() == Some(path.as_path()),
+                _ => false,
+            });
+            if let Some(pid) = pane_id {
+                app.close_pane(pid);
+                return;
+            }
+        }
+        return;
+    }
     // vscode-user-mouse SEV-2 2026-07-10: after a split, per-leaf
     // tabs live in `split_tab_chips` (not `bufferline_tabs`), so
     // middle-click on a split-pane tab did nothing. Same close
