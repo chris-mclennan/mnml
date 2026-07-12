@@ -1909,18 +1909,18 @@ fn draw_tree_drag_ghost(frame: &mut Frame, app: &App) {
     // to a plain move-drag, so the user had no confirmation the
     // Alt modifier had registered until the file appeared in two
     // places. Prefix with a `⧉ COPY` badge when copying.
-    let prefix = if drag.copy_instead_of_move {
+    let (prefix, prefix_cells) = if drag.copy_instead_of_move {
         if drag.src_is_dir {
-            "\u{29C9} 📁 "
+            ("\u{29C9} 📁 ", 5u16)
         } else {
-            "\u{29C9} 📄 "
+            ("\u{29C9} 📄 ", 5)
         }
     } else if drag.src_is_dir {
-        "📁 "
+        ("📁 ", 3)
     } else {
-        "📄 "
+        ("📄 ", 3)
     };
-    let chip_w = label_w + prefix.chars().count() as u16 + 2;
+    let chip_w = label_w + prefix_cells + 2;
     let area = frame.area();
     // Paint the chip RIGHT next to the cursor (1 cell offset to
     // avoid covering the cursor itself). User-feedback 2026-06-22
