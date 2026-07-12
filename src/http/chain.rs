@@ -136,7 +136,12 @@ pub fn run(
         let raw =
             std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
         let script = script::parse(&raw);
-        let mut req = super::parse(&raw).map_err(|e| format!("step {}: parse: {e}", i + 1))?;
+        // api-round-10 SEV-2 2026-07-12 — pass each step's file
+        // parent so `-F name=@relpath` uploads resolve against the
+        // .curl file's own dir. Was using process CWD.
+        let step_base_dir = path.parent();
+        let mut req = super::parse_with_base(&raw, step_base_dir)
+            .map_err(|e| format!("step {}: parse: {e}", i + 1))?;
         script::apply_pre(&script, &mut req, &mut env);
         let unresolved = {
             let mut m: Vec<String> = Vec::new();

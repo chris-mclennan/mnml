@@ -33,6 +33,28 @@ pub struct WsSendOutput {
 ///
 /// Public-in-module for unit-testing the bounds-picking logic
 /// in isolation from IO / `App`.
+/// Percent-encode `s` for use as a URL query component (RFC 3986
+/// `application/x-www-form-urlencoded` semantics with `+` for space).
+/// Preserves the unreserved set (`A-Z`, `a-z`, `0-9`, `-`, `_`, `.`,
+/// `~`); everything else becomes `%XX`. api-round-10 SEV-2
+/// 2026-07-12 — was raw-splicing values into the URL.
+fn percent_encode_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push('+'),
+            _ => {
+                use std::fmt::Write;
+                let _ = write!(out, "%{b:02X}");
+            }
+        }
+    }
+    out
+}
+
 fn curl_block_bounds(lines: &[&str], cursor_row: usize) -> (usize, usize) {
     let starts: Vec<usize> = lines
         .iter()
@@ -5402,6 +5424,13 @@ impl App {
         let value = draft.value.trim();
         let key_owned = key.to_string();
         let value_owned = value.to_string();
+        // api-round-10 SEV-2 2026-07-12 — percent-encode the value
+        // so a param that contains `?`, `&`, `=`, `#`, space, or
+        // any other reserved query char doesn't corrupt the URL.
+        // Was splicing raw. Encode the key too so `x y=1` doesn't
+        // produce `?x y=1`.
+        let key_encoded = percent_encode_component(&key_owned);
+        let value_encoded = percent_encode_component(&value_owned);
         if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
             let sep = if rp.request.url.contains('?') {
                 '&'
@@ -5409,9 +5438,9 @@ impl App {
                 '?'
             };
             rp.request.url.push(sep);
-            rp.request.url.push_str(&key_owned);
+            rp.request.url.push_str(&key_encoded);
             rp.request.url.push('=');
-            rp.request.url.push_str(&value_owned);
+            rp.request.url.push_str(&value_encoded);
             rp.url_cursor = rp.request.url.len();
             if continue_drafting {
                 rp.params_add = Some(crate::request_pane::ParamsAddDraft::default());

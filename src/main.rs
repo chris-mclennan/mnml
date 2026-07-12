@@ -683,8 +683,13 @@ fn do_run(file: &Path, env_name: Option<&str>, workspace: Option<&Path>) -> Resu
     // Parse the request (its url/headers/body still hold `{{vars}}`), then the
     // `@`-directives. `apply_pre` runs `@set-header` / `@set-env` before we
     // expand the request's own fields, so `{{NAME}}` can reference `@set-env`s.
+    // api-round-10 SEV-2 2026-07-12 — pass the file's parent as the
+    // base_dir so `-F name=@relpath` uploads resolve against the
+    // request file's directory, not the process CWD. Matches the
+    // Request pane's behavior post-round-8.
     let script = http::script::parse(&raw);
-    let mut req = http::parse(&raw).map_err(|e| e.to_string())?;
+    let base_dir = file.parent();
+    let mut req = http::parse_with_base(&raw, base_dir).map_err(|e| e.to_string())?;
     http::script::apply_pre(&script, &mut req, &mut env);
 
     let mut missing: Vec<String> = Vec::new();
