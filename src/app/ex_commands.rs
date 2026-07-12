@@ -22,6 +22,37 @@ use super::*;
 /// and `:args src/**/*.rs` — the two forms nvchad users hit ~always.
 /// Uses `ignore::WalkBuilder` so `.gitignore` is respected during
 /// recursive scans.
+/// Split `:w | e other.txt` style command chains on ` | ` (space
+/// pipe space). Returns `Some(parts)` when at least one split point
+/// exists, else `None` so the caller doesn't need to recurse on
+/// trivial cases. Skips pipes inside `s/…/…/` payloads (`s/foo|bar/`)
+/// by detecting the substitute-shortcut head. nvchad-round-10 SEV-2
+/// 2026-07-11.
+fn split_ex_command_chain(line: &str) -> Option<Vec<String>> {
+    let head_tok = line.split_whitespace().next().unwrap_or("");
+    // If the head is a substitute (`s/…`, `:%s/…`, `:{range}s/…`),
+    // don't split — the pipe is likely inside the pattern.
+    if head_tok.starts_with("s/")
+        || head_tok.starts_with("s#")
+        || head_tok.starts_with("%s/")
+        || head_tok.starts_with("g/")
+        || head_tok.starts_with("v/")
+    {
+        return None;
+    }
+    // Look for ` | ` — space-pipe-space. This avoids splitting
+    // pipes inside quoted args / URLs / regexes.
+    if !line.contains(" | ") {
+        return None;
+    }
+    let parts: Vec<String> = line
+        .split(" | ")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    (parts.len() > 1).then_some(parts)
+}
+
 fn arglist_expand(ws: &std::path::Path, pattern: &str) -> Vec<std::path::PathBuf> {
     let expanded = shellexpand_tilde(pattern);
     let has_wildcard = expanded.contains('*') || expanded.contains('?');
@@ -835,6 +866,16 @@ impl App {
         // Normalize both by stripping any single leading colon.
         let line = line.trim().trim_start_matches(':').trim_start();
         if line.is_empty() {
+            return;
+        }
+        // nvchad-round-10 SEV-2 2026-07-11 — `:w | e other.txt` and
+        // friends. Split on ` | ` (space-pipe-space) only so we don't
+        // break `:s/foo|bar/z/` or path/URL-style pipes. Recurse on
+        // each part.
+        if let Some(parts) = split_ex_command_chain(line) {
+            for part in parts {
+                self.run_ex_command(&part);
+            }
             return;
         }
         // Bare number ⇒ jump to that line.

@@ -259,7 +259,7 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
         if let Some(dst) = dst_tab
             && dst != src
         {
-            app.swap_bufferline_tabs(src, dst);
+            app.splice_bufferline_tabs(src, dst);
             app.rects.bufferline_drag_tab = None;
             app.rects.tab_drop_target = None;
             return;

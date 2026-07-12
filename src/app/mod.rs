@@ -614,6 +614,25 @@ pub struct ReplaceConfirm {
 /// (the start / end rows of the last visual selection) get replaced with their
 /// 1-based row numbers. Unresolvable marks are left in place so the line-range
 /// parser declines and the outer dispatcher falls through.
+/// Filter `folds` down to the "top-level" set — folds whose start
+/// row is NOT strictly inside any other fold's range. Used by
+/// `zj`/`zk` so nested folds from `zM` don't clog the inter-fold
+/// navigation. nvchad-round-10 SEV-2 2026-07-11.
+fn top_level_folds(folds: &std::collections::BTreeMap<usize, usize>) -> Vec<(usize, usize)> {
+    let entries: Vec<(usize, usize)> = folds.iter().map(|(&s, &e)| (s, e)).collect();
+    entries
+        .iter()
+        .filter(|&&(s, _)| {
+            !entries.iter().any(|&(os, oe)| {
+                // Strictly inside another fold: os < s <= oe (and
+                // (os, oe) is not the entry itself).
+                os < s && s <= oe && (os, oe) != (s, folds[&s])
+            })
+        })
+        .copied()
+        .collect()
+}
+
 fn expand_mark_refs(line: &str, lookup: &dyn Fn(char) -> Option<usize>) -> String {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.chars().peekable();
@@ -9657,7 +9676,17 @@ impl App {
             return;
         };
         let cur_row = b.editor.row_col().0;
-        let next: Option<usize> = b.folds.keys().copied().find(|&s| s > cur_row);
+        // nvchad-round-10 SEV-2 regression 2026-07-11 — was iterating
+        // ALL fold starts including nested ones, so after `zM` (which
+        // creates folds for every bracket pair) `zj` jumped inside
+        // the current fold instead of skipping to the next top-level
+        // block. Filter out folds whose start is strictly inside
+        // another fold's range.
+        let top_level: Vec<(usize, usize)> = top_level_folds(&b.folds);
+        let next = top_level
+            .iter()
+            .find(|(s, _)| *s > cur_row)
+            .map(|(s, _)| *s);
         if let Some(target) = next
             && let Some(b) = self.active_editor_mut()
         {
@@ -9673,7 +9702,12 @@ impl App {
             return;
         };
         let cur_row = b.editor.row_col().0;
-        let prev: Option<usize> = b.folds.keys().copied().filter(|&s| s < cur_row).max();
+        let top_level: Vec<(usize, usize)> = top_level_folds(&b.folds);
+        let prev = top_level
+            .iter()
+            .rev()
+            .find(|(s, _)| *s < cur_row)
+            .map(|(s, _)| *s);
         if let Some(target) = prev
             && let Some(b) = self.active_editor_mut()
         {
@@ -10178,6 +10212,14 @@ impl App {
                 )
             })
             .collect();
+        // nvchad-round-10 SEV-2 2026-07-11 — feed an implicit Esc
+        // between iterations so a chord that entered Insert (e.g.
+        // `Ihello`) doesn't leak into the next line. Mirrors
+        // `run_norm`'s pattern.
+        let esc = ratatui::crossterm::event::KeyEvent::new(
+            ratatui::crossterm::event::KeyCode::Esc,
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        );
         for row in start_line..=end_line {
             if let Some(Pane::Editor(b)) = self.panes.get_mut(idx) {
                 if row >= b.editor.line_count() {
@@ -10188,6 +10230,7 @@ impl App {
             for key in &key_events {
                 crate::tui::dispatch_key(self, *key);
             }
+            crate::tui::dispatch_key(self, esc);
         }
         self.toast(format!(
             ":{start_line}..{end_line}norm — {} line(s)",
@@ -10893,6 +10936,36 @@ impl App {
     /// so they still resolve to the same content after the move. Used
     /// by bufferline drag-reorder to let the user reorder tabs by
     /// click-and-drag.
+    /// Splice `src` next to `dst` in the bufferline (drag-reorder
+    /// canonical). Uses a series of adjacent swaps so that at the
+    /// end, `src` is at the slot immediately BEFORE `dst` (or
+    /// immediately after if src > dst — matches the drag direction).
+    /// nvchad-round-10 SEV-3 2026-07-11 — was calling
+    /// `swap_bufferline_tabs` which literally swapped the two arena
+    /// positions, so a drag of `A` onto `B` in `[W X A Y Z B T]`
+    /// gave `[W X B Y Z A T]` (swap) instead of `[W X Y Z A B T]`
+    /// (splice).
+    pub fn splice_bufferline_tabs(&mut self, src: PaneId, dst: PaneId) {
+        if src == dst || src >= self.panes.len() || dst >= self.panes.len() {
+            return;
+        }
+        let mut cur = src;
+        if cur < dst {
+            // Walk src rightward, one adjacent swap at a time, so
+            // it lands adjacent to dst (just before dst's current
+            // position).
+            while cur + 1 < dst {
+                self.swap_bufferline_tabs(cur, cur + 1);
+                cur += 1;
+            }
+        } else {
+            while cur > dst + 1 {
+                self.swap_bufferline_tabs(cur, cur - 1);
+                cur -= 1;
+            }
+        }
+    }
+
     pub fn swap_bufferline_tabs(&mut self, a: PaneId, b: PaneId) {
         if a == b || a >= self.panes.len() || b >= self.panes.len() {
             return;
