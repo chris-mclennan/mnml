@@ -947,40 +947,74 @@ pub fn draw_pane(
             }
         }
 
-        // Inlay hints: collect every hint on this line, format as one
-        // joined string, paint into trailing space cells in dim color.
-        // (Vim canonical position is inline — we render end-of-line for
-        // the MVP because it doesn't shift real code cells.)
+        // Inlay hints: paint each hint at its own file column so
+        // param-name hints land right before the arg, param-type
+        // hints land right after the decl, etc. — VS Code style
+        // adjacency instead of clumping every hint at end-of-line.
+        // 2026-07-12 user report — hints looked "spaced out" because
+        // the previous MVP joined every hint with `"  "` and painted
+        // at n+2 past end-of-code.
+        //
+        // We can't shift code cells, so if a hint's column overlaps
+        // an already-painted code cell, we bump the paint position
+        // to just after it and continue — that keeps hints in their
+        // approximate positions (bunched near the code they annotate,
+        // not stranded at the right edge).
         let hints_on_line: Vec<&crate::lsp::InlayHint> = if app.config.editor.inlay_hints {
-            buf.inlay_hints
+            let mut v: Vec<&crate::lsp::InlayHint> = buf
+                .inlay_hints
                 .iter()
                 .filter(|h| (h.line as usize) == line_no)
-                .collect()
+                .collect();
+            v.sort_by_key(|h| h.character);
+            v
         } else {
             Vec::new()
         };
         if !hints_on_line.is_empty() {
-            let chip = hints_on_line
-                .iter()
-                .map(|h| h.label.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join("  ");
-            let with_lead = format!("  {chip}");
-            let start_c = n + 2;
             let hcolor = theme::cur().comment;
-            for (i, mc) in with_lead.chars().enumerate() {
-                let c = start_c + i;
-                if c < view_col_start {
+            let mut cursor_col = 0usize;
+            for hint in &hints_on_line {
+                let label = hint.label.trim();
+                if label.is_empty() {
                     continue;
                 }
-                let vc = c - view_col_start;
-                if vc >= cells.len() {
-                    break;
+                // Target column in file coords, clamped forward
+                // past whatever we've already painted.
+                let target_c = (hint.character as usize).max(cursor_col);
+                // If the target lands ON existing code, bump right
+                // until we hit an empty cell — hints "flow" past
+                // real code without overwriting it.
+                let mut c = target_c;
+                loop {
+                    if c < view_col_start {
+                        c += 1;
+                        continue;
+                    }
+                    let vc = c - view_col_start;
+                    if vc >= cells.len() {
+                        break;
+                    }
+                    if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                        break;
+                    }
+                    c += 1;
                 }
-                if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
-                    cells[vc] = (mc, hcolor, base_bg, ratatui::style::Modifier::empty());
+                // Paint the label starting at c.
+                for (i, ch) in label.chars().enumerate() {
+                    let cc = c + i;
+                    if cc < view_col_start {
+                        continue;
+                    }
+                    let vc = cc - view_col_start;
+                    if vc >= cells.len() {
+                        break;
+                    }
+                    if cells[vc].0 == ' ' && cells[vc].2 == base_bg {
+                        cells[vc] = (ch, hcolor, base_bg, ratatui::style::Modifier::empty());
+                    }
                 }
+                cursor_col = c + label.chars().count() + 1; // +1 for a single-cell gap
             }
         }
 
