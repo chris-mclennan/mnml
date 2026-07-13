@@ -972,12 +972,18 @@ pub fn draw_pane(
             Vec::new()
         };
         if !hints_on_line.is_empty() {
+            // Separate hints with ` · ` (middle dot) instead of a
+            // single space — some labels carry their own leading
+            // punctuation (`: void`, `: string`) and a bare-space
+            // separator against `param:` gave a visually-double
+            // space at the seam (`param:  : void`). The middot is
+            // a clean punctuation-agnostic delimiter. 2026-07-12.
             let chip = hints_on_line
                 .iter()
                 .map(|h| h.label.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
-                .join(" ");
+                .join(" · ");
             let with_lead = format!(" {chip}");
             let start_c = n + 1;
             let hcolor = theme::cur().comment;
