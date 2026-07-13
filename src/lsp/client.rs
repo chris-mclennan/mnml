@@ -997,15 +997,21 @@ fn handle_message(
                 .unwrap_or_default();
             let _ = tx.send(LspEvent::Diagnostics { path, diags });
         }
-        // window/showMessage → toast
-        if (method == "window/showMessage" || method == "window/logMessage")
-            && let Some(m) = v
-                .get("params")
-                .and_then(|p| p.get("message"))
-                .and_then(|m| m.as_str())
-            && method == "window/showMessage"
+        // window/showMessage → toast (errors only). LSP MessageType:
+        // 1 = Error, 2 = Warning, 3 = Info, 4 = Log. 2026-07-12 —
+        // was toasting every showMessage regardless of type, which
+        // meant every "Inlay Hints request failed. Requires TypeScript
+        // 4.4+" warning from typescript-language-server produced a
+        // toast. Gate to errors so genuine problems still surface
+        // but warnings/info/log stay silent.
+        if method == "window/showMessage"
+            && let Some(params) = v.get("params")
+            && let Some(m) = params.get("message").and_then(|m| m.as_str())
         {
-            let _ = tx.send(LspEvent::Message(format!("LSP: {m}")));
+            let msg_type = params.get("type").and_then(|t| t.as_i64()).unwrap_or(1);
+            if msg_type == 1 {
+                let _ = tx.send(LspEvent::Message(format!("LSP: {m}")));
+            }
         }
         // `$/progress` — long-running task indicator. Routes to the
         // statusline busy chip via three events (begin / report / end).
