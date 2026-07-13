@@ -972,15 +972,31 @@ pub fn draw_pane(
             Vec::new()
         };
         if !hints_on_line.is_empty() {
-            // Separate hints with ` · ` (middle dot) instead of a
-            // single space — some labels carry their own leading
-            // punctuation (`: void`, `: string`) and a bare-space
-            // separator against `param:` gave a visually-double
-            // space at the seam (`param:  : void`). The middot is
-            // a clean punctuation-agnostic delimiter. 2026-07-12.
+            // Separate hints with ` · ` (middle dot) — clean
+            // punctuation-agnostic delimiter. 2026-07-12.
+            //
+            // Normalize labels so type-hints don't leave an
+            // orphaned colon-space next to the middot. LSP labels
+            // for type hints commonly ship as `: TypeName` — the
+            // leading `: ` is intended for INLINE render (glues to
+            // the identifier before the position). At end-of-line
+            // render there's no identifier before it, so the
+            // leading `: ` becomes visually-double whitespace after
+            // the middot separator (`callback: · : void`). Drop
+            // the leading `:` and surrounding whitespace when it
+            // appears; leave labels that carry semantic prefix
+            // characters intact.
             let chip = hints_on_line
                 .iter()
-                .map(|h| h.label.trim().to_string())
+                .map(|h| {
+                    let s = h.label.trim();
+                    // Type-hint pattern: leading `:` (possibly with
+                    // space around it). Strip the colon + its
+                    // adjacent whitespace so only the type name
+                    // survives.
+                    let stripped = s.strip_prefix(':').unwrap_or(s).trim_start();
+                    stripped.to_string()
+                })
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
