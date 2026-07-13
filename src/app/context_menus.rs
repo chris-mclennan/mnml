@@ -1549,6 +1549,11 @@ impl App {
             Command(id) => {
                 crate::command::run(id, self);
             }
+            OpenGlyphBuilderForCp(cp) => {
+                if !self.open_glyph_builder_for_edit_cp(cp) {
+                    self.toast(format!("no glyph found for U+{cp:04X}"));
+                }
+            }
             CloseTab(id) => self.close_pane(id),
             CloseOtherTabs(id) => self.close_panes_except(Some(id)),
             CloseAllTabs => self.close_panes_except(None),

@@ -71,6 +71,11 @@ pub enum MenuAction {
     ShowIntegrationManifest(String),
     /// Run a registered command by id (e.g. `tree.refresh`).
     Command(&'static str),
+    /// Open the glyph builder pre-loaded with a specific codepoint
+    /// so the user can nudge width / height / center. Surfaced by
+    /// the tab-bar AI chip right-click for baseline-drift fixes.
+    /// 2026-07-13.
+    OpenGlyphBuilderForCp(u32),
     CloseTab(PaneId),
     CloseOtherTabs(PaneId),
     CloseAllTabs,

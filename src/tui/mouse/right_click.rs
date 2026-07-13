@@ -1053,6 +1053,21 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         // kept the four half-placement items so the six-item
         // menu now maps to five distinct outcomes: toggle
         // existing + place in {left, right, top, bottom}.
+        // 2026-07-13 user requests — visibility toggles + glyph
+        // edit access straight from the chip's own menu (was
+        // config-only). Codepoint for the glyph builder is the
+        // PUA slot each AI kind uses (F8B0 / F8B1); the builder
+        // lets users nudge width/height/center to fix baseline
+        // drift against sibling codicons.
+        let ai_visibility_cur = app.config.ui.tab_bar_ai_icon.clone();
+        let mark = |val: &str| {
+            if ai_visibility_cur == val {
+                "✓ "
+            } else {
+                "  "
+            }
+        };
+        let glyph_cp: u32 = if is_codex { 0xF8B1 } else { 0xF8B0 };
         let items = vec![
             MenuItem::new(
                 format!("Toggle existing {kind_label} pane"),
@@ -1073,6 +1088,28 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuItem::new(
                 format!("New {kind_label} session in bottom half"),
                 MenuAction::Command(bottom_cmd),
+            ),
+            // Visibility submenu — pick which AI chips render in
+            // this cluster.
+            MenuItem::new(
+                format!("{}Show Claude only", mark("claude_code")),
+                MenuAction::Command("view.tab_bar_ai_claude_only"),
+            ),
+            MenuItem::new(
+                format!("{}Show Codex only", mark("codex")),
+                MenuAction::Command("view.tab_bar_ai_codex_only"),
+            ),
+            MenuItem::new(
+                format!("{}Show both", mark("both")),
+                MenuAction::Command("view.tab_bar_ai_both"),
+            ),
+            MenuItem::new(
+                format!("{}Hide these icons", mark("none")),
+                MenuAction::Command("view.tab_bar_ai_none"),
+            ),
+            MenuItem::new(
+                format!("Edit {kind_label} glyph…"),
+                MenuAction::OpenGlyphBuilderForCp(glyph_cp),
             ),
         ];
         // Suppress the unused vars from the earlier item set —

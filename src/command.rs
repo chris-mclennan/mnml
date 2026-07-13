@@ -2971,6 +2971,50 @@ fn builtin_commands() -> Vec<Command> {
                 }
             },
         },
+        // 2026-07-13 user request — quick-toggle visibility of
+        // the Claude/Codex chips in the top-right tab-bar cluster.
+        // Surfaced by the AI chip's right-click menu; also usable
+        // from the palette.
+        Command {
+            id: "view.tab_bar_ai_claude_only",
+            title: "Tab bar AI chips: show Claude only",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.tab_bar_ai_icon = "claude_code".into();
+                app.toast("tab-bar AI chips: Claude only");
+            },
+        },
+        Command {
+            id: "view.tab_bar_ai_codex_only",
+            title: "Tab bar AI chips: show Codex only",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.tab_bar_ai_icon = "codex".into();
+                app.toast("tab-bar AI chips: Codex only");
+            },
+        },
+        Command {
+            id: "view.tab_bar_ai_both",
+            title: "Tab bar AI chips: show Claude + Codex",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.tab_bar_ai_icon = "both".into();
+                app.toast("tab-bar AI chips: both");
+            },
+        },
+        Command {
+            id: "view.tab_bar_ai_none",
+            title: "Tab bar AI chips: hide (show none)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.tab_bar_ai_icon = "none".into();
+                app.toast("tab-bar AI chips: hidden");
+            },
+        },
         Command {
             id: "markdown.preview",
             title: "Markdown: open rendered preview (split)",
