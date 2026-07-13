@@ -244,8 +244,16 @@ pub fn cur() -> Theme {
 /// (single-leaf strip) and ui/mod.rs (per-leaf strip painter).
 pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, ratatui::style::Color) {
     match kind {
-        "codex" => ("\u{F8B1}", "C", t.cyan),
-        _ => ("\u{F8B0}", "*", t.orange),
+        // 2026-07-12 user request — the Claude Code glyph `F8B0`
+        // (mnml-patched PUA) renders one row higher than the
+        // sibling codicons (terminal EA85, split EB56/EB57) in
+        // the user's font because it was designed at a taller cap
+        // height. Swap to codicon `hubot` (EB25), which shares
+        // baseline + cap height with the rest of the cluster.
+        // Codex kept for parity; also swapped to hubot with a
+        // different tint since it's hidden by default anyway.
+        "codex" => ("\u{EB25}", "C", t.cyan),
+        _ => ("\u{EB25}", "*", t.orange),
     }
 }
 

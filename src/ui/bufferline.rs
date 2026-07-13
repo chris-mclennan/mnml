@@ -129,6 +129,11 @@ pub struct TabChipInputs {
     pub is_dirty: bool,
     pub is_pinned: bool,
     pub is_preview: bool,
+    /// True when the mouse is hovering this tab. Renderer paints
+    /// the close `×` glyph on hover (not just when active) so
+    /// users can close an inactive tab in a single click.
+    /// 2026-07-12.
+    pub is_hovered: bool,
     /// `""` for panes with no LSP / linter diagnostics; else a
     /// short `"✗3"` (errors) or `"⚠2"` (warnings) chip that renders
     /// between the name and the badge.
@@ -204,12 +209,20 @@ pub fn tab_chip_spans(
     let t = theme::cur();
     let pin_glyph = if nerd { "\u{f08d}" } else { "P" };
     let close_glyph = if nerd { "\u{F0156}" } else { "x" };
+    // 2026-07-12 user request — hover reveals the close × on
+    // non-active tabs so a single click closes an inactive tab
+    // (previously required focus-then-click). Same close_glyph as
+    // the active tab; different fg color so it reads as
+    // "affordance revealed on hover" rather than "this is the
+    // active tab."
     let (badge, badge_fg_active, badge_fg_inactive) = if inputs.is_pinned {
         (pin_glyph.to_string(), t.yellow, t.yellow)
     } else if inputs.is_dirty {
         ("●".to_string(), t.orange, t.orange)
     } else if inputs.is_active {
         (close_glyph.to_string(), t.red, t.grey)
+    } else if inputs.is_hovered {
+        (close_glyph.to_string(), t.grey_fg, t.grey_fg)
     } else {
         (" ".to_string(), t.grey_fg, t.grey)
     };
@@ -330,7 +343,16 @@ pub fn paint_tab_chip(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(bg)),
         chip_rect,
     );
-    let close = if inputs.is_active && !inputs.is_pinned && !inputs.is_dirty && painted_w >= 2 {
+    // Close hit-rect: any tab whose badge is `×` should route
+    // a click on the badge cells to the close action. That's the
+    // active tab (existing) OR — 2026-07-12 — a hovered non-active
+    // tab. Pinned + dirty tabs still show their pin / dirty dot
+    // so no close rect there.
+    let close = if (inputs.is_active || inputs.is_hovered)
+        && !inputs.is_pinned
+        && !inputs.is_dirty
+        && painted_w >= 2
+    {
         Some(Rect {
             x: chip_rect.x + chip_rect.width - 2,
             y: chip_rect.y,
@@ -756,6 +778,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             is_dirty: pane.is_dirty(),
             is_pinned,
             is_preview,
+            is_hovered: app.hovered_bufferline_tab == Some(i),
             diag_chip: diag,
             verb_split,
             // Top bufferline shows the whole title (labels[i] is
@@ -1624,6 +1647,7 @@ mod tests {
             is_dirty: false,
             is_pinned: false,
             is_preview: false,
+            is_hovered: false,
             diag_chip: String::new(),
             verb_split: None,
             name_cap: 32,

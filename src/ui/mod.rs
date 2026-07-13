@@ -3536,6 +3536,7 @@ fn paint_leaf_tab_strip(
             is_pinned: matches!(pane, Pane::Editor(b) if b.is_pinned),
             is_preview: matches!(pane, Pane::Editor(b) if b.is_preview)
                 || matches!(pane, Pane::Request(rp) if rp.is_preview),
+            is_hovered: app.hovered_bufferline_tab == Some(id),
             diag_chip: crate::ui::bufferline::diag_chip_for(pane),
             verb_split,
             name_cap: chip_max_name_w,

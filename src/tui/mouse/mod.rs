@@ -462,6 +462,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // A move OFF every chip clears the hover; click + key events also clear
     // it (handled elsewhere).
     if matches!(m.kind, MouseEventKind::Moved) {
+        // 2026-07-12 — track which bufferline tab the mouse is over
+        // so the renderer paints its close `×` glyph on hover (not
+        // just when active). Rebuilt every Moved event so leaving
+        // the strip clears it.
+        app.hovered_bufferline_tab = app
+            .rects
+            .bufferline_tabs
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            .map(|&(_, pid)| pid);
         // 2026-06-28 — hover-highlight on context menu items.
         // The hover-tooltip Moved handler used to return early,
         // which meant the dedicated context-menu hover block at

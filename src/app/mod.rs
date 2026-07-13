@@ -4123,6 +4123,14 @@ pub struct App {
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
     pub hover_chip: Option<(crate::HoverChip, std::time::Instant)>,
+    /// PaneId of the bufferline tab the mouse is currently over
+    /// (any tab, active or not). Set by the `Moved` mouse handler
+    /// when the pointer is over a `bufferline_tabs` rect; cleared
+    /// when it moves off. Consulted by the bufferline renderer so
+    /// a non-active tab's close `×` glyph appears on hover, giving
+    /// users a "close inactive tab in one click" affordance
+    /// (previously they had to focus the tab first). 2026-07-12.
+    pub hovered_bufferline_tab: Option<PaneId>,
     /// Which editor line is currently under the mouse cursor
     /// (`(pane_id, 0-based line_no)`). Drives the VS Code-style
     /// fold-arrow indicator: foldable lines show a `↓` in the
@@ -5039,6 +5047,7 @@ impl App {
             debug_rects: false,
             no_pane_cmdline: None,
             hover_chip: None,
+            hovered_bufferline_tab: None,
             hover_editor_line: None,
             hover_divider_idx: None,
             hover_tree_edge: false,

@@ -1530,7 +1530,11 @@ impl Default for Config {
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
                 top_bar_cluster_mode: "auto".to_string(),
-                tab_bar_ai_icon: "both".to_string(),
+                // 2026-07-12 user request — default to Claude Code
+                // only (was "both", which added Codex right next to
+                // Claude). Users who want Codex too can flip
+                // `[ui] tab_bar_ai_icon = "both"` in config.
+                tab_bar_ai_icon: "claude_code".to_string(),
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
                 hover_help: false,
