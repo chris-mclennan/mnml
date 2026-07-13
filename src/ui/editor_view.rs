@@ -1000,8 +1000,16 @@ pub fn draw_pane(
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join(" · ");
+            // Paint starting AT the first cell past end-of-code
+            // (n). Those cells are already blank from the code-
+            // area init, so an extra leading space in `with_lead`
+            // would land on top of an already-blank cell and read
+            // as a double-space gap. 2026-07-12 user report — was
+            // `start_c = n + 1` + `" {chip}"` → 2 blank cells then
+            // chip. Now: `start_c = n` + `" {chip}"` → 1 blank cell
+            // (from the leading space) then chip.
             let with_lead = format!(" {chip}");
-            let start_c = n + 1;
+            let start_c = n;
             let hcolor = theme::cur().comment;
             for (i, mc) in with_lead.chars().enumerate() {
                 let c = start_c + i;
