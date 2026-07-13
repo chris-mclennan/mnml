@@ -127,6 +127,33 @@ impl LspClient {
         // `initialize` → `initialized`. We don't wait for the response (servers in
         // practice queue the messages that follow); the reader just ignores it.
         let root_uri = path_to_uri(root);
+        // 2026-07-12 user request — TypeScript inlay hints
+        // (`js/ts.inlayHints.parameterTypes.enabled` etc.). The
+        // typescript-language-server reads its inlay-hint switches
+        // from `initializationOptions.preferences`; they default OFF
+        // if we don't send them. Wire all six categories on for
+        // any TS server so `[editor] inlay_hints = true` in mnml's
+        // config actually surfaces param-type / return-type / etc.
+        // hints (the LSP server won't emit any hints without these
+        // preferences set even if the client requests textDocument/
+        // inlayHint).
+        let initialization_options =
+            if sc.cmd.contains("typescript-language-server") || sc.name.contains("typescript") {
+                json!({
+                    "preferences": {
+                        "includeInlayParameterNameHints": "all",
+                        "includeInlayParameterNameHintsWhenArgumentMatchesName": false,
+                        "includeInlayFunctionParameterTypeHints": true,
+                        "includeInlayVariableTypeHints": true,
+                        "includeInlayVariableTypeHintsWhenTypeMatchesName": false,
+                        "includeInlayPropertyDeclarationTypeHints": true,
+                        "includeInlayFunctionLikeReturnTypeHints": true,
+                        "includeInlayEnumMemberValueHints": true,
+                    }
+                })
+            } else {
+                serde_json::Value::Null
+            };
         c.request(
             "initialize",
             json!({
@@ -134,6 +161,7 @@ impl LspClient {
                 "clientInfo": { "name": "mnml" },
                 "rootUri": root_uri,
                 "workspaceFolders": [ { "uri": root_uri, "name": "workspace" } ],
+                "initializationOptions": initialization_options,
                 "capabilities": {
                     "window": {
                         "workDoneProgress": true
