@@ -515,13 +515,47 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Enter => {
+            // keyboard-round-9 SEV-2 F1 2026-07-14 — walk to the
+            // nearest Action if item_idx points somewhere invalid
+            // (usize::MAX after a mouse open, or a Separator). Prior
+            // impl silently swallowed Enter in those cases; users
+            // expected first-item activation.
+            let target = match menu.items.get(open.item_idx) {
+                Some(crate::menu_bar::MenuItem::Action { .. }) => open.item_idx,
+                _ => walk_to_action(&menu.items, 0, true),
+            };
             if let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
-                menu.items.get(open.item_idx)
+                menu.items.get(target)
             {
                 let id = *command_id;
                 app.menu_open = None;
                 crate::command::run(id, app);
             }
+            true
+        }
+        // keyboard-round-9 SEV-2 F1 2026-07-14 — printable-char
+        // mnemonic (first-letter match) fires the corresponding
+        // Action, matching VS Code / GTK menu-bar convention. Any
+        // OTHER printable char is swallowed so it can't leak into
+        // the editor while the menu is open. Was: pressing N/O/S
+        // while File menu was up typed the letter into the buffer
+        // and left the menu open — worst of both worlds.
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let lower = c.to_ascii_lowercase();
+            let hit = menu.items.iter().enumerate().find_map(|(i, it)| match it {
+                crate::menu_bar::MenuItem::Action { label, command_id } => label
+                    .chars()
+                    .find(|ch| ch.is_ascii_alphabetic())
+                    .and_then(|first| {
+                        (first.to_ascii_lowercase() == lower).then_some((i, *command_id))
+                    }),
+                _ => None,
+            });
+            if let Some((_, id)) = hit {
+                app.menu_open = None;
+                crate::command::run(id, app);
+            }
+            // Swallow the char either way — no bleed into the editor.
             true
         }
         _ => false,
