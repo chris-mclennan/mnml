@@ -804,13 +804,18 @@ pub struct UiConfig {
     /// `ai.codex_new` when available) and jumps focus into it — the
     /// session shows up in the Sessions activity panel. Four values:
     ///   - `"none"` — no AI button on the tab bar.
-    ///   - `"claude_code"` — Claude Code launcher only.
+    ///   - `"claude_code"` (default 2026-07-12) — Claude Code launcher only.
     ///   - `"codex"` — Codex launcher only.
-    ///   - `"both"` (default 2026-07-09) — Claude Code + Codex.
+    ///   - `"both"` — Claude Code + Codex.
+    ///
+    /// The default was `"both"` from 2026-07-09 through 2026-07-11 and
+    /// then flipped to `"claude_code"` (Codex hidden by default) so users
+    /// wouldn't see two AI launchers when they've only wired up one.
+    /// Right-click the AI chip → visibility submenu to switch at runtime.
     ///
     /// ```toml
     /// [ui]
-    /// tab_bar_ai_icon = "both"
+    /// tab_bar_ai_icon = "claude_code"
     /// ```
     pub tab_bar_ai_icon: String,
 

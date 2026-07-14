@@ -1019,7 +1019,27 @@ impl App {
                     MenuAction::Command("http.new_chain"),
                 )],
             ),
-            5 => ("MOCKS", vec![]),
+            // design-round-4 issue 9 2026-07-14 — MOCKS was the only
+            // section of 7 with no section-specific verb, which read
+            // like "the menu is broken" after the other 6 sections
+            // taught the user "section header → section verbs." Mocks
+            // can't be created from scratch (they're derived from
+            // captured/live responses via http.save_mock on a request
+            // pane), but surfacing the save/replay pair here at least
+            // shows the mock lifecycle exists.
+            5 => (
+                "MOCKS",
+                vec![
+                    MenuItem::new(
+                        "Save active response as mock",
+                        MenuAction::Command("http.save_mock"),
+                    ),
+                    MenuItem::new(
+                        "Replay mock into active request",
+                        MenuAction::Command("http.replay_mock"),
+                    ),
+                ],
+            ),
             6 => (
                 "COLLECTIONS",
                 vec![MenuItem::new(

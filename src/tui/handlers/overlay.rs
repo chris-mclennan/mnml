@@ -435,14 +435,25 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
                         // user saw a black hole: picker gone, no
                         // feedback. Toast at fire-time so the picker
                         // close has visible cause even if the reply
-                        // is empty / delayed.
+                        // is empty / delayed. design-round-4 issue 6
+                        // 2026-07-14 — lowercased to match the
+                        // `noun: state` toast convention (`"inlay
+                        // hints: on"`, `"tab-bar AI chips: hidden"`).
                         app.close_picker();
-                        app.toast("Symbols: fetching…");
+                        app.toast("symbols: fetching…");
                         crate::command::run("lsp.symbols", app);
                         return;
                     }
                     '#' => {
+                        // design-round-4 issue 5 2026-07-14 — same
+                        // async-black-hole risk as `@`; `#` opens a
+                        // query prompt but the prompt itself + the
+                        // downstream `workspace/symbol` reply can
+                        // both be slow / empty on unwarmed LSPs. Add
+                        // the sibling toast so the pair behaves the
+                        // same way.
                         app.close_picker();
+                        app.toast("workspace symbols: fetching…");
                         crate::command::run("lsp.workspace_symbols", app);
                         return;
                     }

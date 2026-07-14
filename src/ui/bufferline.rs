@@ -215,14 +215,24 @@ pub fn tab_chip_spans(
     // the active tab; different fg color so it reads as
     // "affordance revealed on hover" rather than "this is the
     // active tab."
+    // design-round-4 issue 8 2026-07-14 — hover on a DIRTY inactive
+    // tab now also reveals ×, painted in orange so it stays legible
+    // that the tab has unsaved changes (the click still routes
+    // through the existing unsaved-changes confirm flow on
+    // `buffer.close`). Was: is_dirty won the branch before
+    // is_hovered, so dirty inactive tabs stayed at the orange dot
+    // and required focus-then-close — exactly the "quick dismiss"
+    // case the hover fix was written for.
     let (badge, badge_fg_active, badge_fg_inactive) = if inputs.is_pinned {
         (pin_glyph.to_string(), t.yellow, t.yellow)
-    } else if inputs.is_dirty {
-        ("●".to_string(), t.orange, t.orange)
     } else if inputs.is_active {
         (close_glyph.to_string(), t.red, t.grey)
+    } else if inputs.is_hovered && inputs.is_dirty {
+        (close_glyph.to_string(), t.orange, t.orange)
     } else if inputs.is_hovered {
         (close_glyph.to_string(), t.grey_fg, t.grey_fg)
+    } else if inputs.is_dirty {
+        ("●".to_string(), t.orange, t.orange)
     } else {
         (" ".to_string(), t.grey_fg, t.grey)
     };
@@ -345,14 +355,14 @@ pub fn paint_tab_chip(
     );
     // Close hit-rect: any tab whose badge is `×` should route
     // a click on the badge cells to the close action. That's the
-    // active tab (existing) OR — 2026-07-12 — a hovered non-active
-    // tab. Pinned + dirty tabs still show their pin / dirty dot
-    // so no close rect there.
-    let close = if (inputs.is_active || inputs.is_hovered)
-        && !inputs.is_pinned
-        && !inputs.is_dirty
-        && painted_w >= 2
-    {
+    // active tab OR — 2026-07-12 — a hovered non-active tab.
+    // design-round-4 issue 8 2026-07-14 — was `&& !is_dirty`, which
+    // meant a hovered dirty inactive tab painted its × (per the
+    // badge chain above) but the click on it fell through to
+    // "activate the tab" instead of closing. `buffer.close`'s
+    // existing unsaved-changes confirm flow makes registering the
+    // rect safe. Pinned tabs stay opt-out (explicit unpin verb).
+    let close = if (inputs.is_active || inputs.is_hovered) && !inputs.is_pinned && painted_w >= 2 {
         Some(Rect {
             x: chip_rect.x + chip_rect.width - 2,
             y: chip_rect.y,
@@ -1864,12 +1874,14 @@ mod tests {
     }
 
     #[test]
-    fn chip_paint_registers_close_rect_only_for_active_clean_unpinned() {
+    fn chip_paint_registers_close_rect_only_for_active_or_hovered_unpinned() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
-        // Grid so each case renders into its own scratch buffer.
+        // design-round-4 issue 8 2026-07-14 — dirty tabs now DO get
+        // a close rect (× reveals on hover, unsaved-changes confirm
+        // fires downstream). Pinned tabs still opt out.
         let cases: Vec<(TabChipInputs, bool, &str)> = vec![
-            (base_inputs(), false, "inactive"),
+            (base_inputs(), false, "inactive-not-hovered"),
             (
                 TabChipInputs {
                     is_active: true,
@@ -1884,7 +1896,7 @@ mod tests {
                     is_dirty: true,
                     ..base_inputs()
                 },
-                false,
+                true,
                 "active-dirty",
             ),
             (
@@ -1895,6 +1907,32 @@ mod tests {
                 },
                 false,
                 "active-pinned",
+            ),
+            (
+                TabChipInputs {
+                    is_hovered: true,
+                    ..base_inputs()
+                },
+                true,
+                "inactive-hovered",
+            ),
+            (
+                TabChipInputs {
+                    is_hovered: true,
+                    is_dirty: true,
+                    ..base_inputs()
+                },
+                true,
+                "inactive-hovered-dirty",
+            ),
+            (
+                TabChipInputs {
+                    is_hovered: true,
+                    is_pinned: true,
+                    ..base_inputs()
+                },
+                false,
+                "hovered-pinned",
             ),
         ];
         for (inputs, expect_close, label) in cases {

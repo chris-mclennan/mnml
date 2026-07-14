@@ -63,6 +63,13 @@ pub struct MenuOpenState {
     /// shows the highlight by default. Mouse-opened menus leave it
     /// `false` and only highlight on hover.
     pub keyboard_opened: bool,
+    /// Last mnemonic letter that was matched inside this dropdown.
+    /// Set when a printable-char press finds an Action; consecutive
+    /// presses of the same letter cycle through the remaining matches
+    /// (highlight-only) before Enter commits — VS Code / GTK / Win32
+    /// convention. Cleared on arrow-nav so re-pressing the letter
+    /// starts fresh. design-round-4 issue 1 2026-07-14.
+    pub last_mnemonic: Option<char>,
 }
 
 impl MenuOpenState {
@@ -71,6 +78,7 @@ impl MenuOpenState {
             menu_idx,
             item_idx: 0,
             keyboard_opened: true,
+            last_mnemonic: None,
         }
     }
 
@@ -79,6 +87,7 @@ impl MenuOpenState {
             menu_idx,
             item_idx: usize::MAX,
             keyboard_opened: false,
+            last_mnemonic: None,
         }
     }
 }

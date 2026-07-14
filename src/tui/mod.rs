@@ -494,6 +494,7 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
                 if let Some(s) = app.menu_open.as_mut() {
                     s.item_idx = new_idx;
                     s.keyboard_opened = true;
+                    s.last_mnemonic = None;
                 }
             }
             true
@@ -510,6 +511,7 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
                 if let Some(s) = app.menu_open.as_mut() {
                     s.item_idx = new_idx;
                     s.keyboard_opened = true;
+                    s.last_mnemonic = None;
                 }
             }
             true
@@ -534,26 +536,45 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         // keyboard-round-9 SEV-2 F1 2026-07-14 — printable-char
-        // mnemonic (first-letter match) fires the corresponding
-        // Action, matching VS Code / GTK menu-bar convention. Any
-        // OTHER printable char is swallowed so it can't leak into
-        // the editor while the menu is open. Was: pressing N/O/S
-        // while File menu was up typed the letter into the buffer
-        // and left the menu open — worst of both worlds.
+        // mnemonic (first-letter match) highlights the matching
+        // Action; a second press of the SAME letter cycles to the
+        // next match; Enter commits. design-round-4 issue 1
+        // 2026-07-14 — was single-shot "fire the first match", so
+        // View's 7 "Toggle*" items all collapsed onto "Toggle file
+        // tree" and the other 6 were unreachable. Any OTHER
+        // printable char is still swallowed so it can't leak into
+        // the editor while the menu is open.
         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
             let lower = c.to_ascii_lowercase();
-            let hit = menu.items.iter().enumerate().find_map(|(i, it)| match it {
-                crate::menu_bar::MenuItem::Action { label, command_id } => label
-                    .chars()
-                    .find(|ch| ch.is_ascii_alphabetic())
-                    .and_then(|first| {
-                        (first.to_ascii_lowercase() == lower).then_some((i, *command_id))
-                    }),
-                _ => None,
-            });
-            if let Some((_, id)) = hit {
-                app.menu_open = None;
-                crate::command::run(id, app);
+            let matches: Vec<usize> = menu
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(i, it)| match it {
+                    crate::menu_bar::MenuItem::Action { label, .. } => label
+                        .chars()
+                        .find(|ch| ch.is_ascii_alphabetic())
+                        .and_then(|first| (first.to_ascii_lowercase() == lower).then_some(i)),
+                    _ => None,
+                })
+                .collect();
+            if let Some(&first) = matches.first() {
+                // Repeat press of same letter → advance to next match
+                // (wraps). Different letter → land on first match.
+                let target = if open.last_mnemonic == Some(lower) && matches.len() > 1 {
+                    matches
+                        .iter()
+                        .find(|&&idx| idx > open.item_idx)
+                        .copied()
+                        .unwrap_or(first)
+                } else {
+                    first
+                };
+                if let Some(s) = app.menu_open.as_mut() {
+                    s.item_idx = target;
+                    s.keyboard_opened = true;
+                    s.last_mnemonic = Some(lower);
+                }
             }
             // Swallow the char either way — no bleed into the editor.
             true
