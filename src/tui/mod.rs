@@ -402,17 +402,30 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
 /// `[ui] menu_bar` mode isn't `"hidden"`.
 fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
     let menus = crate::menu_bar::bar();
+    // keyboard-round-10 SEV-2 F1 2026-07-14 — the menu bar clips
+    // menus that don't fit before the right-side chip cluster (at
+    // 120 cols only File/Edit/Selection render). Alt+letter used
+    // to match ANY menu by first-alpha regardless of visibility,
+    // so `Alt+V` on a 120-col terminal opened the View menu in
+    // state without a dropdown ever rendering — Enter then fired
+    // the invisible menu's first Action. Only accept matches that
+    // correspond to a rect registered during last render.
+    let visible_idxs: std::collections::HashSet<usize> =
+        app.rects.menu_bar_words.iter().map(|(_, i)| *i).collect();
+    let is_visible = |i: usize| visible_idxs.is_empty() || visible_idxs.contains(&i);
     // F10 — open the first menu whose label is alphabetic
     // (skip the brand menu, whose label starts with a Nerd Font
     // glyph). Falls back to index 0 if no alphabetic menu exists.
     if key.code == KeyCode::F(10) && key.modifiers.is_empty() && !menus.is_empty() {
         let target = menus
             .iter()
-            .position(|m| {
-                m.label
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic())
+            .enumerate()
+            .position(|(i, m)| {
+                is_visible(i)
+                    && m.label
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphabetic())
             })
             .unwrap_or(0);
         app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(target));
@@ -436,11 +449,12 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
         && let KeyCode::Char(ch) = key.code
     {
         let ch_lower = ch.to_ascii_lowercase();
-        if let Some((i, _)) = menus.iter().enumerate().find(|(_, m)| {
-            m.label
-                .chars()
-                .find(|c| c.is_ascii_alphabetic())
-                .is_some_and(|c| c.to_ascii_lowercase() == ch_lower)
+        if let Some((i, _)) = menus.iter().enumerate().find(|(i, m)| {
+            is_visible(*i)
+                && m.label
+                    .chars()
+                    .find(|c| c.is_ascii_alphabetic())
+                    .is_some_and(|c| c.to_ascii_lowercase() == ch_lower)
         }) {
             app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(i));
             return true;
@@ -465,17 +479,20 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Left => {
-            let n = menus.len();
-            if n > 1 {
-                let prev = (open.menu_idx + n - 1) % n;
+            // keyboard-round-10 SEV-2 F1 2026-07-14 — skip menus
+            // that aren't currently visible in the bar. Otherwise
+            // Right from Selection at 120 cols advanced into an
+            // invisible View menu and subsequent Enter fired an
+            // action with no visible dropdown.
+            let visible: Vec<usize> = app.rects.menu_bar_words.iter().map(|(_, i)| *i).collect();
+            if let Some(prev) = prev_visible_menu(open.menu_idx, &visible, menus.len()) {
                 app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(prev));
             }
             true
         }
         KeyCode::Right => {
-            let n = menus.len();
-            if n > 1 {
-                let next = (open.menu_idx + 1) % n;
+            let visible: Vec<usize> = app.rects.menu_bar_words.iter().map(|(_, i)| *i).collect();
+            if let Some(next) = next_visible_menu(open.menu_idx, &visible, menus.len()) {
                 app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(next));
             }
             true
@@ -581,6 +598,43 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
         }
         _ => false,
     }
+}
+
+/// Sort + dedup the visible-menu indexes and return the next one after
+/// `cur` (wraps). Returns None when `visible` is empty (menu bar hasn't
+/// rendered yet) or has one element (nothing to advance to).
+/// keyboard-round-10 SEV-2 F1.
+fn next_visible_menu(cur: usize, visible: &[usize], _total: usize) -> Option<usize> {
+    let mut vis: Vec<usize> = visible.to_vec();
+    vis.sort_unstable();
+    vis.dedup();
+    if vis.len() < 2 {
+        return None;
+    }
+    // First visible > cur, else wrap to smallest.
+    Some(
+        vis.iter()
+            .copied()
+            .find(|&i| i > cur)
+            .unwrap_or_else(|| vis[0]),
+    )
+}
+
+fn prev_visible_menu(cur: usize, visible: &[usize], _total: usize) -> Option<usize> {
+    let mut vis: Vec<usize> = visible.to_vec();
+    vis.sort_unstable();
+    vis.dedup();
+    if vis.len() < 2 {
+        return None;
+    }
+    // Last visible < cur, else wrap to largest.
+    Some(
+        vis.iter()
+            .copied()
+            .rev()
+            .find(|&i| i < cur)
+            .unwrap_or_else(|| vis[vis.len() - 1]),
+    )
 }
 
 /// Walk through `items` starting at `start`, in the given direction

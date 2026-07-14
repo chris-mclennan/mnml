@@ -332,8 +332,15 @@ impl App {
         b.editor.clear_extra_cursors();
         let (first_s, first_e) = hits[0];
         b.editor.set_selection(first_s, first_e);
-        for (s, _e) in hits.iter().skip(1) {
-            b.editor.add_extra_cursor(*s);
+        // keyboard-round-10 SEV-2 F2 2026-07-14 — was
+        // `add_extra_cursor(*s)`, which discarded each hit's end
+        // and stored anchor==cursor (zero-length selection). Typing
+        // then INSERTED at each extra instead of REPLACING the
+        // word, yielding `COUNTcount` at every extra hit. Use the
+        // selection-aware helper so all N cursors span the same
+        // word range.
+        for (s, e) in hits.iter().skip(1) {
+            b.editor.add_extra_cursor_with_anchor(*s, *e);
         }
         if hits.len() > 1 {
             self.toast(format!("selected {} occurrences", hits.len()));

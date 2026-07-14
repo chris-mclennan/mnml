@@ -1992,6 +1992,21 @@ fn builtin_commands() -> Vec<Command> {
                 if let Some(pid) = app.right_panel_active_pane_id() {
                     app.close_pane(pid);
                 }
+                // keyboard-round-10 SEV-2 F6 2026-07-14 — when the
+                // close empties the panel, snap focus back to the
+                // main pane / tree instead of leaving `Focus::RightPanel`
+                // on an empty panel. status.focus was publishing
+                // "right_panel" with rightPanelPanes:[] which is
+                // ambiguous for downstream consumers + confused
+                // subsequent keyboard routing.
+                if app.right_panel_panes.is_empty() && app.focus == crate::focus::Focus::RightPanel
+                {
+                    app.focus = if app.active.is_some() {
+                        crate::focus::Focus::Pane
+                    } else {
+                        crate::focus::Focus::Tree
+                    };
+                }
             },
         },
         // vscode-user-keyboard S1-1 — chip toggle / edit / remove had

@@ -837,6 +837,36 @@ impl Editor {
         self.sort_extras();
     }
 
+    /// Add an extra cursor at `cursor` with a real selection anchored at
+    /// `anchor` (so the extra spans `[min(anchor,cursor), max(…))`). Used
+    /// by "Select all occurrences" (Ctrl+Shift+L) where each hit is a
+    /// word range, not just a point — the plain `add_extra_cursor(byte)`
+    /// helper synthesizes anchor=cursor for the pointwise mouse case,
+    /// which produced zero-length "selections" that made typing INSERT
+    /// instead of REPLACE. keyboard-round-10 SEV-2 F2 2026-07-14.
+    pub fn add_extra_cursor_with_anchor(&mut self, anchor: usize, cursor: usize) {
+        let cur = cursor.min(self.text.len());
+        let mut cur = cur;
+        while cur < self.text.len() && !self.text.is_char_boundary(cur) {
+            cur += 1;
+        }
+        let mut anc = anchor.min(self.text.len());
+        while anc < self.text.len() && !self.text.is_char_boundary(anc) {
+            anc += 1;
+        }
+        if cur == self.cursor {
+            return;
+        }
+        if let Some(pos) = self.extra_cursors.iter().position(|&c| c == cur) {
+            self.extra_cursors.remove(pos);
+            self.extra_anchors.remove(pos);
+            return;
+        }
+        self.extra_cursors.push(cur);
+        self.extra_anchors.push(Some(anc));
+        self.sort_extras();
+    }
+
     /// Re-sort `extra_cursors` and keep `extra_anchors` in sync. Public
     /// helpers that mutate the parallel arrays should call this after.
     fn sort_extras(&mut self) {
