@@ -1587,6 +1587,20 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     if let Some(scratch) = app.scratch_term.as_mut()
         && scratch.focused
     {
+        // keyboard-round-12 SEV-2 2026-07-14 — Ctrl+` must escape
+        // the pty-forwarding branch so it can reach the toggle
+        // command and CLOSE the scratch term. Was: every non-Esc
+        // key (including the toggle chord itself) got forwarded
+        // to the child, which just typed a backtick into the
+        // shell — the close half of the toggle was unreachable
+        // from the keyboard. Also handle Ctrl+~ / Ctrl+Shift+` in
+        // case a terminal delivers Shift with the tilde form.
+        let is_close_chord = matches!(key.code, KeyCode::Char('`') | KeyCode::Char('~'))
+            && key.modifiers.contains(KeyModifiers::CONTROL);
+        if is_close_chord {
+            app.toggle_scratch_term();
+            return;
+        }
         if key.code == KeyCode::Esc {
             scratch.focused = false;
             return;

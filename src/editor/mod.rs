@@ -4246,11 +4246,24 @@ impl Editor {
             }
 
             // ── history ──
+            // keyboard-round-12 SEV-2 2026-07-14 — clear extra
+            // cursors on undo/redo so `Ctrl+Shift+L` + type +
+            // `Ctrl+Z` doesn't leave the buffer restored but the
+            // extras still armed (subsequent typing then hit every
+            // dormant cursor — data integrity risk). VS Code
+            // snapshots selection alongside text; mnml's Snapshot
+            // struct doesn't yet include the extra_cursors /
+            // extra_anchors vectors so match VS Code's UX at a
+            // higher level: an undo/redo exits multi-cursor mode.
+            // The user can always Ctrl+Shift+L again to restore
+            // it.
             Undo => {
                 if let Some(s) = self.undo.pop() {
                     let cur = self.snapshot();
                     self.redo.push(cur);
                     self.restore(s);
+                    self.extra_cursors.clear();
+                    self.extra_anchors.clear();
                     out.buffer_changed = true;
                 }
             }
@@ -4259,6 +4272,8 @@ impl Editor {
                     let cur = self.snapshot();
                     self.undo.push(cur);
                     self.restore(s);
+                    self.extra_cursors.clear();
+                    self.extra_anchors.clear();
                     out.buffer_changed = true;
                 }
             }
