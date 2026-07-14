@@ -426,7 +426,18 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
                         return;
                     }
                     '@' => {
+                        // keyboard-round-9 SEV-2 2026-07-14 — the `@`
+                        // mode-switch closes the picker and fires an
+                        // async `textDocument/documentSymbol` request.
+                        // On a small file (or before the LSP has fully
+                        // initialized) the reply either doesn't arrive
+                        // or arrives with 0 symbols — either way the
+                        // user saw a black hole: picker gone, no
+                        // feedback. Toast at fire-time so the picker
+                        // close has visible cause even if the reply
+                        // is empty / delayed.
                         app.close_picker();
+                        app.toast("Symbols: fetching…");
                         crate::command::run("lsp.symbols", app);
                         return;
                     }

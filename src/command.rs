@@ -350,9 +350,16 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             // VSCode convention. `Ctrl+B` toggles tree visibility; this just
             // moves focus there (and forces it visible if it was hidden).
+            // keyboard-round-9 SEV-2 2026-07-14 — also switches the
+            // sidebar activity to Explorer so `Ctrl+Shift+E` from any
+            // other activity (Integrations, Search, Debug, …) actually
+            // returns to the file list. Was: only refocused the tree
+            // *within* the current activity, so Ctrl+Shift+X stranded
+            // the user with no keyboard escape.
             keys: &["ctrl+shift+e"],
             run: |app| {
                 app.tree_visible = true;
+                app.set_activity_section(crate::app::ActivitySection::Explorer);
                 app.focus_tree();
             },
         },
