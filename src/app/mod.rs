@@ -2353,6 +2353,12 @@ pub struct PaneRects {
     /// users can commit without typing Enter / Esc.
     pub settings_save_button: Option<Rect>,
     pub settings_cancel_button: Option<Rect>,
+    /// mouse-round-12 SEV-2 F3 2026-07-14 — click-target for the
+    /// `/ filter` row at the top of the settings overlay. Was:
+    /// only `/` on the keyboard focused the filter — mouse-first
+    /// users typing after the click sent letters straight to the
+    /// row keyboard handler ('l' cycled Line numbers etc.).
+    pub settings_filter_row: Option<Rect>,
     /// GitGraph column header rects (Author / Date / SHA) — click to
     /// cycle that column's sort (asc / desc / none).
     pub git_graph_column_headers: Vec<(Rect, crate::git::graph::SortColumn)>,
@@ -4141,6 +4147,13 @@ pub struct App {
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
     pub hover_chip: Option<(crate::HoverChip, std::time::Instant)>,
+    /// Last observed mouse position (col, row) from a `Moved` event.
+    /// `None` until the mouse first moves (fresh session or after a
+    /// keystroke that reset hover state). Consumed by hover-only
+    /// affordances that want to condition their hit-rects on "is the
+    /// mouse over me right now" without going through the `hover_chip`
+    /// tooltip pipeline. mouse-round-12 SEV-2 F1 2026-07-14.
+    pub mouse_pos: Option<(u16, u16)>,
     /// PaneId of the bufferline tab the mouse is currently over
     /// (any tab, active or not). Set by the `Moved` mouse handler
     /// when the pointer is over a `bufferline_tabs` rect; cleared
@@ -5065,6 +5078,7 @@ impl App {
             debug_rects: false,
             no_pane_cmdline: None,
             hover_chip: None,
+            mouse_pos: None,
             hovered_bufferline_tab: None,
             hover_editor_line: None,
             hover_divider_idx: None,

@@ -109,6 +109,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         width: inner.width,
         height: 1,
     };
+    // mouse-round-12 SEV-2 F3 2026-07-14 — register the filter row
+    // as a click target so mouse-first users can focus it without
+    // needing to press `/` on the keyboard.
+    app.rects.settings_filter_row = Some(filter_row_rect);
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(

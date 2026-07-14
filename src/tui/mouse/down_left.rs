@@ -223,6 +223,32 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if app.begin_git_graph_detail_drag(x, y) {
         return;
     }
+    // mouse-round-12 SEV-2 F2 2026-07-14 — divider double-click
+    // equalize must be checked BEFORE begin_divider_drag; the
+    // round-11 fallback at ~line 2760 was unreachable because
+    // begin_divider_drag returns unconditionally on divider hit.
+    // Match the same 450 ms double-click window, then consume.
+    if app
+        .rects
+        .split_dividers
+        .iter()
+        .any(|d| crate::app::dispatch::contains(d.rect, x, y))
+    {
+        let now = std::time::Instant::now();
+        let is_double = matches!(
+            app.last_click,
+            Some((prev, px, py, c))
+                if px == x
+                    && py == y
+                    && c >= 1
+                    && now.duration_since(prev) < std::time::Duration::from_millis(450)
+        );
+        app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
+        if is_double {
+            app.equalize_splits();
+            return;
+        }
+    }
     // Grab a split divider? (do this first — it sits between two pane rects)
     if app.begin_divider_drag(x, y) {
         return;

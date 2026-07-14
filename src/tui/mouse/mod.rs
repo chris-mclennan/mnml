@@ -462,6 +462,11 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // A move OFF every chip clears the hover; click + key events also clear
     // it (handled elsewhere).
     if matches!(m.kind, MouseEventKind::Moved) {
+        // mouse-round-12 SEV-2 F1 2026-07-14 — track raw pointer so
+        // hover-only affordances (workspace-header action chips)
+        // can gate their hit-rect registration on "mouse actually
+        // over this row" without going through the tooltip debounce.
+        app.mouse_pos = Some((x, y));
         // 2026-07-12 — track which bufferline tab the mouse is over
         // so the renderer paints its close `×` glyph on hover (not
         // just when active). Rebuilt every Moved event so leaving
@@ -855,6 +860,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                     && crate::app::dispatch::contains(rect, x, y)
                 {
                     app.close_settings_overlay_cancel();
+                    return;
+                }
+                // mouse-round-12 SEV-2 F3 2026-07-14 — click on the
+                // `/ filter` row focuses the filter so a mouse-first
+                // user can type to narrow the list. Was: only `/`
+                // on the keyboard did this; letters typed after a
+                // row-click routed to the row keyboard handler and
+                // cycled the row's value.
+                if let Some(rect) = app.rects.settings_filter_row
+                    && crate::app::dispatch::contains(rect, x, y)
+                {
+                    app.settings_filter_focus();
                     return;
                 }
                 // vscode-user-mouse SEV-2 2026-07-10: per-option
