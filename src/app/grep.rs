@@ -137,9 +137,28 @@ impl App {
         // convention.
         let (hits, used) = grep_workspace(&self.workspace, &q);
         if hits.is_empty() {
-            self.toast(format!("{used}: no matches for {q:?}"));
+            if used == "unavailable" {
+                // keyboard-round-9 SEV-2 2026-07-14 — rg not on PATH
+                // AND workspace isn't a git repo (git grep also
+                // failed). Was: silent "rg: no matches" toast that
+                // flashed and left the user staring at an empty
+                // screen. Now: persistent chip with the install
+                // hint until dismissed.
+                self.toast_persistent(
+                    "grep.unavailable",
+                    format!(
+                        "grep unavailable — install ripgrep (`brew install ripgrep`) or run in a git repo. Query: {q:?}"
+                    ),
+                    crate::app::ToastLevel::Warn,
+                );
+            } else {
+                self.toast(format!("{used}: no matches for {q:?}"));
+            }
             return;
         }
+        // Successful grep clears any stale unavailable-hint chip so
+        // the user isn't nagged after they install ripgrep.
+        self.toast_dismiss("grep.unavailable");
         // Already showing a grep pane somewhere? Refresh it in place.
         if let Some(id) = self.panes.iter().position(|p| matches!(p, Pane::Grep(_))) {
             if let Some(Pane::Grep(g)) = self.panes.get_mut(id) {

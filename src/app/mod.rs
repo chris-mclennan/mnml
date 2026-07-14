@@ -1062,21 +1062,26 @@ fn place_cursor_at_byte(b: &mut Buffer, byte: usize) {
 /// Workspace grep — try `rg --vimgrep` first (fast, gitignore-aware), fall back
 /// to `git grep -n --column` if `rg` isn't on PATH. Returns parsed hits + which
 /// tool produced them (used for the `Pane::Grep` title's "rg: …" / "git grep: …"
-/// prefix).
+/// prefix). The special value `"unavailable"` is returned when *neither* tool
+/// could be spawned (rg not installed AND workspace isn't a git repo — the
+/// caller uses this to surface an install hint instead of a silent 0-matches
+/// toast). keyboard-round-9 SEV-2 2026-07-14.
 pub(crate) fn grep_workspace(
     workspace: &std::path::Path,
     query: &str,
 ) -> (Vec<crate::grep_pane::GrepHit>, &'static str) {
     use crate::grep_pane::parse_rg_vimgrep;
     use std::process::Command;
-    if let Ok(o) = Command::new("rg")
+    let rg_out = Command::new("rg")
         .arg("--vimgrep")
         .arg("--no-heading")
         .arg("--smart-case")
         .arg(query)
         .arg(".")
         .current_dir(workspace)
-        .output()
+        .output();
+    let rg_spawned = rg_out.is_ok();
+    if let Ok(o) = &rg_out
         && o.status.success()
         && !o.stdout.is_empty()
     {
@@ -1086,11 +1091,13 @@ pub(crate) fn grep_workspace(
         );
     }
     // git grep fallback (works in any repo even without rg installed).
-    if let Ok(o) = Command::new("git")
+    let git_out = Command::new("git")
         .args(["grep", "-n", "--column", "-I", "-e"])
         .arg(query)
         .current_dir(workspace)
-        .output()
+        .output();
+    let git_spawned = git_out.is_ok();
+    if let Ok(o) = &git_out
         && o.status.success()
         && !o.stdout.is_empty()
     {
@@ -1099,7 +1106,18 @@ pub(crate) fn grep_workspace(
             "git grep",
         );
     }
-    (Vec::new(), "rg")
+    // Neither tool actually ran → surface an install hint. rg's spawn
+    // fails with `NotFound` when the binary isn't on PATH; git's spawn
+    // fails when git itself is missing (rare on dev machines but still
+    // possible). If BOTH failed to launch we return "unavailable".
+    if !rg_spawned && !git_spawned {
+        return (Vec::new(), "unavailable");
+    }
+    // One of the tools ran but produced no matches / non-zero exit
+    // (both rg and git grep exit 1 for no-hits — that's the empty
+    // stdout branch). Preserve the historical "rg: no matches" wording
+    // by reporting whichever tool was reached.
+    (Vec::new(), if rg_spawned { "rg" } else { "git grep" })
 }
 
 /// Byte range `[s, e)` of the path-like token centered on `byte` in `text`.
