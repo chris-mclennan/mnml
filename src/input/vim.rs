@@ -1675,12 +1675,18 @@ impl VimInputHandler {
                     KeyCode::Char('I') if around => SelectOuterIndentBlock,
                     // Brackets — vim accepts the open *or* the close as the
                     // text-object char; both mean "the surrounding pair".
-                    // (`ib` / `iB` shorthands aren't wired yet — same shape.)
-                    KeyCode::Char(c @ ('(' | ')' | '[' | ']' | '{' | '}' | '<' | '>')) => {
+                    // nvchad-round-12 SEV-2 2026-07-14 — `b` and `B` are
+                    // vim's canonical shorthands: `b` = `(`, `B` = `{`.
+                    // These are the most-used text-object aliases (every
+                    // :h text-objects tutorial teaches `dib`/`daB` first).
+                    // `dib` and `di(` are now equivalent; `diB` == `di{`.
+                    KeyCode::Char(
+                        c @ ('(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | 'b' | 'B'),
+                    ) => {
                         let open = match c {
-                            ')' => '(',
+                            ')' | 'b' => '(',
                             ']' => '[',
-                            '}' => '{',
+                            '}' | 'B' => '{',
                             '>' => '<',
                             other => other,
                         };
@@ -3119,11 +3125,16 @@ impl VimInputHandler {
                     KeyCode::Char('i') if around => SelectAroundIndentBlock,
                     KeyCode::Char('i') => SelectInnerIndentBlock,
                     KeyCode::Char('I') if around => SelectOuterIndentBlock,
-                    KeyCode::Char(c @ ('(' | ')' | '[' | ']' | '{' | '}' | '<' | '>')) => {
+                    // nvchad-round-12 SEV-2 2026-07-14 — `b`/`B`
+                    // shorthands for `(`/`{`. Parity with the
+                    // operator-pending dispatch at line 1679.
+                    KeyCode::Char(
+                        c @ ('(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | 'b' | 'B'),
+                    ) => {
                         let open = match c {
-                            ')' => '(',
+                            ')' | 'b' => '(',
                             ']' => '[',
-                            '}' => '{',
+                            '}' | 'B' => '{',
                             '>' => '<',
                             other => other,
                         };

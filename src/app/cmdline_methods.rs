@@ -337,6 +337,11 @@ pub(crate) fn parse_substitute(line: &str) -> Option<Substitute> {
     let case_insensitive = flags.contains('i');
     let confirm = flags.contains('c');
     let count_only = flags.contains('n');
+    // nvchad-round-12 SEV-2 2026-07-14 — vim default is first-match
+    // per line; `/g` extends to all. Was: implicit "all" for
+    // everything, so `:s/foo/bar/` on `foo foo foo` yielded
+    // `bar bar bar` instead of `bar foo foo`.
+    let global = flags.contains('g');
     Some(Substitute {
         find,
         replace,
@@ -344,6 +349,7 @@ pub(crate) fn parse_substitute(line: &str) -> Option<Substitute> {
         whole_buffer,
         confirm,
         count_only,
+        global,
         line_range: None,
     })
 }

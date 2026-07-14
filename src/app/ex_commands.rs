@@ -741,6 +741,31 @@ impl App {
         .into_iter()
         .map(|(s, e)| (s + lo, e + lo))
         .collect();
+        // nvchad-round-12 SEV-2 2026-07-14 — vim default (no `/g`) is
+        // one replacement PER LINE. When !sub.global, keep only the
+        // first match on each line's start-byte. Was: mnml always
+        // replaced every match, so `:s/foo/bar/` on `foo foo foo`
+        // became `bar bar bar` instead of `bar foo foo`.
+        let matches: Vec<(usize, usize)> = if sub.global {
+            matches
+        } else {
+            let text_bytes = text.as_bytes();
+            let line_of = |byte: usize| -> usize {
+                text_bytes[..byte.min(text_bytes.len())]
+                    .iter()
+                    .filter(|&&b| b == b'\n')
+                    .count()
+            };
+            let mut seen: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut out = Vec::with_capacity(matches.len());
+            for m in matches {
+                let ln = line_of(m.0);
+                if seen.insert(ln) {
+                    out.push(m);
+                }
+            }
+            out
+        };
         let label = if sub.whole_buffer { ":%s" } else { ":s" };
         if matches.is_empty() {
             self.toast(format!("{label} — no match for {:?}", sub.find));
@@ -810,7 +835,22 @@ impl App {
             match regex::Regex::new(&prefixed) {
                 Ok(re) => {
                     let replacement = vim_replacement_to_regex(&sub.replace);
-                    let replaced = re.replace_all(scope, replacement.as_str()).into_owned();
+                    // nvchad-round-12 SEV-2 2026-07-14 — vim's `/g`
+                    // extends replacement from FIRST-per-line to
+                    // ALL-per-line. Was: `re.replace_all` on the whole
+                    // scope ran every match regardless of the flag.
+                    // Now: split by line and use `replace` (first) or
+                    // `replace_all` (global) per line, then rejoin.
+                    let replaced: String = scope
+                        .split_inclusive('\n')
+                        .map(|line| {
+                            if sub.global {
+                                re.replace_all(line, replacement.as_str()).into_owned()
+                            } else {
+                                re.replace(line, replacement.as_str()).into_owned()
+                            }
+                        })
+                        .collect();
                     vec![crate::edit_op::EditOp::ReplaceRange {
                         start: lo,
                         end: hi,
@@ -1193,6 +1233,23 @@ impl App {
                     self.save_active_as(rest);
                 }
             }
+            // nvchad-round-12 SEV-2 2026-07-14 — `:w!` / `:write!` used
+            // to be silent no-ops. Vim's `!` on write forces past a
+            // read-only filesystem; mnml has no r/o concept at this
+            // layer, so `!` is semantically identical to plain save
+            // — but it MUST save, not silently drop the write.
+            // Especially dangerous when combined with quit (a user
+            // typing `:wa!` before `:qa!` under a "force everything"
+            // reflex was losing writes).
+            "w!" | "write!" => {
+                if rest.is_empty() {
+                    self.save_active();
+                } else if let Some(shell_cmd) = rest.strip_prefix('!') {
+                    self.write_buffer_to_shell(shell_cmd.trim());
+                } else {
+                    self.save_active_as(rest);
+                }
+            }
             "saveas" => {
                 if rest.is_empty() {
                     self.toast(":saveas <path> — path required");
@@ -1235,7 +1292,18 @@ impl App {
                 }
             }
             "wa" | "wall" => self.save_all(),
+            // nvchad-round-12 SEV-2 2026-07-14 — bang variants must
+            // save. Same rationale as `:w!` above.
+            "wa!" | "wall!" | "w!a" => self.save_all(),
             "wqa" | "wqall" | "xa" | "xall" => {
+                self.save_all();
+                self.should_quit = true;
+            }
+            // nvchad-round-12 SEV-2 2026-07-14 — was silently
+            // matching `qa!` via the fuzzy fallback (quit-only), so
+            // `:wqa!` did the q!-half but silently DROPPED the write.
+            // Explicit arm to save + quit.
+            "wqa!" | "wqall!" | "xa!" | "xall!" => {
                 self.save_all();
                 self.should_quit = true;
             }
@@ -3146,6 +3214,77 @@ impl App {
                 // Last resort: maybe it names a registered command.
                 if crate::command::registry().get(other).is_some() {
                     crate::command::run(other, self);
+                    return;
+                }
+                // nvchad-round-12 SEV-2 2026-07-14 — reserved vim ex
+                // command names that mnml doesn't yet implement. Was:
+                // the fuzzy fallback below matched `:map` against
+                // `editor.toggle_keyMAP` and silently flipped the
+                // user out of vim mode; `:changes` matched
+                // `git.commit_staged_changes`; etc. Fuzzy-resolving
+                // *any* vim canonical name is a footgun — a user
+                // typing a reflexive vim command should get "unknown"
+                // (recoverable) rather than a sibling action firing
+                // by name-collision. If mnml grows a real implementation
+                // for one of these, add it as an explicit arm above
+                // (which shadows this list).
+                const VIM_RESERVED: &[&str] = &[
+                    "map",
+                    "nmap",
+                    "imap",
+                    "vmap",
+                    "xmap",
+                    "cmap",
+                    "smap",
+                    "omap",
+                    "tmap",
+                    "unmap",
+                    "nunmap",
+                    "iunmap",
+                    "vunmap",
+                    "xunmap",
+                    "cunmap",
+                    "noremap",
+                    "nnoremap",
+                    "inoremap",
+                    "vnoremap",
+                    "xnoremap",
+                    "cnoremap",
+                    "changes",
+                    "jumps",
+                    "marks",
+                    "reg",
+                    "registers",
+                    "buffers",
+                    "ls",
+                    "files",
+                    "let",
+                    "call",
+                    "sign",
+                    "signs",
+                    "syntax",
+                    "syn",
+                    "highlight",
+                    "hi",
+                    "colorscheme",
+                    "color",
+                    "colo",
+                    "cd",
+                    "chdir",
+                    "lcd",
+                    "tcd",
+                    "put",
+                    "put!",
+                    "verbose",
+                    "silent",
+                    "debug",
+                    "profile",
+                    "profdel",
+                    "hist",
+                    "history",
+                ];
+                if VIM_RESERVED.contains(&other) {
+                    self.toast(format!(":{line} — unknown command"));
                     return;
                 }
                 // 2026-06-26 — typed text isn't a known command.

@@ -572,6 +572,12 @@ pub(crate) struct Substitute {
     confirm: bool,
     /// `n` flag — only count matches, don't replace (vim canonical).
     count_only: bool,
+    /// `g` flag — replace ALL matches on each line. Vim's default
+    /// (no `g`) is FIRST-match-only per line; `/g` extends to all.
+    /// nvchad-round-12 SEV-2 2026-07-14 — mnml used to always
+    /// replace all, violating the most-fundamental vim substitute
+    /// semantic.
+    pub(crate) global: bool,
     /// Optional inclusive line range `(start_line, end_line)`. Used
     /// by `:5,10s/…/…/g` where a specific range is given (not `%`
     /// and not bare `:s`). Overrides both `whole_buffer` and the
