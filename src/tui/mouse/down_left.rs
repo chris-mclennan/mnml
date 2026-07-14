@@ -17,6 +17,18 @@ use crate::app::App;
 use crate::command;
 use crate::pane::Pane;
 
+/// Max gap between two clicks at the same (x, y) that still counts
+/// as a double-click. mouse-round-14 SEV-2 F1 2026-07-14 — bumped
+/// from 450 → 700 ms because natural trackpad cadence lands
+/// around 350-600 ms between clicks (particularly for the
+/// divider-equalize / tab-close double-click paths), and the render
+/// + poll_sleep + drain-iter overhead under the IPC channel eats
+/// another ~40-80 ms on top of the human timing. 700 ms is macOS
+/// System-Preferences → Trackpad's "slow" end and still fast
+/// enough that two intentionally-separate clicks don't misfire as
+/// a double.
+const DOUBLE_CLICK_MAX_MS: u128 = 700;
+
 pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // #20 Pattern B — confirm modal takes priority over every
     // other click when it's up.
@@ -241,7 +253,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 if px == x
                     && py == y
                     && c >= 1
-                    && now.duration_since(prev) < std::time::Duration::from_millis(450)
+                    && now.duration_since(prev) < std::time::Duration::from_millis(DOUBLE_CLICK_MAX_MS as u64)
         );
         app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
         if is_double {
@@ -1245,7 +1257,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             Some((prev, px, py, _))
                 if px == x
                     && py == y
-                    && now.duration_since(prev) < std::time::Duration::from_millis(450)
+                    && now.duration_since(prev) < std::time::Duration::from_millis(DOUBLE_CLICK_MAX_MS as u64)
         );
         app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
         if is_double && let Some(Pane::Editor(b)) = app.panes.get_mut(tab_pane) {
@@ -1863,7 +1875,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             Some((prev, px, py, c))
                 if px == x
                     && py == y
-                    && now.duration_since(prev) < std::time::Duration::from_millis(450) =>
+                    && now.duration_since(prev)
+                        < std::time::Duration::from_millis(DOUBLE_CLICK_MAX_MS as u64) =>
             {
                 (c + 1).min(3)
             }
@@ -2751,7 +2764,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             Some((prev, px, py, c))
                 if px == x
                     && py == y
-                    && now.duration_since(prev) < std::time::Duration::from_millis(450) =>
+                    && now.duration_since(prev)
+                        < std::time::Duration::from_millis(DOUBLE_CLICK_MAX_MS as u64) =>
             {
                 (c + 1).min(3)
             }
@@ -2810,7 +2824,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 if px == x
                     && py == y
                     && c >= 1
-                    && now.duration_since(prev) < std::time::Duration::from_millis(450)
+                    && now.duration_since(prev) < std::time::Duration::from_millis(DOUBLE_CLICK_MAX_MS as u64)
         );
         app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
         if is_double {
@@ -2875,7 +2889,8 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             Some((prev, px, py, c))
                 if px == x
                     && py == y
-                    && now.duration_since(prev) < std::time::Duration::from_millis(450) =>
+                    && now.duration_since(prev)
+                        < std::time::Duration::from_millis(DOUBLE_CLICK_MAX_MS as u64) =>
             {
                 (c + 1).min(3)
             }
