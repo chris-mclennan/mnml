@@ -347,6 +347,27 @@ fn upsert_env_var(existing: &str, var: &str, value: &str) -> Result<String, Stri
 }
 
 impl App {
+    /// The env set every HTTP-side read/write should agree on.
+    /// api-round-11 SEV-1 2026-07-14 — three call sites in this file
+    /// were reading via `EnvSet::select(...)` (no config_default,
+    /// no "dev" fallback) while the write path used
+    /// `resolve_env_name_with_fallback` (4-tier + literal "dev"
+    /// fallback). In a `.mnml`-only workspace with no override /
+    /// $MNML_ENV / `.rqst/config`, the reader came back EMPTY while
+    /// the writer confidently wrote to `dev.env` — clicking a Vars
+    /// cell + Tab silently wiped the real value. Fix: one helper,
+    /// same fallback everywhere. Uses `resolve_env_name_with_fallback`
+    /// to pick the effective name (config + envvar + rqst + "dev")
+    /// then `EnvSet::load` for the actual key/value map.
+    pub(crate) fn active_envset(&self) -> crate::http::template::EnvSet {
+        let (name, _fallback) = resolve_env_name_with_fallback(
+            &self.workspace,
+            self.http_env_override.as_deref(),
+            self.config.http.default_env.as_deref(),
+        );
+        crate::http::template::EnvSet::load(&self.workspace, &name)
+    }
+
     /// `http.insert_header` — opens a picker over common HTTP
     /// header names. Enter inserts `Name: ` at the active Request
     /// pane's Headers cursor (or appends if no Headers field
@@ -4383,10 +4404,9 @@ impl App {
         let Some(crate::pane::Pane::Request(rp)) = self.panes.get(cur) else {
             return String::new();
         };
-        let envset = crate::http::template::EnvSet::select(
-            &self.workspace,
-            self.http_env_override.as_deref(),
-        );
+        // api-round-11 SEV-1 2026-07-14 — use the shared helper so
+        // this reader agrees with the writer at http_kv_edit_commit.
+        let envset = self.active_envset();
         // 1. URL caret first — most specific.
         let url = &rp.request.url;
         let caret = rp.url_cursor.min(url.len());
@@ -4481,10 +4501,10 @@ impl App {
             }
             return;
         }
-        let envset = crate::http::template::EnvSet::select(
-            &self.workspace,
-            self.http_env_override.as_deref(),
-        );
+        // api-round-11 SEV-1 2026-07-14 — shared helper so this
+        // "set value" flow can't disagree with the reader at
+        // pending_var_at_cursor_name or the writer.
+        let envset = self.active_envset();
         // Resolve the target env name. If there's an active env, use it.
         // Otherwise (vscode-mouse SEV-2 #6 2026-07-10) fall back to the
         // sole env file when there's exactly one — a click on a var in
@@ -5537,6 +5557,16 @@ impl App {
         editing_name: bool,
     ) {
         let Some(cur) = self.active else { return };
+        // api-round-11 SEV-1 2026-07-14 — resolve the Vars seed via
+        // the shared active-env helper BEFORE the `rp` mut-borrow so
+        // read/write agree on the effective env in a `.mnml`-only
+        // workspace (was: broken `EnvSet::select(no config_default)`
+        // returned empty here and Tab committed the empty back to disk).
+        let vars_seed = if !editing_name && matches!(kind, crate::request_pane::KvEditKind::Vars) {
+            self.active_envset().lookup(&key).unwrap_or_default()
+        } else {
+            String::new()
+        };
         let Some(Pane::Request(rp)) = self.panes.get_mut(cur) else {
             return;
         };
@@ -5564,17 +5594,7 @@ impl App {
                         (k.trim().eq_ignore_ascii_case(&key)).then(|| v.trim().to_string())
                     })
                     .unwrap_or_default(),
-                // #23 v3 — read from the active env file. Values
-                // are already loaded into the Vars-tab render via
-                // `EnvSet` but that's captured in the ui layer.
-                // Re-read here so the seed is authoritative.
-                crate::request_pane::KvEditKind::Vars => {
-                    let envset = crate::http::template::EnvSet::select(
-                        &self.workspace,
-                        self.http_env_override.as_deref(),
-                    );
-                    envset.lookup(&key).unwrap_or_default()
-                }
+                crate::request_pane::KvEditKind::Vars => vars_seed,
             }
         };
         rp.kv_edit = Some(crate::request_pane::KvValueEdit {
@@ -5670,11 +5690,16 @@ impl App {
                 if edit.editing_name {
                     // Look up current value first so we can
                     // preserve it under the new name.
-                    let envset = crate::http::template::EnvSet::select(
-                        &self.workspace,
-                        self.http_env_override.as_deref(),
-                    );
-                    let current_val = envset.lookup(&edit.original_key).unwrap_or_default();
+                    // api-round-11 SEV-1 2026-07-14 — was
+                    // `EnvSet::select(no config_default)` which
+                    // returned empty on `.mnml`-only workspaces, so
+                    // renames replaced the old key with an EMPTY-
+                    // valued new key. `active_envset` uses the same
+                    // fallback as the write path.
+                    let current_val = self
+                        .active_envset()
+                        .lookup(&edit.original_key)
+                        .unwrap_or_default();
                     self.http_delete_env_key(&edit.original_key);
                     self.write_env_var(&new_buffer, &current_val);
                 } else {
