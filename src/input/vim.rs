@@ -1149,6 +1149,24 @@ impl VimInputHandler {
                     KeyCode::Char('g') => {
                         // `gg` ⇒ first line. `<count>gg` ⇒ go to line `<count>`
                         // (vim canonical: same as `<count>G`).
+                        // nvchad-round-13 SEV-2 F3 2026-07-14 — operator
+                        // + `gg` needs LINEWISE semantics; route to
+                        // OperatorLinewiseTo the same way `dG` does.
+                        // target=Some(0) → buffer start, Some(n) → line n.
+                        if let Some(op) = pending_op
+                            && matches!(op, PendingOp::Delete | PendingOp::Yank)
+                        {
+                            let op_ch = match op {
+                                PendingOp::Delete => 'd',
+                                PendingOp::Yank => 'y',
+                                _ => 'd',
+                            };
+                            let target = if count_was_explicit { Some(n) } else { Some(0) };
+                            return InputResult::App(AppCommand::OperatorLinewiseTo {
+                                op: op_ch,
+                                target,
+                            });
+                        }
                         if count_was_explicit {
                             InputResult::Ops(vec![EditOp::MoveToLine(n as usize)])
                         } else {
@@ -2106,7 +2124,13 @@ impl VimInputHandler {
             if doubled {
                 return match op {
                     PendingOp::Delete => InputResult::Ops(Self::repeated(DeleteLine, n)),
-                    PendingOp::Yank => InputResult::Ops(Self::repeated(YankLine, n)),
+                    // nvchad-round-13 SEV-2 2026-07-14 — `<count>yy`
+                    // was `N × YankLine` which overwrites the
+                    // clipboard on every iteration, so `3yy` yanked
+                    // only the last of the 3 lines. Same fix as the
+                    // vertical-motion path at :2289 — one linewise
+                    // multi-line capture.
+                    PendingOp::Yank => InputResult::Ops(vec![YankLinesCount(n)]),
                     PendingOp::Change => {
                         self.mode = VimMode::Insert;
                         // clear the line's contents but keep the line, then insert
@@ -2227,6 +2251,28 @@ impl VimInputHandler {
                 self.op = Some(op);
                 self.prefix = Prefix::G;
                 return InputResult::Consumed;
+            }
+            // nvchad-round-13 SEV-2 F3 2026-07-14 — operator + `G`.
+            // `dG` / `yG` / `d<n>G` need LINEWISE semantics but the
+            // generic motion path builds a charwise selection at
+            // cursor column. Route to `OperatorLinewiseTo` so the App
+            // layer resolves cur_row + target_row and calls the
+            // existing `delete_lines` / `yank_lines`. Handles d/y;
+            // `c` is deferred (needs insert-mode transition from
+            // App layer — see the helper comment).
+            if matches!(key.code, KeyCode::Char('G'))
+                && matches!(op, PendingOp::Delete | PendingOp::Yank)
+            {
+                let op_ch = match op {
+                    PendingOp::Delete => 'd',
+                    PendingOp::Yank => 'y',
+                    _ => 'd',
+                };
+                // Explicit count (from `<n>G`) → absolute line target;
+                // bare `G` → None (buffer end).
+                let target = self.count;
+                self.reset_pending();
+                return InputResult::App(AppCommand::OperatorLinewiseTo { op: op_ch, target });
             }
             // operator + f / F / t / T → find-char with operator applied.
             if let KeyCode::Char(c @ ('f' | 'F' | 't' | 'T')) = key.code {
@@ -2612,9 +2658,21 @@ impl VimInputHandler {
                 self.prefix = Prefix::Flash1;
                 InputResult::Consumed
             }
+            // nvchad-round-13 SEV-2 2026-07-14 — `S` = "substitute
+            // whole line" (equivalent to `cc`). Previous impl was
+            // `SelectLine + ReplaceSelection("")` which acts like
+            // `d0i`: `SelectLine` selects [line_start, cursor), so
+            // only the pre-cursor half of the line got wiped. Add
+            // `MoveLineEnd` before SelectLine so the selection
+            // spans the entire line. Matches the doubled-op `cc`
+            // path at :2110-2121.
             KeyCode::Char('S') => {
                 self.enter_insert();
-                InputResult::Ops(vec![SelectLine, ReplaceSelection(String::new())])
+                InputResult::Ops(vec![
+                    MoveLineEnd,
+                    SelectLine,
+                    ReplaceSelection(String::new()),
+                ])
             }
             KeyCode::Char('r') if ctrl => {
                 self.reset_pending();
@@ -3887,7 +3945,15 @@ mod tests {
     fn yy_yanks_line() {
         let mut v = h();
         v.handle_key(k('y'), &ctx());
-        assert_eq!(ops(v.handle_key(k('y'), &ctx())), vec![EditOp::YankLine]);
+        // nvchad-round-13 SEV-2 F2 2026-07-14 — `yy` now emits
+        // YankLinesCount(1) instead of the count-unaware YankLine
+        // (so `<n>yy` captures N lines in one linewise op rather
+        // than iterating and overwriting the clipboard each time).
+        // Single-line case behaves identically.
+        assert_eq!(
+            ops(v.handle_key(k('y'), &ctx())),
+            vec![EditOp::YankLinesCount(1)]
+        );
     }
 
     #[test]

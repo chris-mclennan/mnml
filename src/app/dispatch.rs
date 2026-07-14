@@ -245,6 +245,7 @@ pub(crate) fn apply_app_command(app: &mut App, cmd: crate::input::AppCommand) {
         BlockReplaceWith { ch } => app.block_replace_with(ch),
         FilterLinesFromCursor { count } => app.begin_filter_lines_from_cursor(count),
         FilterParagraphFromCursor { around } => app.begin_filter_paragraph_from_cursor(around),
+        OperatorLinewiseTo { op, target } => app.vim_operator_linewise_to(op, target),
         CmdlineTabComplete => app.cmdline_tab_complete(),
         CmdlinePopupMove(delta) => app.cmdline_popup_move(delta as isize),
         CmdlineInsertCursorWord(big) => app.cmdline_insert_cursor_word(big),

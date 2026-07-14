@@ -172,6 +172,20 @@ pub enum AppCommand {
         count: u32,
         above: bool,
     },
+    /// vim `d`/`y`/`c` + `G` / `gg` / `<count>G`. Delete / yank /
+    /// change the linewise span from the cursor's current line to
+    /// the target line (buffer end, buffer start, or an absolute
+    /// line). Resolved at App layer so the count / cursor / line-
+    /// count all come from the buffer at dispatch time — vim.rs
+    /// doesn't have access. nvchad-round-13 SEV-2 F3 2026-07-14.
+    OperatorLinewiseTo {
+        /// `'d'` / `'y'` / `'c'`.
+        op: char,
+        /// `None` → buffer end (`G` with no count).
+        /// `Some(0)` → buffer start (`gg`).
+        /// `Some(n)` → 1-based line `n` (`<n>G`).
+        target: Option<u32>,
+    },
     /// Tab pressed on the `:` cmdline — ask the App to compute completion
     /// candidates and cycle them. The handler can't do path completion on
     /// its own (no workspace access), so the App owns the cycle state and

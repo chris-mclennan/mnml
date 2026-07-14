@@ -10278,6 +10278,45 @@ impl App {
         self.toast(format!(":y {start_line}..{end_line} ({n} line(s))"));
     }
 
+    /// nvchad-round-13 SEV-2 F3 2026-07-14 — vim `dG` / `dgg` /
+    /// `d<n>G` (and y/c variants). Delete / yank / change the
+    /// LINEWISE span from the cursor's current line to `target`.
+    /// The input handler doesn't have access to line count or
+    /// cursor position, so it fires an AppCommand and this method
+    /// resolves the span here. `target` semantics:
+    ///   * `None` → buffer end (`G` with no count).
+    ///   * `Some(0)` → buffer start (`gg`).
+    ///   * `Some(n)` → 1-based line `n` (`<n>G`).
+    pub fn vim_operator_linewise_to(&mut self, op: char, target: Option<u32>) {
+        let Some(b) = self.active_editor() else {
+            return;
+        };
+        let (cur_row, _) = b.editor.row_col();
+        let line_count = b.editor.line_count();
+        let target_row = match target {
+            None => line_count.saturating_sub(1),
+            Some(0) => 0usize,
+            Some(n) => (n as usize)
+                .saturating_sub(1)
+                .min(line_count.saturating_sub(1)),
+        };
+        let (lo, hi) = if target_row < cur_row {
+            (target_row, cur_row)
+        } else {
+            (cur_row, target_row)
+        };
+        match op {
+            'd' => self.delete_lines(lo, hi),
+            'y' => self.yank_lines(lo, hi),
+            // `c` (change-to-G) needs an insert-mode transition; the
+            // App layer doesn't own the vim handler's mode. Left
+            // unsupported for now — `cG` is far less common than the
+            // muscle-memory `dG` / `yG` pair this round targets.
+            // Nvchad users can fall back to `dG` + `O`.
+            _ => {}
+        }
+    }
+
     /// `:g/pattern/cmd` (or `:v/pattern/cmd` for invert) — run `<cmd>`
     /// on every line in the buffer whose text contains `<pattern>`
     /// (literal substring; vim's regex isn't wired). Lines visited
