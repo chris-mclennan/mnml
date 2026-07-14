@@ -1329,6 +1329,12 @@ pub fn rects_dump_json(app: &App) -> String {
     // Same pattern as bufferline_overflow_* above.
     one!("settings_save_button", app.rects.settings_save_button);
     one!("settings_cancel_button", app.rects.settings_cancel_button);
+    // mouse-round-13 SEV-2 F2 2026-07-14 — the filter-row click
+    // target landed in commit 63ac6aef but wasn't exposed via
+    // rects.json, so the hunter reported the fix as unshipped
+    // ("no `settings_filter_row` entries"). Same class of gap as
+    // the notes/todos/sessions filter inputs below.
+    one!("settings_filter_row", app.rects.settings_filter_row);
     // vscode-user-mouse + vscode-user-keyboard 2026-07-09 —
     // the new filter-row inputs on TODOs / Notes / Sessions +
     // the tab-strip AI launcher chips had rects populated but
