@@ -347,25 +347,25 @@ fn upsert_env_var(existing: &str, var: &str, value: &str) -> Result<String, Stri
 }
 
 impl App {
-    /// The env set every HTTP-side read/write should agree on.
-    /// api-round-11 SEV-1 2026-07-14 — three call sites in this file
-    /// were reading via `EnvSet::select(...)` (no config_default,
-    /// no "dev" fallback) while the write path used
-    /// `resolve_env_name_with_fallback` (4-tier + literal "dev"
-    /// fallback). In a `.mnml`-only workspace with no override /
-    /// $MNML_ENV / `.rqst/config`, the reader came back EMPTY while
-    /// the writer confidently wrote to `dev.env` — clicking a Vars
-    /// cell + Tab silently wiped the real value. Fix: one helper,
-    /// same fallback everywhere. Uses `resolve_env_name_with_fallback`
-    /// to pick the effective name (config + envvar + rqst + "dev")
-    /// then `EnvSet::load` for the actual key/value map.
+    /// The env set every HTTP-side read/write/send should agree on.
+    ///
+    /// api-round-11 SEV-1 (edit surface wiping Vars-cell values) +
+    /// api-round-12 SEV-1 (send surface failing "unresolved vars"
+    /// on a green Vars tab) both fell out of the read/write/send
+    /// paths disagreeing about which env is active in a
+    /// `.mnml`-only workspace. Route everything through
+    /// [`crate::http::template::EnvSet::select_with_full_fallback`]
+    /// so the fallback (explicit → $MNML_ENV → `[http] default_env`
+    /// → `.rqst/config` → literal "dev") is the same for every
+    /// surface — Vars tab render, edit-seed, write, delete,
+    /// send, refire, bench, extract, chain, CLI `run`, CLI
+    /// `chain run`.
     pub(crate) fn active_envset(&self) -> crate::http::template::EnvSet {
-        let (name, _fallback) = resolve_env_name_with_fallback(
+        crate::http::template::EnvSet::select_with_full_fallback(
             &self.workspace,
             self.http_env_override.as_deref(),
             self.config.http.default_env.as_deref(),
-        );
-        crate::http::template::EnvSet::load(&self.workspace, &name)
+        )
     }
 
     /// `http.insert_header` — opens a picker over common HTTP
@@ -1911,11 +1911,9 @@ impl App {
         // same env the actual send-time path would use. Prior
         // version hardcoded `None`, leaving a narrower slice of
         // the original SEV-2 unfixed.
-        let env = crate::http::template::EnvSet::select_with_config_default(
-            &self.workspace,
-            self.http_env_override.as_deref(),
-            self.config.http.default_env.as_deref(),
-        );
+        // api-round-12 SEV-1 2026-07-14 — same alignment as the
+        // send / bench / extract paths.
+        let env = self.active_envset();
         let Some(Pane::Request(rp)) = self.panes.get(cur) else {
             self.toast("http.copy_ai_prompt: active pane isn't a Request");
             return;
@@ -2701,7 +2699,7 @@ impl App {
     /// HTTP request; on response, `App::tick`'s drain opens the
     /// `LookupItem` picker with parsed list rows.
     pub fn accept_lookup_file(&mut self, file_path: &std::path::Path) {
-        use crate::http::{self, template::EnvSet};
+        use crate::http;
         // #polish 2026-07-06 — double-fire guard. Was: a second
         // `:http.lookup` accept while the first was still in-flight
         // overwrote `lookup_fire_rx` and dropped the first result
@@ -2726,11 +2724,19 @@ impl App {
             }
         };
         let script = http::script::parse(&text);
-        let mut env = EnvSet::select_with_config_default(
-            &self.workspace,
-            self.http_env_override.as_deref(),
-            self.config.http.default_env.as_deref(),
-        );
+        // api-round-12 SEV-1 2026-07-14 — was
+        // `EnvSet::select_with_config_default` (4-tier: explicit /
+        // $MNML_ENV / config / .rqst-config). In a `.mnml`-only
+        // workspace with none of those set, it returned empty and
+        // every `{{VAR}}` reference in the request template stayed
+        // literal on the wire — Send failed with "unresolved vars"
+        // even though the Vars tab correctly showed the resolved
+        // values. Round-11 fix aligned the EDIT surface with the
+        // write path's "dev" fallback via `active_envset()` but
+        // left the SEND surface behind, splitting the resolver in
+        // half. Route through the shared helper so read/edit/write/
+        // send all agree.
+        let mut env = self.active_envset();
         http::script::apply_pre(&script, &mut request, &mut env);
         request.url = http::template::expand(&request.url, &env);
         for (_, v) in request.headers.iter_mut() {
@@ -3264,7 +3270,7 @@ impl App {
     /// richer `send_request_from_active` path does full multi-block
     /// block-aware parsing for `.http` / `.rest`.
     fn parse_active_as_request(&mut self) -> Option<crate::http::Request> {
-        use crate::http::{self, template::EnvSet};
+        use crate::http;
         let cur = self.active?;
         // From a Request pane, clone the in-flight request AND run the
         // same pre-script + template::expand triplet every other send
@@ -3278,11 +3284,9 @@ impl App {
         if let Some(Pane::Request(rp)) = self.panes.get(cur) {
             let mut request = rp.request.clone();
             let script = rp.script.clone();
-            let mut env = EnvSet::select_with_config_default(
-                &self.workspace,
-                self.http_env_override.as_deref(),
-                self.config.http.default_env.as_deref(),
-            );
+            // api-round-12 SEV-1 2026-07-14 — bench went through
+            // the 4-tier resolver too; same story as send_active.
+            let mut env = self.active_envset();
             http::script::apply_pre(&script, &mut request, &mut env);
             request.url = http::template::expand(&request.url, &env);
             for (_, v) in request.headers.iter_mut() {
@@ -3361,11 +3365,19 @@ impl App {
             },
         };
         let script = http::script::parse(&script_src);
-        let mut env = EnvSet::select_with_config_default(
-            &self.workspace,
-            self.http_env_override.as_deref(),
-            self.config.http.default_env.as_deref(),
-        );
+        // api-round-12 SEV-1 2026-07-14 — was
+        // `EnvSet::select_with_config_default` (4-tier: explicit /
+        // $MNML_ENV / config / .rqst-config). In a `.mnml`-only
+        // workspace with none of those set, it returned empty and
+        // every `{{VAR}}` reference in the request template stayed
+        // literal on the wire — Send failed with "unresolved vars"
+        // even though the Vars tab correctly showed the resolved
+        // values. Round-11 fix aligned the EDIT surface with the
+        // write path's "dev" fallback via `active_envset()` but
+        // left the SEND surface behind, splitting the resolver in
+        // half. Route through the shared helper so read/edit/write/
+        // send all agree.
+        let mut env = self.active_envset();
         http::script::apply_pre(&script, &mut request, &mut env);
         request.url = http::template::expand(&request.url, &env);
         for (_, v) in request.headers.iter_mut() {
@@ -3972,7 +3984,7 @@ impl App {
     /// `.mnml/env/$MNML_ENV`, open a `Pane::Request` split, and fire the request
     /// on a background thread. `tick` delivers the response.
     pub fn send_request_from_active(&mut self) {
-        use crate::http::{self, template::EnvSet};
+        use crate::http;
         let Some(cur) = self.active else {
             self.toast("no active editor");
             return;
@@ -4072,11 +4084,19 @@ impl App {
             }
         };
         let script = http::script::parse(&script_src);
-        let mut env = EnvSet::select_with_config_default(
-            &self.workspace,
-            self.http_env_override.as_deref(),
-            self.config.http.default_env.as_deref(),
-        );
+        // api-round-12 SEV-1 2026-07-14 — was
+        // `EnvSet::select_with_config_default` (4-tier: explicit /
+        // $MNML_ENV / config / .rqst-config). In a `.mnml`-only
+        // workspace with none of those set, it returned empty and
+        // every `{{VAR}}` reference in the request template stayed
+        // literal on the wire — Send failed with "unresolved vars"
+        // even though the Vars tab correctly showed the resolved
+        // values. Round-11 fix aligned the EDIT surface with the
+        // write path's "dev" fallback via `active_envset()` but
+        // left the SEND surface behind, splitting the resolver in
+        // half. Route through the shared helper so read/edit/write/
+        // send all agree.
+        let mut env = self.active_envset();
         // Merge the file's running env (@capture-populated) so a
         // login → orders flow inside one file resolves `{{TOKEN}}`.
         // Later entries win over base env values.
@@ -4130,11 +4150,10 @@ impl App {
         // token flow that the sidebar UI heavily depends on. Other
         // send paths (`send_active`, `send_file`) already do this;
         // refire_request was the outlier.
-        let mut env = crate::http::template::EnvSet::select_with_config_default(
-            &self.workspace,
-            self.http_env_override.as_deref(),
-            self.config.http.default_env.as_deref(),
-        );
+        // api-round-12 SEV-1 2026-07-14 — final send-path holdout;
+        // route through `active_envset()` so read/edit/write/send
+        // all agree on the effective env.
+        let mut env = self.active_envset();
         self.merge_http_running_env(source_path.as_deref(), &mut env);
         crate::http::script::apply_pre(&script, &mut request, &mut env);
         request.url = crate::http::template::expand(&request.url, &env);

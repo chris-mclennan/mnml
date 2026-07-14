@@ -1092,10 +1092,11 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         }
         HoverChip::RequestVarToken(idx) => {
             let (rect, name) = app.rects.request_var_click_rects.get(idx)?.clone();
-            let envset = crate::http::template::EnvSet::select(
-                &app.workspace,
-                app.http_env_override.as_deref(),
-            );
+            // api-round-12 SEV-2 2026-07-14 — was 2-tier
+            // `EnvSet::select` which returned empty on `.mnml`-only
+            // workspaces, making every resolved var render as "not
+            // defined in active env" in the hover tooltip.
+            let envset = app.active_envset();
             // Same resolution shape as tokenize_vars — `$foo` hits
             // dynamic_var, otherwise env lookup.
             let value = match name.strip_prefix('$') {

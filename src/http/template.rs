@@ -97,6 +97,41 @@ impl EnvSet {
         }
     }
 
+    /// The 5-tier resolver everything read/edit/write/send should
+    /// agree on. Adds two things over [`Self::select_with_config_default`]:
+    ///
+    ///   1. When `config_default` is `None`, read `[http] default_env`
+    ///      out of `<workspace>/.mnml/config.toml` (then
+    ///      `~/.config/mnml/config.toml`) directly. Lets CLI paths
+    ///      that don't own a full `Config` struct still match the
+    ///      App's resolver without threading it through.
+    ///   2. When nothing resolves a name, fall through to the literal
+    ///      `"dev"` (matching mnml's write-path convention — the
+    ///      Vars-tab edit surface and every `write_env_var` /
+    ///      `http_delete_env_key` call has always used this as the
+    ///      last-resort target since 2026-07-06).
+    ///
+    /// api-round-11 SEV-1 (Vars-cell writes) + api-round-12 SEV-1
+    /// (Send / bench / extract / chain / CLI `run`) both fell out
+    /// of read/write/send disagreeing about the fallback. This
+    /// helper is the single source of truth so those flows can't
+    /// drift again.
+    pub fn select_with_full_fallback(
+        workspace: &Path,
+        explicit: Option<&str>,
+        config_default: Option<&str>,
+    ) -> Self {
+        let name = explicit
+            .map(str::to_string)
+            .or_else(|| std::env::var("MNML_ENV").ok())
+            .or_else(|| config_default.map(str::to_string))
+            .or_else(|| read_mnml_config_default_env(workspace))
+            .or_else(|| read_rqst_config_default_env(workspace))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "dev".to_string());
+        Self::load(workspace, &name)
+    }
+
     /// Active env name (`Some("dev")`) — set by [`Self::select`] /
     /// [`Self::load`]. `None` only on `Self::empty()`.
     pub fn name(&self) -> Option<&str> {
@@ -282,6 +317,58 @@ fn read_rqst_config_default_env(workspace: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Read `[http] default_env = "..."` out of a mnml-native config
+/// file. Tries the workspace-local `.mnml/config.toml` first, then
+/// `~/.config/mnml/config.toml`. Used by
+/// [`EnvSet::select_with_full_fallback`] so CLI paths that don't own
+/// a full `Config` struct still see the same env the App does.
+/// api-round-12 SEV-1 2026-07-14.
+fn read_mnml_config_default_env(workspace: &Path) -> Option<String> {
+    fn read_one(path: &Path) -> Option<String> {
+        let text = fs::read_to_string(path).ok()?;
+        // Parse just enough TOML to pull `[http] default_env`. Rather
+        // than depend on `toml` in this hot path, hand-scan for the
+        // `[http]` header + `default_env = "..."` line. Handles
+        // whitespace + comment lines. Case-sensitive on the key
+        // (matches how `serde` deserializes).
+        let mut in_http_section = false;
+        for line in text.lines() {
+            let l = line.trim();
+            if l.is_empty() || l.starts_with('#') {
+                continue;
+            }
+            if l.starts_with('[') && l.ends_with(']') {
+                in_http_section = l == "[http]";
+                continue;
+            }
+            if in_http_section
+                && let Some((k, v)) = l.split_once('=')
+                && k.trim() == "default_env"
+            {
+                let v = v.trim();
+                // Strip surrounding double quotes.
+                let stripped = v
+                    .strip_prefix('"')
+                    .and_then(|s| s.strip_suffix('"'))
+                    .unwrap_or(v);
+                if !stripped.trim().is_empty() {
+                    return Some(stripped.to_string());
+                }
+            }
+        }
+        None
+    }
+    read_one(&workspace.join(".mnml").join("config.toml")).or_else(|| {
+        std::env::var_os("HOME").and_then(|home| {
+            let path = std::path::PathBuf::from(home)
+                .join(".config")
+                .join("mnml")
+                .join("config.toml");
+            read_one(&path)
+        })
+    })
 }
 
 fn parse_env_line(line: &str) -> Option<(String, String)> {

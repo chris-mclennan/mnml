@@ -794,8 +794,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
         let name = name.clone();
-        let envset =
-            crate::http::template::EnvSet::select(&app.workspace, app.http_env_override.as_deref());
+        // api-round-12 SEV-2 2026-07-14 — was 2-tier
+        // `EnvSet::select` (empty on `.mnml`-only workspaces),
+        // so `resolved` was always `false` and a click on a
+        // GREEN (resolved) var wrongly opened the "Set value…"
+        // prompt instead of jump-to-definition. Route through
+        // the shared 5-tier helper.
+        let envset = app.active_envset();
         let resolved = match name.strip_prefix('$') {
             Some(dyn_name) => crate::http::template::dynamic_var(dyn_name).is_some(),
             None => envset.lookup(&name).is_some(),

@@ -675,7 +675,13 @@ fn do_run(file: &Path, env_name: Option<&str>, workspace: Option<&Path>) -> Resu
             Some(start.to_path_buf())
         })
         .unwrap_or_else(|| PathBuf::from("."));
-    let mut env = EnvSet::select(&ws, env_name);
+    // api-round-12 SEV-1 2026-07-14 — was 2-tier `EnvSet::select`
+    // (no config_default, no literal "dev" fallback). In a
+    // `.mnml`-only workspace with no override / $MNML_ENV, it
+    // returned empty and every `{{VAR}}` stayed literal, killing
+    // `mnml run file.http` unless the user remembered `--env dev`.
+    // Route through the shared 5-tier resolver so CLI matches App.
+    let mut env = EnvSet::select_with_full_fallback(&ws, env_name, None);
     if let Some(name) = &env.name {
         eprintln!("env: {name}");
     }

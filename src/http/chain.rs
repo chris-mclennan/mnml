@@ -128,7 +128,10 @@ pub fn run(
         ));
     }
     let chain_dir = chain_file.parent().unwrap_or(Path::new("."));
-    let mut env = EnvSet::select(workspace, env_name);
+    // api-round-12 SEV-1 2026-07-14 — was `EnvSet::select` (2-tier).
+    // Route through the shared 5-tier resolver so the CLI chain
+    // runner matches the App / send path.
+    let mut env = EnvSet::select_with_full_fallback(workspace, env_name, None);
 
     for (i, step) in steps.iter().enumerate() {
         let path = resolve_request_path(&step.request, chain_dir, workspace)
