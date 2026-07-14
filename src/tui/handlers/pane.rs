@@ -1330,7 +1330,14 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         c.selected = 0;
                     }
                 } else {
-                    app.focus_tree();
+                    // keyboard-round-11 SEV-2 F1 2026-07-14 — was
+                    // `focus_tree()`, which mirrored the pre-round-9
+                    // Problems-Esc bug: focus flipped to TREE but the
+                    // Cheatsheet body stayed in the editor area with
+                    // no visible action. `focus_pane_or_tree` returns
+                    // to the last editor pane when one exists, tree
+                    // as fallback — matching the Problems fix.
+                    app.focus_pane_or_tree();
                 }
             }
             _ => {}

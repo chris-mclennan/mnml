@@ -321,12 +321,23 @@ pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
         KeyCode::Down | KeyCode::Char('j') => app.settings_move_row(1),
         KeyCode::Left | KeyCode::Char('h') => app.settings_adjust_value(-1),
         KeyCode::Right | KeyCode::Char('l') => app.settings_adjust_value(1),
-        KeyCode::Char('r') => app.settings_reset_row(),
-        KeyCode::Char('R') => {
-            // Shift+r — reset all to defaults (the explicit reset-all
-            // path; the same as Enter on the sentinel row).
-            app.config = crate::config::Config::default();
-            app.toast("settings: all reset to defaults");
+        // keyboard-round-11 SEV-3 F5 2026-07-14 — dispatch by the
+        // SHIFT modifier, not the char case. Real terminals deliver
+        // Shift+R as `Char('R')` naked (no SHIFT bit); IPC harnesses
+        // deliver it as `Char('r') + SHIFT`. Was: `Char('r')` alone
+        // handled reset-row, `Char('R')` alone handled reset-all —
+        // so IPC's `shift+r` (case-lowered `r` with SHIFT) matched
+        // the first arm and only reset the row. Now: SHIFT-any-case
+        // → reset-all, plain `r` → reset-row. Also allows `R` under
+        // Caps Lock without Shift to still reset-all (matches the
+        // pre-fix terminal behavior).
+        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'r') => {
+            if key.modifiers.contains(KeyModifiers::SHIFT) || c == 'R' {
+                app.config = crate::config::Config::default();
+                app.toast("settings: all reset to defaults");
+            } else {
+                app.settings_reset_row();
+            }
         }
         _ => {}
     }
