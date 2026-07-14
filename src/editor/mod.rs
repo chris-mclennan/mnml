@@ -558,6 +558,10 @@ fn op_preserves_goal_col(op: &EditOp) -> bool {
     match op {
         MoveUp | MoveDown | PageUp | PageDown | HalfPageUp | HalfPageDown => true,
         Repeat(_, inner) => op_preserves_goal_col(inner),
+        // Atomic groups preserve goal col iff EVERY inner op does —
+        // conservative default so a mixed group (motion + edit) still
+        // resets goal_col.
+        Atomic(ops) => ops.iter().all(op_preserves_goal_col),
         _ => false,
     }
 }
@@ -639,6 +643,68 @@ fn auto_pair_close(c: char) -> Option<char> {
 /// (Used for the "skip over an auto-inserted close" shortcut.)
 fn is_auto_pair_close(c: char) -> bool {
     matches!(c, ')' | ']' | '}' | '"' | '\'' | '`')
+}
+
+/// Whether an op mutates the buffer text (adds/removes/replaces
+/// characters). Motions, selection ops, undo/redo, and clipboard
+/// side effects return `false`. Used by `Repeat` in apply_one to
+/// decide whether to wrap in an atomic-undo group so `<count><op>`
+/// combos (`3dd`, `5x`, `3J`) collapse into a single undo entry.
+/// nvchad-round-14 SEV-2 2026-07-14.
+fn op_mutates_buffer(op: &EditOp) -> bool {
+    use EditOp::*;
+    match op {
+        // Text mutations. Kept as an explicit allow-list so a new
+        // motion-like variant added later doesn't accidentally opt
+        // into atomic-undo grouping.
+        InsertChar(_)
+        | InsertStr(_)
+        | InsertCharFromLine { .. }
+        | InsertNewline
+        | InsertNewlineBelow
+        | InsertNewlineAbove
+        | Backspace
+        | DeleteForward
+        | DeleteWordLeft
+        | DeleteWordRight
+        | DeleteToLineStart
+        | DeleteToLineEnd
+        | DeleteLine
+        | DeleteSelection
+        | DeleteBlock
+        | ReplaceSelection(_)
+        | ReplaceCharAtCursor(_)
+        | OverwriteCharAndAdvance(_)
+        | ReplaceUndoOne
+        | ReplaceRange { .. }
+        | Indent
+        | Outdent
+        | ToggleLineComment
+        | MoveLineUp
+        | MoveLineDown
+        | DuplicateLine
+        | JoinLines { .. }
+        | TransformSelectionCase(_)
+        | ToggleCaseChar
+        | ChangeNumberAtCursor { .. }
+        | ReflowParagraph { .. }
+        | AlignSelection { .. }
+        | SurroundSelection { .. }
+        | DeleteSurround(_)
+        | ChangeSurround { .. }
+        | PasteAfter
+        | PasteBefore
+        | PasteAfterEnd
+        | PasteBeforeEnd
+        | Paste
+        | CutSelection => true,
+        // Recurse into wrappers.
+        Repeat(_, inner) => op_mutates_buffer(inner),
+        Atomic(ops) => ops.iter().any(op_mutates_buffer),
+        // Everything else (motions, selection ops, undo/redo, yank,
+        // clipboard side effects, meta) leaves buffer text alone.
+        _ => false,
+    }
 }
 
 /// Whether an op is (a chain of) typed characters — used to decide whether to
@@ -1923,8 +1989,48 @@ impl Editor {
         use EditOp::*;
         match op {
             Repeat(n, inner) => {
-                for _ in 0..n {
-                    self.apply_one((*inner).clone(), vp, clip, out);
+                // nvchad-round-14 SEV-2 2026-07-14 — when the inner
+                // op mutates the buffer, coalesce all N per-iteration
+                // checkpoints into ONE so a single `u` reverts the
+                // whole count-multiplied op (`3dd`, `5x`, `3J`, …).
+                // Motion-only Repeat (`3w`, `5j`, …) doesn't push
+                // checkpoints anyway; skip the wrapping in that case
+                // to avoid a spurious empty undo entry.
+                if op_mutates_buffer(&inner) && n > 1 {
+                    self.redo.clear();
+                    self.in_insert_run = false;
+                    let before_len = self.undo.len();
+                    self.push_undo();
+                    let target_len = before_len + 1;
+                    for _ in 0..n {
+                        self.apply_one((*inner).clone(), vp, clip, out);
+                    }
+                    if self.undo.len() > target_len {
+                        self.undo.truncate(target_len);
+                    }
+                } else {
+                    for _ in 0..n {
+                        self.apply_one((*inner).clone(), vp, clip, out);
+                    }
+                }
+            }
+            // Explicit atomic group — like Repeat above but for a
+            // heterogeneous list of ops. Push one pre-state
+            // checkpoint, run the inner ops (each of which pushes
+            // its own), then truncate back to keep only ours.
+            // Mirrors `Editor::atomic_undo` at the op level.
+            // nvchad-round-14 SEV-2 2026-07-14.
+            Atomic(inner_ops) => {
+                self.redo.clear();
+                self.in_insert_run = false;
+                let before_len = self.undo.len();
+                self.push_undo();
+                let target_len = before_len + 1;
+                for inner in inner_ops {
+                    self.apply_one(inner, vp, clip, out);
+                }
+                if self.undo.len() > target_len {
+                    self.undo.truncate(target_len);
                 }
             }
 

@@ -421,6 +421,22 @@ pub enum EditOp {
 
     /// Apply `op` `n` times (vim counts: `3w`, `5dd`). The editor never learns counts exist.
     Repeat(u32, Box<EditOp>),
+
+    /// Run `ops` in sequence but coalesce every per-op undo
+    /// checkpoint into ONE — so `u` reverts the entire group in a
+    /// single press. Used by count-multiplied linewise ops
+    /// (`3dd`, `5x`, `3J`, `3O<text><esc>`, `3<oNEW><esc>`) which
+    /// otherwise emit N separate `DeleteLine` / `DeleteForward` /
+    /// `JoinLines` / `InsertNewline+text` ops, each of which pushes
+    /// its own checkpoint → the user has to Ctrl+Z N times to
+    /// undo a single count-prefixed vim op.
+    ///
+    /// Implementation-wise this mirrors `Editor::atomic_undo` at
+    /// the op level: captures `undo.len()` before running the
+    /// inner ops, then truncates back to `len + 1` after so only
+    /// the wrapper's own pre-state checkpoint survives.
+    /// nvchad-round-14 SEV-2 2026-07-14.
+    Atomic(Vec<EditOp>),
 }
 
 /// Letter-case transform variant for `EditOp::TransformSelectionCase`.

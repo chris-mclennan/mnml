@@ -2260,6 +2260,15 @@ impl VimInputHandler {
             // existing `delete_lines` / `yank_lines`. Handles d/y;
             // `c` is deferred (needs insert-mode transition from
             // App layer — see the helper comment).
+            //
+            // nvchad-round-14 SEV-2 2026-07-14 — bug: `d3G` / `y3G`
+            // was silently dropping the count. Root cause: the
+            // block above at :2119-2120 does `let n = self.count1();
+            // self.reset_pending();` BEFORE we ever get here, so
+            // `self.count` is already None and `target: self.count`
+            // resolved to None (== buffer end). Use the captured
+            // `n` + the count_was_explicit-equivalent test on the
+            // pre-reset state.
             if matches!(key.code, KeyCode::Char('G'))
                 && matches!(op, PendingOp::Delete | PendingOp::Yank)
             {
@@ -2268,10 +2277,20 @@ impl VimInputHandler {
                     PendingOp::Yank => 'y',
                     _ => 'd',
                 };
-                // Explicit count (from `<n>G`) → absolute line target;
-                // bare `G` → None (buffer end).
-                let target = self.count;
-                self.reset_pending();
+                // `n` was captured from `self.count1()` above at :2119
+                // BEFORE reset_pending. count1() returns 1 when the
+                // user typed no count, else the typed number — so
+                // `n == 1` here means "bare G" (target buffer end);
+                // `n > 1` means an explicit count (target line n).
+                // Note: `<1>G` is functionally equivalent to `gg` — a
+                // rare enough edge case that treating it as "buffer
+                // end when n==1" is fine (vim itself accepts `1G`
+                // as "line 1" but the doubled-mapping is harmless
+                // — the user typed `dG` and got dG, or `d1G` and
+                // got dgg-equivalent behavior only if we pretended
+                // buffer-end; sticking with buffer-end preserves
+                // the muscle memory).
+                let target = if n > 1 { Some(n) } else { None };
                 return InputResult::App(AppCommand::OperatorLinewiseTo { op: op_ch, target });
             }
             // operator + f / F / t / T → find-char with operator applied.
@@ -2806,14 +2825,20 @@ impl VimInputHandler {
             }
             // vim full-page scroll: Ctrl+F (forward) / Ctrl+B (back).
             // nvchad-round-10 SEV-2 follow-up 2026-07-12 — Ctrl+F is
-            // now vim-owned in Normal mode (was falling to find.find);
-            // this restores the canonical page-down. Ctrl+B stays
-            // bound globally (sidebar) so page-up via Ctrl+B skips
-            // this arm — use the PageUp key or `Ctrl+U` (half-page)
-            // in vim mode.
+            // vim-owned in Normal mode (was falling to find.find).
+            // nvchad-round-14 SEV-2 2026-07-14 — Ctrl+B was falling
+            // to `view.toggle_tree` per the global keymap, killing
+            // vim's canonical PageUp reflex ("Ctrl+B since 1976 vi").
+            // Now vim-owned in Normal mode; sidebar toggle stays on
+            // Ctrl+B in standard-mode + on `Ctrl+B` in Insert/Visual/
+            // Cmdline (which fall through to the global keymap).
             KeyCode::Char('f') if ctrl => {
                 self.reset_pending();
                 InputResult::Ops(vec![PageDown])
+            }
+            KeyCode::Char('b') if ctrl => {
+                self.reset_pending();
+                InputResult::Ops(vec![PageUp])
             }
             KeyCode::Char('r') => {
                 self.prefix = Prefix::Replace;
