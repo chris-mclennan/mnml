@@ -551,20 +551,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // clear preserves tree + editor + everyone's
         // registrations for one full frame.
         app.rects.scrollbars.clear();
-        // mouse-round-11 SEV-2 2026-07-12 — clear cross-section
-        // filter rects up front so a stale rect from a previous
-        // frame's active section can't hijack a click in the
-        // current section. Without this, activating Notes after
-        // HTTP left `http_panel_filter_input` set to its old row
-        // 2 rect; a click on Notes' own filter row at the same
-        // coords routed to the HTTP handler and swapped the
-        // sidebar back to HTTP.
-        app.rects.http_panel_filter_input = None;
-        app.rects.notes_panel_filter_input = None;
-        app.rects.todos_panel_filter_input = None;
-        app.rects.sessions_panel_filter_input = None;
-        app.rects.agents_panel_filter_input = None;
-        app.rects.cloud_agents_filter_input = None;
+        // mouse-round-11 SEV-2 2026-07-12 → user report 2026-07-15
+        // ("previously viewed screen is getting the clicks") — clear
+        // EVERY activity-panel click-rect up front so a stale rect
+        // from a previously-visible panel can't hijack a click.
+        // Whichever panel dispatches below repopulates its own
+        // rects; anything else stays cleared. Round-11 only covered
+        // filter-input rects — this generalizes to all activity-
+        // panel rects. See `PaneRects::clear_activity_panel_rects`
+        // for the full list and the maintenance note.
+        app.rects.clear_activity_panel_rects();
         match app.active_section {
             crate::app::ActivitySection::Explorer => {
                 tree_view::draw(frame, app, content_area);

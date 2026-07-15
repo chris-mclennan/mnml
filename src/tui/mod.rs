@@ -2118,6 +2118,31 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // nvchad-round-15 SEV-2 F2 2026-07-15 — Ctrl+B in vim Normal /
+    // Visual mode is canonical PageUp (since 1976 vi). The global
+    // keymap binds it to `view.toggle_tree` — correct in standard
+    // mode, but in vim Normal mode the vim.rs handler at :2839
+    // owns Ctrl+B. Without this bypass, `dispatch_chord_chain`
+    // below would fire the global toggle first and the vim.rs
+    // branch is dead code. Skip chord_chain when the current key
+    // is a vim-reserved Normal-mode chord so it falls through to
+    // the focused input handler naturally. Matches the same
+    // reasoning as the existing round-10 Ctrl+F fix (vim.rs side).
+    let vim_reserves_key = {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let vim_normal_or_visual = matches!(
+            app.editing_mode(),
+            crate::input::EditingMode::Normal
+                | crate::input::EditingMode::Visual
+                | crate::input::EditingMode::VisualLine
+                | crate::input::EditingMode::VisualBlock
+        );
+        vim_normal_or_visual
+            && ctrl
+            && !key.modifiers.contains(KeyModifiers::ALT)
+            && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
+    };
+
     // vscode-user-keyboard SEV-2: when the chord chain bottoms out
     // and fires its fallback (typically `whichkey.leader`), the
     // current key was being dropped instead of fed into the just-
@@ -2126,7 +2151,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // NOT open before chord-dispatch but IS open after, re-route
     // the current key to the overlay's char-feed.
     let whichkey_was_open = app.whichkey.is_some();
-    if dispatch_chord_chain(app, key) {
+    if !vim_reserves_key && dispatch_chord_chain(app, key) {
         return;
     }
     if !whichkey_was_open

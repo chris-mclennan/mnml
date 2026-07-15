@@ -2638,6 +2638,83 @@ pub struct PaneRects {
     pub tab_drop_target: Option<(PaneId, crate::app::tab_drop::DropZone)>,
 }
 
+impl PaneRects {
+    /// Wipe every activity-panel-scoped click-rect. Called at the top
+    /// of the section-dispatch in `ui::draw` so stale rects from a
+    /// previously-visible panel can't hijack a click when the user has
+    /// switched to a different activity (Notes → HTTP → Sessions, etc).
+    ///
+    /// Whichever panel is drawn THIS frame repopulates its own rects;
+    /// panels that aren't drawn stay cleared. Follow-up to the round-11
+    /// F1 fix which only cleared the filter-input rects — those were
+    /// just the tip of the iceberg. User report 2026-07-15:
+    /// "previously viewed screen is getting the clicks."
+    ///
+    /// Not-in-scope on purpose (kept live across activity switches):
+    ///   * `tree` / `tree_rows` / `tree_toggle` / `tree_icon_buttons`
+    ///     — the Explorer file tree IS shared with other activities
+    ///     (workspace context stays even when the sidebar shows Notes).
+    ///   * `activity_bar_*` / `palette_*` / `statusline_*` — chrome
+    ///     that renders every frame.
+    ///   * Editor / pane rects — those are per-pane, not per-activity.
+    ///
+    /// If you add a new activity panel, add its rects here. If you
+    /// touch this list, mirror in a test that clicks (0,0) after
+    /// switching activities to prove no rect from the outgoing panel
+    /// survives.
+    pub fn clear_activity_panel_rects(&mut self) {
+        // HTTP panel.
+        self.http_panel_files.clear();
+        self.http_panel_recent_rows.clear();
+        self.http_panel_captured_rows.clear();
+        self.http_panel_section_headers.clear();
+        self.http_panel_section_chips.clear();
+        self.http_panel_env_rows.clear();
+        self.http_panel_chain_rows.clear();
+        self.http_panel_mock_rows.clear();
+        self.http_panel_collection_rows.clear();
+        self.http_panel_collection_folder_rows.clear();
+        self.http_panel_icon_buttons.clear();
+        self.http_panel_collection_new_request_chips.clear();
+        self.http_panel_new_chip = None;
+        self.http_panel_filter_input = None;
+        self.http_panel_capture_chip = None;
+        self.http_panel_captured_clear_chip = None;
+        self.http_panel_captured_refresh_chip = None;
+        self.http_panel_recent_clear_chip = None;
+        self.http_panel_discover_chip = None;
+        self.http_panel_env_new_chip = None;
+        self.http_panel_chain_new_chip = None;
+        self.http_panel_collection_new_chip = None;
+        self.http_panel_import_chip = None;
+        // Notes panel.
+        self.notes_panel_files.clear();
+        self.notes_panel_new_chip = None;
+        self.notes_panel_filter_input = None;
+        // Todos panel.
+        self.todos_panel_rows.clear();
+        self.todos_panel_refresh_chip = None;
+        self.todos_panel_filter_input = None;
+        // Sessions panel.
+        self.sessions_panel_filter_input = None;
+        // Agents (Claude Code / Codex) panel.
+        self.agents_panel_rows.clear();
+        self.agents_panel_workspace_headers.clear();
+        self.agents_panel_area = None;
+        self.agents_panel_filter_input = None;
+        self.agents_panel_new_chip = None;
+        self.agents_panel_pr_chip = None;
+        self.agents_panel_view_chip = None;
+        // Cloud agents (ECS runner) panel.
+        self.cloud_agents_rows.clear();
+        self.cloud_agents_filter_input = None;
+        self.cloud_agents_new_run_button = None;
+        self.cloud_agents_quick_input = None;
+        self.cloud_agents_change_defaults_chip = None;
+        self.cloud_agents_view_chip = None;
+    }
+}
+
 /// Ex-cmdline Tab completion cycle. While the user keeps pressing Tab, this
 /// remembers the part of the cmdline that should NOT change, the list of
 /// matching candidates, and which one is on screen. The cmdline currently

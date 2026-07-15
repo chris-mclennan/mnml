@@ -2247,9 +2247,20 @@ impl VimInputHandler {
             // text object"). Other g-prefixed motions (`gg`, `gj`, etc.)
             // would also work here in principle but most aren't yet wired
             // to honor the pending op.
+            //
+            // nvchad-round-15 SEV-2 F1 2026-07-15 — restore `self.count`
+            // after the reset_pending block above at :2119-2120 cleared
+            // it. Without this, `d3g` transitions op→G-prefix with
+            // count=None, so the next-key `g` sees count_was_explicit
+            // = false and treats `d3gg` as bare `dgg` (buffer start,
+            // ignoring the count). Same bug shape as the round-14 F1
+            // fix for `d3G` but on the two-key-press variant.
             if matches!(key.code, KeyCode::Char('g')) {
                 self.op = Some(op);
                 self.prefix = Prefix::G;
+                if n > 1 {
+                    self.count = Some(n);
+                }
                 return InputResult::Consumed;
             }
             // nvchad-round-13 SEV-2 F3 2026-07-14 — operator + `G`.
