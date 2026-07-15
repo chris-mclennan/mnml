@@ -695,6 +695,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
         .cloned()
     {
+        // api-round-13 SEV-2 A 2026-07-15 — a click that starts an
+        // inline KV edit must also move keyboard focus to the pane,
+        // otherwise every subsequent keystroke routes to whichever
+        // handler currently owns focus (typically the tree, if the
+        // request pane was opened as a preview from the tree/
+        // COLLECTIONS list). Symptom: the cell renders `value▏` but
+        // every key/backspace/Enter/Tab/Esc is silently swallowed;
+        // only another mouse click elsewhere recovers.
+        app.focus_pane();
         if key == "\0COMMIT" {
             return;
         }
@@ -729,6 +738,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
         .cloned()
     {
+        // api-round-13 SEV-2 A 2026-07-15 — same pane-focus fix
+        // as request_vars_rows above. See comment there.
+        app.focus_pane();
         // Kind is now carried on the rect itself (fix 2026-07-07) so
         // secondary-side clicks in a side-by-side edit split route
         // to the right params/headers path even when the primary
