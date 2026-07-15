@@ -37,11 +37,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Collect Pty panes first so the header can show the filtered
     // count. Index in `app.panes` doubles as the focus target for
     // the click handler.
+    //
+    // user report 2026-07-15 — "why is bitbucket showing up in
+    // sessions? shouldn't a session just be Claude Code or Codex
+    // though?". Yes — Sessions is the AI-agent panel, not a
+    // "every process mnml has spawned" catchall. Filter to Pty
+    // panes whose `exe` is one of the AI CLIs. Bare shells,
+    // integrations (bitbucket / amplify / :term <binary>), and
+    // task launches are all excluded — they show up in the
+    // bufferline as regular Pty tabs but don't clutter the AI
+    // Sessions view.
+    fn is_ai_session_pane(p: &Pane) -> bool {
+        let Pane::Pty(s) = p else { return false };
+        // exe basename — path-agnostic (`/usr/local/bin/claude` still matches).
+        let exe_base = std::path::Path::new(&s.profile.exe)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&s.profile.exe);
+        matches!(exe_base, "claude" | "codex")
+    }
     let all_pty_indices: Vec<usize> = app
         .panes
         .iter()
         .enumerate()
-        .filter_map(|(i, p)| matches!(p, Pane::Pty(_)).then_some(i))
+        .filter_map(|(i, p)| is_ai_session_pane(p).then_some(i))
         .collect();
     let filter_lc = app.sessions_panel_filter.to_ascii_lowercase();
     let pty_indices: Vec<usize> = if filter_lc.is_empty() {
