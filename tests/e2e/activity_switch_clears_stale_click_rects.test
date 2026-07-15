@@ -1,0 +1,52 @@
+# Regression: switching activities MUST wipe the outgoing panel's
+# click-rects, or a click at the incoming panel's coord routes to the
+# outgoing panel's handler (the "previously viewed screen getting the
+# clicks" class user-report 2026-07-15, prior round-11 F1 report).
+#
+# Repro shape:
+#   1. Switch to HTTP  → populates http_panel_filter_input, section
+#      headers, `+ New` chips, etc.
+#   2. Switch to Notes → Notes panel draws (filter row lands at a
+#      similar coord to HTTP's filter row).
+#   3. Click at a coord inside the sidebar column that WOULD have
+#      matched HTTP's chips before the round-15 systematic clear.
+#   4. Assertion: no HTTP-panel prompt / overlay / state change fired.
+#      (Whatever HTTP would have popped — "New collection name",
+#      "New request", etc. — must be absent.)
+#
+# The systematic fix in PaneRects::clear_activity_panel_rects (called
+# at the top of ui/mod.rs section-dispatch) wipes all 43 activity-
+# panel-scoped rects on every frame; only the currently-drawn panel
+# repopulates. This test exercises just one switch, but the whole
+# class collapses to the same code path — cover-once-cover-all.
+
+write dummy.txt hello
+open dummy.txt
+
+# Populate HTTP panel rects.
+command view.activity_http
+wait 100
+
+# Switch to Notes.
+command view.activity_notes
+wait 100
+
+# The Notes panel is now visible. Click at a coord in the sidebar
+# column (col 10) at a row inside the panel body. Under the old
+# behavior this would have hit a stale HTTP rect — under the fix
+# it either does nothing or clicks a Notes-owned target.
+click 10 5
+wait 100
+
+# The screen must NOT contain any HTTP-panel prompt strings that
+# would only appear if a stale HTTP click hijacked the event.
+expect screen lacks "New collection name"
+expect screen lacks "New request"
+expect screen lacks "New env"
+expect screen lacks "New chain"
+
+# Additionally: the sidebar header must still read "NOTES", not
+# "HTTP" — a stale HTTP handler often calls `set_activity_section`
+# to swap the sidebar back (which was the round-11 F1 symptom).
+expect screen contains "NOTES"
+expect screen lacks "COLLECTIONS"
