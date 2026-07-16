@@ -467,6 +467,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         // can gate their hit-rect registration on "mouse actually
         // over this row" without going through the tooltip debounce.
         app.mouse_pos = Some((x, y));
+        // mouse-round-16 SEV-2 F1 2026-07-16 — clear the "just
+        // closed a tab here" guard as soon as the pointer moves
+        // to a different cell. See the guard site in down_left.rs
+        // (`last_tab_close_at`).
+        if app
+            .last_tab_close_at
+            .is_some_and(|(cx, cy)| cx != x || cy != y)
+        {
+            app.last_tab_close_at = None;
+        }
         // 2026-07-12 — track which bufferline tab the mouse is over
         // so the renderer paints its close `×` glyph on hover (not
         // just when active). Rebuilt every Moved event so leaving

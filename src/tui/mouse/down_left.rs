@@ -1049,14 +1049,22 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .iter()
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
+        // mouse-round-16 SEV-2 F1 2026-07-16 — require physical
+        // mouse movement between tab-close clicks. Round-15's
+        // `last_click = None` reset only broke dbl-CLICK state;
+        // the raw second click at the same coord still closed
+        // whatever tab had slid into that slot. Now: if the last
+        // close fired at this exact (col, row) AND the pointer
+        // hasn't moved since, swallow the click. The user must
+        // physically move the mouse to close the next tab —
+        // matches VS Code / Chrome tab-close behavior.
+        if app.last_tab_close_at == Some((x, y)) {
+            return;
+        }
         app.close_pane(id);
-        // mouse-round-15 SEV-2 F2 2026-07-15 — after a close, the
-        // NEXT tab slides into this coord's slot. Without resetting
-        // last_click, a second click within DOUBLE_CLICK_MAX_MS at
-        // the same (x,y) chained into a dbl-close (closed a
-        // different tab the user didn't intend to touch — data-loss
-        // risk on dirty tabs). Reset so successive clicks land as
-        // fresh single-clicks on whatever slid into place.
+        app.last_tab_close_at = Some((x, y));
+        // Also reset last_click for the round-15 double-click
+        // state (harmless if already None; kept for defense in depth).
         app.last_click = None;
         return;
     }

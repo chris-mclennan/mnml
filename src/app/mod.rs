@@ -4245,6 +4245,21 @@ pub struct App {
     /// users a "close inactive tab in one click" affordance
     /// (previously they had to focus the tab first). 2026-07-12.
     pub hovered_bufferline_tab: Option<PaneId>,
+    /// mouse-round-16 F1 2026-07-16 — screen coord (col, row) of the
+    /// last bufferline close-× click. Set when a close fires;
+    /// consulted on subsequent Down(Left) events: if the pointer is
+    /// STILL at those same coords, the click is suppressed as an
+    /// accidental double-tap on whatever tab slid into the just-
+    /// closed slot. Cleared on any Moved event that lands at a
+    /// different coord (the user physically moved the mouse), and
+    /// on any non-close click (they've moved on to another action).
+    /// Rationale: rapid dbl-click at a fixed coord was closing 2
+    /// tabs — round-15's `last_click=None` fix only broke the
+    /// dbl-click STATE; the raw second click still hit the newly-
+    /// slotted tab's close-X because it's rendered at the same
+    /// coord. This gate requires physical mouse movement between
+    /// intentional closes.
+    pub last_tab_close_at: Option<(u16, u16)>,
     /// Which editor line is currently under the mouse cursor
     /// (`(pane_id, 0-based line_no)`). Drives the VS Code-style
     /// fold-arrow indicator: foldable lines show a `↓` in the
@@ -5163,6 +5178,7 @@ impl App {
             hover_chip: None,
             mouse_pos: None,
             hovered_bufferline_tab: None,
+            last_tab_close_at: None,
             hover_editor_line: None,
             hover_divider_idx: None,
             hover_tree_edge: false,
