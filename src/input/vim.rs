@@ -1259,18 +1259,31 @@ impl VimInputHandler {
                     // `gu{motion}` — lowercase. Sets a pending op + waits
                     // for a motion (or `u` for the doubled "current line"
                     // form). E.g. `guu` lowercases the line; `guw` the word.
+                    // nvchad-round-16 SEV-2 F1 2026-07-16 — restore
+                    // `self.count` after reset_pending above so a
+                    // `<n>gu<motion>` still multiplies. Same pattern
+                    // as the round-15 F1 fix for the `d/y/c` arms.
                     KeyCode::Char('u') => {
                         self.op = Some(PendingOp::Lower);
+                        if count_was_explicit {
+                            self.count = Some(n);
+                        }
                         InputResult::Consumed
                     }
                     // `gU{motion}` — uppercase.
                     KeyCode::Char('U') => {
                         self.op = Some(PendingOp::Upper);
+                        if count_was_explicit {
+                            self.count = Some(n);
+                        }
                         InputResult::Consumed
                     }
                     // `g~{motion}` — toggle case.
                     KeyCode::Char('~') => {
                         self.op = Some(PendingOp::ToggleCase);
+                        if count_was_explicit {
+                            self.count = Some(n);
+                        }
                         InputResult::Consumed
                     }
                     // `gn` / `gN` — find as text-object. Standalone (no
@@ -1282,8 +1295,11 @@ impl VimInputHandler {
                     // `gp` / `gP` — paste; cursor lands at END of the pasted
                     // text (vs. plain `p`/`P` where it lands at the start of
                     // a linewise paste). Vim convention.
-                    KeyCode::Char('p') => InputResult::Ops(vec![PasteAfterEnd]),
-                    KeyCode::Char('P') => InputResult::Ops(vec![PasteBeforeEnd]),
+                    // nvchad-round-16 SEV-2 F3 2026-07-16 — `<n>gp`
+                    // and `<n>gP` used to drop the count. Repeat the
+                    // paste N times.
+                    KeyCode::Char('p') => InputResult::Ops(Self::repeated(PasteAfterEnd, n)),
+                    KeyCode::Char('P') => InputResult::Ops(Self::repeated(PasteBeforeEnd, n)),
                     // `g*` / `g#` — like `*` / `#` but match the word as a
                     // substring (no word-boundary requirement). mnml's
                     // find is already substring-based (no `\b` in literal
@@ -1405,8 +1421,13 @@ impl VimInputHandler {
             }
             Prefix::Gc => {
                 if key.code == KeyCode::Char('c') {
+                    // nvchad-round-16 SEV-2 F2 2026-07-16 — was
+                    // `vec![ToggleLineComment]` which dropped
+                    // `<n>gcc`'s count. `Self::repeated` handles
+                    // the n==1 case cleanly (no Repeat wrapper).
+                    let n = self.count1();
                     self.reset_pending();
-                    return InputResult::Ops(vec![ToggleLineComment]);
+                    return InputResult::Ops(Self::repeated(ToggleLineComment, n));
                 }
                 // `gcip` / `gcap` — text-object dispatch. Reuses the
                 // same TextObjectInner / Around prefix machinery `gq`
@@ -2138,14 +2159,44 @@ impl VimInputHandler {
                         // whole line — see note on the case-transform branches
                         // below for why this is needed after the 2026-06-13
                         // SelectLine fix.
-                        InputResult::Ops(vec![
-                            SelectLine,
-                            MoveLineEnd,
-                            ReplaceSelection(String::new()),
-                        ])
+                        // nvchad-round-16 SEV-2 F4 2026-07-16 —
+                        // `<n>cc` needs to change n lines. Extend the
+                        // selection down by n-1 additional line-ends
+                        // before clearing so `3cc` wipes 3 lines and
+                        // enters insert on the first.
+                        let mut ops = vec![SelectLine, MoveLineEnd];
+                        for _ in 1..n {
+                            ops.push(MoveDown);
+                            ops.push(MoveLineEnd);
+                        }
+                        ops.push(ReplaceSelection(String::new()));
+                        InputResult::Ops(ops)
                     }
-                    PendingOp::Indent => InputResult::Ops(Self::repeated(Indent, n)),
-                    PendingOp::Outdent => InputResult::Ops(Self::repeated(Outdent, n)),
+                    // nvchad-round-16 SEV-2 F5 2026-07-16 — `<n>>>`
+                    // used to apply N indent LEVELS to the current
+                    // line (`Self::repeated(Indent, n)` iterated the
+                    // op). Vim's `<n>>>` indents N LINES by one
+                    // level. Fix: build a linewise selection over N
+                    // lines first so Indent's `for_each_selected_line`
+                    // walks all N. Same for `<<`.
+                    PendingOp::Indent => {
+                        let mut ops = vec![SelectStart];
+                        for _ in 1..n {
+                            ops.push(MoveDown);
+                        }
+                        ops.push(Indent);
+                        ops.push(SelectClear);
+                        InputResult::Ops(ops)
+                    }
+                    PendingOp::Outdent => {
+                        let mut ops = vec![SelectStart];
+                        for _ in 1..n {
+                            ops.push(MoveDown);
+                        }
+                        ops.push(Outdent);
+                        ops.push(SelectClear);
+                        InputResult::Ops(ops)
+                    }
                     PendingOp::Reflow => InputResult::Ops(vec![ReflowParagraph {
                         width: self.text_width,
                     }]),
@@ -2232,14 +2283,23 @@ impl VimInputHandler {
             // operator + `i` / `a` → text-object prefix (`diw`, `daw`, …).
             // `reset_pending()` above cleared `self.op`; put it back so the
             // prefix dispatcher knows which operator to apply.
+            // nvchad-round-16 SEV-2 F6 2026-07-16 — also restore
+            // `self.count` so `<n>diw` etc. still multiplies. `n`
+            // was captured from `count1()` above before reset_pending.
             if matches!(key.code, KeyCode::Char('i')) {
                 self.op = Some(op);
                 self.prefix = Prefix::TextObjectInner;
+                if n > 1 {
+                    self.count = Some(n);
+                }
                 return InputResult::Consumed;
             }
             if matches!(key.code, KeyCode::Char('a')) {
                 self.op = Some(op);
                 self.prefix = Prefix::TextObjectAround;
+                if n > 1 {
+                    self.count = Some(n);
+                }
                 return InputResult::Consumed;
             }
             // operator + `g` → enter the G prefix with the operator
@@ -2697,12 +2757,17 @@ impl VimInputHandler {
             // spans the entire line. Matches the doubled-op `cc`
             // path at :2110-2121.
             KeyCode::Char('S') => {
+                // nvchad-round-16 SEV-2 F4 2026-07-16 — `<n>S` mirrors
+                // `<n>cc`: extend selection down n-1 additional lines
+                // before clearing so `3S` substitutes 3 lines.
                 self.enter_insert();
-                InputResult::Ops(vec![
-                    MoveLineEnd,
-                    SelectLine,
-                    ReplaceSelection(String::new()),
-                ])
+                let mut ops = vec![MoveLineEnd, SelectLine];
+                for _ in 1..n {
+                    ops.push(MoveDown);
+                    ops.push(MoveLineEnd);
+                }
+                ops.push(ReplaceSelection(String::new()));
+                InputResult::Ops(ops)
             }
             KeyCode::Char('r') if ctrl => {
                 self.reset_pending();
@@ -3257,6 +3322,33 @@ impl VimInputHandler {
             let d = c as u32 - '0' as u32;
             self.count = Some(self.count.unwrap().saturating_mul(10).saturating_add(d));
             return InputResult::Consumed;
+        }
+
+        // nvchad-round-16 SEV-2 F7 2026-07-16 — vim scroll chords
+        // in Visual mode. Must intercept BEFORE `Self::motion` (which
+        // matches `Char('b')` as MoveWordLeft ignoring the ctrl
+        // modifier — so Ctrl+B fell to `b`-motion + `Ctrl+F/D/U/E`
+        // silently no-op'd or dropped the selection to global chords).
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if ctrl && let KeyCode::Char(c) = key.code {
+            let scroll_op = match c {
+                'b' | 'B' => Some(PageUp),
+                'f' | 'F' => Some(PageDown),
+                'u' | 'U' => Some(HalfPageUp),
+                'd' | 'D' => Some(HalfPageDown),
+                // Ctrl+E / Ctrl+Y scroll viewport without moving
+                // cursor in vim; mnml doesn't have separate viewport
+                // ops, so map to HalfPage as the closest analog
+                // (matches how Normal mode handles them at :955 / :952).
+                'e' | 'E' => Some(HalfPageDown),
+                'y' | 'Y' => Some(HalfPageUp),
+                _ => None,
+            };
+            if let Some(op) = scroll_op {
+                let n = self.count1();
+                self.count = None;
+                return InputResult::Ops(Self::repeated(op, n));
+            }
         }
 
         if let Some(m) = Self::motion(key.code) {
