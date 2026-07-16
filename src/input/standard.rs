@@ -334,10 +334,19 @@ impl InputHandler for StandardInputHandler {
             KeyCode::PageDown => mv(PageDown),
 
             KeyCode::Esc => {
+                // keyboard-round-14 SEV-2 2026-07-16 — Esc after
+                // `Ctrl+Shift+L` (multi-cursor select-all-occurrences)
+                // used to fire only `SelectClear` because the primary
+                // cursor DID have a selection. The extras stayed
+                // armed → typing after Esc still fanned out. Match
+                // VS Code: Esc exits multi-cursor mode too, so emit
+                // both. The `ClearExtraCursors` case reached from the
+                // Ignored branch elsewhere in the app is redundant
+                // now that both ops are emitted here.
                 if ctx.has_selection {
-                    InputResult::Ops(vec![SelectClear])
+                    InputResult::Ops(vec![SelectClear, ClearExtraCursors])
                 } else {
-                    InputResult::Ignored
+                    InputResult::Ops(vec![ClearExtraCursors])
                 }
             }
 
@@ -512,15 +521,19 @@ mod tests {
     }
 
     #[test]
-    fn esc_clears_selection_else_ignored() {
+    fn esc_clears_selection_and_extra_cursors() {
+        // keyboard-round-14 SEV-2 2026-07-16 — Esc now also clears
+        // extra cursors so the dormant-extras-fan-out bug after
+        // Ctrl+Shift+L is fixed. Both branches always emit
+        // ClearExtraCursors.
         assert_eq!(
             ops(h().handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &ctx(true))),
-            vec![EditOp::SelectClear]
+            vec![EditOp::SelectClear, EditOp::ClearExtraCursors]
         );
-        assert!(matches!(
-            h().handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &ctx(false)),
-            InputResult::Ignored
-        ));
+        assert_eq!(
+            ops(h().handle_key(key(KeyCode::Esc, KeyModifiers::NONE), &ctx(false))),
+            vec![EditOp::ClearExtraCursors]
+        );
     }
 
     #[test]

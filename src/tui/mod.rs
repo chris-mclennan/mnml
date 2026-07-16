@@ -2143,6 +2143,52 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
     };
 
+    // keyboard-round-14 SEV-2 2026-07-16 — when a Pty pane is
+    // focused, forward the shell-critical ctrl chords straight to
+    // the child instead of letting the global keymap eat them.
+    // Was: Ctrl+D fired `editor.add_cursor_at_next_word` even from
+    // a focused shell (breaking exit); Ctrl+K fired the whichkey
+    // leader (breaking kill-line); Ctrl+R fired `find.find`
+    // (breaking reverse-history-search); Ctrl+N/P fired autocomplete
+    // move (breaking readline history); Ctrl+F fired
+    // `find.find` (breaking readline forward-char). These are the
+    // 6 chords a shell user hits within seconds of dropping into a
+    // sibling. Sits above dispatch_chord_chain so the key falls
+    // through to the focused-Pty handler naturally.
+    //
+    // Exceptions:
+    //  * Ctrl+F in a claude-code pane keeps its filename-inject
+    //    (handled in pane.rs before the pty write path).
+    //  * Ctrl+` still toggles the scratch terminal (kb-round-12).
+    //  * Ctrl+C / Ctrl+U / Ctrl+A already fell through correctly.
+    let pty_reserves_key = {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let active_is_pty = app.focus == crate::focus::Focus::Pane
+            && app
+                .active
+                .and_then(|i| app.panes.get(i))
+                .is_some_and(|p| matches!(p, crate::pane::Pane::Pty(_)));
+        active_is_pty
+            && ctrl
+            && !key.modifiers.contains(KeyModifiers::ALT)
+            && !key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(
+                key.code,
+                KeyCode::Char('d')
+                    | KeyCode::Char('D')
+                    | KeyCode::Char('k')
+                    | KeyCode::Char('K')
+                    | KeyCode::Char('n')
+                    | KeyCode::Char('N')
+                    | KeyCode::Char('p')
+                    | KeyCode::Char('P')
+                    | KeyCode::Char('r')
+                    | KeyCode::Char('R')
+                    | KeyCode::Char('f')
+                    | KeyCode::Char('F')
+            )
+    };
+
     // vscode-user-keyboard SEV-2: when the chord chain bottoms out
     // and fires its fallback (typically `whichkey.leader`), the
     // current key was being dropped instead of fed into the just-
@@ -2151,7 +2197,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // NOT open before chord-dispatch but IS open after, re-route
     // the current key to the overlay's char-feed.
     let whichkey_was_open = app.whichkey.is_some();
-    if !vim_reserves_key && dispatch_chord_chain(app, key) {
+    if !vim_reserves_key && !pty_reserves_key && dispatch_chord_chain(app, key) {
         return;
     }
     if !whichkey_was_open
