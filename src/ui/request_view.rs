@@ -3744,7 +3744,19 @@ fn draw_response(
                 || ct_lower.contains("tar")
                 || ct_lower.contains("protobuf")
                 || ct_lower.contains("msgpack");
-            let size = r.body_bytes.len().max(r.body.len());
+            // api-round-14 SEV-2 2026-07-16 — was
+            // `body_bytes.len().max(body.len())` which INFLATED
+            // binary/non-UTF8 sizes: lossy UTF-8 decoding replaces
+            // each invalid byte with U+FFFD (3 bytes in UTF-8),
+            // so `body.len() > body_bytes.len()` for non-UTF8
+            // data and `max()` picked the wrong side. Raw bytes
+            // are always the correct size when present; fall back
+            // to `body.len()` only when no raw copy was captured.
+            let size = if !r.body_bytes.is_empty() {
+                r.body_bytes.len()
+            } else {
+                r.body.len()
+            };
             if is_binary_ct {
                 let kind = if ct_lower.starts_with("image/") {
                     "image"
@@ -3767,11 +3779,21 @@ fn draw_response(
                 ));
                 return;
             }
-            let pretty = pretty_body(&r.body, &r.headers);
+            // api-round-14 SEV-2 2026-07-16 — "TEXT" format ("plain
+            // text (no highlight)") used to still call pretty_body
+            // unconditionally, which auto-prettifies JSON etc. from
+            // the content-type. Users had no way to view the actual
+            // raw response bytes. Now: Text short-circuits pretty
+            // and shows the body verbatim.
+            use crate::request_pane::ResponseBodyFormat;
+            let pretty = if matches!(rp.response_body_format, ResponseBodyFormat::Text) {
+                r.body.clone()
+            } else {
+                pretty_body(&r.body, &r.headers)
+            };
             // Pick the syntax-highlighter language. Override wins
             // over auto-detect. XML aliases to HTML (same grammar).
             // Text = no highlight.
-            use crate::request_pane::ResponseBodyFormat;
             let highlight_lang: Option<&'static str> = match rp.response_body_format {
                 ResponseBodyFormat::Json => Some("json"),
                 ResponseBodyFormat::Xml | ResponseBodyFormat::Html => Some("html"),

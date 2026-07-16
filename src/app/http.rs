@@ -6326,7 +6326,17 @@ impl App {
                             url: &rp.request.url,
                             status: Some(rv.status),
                             duration_ms: Some(rv.elapsed.as_millis()),
-                            body_bytes: Some(rv.body.len()),
+                            // api-round-14 SEV-2 2026-07-16 — was
+                            // `rv.body.len()` which inflated
+                            // non-UTF8 payloads via U+FFFD (3-byte)
+                            // replacement chars. Prefer raw bytes
+                            // when captured; fall back to `body`
+                            // length for the text-only shape.
+                            body_bytes: Some(if !rv.body_bytes.is_empty() {
+                                rv.body_bytes.len()
+                            } else {
+                                rv.body.len()
+                            }),
                             error: None,
                             headers: Some(&rp.request.headers),
                             request_body: rp.request.body.as_deref(),

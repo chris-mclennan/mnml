@@ -258,7 +258,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.last_click = Some((now, x, y, if is_double { 2 } else { 1 }));
         if is_double {
             app.equalize_splits();
-            return;
+            // mouse-round-15 SEV-2 F1 2026-07-15 — don't early-return.
+            // The user's second Down may be intended as a drag start,
+            // not a "dbl-click to equalize" (unambiguous only at Up
+            // time). Fall through to begin_divider_drag so the drag
+            // still arms — the user's drag continues from the just-
+            // equalized position, which is a strictly better outcome
+            // than "click-then-drag within 700 ms silently drops the
+            // drag."
         }
     }
     // Grab a split divider? (do this first — it sits between two pane rects)
@@ -666,6 +673,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     // Click on a Response sub-tab chip (Body / Headers / Timeline
     // / Tests) → switch the active pane's `response_tab`.
+    // api-round-14 SEV-2 2026-07-16 — also snap the pane's view
+    // to Response AND focus_pane() so the documented `/`-search
+    // and `j`/`k` scroll bindings actually reach the response
+    // renderer. Was: only set `response_tab` — the pane could
+    // still be in ViewMode::Edit or focus could still be on the
+    // tree, so the next keystroke silently corrupted the URL
+    // instead of scrolling / searching.
     if let Some((_, tab)) = app
         .rects
         .request_response_tabs
@@ -677,7 +691,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             && let Some(crate::pane::Pane::Request(rp)) = app.panes.get_mut(cur)
         {
             rp.response_tab = tab;
+            rp.view = crate::request_pane::ViewMode::Response;
         }
+        app.focus_pane();
         return;
     }
     // Click on a Vars-tab row → cell-level routing (#23 v3).
@@ -1034,6 +1050,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
         app.close_pane(id);
+        // mouse-round-15 SEV-2 F2 2026-07-15 — after a close, the
+        // NEXT tab slides into this coord's slot. Without resetting
+        // last_click, a second click within DOUBLE_CLICK_MAX_MS at
+        // the same (x,y) chained into a dbl-close (closed a
+        // different tab the user didn't intend to touch — data-loss
+        // risk on dirty tabs). Reset so successive clicks land as
+        // fresh single-clicks on whatever slid into place.
+        app.last_click = None;
         return;
     }
     if let Some(&(_, id)) = app

@@ -170,11 +170,20 @@ pub fn run(opts: &Options) -> Result<(usize, usize), String> {
                     None,
                 );
                 let file = dir.join(format!("{file_base}.curl"));
+                // api-round-14 SEV-1 2026-07-16 — `count += 1` used
+                // to run unconditionally after the if/else, so a
+                // re-run against unchanged stubs reported "wrote N"
+                // for N files it had actually skipped. The chain-
+                // step / login-index side-effects still fire on
+                // skip (they need the file's chain position even
+                // when the file itself already exists); only the
+                // "wrote" counter needs to gate on the write path.
                 if !opts.force && file.exists() {
                     skipped += 1;
                 } else {
                     std::fs::write(&file, curl)
                         .map_err(|e| format!("write {}: {e}", file.display()))?;
+                    count += 1;
                 }
                 let rel = format!("{folder}/{file_base}.curl");
                 let step = ChainStep {
@@ -188,7 +197,6 @@ pub fn run(opts: &Options) -> Result<(usize, usize), String> {
                     .entry(folder.clone())
                     .or_default()
                     .push(step);
-                count += 1;
                 // Tier 7 edge-case variants — only when the operation
                 // has a body schema and opts.edge_cases is on.
                 if opts.edge_cases && has_body_schema(op) {
@@ -228,11 +236,14 @@ pub fn run(opts: &Options) -> Result<(usize, usize), String> {
                         None,
                     );
                     let file = dir.join(format!("{file_base}.{safe}.curl"));
+                    // api-round-14 SEV-1 2026-07-16 — same double-
+                    // count fix as the un-named branch above.
                     if !opts.force && file.exists() {
                         skipped += 1;
                     } else {
                         std::fs::write(&file, curl)
                             .map_err(|e| format!("write {}: {e}", file.display()))?;
+                        count += 1;
                     }
                     let rel = format!("{folder}/{file_base}.{safe}.curl");
                     let step = ChainStep {
@@ -246,7 +257,6 @@ pub fn run(opts: &Options) -> Result<(usize, usize), String> {
                         .entry(folder.clone())
                         .or_default()
                         .push(step);
-                    count += 1;
                 }
             }
         }
