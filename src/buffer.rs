@@ -827,6 +827,10 @@ impl Buffer {
             }
             _ => (None, None),
         };
+        let first_nonws = line
+            .chars()
+            .take_while(|c| c.is_whitespace() && *c != '\n')
+            .count();
         EditCtx {
             cursor: cur,
             line_len: line.chars().count(),
@@ -835,6 +839,8 @@ impl Buffer {
             at_line_start: col == 0,
             at_line_end: self.editor.is_at_line_end(),
             has_selection: self.editor.has_selection(),
+            line_first_nonws_col: first_nonws,
+            cursor_col: col,
             next_find_match: next_match,
             prev_find_match: prev_match,
             wrap_width,

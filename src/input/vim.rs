@@ -3968,6 +3968,8 @@ mod tests {
             at_line_start: true,
             at_line_end: false,
             has_selection: false,
+            line_first_nonws_col: 0,
+            cursor_col: 0,
             next_find_match: None,
             prev_find_match: None,
             wrap_width: None,

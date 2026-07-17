@@ -701,8 +701,20 @@ impl App {
         };
         let n = ops.len();
         let clip = &mut self.clipboard;
+        // keyboard-round-14 SEV-3 #12 2026-07-17 — replace-all
+        // used to emit N individual `ReplaceRange` ops through
+        // apply_edit_ops, each pushing its own undo checkpoint.
+        // User needed N Ctrl+Z presses to fully revert. Wrap in
+        // atomic_undo (matches `:%s/.../.../g`'s pattern) so ONE
+        // press undoes the whole run.
         let path = if let Some(Pane::Editor(b)) = self.panes.get_mut(cur) {
-            b.apply_edit_ops(ops, clip, 0);
+            b.editor.atomic_undo(|editor| {
+                for op in ops {
+                    editor.apply(op, 0, clip);
+                }
+            });
+            b.recompute_dirty();
+            b.refresh_highlights();
             b.path.clone()
         } else {
             None

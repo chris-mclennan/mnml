@@ -27,7 +27,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let header_text = if p.filter_mode {
         format!(" Cheatsheet · /{} · esc clears · enter applies ", p.query)
     } else if p.query.is_empty() {
-        " Cheatsheet · / filter · j/k · Esc → tree · Ctrl+W close ".to_string()
+        // keyboard-round-14 SEV-3 #6 2026-07-17 — was "Esc → tree";
+        // round-11's focus_pane_or_tree fix routes Esc to the last
+        // editor instead. Match reality.
+        " Cheatsheet · / filter · j/k · Esc → back · Ctrl+W close ".to_string()
     } else {
         format!(
             " Cheatsheet · filter: {} · / to edit · esc clears ",

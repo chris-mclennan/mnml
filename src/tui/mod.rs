@@ -473,6 +473,27 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
     let Some(menu) = menus.get(open.menu_idx) else {
         return false;
     };
+    // keyboard-round-14 SEV-3 #11 2026-07-17 — Alt+letter that
+    // matches the currently-open menu's first-alpha closes it
+    // (VS Code convention: Alt+V opens View → Alt+V again closes).
+    // Was: silent no-op — user needed Esc or Alt+different-letter
+    // to close. Only matches the SAME menu; Alt+other-letter still
+    // switches menus (existing behavior below).
+    if key.modifiers.contains(KeyModifiers::ALT)
+        && !key.modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Char(ch) = key.code
+    {
+        let ch_lower = ch.to_ascii_lowercase();
+        let same_first_alpha = menu
+            .label
+            .chars()
+            .find(|c| c.is_ascii_alphabetic())
+            .is_some_and(|c| c.to_ascii_lowercase() == ch_lower);
+        if same_first_alpha {
+            app.menu_open = None;
+            return true;
+        }
+    }
     match key.code {
         KeyCode::Esc => {
             app.menu_open = None;

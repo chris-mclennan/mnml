@@ -238,6 +238,13 @@ pub struct EditCtx {
     pub at_line_start: bool,
     pub at_line_end: bool,
     pub has_selection: bool,
+    /// Column (0-based, in chars) at which the current line's
+    /// leading whitespace ends. Feeds VS Code's "Smart Home"
+    /// (Home toggles between col 0 and first-non-ws col).
+    /// keyboard-round-14 SEV-3 #7 2026-07-17.
+    pub line_first_nonws_col: usize,
+    /// Cursor's column within the current line (0-based, in chars).
+    pub cursor_col: usize,
     /// Byte range `(start, end)` of the closest find-match strictly *after*
     /// the cursor (wraps to first). `None` when the buffer has no active find
     /// state or the matches list is empty. Used by vim's `gn` text-object

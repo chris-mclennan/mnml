@@ -328,7 +328,19 @@ impl InputHandler for StandardInputHandler {
                     InputResult::Ops(ops)
                 }
             }
-            KeyCode::Home => mv(MoveLineStart),
+            // keyboard-round-14 SEV-3 #7 2026-07-17 — VS Code
+            // Smart Home. First Home from anywhere past leading-ws
+            // jumps to first-non-ws; second Home (cursor already
+            // AT first-non-ws) jumps to col 0. Only fires the
+            // smart toggle when the line has leading whitespace;
+            // otherwise straight to col 0 (no wasted keypress).
+            KeyCode::Home => {
+                if ctx.line_first_nonws_col > 0 && ctx.cursor_col != ctx.line_first_nonws_col {
+                    mv(MoveLineFirstNonWs)
+                } else {
+                    mv(MoveLineStart)
+                }
+            }
             KeyCode::End => mv(MoveLineEnd),
             KeyCode::PageUp => mv(PageUp),
             KeyCode::PageDown => mv(PageDown),
@@ -381,6 +393,8 @@ mod tests {
             at_line_start: true,
             at_line_end: true,
             has_selection: has_sel,
+            line_first_nonws_col: 0,
+            cursor_col: 0,
             next_find_match: None,
             prev_find_match: None,
             wrap_width: None,
