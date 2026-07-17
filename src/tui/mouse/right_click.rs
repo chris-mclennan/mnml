@@ -288,6 +288,63 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                     MenuAction::Command("ai.dashboard"),
                 ));
             }
+            // mouse-round-16 F4 2026-07-17 — fill in the 5 sparse
+            // "Show X"-only activity-bar menus with a section-
+            // specific quick action. Each is a single well-scoped
+            // verb the user hits most on that panel — not an
+            // exhaustive list; users still have the palette for
+            // everything else.
+            ActivitySection::Search => {
+                items.push(MenuItem::new(
+                    "New search",
+                    MenuAction::Command("find.grep"),
+                ));
+            }
+            ActivitySection::Git => {
+                items.push(MenuItem::new(
+                    "Open git graph",
+                    MenuAction::Command("git.graph"),
+                ));
+                items.push(MenuItem::new("Fetch", MenuAction::Command("git.fetch")));
+                items.push(MenuItem::new("Commit…", MenuAction::Command("git.commit")));
+            }
+            ActivitySection::Debug => {
+                items.push(MenuItem::new("Run", MenuAction::Command("dap.run")));
+                items.push(MenuItem::new(
+                    "Toggle breakpoint at cursor",
+                    MenuAction::Command("dap.toggle_breakpoint"),
+                ));
+            }
+            ActivitySection::Integrations => {
+                items.push(MenuItem::new(
+                    "Refresh integrations",
+                    MenuAction::Command("integrations.refresh"),
+                ));
+                items.push(MenuItem::new(
+                    "Refresh binary cache",
+                    MenuAction::Command("integrations.refresh_binary_cache"),
+                ));
+            }
+            ActivitySection::Sessions => {
+                items.push(MenuItem::new(
+                    "+ New Claude Code session",
+                    MenuAction::Command("ai.claude_code_new"),
+                ));
+                items.push(MenuItem::new(
+                    "+ New Codex session",
+                    MenuAction::Command("ai.codex_new"),
+                ));
+            }
+            ActivitySection::CloudAgents => {
+                items.push(MenuItem::new(
+                    "+ New cloud run",
+                    MenuAction::Command("cloud_agents.new_run"),
+                ));
+                items.push(MenuItem::new(
+                    "+ New from wizard",
+                    MenuAction::Command("cloud_agents.new_run_wizard"),
+                ));
+            }
             _ => {}
         }
         app.context_menu = Some(ContextMenu::new(Some(label.to_string()), (x, y), items));
@@ -1008,6 +1065,74 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_top_bar_cluster_context_menu((x, y));
         return;
     }
+    // mouse-round-16 F3 2026-07-17 — split-strip `[│]` / `[─]`
+    // / `[$]` chips got no right-click menu. Left-click already
+    // fires the primary action (H/V split; open shell) so this
+    // is discoverability + orientation-choice for the split
+    // arrows. Terminal chip gets Open shell / Open shell in split.
+    if let Some(&(_, leaf_active, dir)) = app
+        .rects
+        .split_strip_buttons
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        app.active = Some(leaf_active);
+        let (title, items) = match dir {
+            crate::layout::SplitDir::Horizontal => (
+                "Split horizontal",
+                vec![
+                    MenuItem::new("Split right", MenuAction::Command("view.split_right")),
+                    MenuItem::new(
+                        "Equalize splits",
+                        MenuAction::Command("view.equalize_splits"),
+                    ),
+                    MenuItem::new("Grow width", MenuAction::Command("view.split_grow_width")),
+                    MenuItem::new(
+                        "Shrink width",
+                        MenuAction::Command("view.split_shrink_width"),
+                    ),
+                    MenuItem::new("Close active pane", MenuAction::Command("buffer.close")),
+                ],
+            ),
+            crate::layout::SplitDir::Vertical => (
+                "Split vertical",
+                vec![
+                    MenuItem::new("Split down", MenuAction::Command("view.split_down")),
+                    MenuItem::new(
+                        "Equalize splits",
+                        MenuAction::Command("view.equalize_splits"),
+                    ),
+                    MenuItem::new("Grow height", MenuAction::Command("view.split_grow_height")),
+                    MenuItem::new(
+                        "Shrink height",
+                        MenuAction::Command("view.split_shrink_height"),
+                    ),
+                    MenuItem::new("Close active pane", MenuAction::Command("buffer.close")),
+                ],
+            ),
+        };
+        app.context_menu = Some(ContextMenu::new(Some(title.into()), (x, y), items));
+        return;
+    }
+    if let Some(&(_, leaf_active)) = app
+        .rects
+        .split_strip_term_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        app.active = Some(leaf_active);
+        let items = vec![
+            MenuItem::new("Open shell", MenuAction::Command("term.shell")),
+            MenuItem::new(
+                "Open scratch terminal",
+                MenuAction::Command("term.scratch_toggle"),
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("Terminal".into()), (x, y), items));
+        return;
+    }
     // Right-click on the split-strip AI button → choose
     // between Claude / Codex without changing the configured
     // default. Tab-strip Term + Split buttons are single-
@@ -1318,6 +1443,15 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             if let Some(row) = app.tree.selected_row() {
                 app.open_tree_context_menu(row.path.clone(), row.is_dir, (x, y));
             }
+        } else {
+            // mouse-round-16 F5 2026-07-17 — right-click on the
+            // empty tree space below the last file was a dead
+            // zone. Match VS Code's Explorer empty-space menu:
+            // create-at-root verbs + refresh. Uses the workspace-
+            // root context menu which already covers these verbs
+            // (New file / New folder / Cut/Copy/Paste / Refresh).
+            app.focus_tree();
+            app.open_workspace_header_context_menu((x, y));
         }
         return;
     }

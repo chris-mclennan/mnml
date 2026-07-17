@@ -848,6 +848,15 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::RailHeaderChip(action));
     }
+    // mouse-round-16 F6 2026-07-17 — git-graph toolbar chips.
+    if let Some(&(_, _, action)) = app
+        .rects
+        .git_toolbar_buttons
+        .iter()
+        .find(|(r, _, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::GitToolbarChip(action));
+    }
     // Test the close badge FIRST so its tooltip wins over the
     // generic tab tooltip when the pointer is over the trailing
     // `×`/`●` cells (the badge rect is a 2-cell strip inside the

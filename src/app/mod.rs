@@ -10976,16 +10976,19 @@ impl App {
         false
     }
     /// Continue a tree-width drag: set the rail's width to the column under
-    /// the pointer, clamped to `[16, screen_width - 20]`. Min matches the
-    /// Settings schema's `ui.tree_width` min so a runtime drag can't put the
-    /// tree into an unusable 5-column state that the config path forbids.
-    /// mouse-round-11 SEV-2 2026-07-12.
+    /// the pointer, clamped to `[16, min(80, screen_width - 20)]`. Bounds
+    /// match the Settings schema's `ui.tree_width` clamp so a runtime drag
+    /// can't put the tree into a state the config path forbids.
+    /// mouse-round-11 SEV-2 2026-07-12 (min), mouse-round-16 F2 2026-07-17 (max).
     pub fn drag_tree_edge_to(&mut self, x: u16, screen_width: u16) {
         if !self.dragging_tree_edge {
             return;
         }
         const TREE_WIDTH_MIN: u16 = 16;
-        let max = screen_width.saturating_sub(20).max(TREE_WIDTH_MIN);
+        const TREE_WIDTH_MAX: u16 = 80;
+        let max = screen_width
+            .saturating_sub(20)
+            .clamp(TREE_WIDTH_MIN, TREE_WIDTH_MAX);
         let new = x.clamp(TREE_WIDTH_MIN, max);
         self.tree_width = new;
     }
@@ -14876,16 +14879,17 @@ mod tests {
         app.drag_tree_edge_to(50, 200);
         assert_eq!(app.tree_width, initial);
 
-        // Simulate a drag — clamps to [16, 180]. mouse-round-11 SEV-2
-        // 2026-07-12: min bumped 8 → 16 to match the config schema's
-        // min (Settings overlay says 16–60).
+        // Simulate a drag — clamps to [16, min(80, screen-20)].
+        // mouse-round-11 SEV-2: min bumped 8 → 16 to match the
+        // config schema's min. mouse-round-16 F2 2026-07-17: max
+        // capped at 80 to match Settings max.
         app.dragging_tree_edge = true;
         app.drag_tree_edge_to(50, 200);
         assert_eq!(app.tree_width, 50);
         app.drag_tree_edge_to(2, 200);
         assert_eq!(app.tree_width, 16);
         app.drag_tree_edge_to(220, 200);
-        assert_eq!(app.tree_width, 180);
+        assert_eq!(app.tree_width, 80);
         app.end_tree_edge_drag();
         assert!(!app.dragging_tree_edge);
 

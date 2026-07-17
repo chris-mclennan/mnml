@@ -117,7 +117,7 @@ pub(crate) mod whichkey;
 /// The toolbar's `(rect, pane_id, action)` entries land on
 /// `app.rects.git_toolbar_buttons`; the mouse handler matches the
 /// rect + fires via `App::run_git_toolbar_action`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitToolbarAction {
     /// `git pull --ff-only`
     Pull,
@@ -152,6 +152,27 @@ pub enum GitToolbarAction {
     /// Re-apply the most recently undone commit — `git reset --soft`
     /// to the captured hash. No-op when the undo stack is empty.
     Redo,
+}
+
+impl GitToolbarAction {
+    /// Human-readable tooltip label — mouse-round-16 F6 2026-07-17.
+    pub fn tooltip_label(self) -> &'static str {
+        match self {
+            Self::Pull => "pull (git pull --ff-only)",
+            Self::Push => "push (git push, --set-upstream on first)",
+            Self::Fetch => "fetch (git fetch --all --prune)",
+            Self::BranchPicker => "switch branch (git.checkout)",
+            Self::Commit => "commit… (git.commit)",
+            Self::Stash => "stash push (git.stash)",
+            Self::StashPop => "stash pop",
+            Self::Reflog => "reflog (recover a lost commit)",
+            Self::RefreshRepos => "refresh all repos",
+            Self::SwitchRepo => "switch active repo",
+            Self::BlameToggle => "toggle blame gutter",
+            Self::Undo => "undo last commit (soft-reset HEAD~1)",
+            Self::Redo => "redo last undone commit",
+        }
+    }
 }
 
 /// One clickable action inside the `Pane::GitGraph` WIP detail panel.
@@ -250,6 +271,10 @@ pub enum HoverChip {
     ToastBox(usize),
     /// A `> GIT` rail-header chip (one per action enum).
     RailHeaderChip(GitRailHeaderAction),
+    /// A `Pane::GitGraph` top-toolbar chip (Undo/Redo/Pull/Push/…).
+    /// mouse-round-16 F6 2026-07-17 — was: no tooltip on any of
+    /// the 9 chips.
+    GitToolbarChip(GitToolbarAction),
     /// A bufferline tab (carries the pane id). Tooltip shows the full path
     /// + dirty state — `display_name()` is workspace-relative + truncated.
     BufferlineTab(crate::layout::PaneId),

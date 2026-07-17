@@ -763,6 +763,15 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             };
             Some((rect, label.into(), None))
         }
+        HoverChip::GitToolbarChip(action) => {
+            let rect = app
+                .rects
+                .git_toolbar_buttons
+                .iter()
+                .find(|(_, _, a)| std::mem::discriminant(a) == std::mem::discriminant(&action))
+                .map(|(r, _, _)| *r)?;
+            Some((rect, action.tooltip_label().into(), None))
+        }
         HoverChip::BufferlineNewTab => {
             let rect = app.rects.bufferline_new_tab_button?;
             Some((
