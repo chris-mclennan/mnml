@@ -164,6 +164,16 @@ jobs:
           $SUDO apt-get update
           $SUDO apt-get install -y \
             libfontconfig1-dev libssl-dev pkg-config
+      # MANUAL EDIT — `libghostty-vt-sys`'s build.rs invokes `zig build`
+      # to compile the vendored Ghostty terminal-emulation library.
+      # Without zig on PATH the crate panics ("failed to execute zig
+      # build: No such file or directory") and every target build
+      # fails. Matches the local dev setup (run.sh + dev.sh prepend
+      # /opt/homebrew/opt/zig@0.15/bin).
+      - name: Install zig 0.15
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ join(matrix.targets, '-') }}
