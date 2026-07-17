@@ -170,10 +170,12 @@ jobs:
       # build: No such file or directory") and every target build
       # fails. Matches the local dev setup (run.sh + dev.sh prepend
       # /opt/homebrew/opt/zig@0.15/bin).
-      - name: Install zig 0.15
+      - name: Install zig 0.15.2
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.1
+          # libghostty-vt-sys 0.2.0's build.zig hard-requires >= 0.15.2
+          # (0.15.1 fails with `does not meet the required build version`).
+          version: 0.15.2
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ join(matrix.targets, '-') }}
