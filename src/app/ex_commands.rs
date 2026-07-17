@@ -3284,6 +3284,34 @@ impl App {
                     "history",
                 ];
                 if VIM_RESERVED.contains(&other) {
+                    // nvchad-round-16 SEV-3 F16 2026-07-17 — `:map`
+                    // (and the map/unmap/noremap family) is what
+                    // vim users hit to INSPECT their bindings. Route
+                    // to the cheatsheet, which shows every registered
+                    // chord + command grouped by prefix — the closest
+                    // mnml analog to vim's `:map` output. Other
+                    // reserved names still toast "unknown".
+                    if matches!(
+                        other,
+                        "map"
+                            | "nmap"
+                            | "imap"
+                            | "vmap"
+                            | "xmap"
+                            | "cmap"
+                            | "smap"
+                            | "omap"
+                            | "tmap"
+                            | "noremap"
+                            | "nnoremap"
+                            | "inoremap"
+                            | "vnoremap"
+                            | "xnoremap"
+                            | "cnoremap"
+                    ) {
+                        crate::command::run("view.cheatsheet", self);
+                        return;
+                    }
                     self.toast(format!(":{line} — unknown command"));
                     return;
                 }

@@ -628,7 +628,12 @@ impl VimInputHandler {
             return InputResult::Consumed;
         }
         // Ctrl+A / Ctrl+E ⇒ jump to start / end of line (vim+readline canon).
-        if matches!(key.code, KeyCode::Char('a')) && ctrl {
+        // nvchad-round-16 SEV-3 F15 2026-07-17 — Ctrl+B is vim
+        // canonical `<C-B>` in cmdline: jump to line start. Same as
+        // Ctrl+A here (Ctrl+A also used for BOL in mnml's cmdline).
+        // Was: fell through to the literal-char insert, so Ctrl+B
+        // in `:` typed a literal `b`.
+        if matches!(key.code, KeyCode::Char('a' | 'b')) && ctrl {
             self.cmdline_cursor = 0;
             self.cmdline = Some(line);
             return InputResult::Consumed;
@@ -963,6 +968,15 @@ impl VimInputHandler {
             KeyCode::Char('c') if ctrl => {
                 self.enter_normal();
                 InputResult::Consumed
+            }
+            // nvchad-round-16 SEV-3 F13 2026-07-17 — `Ctrl+[` is
+            // vim's canonical Escape (users on ergonomic layouts
+            // with `Caps Lock → Ctrl` remaps hit this reflex
+            // constantly). Was: silent no-op → finger kept typing.
+            // Mirror the plain Esc arm above.
+            KeyCode::Char('[') if ctrl => {
+                self.enter_normal();
+                InputResult::Ops(vec![MoveLeft])
             }
             // Insert-mode chords (vim canonical):
             // Ctrl+W ⇒ delete previous word
