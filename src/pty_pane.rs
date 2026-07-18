@@ -683,6 +683,16 @@ impl PtySession {
     pub fn session_summary(&self) -> Option<String> {
         summarize_grid(&self.render_grid())
     }
+
+    /// Up to `max` lines of grid content for the Sessions-panel
+    /// hover tooltip — same filters as `session_summary` (no
+    /// footer chips, no input prompt, no chrome), but returns
+    /// several lines so the tooltip reads as "what's on this
+    /// pane's screen right now" rather than a bare one-liner.
+    /// Most-recent-first (bottom-of-grid → top).
+    pub fn session_summary_lines(&self, max: usize) -> Vec<String> {
+        summarize_grid_lines(&self.render_grid(), max)
+    }
 }
 
 fn summarize_grid(grid: &RenderGrid) -> Option<String> {
@@ -706,8 +716,24 @@ fn summarize_grid(grid: &RenderGrid) -> Option<String> {
         if is_chrome_line(trimmed) {
             continue;
         }
-        // Claude Code's activity line always contains `…` or `...`.
-        if activity.is_none() && (trimmed.contains('…') || trimmed.contains("...")) {
+        // Skip Claude Code's persistent footer chips — "auto mode
+        // on (shift+tab to cycle)", "↵ for agents", etc. Those
+        // never carry per-session context; they're always visible
+        // at the bottom of the pty.
+        if is_footer_chip(trimmed) {
+            continue;
+        }
+        // Skip the pending-input prompt row — `) ...` or `> ...`.
+        // If the user is typing, that's not a session summary;
+        // if they haven't typed, it's blank chrome.
+        if is_input_prompt(trimmed) {
+            continue;
+        }
+        // Claude Code's activity line: `<glyph> <Verb>` optionally
+        // followed by an ellipsis or a `for Ns` duration. Recognise
+        // either shape so we still catch it when the ellipsis has
+        // fallen off between animation frames.
+        if activity.is_none() && looks_like_activity_line(trimmed) {
             let cleaned = strip_leading_spinner_chars(trimmed).trim().to_string();
             if !cleaned.is_empty() {
                 activity = Some(cleaned);
@@ -715,8 +741,6 @@ fn summarize_grid(grid: &RenderGrid) -> Option<String> {
         }
         if fallback.is_none() {
             let cleaned = strip_leading_spinner_chars(trimmed).trim().to_string();
-            // Skip lines that are almost certainly UI chrome — a
-            // lone prompt char or a single-word toolbar entry.
             if cleaned.chars().count() >= 3 {
                 fallback = Some(cleaned);
             }
@@ -728,6 +752,44 @@ fn summarize_grid(grid: &RenderGrid) -> Option<String> {
     activity.or(fallback)
 }
 
+fn summarize_grid_lines(grid: &RenderGrid, max: usize) -> Vec<String> {
+    if max == 0 {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::with_capacity(max);
+    for row in (0..grid.rows).rev() {
+        let mut line = String::new();
+        for col in 0..grid.cols {
+            if let Some(c) = grid.cell(row, col) {
+                line.push_str(&c.text);
+            }
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty()
+            || is_chrome_line(trimmed)
+            || is_footer_chip(trimmed)
+            || is_input_prompt(trimmed)
+        {
+            continue;
+        }
+        let cleaned = strip_leading_spinner_chars(trimmed).trim().to_string();
+        if cleaned.chars().count() < 3 {
+            continue;
+        }
+        // Deduplicate against the previous line — Claude Code's
+        // status area can double-emit the activity row between
+        // spinner frames.
+        if out.last().map(|s| s == &cleaned).unwrap_or(false) {
+            continue;
+        }
+        out.push(cleaned);
+        if out.len() >= max {
+            break;
+        }
+    }
+    out
+}
+
 fn is_chrome_line(s: &str) -> bool {
     let chars: Vec<char> = s.chars().collect();
     if chars.is_empty() {
@@ -737,6 +799,75 @@ fn is_chrome_line(s: &str) -> bool {
     let first = chars[0];
     if !first.is_alphanumeric() && chars.iter().all(|&c| c == first || c.is_whitespace()) {
         return true;
+    }
+    false
+}
+
+/// Recognise Claude Code's persistent bottom-of-screen footer
+/// chips — text that's always visible regardless of what the
+/// session is doing, so it never belongs in a session summary.
+fn is_footer_chip(s: &str) -> bool {
+    // Casefold once; every marker below is ASCII-lowercased.
+    let lower = s.to_ascii_lowercase();
+    const MARKERS: &[&str] = &[
+        "auto mode",
+        "shift+tab to cycle",
+        "shift+tab to change",
+        "for agents",
+        "for approval",
+        "for planning",
+        "for accept",
+        "for accept edits",
+        "for tools",
+        "for interrupt",
+        "esc to interrupt",
+        "esc to close",
+        "for compact",
+        "context left until auto-compact",
+        "context left",
+        "shortcuts",
+    ];
+    MARKERS.iter().any(|m| lower.contains(m))
+}
+
+/// Row starts with a pending-input marker (`>` or `)`) — Claude
+/// Code's / mnml's composer prompt. Either blank chrome or an
+/// in-progress edit — not a summary.
+fn is_input_prompt(s: &str) -> bool {
+    let first = match s.chars().next() {
+        Some(c) => c,
+        None => return false,
+    };
+    matches!(first, '>' | ')' | '❯')
+}
+
+/// True if this line looks like Claude Code's activity indicator —
+/// `<spinner-glyph> <Verb>` followed by either an ellipsis or a
+/// `for Ns` / `for Nm` / `for Nh` duration token. Tolerant of the
+/// ellipsis disappearing between animation frames.
+fn looks_like_activity_line(s: &str) -> bool {
+    if s.contains('…') || s.contains("...") {
+        return true;
+    }
+    // Any " for <digits><s|m|h>" token near the end reads as an
+    // activity duration (e.g. "Sautéed for 27s"). Only accept
+    // this when the line is short — a real Claude activity line is
+    // ~30 chars; body prose containing "…for 5s…" incidentally
+    // wouldn't match this filter.
+    if s.chars().count() > 60 {
+        return false;
+    }
+    let bytes = s.as_bytes();
+    if let Some(pos) = s.find(" for ") {
+        let mut i = pos + 5;
+        let mut saw_digit = false;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            saw_digit = true;
+            i += 1;
+        }
+        if saw_digit && i < bytes.len() && matches!(bytes[i], b's' | b'm' | b'h') {
+            return true;
+        }
     }
     false
 }
@@ -1442,6 +1573,40 @@ mod tests {
         let dir2 = tempfile::tempdir().unwrap();
         let p2 = BinaryProfile::claude_code(dir2.path().to_path_buf());
         assert!(!p2.args.iter().any(|a| a == "--append-system-prompt"));
+    }
+
+    #[test]
+    fn is_footer_chip_matches_claude_persistent_footer() {
+        assert!(is_footer_chip(
+            "auto mode on (shift+tab to cycle) · ↵ for agents"
+        ));
+        assert!(is_footer_chip("↵ for agents"));
+        assert!(is_footer_chip("? for shortcuts"));
+        assert!(is_footer_chip("Context left until auto-compact: 43%"));
+        assert!(is_footer_chip("Shift+Tab to change mode"));
+        assert!(!is_footer_chip("Sautéed for 27s"));
+        assert!(!is_footer_chip("● I'll pull up TE-1234 from Jira."));
+    }
+
+    #[test]
+    fn is_input_prompt_matches_composer_lines() {
+        assert!(is_input_prompt("> "));
+        assert!(is_input_prompt("> tell me about TE-1234"));
+        assert!(is_input_prompt(") Look for the ordering-channel feature"));
+        assert!(is_input_prompt("❯ do the thing"));
+        assert!(!is_input_prompt("Sautéed for 27s"));
+    }
+
+    #[test]
+    fn looks_like_activity_line_matches_claudes_status_shape() {
+        assert!(looks_like_activity_line("✻ Sautéed for 27s"));
+        assert!(looks_like_activity_line("· Reading files…"));
+        assert!(looks_like_activity_line("✳ Working…"));
+        // Long body prose with an incidental "for 5s" doesn't count.
+        assert!(!looks_like_activity_line(
+            "A long paragraph of body text that happens to say Baked for 5s in the middle of a sentence"
+        ));
+        assert!(!looks_like_activity_line("auto mode on"));
     }
 
     #[test]

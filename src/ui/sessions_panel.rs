@@ -20,8 +20,12 @@ use crate::app::App;
 use crate::pane::Pane;
 use crate::ui::theme;
 
-/// Height in rows for one session tab.
-const TAB_H: u16 = 3;
+/// Height in rows for one session tab. 2 rows: name + summary.
+/// The old row 2 (⎇ branch · cwd) was folded into a hover tooltip
+/// — user report 2026-07-18: "not sure line 2 is that helpful
+/// showing branch and repo, maybe we could still show that but
+/// only on hover".
+const TAB_H: u16 = 2;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
@@ -291,41 +295,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             },
         );
 
-        // Row 2: ⎇ <branch> · <cwd basename>.
-        // Cwd already captured above for ticket detection.
-        let branch = branch_for_lookup
-            .clone()
-            .unwrap_or_else(|| "(no branch)".to_string());
-        let cwd_label = cwd
-            .and_then(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_default();
-        let mut row2_spans = vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled("⎇ ", Style::default().fg(t.purple).bg(bg)),
-            Span::styled(branch, Style::default().fg(t.fg).bg(bg)),
-        ];
-        if !cwd_label.is_empty() {
-            row2_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
-            row2_spans.push(Span::styled(
-                cwd_label,
-                Style::default().fg(t.comment).bg(bg),
-            ));
-        }
-        frame.render_widget(
-            Paragraph::new(Line::from(row2_spans)),
-            Rect {
-                x: area.x + 1,
-                y: y + 1,
-                width: area.width - 1,
-                height: 1,
-            },
-        );
+        // Row 2 (branch/cwd) is now hover-only — see the tooltip
+        // pass at the bottom of `draw`. Still compute cwd_label
+        // for the hover payload cached later.
+        let _branch_kept_for_hover = branch_for_lookup.clone();
 
-        // Row 3: a one-line summary of what the session is doing
+        // Row 2: a one-line summary of what the session is doing
         // (Claude's activity verb line when it's thinking; the last
         // real content line otherwise) — or `exited` for a dead
         // child. The old running/recent/idle status text was
@@ -354,7 +329,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 summary_text
             }
         };
-        let mut row3_spans = vec![
+        let mut row2_spans = vec![
             Span::styled("  ", Style::default().bg(bg)),
             Span::styled(summary_text, Style::default().fg(summary_color).bg(bg)),
         ];
@@ -363,22 +338,22 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         {
             // Only show the ticket chip when it wasn't already
             // used as the label (i.e. user has a custom rename).
-            row3_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
-            row3_spans.push(Span::styled(ticket, Style::default().fg(t.cyan).bg(bg)));
+            row2_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
+            row2_spans.push(Span::styled(ticket, Style::default().fg(t.cyan).bg(bg)));
         }
-        // Capture the pid before the row3 paint so we can release
+        // Capture the pid before the row2 paint so we can release
         // the &Pane borrow and re-borrow App mutably for the
         // session_ports cache lookup.
         let pty_pid_opt = s.pid();
-        let row3_rect = Rect {
+        let row2_rect = Rect {
             x: area.x + 1,
-            y: y + 2,
+            y: y + 1,
             width: area.width - 1,
             height: 1,
         };
-        frame.render_widget(Paragraph::new(Line::from(row3_spans)), row3_rect);
+        frame.render_widget(Paragraph::new(Line::from(row2_spans)), row2_rect);
         // Listening ports (cached) — append as a `:3000` chip
-        // after the status text on row 3.
+        // after the summary on row 2.
         if let Some(pid) = pty_pid_opt {
             let ports = app.session_ports(pid);
             if !ports.is_empty() {
@@ -388,10 +363,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .collect::<Vec<_>>()
                     .join(" ");
                 let chip_w = chip_text.chars().count() as u16;
-                if row3_rect.width > chip_w + 6 {
+                if row2_rect.width > chip_w + 6 {
                     let chip_rect = Rect {
-                        x: row3_rect.x + row3_rect.width - chip_w - 1,
-                        y: row3_rect.y,
+                        x: row2_rect.x + row2_rect.width - chip_w - 1,
+                        y: row2_rect.y,
                         width: chip_w,
                         height: 1,
                     };
@@ -512,6 +487,118 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ]);
         frame.render_widget(Paragraph::new(line), new_rect);
         app.rects.session_new_chip = Some(new_rect);
+    }
+    paint_hover_tooltip(frame, app, area);
+}
+
+/// If the mouse is over a session card, paint a floating tooltip
+/// anchored to the right of the sessions panel with the branch,
+/// cwd, and up to 4 lines of recent grid content. This replaces
+/// the old always-on row-2 branch/cwd display.
+fn paint_hover_tooltip(frame: &mut Frame, app: &mut App, panel_area: Rect) {
+    let Some((mx, my)) = app.mouse_pos else {
+        return;
+    };
+    let hit = app
+        .rects
+        .session_tabs
+        .iter()
+        .find(|(r, _)| mx >= r.x && mx < r.x + r.width && my >= r.y && my < r.y + r.height)
+        .copied();
+    let Some((row_rect, pid)) = hit else {
+        return;
+    };
+    // Pull the session data — branch, cwd basename, grid lines.
+    let session = match app.panes.get(pid) {
+        Some(Pane::Pty(s)) => s,
+        _ => return,
+    };
+    let cwd = session.profile.cwd.as_ref();
+    let branch = cwd
+        .and_then(|p| current_branch(p))
+        .unwrap_or_else(|| "(no branch)".to_string());
+    let cwd_label = cwd
+        .and_then(|p| p.to_str().map(|s| s.to_string()))
+        .unwrap_or_default();
+    let lines = session.session_summary_lines(4);
+    let mut body: Vec<Line> = Vec::new();
+    let t = theme::cur();
+    let bg = ratatui::style::Color::Rgb(38, 38, 46);
+    body.push(Line::from(vec![
+        Span::styled(" ⎇ ", Style::default().fg(t.purple).bg(bg)),
+        Span::styled(branch, Style::default().fg(t.fg).bg(bg)),
+    ]));
+    if !cwd_label.is_empty() {
+        body.push(Line::from(vec![
+            Span::styled(" ⌂ ", Style::default().fg(t.comment).bg(bg)),
+            Span::styled(cwd_label, Style::default().fg(t.comment).bg(bg)),
+        ]));
+    }
+    if !lines.is_empty() {
+        body.push(Line::from(Span::styled(" ", Style::default().bg(bg))));
+        for line in &lines {
+            body.push(Line::from(vec![
+                Span::styled(" ", Style::default().bg(bg)),
+                Span::styled(line.clone(), Style::default().fg(t.fg).bg(bg)),
+                Span::styled(" ", Style::default().bg(bg)),
+            ]));
+        }
+    }
+    // Width: fit longest line, cap at 60. Height: body.len() + 0.
+    let longest = body
+        .iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.chars().count())
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap_or(20);
+    let width: u16 = (longest.clamp(24, 60) + 2) as u16;
+    let height: u16 = body.len() as u16;
+    // Anchor to the right of the panel; if that overflows, anchor
+    // to the left of the panel (rare — panel is a fixed left sidebar).
+    let anchor_x = panel_area.x + panel_area.width + 1;
+    let screen_w = frame.area().width;
+    let x = if anchor_x + width <= screen_w {
+        anchor_x
+    } else {
+        panel_area.x.saturating_sub(width + 1)
+    };
+    let y = row_rect.y;
+    let rect = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+    // Blank the rect with our tooltip bg so it visually reads as
+    // a floating card over the pane content below.
+    for row in rect.y..rect.y + rect.height {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ".repeat(rect.width as usize),
+                Style::default().bg(bg),
+            ))),
+            Rect {
+                x: rect.x,
+                y: row,
+                width: rect.width,
+                height: 1,
+            },
+        );
+    }
+    for (i, line) in body.into_iter().enumerate() {
+        frame.render_widget(
+            Paragraph::new(line),
+            Rect {
+                x: rect.x,
+                y: rect.y + i as u16,
+                width: rect.width,
+                height: 1,
+            },
+        );
     }
 }
 
