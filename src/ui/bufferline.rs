@@ -339,12 +339,13 @@ pub fn tab_chip_spans(
         .map(|(verb, _)| verb.chars().count() as u16 + 3);
     // 2026-07-17 — icon width used to be hardcoded at 4 (assumed
     // 1-char glyph + `" X  "` padding). Codex's `❯_` is 2 chars, so
-    // widen dynamically: 3 fixed cells (leading + trailing space *2)
-    // + the glyph's own char count. Single-char glyphs stay at 4.
+    // widen dynamically. 2026-07-18 tightened to `" X "` (single
+    // trailing space) — user reported double-spaced feel. Fixed
+    // padding is now 2 cells (1 leading + 1 trailing).
     let icon_cells = if skip_icon {
         1
     } else {
-        3 + inputs.glyph.chars().count() as u16
+        2 + inputs.glyph.chars().count() as u16
     };
     let base_cells = icon_cells + name_cells + 1 + diag_cells + 2;
     let chip_w = base_cells + verb_extra.unwrap_or(0);
@@ -370,8 +371,11 @@ pub fn tab_chip_spans(
     if skip_icon {
         spans.push(Span::styled(" ".to_string(), Style::default().bg(bg)));
     } else {
+        // 2026-07-18 — was `" X  "` (icon + 2 trailing spaces). Read
+        // as double-spaced between icon and label. Trim to a single
+        // trailing space so the name sits one cell after the glyph.
         spans.push(Span::styled(
-            format!(" {}  ", inputs.glyph),
+            format!(" {} ", inputs.glyph),
             Style::default().fg(inputs.icon_color).bg(bg),
         ));
     }
