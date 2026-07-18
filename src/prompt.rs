@@ -405,6 +405,22 @@ impl Prompt {
         self.refresh_suggestions();
     }
 
+    /// Insert a string at the caret — used by the bracketed-paste
+    /// handler (Cmd+V on macOS, Ctrl+V in linux terminals). Newlines
+    /// are collapsed to spaces since the prompt is a single-line
+    /// widget; embedded NUL is stripped so a pasted binary blob can't
+    /// break the buffer.
+    pub fn insert_str(&mut self, s: &str) {
+        let cleaned: String = s
+            .chars()
+            .filter(|c| *c != '\0')
+            .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+            .collect();
+        self.input.insert_str(self.cursor, &cleaned);
+        self.cursor += cleaned.len();
+        self.refresh_suggestions();
+    }
+
     pub fn backspace(&mut self) {
         if self.cursor == 0 {
             return;
@@ -681,6 +697,27 @@ mod tests {
         p.insert_char('o');
         p.insert_char('o');
         assert!(p.suggestions.is_empty());
+    }
+
+    #[test]
+    fn insert_str_at_caret_moves_cursor_and_scrubs_newlines() {
+        let mut p = Prompt::new(PromptKind::GitCommit, "");
+        p.insert_str("./bin/multi.sh");
+        assert_eq!(p.input, "./bin/multi.sh");
+        assert_eq!(p.cursor, 14);
+        // A pasted multi-line blob collapses newlines to spaces.
+        let mut p2 = Prompt::new(PromptKind::GitCommit, "");
+        p2.insert_str("one\ntwo\rthree");
+        assert_eq!(p2.input, "one two three");
+        assert_eq!(p2.cursor, 13);
+        // Insert at the middle preserves surrounding text.
+        let mut p3 = Prompt::new(PromptKind::GitCommit, "");
+        p3.insert_char('a');
+        p3.insert_char('c');
+        p3.cursor = 1;
+        p3.insert_str("XYZ");
+        assert_eq!(p3.input, "aXYZc");
+        assert_eq!(p3.cursor, 4);
     }
 
     #[test]

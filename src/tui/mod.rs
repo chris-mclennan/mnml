@@ -260,6 +260,16 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                         app.integration_edit_paste();
                         continue;
                     }
+                    // Prompt overlay — Cmd+V / Ctrl+V on ANY prompt
+                    // (single-line text input) inserts the pasted
+                    // text at the caret. Every overlay text field
+                    // must ship with paste per user 2026-07-15
+                    // "overlay-text-field-affordances" — no more
+                    // append-only prompts.
+                    if let Some(p) = app.prompt.as_mut() {
+                        p.insert_str(text.trim_end_matches('\n'));
+                        continue;
+                    }
                     // Priority 1 — drag-and-drop of external files
                     // (#7): terminals emit a bracketed-paste with a
                     // filesystem path when the user drops a file.
