@@ -1296,6 +1296,23 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.split_new_scratch(),
         },
         Command {
+            id: "scratch.new",
+            title: "New scratch buffer (empty, no file)",
+            group: "buffer",
+            keys: &[],
+            run: |app| app.open_scratch_with_text("scratch".into(), String::new()),
+        },
+        Command {
+            id: "scratch.from_clipboard",
+            title: "New scratch buffer from clipboard",
+            group: "buffer",
+            keys: &[],
+            run: |app| {
+                let text = app.clipboard.text();
+                app.open_scratch_with_text("clipboard".into(), text);
+            },
+        },
+        Command {
             id: "view.maximize_height",
             title: "Maximize active split height (vim `Ctrl+W _`)",
             group: "view",

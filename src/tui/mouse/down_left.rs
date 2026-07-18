@@ -1289,12 +1289,40 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // one-tab-type 2026-07-18 — empty-state `+` chip on the top
-    // row (visible when there are no panes). Click → open the
-    // file picker so the user's first file becomes the first pane.
+    // row. Click opens a positional context menu anchored at the
+    // chip (not a centered picker) with 10 "create something"
+    // options. Default highlight is "New scratch buffer" so Enter
+    // fires it instantly.
     if let Some(r) = app.rects.bufferline_empty_plus
         && crate::app::dispatch::contains(r, x, y)
     {
-        crate::command::run("picker.files", app);
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
+            MenuItem::new("Open file…", MenuAction::Command("picker.files")),
+            MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
+            MenuItem::new(
+                "From clipboard",
+                MenuAction::Command("scratch.from_clipboard"),
+            ),
+            MenuItem::new("New HTTP request", MenuAction::Command("http.new")),
+            MenuItem::new("New shell", MenuAction::Command("term.shell")),
+            MenuItem::new("New browser tab", MenuAction::Command("browser.open")),
+            MenuItem::new(
+                "New Claude Code session",
+                MenuAction::Command("ai.claude_code_new"),
+            ),
+            MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
+            MenuItem::new("New tab page", MenuAction::Command("tab.new")),
+        ];
+        // Anchor the menu near the chip so it doesn't fly to the
+        // screen center — sits just below-left of the click.
+        let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
+        // Default highlight = New scratch (index 0). Force
+        // interacted=true so the highlight is visible immediately.
+        menu.selected = 0;
+        menu.interacted = true;
+        app.context_menu = Some(menu);
         return;
     }
     // 2026-06-22 — per-split split-editor buttons at the right of
