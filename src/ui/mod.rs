@@ -3587,17 +3587,21 @@ fn paint_leaf_tab_strip(
             width: plus_w,
             height: 1,
         };
+        // 2026-07-18 — paint the 3 cells with `t.bg` (same as an
+        // active tab's chip bg) so `+` reads as its own little
+        // mini-tab pill, not floating punctuation on the strip.
+        let plus_bg = t.bg;
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" ", Style::default().bg(strip_bg)),
+                Span::styled(" ", Style::default().bg(plus_bg)),
                 Span::styled(
                     plus_glyph,
                     Style::default()
                         .fg(t.green)
-                        .bg(strip_bg)
+                        .bg(plus_bg)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(" ", Style::default().bg(strip_bg)),
+                Span::styled(" ", Style::default().bg(plus_bg)),
             ])),
             plus_rect,
         );
