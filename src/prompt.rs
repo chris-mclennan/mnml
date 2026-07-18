@@ -690,6 +690,12 @@ mod tests {
         assert_eq!(filter, "");
     }
 
+    // Hardcodes a Unix-shape path (`/tmp/myProj`) — on Windows
+    // `PathBuf::from("/tmp/myProj").parent()` is `/`, not `/tmp`,
+    // because the path is absolute-with-implicit-root there.
+    // Function itself is cross-platform; only the assertion is
+    // Unix-specific. See tests below for the Windows variant.
+    #[cfg(unix)]
     #[test]
     fn split_path_extracts_prefix() {
         let (parent, filter) = split_path_for_browse("/tmp/myProj");
@@ -697,6 +703,18 @@ mod tests {
         assert_eq!(filter, "myProj");
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn split_path_extracts_prefix_windows() {
+        let (parent, filter) = split_path_for_browse(r"C:\tmp\myProj");
+        assert_eq!(parent, std::path::PathBuf::from(r"C:\tmp"));
+        assert_eq!(filter, "myProj");
+    }
+
+    // Uses `$HOME` — on Windows the function falls back to
+    // `$USERPROFILE`. Split into per-platform tests so each sets
+    // the right env var and asserts against a valid platform path.
+    #[cfg(unix)]
     #[test]
     fn split_path_tilde_expansion() {
         // SAFETY: setting HOME for the duration of one synchronous test
@@ -715,6 +733,27 @@ mod tests {
             unsafe { std::env::set_var("HOME", p) };
         } else {
             unsafe { std::env::remove_var("HOME") };
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn split_path_tilde_expansion_windows() {
+        // Windows: function falls back to USERPROFILE when HOME isn't set.
+        let prev = std::env::var_os("USERPROFILE");
+        unsafe { std::env::set_var("USERPROFILE", r"C:\Users\x") };
+        let prev_home = std::env::var_os("HOME");
+        unsafe { std::env::remove_var("HOME") };
+        let (parent, filter) = split_path_for_browse("~/Proj");
+        assert_eq!(parent, std::path::PathBuf::from(r"C:\Users\x"));
+        assert_eq!(filter, "Proj");
+        if let Some(p) = prev {
+            unsafe { std::env::set_var("USERPROFILE", p) };
+        } else {
+            unsafe { std::env::remove_var("USERPROFILE") };
+        }
+        if let Some(p) = prev_home {
+            unsafe { std::env::set_var("HOME", p) };
         }
     }
 
