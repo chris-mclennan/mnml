@@ -2277,7 +2277,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             for (idx, ch) in m.label.chars().enumerate() {
                 let mut style = base_style;
                 // Resting-state brand-mark glyphs (all chars before
-                // the wordmark, e.g. `>` and `_` in `>_  mnml`) pop
+                // the wordmark, e.g. `❯` and `_` in `❯_  mnml`) pop
                 // in accent (cyan). Open-state inverts the whole
                 // word, so we leave it alone there.
                 let is_brand_mark = is_brand_menu && first_alpha_idx.is_some_and(|fa| idx < fa);

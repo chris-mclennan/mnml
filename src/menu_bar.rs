@@ -118,7 +118,7 @@ fn brand_menu() -> MenuDef {
         // first char isn't an Alt accelerator letter, so Alt+M
         // is reserved for the user; the brand menu opens only
         // via mouse click or arrow-left from File.
-        label: ">_  mnml",
+        label: "❯_  mnml",
         items: vec![
             MenuItem::Action {
                 label: "About mnml…",
