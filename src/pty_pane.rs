@@ -630,46 +630,25 @@ impl PtySession {
     /// Claude Code prints. The tab animation should feel identical
     /// to what the user sees in Claude Code's own pane.
     pub fn current_spinner_glyph(&self) -> Option<char> {
-        if !detect_ai_thinking(&self.render_grid()) {
-            return None;
-        }
-        // 2026-07-18 v4 — verification research extracted the ACTUAL
-        // sequence from @anthropic-ai/claude-code v2.1.214's JS binary
-        // (offset 229197431):
+        // 2026-07-18 v5 — user watching side-by-side: "you can see the
+        // tab animation usually not matching the prompt animation."
         //
-        //   TERM === "xterm-ghostty"
-        //     ? ["·", "✢", "✳", "✶", "✻", "✻"]
-        //     : ["·", "✢", "✳", "✶", "✻", "✽"]
+        // My previous v3/v4 approach ran mnml's OWN timer, cycling
+        // through Claude Code's frame list with either linear or
+        // raised-cosine easing. Even with the exact same easing
+        // formula and frames, the phase is offset from Claude Code's
+        // internal timer — they started at different Instants — so
+        // the tab char and the on-screen spinner char were rarely
+        // the same at the same instant.
         //
-        // 6 frames, not 8 or 9. `·` (U+00B7 MIDDLE DOT) is the FIRST
-        // frame, not a trailing collapse — but because of the
-        // raised-cosine easing (below), `·` dwells at BOTH endpoints
-        // of the cycle. That's why the user perceived it as "a dot
-        // at the end before restart" — visually it IS the last thing
-        // seen before wrapping.
+        // Mirror the pty's live output instead: whatever char Claude
+        // Code is showing RIGHT NOW at its spinner position, we
+        // show. The tab reads as a perfect small-screen mirror of
+        // the pane's own indicator, in perfect sync.
         //
-        // Traversal (offset 229584341):
-        //   phase = (1 - cos(2π * t / 2000)) / 2
-        //   idx = round(phase * 5)
-        //
-        // Raised-cosine easing over 2000ms cycle: phase sweeps
-        // 0→1→0 smoothly, so idx runs 0→5→0. Because cosine is slow
-        // at endpoints and fast in the middle, `·` (idx 0) and `✻`
-        // (idx 5) hold visibly longer than the middle frames. Not a
-        // linear rotation — the endpoints breathe.
-        //
-        // mnml runs in ghostty, so we use the ghostty variant with
-        // `✻` at both idx 4 AND 5 — the peak holds longer than the
-        // non-ghostty branch.
-        const FRAMES: &[char] = &['·', '✢', '✳', '✶', '✻', '✻'];
-        const CYCLE_MS: f32 = 2000.0;
-        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        let start = START.get_or_init(std::time::Instant::now);
-        let ms = std::time::Instant::now().duration_since(*start).as_millis() as f32;
-        let t = (ms % CYCLE_MS) / CYCLE_MS;
-        let phase = (1.0 - (2.0 * std::f32::consts::PI * t).cos()) / 2.0;
-        let idx = (phase * (FRAMES.len() - 1) as f32).round() as usize;
-        Some(FRAMES[idx.min(FRAMES.len() - 1)])
+        // No detection gate needed — sample_current_spinner_from_grid
+        // already returns None when no `…` line is on screen.
+        sample_current_spinner_from_grid(&self.render_grid())
     }
 
     /// True if Codex is currently in a thinking/working state.
@@ -1038,20 +1017,47 @@ fn detect_codex_thinking(grid: &RenderGrid) -> bool {
     false
 }
 
-/// Is an AI CLI (Claude Code, Codex, similar) currently in a
-/// thinking/working state? Same signal `detect_spinner_glyph` uses
-/// (spinner char + `…`) but returns just yes/no so we can drive our
-/// own animation timer instead of mirroring the pty's char rate.
-fn detect_ai_thinking(grid: &RenderGrid) -> bool {
-    detect_spinner_glyph(grid).is_some()
+/// Sample the current spinner char directly from the pty grid.
+/// Claude Code's status line is `<glyph> <verb>…` on a row near the
+/// bottom of the composer — find that row (any row containing `…`)
+/// and return its first non-whitespace char. Whatever Claude Code
+/// is showing right now is what we mirror; no timer of our own.
+///
+/// Returns None when no `…` line is visible (Claude Code is idle
+/// or the pane hasn't finished repainting after startup). Scans
+/// bottom-to-top since the status line lives near the input.
+fn sample_current_spinner_from_grid(grid: &RenderGrid) -> Option<char> {
+    for row in (0..grid.rows).rev() {
+        let mut line = String::new();
+        for col in 0..grid.cols {
+            if let Some(c) = grid.cell(row, col) {
+                line.push_str(&c.text);
+            }
+        }
+        if !line.contains('…') && !line.contains("...") {
+            continue;
+        }
+        // Leading non-whitespace char of this row — the spinner
+        // glyph Claude Code is currently painting.
+        let first = line.chars().find(|c| !c.is_whitespace())?;
+        // Guard: only return chars that look like plausible
+        // spinner glyphs. Anything alphanumeric is more likely
+        // scrollback content that happens to have `…` in it (e.g.
+        // "Loading dependencies…"), not the actual spinner row.
+        if first.is_alphanumeric() {
+            continue;
+        }
+        return Some(first);
+    }
+    None
 }
 
+// Legacy detector kept for tests that document the char set Claude
+// Code has historically cycled through. Live rendering uses
+// `sample_current_spinner_from_grid` which mirrors any char without
+// needing an enumerated list.
+#[cfg(test)]
 fn detect_spinner_glyph(grid: &RenderGrid) -> Option<char> {
-    // Includes Claude Code v2.1.214's confirmed frame set
-    // (`· ✢ ✳ ✶ ✻ ✽`) plus historical/generic ornaments other
-    // CLIs might use. Detection requires a matching char AND `…`
-    // on the same line, so `·` doesn't false-positive on bullet
-    // lists in editor content.
     const SPINNER_CHARS: &[char] = &[
         '·', '✢', '✳', '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅',
         '◐', '◓', '◑', '◒',
