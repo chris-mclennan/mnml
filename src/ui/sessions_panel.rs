@@ -49,12 +49,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // Sessions view.
     fn is_ai_session_pane(p: &Pane) -> bool {
         let Pane::Pty(s) = p else { return false };
-        // exe basename — path-agnostic (`/usr/local/bin/claude` still matches).
-        let exe_base = std::path::Path::new(&s.profile.exe)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&s.profile.exe);
-        matches!(exe_base, "claude" | "codex")
+        // 2026-07-18 — was `exe basename == "claude"|"codex"`. That
+        // broke when workspaces set a per-workspace launcher script
+        // (`./bin/claude-multi.sh` etc.) via the chip's "Set launcher
+        // script…" menu — the exe basename becomes `claude-multi.sh`
+        // and misses the match, so real Claude Code sessions vanish
+        // from this panel. Match against the stable BinaryProfile
+        // label instead — it's `"claude code"` / `"claude code
+        // (resumed)"` / `"codex"` regardless of what wrapper the
+        // user runs it through.
+        matches!(
+            s.profile.label.to_ascii_lowercase().as_str(),
+            "claude code" | "claude code (resumed)" | "codex"
+        )
     }
     let all_pty_indices: Vec<usize> = app
         .panes
