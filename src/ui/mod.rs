@@ -2276,14 +2276,14 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             spans.push(Span::styled(" ", base_style));
             for (idx, ch) in m.label.chars().enumerate() {
                 let mut style = base_style;
-                // Resting-state brand-mark glyphs (all chars before
-                // the wordmark, e.g. `❯` and `_` in `❯_  mnml`) pop
-                // in accent (cyan). Open-state inverts the whole
-                // word, so we leave it alone there.
                 let is_brand_mark = is_brand_menu && first_alpha_idx.is_some_and(|fa| idx < fa);
-                if is_brand_mark && !ch.is_whitespace() && !is_open {
-                    style = style.fg(t.cyan);
-                }
+                // 2026-07-18 — brand mark used to pop in cyan (`❯`
+                // and `_` accent). User wanted it toned down to the
+                // same darker grey the other menu-bar words use.
+                // Inherit base_style unchanged; the bold treatment
+                // below still makes it distinctive against the plain
+                // menu words without an accent color.
+                let _ = is_brand_mark;
                 // Brand menu's wordmark is exempt — its identity is
                 // the icon, not a letter. Other menus underline the
                 // first alpha char as the Alt+letter accelerator.
