@@ -145,7 +145,7 @@ impl App {
         let is_claude = matches!(
             self.panes.get(id),
             Some(Pane::Pty(s)) if s.profile.session_id.is_some()
-                && s.profile.label.starts_with("claude")
+                && s.profile.label.to_ascii_lowercase().starts_with("claude")
         );
         if !matches!(self.panes.get(id), Some(Pane::Pty(_))) {
             return;

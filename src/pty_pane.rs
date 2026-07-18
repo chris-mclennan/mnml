@@ -166,7 +166,7 @@ impl BinaryProfile {
         }
         let exe = resolve_launcher(&workspace, "claude_code", "claude");
         BinaryProfile {
-            label: "claude code".to_string(),
+            label: "Claude Code".to_string(),
             exe,
             args,
             cwd: Some(workspace),
@@ -190,7 +190,7 @@ impl BinaryProfile {
     pub fn claude_code_resume(workspace: PathBuf, session_id: String) -> Self {
         let exe = resolve_launcher(&workspace, "claude_code", "claude");
         BinaryProfile {
-            label: "claude code (resumed)".to_string(),
+            label: "Claude Code (resumed)".to_string(),
             exe,
             args: vec!["--resume".to_string(), session_id.clone()],
             cwd: Some(workspace),
@@ -224,7 +224,7 @@ impl BinaryProfile {
     pub fn codex(workspace: PathBuf) -> Self {
         let exe = resolve_launcher(&workspace, "codex", "codex");
         BinaryProfile {
-            label: "codex".to_string(),
+            label: "Codex".to_string(),
             exe,
             args: Vec::new(),
             cwd: Some(workspace),
