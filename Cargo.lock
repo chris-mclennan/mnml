@@ -2181,12 +2181,13 @@ dependencies = [
 
 [[package]]
 name = "mnml-bridge"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "ratatui",
  "serde",
  "serde_json",
  "tempfile",
+ "uds_windows",
 ]
 
 [[package]]
