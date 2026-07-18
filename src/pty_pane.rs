@@ -875,12 +875,44 @@ pub(crate) fn resolve_tab_label(
     profile_label: &str,
 ) -> String {
     for cand in [display_name, Some(osc_title)].into_iter().flatten() {
-        let cand = cand.trim();
-        if !cand.is_empty() {
-            return cand.to_string();
+        let cleaned = strip_leading_spinner_chars(cand.trim());
+        if !cleaned.is_empty() {
+            return cleaned.to_string();
         }
     }
     profile_label.to_string()
+}
+
+/// Claude Code (and some other AI CLIs) set their OSC window title
+/// to `"✻ Claude Code"` — with the CURRENT frame of their thinking
+/// spinner as the leading character. That worked fine as a terminal
+/// window title but read as "SVG_icon * Claude Code" in mnml's tab
+/// (icon slot + spinner-prefix in the label) — the user saw two
+/// icons for one pane. Strip any leading char that's in the known
+/// spinner set (plus one trailing space) so the tab label reads as
+/// just the name.
+pub(crate) fn strip_leading_spinner_chars(s: &str) -> &str {
+    // Same set as detect_spinner_glyph, plus `•` for Codex and `*`
+    // as a plain-ASCII spinner some CLIs use.
+    const LEADING_SPINNER_CHARS: &[char] = &[
+        '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅', '◐', '◓', '◑',
+        '◒', '•', '*',
+    ];
+    let mut rest = s;
+    // Repeat once — some titles like `"✻ ✻ Claude"` (two spinner
+    // chars separated by a space) shed both.
+    for _ in 0..2 {
+        if let Some(first) = rest.chars().next()
+            && LEADING_SPINNER_CHARS.contains(&first)
+        {
+            let skip = first.len_utf8();
+            let after = &rest[skip..];
+            rest = after.trim_start();
+        } else {
+            break;
+        }
+    }
+    rest
 }
 
 /// Scan a pty screen for a Claude-Code-style spinner — a row carrying
@@ -985,6 +1017,35 @@ impl Drop for PtySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_leading_spinner_chars_scrubs_osc_prefix() {
+        // Claude Code's OSC title is often "✻ Claude Code" — the
+        // spinner glyph as leading char cycles frame to frame.
+        assert_eq!(strip_leading_spinner_chars("✻ Claude Code"), "Claude Code");
+        assert_eq!(strip_leading_spinner_chars("✽ Claude Code"), "Claude Code");
+        assert_eq!(strip_leading_spinner_chars("• Codex"), "Codex");
+        // No leading spinner — unchanged.
+        assert_eq!(strip_leading_spinner_chars("Claude Code"), "Claude Code");
+        // Doubled prefix like "✻ ✽ Claude" — sheds both.
+        assert_eq!(strip_leading_spinner_chars("✻ ✽ Claude"), "Claude");
+        // Spinner in the MIDDLE isn't stripped — only leading.
+        assert_eq!(
+            strip_leading_spinner_chars("Working ✻ 12s"),
+            "Working ✻ 12s"
+        );
+    }
+
+    #[test]
+    fn resolve_tab_label_scrubs_leading_spinner_from_osc() {
+        // OSC title from Claude Code — the leading ✻ was being
+        // painted next to mnml's own icon slot, producing the
+        // "double icon" the 2026-07-18 hunt found.
+        assert_eq!(
+            resolve_tab_label(None, "✻ Claude Code", "claude code"),
+            "Claude Code"
+        );
+    }
 
     #[test]
     fn resolve_tab_label_prefers_name_then_osc_then_profile() {

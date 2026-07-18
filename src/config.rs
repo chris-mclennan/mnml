@@ -2206,6 +2206,22 @@ impl Config {
                     merged.push(builtin.clone());
                 }
             }
+            // 2026-07-18 — one-time migration: users who launched
+            // mnml pre-v0.2 have persisted `glyph = ""` (U+F8B0,
+            // patched Claude Spark) and `glyph = ""` (U+F8B1,
+            // patched Codex). Those depend on the mnml Nerd Font
+            // patch script having run — everyone else sees tofu.
+            // Rewrite to the current defaults on load so the tab
+            // icon matches the v0.2 look without hand-editing the
+            // config.
+            for icon in &mut merged {
+                if icon.id == "claude_code" && icon.glyph == "\u{F8B0}" {
+                    icon.glyph = "\u{273B}".to_string();
+                }
+                if icon.id == "codex" && icon.glyph == "\u{F8B1}" {
+                    icon.glyph = "\u{276F}_".to_string();
+                }
+            }
             self.ui.integration_icons = merged;
         }
         // `ticket_prefixes` — pty-tab auto-naming from scrollback.
