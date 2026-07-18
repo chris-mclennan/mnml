@@ -167,10 +167,7 @@ fn codex_breath_color() -> ratatui::style::Color {
 /// the sibling-integration match runs against `App.config` and needs
 /// more state than we have at title-formatting time.
 fn is_branded_pty_label(label: &str) -> bool {
-    matches!(
-        label.to_ascii_lowercase().as_str(),
-        "claude code" | "claude code (resumed)" | "codex"
-    )
+    matches!(label, "Claude Code" | "Claude Code (resumed)" | "Codex")
 }
 
 /// The shape of a single tab chip. Fed into `paint_tab_chip` by

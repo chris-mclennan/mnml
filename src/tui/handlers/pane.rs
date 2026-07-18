@@ -2125,7 +2125,7 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         && key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(
             app.panes.get(i),
-            Some(Pane::Pty(s)) if !s.is_exited() && s.profile.label.to_ascii_lowercase().starts_with("claude")
+            Some(Pane::Pty(s)) if !s.is_exited() && s.profile.label.starts_with("Claude")
         )
     {
         app.inject_filename_to_claude(i);

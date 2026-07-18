@@ -59,8 +59,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // (resumed)"` / `"codex"` regardless of what wrapper the
         // user runs it through.
         matches!(
-            s.profile.label.to_ascii_lowercase().as_str(),
-            "claude code" | "claude code (resumed)" | "codex"
+            s.profile.label.as_str(),
+            "Claude Code" | "Claude Code (resumed)" | "Codex"
         )
     }
     let all_pty_indices: Vec<usize> = app

@@ -734,7 +734,7 @@ impl App {
     /// `BinaryProfile.label`), or `None`.
     fn find_claude_pty(&self) -> Option<PaneId> {
         self.panes.iter().position(|p| match p {
-            Pane::Pty(s) => s.profile.label.to_ascii_lowercase().starts_with("claude"),
+            Pane::Pty(s) => s.profile.label.starts_with("Claude"),
             _ => false,
         })
     }
@@ -742,7 +742,7 @@ impl App {
     /// Return the pane id of any open Codex pty pane.
     fn find_codex_pty(&self) -> Option<PaneId> {
         self.panes.iter().position(|p| match p {
-            Pane::Pty(s) => s.profile.label.to_ascii_lowercase().starts_with("codex"),
+            Pane::Pty(s) => s.profile.label.starts_with("Codex"),
             _ => false,
         })
     }
