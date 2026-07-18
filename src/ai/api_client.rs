@@ -1555,6 +1555,12 @@ mod tests {
     }
 
     #[cfg(unix)]
+    // Test asserts that a leaf-symlink escape is refused. Symlinks
+    // on Windows require admin/dev-mode + std::os::windows::fs::
+    // symlink_file API — different enough to be its own test. Gate
+    // the whole case to Unix; the underlying protection code
+    // (parent-canonicalize + leaf check) is exercised by other tests.
+    #[cfg(unix)]
     #[test]
     fn execute_tool_write_file_refuses_leaf_symlink_escape() {
         // untouched-surfaces-hunt-2026-06-08 SEV-2: a pre-existing

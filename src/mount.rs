@@ -25,6 +25,11 @@
 //! counter so successive mounts in the same session don't collide.
 
 use std::io::Write;
+// UDS on Unix; `uds_windows` wraps Windows 10 v1803+ AF_UNIX with a
+// std-mirror API so the mount transport code below is identical
+// across platforms. Only 4 method calls (bind, set_nonblocking,
+// accept, try_clone) + Read/Write via traits — all match.
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -32,6 +37,8 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+#[cfg(windows)]
+use uds_windows::{UnixListener, UnixStream};
 
 use mnml_bridge::{Cell, Geometry, HostMessage, InputEvent, SiblingMessage};
 
