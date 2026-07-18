@@ -69,6 +69,12 @@ pub enum MenuAction {
     /// integration in an editor pane so users can hand-edit
     /// without leaving mnml.
     ShowIntegrationManifest(String),
+    /// v0.2.0 — set the per-workspace launcher script for an
+    /// integration that spawns a binary (`claude_code`, `codex`).
+    /// Opens a `PromptKind::IntegrationLauncher` prompt seeded with
+    /// the current value; accept writes to
+    /// `<workspace>/.mnml/integrations/<id>.toml`.
+    SetIntegrationLauncher(String),
     /// Run a registered command by id (e.g. `tree.refresh`).
     Command(&'static str),
     /// Open the glyph builder pre-loaded with a specific codepoint

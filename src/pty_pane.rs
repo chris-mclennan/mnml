@@ -75,6 +75,44 @@ impl RenderGrid {
     }
 }
 
+/// Look up the per-workspace launcher override for a built-in
+/// integration. Reads `<workspace>/.mnml/integrations/<id>.toml`
+/// for a `launcher = "..."` line; returns that path if present,
+/// otherwise `default_exe`. Intentionally hand-scraped to avoid
+/// pulling a TOML parser into the hot spawn path — the file only
+/// ever has one field.
+///
+/// The right-click "Set launcher script…" writes this file; users
+/// can also hand-edit it. Empty launcher / missing file = default.
+pub fn resolve_launcher(workspace: &std::path::Path, id: &str, default_exe: &str) -> String {
+    let path = workspace
+        .join(".mnml")
+        .join("integrations")
+        .join(format!("{id}.toml"));
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return default_exe.to_string();
+    };
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(rest) = l.strip_prefix("launcher") {
+            let rest = rest.trim_start();
+            let Some(rest) = rest.strip_prefix('=') else {
+                continue;
+            };
+            let rest = rest.trim();
+            if let Some(inner) = rest.strip_prefix('"')
+                && let Some(end) = inner.find('"')
+            {
+                let val = &inner[..end];
+                if !val.is_empty() {
+                    return val.to_string();
+                }
+            }
+        }
+    }
+    default_exe.to_string()
+}
+
 /// What runs inside a pty pane — a config record so the caller picks "shell" vs
 /// "claude" without this module knowing about products.
 #[derive(Debug, Clone)]
@@ -111,6 +149,11 @@ impl BinaryProfile {
     /// `claude` (Claude Code), with a known `--session-id` (so mnml can mirror the
     /// transcript). If the workspace has a `.mnml/CLAUDE.md`, inject it via
     /// `--append-system-prompt` so the assistant orients before message #1.
+    ///
+    /// The exe defaults to `claude` on PATH; a per-workspace override at
+    /// `<workspace>/.mnml/integrations/claude_code.toml` (set via the chip
+    /// right-click "Set launcher script…") replaces it — useful for wrapper
+    /// scripts like `./bin/claude-multi.sh` that add `--add-dir` flags.
     pub fn claude_code(workspace: PathBuf) -> Self {
         let sid = crate::ai::gen_session_id();
         let mut args = vec!["--session-id".to_string(), sid.clone()];
@@ -121,9 +164,10 @@ impl BinaryProfile {
             args.push("--append-system-prompt".to_string());
             args.push(text);
         }
+        let exe = resolve_launcher(&workspace, "claude_code", "claude");
         BinaryProfile {
             label: "claude code".to_string(),
-            exe: "claude".to_string(),
+            exe,
             args,
             cwd: Some(workspace),
             env: Vec::new(),
@@ -144,9 +188,10 @@ impl BinaryProfile {
     /// `claude --resume <session_id>` — open an existing session (e.g. one started
     /// by an `ai.*` one-shot) interactively, with its conversation already loaded.
     pub fn claude_code_resume(workspace: PathBuf, session_id: String) -> Self {
+        let exe = resolve_launcher(&workspace, "claude_code", "claude");
         BinaryProfile {
             label: "claude code (resumed)".to_string(),
-            exe: "claude".to_string(),
+            exe,
             args: vec!["--resume".to_string(), session_id.clone()],
             cwd: Some(workspace),
             env: Vec::new(),
@@ -173,11 +218,14 @@ impl BinaryProfile {
         }
     }
 
-    /// `codex` (OpenAI Codex CLI).
+    /// `codex` (OpenAI Codex CLI). Same launcher-override story as
+    /// `claude_code` — a workspace can point at a wrapper script via
+    /// `<workspace>/.mnml/integrations/codex.toml`.
     pub fn codex(workspace: PathBuf) -> Self {
+        let exe = resolve_launcher(&workspace, "codex", "codex");
         BinaryProfile {
             label: "codex".to_string(),
-            exe: "codex".to_string(),
+            exe,
             args: Vec::new(),
             cwd: Some(workspace),
             env: Vec::new(),
@@ -1051,6 +1099,57 @@ mod tests {
         assert!(!p.exe.is_empty());
         assert!(p.label.starts_with("terminal ("));
         assert!(p.args.is_empty());
+    }
+
+    #[test]
+    fn resolve_launcher_returns_default_when_no_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            "claude"
+        );
+    }
+
+    #[test]
+    fn resolve_launcher_reads_override_from_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/claude_code.toml"),
+            "launcher = \"./bin/multi.sh\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            "./bin/multi.sh"
+        );
+    }
+
+    #[test]
+    fn resolve_launcher_empty_string_falls_back_to_default() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/claude_code.toml"),
+            "launcher = \"\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            "claude"
+        );
+    }
+
+    #[test]
+    fn resolve_launcher_survives_comments_and_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/codex.toml"),
+            "# comment\n\n   launcher  =  \"wrap.sh\"   \n",
+        )
+        .unwrap();
+        assert_eq!(resolve_launcher(dir.path(), "codex", "codex"), "wrap.sh");
     }
 
     #[test]

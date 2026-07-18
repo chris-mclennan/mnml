@@ -4603,6 +4603,10 @@ pub struct App {
     /// (or the integrations.remove palette picker), resolved on
     /// prompt accept.
     pub pending_integration_remove_id: Option<String>,
+    /// Integration id awaiting a launcher-script value from the
+    /// `PromptKind::IntegrationLauncher` prompt. Set by the chip's
+    /// "Set launcher script…" menu, read by the prompt-accept.
+    pub pending_integration_launcher_id: Option<String>,
     /// Pending worktree path for `:git.worktree_add` and
     /// `:git.worktree_remove` confirm prompts.
     pub pending_worktree_path: Option<std::path::PathBuf>,
@@ -5269,6 +5273,7 @@ impl App {
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,
             pending_integration_remove_id: None,
+            pending_integration_launcher_id: None,
             pending_worktree_path: None,
             pending_merge_source: None,
             pending_rebase_onto: None,

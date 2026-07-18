@@ -190,6 +190,14 @@ pub enum PromptKind {
     /// Surfaced from the palette command
     /// `integrations.patch_nerd_font_svg`.
     PatchNerdFontSvg,
+    /// Accept ⇒ write `launcher = "<input>"` to
+    /// `<workspace>/.mnml/integrations/<id>.toml` where `<id>` is
+    /// held in `App.pending_integration_launcher_id`. Empty input
+    /// clears the launcher override (deletes the key or the file).
+    /// `pty_pane::claude_code` / `codex` read this at spawn time
+    /// so a per-workspace wrapper (e.g. `./bin/claude-multi.sh`)
+    /// runs in place of the plain binary. Ships with v0.2.0.
+    IntegrationLauncher,
     /// Accept ⇒ create an empty file at `<parent>/<input>`, then open it.
     NewFile,
     /// Accept ⇒ `mkdir -p <parent>/<input>`. No buffer opened.

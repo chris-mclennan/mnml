@@ -1965,6 +1965,10 @@ impl App {
                 let raw = from_selected.unwrap_or_else(|| p.input.trim().to_string());
                 self.file_finish_move_to(&raw);
             }
+            crate::prompt::PromptKind::IntegrationLauncher => {
+                let input = p.input.clone();
+                self.accept_integration_launcher(input);
+            }
         }
     }
 }

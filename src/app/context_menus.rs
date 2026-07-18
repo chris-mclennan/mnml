@@ -319,6 +319,76 @@ impl App {
     /// Lets the user edit the chip's glyph/color/tooltip in place
     /// or remove it without opening the discovery overlay first.
     /// `icon_idx` is the position in `config.ui.integration_icons`.
+    /// Read the current per-workspace launcher override for a
+    /// built-in integration (currently `claude_code` / `codex`).
+    /// Returns None if the workspace has no override. Thin wrapper
+    /// around `pty_pane::resolve_launcher` — one source of truth
+    /// for the TOML scrape.
+    pub fn integration_launcher_override(&self, id: &str) -> Option<String> {
+        // resolve_launcher returns default_exe if no override; use
+        // a sentinel we can compare against to detect that case.
+        let sentinel = "__no_override__";
+        let val = crate::pty_pane::resolve_launcher(&self.workspace, id, sentinel);
+        if val == sentinel { None } else { Some(val) }
+    }
+
+    /// Open a `PromptKind::IntegrationLauncher` prompt seeded with
+    /// the current override (if any) so the user can edit / clear.
+    /// The id is stashed on `pending_integration_launcher_id` so
+    /// the prompt-accept knows which manifest to write.
+    pub fn open_integration_launcher_prompt(&mut self, id: String) {
+        let seed = self.integration_launcher_override(&id).unwrap_or_default();
+        let title = format!(
+            "Launcher for `{id}` — path (empty = default `{}`)",
+            if id == "codex" { "codex" } else { "claude" }
+        );
+        let prompt = crate::prompt::Prompt::seeded(
+            crate::prompt::PromptKind::IntegrationLauncher,
+            title,
+            seed,
+        );
+        self.pending_integration_launcher_id = Some(id);
+        self.prompt = Some(prompt);
+    }
+
+    /// Accept handler for `PromptKind::IntegrationLauncher`. Writes
+    /// (or clears) `launcher = "<input>"` in
+    /// `<workspace>/.mnml/integrations/<id>.toml`.
+    ///
+    /// - Empty input → strip the `launcher` key. If it's the only
+    ///   field, remove the file entirely (leaves no orphan manifest).
+    /// - Non-empty input → write a minimal file containing just the
+    ///   `launcher` line. This keeps the "built-in integration" path
+    ///   clean — we're not overriding glyph/color/etc., just the
+    ///   launcher.
+    pub fn accept_integration_launcher(&mut self, input: String) {
+        let Some(id) = self.pending_integration_launcher_id.take() else {
+            return;
+        };
+        let dir = self.workspace.join(".mnml").join("integrations");
+        let path = dir.join(format!("{id}.toml"));
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            let _ = std::fs::remove_file(&path);
+            self.toast(format!("launcher for `{id}` cleared (using default)"));
+            return;
+        }
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.toast(format!("mkdir {}: {e}", dir.display()));
+            return;
+        }
+        let contents = format!(
+            "# Workspace-scoped override for the `{id}` integration.\n\
+             # Rewritten by mnml's \"Set launcher script…\" menu — hand-edit\n\
+             # is fine too.\n\
+             launcher = \"{trimmed}\"\n"
+        );
+        match std::fs::write(&path, contents) {
+            Ok(()) => self.toast(format!("launcher for `{id}` → {trimmed}")),
+            Err(e) => self.toast(format!("write {}: {e}", path.display())),
+        }
+    }
+
     pub fn open_integration_chip_context_menu(&mut self, icon_idx: usize, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let Some(icon) = self.config.ui.integration_icons.get(icon_idx) else {
@@ -372,6 +442,22 @@ impl App {
             "Edit…",
             MenuAction::EditIntegration(id.clone()),
         ));
+        // v0.2.0 — per-workspace launcher-script override for
+        // integrations that spawn a binary. Only surfaced on
+        // built-ins where mnml chooses the exe (claude_code /
+        // codex); sibling integrations already control their own
+        // spawn via `binary = "..."` in the manifest, so the
+        // wrapper isn't useful for them.
+        if id == "claude_code" || id == "codex" {
+            let label = match self.integration_launcher_override(&id) {
+                Some(current) => format!("Set launcher script… (current: {current})"),
+                None => "Set launcher script…".to_string(),
+            };
+            items.push(MenuItem::new(
+                label,
+                MenuAction::SetIntegrationLauncher(id.clone()),
+            ));
+        }
         // 2026-07-09 user request — more integration-management
         // gestures in the right-click menu. Copy id + open the
         // manifest live above Remove so a mis-click is more likely
@@ -1416,6 +1502,9 @@ impl App {
             }
             EditIntegration(id) => {
                 self.open_integration_edit_by_id(&id);
+            }
+            SetIntegrationLauncher(id) => {
+                self.open_integration_launcher_prompt(id);
             }
             RemoveIntegration(id) => {
                 self.open_integration_remove_confirm(id);
