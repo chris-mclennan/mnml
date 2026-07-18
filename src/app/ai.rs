@@ -649,6 +649,9 @@ impl App {
     /// the pty tab strip's `+` uses `add_pty_tab` instead (tab, not
     /// split).
     pub fn open_claude_code_new(&mut self) {
+        if self.config.ui.auto_show_sessions_on_ai_activate {
+            self.set_activity_section(crate::app::ActivitySection::Sessions);
+        }
         self.open_pty_dir(
             crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
             crate::layout::SplitDir::Horizontal,
@@ -662,6 +665,9 @@ impl App {
     /// `BottomHalf` swap the newly-created split's sides so the new
     /// pane ends up where the user expected.
     pub fn open_claude_code_new_at(&mut self, placement: PanePlacement) {
+        if self.config.ui.auto_show_sessions_on_ai_activate {
+            self.set_activity_section(crate::app::ActivitySection::Sessions);
+        }
         self.open_pty_at_placement(
             crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
             placement,
@@ -671,6 +677,9 @@ impl App {
     /// Place a fresh Codex pane in a specific half. Mirror of
     /// `open_claude_code_new_at`.
     pub fn open_codex_new_at(&mut self, placement: PanePlacement) {
+        if self.config.ui.auto_show_sessions_on_ai_activate {
+            self.set_activity_section(crate::app::ActivitySection::Sessions);
+        }
         self.open_pty_at_placement(
             crate::pty_pane::BinaryProfile::codex(self.workspace.clone()),
             placement,
@@ -716,6 +725,9 @@ impl App {
     /// of `open_claude_code_new` — split-strip AI chip in `both` mode
     /// dispatches here.
     pub fn open_codex_new(&mut self) {
+        if self.config.ui.auto_show_sessions_on_ai_activate {
+            self.set_activity_section(crate::app::ActivitySection::Sessions);
+        }
         self.open_pty_dir(
             crate::pty_pane::BinaryProfile::codex(self.workspace.clone()),
             crate::layout::SplitDir::Horizontal,

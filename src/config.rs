@@ -819,6 +819,16 @@ pub struct UiConfig {
     /// ```
     pub tab_bar_ai_icon: String,
 
+    /// Auto-switch the activity panel to Sessions when a Claude
+    /// Code / Codex Pty pane becomes active — via tab click,
+    /// sidebar chip, split-strip cluster chip, `+ New session`,
+    /// right-click "New ... on right half", `:bn`/`:bp` cycling, or
+    /// any other activation route. Default `true` — matches the
+    /// idea that AI panes live in Sessions and the sidebar should
+    /// context-follow.
+    /// one-tab-type 2026-07-18.
+    pub auto_show_sessions_on_ai_activate: bool,
+
     /// Start the rail's `> GIT` section expanded on launch?
     /// Default `false` (collapsed) — keeps the rail compact when
     /// the user lands. Toggle in-session by clicking the section
@@ -1547,6 +1557,7 @@ impl Default for Config {
                 // Claude). Users who want Codex too can flip
                 // `[ui] tab_bar_ai_icon = "both"` in config.
                 tab_bar_ai_icon: "claude_code".to_string(),
+                auto_show_sessions_on_ai_activate: true,
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
                 hover_help: false,
@@ -1851,6 +1862,9 @@ struct RawUi {
     /// See [`UiConfig::tab_bar_ai_icon`].
     #[serde(default)]
     tab_bar_ai_icon: Option<String>,
+    /// See [`UiConfig::auto_show_sessions_on_ai_activate`].
+    #[serde(default)]
+    auto_show_sessions_on_ai_activate: Option<bool>,
     /// Initial expanded state for the rail's `> GIT` section.
     /// Default `false` (collapsed). See
     /// [`UiConfig::git_section_default_expanded`].
@@ -2278,6 +2292,9 @@ impl Config {
             ) {
                 self.ui.tab_bar_ai_icon = normalized;
             }
+        }
+        if let Some(b) = raw.ui.auto_show_sessions_on_ai_activate {
+            self.ui.auto_show_sessions_on_ai_activate = b;
         }
         if let Some(b) = raw.ui.git_section_default_expanded {
             self.ui.git_section_default_expanded = b;

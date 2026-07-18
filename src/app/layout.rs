@@ -9,6 +9,14 @@
 
 use super::*;
 
+/// True if the profile label belongs to an AI CLI (Claude Code /
+/// Codex / any resumed session). Used to gate the
+/// `auto_show_sessions_on_ai_activate` swap in `reveal_pane` +
+/// the `_new` spawn variants.
+pub(crate) fn is_ai_profile(label: &str) -> bool {
+    label.starts_with("Claude") || label == "Codex"
+}
+
 impl App {
     /// Active tab page's split tree (mutable view).
     pub fn layout_mut(&mut self) -> &mut Layout {
@@ -283,6 +291,15 @@ impl App {
             self.last_active = prior;
         }
         self.focus = Focus::Pane;
+        // one-tab-type 2026-07-18 — auto-switch the activity panel
+        // to Sessions when the revealed pane is a Claude Code /
+        // Codex Pty. Gated on `[ui] auto_show_sessions_on_ai_activate`
+        // so vim users who `:bn`/`:bp`-cycle can turn it off.
+        if self.config.ui.auto_show_sessions_on_ai_activate
+            && matches!(self.panes.get(id), Some(Pane::Pty(s)) if is_ai_profile(&s.profile.label))
+        {
+            self.set_activity_section(crate::app::ActivitySection::Sessions);
+        }
         self.retarget_outline_to_active();
         // If the revealed pane is a GitGraph, refresh it — its WIP virtual
         // row + commit list otherwise stay frozen at the last `after_git_change`
