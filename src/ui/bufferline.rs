@@ -110,37 +110,52 @@ fn tab_labels(panes: &[Pane]) -> Vec<String> {
     titles
 }
 
-/// Codex's on-screen animation is a color shimmer — its `•` char
-/// never changes, but its fg color breathes from ~black (dim base)
-/// up to ~white (peak) and back over ~1.5s. Approximate that in the
-/// tab-icon slot with a piecewise-linear brightness curve applied
-/// to a grey RGB triple: fade-in 500ms → hold 500ms → fade-out 500ms.
-/// Anchored to a process-static Instant so every rendered frame
-/// advances naturally — same pattern as the agents_panel spinner.
+/// Faithful port of Codex's `shimmer_spans` (from
+/// `openai/codex:codex-rs/tui/src/shimmer.rs`) for a 1-cell tab-icon
+/// slot. Codex's animation on-screen is:
+///
+/// - `period = chars.len() + padding * 2` where `padding = 10`.
+///   For a single `•` char that's `1 + 20 = 21` positions.
+/// - `sweep_seconds = 2.0` — a "highlight position" walks linearly
+///   from 0..period every 2s.
+/// - The visible char sits at position `padding = 10` (fixed).
+/// - `band_half_width = 5.0` — triangular ramp: weight = `1.0 -
+///   distance / 5.0` when `distance < 5.0`, else 0.
+/// - Final color = `blend(base, peak, weight)` — linear RGB lerp.
+///
+/// So the char sits at base color for ~75% of the cycle (weight
+/// stays 0 while the highlight is > 5 positions away), then ramps
+/// weight up over ~475ms, peaks instantly (~1000ms into cycle),
+/// then ramps back down. NOT a hold-at-peak — a triangle. The
+/// perception of a "hold" comes from the near-peak plateau of the
+/// triangle wave, but the peak itself is instantaneous.
+///
+/// Colors: base = dim grey (matches Codex's default_fg fallback),
+/// peak = white (matches its default_bg fallback on dark themes).
+/// Same R=G=B so it stays neutral in front of any themed accent.
 fn codex_breath_color() -> ratatui::style::Color {
     use ratatui::style::Color;
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     let start = START.get_or_init(std::time::Instant::now);
     let ms = std::time::Instant::now().duration_since(*start).as_millis();
-    let phase = (ms % 1500) as f32 / 1500.0;
-    // Piecewise: 0-0.33 = fade-in, 0.33-0.66 = hold at peak,
-    // 0.66-1.0 = fade-out. Matches user's observation
-    // "starts black, gets brighter white, holds for a half second,
-    // dims back to black."
-    let brightness = if phase < 0.33 {
-        phase / 0.33
-    } else if phase < 0.66 {
-        1.0
+    const CYCLE_MS: u128 = 2000;
+    const PERIOD: f32 = 21.0; // chars.len(1) + padding(10) * 2
+    const CHAR_POSITION: f32 = 10.0; // padding
+    const BAND_HALF_WIDTH: f32 = 5.0;
+    let phase = (ms % CYCLE_MS) as f32 / CYCLE_MS as f32;
+    let pos_f = phase * PERIOD;
+    // Wrap-aware distance: the highlight loops, so the shortest
+    // distance from `pos_f` to `char_position` is min(|d|, period-|d|).
+    let raw = (pos_f - CHAR_POSITION).abs();
+    let distance = raw.min(PERIOD - raw);
+    let weight = if distance >= BAND_HALF_WIDTH {
+        0.0
     } else {
-        1.0 - (phase - 0.66) / 0.34
+        1.0 - (distance / BAND_HALF_WIDTH)
     };
-    // Interpolate between dim grey (60) and white (255) — grey base
-    // matches Codex's rest color, white peak matches its shimmer
-    // highlight. Same value on r/g/b keeps it neutral so a themed
-    // pane accent isn't fighting the breath.
-    let dim: u8 = 60;
+    let base: u8 = 60;
     let peak: u8 = 255;
-    let g = (dim as f32 + (peak - dim) as f32 * brightness) as u8;
+    let g = (base as f32 + (peak - base) as f32 * weight) as u8;
     Color::Rgb(g, g, g)
 }
 

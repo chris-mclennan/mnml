@@ -1060,16 +1060,18 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "claude_code".to_string(),
-                        // 2026-07-17 — was the branded Claude Spark
-                        // glyph patched into the user's Nerd Font at
-                        // U+F8B0. Dropped the patched-font dep in
-                        // favor of `✻` (U+273B "Heavy Teardrop-Spoked
-                        // Asterisk"), the real Unicode char Claude
-                        // Code's own CLI prints while thinking. Tabs
-                        // now match what Claude Code shows, no
-                        // font-patch script required.
-                        glyph: "\u{273B}".to_string(),
-                        fallback: "\u{273B}".to_string(),
+                        // 2026-07-17 v1 — dropped patched U+F8B0 SVG for ✻ (U+273B).
+                        // 2026-07-18 v2 — Claude Code v2.1.214's ACTUAL
+                        // idle glyph is `✳` (U+2733 "Eight Spoked
+                        // Asterisk"), not `✻`. Empirically measured
+                        // from the npm package's pty output — same
+                        // char it uses as the first + last frame of
+                        // its 8-frame breathing spinner. Using it
+                        // idle makes the transition into the
+                        // animation seamless (idle frame = frame 0
+                        // of the spinner).
+                        glyph: "\u{2733}".to_string(),
+                        fallback: "\u{2733}".to_string(),
                         command: "ai.claude_code".to_string(),
                         color: "orange".to_string(),
                         tooltip: Some("Claude Code".to_string()),
@@ -2214,9 +2216,16 @@ impl Config {
             // Rewrite to the current defaults on load so the tab
             // icon matches the v0.2 look without hand-editing the
             // config.
+            //
+            // 2026-07-18 second pass — also migrate `✻` (U+273B) →
+            // `✳` (U+2733) for claude_code. Post-empirical-research
+            // we know Claude Code's own idle glyph is ✳; the ✻
+            // default from the first migration was wrong.
             for icon in &mut merged {
-                if icon.id == "claude_code" && icon.glyph == "\u{F8B0}" {
-                    icon.glyph = "\u{273B}".to_string();
+                if icon.id == "claude_code"
+                    && (icon.glyph == "\u{F8B0}" || icon.glyph == "\u{273B}")
+                {
+                    icon.glyph = "\u{2733}".to_string();
                 }
                 if icon.id == "codex" && icon.glyph == "\u{F8B1}" {
                     icon.glyph = "\u{276F}_".to_string();

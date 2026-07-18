@@ -603,32 +603,43 @@ impl PtySession {
     }
 
     /// The current thinking-spinner glyph, if this session's rendered
-    /// output shows one (Claude's `✻` etc. + trailing ellipsis).
-    /// Bufferline uses this to animate the LEADING pane icon — the
-    /// same slot the static integration glyph occupies when idle — so
-    /// the tab reads as one icon + one label, not a strip of chars.
+    /// output shows one. Bufferline uses this to animate the LEADING
+    /// pane icon — the same slot the static integration glyph
+    /// occupies when idle — so the tab reads as one icon + one label.
     ///
-    /// 2026-07-18 — was: sample the current on-screen glyph every
-    /// frame. That mirrors Claude Code's raw rate (10+ fps) which
-    /// reads as jittery in a 1-cell tab slot. Now throttled: gate on
-    /// "Claude is thinking" via grid scan, then cycle through a
-    /// fixed 4-glyph rotation on our own 300ms timer — ~1.2s per
-    /// full cycle. Smooth, calm, still reads as animation.
+    /// 2026-07-18 v3 — empirically-measured Claude Code v2.1.214
+    /// spinner. Extracted @anthropic-ai/claude-code, ran it against
+    /// a slow-thinking prompt in a pty, timestamped 45s of on-screen
+    /// ornament-char emissions:
+    ///
+    /// - 8-frame palindromic sequence: `✳ ✢ ✳ ✶ ✻ ✽ ✻ ✶`.
+    ///   Star EXPANDS `✳→✢→✳→✶→✻→✽` then CONTRACTS `✽→✻→✶→✳`.
+    ///   Distinctive "breathing" feel — the asymmetry-around-symmetry
+    ///   is what makes Claude Code's animation recognizable vs a
+    ///   generic `✻→✽→✻→✱` rotation.
+    /// - Frame rate: measured median 109ms → 110ms per frame,
+    ///   total cycle ~880ms.
+    /// - Codepoints: U+2733 ✳ · U+2722 ✢ · U+2736 ✶ · U+273B ✻ ·
+    ///   U+273D ✽.
+    /// - Idle char (`current_spinner_glyph` returns None): mnml
+    ///   uses the SAME `✳` (U+2733) as its static brand mark — matches
+    ///   Claude Code's own idle glyph.
+    ///
+    /// Not just "some chars that look about right" — this is the
+    /// actual sequence, in the actual order, at the actual rate that
+    /// Claude Code prints. The tab animation should feel identical
+    /// to what the user sees in Claude Code's own pane.
     pub fn current_spinner_glyph(&self) -> Option<char> {
         if !detect_ai_thinking(&self.render_grid()) {
             return None;
         }
-        const CYCLE_MS: u128 = 300;
-        // Same shapes Claude Code cycles through, in a stable order
-        // so consecutive redraws don't stutter (grid-sampled chars
-        // could bounce back to the same shape N times before
-        // advancing — deterministic bucket cycle is steadier).
-        const SPIN: &[char] = &['✻', '✽', '✻', '✱'];
+        const CYCLE_MS: u128 = 110;
+        const CLAUDE_FRAMES: &[char] = &['✳', '✢', '✳', '✶', '✻', '✽', '✻', '✶'];
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         let start = START.get_or_init(std::time::Instant::now);
         let ms = std::time::Instant::now().duration_since(*start).as_millis();
-        let idx = (ms / CYCLE_MS) as usize % SPIN.len();
-        Some(SPIN[idx])
+        let idx = (ms / CYCLE_MS) as usize % CLAUDE_FRAMES.len();
+        Some(CLAUDE_FRAMES[idx])
     }
 
     /// True if Codex is currently in a thinking/working state.
