@@ -390,6 +390,30 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 /// cluster itself. Everything else in the old draw was tied to
 /// the top tab strip.
 fn paint_mode_chip_and_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
+    let t = theme::cur();
+    // 2026-07-18 — when the row is visible with zero panes (empty
+    // workspace, all tabs closed), paint a "no buffers" hint on
+    // the left of the row so the strip doesn't look confusingly
+    // empty. Sits at the leftmost cell of the row.
+    if app.panes.is_empty() {
+        let hint = "  no buffers ";
+        let hint_w = hint.chars().count() as u16;
+        if area.width >= hint_w {
+            let hint_rect = Rect {
+                x: area.x,
+                y: area.y,
+                width: hint_w,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    hint,
+                    Style::default().fg(t.grey_fg).bg(t.bg_darker),
+                ))),
+                hint_rect,
+            );
+        }
+    }
     // Mode chip — sits immediately left of the launcher cluster.
     let cluster_w = split_buttons_width(app);
     if let Some((label, kind, pid)) = mode_chip_for_active(app) {
