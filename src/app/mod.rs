@@ -1494,6 +1494,17 @@ pub enum AiPlaceholderKind {
     ClaudeCode,
 }
 
+/// Sessions panel — how to sort the tab list. Pinned sessions
+/// bubble to the top regardless of this setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionsSortMode {
+    /// Sort by state: running → recent → idle → exited.
+    Auto,
+    /// User's manual order (right-click "Move up / down / top /
+    /// bottom" bumps a session into this vec).
+    Manual,
+}
+
 /// land independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySection {
@@ -4116,6 +4127,18 @@ pub struct App {
     /// of the 3 Claudes is closed (the split collapses).
     pub ai_placeholder_slot: Option<crate::app::AiPlaceholderKind>,
 
+    /// User-controlled session ordering (when `sessions_sort_mode
+    /// == Manual`). Session pane ids in the order they should be
+    /// listed. Ids not in this vec render after those that are,
+    /// in their natural `App.panes` order.
+    pub sessions_manual_order: Vec<usize>,
+    /// PaneIds of pinned sessions. Pinned sessions bubble to the
+    /// top of the Sessions panel regardless of the sort mode.
+    pub sessions_pinned: std::collections::HashSet<usize>,
+    /// Sort mode for the Sessions panel — Auto (running → idle →
+    /// exited) or Manual (user's `sessions_manual_order`).
+    pub sessions_sort_mode: crate::app::SessionsSortMode,
+
     /// `/`-style filter for the Sessions panel — case-insensitive
     /// match against session display name, git branch, cwd basename,
     /// and detected ticket. Empty = show all.
@@ -5081,6 +5104,9 @@ impl App {
             notes_panel_filter: String::new(),
             notes_panel_filter_focused: false,
             ai_placeholder_slot: None,
+            sessions_manual_order: Vec::new(),
+            sessions_pinned: std::collections::HashSet::new(),
+            sessions_sort_mode: crate::app::SessionsSortMode::Auto,
             sessions_panel_filter: String::new(),
             sessions_panel_filter_focused: false,
             todos_panel_cursor: 0,
@@ -8503,7 +8529,19 @@ impl App {
             _ => return,
         };
         let title = Some(label);
+        let pinned = self.sessions_pinned.contains(&pane_id);
+        let pin_label = if pinned { "Unpin" } else { "Pin" };
+        let sort_auto_label = match self.sessions_sort_mode {
+            crate::app::SessionsSortMode::Auto => "✓ Auto sort",
+            crate::app::SessionsSortMode::Manual => "Auto sort",
+        };
         let items = vec![
+            MenuItem::new(pin_label, MenuAction::SessionTogglePin(pane_id)),
+            MenuItem::new("Move up", MenuAction::SessionMoveUp(pane_id)),
+            MenuItem::new("Move down", MenuAction::SessionMoveDown(pane_id)),
+            MenuItem::new("Move to top", MenuAction::SessionMoveToTop(pane_id)),
+            MenuItem::new("Move to bottom", MenuAction::SessionMoveToBottom(pane_id)),
+            MenuItem::new(sort_auto_label, MenuAction::SessionSortAuto),
             MenuItem::new("Rename…", MenuAction::SessionRename(pane_id)),
             MenuItem::new(
                 "Color: Green",
@@ -8528,6 +8566,86 @@ impl App {
             MenuItem::new("Close session", MenuAction::SessionClose(pane_id)),
         ];
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
+    /// Toggle pin state for a session; pinned sessions bubble to
+    /// the top of the Sessions panel.
+    pub fn session_toggle_pin(&mut self, pane_id: usize) {
+        if self.sessions_pinned.contains(&pane_id) {
+            self.sessions_pinned.remove(&pane_id);
+        } else {
+            self.sessions_pinned.insert(pane_id);
+        }
+    }
+
+    /// Ensure the manual order vec contains `pane_id`. If it's
+    /// missing, appends it. Idempotent.
+    fn ensure_in_manual_order(&mut self, pane_id: usize) {
+        if !self.sessions_manual_order.contains(&pane_id) {
+            self.sessions_manual_order.push(pane_id);
+        }
+        self.sessions_sort_mode = crate::app::SessionsSortMode::Manual;
+    }
+
+    /// Move a session one slot up in the manual order (swap with
+    /// its predecessor). Switches sort mode to Manual.
+    pub fn session_move_up(&mut self, pane_id: usize) {
+        self.ensure_in_manual_order(pane_id);
+        if let Some(pos) = self
+            .sessions_manual_order
+            .iter()
+            .position(|&p| p == pane_id)
+            && pos > 0
+        {
+            self.sessions_manual_order.swap(pos, pos - 1);
+        }
+    }
+
+    /// Move a session one slot down in the manual order.
+    pub fn session_move_down(&mut self, pane_id: usize) {
+        self.ensure_in_manual_order(pane_id);
+        if let Some(pos) = self
+            .sessions_manual_order
+            .iter()
+            .position(|&p| p == pane_id)
+            && pos + 1 < self.sessions_manual_order.len()
+        {
+            self.sessions_manual_order.swap(pos, pos + 1);
+        }
+    }
+
+    /// Move a session to the top of the manual order.
+    pub fn session_move_to_top(&mut self, pane_id: usize) {
+        self.ensure_in_manual_order(pane_id);
+        if let Some(pos) = self
+            .sessions_manual_order
+            .iter()
+            .position(|&p| p == pane_id)
+        {
+            let v = self.sessions_manual_order.remove(pos);
+            self.sessions_manual_order.insert(0, v);
+        }
+    }
+
+    /// Move a session to the bottom of the manual order.
+    pub fn session_move_to_bottom(&mut self, pane_id: usize) {
+        self.ensure_in_manual_order(pane_id);
+        if let Some(pos) = self
+            .sessions_manual_order
+            .iter()
+            .position(|&p| p == pane_id)
+        {
+            let v = self.sessions_manual_order.remove(pos);
+            self.sessions_manual_order.push(v);
+        }
+    }
+
+    /// Switch the Sessions panel back to Auto sort mode. Clears
+    /// the user's manual order (nothing to preserve — the auto
+    /// rules take over).
+    pub fn session_sort_auto(&mut self) {
+        self.sessions_sort_mode = crate::app::SessionsSortMode::Auto;
+        self.sessions_manual_order.clear();
     }
 
     /// Open the rename prompt for a specific Pty pane (the

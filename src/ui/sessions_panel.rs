@@ -83,6 +83,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             .filter(|pid| session_matches_filter(app, *pid, &filter_lc))
             .collect()
     };
+    let pty_indices = sort_sessions(app, pty_indices);
 
     // Header — appends `(N of M)` when the filter is active.
     let mut header_spans = vec![
@@ -266,10 +267,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             Modifier::empty()
         });
         let unread = s.unread_bytes();
-        let mut name_spans = vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(label, name_style),
-        ];
+        let is_pinned = app.sessions_pinned.contains(&pid);
+        let mut name_spans = vec![Span::styled("  ", Style::default().bg(bg))];
+        if is_pinned {
+            let pin_glyph = if !app.config.ui.ascii_icons {
+                "\u{F0403} "
+            } else {
+                "📌 "
+            };
+            name_spans.push(Span::styled(
+                pin_glyph,
+                Style::default().fg(t.orange).bg(bg),
+            ));
+        }
+        name_spans.push(Span::styled(label, name_style));
         if unread > 0 && !is_active {
             let count_str = if unread > 999 {
                 "999+".to_string()
@@ -681,6 +692,64 @@ fn session_matches_filter(app: &App, pid: usize, needle_lc: &str) -> bool {
     candidates
         .iter()
         .any(|c| !c.is_empty() && c.to_ascii_lowercase().contains(needle_lc))
+}
+
+/// Order a filtered slice of session pane ids per the current
+/// `sessions_sort_mode`. Pinned sessions always come first (in
+/// their pinned-insertion order — the user's pin sequence).
+/// Non-pinned sessions follow, in either Auto (running first) or
+/// Manual (user's `sessions_manual_order`) order.
+fn sort_sessions(app: &App, indices: Vec<usize>) -> Vec<usize> {
+    use crate::app::SessionsSortMode;
+    let (mut pinned, rest): (Vec<usize>, Vec<usize>) = indices
+        .into_iter()
+        .partition(|pid| app.sessions_pinned.contains(pid));
+    // Pinned kept in their id order — simple + stable. The user's
+    // pin action is a toggle; a per-pin timestamp isn't tracked.
+    pinned.sort_unstable();
+    let mut body = rest;
+    match app.sessions_sort_mode {
+        SessionsSortMode::Auto => {
+            body.sort_by_key(|&pid| session_state_priority(app, pid));
+        }
+        SessionsSortMode::Manual => {
+            body.sort_by_key(|&pid| {
+                app.sessions_manual_order
+                    .iter()
+                    .position(|&x| x == pid)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+    }
+    pinned.into_iter().chain(body).collect()
+}
+
+/// Priority for Auto sort — lower is higher on the list.
+///   0 = action needed (Claude waiting on user for approval)
+///   1 = running (Claude or Codex actively thinking)
+///   2 = idle
+///   3 = exited
+fn session_state_priority(app: &App, pid: usize) -> u8 {
+    let Some(Pane::Pty(s)) = app.panes.get(pid) else {
+        return 4;
+    };
+    if s.is_exited() {
+        return 3;
+    }
+    // "Action needed" heuristic: the summary picker skips known
+    // footer chips, so a summary that STILL mentions "approval"
+    // or "accept" is likely Claude Code's confirmation prompt.
+    if let Some(summary) = s.session_summary() {
+        let lower = summary.to_ascii_lowercase();
+        if lower.contains("approval") || lower.contains("do you want") {
+            return 0;
+        }
+    }
+    let thinking = s.current_spinner_glyph().is_some() || s.is_codex_thinking();
+    if thinking {
+        return 1;
+    }
+    2
 }
 
 /// Cheap git branch lookup — shells out to `git symbolic-ref --short HEAD`.

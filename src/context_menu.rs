@@ -191,6 +191,24 @@ pub enum MenuAction {
     /// Sessions panel — close (kill child + drop pane) the pty
     /// at `pane_id`.
     SessionClose(usize),
+    /// Sessions panel — toggle the pin flag for this session.
+    /// Pinned sessions bubble to the top of the panel regardless
+    /// of the active sort mode.
+    SessionTogglePin(usize),
+    /// Sessions panel — move this session up one slot in the
+    /// user-controlled manual order (switches the panel out of
+    /// Auto mode).
+    SessionMoveUp(usize),
+    /// Sessions panel — move this session down one slot.
+    SessionMoveDown(usize),
+    /// Sessions panel — move to the top of the manual order.
+    SessionMoveToTop(usize),
+    /// Sessions panel — move to the bottom of the manual order.
+    SessionMoveToBottom(usize),
+    /// Sessions panel — switch the sort mode to Auto (running →
+    /// idle → exited, with pinned above), clearing the user's
+    /// manual order.
+    SessionSortAuto,
     /// Workspaces editor — open the rename prompt for the row.
     WorkspaceEditName(usize),
     /// Workspaces editor — open the path-edit prompt.
