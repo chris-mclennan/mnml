@@ -1060,13 +1060,15 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "claude_code".to_string(),
-                        // Branded Claude Spark glyph patched into the
-                        // user's Nerd Font at U+F8B0 by
-                        // `scripts/patch_nerd_font.py`. Fallback `✻` is
-                        // the heavy-teardrop-spoked asterisk Claude's
-                        // CLI prints while thinking — Claude-recognizable
-                        // shape with no Nerd Font required.
-                        glyph: "\u{F8B0}".to_string(),
+                        // 2026-07-17 — was the branded Claude Spark
+                        // glyph patched into the user's Nerd Font at
+                        // U+F8B0. Dropped the patched-font dep in
+                        // favor of `✻` (U+273B "Heavy Teardrop-Spoked
+                        // Asterisk"), the real Unicode char Claude
+                        // Code's own CLI prints while thinking. Tabs
+                        // now match what Claude Code shows, no
+                        // font-patch script required.
+                        glyph: "\u{273B}".to_string(),
                         fallback: "\u{273B}".to_string(),
                         command: "ai.claude_code".to_string(),
                         color: "orange".to_string(),
@@ -1077,12 +1079,15 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "codex".to_string(),
-                        // Branded Codex glyph (cloud + `>_`) patched at
-                        // U+F8B1. Fallback `▶_` evokes a terminal cursor
-                        // — the OpenAI Codex CLI brand has the same
-                        // `>_` motif in its wordmark.
-                        glyph: "\u{F8B1}".to_string(),
-                        fallback: "\u{25B8}_".to_string(),
+                        // 2026-07-17 — was the branded Codex glyph
+                        // patched at U+F8B1 by scripts/patch_nerd_font.py.
+                        // Dropped the patched-font dep in favor of
+                        // `❯_` (U+276F + underscore), matching the
+                        // `>_` prompt motif in the OpenAI Codex CLI's
+                        // wordmark. Two-char glyph — bufferline's
+                        // icon-cell math auto-widens.
+                        glyph: "\u{276F}_".to_string(),
+                        fallback: "\u{276F}_".to_string(),
                         command: "ai.codex".to_string(),
                         color: "cyan".to_string(),
                         tooltip: Some("Codex".to_string()),

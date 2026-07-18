@@ -610,6 +610,16 @@ impl PtySession {
     pub fn current_spinner_glyph(&self) -> Option<char> {
         detect_spinner_glyph(&self.render_grid())
     }
+
+    /// True if Codex is currently in a thinking/working state.
+    /// Codex's animation is a color shimmer on a static `•` (the
+    /// character never changes), so `current_spinner_glyph` returns
+    /// None even when it's active. Detect via a co-signal: `•`
+    /// present in the bottom rows AND a "Working" label or an
+    /// elapsed-time token like `12s` / `1m 32s`.
+    pub fn is_codex_thinking(&self) -> bool {
+        detect_codex_thinking(&self.render_grid())
+    }
 }
 
 /// SGR mouse-report button code for a given crossterm mouse
@@ -896,6 +906,51 @@ fn is_shell_profile(exe: &str) -> bool {
 /// Claude idle, or a non-Claude program. The two-signal (glyph +
 /// ellipsis) test rejects unrelated lines that merely contain a star.
 /// Bottom-up scan: Claude's spinner sits near the input prompt.
+/// Scan the pty grid's bottom rows for signs Codex is working.
+/// Codex's status widget prints `•` + an elapsed-time counter
+/// (`12s`, `1m 32s`, `1h 03m 09s`) and often the word "Working".
+/// Either combination of `•` + elapsed-time-shape OR `•` + "Working"
+/// is a strong-enough signal that a bare `•` in a comment/README
+/// wouldn't false-positive. Only the last 4 rows are scanned since
+/// Codex's status widget lives at the bottom of the composer.
+fn detect_codex_thinking(grid: &RenderGrid) -> bool {
+    let scan_start = grid.rows.saturating_sub(4);
+    for row in scan_start..grid.rows {
+        let mut line = String::new();
+        for col in 0..grid.cols {
+            if let Some(c) = grid.cell(row, col) {
+                line.push_str(&c.text);
+            }
+        }
+        if !line.contains('•') {
+            continue;
+        }
+        if line.contains("Working") {
+            return true;
+        }
+        // Elapsed-time shape: a run of digits followed by `s`, `m `,
+        // or `h `. Enough to detect Codex's compact time format
+        // without pulling in a regex crate.
+        let bytes = line.as_bytes();
+        for i in 0..bytes.len() {
+            if !bytes[i].is_ascii_digit() {
+                continue;
+            }
+            let mut j = i;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 3 || j == i {
+                continue;
+            }
+            if j < bytes.len() && matches!(bytes[j], b's' | b'm' | b'h') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn detect_spinner_glyph(grid: &RenderGrid) -> Option<char> {
     const SPINNER_CHARS: &[char] = &[
         '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅', '◐', '◓', '◑',

@@ -110,6 +110,40 @@ fn tab_labels(panes: &[Pane]) -> Vec<String> {
     titles
 }
 
+/// Codex's on-screen animation is a color shimmer — its `•` char
+/// never changes, but its fg color breathes from ~black (dim base)
+/// up to ~white (peak) and back over ~1.5s. Approximate that in the
+/// tab-icon slot with a piecewise-linear brightness curve applied
+/// to a grey RGB triple: fade-in 500ms → hold 500ms → fade-out 500ms.
+/// Anchored to a process-static Instant so every rendered frame
+/// advances naturally — same pattern as the agents_panel spinner.
+fn codex_breath_color() -> ratatui::style::Color {
+    use ratatui::style::Color;
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    let ms = std::time::Instant::now().duration_since(*start).as_millis();
+    let phase = (ms % 1500) as f32 / 1500.0;
+    // Piecewise: 0-0.33 = fade-in, 0.33-0.66 = hold at peak,
+    // 0.66-1.0 = fade-out. Matches user's observation
+    // "starts black, gets brighter white, holds for a half second,
+    // dims back to black."
+    let brightness = if phase < 0.33 {
+        phase / 0.33
+    } else if phase < 0.66 {
+        1.0
+    } else {
+        1.0 - (phase - 0.66) / 0.34
+    };
+    // Interpolate between dim grey (60) and white (255) — grey base
+    // matches Codex's rest color, white peak matches its shimmer
+    // highlight. Same value on r/g/b keeps it neutral so a themed
+    // pane accent isn't fighting the breath.
+    let dim: u8 = 60;
+    let peak: u8 = 255;
+    let g = (dim as f32 + (peak - dim) as f32 * brightness) as u8;
+    Color::Rgb(g, g, g)
+}
+
 /// True when the profile.label of a Pty pane maps to a branded
 /// integration icon (Claude Code, Codex, or any sibling integration).
 /// Two use sites: skipping the `$` suffix (branded tabs are self-
@@ -288,7 +322,15 @@ pub fn tab_chip_spans(
         .verb_split
         .as_ref()
         .map(|(verb, _)| verb.chars().count() as u16 + 3);
-    let icon_cells = if skip_icon { 1 } else { 4 };
+    // 2026-07-17 — icon width used to be hardcoded at 4 (assumed
+    // 1-char glyph + `" X  "` padding). Codex's `❯_` is 2 chars, so
+    // widen dynamically: 3 fixed cells (leading + trailing space *2)
+    // + the glyph's own char count. Single-char glyphs stay at 4.
+    let icon_cells = if skip_icon {
+        1
+    } else {
+        3 + inputs.glyph.chars().count() as u16
+    };
     let base_cells = icon_cells + name_cells + 1 + diag_cells + 2;
     let chip_w = base_cells + verb_extra.unwrap_or(0);
     let painted_w = chip_w.min(avail_width);
@@ -750,16 +792,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 // spinner when one's on-screen — one animated icon
                 // in the leading slot beats a static icon PLUS a
                 // trailing star jammed in next to the `$`.
+                //
+                // Codex is special-cased: its animation is a color
+                // breath on the same `•`, not a rotating char. Same
+                // glyph either way; the color fg switches from the
+                // themed slot color to the breathing grey ramp when
+                // Codex is working.
                 let spinner = s.current_spinner_glyph();
-                match (sibling_glyph, spinner) {
-                    // Branded pane, thinking — animate the icon slot.
-                    (Some((_, c)), Some(g)) if nerd => (g.to_string(), c),
+                let is_codex = profile_label_lower == "codex";
+                let codex_thinking = is_codex && s.is_codex_thinking();
+                match (sibling_glyph, spinner, codex_thinking) {
+                    // Codex, thinking — same glyph, breathing color.
+                    (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
+                    // Branded pane, thinking (Claude) — swap icon
+                    // for the current on-screen spinner char.
+                    (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),
                     // Branded pane, idle — static brand glyph.
-                    (Some((g, c)), _) if nerd => (g, c),
+                    (Some((g, c)), _, _) if nerd => (g, c),
                     // Unbranded shell, thinking — spinner as icon in
                     // ghost color; still visually distinct from a
                     // resting shell.
-                    (None, Some(g)) if nerd => (g.to_string(), tt.teal),
+                    (None, Some(g), _) if nerd => (g.to_string(), tt.teal),
                     // Ghost — mnml runs in ghostty, and users asked
                     // for "not the generic terminal glyph" for real
                     // shells. \u{F001D} = nf-md-ghost (nerd-font).
