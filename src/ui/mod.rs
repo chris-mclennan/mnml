@@ -1641,15 +1641,18 @@ fn render_layout(
             // leaf's `tabs`). The body area shrinks by 1 row.
             let is_split_leaf = !path.is_empty();
             // qa-feature 2026-07-01 — always paint the leaf tab
-            // strip in a split. The prior heuristic suppressed it
-            // for a lone Pty leaf ("pty_view has its own strip"),
-            // but pty_view's internal strip only fires with 2+
-            // ptys in the same leaf. A solo pty split therefore
-            // got NO tab-with-× — the user couldn't close the pane
-            // by clicking a tab. Let the leaf strip render for
-            // every split leaf; pty_view suppresses its internal
-            // strip when the leaf has just one pty (below).
-            let body_area = if is_split_leaf && area.height >= 2 {
+            // strip in a split (revisit).
+            // 2026-07-18 — narrowed: only paint per-leaf strip when
+            // the leaf has MULTIPLE tabs. User: "in that first
+            // screenshot where the heck are those really old
+            // looking tabs coming from, we had those in early days
+            // of mnml" — the single-tab per-leaf strip duplicated
+            // the top bufferline's own tab and read as archaic.
+            // Top bufferline shows every pane with close × so a
+            // solo-tab leaf is still closeable — the 2026-07-01
+            // concern was covered by the master strip all along.
+            let multi_tab_leaf = tabs_owned.len() > 1;
+            let body_area = if is_split_leaf && multi_tab_leaf && area.height >= 2 {
                 let strip = ratatui::layout::Rect {
                     x: area.x,
                     y: area.y,
