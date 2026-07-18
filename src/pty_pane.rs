@@ -640,7 +640,13 @@ impl PtySession {
         // an 8-frame cycle of 2s — matches the user's perception of
         // Claude Code's actual rate.
         const CYCLE_MS: u128 = 250;
-        const CLAUDE_FRAMES: &[char] = &['✳', '✢', '✳', '✶', '✻', '✽', '✻', '✶'];
+        // 2026-07-18 user: "i see a dot at the end of it an it then
+        // restarts." The previous research pass captured 8 frames but
+        // the researcher was filtering `·` / `•` — those low-luminance
+        // chars look like punctuation in a raw byte stream. Adding
+        // `·` (U+00B7 MIDDLE DOT) as frame 9 — matches the natural
+        // "star collapses to a point before restart" animation shape.
+        const CLAUDE_FRAMES: &[char] = &['✳', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '·'];
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         let start = START.get_or_init(std::time::Instant::now);
         let ms = std::time::Instant::now().duration_since(*start).as_millis();
