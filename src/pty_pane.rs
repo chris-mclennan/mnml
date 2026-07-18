@@ -633,7 +633,13 @@ impl PtySession {
         if !detect_ai_thinking(&self.render_grid()) {
             return None;
         }
-        const CYCLE_MS: u128 = 110;
+        // 2026-07-18 user report — "yours is much faster than claude."
+        // Median 109ms was likely picking up ellipsis re-renders and
+        // other non-spinner-char updates. The p75 measurement (237ms)
+        // is closer to actual spinner-char cadence. 250ms/frame gives
+        // an 8-frame cycle of 2s — matches the user's perception of
+        // Claude Code's actual rate.
+        const CYCLE_MS: u128 = 250;
         const CLAUDE_FRAMES: &[char] = &['✳', '✢', '✳', '✶', '✻', '✽', '✻', '✶'];
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         let start = START.get_or_init(std::time::Instant::now);
