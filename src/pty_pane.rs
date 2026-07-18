@@ -607,8 +607,28 @@ impl PtySession {
     /// Bufferline uses this to animate the LEADING pane icon — the
     /// same slot the static integration glyph occupies when idle — so
     /// the tab reads as one icon + one label, not a strip of chars.
+    ///
+    /// 2026-07-18 — was: sample the current on-screen glyph every
+    /// frame. That mirrors Claude Code's raw rate (10+ fps) which
+    /// reads as jittery in a 1-cell tab slot. Now throttled: gate on
+    /// "Claude is thinking" via grid scan, then cycle through a
+    /// fixed 4-glyph rotation on our own 300ms timer — ~1.2s per
+    /// full cycle. Smooth, calm, still reads as animation.
     pub fn current_spinner_glyph(&self) -> Option<char> {
-        detect_spinner_glyph(&self.render_grid())
+        if !detect_ai_thinking(&self.render_grid()) {
+            return None;
+        }
+        const CYCLE_MS: u128 = 300;
+        // Same shapes Claude Code cycles through, in a stable order
+        // so consecutive redraws don't stutter (grid-sampled chars
+        // could bounce back to the same shape N times before
+        // advancing — deterministic bucket cycle is steadier).
+        const SPIN: &[char] = &['✻', '✽', '✻', '✱'];
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let start = START.get_or_init(std::time::Instant::now);
+        let ms = std::time::Instant::now().duration_since(*start).as_millis();
+        let idx = (ms / CYCLE_MS) as usize % SPIN.len();
+        Some(SPIN[idx])
     }
 
     /// True if Codex is currently in a thinking/working state.
@@ -975,6 +995,14 @@ fn detect_codex_thinking(grid: &RenderGrid) -> bool {
         }
     }
     false
+}
+
+/// Is an AI CLI (Claude Code, Codex, similar) currently in a
+/// thinking/working state? Same signal `detect_spinner_glyph` uses
+/// (spinner char + `…`) but returns just yes/no so we can drive our
+/// own animation timer instead of mirroring the pty's char rate.
+fn detect_ai_thinking(grid: &RenderGrid) -> bool {
+    detect_spinner_glyph(grid).is_some()
 }
 
 fn detect_spinner_glyph(grid: &RenderGrid) -> Option<char> {
