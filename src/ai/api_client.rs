@@ -1554,7 +1554,6 @@ mod tests {
         assert!(r.is_err(), "`..` escape should be refused: {r:?}");
     }
 
-    #[cfg(unix)]
     // Test asserts that a leaf-symlink escape is refused. Symlinks
     // on Windows require admin/dev-mode + std::os::windows::fs::
     // symlink_file API — different enough to be its own test. Gate

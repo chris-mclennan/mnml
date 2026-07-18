@@ -68,9 +68,13 @@ pub fn run(mut app: App) -> Result<bool, String> {
             // state on signal-induced shutdown so the host can
             // restore open files / layout / scroll on next launch.
             app.save_session_on_quit();
-            ipc.append_event(
-                r#"{"event":"exit","reason":"signal","note":"SIGTERM/SIGINT/SIGHUP — early exit"}"#,
-            );
+            #[cfg(unix)]
+            let note = "SIGTERM/SIGINT/SIGHUP — early exit";
+            #[cfg(windows)]
+            let note = "SIGTERM/SIGINT — early exit";
+            ipc.append_event(&format!(
+                r#"{{"event":"exit","reason":"signal","note":"{note}"}}"#
+            ));
             return Ok(false);
         }
         app.tick();
