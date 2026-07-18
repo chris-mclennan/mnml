@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       # mnml depends on the fim-engine sibling crate by path (../fim-engine),
       # so check it out alongside this repo for the path dep to resolve.
@@ -42,10 +42,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config
 
       # libghostty-vt prebuilts live on a GitHub release (~25MB
-      # total across 3 targets) rather than in git. Fetch them
-      # before any cargo command — the script is idempotent so a
-      # warm cargo cache hit doesn't re-download.
+      # total across 3 targets: aarch64-darwin, x86_64-linux,
+      # aarch64-linux) rather than in git. Fetch them before any
+      # cargo command — the script is idempotent so a warm cargo
+      # cache hit doesn't re-download. Skipped on Windows: no
+      # prebuilt exists for that target yet, so libghostty-vt-sys
+      # falls back to its vendored zig-build path (see next step).
       - name: Fetch libghostty-vt prebuilts
+        if: matrix.os != 'windows-latest'
         working-directory: mnml
         run: bash vendor/libghostty-vt/fetch-prebuilts.sh
 
@@ -55,12 +59,24 @@ jobs:
       # Path is relative to the workspace root (where cargo runs
       # via `working-directory: mnml`).
       - name: Set PKG_CONFIG_PATH for libghostty-vt
+        if: matrix.os != 'windows-latest'
+        shell: bash
         run: |
           if [ "${{ matrix.os }}" = "macos-latest" ]; then
             echo "PKG_CONFIG_PATH=${{ github.workspace }}/mnml/vendor/libghostty-vt/pkgconfig-darwin" >> "$GITHUB_ENV"
           else
             echo "PKG_CONFIG_PATH=${{ github.workspace }}/mnml/vendor/libghostty-vt/pkgconfig-linux" >> "$GITHUB_ENV"
           fi
+
+      # Windows has no prebuilt libghostty-vt.a yet, so
+      # libghostty-vt-sys' build.rs will vendored-build from source
+      # — that needs zig 0.15.2 on PATH. Same story as the release
+      # workflow's zig install.
+      - name: Install zig 0.15.2 (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
