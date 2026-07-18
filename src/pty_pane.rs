@@ -630,25 +630,35 @@ impl PtySession {
     /// Claude Code prints. The tab animation should feel identical
     /// to what the user sees in Claude Code's own pane.
     pub fn current_spinner_glyph(&self) -> Option<char> {
-        // 2026-07-18 v5 — user watching side-by-side: "you can see the
-        // tab animation usually not matching the prompt animation."
+        // 2026-07-18 v6 — user report after the tab overhaul: "the
+        // animation no longer matches the prompt one, its animating
+        // from asterisk to big orange dot."
         //
-        // My previous v3/v4 approach ran mnml's OWN timer, cycling
-        // through Claude Code's frame list with either linear or
-        // raised-cosine easing. Even with the exact same easing
-        // formula and frames, the phase is offset from Claude Code's
-        // internal timer — they started at different Instants — so
-        // the tab char and the on-screen spinner char were rarely
-        // the same at the same instant.
+        // v5 grid-sampled every frame, returning `None` whenever
+        // the spinner row wasn't visible in the grid at that
+        // instant (between-frame gap, momentary redraw). `pty_icon`
+        // then fell back to the STATIC branded Claude Code glyph
+        // for that frame — the "big orange dot" — flickering
+        // between spinner char and static icon.
         //
-        // Mirror the pty's live output instead: whatever char Claude
-        // Code is showing RIGHT NOW at its spinner position, we
-        // show. The tab reads as a perfect small-screen mirror of
-        // the pane's own indicator, in perfect sync.
-        //
-        // No detection gate needed — sample_current_spinner_from_grid
-        // already returns None when no `…` line is on screen.
-        sample_current_spinner_from_grid(&self.render_grid())
+        // Restore the empirically-measured palindromic timer (v3)
+        // but gate it on `is_claude_thinking(grid)` — a robust
+        // detector that only requires a bottom-region row starting
+        // with a known Claude spinner char and ending with `…`.
+        // Timer animation eliminates the None-flicker; the phase
+        // won't be locked to Claude's clock, but the sequence,
+        // rate, and character set are Claude's own so the tab
+        // reads as an in-family mirror.
+        if !is_claude_thinking(&self.render_grid()) {
+            return None;
+        }
+        const CYCLE_MS: u128 = 110;
+        const CLAUDE_FRAMES: &[char] = &['✳', '✢', '✳', '✶', '✻', '✽', '✻', '✶'];
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let start = START.get_or_init(std::time::Instant::now);
+        let ms = std::time::Instant::now().duration_since(*start).as_millis();
+        let idx = (ms / CYCLE_MS) as usize % CLAUDE_FRAMES.len();
+        Some(CLAUDE_FRAMES[idx])
     }
 
     /// True if Codex is currently in a thinking/working state.
@@ -1086,16 +1096,19 @@ fn detect_codex_thinking(grid: &RenderGrid) -> bool {
     false
 }
 
-/// Sample the current spinner char directly from the pty grid.
-/// Claude Code's status line is `<glyph> <verb>…` on a row near the
-/// bottom of the composer — find that row (any row containing `…`)
-/// and return its first non-whitespace char. Whatever Claude Code
-/// is showing right now is what we mirror; no timer of our own.
+/// True if Claude Code is currently in a thinking state — used to
+/// gate the palindromic tab-icon animation so it doesn't run when
+/// Claude is idle. Detection: any row in the bottom region of the
+/// grid starts with a known Claude spinner char AND contains an
+/// ellipsis (`…` or `...`) — the shape of Claude's `<glyph>
+/// Verb…` status line.
 ///
-/// Returns None when no `…` line is visible (Claude Code is idle
-/// or the pane hasn't finished repainting after startup). Scans
-/// bottom-to-top since the status line lives near the input.
-fn sample_current_spinner_from_grid(grid: &RenderGrid) -> Option<char> {
+/// Tolerant of false negatives (a brief between-frame gap won't
+/// blank the animation — the check runs every render, and the
+/// timer keeps advancing between checks), but strict on
+/// false positives (won't animate on scrollback content).
+fn is_claude_thinking(grid: &RenderGrid) -> bool {
+    const CLAUDE_SPINNER_CHARS: &[char] = &['·', '✢', '✳', '✱', '✶', '✻', '✽', '❋'];
     for row in (0..grid.rows).rev() {
         let mut line = String::new();
         for col in 0..grid.cols {
@@ -1106,25 +1119,19 @@ fn sample_current_spinner_from_grid(grid: &RenderGrid) -> Option<char> {
         if !line.contains('…') && !line.contains("...") {
             continue;
         }
-        // Leading non-whitespace char of this row — the spinner
-        // glyph Claude Code is currently painting.
-        let first = line.chars().find(|c| !c.is_whitespace())?;
-        // Guard: only return chars that look like plausible
-        // spinner glyphs. Anything alphanumeric is more likely
-        // scrollback content that happens to have `…` in it (e.g.
-        // "Loading dependencies…"), not the actual spinner row.
-        if first.is_alphanumeric() {
+        let Some(first) = line.chars().find(|c| !c.is_whitespace()) else {
             continue;
+        };
+        if CLAUDE_SPINNER_CHARS.contains(&first) {
+            return true;
         }
-        return Some(first);
     }
-    None
+    false
 }
 
 // Legacy detector kept for tests that document the char set Claude
-// Code has historically cycled through. Live rendering uses
-// `sample_current_spinner_from_grid` which mirrors any char without
-// needing an enumerated list.
+// Code has historically cycled through. Live rendering uses the
+// palindromic timer gated on `is_claude_thinking`.
 #[cfg(test)]
 fn detect_spinner_glyph(grid: &RenderGrid) -> Option<char> {
     const SPINNER_CHARS: &[char] = &[
