@@ -633,25 +633,43 @@ impl PtySession {
         if !detect_ai_thinking(&self.render_grid()) {
             return None;
         }
-        // 2026-07-18 user report — "yours is much faster than claude."
-        // Median 109ms was likely picking up ellipsis re-renders and
-        // other non-spinner-char updates. The p75 measurement (237ms)
-        // is closer to actual spinner-char cadence. 250ms/frame gives
-        // an 8-frame cycle of 2s — matches the user's perception of
-        // Claude Code's actual rate.
-        const CYCLE_MS: u128 = 250;
-        // 2026-07-18 user: "i see a dot at the end of it an it then
-        // restarts." The previous research pass captured 8 frames but
-        // the researcher was filtering `·` / `•` — those low-luminance
-        // chars look like punctuation in a raw byte stream. Adding
-        // `·` (U+00B7 MIDDLE DOT) as frame 9 — matches the natural
-        // "star collapses to a point before restart" animation shape.
-        const CLAUDE_FRAMES: &[char] = &['✳', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '·'];
+        // 2026-07-18 v4 — verification research extracted the ACTUAL
+        // sequence from @anthropic-ai/claude-code v2.1.214's JS binary
+        // (offset 229197431):
+        //
+        //   TERM === "xterm-ghostty"
+        //     ? ["·", "✢", "✳", "✶", "✻", "✻"]
+        //     : ["·", "✢", "✳", "✶", "✻", "✽"]
+        //
+        // 6 frames, not 8 or 9. `·` (U+00B7 MIDDLE DOT) is the FIRST
+        // frame, not a trailing collapse — but because of the
+        // raised-cosine easing (below), `·` dwells at BOTH endpoints
+        // of the cycle. That's why the user perceived it as "a dot
+        // at the end before restart" — visually it IS the last thing
+        // seen before wrapping.
+        //
+        // Traversal (offset 229584341):
+        //   phase = (1 - cos(2π * t / 2000)) / 2
+        //   idx = round(phase * 5)
+        //
+        // Raised-cosine easing over 2000ms cycle: phase sweeps
+        // 0→1→0 smoothly, so idx runs 0→5→0. Because cosine is slow
+        // at endpoints and fast in the middle, `·` (idx 0) and `✻`
+        // (idx 5) hold visibly longer than the middle frames. Not a
+        // linear rotation — the endpoints breathe.
+        //
+        // mnml runs in ghostty, so we use the ghostty variant with
+        // `✻` at both idx 4 AND 5 — the peak holds longer than the
+        // non-ghostty branch.
+        const FRAMES: &[char] = &['·', '✢', '✳', '✶', '✻', '✻'];
+        const CYCLE_MS: f32 = 2000.0;
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         let start = START.get_or_init(std::time::Instant::now);
-        let ms = std::time::Instant::now().duration_since(*start).as_millis();
-        let idx = (ms / CYCLE_MS) as usize % CLAUDE_FRAMES.len();
-        Some(CLAUDE_FRAMES[idx])
+        let ms = std::time::Instant::now().duration_since(*start).as_millis() as f32;
+        let t = (ms % CYCLE_MS) / CYCLE_MS;
+        let phase = (1.0 - (2.0 * std::f32::consts::PI * t).cos()) / 2.0;
+        let idx = (phase * (FRAMES.len() - 1) as f32).round() as usize;
+        Some(FRAMES[idx.min(FRAMES.len() - 1)])
     }
 
     /// True if Codex is currently in a thinking/working state.
@@ -1029,9 +1047,14 @@ fn detect_ai_thinking(grid: &RenderGrid) -> bool {
 }
 
 fn detect_spinner_glyph(grid: &RenderGrid) -> Option<char> {
+    // Includes Claude Code v2.1.214's confirmed frame set
+    // (`· ✢ ✳ ✶ ✻ ✽`) plus historical/generic ornaments other
+    // CLIs might use. Detection requires a matching char AND `…`
+    // on the same line, so `·` doesn't false-positive on bullet
+    // lists in editor content.
     const SPINNER_CHARS: &[char] = &[
-        '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅', '◐', '◓', '◑',
-        '◒',
+        '·', '✢', '✳', '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅',
+        '◐', '◓', '◑', '◒',
     ];
     for row in (0..grid.rows).rev() {
         let mut line = String::new();
