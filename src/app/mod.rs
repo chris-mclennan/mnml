@@ -2410,7 +2410,7 @@ pub struct PaneRects {
     /// dir)`. Click → focus that leaf + `split_active(dir)`.
     /// 2026-06-22. Two entries per visible leaf (one Horizontal,
     /// one Vertical). Cleared + repopulated every frame.
-    pub split_strip_buttons: Vec<(Rect, PaneId, crate::layout::SplitDir)>,
+    pub split_strip_buttons: Vec<(Rect, Option<PaneId>, crate::layout::SplitDir)>,
     /// `(rect, pane_id?)` per visible terminal-launch button in the
     /// split-strip cluster (immediately left of the H/V buttons).
     /// Click → focus that leaf (if any) + open a new shell pane via

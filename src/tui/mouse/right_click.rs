@@ -1077,7 +1077,9 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        app.active = Some(leaf_active);
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+        }
         let (title, items) = match dir {
             crate::layout::SplitDir::Horizontal => (
                 "Split horizontal",

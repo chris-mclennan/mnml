@@ -1492,20 +1492,13 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     // fits them. Users on narrow leaves get a partial cluster
     // instead of nothing.
     // 2026-07-18 — was: return if no active pane. That killed the
-    // whole cluster (terminal + Claude + Codex + H/V) in the "no
-    // files open" state — but the user wants at least the launcher
-    // chips available (they're the point of entry into a fresh
-    // workspace). Keep painting terminal + AI chips regardless of
-    // active pane; only gate the H/V split chips (which genuinely
-    // need a leaf to split).
+    // whole cluster in the "no files open" state. First fix: paint
+    // terminal + AI regardless, gate H/V on active. Second fix:
+    // paint H/V too — clicking them in the empty state opens two
+    // scratch editors laid out in the requested direction via
+    // `open_scratch_split`.
     let active_opt = app.active;
-    // If there IS an active pane, use full cluster width (9 cells:
-    // 3 term + 3 splitH + 3 splitV). If there's no active pane,
-    // paint only the term chip (3 cells) plus whatever AI chips
-    // fit — no H/V.
-    let has_active = active_opt.is_some();
-    let core_w = if has_active { SPLIT_BUTTONS_W } else { 3 };
-    if area.width < core_w {
+    if area.width < SPLIT_BUTTONS_W {
         return;
     }
     let t = theme::cur();
@@ -1545,12 +1538,12 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     // in "both" mode) until the total width fits. Terminal + H/V
     // are never dropped — they're the load-bearing part of the
     // cluster (SPLIT_BUTTONS_W = 9 cells for those three).
-    while area.width < core_w + (ai_kinds.len() as u16) * 3 {
+    while area.width < SPLIT_BUTTONS_W + (ai_kinds.len() as u16) * 3 {
         if ai_kinds.pop().is_none() {
             break;
         }
     }
-    let total_w = core_w + (ai_kinds.len() as u16) * 3;
+    let total_w = SPLIT_BUTTONS_W + (ai_kinds.len() as u16) * 3;
     let mut bx = area.x + area.width - total_w;
     for kind in &ai_kinds {
         let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(kind, &t);
@@ -1596,30 +1589,30 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     bx += 3;
 
     // Split buttons — glyph paired with action that CREATES that
-    // layout. Only paint when an active pane exists (nothing to
-    // split otherwise) — the width math above reserved 0 cells for
-    // this pair in the no-active case, so bx is at the right edge
-    // and skipping is safe.
-    if let Some(active) = active_opt {
-        for (glyph, dir) in [
-            (side_by_side_glyph, crate::layout::SplitDir::Horizontal),
-            (stacked_glyph, crate::layout::SplitDir::Vertical),
-        ] {
-            let btn_rect = Rect {
-                x: bx,
-                y: area.y,
-                width: 3,
-                height: 1,
-            };
-            let line = Line::from(vec![
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(glyph, Style::default().fg(t.comment).bg(bg)),
-                Span::styled(" ", Style::default().bg(bg)),
-            ]);
-            frame.render_widget(Paragraph::new(line), btn_rect);
-            app.rects.split_strip_buttons.push((btn_rect, active, dir));
-            bx += 3;
-        }
+    // layout. Painted in both states: when an active pane exists
+    // the click splits it; when no active pane, the click opens
+    // two scratch editors laid out in the direction (empty-state
+    // handled by `App::open_scratch_split` via the click handler).
+    for (glyph, dir) in [
+        (side_by_side_glyph, crate::layout::SplitDir::Horizontal),
+        (stacked_glyph, crate::layout::SplitDir::Vertical),
+    ] {
+        let btn_rect = Rect {
+            x: bx,
+            y: area.y,
+            width: 3,
+            height: 1,
+        };
+        let line = Line::from(vec![
+            Span::styled(" ", Style::default().bg(bg)),
+            Span::styled(glyph, Style::default().fg(t.comment).bg(bg)),
+            Span::styled(" ", Style::default().bg(bg)),
+        ]);
+        frame.render_widget(Paragraph::new(line), btn_rect);
+        app.rects
+            .split_strip_buttons
+            .push((btn_rect, active_opt, dir));
+        bx += 3;
     }
 }
 

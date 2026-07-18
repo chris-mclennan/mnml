@@ -1478,10 +1478,14 @@ pub fn rects_dump_json(app: &App) -> String {
         push_rect(&mut out, &mut first, &format!("right_panel_tab:{idx}"), *r);
     }
     for (r, leaf_active, dir) in &app.rects.split_strip_buttons {
+        let la = match leaf_active {
+            Some(pid) => pid.to_string(),
+            None => "none".to_string(),
+        };
         push_rect(
             &mut out,
             &mut first,
-            &format!("split_strip:{leaf_active}:{dir:?}"),
+            &format!("split_strip:{la}:{dir:?}"),
             *r,
         );
     }

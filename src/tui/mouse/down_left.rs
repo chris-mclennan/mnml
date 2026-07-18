@@ -1267,18 +1267,24 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_shell();
         return;
     }
-    // 2026-06-22 — per-split split-editor buttons at the
-    // right of the strip. Focus the clicked leaf's active
-    // pane, then dispatch split_active(dir).
+    // 2026-06-22 — per-split split-editor buttons at the right of
+    // the strip. Focus the clicked leaf's active pane, then dispatch
+    // split_active(dir). 2026-07-18 — when there's no active pane
+    // (fresh workspace, all tabs closed) use `open_scratch_split`
+    // which lays out two empty scratch editors in the direction.
     if let Some(&(_, leaf_active, dir)) = app
         .rects
         .split_strip_buttons
         .iter()
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
-        app.active = Some(leaf_active);
-        app.focus = crate::focus::Focus::Pane;
-        app.split_active(dir);
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+            app.focus = crate::focus::Focus::Pane;
+            app.split_active(dir);
+        } else {
+            app.open_scratch_split(dir);
+        }
         return;
     }
     if let Some(&(_, leaf_active, tab_pane)) = app

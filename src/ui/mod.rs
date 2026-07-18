@@ -3678,7 +3678,9 @@ fn paint_leaf_tab_strip(
             Span::styled(" ", Style::default().bg(strip_bg)),
         ]);
         frame.render_widget(Paragraph::new(line), btn_rect);
-        app.rects.split_strip_buttons.push((btn_rect, active, dir));
+        app.rects
+            .split_strip_buttons
+            .push((btn_rect, Some(active), dir));
         bx = bx.saturating_add(SPLIT_BTN_W);
     }
 }

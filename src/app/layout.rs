@@ -647,6 +647,29 @@ impl App {
         }
     }
 
+    /// Empty-state H/V split entry point — used when no active pane
+    /// exists (fresh workspace, all tabs closed) and the user clicks
+    /// the split-strip H/V chip. Creates two empty scratch editors
+    /// laid out in the requested direction, then focuses the second.
+    /// 2026-07-18 — supports the "click H/V with no files loaded"
+    /// UX where `split_active`'s "nothing to split" toast used to
+    /// fire.
+    pub fn open_scratch_split(&mut self, dir: crate::layout::SplitDir) {
+        // First scratch — becomes pane 0 in a fresh workspace, or
+        // just the next pane_id if some layout state already exists
+        // (defensive; the caller only invokes this when active is
+        // None).
+        let first = crate::buffer::Buffer::scratch(&self.config);
+        self.panes.push(Pane::Editor(first));
+        let first_id = self.panes.len() - 1;
+        self.reveal_pane(first_id);
+        // Split it in the requested direction with a second scratch.
+        let second = crate::buffer::Buffer::scratch(&self.config);
+        let new_id = self.split_leaf_with(first_id, dir, Pane::Editor(second));
+        self.active = Some(new_id);
+        self.focus = Focus::Pane;
+    }
+
     /// Split the focused leaf, opening a fresh buffer (a re-open of the same file,
     /// or a scratch buffer) in the new half and focusing it.
     pub fn split_active(&mut self, dir: crate::layout::SplitDir) {
