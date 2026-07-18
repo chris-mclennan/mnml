@@ -242,8 +242,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         }
 
         // Row 1: name (bold when active) + optional bell badge.
-        // Name resolves user-rename → Jira ticket from branch /
-        // profile label → profile label, in that order.
+        // 2026-07-18 — use `tab_label_with_prefixes` so the session
+        // row shows the SAME name the bufferline tab shows. That
+        // fn pulls from the pty's OSC title + a grid scrollback
+        // scan for ticket tokens ("Review TE-1234 …"), so Jira
+        // ticket auto-naming that lands in the tab lands here too.
         let cwd = s.profile.cwd.as_ref();
         let branch_for_lookup = cwd.and_then(|p| current_branch(p));
         let detected_ticket = detect_ticket(
@@ -252,11 +255,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             branch_for_lookup.as_deref(),
             &s.profile.label,
         );
-        let label = s.display_name.clone().unwrap_or_else(|| {
-            detected_ticket
-                .clone()
-                .unwrap_or_else(|| s.profile.label.clone())
-        });
+        let label = s.tab_label_with_prefixes(&app.config.ui.ticket_prefixes);
         let name_style = Style::default().fg(t.fg).bg(bg).add_modifier(if is_active {
             Modifier::BOLD
         } else {
