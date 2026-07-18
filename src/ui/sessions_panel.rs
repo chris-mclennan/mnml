@@ -325,32 +325,38 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             },
         );
 
-        // Row 3: status + optional detected ticket chip + bottom
-        // separator. Status thresholds:
-        //   - <2s since last output → running (green).
-        //   - <30s → recent (comment).
-        //   - else → idle (grey).
-        //   - exited child → exited (red).
-        let (status_text, status_color) = if s.is_exited() {
-            ("exited", t.red)
+        // Row 3: a one-line summary of what the session is doing
+        // (Claude's activity verb line when it's thinking; the last
+        // real content line otherwise) — or `exited` for a dead
+        // child. The old running/recent/idle status text was
+        // dropped: row 1's activity-color name already tells you if
+        // the session is live, and the summary makes the panel
+        // useful at a glance.
+        let (summary_text, summary_color): (String, _) = if s.is_exited() {
+            ("exited".to_string(), t.red)
         } else {
-            match s.last_output_at {
-                Some(at) => {
-                    let elapsed = at.elapsed();
-                    if elapsed < std::time::Duration::from_secs(2) {
-                        ("running", t.green)
-                    } else if elapsed < std::time::Duration::from_secs(30) {
-                        ("recent", t.comment)
-                    } else {
-                        ("idle", t.grey)
-                    }
-                }
-                None => ("idle", t.grey),
+            match s.session_summary() {
+                Some(text) => (text, t.comment),
+                None => ("—".to_string(), t.grey),
+            }
+        };
+        // Truncate with an ellipsis so the summary doesn't run past
+        // the panel edge and stomp on the right-anchored ports chip.
+        let summary_text = {
+            let max = (area.width as usize).saturating_sub(6).max(4);
+            let count = summary_text.chars().count();
+            if count > max {
+                let take = max.saturating_sub(1);
+                let mut out: String = summary_text.chars().take(take).collect();
+                out.push('…');
+                out
+            } else {
+                summary_text
             }
         };
         let mut row3_spans = vec![
             Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(status_text, Style::default().fg(status_color).bg(bg)),
+            Span::styled(summary_text, Style::default().fg(summary_color).bg(bg)),
         ];
         if let Some(ticket) = detected_ticket
             && s.display_name.is_none()

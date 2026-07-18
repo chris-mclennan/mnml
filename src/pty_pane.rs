@@ -660,6 +660,75 @@ impl PtySession {
     pub fn is_codex_thinking(&self) -> bool {
         detect_codex_thinking(&self.render_grid())
     }
+
+    /// One-line summary of what the session is currently doing —
+    /// shown as row 3 in the Sessions panel. Preference order:
+    ///
+    ///   1. Claude's `<glyph> Verb… (…s ·…)` status line if visible.
+    ///   2. Any non-chrome line near the bottom of the grid.
+    ///
+    /// Returns `None` when nothing meaningful is on screen (fresh
+    /// pane, cleared terminal). The caller is responsible for
+    /// truncating to fit its row.
+    pub fn session_summary(&self) -> Option<String> {
+        summarize_grid(&self.render_grid())
+    }
+}
+
+fn summarize_grid(grid: &RenderGrid) -> Option<String> {
+    let mut activity: Option<String> = None;
+    let mut fallback: Option<String> = None;
+    // Bottom-up scan — the latest content and the status line both
+    // live near the bottom.
+    for row in (0..grid.rows).rev() {
+        let mut line = String::new();
+        for col in 0..grid.cols {
+            if let Some(c) = grid.cell(row, col) {
+                line.push_str(&c.text);
+            }
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Skip lines that are just repeated single characters (box
+        // borders, separators) — those are chrome, not content.
+        if is_chrome_line(trimmed) {
+            continue;
+        }
+        // Claude Code's activity line always contains `…` or `...`.
+        if activity.is_none() && (trimmed.contains('…') || trimmed.contains("...")) {
+            let cleaned = strip_leading_spinner_chars(trimmed).trim().to_string();
+            if !cleaned.is_empty() {
+                activity = Some(cleaned);
+            }
+        }
+        if fallback.is_none() {
+            let cleaned = strip_leading_spinner_chars(trimmed).trim().to_string();
+            // Skip lines that are almost certainly UI chrome — a
+            // lone prompt char or a single-word toolbar entry.
+            if cleaned.chars().count() >= 3 {
+                fallback = Some(cleaned);
+            }
+        }
+        if activity.is_some() {
+            break;
+        }
+    }
+    activity.or(fallback)
+}
+
+fn is_chrome_line(s: &str) -> bool {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.is_empty() {
+        return true;
+    }
+    // All the same non-alphanumeric char → separator/border.
+    let first = chars[0];
+    if !first.is_alphanumeric() && chars.iter().all(|&c| c == first || c.is_whitespace()) {
+        return true;
+    }
+    false
 }
 
 /// SGR mouse-report button code for a given crossterm mouse
