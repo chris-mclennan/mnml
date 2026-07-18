@@ -2187,6 +2187,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "uds_windows",
 ]
 
 [[package]]

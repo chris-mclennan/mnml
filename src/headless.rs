@@ -35,12 +35,20 @@ pub fn run(mut app: App) -> Result<bool, String> {
     let sigterm_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let signals_registered = {
         let mut any_err = false;
-        for sig in [
+        // SIGHUP is Unix-only — no such signal on Windows. SIGTERM
+        // + SIGINT map to the Windows console-control events via
+        // signal-hook's Windows backend, so Ctrl+C still triggers
+        // the graceful-shutdown path.
+        #[cfg(unix)]
+        let sigs: &[i32] = &[
             signal_hook::consts::SIGTERM,
             signal_hook::consts::SIGINT,
             signal_hook::consts::SIGHUP,
-        ] {
-            if signal_hook::flag::register(sig, sigterm_flag.clone()).is_err() {
+        ];
+        #[cfg(windows)]
+        let sigs: &[i32] = &[signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT];
+        for sig in sigs {
+            if signal_hook::flag::register(*sig, sigterm_flag.clone()).is_err() {
                 any_err = true;
             }
         }
