@@ -1122,7 +1122,9 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        app.active = Some(leaf_active);
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+        }
         let items = vec![
             MenuItem::new("Open shell", MenuAction::Command("term.shell")),
             MenuItem::new(
@@ -1144,7 +1146,9 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        app.active = Some(leaf_active);
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+        }
         // `tag == 1` = Codex chip; anything else (`0`) = Claude Code
         // — matches the down_left click routing.
         let is_codex = tag == 1;

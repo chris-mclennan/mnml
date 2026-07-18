@@ -2411,20 +2411,23 @@ pub struct PaneRects {
     /// 2026-06-22. Two entries per visible leaf (one Horizontal,
     /// one Vertical). Cleared + repopulated every frame.
     pub split_strip_buttons: Vec<(Rect, PaneId, crate::layout::SplitDir)>,
-    /// `(rect, pane_id)` per visible terminal-launch button in the
+    /// `(rect, pane_id?)` per visible terminal-launch button in the
     /// split-strip cluster (immediately left of the H/V buttons).
-    /// Click → focus that leaf + open a new shell pane via
-    /// `App::open_shell()`. Cleared + repopulated every frame.
-    pub split_strip_term_buttons: Vec<(Rect, PaneId)>,
-    /// `(rect, pane_id)` per visible AI-launch button in the
-    /// split-strip cluster. Painted when `[ui] tab_bar_ai_icon`
+    /// Click → focus that leaf (if any) + open a new shell pane via
+    /// `App::open_shell()`. Pane id is Option because the "no files
+    /// open" state still shows the terminal launcher — you're
+    /// clicking it TO create the first pane, so there's no leaf to
+    /// focus yet. Cleared + repopulated every frame.
+    pub split_strip_term_buttons: Vec<(Rect, Option<PaneId>)>,
+    /// `(rect, pane_id?, ai_kind)` per visible AI-launch button in
+    /// the split-strip cluster. Painted when `[ui] tab_bar_ai_icon`
     /// is set to a non-`"none"` value. Left click → fires the
     /// configured `ai.*` command; right click → opens a context
     /// menu to switch between Claude Code / Codex / Hide.
-    /// Split-strip AI launcher chips. `(rect, leaf_active_pane, ai_kind)`
-    /// where `ai_kind = 0` means Claude Code and `1` means Codex. Two
-    /// entries fill this when `[ui] tab_bar_ai_icon = "both"` (#19).
-    pub split_strip_ai_buttons: Vec<(Rect, PaneId, u8)>,
+    /// `ai_kind = 0` = Claude Code, `1` = Codex. Two entries when
+    /// `[ui] tab_bar_ai_icon = "both"` (#19). Pane id is Option for
+    /// the same reason as the terminal button.
+    pub split_strip_ai_buttons: Vec<(Rect, Option<PaneId>, u8)>,
     /// The whole central split-tree area.
     pub body: Option<Rect>,
     /// `(text_area, pane_id)` per visible editor leaf — the editable region

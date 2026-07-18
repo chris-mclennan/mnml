@@ -1486,12 +1486,11 @@ pub fn rects_dump_json(app: &App) -> String {
         );
     }
     for (r, leaf_active) in &app.rects.split_strip_term_buttons {
-        push_rect(
-            &mut out,
-            &mut first,
-            &format!("split_strip_term:{leaf_active}"),
-            *r,
-        );
+        let label = match leaf_active {
+            Some(pid) => format!("split_strip_term:{pid}"),
+            None => "split_strip_term:none".to_string(),
+        };
+        push_rect(&mut out, &mut first, &label, *r);
     }
     // 2026-06-19 — second batch of rect families per vscode-user-
     // mouse agent's "toolkit misses what it was built for" finding.

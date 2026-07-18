@@ -1242,22 +1242,28 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         } else {
             "ai.claude_code_new"
         };
-        app.active = Some(leaf_active);
-        app.focus = crate::focus::Focus::Pane;
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+            app.focus = crate::focus::Focus::Pane;
+        }
         crate::command::run(cmd, app);
         return;
     }
     // Terminal button in the split-strip cluster.
-    // Focus the clicked leaf, then open a shell in a
-    // split (mirrors the `term.shell` palette command).
+    // Focus the clicked leaf (if any), then open a shell in a
+    // split (mirrors the `term.shell` palette command). In the
+    // "no files open" state the button still fires; open_shell
+    // creates the first pane.
     if let Some(&(_, leaf_active)) = app
         .rects
         .split_strip_term_buttons
         .iter()
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
-        app.active = Some(leaf_active);
-        app.focus = crate::focus::Focus::Pane;
+        if let Some(la) = leaf_active {
+            app.active = Some(la);
+            app.focus = crate::focus::Focus::Pane;
+        }
         app.open_shell();
         return;
     }

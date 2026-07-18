@@ -3638,7 +3638,7 @@ fn paint_leaf_tab_strip(
         let tag = if *kind == "codex" { 1u8 } else { 0u8 };
         app.rects
             .split_strip_ai_buttons
-            .push((ai_rect, active, tag));
+            .push((ai_rect, Some(active), tag));
         bx = bx.saturating_add(SPLIT_BTN_W);
     }
 
@@ -3656,7 +3656,9 @@ fn paint_leaf_tab_strip(
             Span::styled(" ", Style::default().bg(strip_bg)),
         ]);
         frame.render_widget(Paragraph::new(line), term_rect);
-        app.rects.split_strip_term_buttons.push((term_rect, active));
+        app.rects
+            .split_strip_term_buttons
+            .push((term_rect, Some(active)));
         bx = bx.saturating_add(SPLIT_BTN_W);
     }
 
