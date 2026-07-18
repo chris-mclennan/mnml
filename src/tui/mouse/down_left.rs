@@ -1237,10 +1237,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .iter()
         .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
     {
+        // 2026-07-18 — aligned with the sidebar integration chip:
+        // `ai.claude_code` / `ai.codex` (reveal-or-open) instead of
+        // the always-spawn `_new` variants. Click reveals an
+        // existing pane if one is open, or spawns one if not.
+        // Right-click's menu still offers explicit New / Fork for
+        // multi-session workflows. User complaint: split-strip chip
+        // and sidebar chip did different things.
         let cmd = if tag == 1 {
-            "ai.codex_new"
+            "ai.codex"
         } else {
-            "ai.claude_code_new"
+            "ai.claude_code"
         };
         if let Some(la) = leaf_active {
             app.active = Some(la);
