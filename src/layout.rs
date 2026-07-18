@@ -181,6 +181,76 @@ impl Layout {
         }
     }
 
+    /// Find a `Split` whose direct children are both single-tab
+    /// `Leaf`s wrapping `a` and `b` (in either order). Returns a
+    /// mutable reference to that `Split` node so the caller can
+    /// swap it out. Used by the Claude auto-tile: when the 3rd
+    /// Claude opens and the existing two are in a leaf-only
+    /// H-split, we rearrange that subtree into a 2×2 grid.
+    ///
+    /// Returns None if the two panes aren't in a clean leaf-only
+    /// pair — a nested layout, multi-tab leaf, or unrelated
+    /// grouping falls through to the caller's fallback.
+    pub fn find_leaf_pair_split_mut(
+        &mut self,
+        a: PaneId,
+        b: PaneId,
+    ) -> Option<(&mut Layout, SplitDir)> {
+        fn is_single_leaf_of(node: &Layout, pane: PaneId) -> bool {
+            matches!(node, Layout::Leaf { active, tabs } if *active == pane && tabs.len() == 1 && tabs[0] == pane)
+        }
+        match self {
+            Layout::Split {
+                dir, first, second, ..
+            } => {
+                let matches_pair = (is_single_leaf_of(first, a) && is_single_leaf_of(second, b))
+                    || (is_single_leaf_of(first, b) && is_single_leaf_of(second, a));
+                if matches_pair {
+                    let dir_copy = *dir;
+                    Some((self, dir_copy))
+                } else {
+                    match self {
+                        Layout::Split { first, second, .. } => first
+                            .find_leaf_pair_split_mut(a, b)
+                            .or_else(|| second.find_leaf_pair_split_mut(a, b)),
+                        _ => None,
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Walk the tree and replace the first `Empty` node encountered
+    /// (depth-first, first-child preferred) with `subtree`.
+    /// Returns true if an `Empty` was found and replaced.
+    pub fn fill_first_empty(&mut self, subtree: Layout) -> bool {
+        match self {
+            Layout::Empty => {
+                *self = subtree;
+                true
+            }
+            Layout::Leaf { .. } => false,
+            Layout::Split { first, second, .. } => {
+                if first.fill_first_empty(subtree.clone()) {
+                    return true;
+                }
+                second.fill_first_empty(subtree)
+            }
+        }
+    }
+
+    /// True if the tree contains any `Empty` node.
+    pub fn contains_empty(&self) -> bool {
+        match self {
+            Layout::Empty => true,
+            Layout::Leaf { .. } => false,
+            Layout::Split { first, second, .. } => {
+                first.contains_empty() || second.contains_empty()
+            }
+        }
+    }
+
     /// Replace the leaf whose ACTIVE pane is `target` with the
     /// subtree `with`. Used by `splice_pane_at` to swap a leaf
     /// for a Split in-place.
@@ -993,6 +1063,102 @@ mod tests {
         assert_eq!(h.ratio_for(60, 5), 50); // 50 cols into a 100-wide area at x=10
         assert_eq!(h.ratio_for(10, 5), 10); // clamped low
         assert_eq!(h.ratio_for(109, 5), 90); // clamped high
+    }
+
+    #[test]
+    fn find_leaf_pair_split_mut_matches_direct_hsplit() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
+        };
+        let hit = l.find_leaf_pair_split_mut(0, 1);
+        assert!(hit.is_some());
+        assert_eq!(hit.unwrap().1, SplitDir::Horizontal);
+    }
+
+    #[test]
+    fn find_leaf_pair_split_mut_matches_swapped_order() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf(7)),
+            second: Box::new(Layout::leaf(3)),
+        };
+        assert!(l.find_leaf_pair_split_mut(3, 7).is_some());
+    }
+
+    #[test]
+    fn find_leaf_pair_split_mut_rejects_multi_tab_leaf() {
+        // A leaf with a second background tab isn't clean, so the
+        // helper falls through to give the caller a chance to fall
+        // back to the default behavior.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf_with_tabs(0, vec![0, 9])),
+            second: Box::new(Layout::leaf(1)),
+        };
+        assert!(l.find_leaf_pair_split_mut(0, 1).is_none());
+    }
+
+    #[test]
+    fn find_leaf_pair_split_mut_finds_nested_pair() {
+        // {C1, C2} live under a nested split, alongside an editor.
+        // Helper should walk into the nested split and match there.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 40,
+            first: Box::new(Layout::leaf(99)), // editor
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(2)),
+            }),
+        };
+        assert!(l.find_leaf_pair_split_mut(1, 2).is_some());
+    }
+
+    #[test]
+    fn fill_first_empty_replaces_the_leftmost_empty_hole() {
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Empty),
+            second: Box::new(Layout::Empty),
+        };
+        assert!(l.fill_first_empty(Layout::leaf(5)));
+        match l {
+            Layout::Split { first, second, .. } => {
+                assert!(matches!(*first, Layout::Leaf { .. }));
+                assert!(matches!(*second, Layout::Empty));
+            }
+            _ => panic!("split lost its shape"),
+        }
+    }
+
+    #[test]
+    fn fill_first_empty_reports_missing_hole() {
+        let mut l = Layout::leaf(0);
+        assert!(!l.fill_first_empty(Layout::leaf(1)));
+    }
+
+    #[test]
+    fn contains_empty_walks_nested_splits() {
+        let l = Layout::Split {
+            dir: SplitDir::Vertical,
+            ratio: 50,
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::Empty),
+            }),
+        };
+        assert!(l.contains_empty());
     }
 
     #[test]

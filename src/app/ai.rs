@@ -648,14 +648,139 @@ impl App {
     /// `ai.claude_code_new` palette command. Splits the active leaf;
     /// the pty tab strip's `+` uses `add_pty_tab` instead (tab, not
     /// split).
+    ///
+    /// Auto-tile — when N Claudes are already open:
+    ///   - N == 2 in a clean H-split of leaves → rearrange to a 2×2
+    ///     grid with the 3rd Claude on BL and an empty placeholder
+    ///     on BR (`ai_placeholder_slot` marks it live).
+    ///   - N == 3 with a live placeholder → fill the placeholder
+    ///     with the new Claude.
+    ///   - Otherwise → default horizontal split from the active pane.
     pub fn open_claude_code_new(&mut self) {
         if self.config.ui.auto_show_sessions_on_ai_activate {
             self.set_activity_section(crate::app::ActivitySection::Sessions);
         }
-        self.open_pty_dir(
-            crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
-            crate::layout::SplitDir::Horizontal,
-        );
+        // Guard against a stale slot marker — if the user closed a
+        // Claude or dragged something into the Empty quadrant, the
+        // tree no longer holds our placeholder even though the flag
+        // may still say it does.
+        if self.ai_placeholder_slot.is_some() && !self.layout().contains_empty() {
+            self.ai_placeholder_slot = None;
+        }
+        let claudes = self.list_claude_pty_ids();
+        match claudes.len() {
+            2 if self.try_open_claude_2x2_third(claudes[0], claudes[1]) => {}
+            3 if self.ai_placeholder_slot.is_some() && self.try_open_claude_fill_placeholder() => {}
+            _ => self.open_pty_dir(
+                crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
+                crate::layout::SplitDir::Horizontal,
+            ),
+        }
+    }
+
+    fn list_claude_pty_ids(&self) -> Vec<crate::layout::PaneId> {
+        self.panes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| match p {
+                Pane::Pty(s) if s.profile.label.starts_with("Claude") => Some(i),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Spawn a 3rd Claude, rearrange the {C1, C2} leaf-only split
+    /// into a 2×2 grid, and set `ai_placeholder_slot`. Returns
+    /// false (rolling back the spawn) if the layout doesn't have a
+    /// clean leaf-only H-split of C1 and C2 to rearrange.
+    fn try_open_claude_2x2_third(
+        &mut self,
+        c1: crate::layout::PaneId,
+        c2: crate::layout::PaneId,
+    ) -> bool {
+        use crate::layout::{Layout, SplitDir};
+        // Only rearrange when the two existing Claudes are in a
+        // clean side-by-side (horizontal) split — that's the shape
+        // the user is asking us to grow into a grid. Any other
+        // topology (nested, multi-tab leaf, vertical split) falls
+        // through to the default handler.
+        if self
+            .layout_mut()
+            .find_leaf_pair_split_mut(c1, c2)
+            .filter(|(_, dir)| *dir == SplitDir::Horizontal)
+            .is_none()
+        {
+            return false;
+        }
+        // Spawn the 3rd Claude.
+        let Some(new_id) = self.spawn_claude_pane() else {
+            return false;
+        };
+        // Rearrange. `find_leaf_pair_split_mut` again since the
+        // borrow above didn't survive across `spawn_claude_pane`.
+        let Some((subtree, _)) = self.layout_mut().find_leaf_pair_split_mut(c1, c2) else {
+            return false;
+        };
+        let old = std::mem::replace(subtree, Layout::Empty);
+        *subtree = Layout::Split {
+            dir: SplitDir::Vertical,
+            ratio: 50,
+            first: Box::new(old),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::leaf(new_id)),
+                second: Box::new(Layout::Empty),
+            }),
+        };
+        self.ai_placeholder_slot = Some(crate::app::AiPlaceholderKind::ClaudeCode);
+        self.active = Some(new_id);
+        self.focus = crate::app::Focus::Pane;
+        true
+    }
+
+    /// Spawn the 4th Claude and drop it into the `Empty` slot in
+    /// the layout tree.
+    fn try_open_claude_fill_placeholder(&mut self) -> bool {
+        if !self.layout().contains_empty() {
+            return false;
+        }
+        let Some(new_id) = self.spawn_claude_pane() else {
+            return false;
+        };
+        if !self
+            .layout_mut()
+            .fill_first_empty(crate::layout::Layout::leaf(new_id))
+        {
+            return false;
+        }
+        self.ai_placeholder_slot = None;
+        self.active = Some(new_id);
+        self.focus = crate::app::Focus::Pane;
+        true
+    }
+
+    fn spawn_claude_pane(&mut self) -> Option<crate::layout::PaneId> {
+        let mut profile = crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone());
+        // Match `open_pty_dir`'s Bridge-env injection so a
+        // rearranged spawn behaves like the default path.
+        let bridge = self.bridge_env();
+        for (k, v) in bridge {
+            if !profile.env.iter().any(|(pk, _)| pk == &k) {
+                profile.env.push((k, v));
+            }
+        }
+        match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
+            Ok(mut s) => {
+                self.apply_saved_pty_name(&mut s);
+                self.panes.push(Pane::Pty(s));
+                Some(self.panes.len() - 1)
+            }
+            Err(e) => {
+                self.toast(format!("can't open terminal: {e}"));
+                None
+            }
+        }
     }
 
     /// Place a fresh Claude Code pane in a specific half of the

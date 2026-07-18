@@ -1358,6 +1358,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.rects.split_tab_chips.clear();
     app.rects.split_tab_close.clear();
     app.rects.split_tab_strip_areas.clear();
+    app.rects.split_tab_plus_buttons.clear();
+    app.rects.ai_placeholder_card = None;
     app.rects.tab_insert_hint = None;
     // Note: `split_strip_buttons` / `split_strip_term_buttons` are
     // NOT cleared here — they were cleared earlier in ui::draw,
@@ -1636,7 +1638,18 @@ fn render_layout(
     path: &mut Vec<bool>,
 ) -> Option<(u16, u16)> {
     match layout {
-        Layout::Empty => None,
+        Layout::Empty => {
+            // Empty leaves inside a Split are the BR quadrant of the
+            // Claude 2×2 auto-tile (see `App::open_claude_code_new`).
+            // Paint a `+ Add Claude Code` card + record the click
+            // rect. An Empty at the root (no path) is the empty-
+            // workspace state — handled higher up by the bufferline
+            // `+` chip; leave it blank.
+            if !path.is_empty() && app.ai_placeholder_slot.is_some() {
+                paint_ai_placeholder_card(frame, app, area);
+            }
+            None
+        }
         Layout::Leaf { active: id, tabs } => {
             let focused = app.active == Some(*id);
             let tabs_owned = tabs.clone();
@@ -3728,6 +3741,76 @@ fn paint_leaf_tab_strip(
             .push((btn_rect, Some(active), dir));
         bx = bx.saturating_add(SPLIT_BTN_W);
     }
+}
+
+/// Paint the `+ Add Claude Code` card into the BR quadrant of the
+/// Claude 2×2 auto-tile layout. `App::ai_placeholder_slot` marks
+/// this quadrant as live; click routing consults
+/// `app.rects.ai_placeholder_card`.
+fn paint_ai_placeholder_card(frame: &mut Frame, app: &mut App, area: Rect) {
+    use ratatui::style::{Color, Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Paragraph;
+    if area.width < 8 || area.height < 3 {
+        return;
+    }
+    let t = theme::cur();
+    let nerd = !app.config.ui.ascii_icons;
+    let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
+    // Faint frame: paint the whole area in the panel bg then a
+    // dim border so the quadrant reads as a card, not blank space.
+    for row in area.y..area.y.saturating_add(area.height) {
+        let strip = Rect {
+            x: area.x,
+            y: row,
+            width: area.width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " ".repeat(area.width as usize),
+                Style::default().bg(t.bg),
+            )),
+            strip,
+        );
+    }
+    // Center the chip. Label: `+ Add Claude Code` when there's
+    // room, `+ Claude` when the quadrant is tight.
+    let full_label = " Add Claude Code";
+    let short_label = " Claude";
+    let use_full =
+        area.width >= (plus_glyph.chars().count() as u16 + full_label.chars().count() as u16 + 4);
+    let label = if use_full { full_label } else { short_label };
+    let chip_text_w = plus_glyph.chars().count() as u16 + label.chars().count() as u16;
+    let chip_w = chip_text_w + 2; // 1-cell padding on each side
+    if area.width < chip_w {
+        return;
+    }
+    let cx = area.x + area.width.saturating_sub(chip_w) / 2;
+    let cy = area.y + area.height / 2;
+    let chip_rect = Rect {
+        x: cx,
+        y: cy,
+        width: chip_w,
+        height: 1,
+    };
+    let chip_bg = Color::Rgb(60, 60, 60); // subtle grey — reads as a button
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ", Style::default().bg(chip_bg)),
+            Span::styled(
+                plus_glyph,
+                Style::default()
+                    .fg(t.green)
+                    .bg(chip_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(label, Style::default().fg(t.fg).bg(chip_bg)),
+            Span::styled(" ", Style::default().bg(chip_bg)),
+        ])),
+        chip_rect,
+    );
+    app.rects.ai_placeholder_card = Some(chip_rect);
 }
 
 /// Pick a `(glyph, color)` for any pane kind — duplicates the

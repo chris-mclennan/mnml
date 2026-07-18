@@ -1485,6 +1485,15 @@ pub enum IntegrationsPanelTab {
     Marketplace,
 }
 
+/// Marker for `App::ai_placeholder_slot` — the empty quadrant of a
+/// 2×2 Claude / Codex grid. Currently only Claude auto-tiles this
+/// way but the enum lets Codex slot in later without touching the
+/// field's type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiPlaceholderKind {
+    ClaudeCode,
+}
+
 /// land independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySection {
@@ -2421,6 +2430,11 @@ pub struct PaneRects {
     /// their first pane. Same visual as split_tab_plus_buttons but
     /// no pane_id (nothing to focus yet).
     pub bufferline_empty_plus: Option<Rect>,
+    /// Click rect for the `+ Add Claude Code` card painted in the
+    /// BR quadrant of the Claude auto-tile 2×2 grid. Click →
+    /// `ai.claude_code_new` (fills the placeholder). Cleared +
+    /// repopulated every frame.
+    pub ai_placeholder_card: Option<Rect>,
     /// `(rect, pane_id?)` per visible terminal-launch button in the
     /// split-strip cluster (immediately left of the H/V buttons).
     /// Click → focus that leaf (if any) + open a new shell pane via
@@ -4091,6 +4105,17 @@ pub struct App {
     /// against the note file name. Empty = show all.
     pub notes_panel_filter: String,
     pub notes_panel_filter_focused: bool,
+    /// When the 3rd Claude Code pane opens, the layout rearranges
+    /// into a 2×2 grid with the bottom-right quadrant as
+    /// `Layout::Empty` — a placeholder for the eventual 4th
+    /// Claude. This flag marks that placeholder as live so the
+    /// renderer knows to paint the `+ Add Claude Code` card
+    /// (instead of a blank rect) and the mouse handler knows to
+    /// treat clicks on it as a "launch the 4th Claude" affordance.
+    /// Cleared when the 4th Claude fills the slot or when either
+    /// of the 3 Claudes is closed (the split collapses).
+    pub ai_placeholder_slot: Option<crate::app::AiPlaceholderKind>,
+
     /// `/`-style filter for the Sessions panel — case-insensitive
     /// match against session display name, git branch, cwd basename,
     /// and detected ticket. Empty = show all.
@@ -5055,6 +5080,7 @@ impl App {
             todos_panel_filter_focused: false,
             notes_panel_filter: String::new(),
             notes_panel_filter_focused: false,
+            ai_placeholder_slot: None,
             sessions_panel_filter: String::new(),
             sessions_panel_filter_focused: false,
             todos_panel_cursor: 0,

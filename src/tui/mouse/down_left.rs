@@ -1288,6 +1288,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         crate::command::run("picker.files", app);
         return;
     }
+    // Claude 2×2 auto-tile placeholder card — click fills the BR
+    // quadrant with a fresh Claude session.
+    if let Some(r) = app.rects.ai_placeholder_card
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_claude_code_new();
+        return;
+    }
     // one-tab-type 2026-07-18 — empty-state `+` chip on the top
     // row. Click opens a positional context menu anchored at the
     // chip (not a centered picker) with 10 "create something"
