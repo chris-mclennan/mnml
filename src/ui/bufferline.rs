@@ -392,26 +392,39 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 fn paint_mode_chip_and_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
     // 2026-07-18 — when the row is visible with zero panes (empty
-    // workspace, all tabs closed), paint a "no buffers" hint on
-    // the left of the row so the strip doesn't look confusingly
-    // empty. Sits at the leftmost cell of the row.
+    // workspace, all tabs closed), paint a `+` chip on the left
+    // that opens the file picker. Same visual as the per-leaf
+    // strip's `+` chip so the empty→populated transition reads as
+    // continuity: your first tab starts here, click to fill it.
+    // Once a pane exists, the row hides entirely and the per-leaf
+    // strip's own `+` takes over.
     if app.panes.is_empty() {
-        let hint = "  no buffers ";
-        let hint_w = hint.chars().count() as u16;
-        if area.width >= hint_w {
-            let hint_rect = Rect {
+        let nerd = !app.config.ui.ascii_icons;
+        let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
+        let plus_w = 3u16;
+        if area.width >= plus_w {
+            let plus_rect = Rect {
                 x: area.x,
                 y: area.y,
-                width: hint_w,
+                width: plus_w,
                 height: 1,
             };
+            let plus_bg = t.bg;
             frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    hint,
-                    Style::default().fg(t.grey_fg).bg(t.bg_darker),
-                ))),
-                hint_rect,
+                Paragraph::new(Line::from(vec![
+                    Span::styled(" ", Style::default().bg(plus_bg)),
+                    Span::styled(
+                        plus_glyph,
+                        Style::default()
+                            .fg(t.green)
+                            .bg(plus_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(" ", Style::default().bg(plus_bg)),
+                ])),
+                plus_rect,
             );
+            app.rects.bufferline_empty_plus = Some(plus_rect);
         }
     }
     // Mode chip — sits immediately left of the launcher cluster.

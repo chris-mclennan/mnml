@@ -1288,6 +1288,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         crate::command::run("picker.files", app);
         return;
     }
+    // one-tab-type 2026-07-18 — empty-state `+` chip on the top
+    // row (visible when there are no panes). Click → open the
+    // file picker so the user's first file becomes the first pane.
+    if let Some(r) = app.rects.bufferline_empty_plus
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        crate::command::run("picker.files", app);
+        return;
+    }
     // 2026-06-22 — per-split split-editor buttons at the right of
     // the strip. Focus the clicked leaf's active pane, then dispatch
     // split_active(dir). 2026-07-18 — when there's no active pane

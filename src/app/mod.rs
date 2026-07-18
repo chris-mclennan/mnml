@@ -2416,6 +2416,11 @@ pub struct PaneRects {
     /// the user can add another buffer as a tab in the same leaf.
     /// one-tab-type 2026-07-18.
     pub split_tab_plus_buttons: Vec<(Rect, PaneId)>,
+    /// `+` chip on the empty-state top row (when there are no
+    /// panes). Click → open the file picker so the user can pick
+    /// their first pane. Same visual as split_tab_plus_buttons but
+    /// no pane_id (nothing to focus yet).
+    pub bufferline_empty_plus: Option<Rect>,
     /// `(rect, pane_id?)` per visible terminal-launch button in the
     /// split-strip cluster (immediately left of the H/V buttons).
     /// Click → focus that leaf (if any) + open a new shell pane via
