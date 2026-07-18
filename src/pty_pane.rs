@@ -564,10 +564,12 @@ impl PtySession {
 
     /// The session's tab/title label. The *name* is the user-set
     /// `display_name` (right-click rename / `:rename`) → the program's
-    /// OSC window title → the binary profile's label. When the session
-    /// is a Claude Code instance that's thinking, the current spinner
-    /// glyph is appended (`my-session ✽`) — the name stays put so the
-    /// tab is still identifiable, the glyph animates frame to frame.
+    /// OSC window title → the binary profile's label. The thinking
+    /// spinner used to be appended here (`my-session ✽`); that made
+    /// the tab read as "airplane star Claude Code ✻ $ ×" — three
+    /// icons where the user wanted one. The spinner now animates
+    /// the LEADING pane icon via [`current_spinner_glyph`], so the
+    /// label stays clean.
     ///
     /// Callers that have access to `[ui] ticket_prefixes` should prefer
     /// [`PtySession::tab_label_with_prefixes`] — it auto-fills the
@@ -584,9 +586,8 @@ impl PtySession {
     /// when no match is found.
     pub fn tab_label_with_prefixes(&self, prefixes: &[String]) -> String {
         let osc = self.term.title().map(|s| s.to_string()).unwrap_or_default();
-        let grid = self.render_grid();
-        let glyph = detect_spinner_glyph(&grid);
         let screen_text = if self.display_name.is_none() && !prefixes.is_empty() {
+            let grid = self.render_grid();
             Some(grid_to_text(&grid))
         } else {
             None
@@ -594,15 +595,20 @@ impl PtySession {
 
         // Priority: user rename > ticket scan > OSC title > profile.label.
         let ticket = screen_text.and_then(|t| scan_for_ticket(&t, prefixes));
-        let name = if let Some(t) = ticket {
+        if let Some(t) = ticket {
             t
         } else {
             resolve_tab_label(self.display_name.as_deref(), &osc, &self.profile.label)
-        };
-        match glyph {
-            Some(g) => format!("{name} {g}"),
-            None => name,
         }
+    }
+
+    /// The current thinking-spinner glyph, if this session's rendered
+    /// output shows one (Claude's `✻` etc. + trailing ellipsis).
+    /// Bufferline uses this to animate the LEADING pane icon — the
+    /// same slot the static integration glyph occupies when idle — so
+    /// the tab reads as one icon + one label, not a strip of chars.
+    pub fn current_spinner_glyph(&self) -> Option<char> {
+        detect_spinner_glyph(&self.render_grid())
     }
 }
 

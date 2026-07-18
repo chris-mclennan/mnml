@@ -93,12 +93,35 @@ fn tab_labels(panes: &[Pane]) -> Vec<String> {
     // marker so they don't read as just-another-tab. Append ` $`
     // (terminal-prompt convention) so 'terminal (zsh)' becomes
     // 'terminal (zsh) $'. Cheap, no new style logic needed.
+    //
+    // 2026-07-17 — skip the `$` for tabs whose leading icon is
+    // already a brand mark (Claude Code, Codex, sibling integrations).
+    // Those tabs read as "[star] Claude Code" which is
+    // self-identifying; the `$` on top read as "shell-in-Claude-Code"
+    // and confused the user. Real shells (ghost icon) keep the `$`
+    // since their icon is generic.
     for (i, p) in panes.iter().enumerate() {
-        if matches!(p, Pane::Pty(_)) {
+        if let Pane::Pty(s) = p
+            && !is_branded_pty_label(&s.profile.label)
+        {
             titles[i] = format!("{} $", titles[i]);
         }
     }
     titles
+}
+
+/// True when the profile.label of a Pty pane maps to a branded
+/// integration icon (Claude Code, Codex, or any sibling integration).
+/// Two use sites: skipping the `$` suffix (branded tabs are self-
+/// identifying) and skipping the ghost-glyph fallback path (they
+/// already have a real icon). Kept as a simple label whitelist here —
+/// the sibling-integration match runs against `App.config` and needs
+/// more state than we have at title-formatting time.
+fn is_branded_pty_label(label: &str) -> bool {
+    matches!(
+        label.to_ascii_lowercase().as_str(),
+        "claude code" | "claude code (resumed)" | "codex"
+    )
 }
 
 /// The shape of a single tab chip. Fed into `paint_tab_chip` by
@@ -663,17 +686,28 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 //   3. Command args (for `:term ` commands where
                 //      the label was derived elsewhere)
                 //
-                // Real terminals (shell / npm run / codex / etc.)
-                // that don't match any integration fall through to
-                // the ghost glyph (mnml runs in ghostty; the ghost
-                // is the natural "this is a shell" marker).
-                // 2026-07-11 — was terminal-caret \u{f489}; the
-                // matching logic was also too narrow (id fallback
-                // was missing), so Bitbucket-style integrations got
-                // the terminal glyph even though they should have
-                // gotten their own icon.
+                // 2026-07-17 — Claude Code / Codex hit a special
+                // case: their `profile.label` is "claude code" (with
+                // a space) but the integration id is "claude_code"
+                // (with an underscore). eq_ignore_ascii_case misses
+                // that mismatch, so those panes used to fall through
+                // to the ghost glyph — reading as "airplane star
+                // Claude Code $ ×" to the user. Normalize whitespace
+                // to underscores in the id lookup to match by intent.
+                //
+                // 2026-07-17 — when the pty is currently thinking
+                // (Claude's ✻+"…" spinner is on screen), use THAT
+                // glyph as the leading icon instead of the static
+                // brand glyph. Keeps the tab as one animated icon +
+                // one label, matching Claude Code's own presentation.
+                //
+                // Real terminals (shell / npm run) that don't match
+                // any integration fall through to the ghost glyph
+                // (mnml runs in ghostty; the ghost is the natural
+                // "this is a shell" marker).
                 let profile_label = s.profile.label.as_str();
                 let profile_label_lower = profile_label.to_ascii_lowercase();
+                let profile_label_normalized = profile_label_lower.replace(' ', "_");
                 let profile_args = s.profile.args.join(" ").to_ascii_lowercase();
                 let sibling_glyph = app
                     .config
@@ -681,10 +715,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .integration_icons
                     .iter()
                     .find(|ic| {
-                        // Match 2: integration id equals profile label
-                        // (case-insensitive) — the most reliable form
-                        // when the derivation heuristic would fail.
-                        if ic.id.eq_ignore_ascii_case(profile_label) {
+                        // Match 2 (extended): integration id equals
+                        // the profile label (case-insensitive) with
+                        // spaces normalized to underscores — so
+                        // "claude code" matches id "claude_code".
+                        if ic.id.eq_ignore_ascii_case(&profile_label_normalized) {
                             return true;
                         }
                         let cmd = ic.command.as_str();
@@ -711,8 +746,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                         false
                     })
                     .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)));
-                match sibling_glyph {
-                    Some((g, c)) if nerd => (g, c),
+                // Swap the static brand glyph for the live thinking
+                // spinner when one's on-screen — one animated icon
+                // in the leading slot beats a static icon PLUS a
+                // trailing star jammed in next to the `$`.
+                let spinner = s.current_spinner_glyph();
+                match (sibling_glyph, spinner) {
+                    // Branded pane, thinking — animate the icon slot.
+                    (Some((_, c)), Some(g)) if nerd => (g.to_string(), c),
+                    // Branded pane, idle — static brand glyph.
+                    (Some((g, c)), _) if nerd => (g, c),
+                    // Unbranded shell, thinking — spinner as icon in
+                    // ghost color; still visually distinct from a
+                    // resting shell.
+                    (None, Some(g)) if nerd => (g.to_string(), tt.teal),
                     // Ghost — mnml runs in ghostty, and users asked
                     // for "not the generic terminal glyph" for real
                     // shells. \u{F001D} = nf-md-ghost (nerd-font).
