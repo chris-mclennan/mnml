@@ -508,8 +508,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .active
         .and_then(|i| app.panes.get(i))
         .is_some_and(|p| matches!(p, crate::pane::Pane::GitGraph(_)));
+    // one-tab-type 2026-07-18 — only allocate the bufferline row
+    // when there are NO panes open. In that empty state the row
+    // hosts the launcher cluster (H/V/Term/Claude/Codex) so the
+    // user has an entry point. Once any pane exists, its per-leaf
+    // strip carries the cluster + tabs — the top row would just
+    // duplicate the launcher chips on an empty background.
+    let empty_workspace = app.panes.is_empty();
     let (bufferline_area, body_area) =
-        if app.bufferline_visible && !has_splits && !hide_for_git_graph {
+        if app.bufferline_visible && empty_workspace && !has_splits && !hide_for_git_graph {
             let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
             (Some(r[0]), r[1])
         } else {
@@ -3514,7 +3521,7 @@ fn paint_leaf_tab_strip(
         let Some(pane) = app.panes.get(id) else {
             continue;
         };
-        let (glyph, icon_color) = icon_for_pane(pane, nerd);
+        let (glyph, icon_color) = icon_for_pane(app, pane, nerd);
         let verb_split = if matches!(pane, Pane::Request(_)) {
             crate::ui::bufferline::split_http_verb(&pane.title())
         } else {
@@ -3522,7 +3529,7 @@ fn paint_leaf_tab_strip(
         };
         let inputs = crate::ui::bufferline::TabChipInputs {
             id,
-            glyph: glyph.to_string(),
+            glyph,
             icon_color,
             name: pane.title(),
             is_active: id == active,
@@ -3722,20 +3729,108 @@ fn paint_leaf_tab_strip(
 /// Pick a `(glyph, color)` for any pane kind — duplicates the
 /// dispatch in `bufferline::draw` but kept inline here so the
 /// per-leaf tab strip doesn't need a public API on bufferline.
-fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui::style::Color) {
+/// Rich Pty icon: sibling-integration branded glyph when the pane's
+/// profile.label matches a configured integration (Claude Code /
+/// Codex / mnml-forge-bitbucket / …), animated Claude spinner when
+/// Claude is thinking, breathing color when Codex is thinking. Falls
+/// through to the generic ghost glyph for unmatched shells. Ported
+/// from the retired top-bufferline Pty branch.
+fn pty_icon(
+    app: &crate::app::App,
+    s: &crate::pty_pane::PtySession,
+    nerd: bool,
+) -> (String, ratatui::style::Color) {
+    let tt = theme::cur();
+    let profile_label = s.profile.label.as_str();
+    let profile_label_lower = profile_label.to_ascii_lowercase();
+    let profile_label_normalized = profile_label_lower.replace(' ', "_");
+    let profile_args = s.profile.args.join(" ").to_ascii_lowercase();
+    let sibling_glyph = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .find(|ic| {
+            if ic.id.eq_ignore_ascii_case(&profile_label_normalized) {
+                return true;
+            }
+            let cmd = ic.command.as_str();
+            if !cmd.starts_with(":term ") {
+                return false;
+            }
+            let Some(bin) = cmd.strip_prefix(":term ").map(str::trim) else {
+                return false;
+            };
+            if bin.split('-').next_back() == Some(profile_label) {
+                return true;
+            }
+            profile_args.contains(&bin.to_ascii_lowercase())
+                || profile_args.contains(&profile_label_lower)
+        })
+        .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)));
+    let spinner = s.current_spinner_glyph();
+    let is_codex = profile_label_lower == "codex";
+    let codex_thinking = is_codex && s.is_codex_thinking();
+    match (sibling_glyph, spinner, codex_thinking) {
+        (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
+        (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),
+        (Some((g, c)), _, _) if nerd => (g, c),
+        (None, Some(g), _) if nerd => (g.to_string(), tt.teal),
+        _ => ((if nerd { "\u{F001D}" } else { "▶" }).to_string(), tt.teal),
+    }
+}
+
+/// Codex uses a color-breath animation on `•`. Faithful port of
+/// Codex's `shimmer_spans`: 2000ms cycle, period=21, band-half-
+/// width=5, triangle-band interpolation between grey and white.
+fn codex_breath_color() -> ratatui::style::Color {
+    use ratatui::style::Color;
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    let ms = std::time::Instant::now().duration_since(*start).as_millis();
+    const CYCLE_MS: u128 = 2000;
+    const PERIOD: f32 = 21.0;
+    const CHAR_POSITION: f32 = 10.0;
+    const BAND_HALF_WIDTH: f32 = 5.0;
+    let phase = (ms % CYCLE_MS) as f32 / CYCLE_MS as f32;
+    let pos_f = phase * PERIOD;
+    let raw = (pos_f - CHAR_POSITION).abs();
+    let distance = raw.min(PERIOD - raw);
+    let weight = if distance >= BAND_HALF_WIDTH {
+        0.0
+    } else {
+        1.0 - (distance / BAND_HALF_WIDTH)
+    };
+    let base: u8 = 60;
+    let peak: u8 = 255;
+    let g = (base as f32 + (peak - base) as f32 * weight) as u8;
+    Color::Rgb(g, g, g)
+}
+
+fn icon_for_pane(
+    app: &crate::app::App,
+    pane: &crate::pane::Pane,
+    nerd: bool,
+) -> (String, ratatui::style::Color) {
     use crate::pane::Pane;
+    // Helper for the majority case: static glyph + static color.
+    let s = |g: &'static str, c: ratatui::style::Color| (g.to_string(), c);
     match pane {
         Pane::Editor(b) => {
             let p = b
                 .path
                 .clone()
                 .unwrap_or_else(|| std::path::PathBuf::from("untitled"));
-            crate::ui::icons::for_path(&p, false, false, nerd)
+            let icon = crate::ui::icons::for_path(&p, false, false, nerd);
+            s(icon.0, icon.1)
         }
-        Pane::MdPreview(p) => crate::ui::icons::for_path(&p.path, false, false, nerd),
-        Pane::Diff(_) => (if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
-        Pane::GitGraph(_) => (if nerd { "\u{f1d3}" } else { "⎇" }, theme::cur().orange),
-        Pane::GitStatus(_) => (if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
+        Pane::MdPreview(p) => {
+            let icon = crate::ui::icons::for_path(&p.path, false, false, nerd);
+            s(icon.0, icon.1)
+        }
+        Pane::Diff(_) => s(if nerd { "\u{f0e7e}" } else { "±" }, theme::cur().orange),
+        Pane::GitGraph(_) => s(if nerd { "\u{f1d3}" } else { "⎇" }, theme::cur().orange),
+        Pane::GitStatus(_) => s(if nerd { "\u{f1d2}" } else { "±" }, theme::cur().green),
         Pane::Request(r) => {
             let tt = theme::cur();
             let color = match r.request.method.to_uppercase().as_str() {
@@ -3748,29 +3843,29 @@ fn icon_for_pane(pane: &crate::pane::Pane, nerd: bool) -> (&'static str, ratatui
                 "OPTIONS" => tt.purple,
                 _ => tt.blue,
             };
-            (if nerd { "\u{F1D8}" } else { "→" }, color)
+            s(if nerd { "\u{F1D8}" } else { "→" }, color)
         }
-        Pane::Pty(_) => (if nerd { "\u{f489}" } else { "▶" }, theme::cur().teal),
-        Pane::Ai(_) => (if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
-        Pane::Tests(_) => (if nerd { "\u{f0668}" } else { "✓" }, theme::cur().green),
-        Pane::Browser(_) => (if nerd { "\u{f059f}" } else { "◉" }, theme::cur().blue),
-        Pane::Diagnostics(_) => (if nerd { "\u{f0026}" } else { "⚠" }, theme::cur().red),
-        Pane::Grep(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().yellow),
-        Pane::Flaky(_) => (if nerd { "\u{f0668}" } else { "≋" }, theme::cur().purple),
-        Pane::Outline(_) => (if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
-        Pane::Quickfix(_) => (if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
-        Pane::CmdlineHistory(_) => (if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
-        Pane::Cheatsheet(_) => (if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
-        Pane::Debug(_) => (if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
-        Pane::DapRepl(_) => (if nerd { "\u{F018D}" } else { ">" }, theme::cur().cyan),
-        Pane::Image(_) => (if nerd { "\u{F021F}" } else { "▤" }, theme::cur().purple),
-        Pane::ClaudeAgents(_) => (if nerd { "\u{F06A9}" } else { "◆" }, theme::cur().purple),
-        Pane::Websocket(_) => (if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
-        Pane::SpendReport(_) => (if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
-        Pane::Mount(_) => (if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
-        Pane::CloudAgentRun(_) => (if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
-        Pane::NewCloudAgentWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green),
-        Pane::NewCloudRunWizard(_) => (if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
+        Pane::Pty(pty) => pty_icon(app, pty, nerd),
+        Pane::Ai(_) => s(if nerd { "\u{f0e0a}" } else { "✦" }, theme::cur().purple),
+        Pane::Tests(_) => s(if nerd { "\u{f0668}" } else { "✓" }, theme::cur().green),
+        Pane::Browser(_) => s(if nerd { "\u{f059f}" } else { "◉" }, theme::cur().blue),
+        Pane::Diagnostics(_) => s(if nerd { "\u{f0026}" } else { "⚠" }, theme::cur().red),
+        Pane::Grep(_) => s(if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().yellow),
+        Pane::Flaky(_) => s(if nerd { "\u{f0668}" } else { "≋" }, theme::cur().purple),
+        Pane::Outline(_) => s(if nerd { "\u{f01bd}" } else { "⌥" }, theme::cur().purple),
+        Pane::Quickfix(_) => s(if nerd { "\u{f0349}" } else { "⌕" }, theme::cur().teal),
+        Pane::CmdlineHistory(_) => s(if nerd { "\u{eb15}" } else { "❯" }, theme::cur().comment),
+        Pane::Cheatsheet(_) => s(if nerd { "\u{f128}" } else { "?" }, theme::cur().yellow),
+        Pane::Debug(_) => s(if nerd { "\u{f188}" } else { "🐛" }, theme::cur().red),
+        Pane::DapRepl(_) => s(if nerd { "\u{F018D}" } else { ">" }, theme::cur().cyan),
+        Pane::Image(_) => s(if nerd { "\u{F021F}" } else { "▤" }, theme::cur().purple),
+        Pane::ClaudeAgents(_) => s(if nerd { "\u{F06A9}" } else { "◆" }, theme::cur().purple),
+        Pane::Websocket(_) => s(if nerd { "\u{F0317}" } else { "◇" }, theme::cur().teal),
+        Pane::SpendReport(_) => s(if nerd { "\u{F01C2}" } else { "$" }, theme::cur().orange),
+        Pane::Mount(_) => s(if nerd { "\u{F0BD3}" } else { "M" }, theme::cur().cyan),
+        Pane::CloudAgentRun(_) => s(if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
+        Pane::NewCloudAgentWizard(_) => s(if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green),
+        Pane::NewCloudRunWizard(_) => s(if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
     }
 }
 
