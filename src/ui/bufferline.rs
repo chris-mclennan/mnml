@@ -1492,11 +1492,10 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     // fits them. Users on narrow leaves get a partial cluster
     // instead of nothing.
     // 2026-07-18 — was: return if no active pane. That killed the
-    // whole cluster in the "no files open" state. First fix: paint
-    // terminal + AI regardless, gate H/V on active. Second fix:
-    // paint H/V too — clicking them in the empty state opens two
-    // scratch editors laid out in the requested direction via
-    // `open_scratch_split`.
+    // whole cluster in the "no files open" state. Now: paint the
+    // full cluster (terminal + H/V + AI) regardless. H/V in the
+    // empty state opens two scratch editors laid out in the
+    // requested direction via `open_scratch_split`.
     let active_opt = app.active;
     if area.width < SPLIT_BUTTONS_W {
         return;
