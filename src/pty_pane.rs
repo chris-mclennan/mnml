@@ -888,31 +888,25 @@ pub(crate) fn resolve_tab_label(
 /// spinner as the leading character. That worked fine as a terminal
 /// window title but read as "SVG_icon * Claude Code" in mnml's tab
 /// (icon slot + spinner-prefix in the label) — the user saw two
-/// icons for one pane. Strip any leading char that's in the known
-/// spinner set (plus one trailing space) so the tab label reads as
-/// just the name.
+/// icons for one pane. Strip leading non-alphanumeric decorative
+/// chars so the tab label reads as just the name.
+///
+/// 2026-07-18 second pass — the char-set enumeration was fragile
+/// (Claude Code's spinner cycles through 20+ Unicode ornament stars;
+/// listing them all is a maintenance liability). Widen to "any
+/// leading char that isn't an ASCII/Unicode word char, `[`, `(`, or
+/// `<`" — those brackets are the only non-alpha starters a legit
+/// tab title would use. Everything else gets shed until we reach a
+/// word char.
 pub(crate) fn strip_leading_spinner_chars(s: &str) -> &str {
-    // Same set as detect_spinner_glyph, plus `•` for Codex and `*`
-    // as a plain-ASCII spinner some CLIs use.
-    const LEADING_SPINNER_CHARS: &[char] = &[
-        '✱', '✶', '✦', '✧', '⋆', '✽', '✻', '❋', '✿', '✺', '✷', '✸', '✹', '❉', '❅', '◐', '◓', '◑',
-        '◒', '•', '*',
-    ];
-    let mut rest = s;
-    // Repeat once — some titles like `"✻ ✻ Claude"` (two spinner
-    // chars separated by a space) shed both.
-    for _ in 0..2 {
-        if let Some(first) = rest.chars().next()
-            && LEADING_SPINNER_CHARS.contains(&first)
-        {
-            let skip = first.len_utf8();
-            let after = &rest[skip..];
-            rest = after.trim_start();
-        } else {
-            break;
-        }
-    }
-    rest
+    // Find the byte-offset of the first char that could plausibly
+    // start a real tab title.
+    let cutoff = s
+        .char_indices()
+        .find(|(_, c)| c.is_alphanumeric() || matches!(*c, '(' | '[' | '<' | '"' | '\''))
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    s[cutoff..].trim_start()
 }
 
 /// Scan a pty screen for a Claude-Code-style spinner — a row carrying
