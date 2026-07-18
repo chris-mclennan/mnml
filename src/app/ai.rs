@@ -621,6 +621,13 @@ impl App {
     }
 
     pub fn open_claude_code(&mut self) {
+        // 2026-07-18 — also switch the activity bar to the Sessions
+        // panel. AI panes live in Sessions, so having the user
+        // context-shift to the panel that owns their new/revealed
+        // pane matches expectations. Applies to both entry points
+        // (sidebar Integrations chip + split-strip AI chip) since
+        // both call this method.
+        self.set_activity_section(crate::app::ActivitySection::Sessions);
         // If a Claude pane is already open, toggle focus / visibility-ish
         // by revealing it instead of spawning a duplicate. (Claude
         // sessions are expensive to bootstrap — same gesture as the
@@ -692,6 +699,9 @@ impl App {
     }
 
     pub fn open_codex(&mut self) {
+        // Parallel to `open_claude_code`: switch the activity bar
+        // to Sessions since that's where AI panes are surfaced.
+        self.set_activity_section(crate::app::ActivitySection::Sessions);
         if let Some(id) = self.find_codex_pty() {
             self.reveal_pane(id);
             return;
