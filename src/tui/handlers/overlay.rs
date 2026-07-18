@@ -774,6 +774,23 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             p.input.clear();
             p.cursor = 0;
         }
+        // Ctrl+V — clipboard paste. On macOS Ghostty (and most macOS
+        // terminals) Cmd+V translates to a bracketed-paste event
+        // and hits the Event::Paste path in tui/mod.rs. Ctrl+V is
+        // passed through as a raw key event because it has shell
+        // meanings (Vim insert-literal etc.). In a text prompt the
+        // user's intent is clearly paste, so read the system
+        // clipboard and insert. Also handles Linux Ctrl+V where
+        // most terminals bind Ctrl+Shift+V for paste but leave
+        // Ctrl+V raw — same fix works.
+        KeyCode::Char('v' | 'V') if ctrl => {
+            // Release the borrow on `p` before touching app.clipboard.
+            let text = app.clipboard.text();
+            if let Some(p) = app.prompt.as_mut() {
+                p.insert_str(text.trim_end_matches('\n'));
+            }
+            return;
+        }
         KeyCode::Left => p.move_left(),
         KeyCode::Right => p.move_right(),
         KeyCode::Home => p.move_home(),
