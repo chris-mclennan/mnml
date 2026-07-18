@@ -2223,13 +2223,21 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.sessions_panel_filter_focused = true;
         return;
     }
-    // Sessions panel `+ New session` chip → spawn a Claude
-    // Code pane (the most common case). Checked BEFORE
-    // tab clicks so a click on the chip wins.
+    // Sessions panel `+ New session` chip → spawn a NEW Claude
+    // Code pane. Checked BEFORE tab clicks so a click on the chip
+    // wins.
+    //
+    // 2026-07-18 — was `ai.claude_code`, which is the "reveal or
+    // open" command that re-focuses an existing Claude Code pane
+    // instead of spawning a fresh one. User: "when I open a Claude
+    // Code session and then click new session again, nothing
+    // happens" — because the existing pane was already focused,
+    // the reveal became a no-op. Use `ai.claude_code_new`
+    // (always-spawn) instead.
     if let Some(r) = app.rects.session_new_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        crate::command::run("ai.claude_code", app);
+        crate::command::run("ai.claude_code_new", app);
         return;
     }
     // HTTP panel — sectioned sidebar (#10 v2). Order: chip rects
