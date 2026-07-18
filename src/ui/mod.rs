@@ -1639,24 +1639,15 @@ fn render_layout(
             // pty_view), carve out the top row of `area` and paint
             // a horizontal row of tab chips (one per pane in the
             // leaf's `tabs`). The body area shrinks by 1 row.
-            let is_split_leaf = !path.is_empty();
-            // qa-feature 2026-07-01 — always paint the leaf tab
-            // strip in a split. The prior heuristic suppressed it
-            // for a lone Pty leaf ("pty_view has its own strip"),
-            // but pty_view's internal strip only fires with 2+
-            // ptys in the same leaf. A solo pty split therefore
-            // got NO tab-with-× — the user couldn't close the pane
-            // by clicking a tab. Let the leaf strip render for
-            // every split leaf; pty_view suppresses its internal
-            // strip when the leaf has just one pty (below).
-            //
-            // 2026-07-18 revert — briefly tried narrowing to
-            // multi_tab_leaf only; that removed the per-leaf strip
-            // from single-file split leaves and the user lost
-            // "which file is in this leaf" visibility + the close ×.
-            // The 2026-07-01 gate was right; the "goofy tabs" case
-            // must be from something else.
-            let body_area = if is_split_leaf && area.height >= 2 {
+            // one-tab-type 2026-07-18 — per-leaf tab strips are now
+            // the ONLY tab UI. Drop the `is_split_leaf` gate so the
+            // strip renders for every leaf including the single-
+            // leaf state. Top bufferline's tab loop is being
+            // retired in this branch; the launcher cluster
+            // (H/V/Term/Claude/Codex) stays on that row via the
+            // palette-bar-drawn chips.
+            let _ = path; // still passed in for future use
+            let body_area = if area.height >= 2 {
                 let strip = ratatui::layout::Rect {
                     x: area.x,
                     y: area.y,
@@ -3569,6 +3560,42 @@ fn paint_leaf_tab_strip(
         chip_x = chip_x.saturating_add(1);
     }
     let _ = leaf_focused;
+
+    // one-tab-type 2026-07-18 — a `+` chip immediately after the
+    // last tab in this leaf's strip. Click → focus this leaf +
+    // open the file picker so the user can add another buffer to
+    // this leaf. Only render when there's room (before mode chip +
+    // split buttons cluster).
+    let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
+    let plus_w = 3u16; // ` + `
+    let mode_chip_w = mode_chip
+        .as_ref()
+        .map(|(l, _, _)| l.chars().count() as u16)
+        .unwrap_or(0);
+    let reserved_right = split_btns_total + mode_chip_w;
+    if chip_x + plus_w <= strip_right.saturating_sub(reserved_right) {
+        let plus_rect = Rect {
+            x: chip_x,
+            y: strip.y,
+            width: plus_w,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ", Style::default().bg(strip_bg)),
+                Span::styled(
+                    plus_glyph,
+                    Style::default()
+                        .fg(t.green)
+                        .bg(strip_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" ", Style::default().bg(strip_bg)),
+            ])),
+            plus_rect,
+        );
+        app.rects.split_tab_plus_buttons.push((plus_rect, active));
+    }
 
     // #polish 2026-07-06 — mode chip (Preview / Edit) painted in the
     // strip between tabs and the split buttons.

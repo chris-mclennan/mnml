@@ -13,11 +13,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use std::collections::HashMap;
-
 use crate::app::App;
 use crate::pane::Pane;
-use crate::ui::{icons, theme};
+use crate::ui::theme;
 
 // code-reviewer S3-1 — the dead `launcher_color` fn was removed.
 // All callers go through `theme::color_from_slot(name, &t)` now.
@@ -61,113 +59,6 @@ pub(crate) fn diag_chip_for(p: &Pane) -> String {
         }
     }
     String::new()
-}
-
-/// One label per pane in `app.panes`, in order. For editor panes whose bare
-/// filename is shared with another open editor (e.g. five `mod.rs`), prepend
-/// the immediate parent dir (`git/mod.rs`, `ai/mod.rs`) so the tabs are
-/// distinguishable. Non-editor panes keep their original title.
-fn tab_labels(panes: &[Pane]) -> Vec<String> {
-    let mut name_counts: HashMap<String, usize> = HashMap::new();
-    let mut titles: Vec<String> = Vec::with_capacity(panes.len());
-    for p in panes {
-        let t = p.title();
-        titles.push(t.clone());
-        if matches!(p, Pane::Editor(_)) {
-            *name_counts.entry(t).or_default() += 1;
-        }
-    }
-    for (i, p) in panes.iter().enumerate() {
-        if let Pane::Editor(b) = p
-            && let Some(path) = &b.path
-            && name_counts.get(&titles[i]).copied().unwrap_or(0) > 1
-            && let Some(parent) = path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-        {
-            titles[i] = format!("{parent}/{}", titles[i]);
-        }
-    }
-    // design-critic Issue 7 — Pty tabs need an at-a-glance visual
-    // marker so they don't read as just-another-tab. Append ` $`
-    // (terminal-prompt convention) so 'terminal (zsh)' becomes
-    // 'terminal (zsh) $'. Cheap, no new style logic needed.
-    //
-    // 2026-07-17 — skip the `$` for tabs whose leading icon is
-    // already a brand mark (Claude Code, Codex, sibling integrations).
-    // Those tabs read as "[star] Claude Code" which is
-    // self-identifying; the `$` on top read as "shell-in-Claude-Code"
-    // and confused the user. Real shells (ghost icon) keep the `$`
-    // since their icon is generic.
-    for (i, p) in panes.iter().enumerate() {
-        if let Pane::Pty(s) = p
-            && !is_branded_pty_label(&s.profile.label)
-        {
-            titles[i] = format!("{} $", titles[i]);
-        }
-    }
-    titles
-}
-
-/// Faithful port of Codex's `shimmer_spans` (from
-/// `openai/codex:codex-rs/tui/src/shimmer.rs`) for a 1-cell tab-icon
-/// slot. Codex's animation on-screen is:
-///
-/// - `period = chars.len() + padding * 2` where `padding = 10`.
-///   For a single `•` char that's `1 + 20 = 21` positions.
-/// - `sweep_seconds = 2.0` — a "highlight position" walks linearly
-///   from 0..period every 2s.
-/// - The visible char sits at position `padding = 10` (fixed).
-/// - `band_half_width = 5.0` — triangular ramp: weight = `1.0 -
-///   distance / 5.0` when `distance < 5.0`, else 0.
-/// - Final color = `blend(base, peak, weight)` — linear RGB lerp.
-///
-/// So the char sits at base color for ~75% of the cycle (weight
-/// stays 0 while the highlight is > 5 positions away), then ramps
-/// weight up over ~475ms, peaks instantly (~1000ms into cycle),
-/// then ramps back down. NOT a hold-at-peak — a triangle. The
-/// perception of a "hold" comes from the near-peak plateau of the
-/// triangle wave, but the peak itself is instantaneous.
-///
-/// Colors: base = dim grey (matches Codex's default_fg fallback),
-/// peak = white (matches its default_bg fallback on dark themes).
-/// Same R=G=B so it stays neutral in front of any themed accent.
-fn codex_breath_color() -> ratatui::style::Color {
-    use ratatui::style::Color;
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    let start = START.get_or_init(std::time::Instant::now);
-    let ms = std::time::Instant::now().duration_since(*start).as_millis();
-    const CYCLE_MS: u128 = 2000;
-    const PERIOD: f32 = 21.0; // chars.len(1) + padding(10) * 2
-    const CHAR_POSITION: f32 = 10.0; // padding
-    const BAND_HALF_WIDTH: f32 = 5.0;
-    let phase = (ms % CYCLE_MS) as f32 / CYCLE_MS as f32;
-    let pos_f = phase * PERIOD;
-    // Wrap-aware distance: the highlight loops, so the shortest
-    // distance from `pos_f` to `char_position` is min(|d|, period-|d|).
-    let raw = (pos_f - CHAR_POSITION).abs();
-    let distance = raw.min(PERIOD - raw);
-    let weight = if distance >= BAND_HALF_WIDTH {
-        0.0
-    } else {
-        1.0 - (distance / BAND_HALF_WIDTH)
-    };
-    let base: u8 = 60;
-    let peak: u8 = 255;
-    let g = (base as f32 + (peak - base) as f32 * weight) as u8;
-    Color::Rgb(g, g, g)
-}
-
-/// True when the profile.label of a Pty pane maps to a branded
-/// integration icon (Claude Code, Codex, or any sibling integration).
-/// Two use sites: skipping the `$` suffix (branded tabs are self-
-/// identifying) and skipping the ghost-glyph fallback path (they
-/// already have a real icon). Kept as a simple label whitelist here —
-/// the sibling-integration match runs against `App.config` and needs
-/// more state than we have at title-formatting time.
-fn is_branded_pty_label(label: &str) -> bool {
-    matches!(label, "Claude Code" | "Claude Code (resumed)" | "Codex")
 }
 
 /// The shape of a single tab chip. Fed into `paint_tab_chip` by
@@ -466,6 +357,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     );
     app.rects.bufferline_tabs.clear();
     app.rects.bufferline_tab_close.clear();
+    app.rects.bufferline_overflow_left = None;
+    app.rects.bufferline_overflow_right = None;
     // 2026-06-22 — the right-cluster chip rects
     // (launcher_icon_rects / bufferline_new_tab_button /
     // bufferline_tab_page_* / bufferline_theme_toggle /
@@ -477,622 +370,54 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.width == 0 {
         return;
     }
-    let nerd = !app.config.ui.ascii_icons;
-    // Right cluster: launcher-icon chips on the LEFT edge of the cluster
-    // (configurable count — Claude + Codex by default, more via
-    // `[[ui.launcher_icon]]`), then ` + ` ` TABS ` per-tabpage chips
-    // ` ●━ ` ` × `. Each launcher chip is 4 cells (` <glyph> ` + label
-    // space). Pre-compute the total so the per-buffer tab strip's
-    // scroll math reserves enough width.
-    // The cluster lives on the palette-bar chrome row, not the
-    // bufferline itself. The terminal + H/V split buttons (+ the
-    // optional AI button) DO live on the bufferline — reserve the
-    // rightmost `split_buttons_width(app)` cells for them so the
-    // tab strip's scroll math doesn't run them over.
-    //
-    // #polish 2026-07-06 — plus a mode chip (`👁 Preview` when the
-    // active pane is a markdown Editor, `✏ Edit` when it's an
-    // MdPreview) sitting to the left of the split-button cluster.
-    // Replaces the per-pane banner row that used to eat a full
-    // content row per markdown pane.
-    let mode_chip = mode_chip_for_active(app);
-    let mode_chip_w = mode_chip
-        .as_ref()
-        .map(|(label, _, _)| label.chars().count() as u16)
-        .unwrap_or(0);
-    let cluster_w = split_buttons_width(app) + mode_chip_w;
-    let tabs_max_x = area.x.saturating_add(area.width.saturating_sub(cluster_w));
+    // one-tab-type 2026-07-18 — retire the top bufferline's tab
+    // strip. Per-leaf strips (paint_leaf_tab_strip in ui/mod.rs)
+    // are now the ONLY tab UI. The bufferline row now only hosts:
+    //   1. The mode chip (▶ Edit / 👁 Preview) — bottom-right of
+    //      the tabs area, immediately left of the launcher cluster
+    //   2. The launcher cluster (H/V/Term/Claude/Codex) via
+    //      paint_split_buttons
+    // Everything else (tab labels, diag chips, overflow arrows,
+    // + new-request-chip) was tied to the top tab-strip and is
+    // retired with it.
+    paint_mode_chip_and_split_buttons(frame, app, area);
+}
 
-    // Disambiguated labels — when two open editors share a filename, prepend
-    // the parent dir to both (`git/mod.rs` vs `ai/mod.rs`).
-    let labels = tab_labels(&app.panes);
-    // Per-tab diagnostic chip — `✗N` for any errors, else `⚠N` for warnings,
-    // else empty. Surfaced so the user sees broken buffers without opening
-    // them. The chip sits between the name and the dirty badge.
-    let diag_chips: Vec<String> = app.panes.iter().map(diag_chip_for).collect();
-    // Pre-compute each tab's display width so we can scroll the bufferline to
-    // keep the active tab on screen (and show `‹`/`›` overflow indicators).
-    // Matches `tab_chip_spans`'s width formula so the scroll math stays
-    // consistent with what's actually painted:
-    //   icon (4 or 1 for skip_icon)
-    //   + name
-    //   + 1 (space after name)
-    //   + diag (chars + 1 leading space, or 0)
-    //   + 2 (badge + trailing pad)
-    //   + verb_extra (verb len + 3, for Request-pane verb split)
-    let widths: Vec<u16> = labels
-        .iter()
-        .enumerate()
-        .zip(&diag_chips)
-        .map(|((idx, name), diag)| {
-            let pane = &app.panes[idx];
-            let skip_icon = matches!(pane, Pane::Request(_));
-            let icon_cells: u16 = if skip_icon { 1 } else { 4 };
-            let diag_cells: u16 = if diag.is_empty() {
-                0
-            } else {
-                diag.chars().count() as u16 + 1
-            };
-            let verb_extra: u16 = if matches!(pane, Pane::Request(_)) {
-                split_http_verb(name)
-                    .map(|(v, _)| v.chars().count() as u16 + 3)
-                    .unwrap_or(0)
-            } else {
-                0
-            };
-            icon_cells + name.chars().count() as u16 + 1 + diag_cells + 2 + verb_extra
-        })
-        .collect();
-    // 2026-06-27 — Pty panes (Claude / Codex / shell) are now
-    // included in the bufferline alongside editors. They keep
-    // their per-pane session strip for in-leaf switching, but
-    // also show up here so the user has a single visual place
-    // to see + close any pane.
-    //
-    // 2026-06-21 — VS Code-style pinned tabs sort to the FRONT.
-    // Within the pinned + unpinned groups, original pane order is
-    // preserved (so the user can still reorder via close/reopen).
-    // mouse-hunter v3 SEV-2 E: panes hosted in the right side panel
-    // are visible there — they shouldn't ALSO appear as bufferline
-    // tabs (ghost duplicates). Filter them out before rendering.
-    // qa-feature 2026-06-30 — GitGraph panes are viewers, not files.
-    // Showing them in the bufferline alongside .ts / .rs / etc. felt
-    // wrong (no "Untitled Document" semantics, can't save, etc.).
-    // They stay reachable via the Git activity-bar icon and the
-    // `:git.graph` command. Same skip applies to BrowserView /
-    // Diagnostics / Outline / Tests viewer panes that have their own
-    // surfaces (the right panel + activity-bar sections).
-    let mut visible: Vec<usize> = (0..app.panes.len())
-        .filter(|i| !app.right_panel_panes.contains(i))
-        .filter(|i| !matches!(app.panes.get(*i), Some(Pane::GitGraph(_))))
-        .collect();
-    visible.sort_by_key(|&i| {
-        let pinned = matches!(app.panes.get(i), Some(Pane::Editor(b)) if b.is_pinned);
-        if pinned { 0 } else { 1 }
-    });
-    let sep = 1u16; // cell between tabs (rendered as the bg color)
-    // qa-feature 2026-07-02 — both 3-cell scroll buttons live on the
-    // RIGHT edge, side-by-side, just before the H/V split buttons.
-    // Tab strip starts at the far left. User preference — the
-    // buttons feel more like a paired scroll widget when they're
-    // next to each other.
-    let overflow_l = 0u16;
-    let overflow_r = 6u16; // ‹ (3) + › (3)
-    let inner_left = area.x + overflow_l;
-    let inner_right = tabs_max_x.saturating_sub(overflow_r);
-    let inner_width = inner_right.saturating_sub(inner_left);
-
-    // Adjust `bufferline_first_visible` so it (a) doesn't run off the end of
-    // the pane list, (b) includes the active tab, (c) is the smallest start
-    // that keeps the active tab visible.
-    if app.bufferline_first_visible >= visible.len() {
-        app.bufferline_first_visible = visible.len().saturating_sub(1);
-    }
-    // qa-7th vscode SEV-2 2026-06-30 — when the user clicks ‹/›
-    // chevrons, the auto-scroll-to-keep-active-tab-visible
-    // clobbered the manual scroll. The chevron handler now stamps
-    // app.bufferline_active_at_scroll = app.active; while that
-    // stamp matches the current active pane, the auto-scroll
-    // back-snap is suppressed. As soon as the user switches tabs,
-    // the stamp clears and auto-scroll resumes.
-    let user_scroll_pinned = app
-        .bufferline_active_at_scroll
-        .is_some_and(|p| Some(p) == app.active);
-    if let Some(active_pos) = app
-        .active
-        .and_then(|a| visible.iter().position(|&p| p == a))
-    {
-        if active_pos < app.bufferline_first_visible {
-            // Active tab is OFF the left edge — always honor this;
-            // even with user_scroll_pinned, scrolling so far left
-            // that the active tab is invisible is non-sense.
-            app.bufferline_first_visible = active_pos;
-            app.bufferline_active_at_scroll = None;
-        } else if !user_scroll_pinned {
-            // Walk back from the active tab while the cumulative width fits.
-            let mut used = 0u16;
-            let mut first = active_pos;
-            loop {
-                let w = widths[visible[first]] + if first > 0 { sep } else { 0 };
-                if used + w > inner_width {
-                    first += 1;
-                    break;
-                }
-                used += w;
-                if first == 0 {
-                    break;
-                }
-                first -= 1;
-            }
-            if app.bufferline_first_visible < first {
-                app.bufferline_first_visible = first;
-            }
-        }
-    }
-    // Reclaim-slack pass (issue #3). When tabs on the right close, the
-    // logic above may leave `first_visible > 0` while the visible range
-    // no longer fills the strip. Walk LEFT while there's room, so
-    // closed-tabs space stops being wasted and hidden tabs come back
-    // into view automatically. Skipped while user_scroll_pinned so a
-    // deliberate ‹ scroll isn't undone.
-    if !user_scroll_pinned && app.bufferline_first_visible > 0 {
-        let mut used: u16 = 0;
-        for (i, &p) in visible
-            .iter()
-            .enumerate()
-            .skip(app.bufferline_first_visible)
-        {
-            let w = widths[p]
-                + if i > app.bufferline_first_visible {
-                    sep
-                } else {
-                    0
-                };
-            used = used.saturating_add(w);
-        }
-        while app.bufferline_first_visible > 0 {
-            let prev = app.bufferline_first_visible - 1;
-            let extra = widths[visible[prev]] + sep;
-            if used.saturating_add(extra) > inner_width {
-                break;
-            }
-            used = used.saturating_add(extra);
-            app.bufferline_first_visible = prev;
-        }
-    }
-    let first_visible = app.bufferline_first_visible;
-
-    let mut spans: Vec<Span> = Vec::new();
-    // qa-feature 2026-07-02 — both scroll buttons now live on the
-    // RIGHT (side-by-side), so nothing here. Tab strip starts at
-    // area.x. The buttons are painted at the very end of this
-    // function, next to the H/V split cluster.
-    app.rects.bufferline_overflow_left = None;
-    let mut x = area.x;
-    // render-reviewer #3 — hoist theme::cur() so the per-tab loop
-    // doesn't acquire its RwLock 27× per tab. With 30 panes that's
-    // ~810 lock acquisitions/frame just from this branch.
-    let tt = theme::cur();
-    let mut last_drawn: usize = first_visible;
-    let mut overflow_right = false;
-    // 2026-07-08 stage-2 unification: this loop now builds
-    // `TabChipInputs` per pane and calls `tab_chip_spans` (shared
-    // with per-leaf strips via `paint_tab_chip`). No more inline
-    // label building / span construction — that lives in one place
-    // now, so both strips can't drift.
-    for vis_pos in first_visible..visible.len() {
-        let i = visible[vis_pos];
-        let pane = &app.panes[i];
-        let active = app.active == Some(i);
-        let name = labels[i].clone();
-        // 2026-07-08 — returns owned `String` glyphs instead of the
-        // prior `&str` / `Box::leak` mix. The old sibling-glyph
-        // branch leaked a fresh heap allocation for the Pty
-        // integration icon on every frame; with N pty tabs at
-        // 60fps that was ~60N/s leaked strings. Owned strings
-        // move cleanly into `TabChipInputs::glyph` without leak
-        // or clone tricks.
-        let (glyph, icon_color): (String, ratatui::style::Color) = match pane {
-            Pane::Editor(b) => {
-                let p = b.path.clone().unwrap_or_else(|| name.clone().into());
-                let (g, c) = icons::for_path(&p, false, false, nerd);
-                (g.to_string(), c)
-            }
-            Pane::MdPreview(p) => {
-                let (g, c) = icons::for_path(&p.path, false, false, nerd);
-                (g.to_string(), c)
-            }
-            Pane::Diff(_) => (
-                (if nerd { "\u{f0e7e}" } else { "±" }).to_string(),
-                tt.orange,
-            ),
-            Pane::GitGraph(_) => ((if nerd { "\u{f1d3}" } else { "⎇" }).to_string(), tt.orange),
-            Pane::GitStatus(_) => ((if nerd { "\u{f1d2}" } else { "±" }).to_string(), tt.green),
-            Pane::Request(r) => {
-                // No icon glyph — the colored METHOD prefix in the
-                // label (rendered below via `split_http_verb`) IS
-                // the icon. Showing the paper-airplane glyph next
-                // to a green "GET" was doubling up. Returns an
-                // empty string; the label-render path checks for
-                // Request panes and skips the icon span entirely.
-                let m = r.request.method.to_uppercase();
-                let color = match m.as_str() {
-                    "GET" => tt.green,
-                    "POST" => tt.orange,
-                    "PUT" => tt.blue,
-                    "PATCH" => tt.cyan,
-                    "DELETE" => tt.red,
-                    "HEAD" => tt.yellow,
-                    "OPTIONS" => tt.purple,
-                    _ => tt.blue,
-                };
-                (String::new(), color)
-            }
-            Pane::Pty(s) => {
-                // 2026-07-03 — sibling integrations that run as
-                // Pty panes (mnml-aws-amplify, mnml-forge-bitbucket,
-                // etc.) inherit their integration's chip glyph so
-                // the tab icon matches the rail chip the user
-                // clicked. Match the profile label ("amplify" /
-                // "bitbucket" / …) against known integration_icons
-                // by both:
-                //   1. Command binary's last hyphen-segment
-                //      (`:term mnml-forge-bitbucket` → `bitbucket`)
-                //   2. Integration id (`ic.id == "bitbucket"`) —
-                //      catches manifest-overridden commands where
-                //      the derivation heuristic fails
-                //   3. Command args (for `:term ` commands where
-                //      the label was derived elsewhere)
-                //
-                // 2026-07-17 — Claude Code / Codex hit a special
-                // case: their `profile.label` is "claude code" (with
-                // a space) but the integration id is "claude_code"
-                // (with an underscore). eq_ignore_ascii_case misses
-                // that mismatch, so those panes used to fall through
-                // to the ghost glyph — reading as "airplane star
-                // Claude Code $ ×" to the user. Normalize whitespace
-                // to underscores in the id lookup to match by intent.
-                //
-                // 2026-07-17 — when the pty is currently thinking
-                // (Claude's ✻+"…" spinner is on screen), use THAT
-                // glyph as the leading icon instead of the static
-                // brand glyph. Keeps the tab as one animated icon +
-                // one label, matching Claude Code's own presentation.
-                //
-                // Real terminals (shell / npm run) that don't match
-                // any integration fall through to the ghost glyph
-                // (mnml runs in ghostty; the ghost is the natural
-                // "this is a shell" marker).
-                let profile_label = s.profile.label.as_str();
-                let profile_label_lower = profile_label.to_ascii_lowercase();
-                let profile_label_normalized = profile_label_lower.replace(' ', "_");
-                let profile_args = s.profile.args.join(" ").to_ascii_lowercase();
-                let sibling_glyph = app
-                    .config
-                    .ui
-                    .integration_icons
-                    .iter()
-                    .find(|ic| {
-                        // Match 2 (extended): integration id equals
-                        // the profile label (case-insensitive) with
-                        // spaces normalized to underscores — so
-                        // "claude code" matches id "claude_code".
-                        if ic.id.eq_ignore_ascii_case(&profile_label_normalized) {
-                            return true;
-                        }
-                        let cmd = ic.command.as_str();
-                        if !cmd.starts_with(":term ") {
-                            return false;
-                        }
-                        let bin = match cmd.strip_prefix(":term ") {
-                            Some(b) => b.trim(),
-                            None => return false,
-                        };
-                        // Match 1: bin's last hyphen-segment.
-                        if bin.split('-').next_back() == Some(profile_label) {
-                            return true;
-                        }
-                        // Match 3: the profile's args contain the
-                        // command binary (belt-and-suspenders for
-                        // Pty spawns that used `open_pty` with the
-                        // full cmdline directly).
-                        if profile_args.contains(&bin.to_ascii_lowercase())
-                            || profile_args.contains(&profile_label_lower)
-                        {
-                            return true;
-                        }
-                        false
-                    })
-                    .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)));
-                // Swap the static brand glyph for the live thinking
-                // spinner when one's on-screen — one animated icon
-                // in the leading slot beats a static icon PLUS a
-                // trailing star jammed in next to the `$`.
-                //
-                // Codex is special-cased: its animation is a color
-                // breath on the same `•`, not a rotating char. Same
-                // glyph either way; the color fg switches from the
-                // themed slot color to the breathing grey ramp when
-                // Codex is working.
-                let spinner = s.current_spinner_glyph();
-                let is_codex = profile_label_lower == "codex";
-                let codex_thinking = is_codex && s.is_codex_thinking();
-                match (sibling_glyph, spinner, codex_thinking) {
-                    // Codex, thinking — same glyph, breathing color.
-                    (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
-                    // Branded pane, thinking (Claude) — swap icon
-                    // for the current on-screen spinner char.
-                    (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),
-                    // Branded pane, idle — static brand glyph.
-                    (Some((g, c)), _, _) if nerd => (g, c),
-                    // Unbranded shell, thinking — spinner as icon in
-                    // ghost color; still visually distinct from a
-                    // resting shell.
-                    (None, Some(g), _) if nerd => (g.to_string(), tt.teal),
-                    // Ghost — mnml runs in ghostty, and users asked
-                    // for "not the generic terminal glyph" for real
-                    // shells. \u{F001D} = nf-md-ghost (nerd-font).
-                    _ => ((if nerd { "\u{F001D}" } else { "▶" }).to_string(), tt.teal),
-                }
-            }
-            Pane::Ai(_) => (
-                (if nerd { "\u{f0e0a}" } else { "✦" }).to_string(),
-                tt.purple,
-            ),
-            Pane::Tests(_) => ((if nerd { "\u{f0668}" } else { "✓" }).to_string(), tt.green),
-            Pane::Browser(_) => ((if nerd { "\u{f059f}" } else { "◉" }).to_string(), tt.blue),
-            Pane::Diagnostics(_) => ((if nerd { "\u{f0026}" } else { "⚠" }).to_string(), tt.red),
-            Pane::Grep(_) => (
-                (if nerd { "\u{f0349}" } else { "⌕" }).to_string(),
-                tt.yellow,
-            ),
-            Pane::Flaky(_) => (
-                (if nerd { "\u{f0668}" } else { "≋" }).to_string(),
-                tt.purple,
-            ),
-            Pane::Outline(_) => (
-                (if nerd { "\u{f01bd}" } else { "⌥" }).to_string(),
-                tt.purple,
-            ),
-            Pane::Quickfix(_) => ((if nerd { "\u{f0349}" } else { "⌕" }).to_string(), tt.teal),
-            Pane::CmdlineHistory(_) => (
-                (if nerd { "\u{eb15}" } else { "❯" }).to_string(),
-                tt.comment,
-            ),
-            Pane::Cheatsheet(_) => ((if nerd { "\u{f128}" } else { "?" }).to_string(), tt.yellow),
-            Pane::Debug(_) => ((if nerd { "\u{f188}" } else { "🐛" }).to_string(), tt.red),
-            Pane::DapRepl(_) => ((if nerd { "\u{F018D}" } else { ">" }).to_string(), tt.cyan),
-            Pane::Image(_) => (
-                (if nerd { "\u{F021F}" } else { "▤" }).to_string(),
-                tt.purple,
-            ),
-            Pane::ClaudeAgents(_) => (
-                (if nerd { "\u{F06A9}" } else { "◆" }).to_string(),
-                tt.purple,
-            ),
-            Pane::Websocket(_) => ((if nerd { "\u{F0317}" } else { "◇" }).to_string(), tt.teal),
-            Pane::SpendReport(_) => (
-                (if nerd { "\u{F01C2}" } else { "$" }).to_string(),
-                tt.orange,
-            ),
-            Pane::Mount(_) => ((if nerd { "\u{F0BD3}" } else { "M" }).to_string(), tt.cyan),
-            Pane::CloudAgentRun(_) => ((if nerd { "\u{F0956}" } else { "☁" }).to_string(), tt.blue),
-            Pane::NewCloudAgentWizard(_) => {
-                ((if nerd { "\u{F0FB1}" } else { "+" }).to_string(), tt.green)
-            }
-            Pane::NewCloudRunWizard(_) => {
-                ((if nerd { "\u{F0FB1}" } else { "+" }).to_string(), tt.cyan)
-            }
-        };
-        // Build the chip inputs from pane state — one spec, one
-        // painter across both strips.
-        let diag = diag_chips[i].clone();
-        let is_pinned = matches!(pane, Pane::Editor(b) if b.is_pinned);
-        let is_preview = matches!(pane, Pane::Editor(b) if b.is_preview)
-            || matches!(pane, Pane::Request(rp) if rp.is_preview);
-        let verb_split = if matches!(pane, Pane::Request(_)) {
-            split_http_verb(&name)
-        } else {
-            None
-        };
-        let inputs = TabChipInputs {
-            id: i,
-            glyph,
-            icon_color,
-            name: name.clone(),
-            is_active: active,
-            is_dirty: pane.is_dirty(),
-            is_pinned,
-            is_preview,
-            is_hovered: app.hovered_bufferline_tab == Some(i),
-            diag_chip: diag,
-            verb_split,
-            // Top bufferline shows the whole title (labels[i] is
-            // pre-clipped by `tab_labels` for ambiguity handling);
-            // a large cap here means "trust the caller".
-            name_cap: 64,
-        };
-        let avail = inner_right.saturating_sub(x);
-        let Some((chip_spans, cells)) = tab_chip_spans(&inputs, tt.bg_darker, avail, nerd) else {
-            overflow_right = true;
-            break;
-        };
-        // Precise width check — the previous check was
-        // approximate (`5 + name` vs the actual `7 + name`),
-        // causing scroll drift. `tab_chip_spans` returns the
-        // truthful width.
-        if x + cells > inner_right {
-            overflow_right = true;
-            break;
-        }
-        last_drawn = vis_pos;
-        spans.extend(chip_spans);
-        app.rects.bufferline_tabs.push((
-            Rect {
-                x,
-                y: area.y,
-                width: cells,
-                height: 1,
-            },
-            i,
-        ));
-        // Close target: last 2 cells (badge + trailing pad),
-        // registered for every chip (pinned/dirty tabs also get
-        // one so bulk close still fires — matches previous
-        // behavior).
-        if cells >= 2 {
-            app.rects.bufferline_tab_close.push((
-                Rect {
-                    x: x + cells - 2,
-                    y: area.y,
-                    width: 2,
-                    height: 1,
-                },
-                i,
-            ));
-        }
-        x += cells;
-        // 1-cell strip-bg separator between chips.
-        if vis_pos + 1 < visible.len() {
-            spans.push(Span::styled(" ", Style::default().bg(tt.bg_darker)));
-            x += 1;
-        }
-    }
-    if visible.is_empty() {
-        // qa-feature 2026-06-30 — "no buffers" is misleading when
-        // a non-bufferline pane (GitGraph / Pty) is the only thing
-        // open. Show a hint describing the pane instead.
-        let hint = match app.active.and_then(|i| app.panes.get(i)) {
-            Some(Pane::GitGraph(_)) => "  git graph ",
-            Some(Pane::Pty(_)) => "  terminal ",
-            _ => "  no buffers ",
-        };
-        spans.push(Span::styled(
-            hint,
-            Style::default()
-                .fg(theme::cur().grey_fg)
-                .bg(theme::cur().bg_darker),
-        ));
-        x += hint.chars().count() as u16;
-    }
-    // Inline `+` chip just past the last tab — mirrors browser tab
-    // strips (Chrome / Firefox / Safari). Appears only when at
-    // least one Request pane exists so we don't clutter the strip
-    // when there's nothing to add-more-of. Clicking it opens a
-    // fresh Request pane. The far-right `bufferline_new_tab_button`
-    // still exists and creates a new tab-page (window / split).
-    let any_request_pane = app.panes.iter().any(|p| matches!(p, Pane::Request(_)));
-    if any_request_pane && x + 3 <= inner_right {
-        let plus_glyph = if nerd { "\u{F0415}" } else { "+" };
-        spans.push(Span::styled(
-            format!(" {plus_glyph} "),
-            Style::default()
-                .fg(theme::cur().green)
-                .bg(theme::cur().bg_darker)
-                .add_modifier(Modifier::BOLD),
-        ));
-        app.rects.bufferline_new_request_button = Some(Rect {
-            x,
-            y: area.y,
-            width: 3,
-            height: 1,
-        });
-        x += 3;
-    }
-    // Are there tabs past the right edge? (Either we broke out of the render
-    // loop, or there are tabs after the last one we drew that we never reached.)
-    let more_right = overflow_right || (last_drawn + 1 < visible.len());
-    // qa-feature 2026-07-02 — fill the gap up to the paired-arrow
-    // cluster, then paint `‹` and `›` side-by-side.
-    let fill_end = inner_right;
-    if x < fill_end {
-        spans.push(Span::styled(
-            " ".repeat((fill_end - x) as usize),
-            Style::default().bg(theme::cur().bg_darker),
-        ));
-    }
-    // Left arrow (paints at inner_right..inner_right+3). Only rendered
-    // when there's actual overflow on that side — the 3-cell footprint
-    // is still reserved by the layout so tabs don't jitter when the
-    // arrow appears / disappears, but idle chrome stays quiet.
-    let left_enabled = first_visible > 0;
-    if left_enabled {
-        spans.push(Span::styled(
-            " ‹ ",
-            Style::default()
-                .fg(theme::cur().blue)
-                .bg(theme::cur().bg_darker)
-                .add_modifier(Modifier::BOLD),
-        ));
-        app.rects.bufferline_overflow_left = Some(ratatui::layout::Rect {
-            x: inner_right,
-            y: area.y,
-            width: 3,
-            height: 1,
-        });
-    } else {
-        spans.push(Span::styled(
-            "   ",
-            Style::default().bg(theme::cur().bg_darker),
-        ));
-        app.rects.bufferline_overflow_left = None;
-    }
-    // Right arrow (paints at inner_right+3..inner_right+6).
-    if more_right {
-        spans.push(Span::styled(
-            " › ",
-            Style::default()
-                .fg(theme::cur().blue)
-                .bg(theme::cur().bg_darker)
-                .add_modifier(Modifier::BOLD),
-        ));
-        app.rects.bufferline_overflow_right = Some(ratatui::layout::Rect {
-            x: inner_right + 3,
-            y: area.y,
-            width: 3,
-            height: 1,
-        });
-    } else {
-        spans.push(Span::styled(
-            "   ",
-            Style::default().bg(theme::cur().bg_darker),
-        ));
-        app.rects.bufferline_overflow_right = None;
-    }
-    let _ = last_drawn;
-
-    // Right cluster (launcher icons, `+`, TABS chips, theme
-    // toggle, close) lives on the palette-bar chrome row.
-    // Bufferline paints the file-tab strip + the H/V split
-    // buttons at the right end.
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
-    // #polish 2026-07-06 — paint the mode chip (Preview / Edit)
-    // in the gap between the tab-scroll cluster and the split
-    // buttons. It sits to the LEFT of the terminal icon.
-    if let Some((label, kind, pid)) = mode_chip {
+/// New (2026-07-18) — extracted from the tab-painting body of
+/// `draw` so it can be called directly by the one-tab-type
+/// short-circuit path. Paints the markdown mode-toggle chip
+/// (Preview / Edit) in front of the launcher cluster, then the
+/// cluster itself. Everything else in the old draw was tied to
+/// the top tab strip.
+fn paint_mode_chip_and_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
+    // Mode chip — sits immediately left of the launcher cluster.
+    let cluster_w = split_buttons_width(app);
+    if let Some((label, kind, pid)) = mode_chip_for_active(app) {
         let chip_w = label.chars().count() as u16;
-        let split_w = split_buttons_width(app);
-        let chip_x = area.x + area.width.saturating_sub(split_w + chip_w);
-        let chip_rect = Rect {
-            x: chip_x,
-            y: area.y,
-            width: chip_w,
-            height: 1,
-        };
-        let (fg, bg) = match kind {
-            ModeChipKind::EditorMd => (theme::cur().bg_darker, theme::cur().purple),
-            ModeChipKind::PreviewMd => (theme::cur().bg_darker, theme::cur().blue),
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                label.to_string(),
-                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-            ))),
-            chip_rect,
-        );
-        match kind {
-            ModeChipKind::EditorMd => app.rects.editor_md_preview_buttons.push((chip_rect, pid)),
-            ModeChipKind::PreviewMd => app.rects.md_preview_edit_buttons.push((chip_rect, pid)),
+        if area.width >= cluster_w + chip_w {
+            let chip_rect = Rect {
+                x: area.x + area.width - cluster_w - chip_w,
+                y: area.y,
+                width: chip_w,
+                height: 1,
+            };
+            let (fg, bg) = match kind {
+                ModeChipKind::EditorMd => (theme::cur().bg_darker, theme::cur().purple),
+                ModeChipKind::PreviewMd => (theme::cur().bg_darker, theme::cur().blue),
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    label.to_string(),
+                    Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+                ))),
+                chip_rect,
+            );
+            match kind {
+                ModeChipKind::EditorMd => {
+                    app.rects.editor_md_preview_buttons.push((chip_rect, pid))
+                }
+                ModeChipKind::PreviewMd => app.rects.md_preview_edit_buttons.push((chip_rect, pid)),
+            }
         }
     }
     paint_split_buttons(frame, app, area);
@@ -1620,6 +945,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
+    #[allow(dead_code)]
     fn ed(path: PathBuf) -> Pane {
         let b = Buffer::open(&path, &Config::default()).unwrap();
         Pane::Editor(b)
@@ -1664,60 +990,6 @@ mod tests {
             source: None,
         };
         assert_eq!(diag_chip_for(&mk(vec![warn(), warn(), err])), "\u{2717}1");
-    }
-
-    #[test]
-    fn disambiguates_only_when_colliding() {
-        let d = tempfile::tempdir().unwrap();
-        let ws = d.path();
-        fs::create_dir(ws.join("git")).unwrap();
-        fs::create_dir(ws.join("ai")).unwrap();
-        fs::write(ws.join("git").join("mod.rs"), "// git\n").unwrap();
-        fs::write(ws.join("ai").join("mod.rs"), "// ai\n").unwrap();
-        fs::write(ws.join("lib.rs"), "// lib\n").unwrap();
-        let panes = vec![
-            ed(ws.join("git").join("mod.rs")),
-            ed(ws.join("ai").join("mod.rs")),
-            ed(ws.join("lib.rs")),
-        ];
-        let labels = tab_labels(&panes);
-        assert_eq!(labels[0], "git/mod.rs");
-        assert_eq!(labels[1], "ai/mod.rs");
-        assert_eq!(labels[2], "lib.rs");
-    }
-
-    /// Render-assertion: paint the real `draw` into a `TestBackend` and
-    /// check both open buffers' tab labels actually land on the strip.
-    #[test]
-    fn draw_paints_open_buffer_tabs() {
-        use ratatui::Terminal;
-        use ratatui::backend::TestBackend;
-
-        let d = tempfile::tempdir().unwrap();
-        let ws = d.path().to_path_buf();
-        fs::write(ws.join("alpha.txt"), "first\n").unwrap();
-        fs::write(ws.join("beta.txt"), "second\n").unwrap();
-        // vim input_style so both opens produce pinned tabs — under
-        // standard mode the second open would replace alpha's preview
-        // and the bufferline would only show beta.
-        let mut cfg = Config::default();
-        cfg.editor.input_style = "vim".to_string();
-        let mut app = App::new(ws.clone(), cfg).unwrap();
-        app.open_path(&ws.join("alpha.txt"));
-        app.open_path(&ws.join("beta.txt"));
-
-        let mut term = Terminal::new(TestBackend::new(120, 1)).unwrap();
-        term.draw(|f| draw(f, &mut app, f.area())).unwrap();
-        let buf = term.backend().buffer();
-        let row: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
-        assert!(
-            row.contains("alpha.txt"),
-            "tab strip missing alpha.txt: {row:?}"
-        );
-        assert!(
-            row.contains("beta.txt"),
-            "tab strip missing beta.txt: {row:?}"
-        );
     }
 
     // 2026-06-22 — full-or-hidden cluster-mode picker tests.

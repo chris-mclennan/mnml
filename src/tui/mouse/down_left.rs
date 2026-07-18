@@ -1274,6 +1274,20 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_shell();
         return;
     }
+    // one-tab-type 2026-07-18 — `+` chip in a per-leaf tab strip.
+    // Click → focus that leaf + open the file picker to add another
+    // tab in the same leaf.
+    if let Some(&(_, leaf_active)) = app
+        .rects
+        .split_tab_plus_buttons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.active = Some(leaf_active);
+        app.focus = crate::focus::Focus::Pane;
+        crate::command::run("picker.files", app);
+        return;
+    }
     // 2026-06-22 — per-split split-editor buttons at the right of
     // the strip. Focus the clicked leaf's active pane, then dispatch
     // split_active(dir). 2026-07-18 — when there's no active pane
