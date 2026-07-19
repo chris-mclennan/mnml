@@ -20,13 +20,13 @@ use crate::app::App;
 use crate::pane::Pane;
 use crate::ui::theme;
 
-/// Height in rows for one session tab. 3 rows: name + 2 lines
+/// Height in rows for one session tab. 4 rows: name + 3 lines
 /// of session summary. Old row 2 (⎇ branch · cwd) still lives in
 /// the hover tooltip — user report 2026-07-18: "not sure line 2
 /// is that helpful showing branch and repo, maybe we could still
-/// show that but only on hover" — but the summary now gets two
-/// rows because the single-line row read as too short.
-const TAB_H: u16 = 3;
+/// show that but only on hover". Card grew from 2 → 3 → 4 rows
+/// across follow-ups so the summary has real room.
+const TAB_H: u16 = 4;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
@@ -319,7 +319,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (summary_lines, summary_color): (Vec<String>, _) = if s.is_exited() {
             (vec!["exited".to_string()], t.red)
         } else {
-            let lines = s.session_summary_lines(2);
+            let lines = s.session_summary_lines(3);
             if lines.is_empty() {
                 (vec!["—".to_string()], t.grey)
             } else {
@@ -342,7 +342,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // the &Pane borrow and re-borrow App mutably for the
         // session_ports cache lookup.
         let pty_pid_opt = s.pid();
-        for (row_off, line_text) in summary_lines.iter().enumerate().take(2) {
+        for (row_off, line_text) in summary_lines.iter().enumerate().take(3) {
             let truncated = truncate_to_row(line_text);
             let mut row_spans = vec![
                 Span::styled("  ", Style::default().bg(bg)),
