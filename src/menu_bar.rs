@@ -396,6 +396,13 @@ fn terminal_menu() -> MenuDef {
 }
 
 fn window_menu() -> MenuDef {
+    // User request 2026-07-19: the Window menu should include a
+    // Split section modelled on macOS's Move & Resize submenu —
+    // splits (right / down / close / equalize), directional focus
+    // (halves), and the AI-grid Layout toggle. Menu bar's MenuItem
+    // enum only supports flat items (no submenu nesting yet), so
+    // group by Separator instead. Every action maps to an existing
+    // palette command so no new command wiring is needed here.
     MenuDef {
         label: "Window",
         items: vec![
@@ -410,6 +417,63 @@ fn window_menu() -> MenuDef {
             MenuItem::Action {
                 label: "Pin / unpin tab",
                 command_id: "buffer.pin_toggle",
+            },
+            MenuItem::Separator,
+            // Split ── side by side / stacked / close / equalize.
+            MenuItem::Action {
+                label: "Split right",
+                command_id: "view.split_right",
+            },
+            MenuItem::Action {
+                label: "Split down",
+                command_id: "view.split_down",
+            },
+            MenuItem::Action {
+                label: "Close split",
+                command_id: "view.close_split",
+            },
+            MenuItem::Action {
+                label: "Equalize splits",
+                command_id: "view.equalize_splits",
+            },
+            MenuItem::Separator,
+            // Resize the active split.
+            MenuItem::Action {
+                label: "Grow split width",
+                command_id: "view.split_grow_width",
+            },
+            MenuItem::Action {
+                label: "Grow split height",
+                command_id: "view.split_grow_height",
+            },
+            MenuItem::Separator,
+            // Focus a neighbouring split — the "Halves" of macOS.
+            MenuItem::Action {
+                label: "Focus split left",
+                command_id: "view.focus_left",
+            },
+            MenuItem::Action {
+                label: "Focus split right",
+                command_id: "view.focus_right",
+            },
+            MenuItem::Action {
+                label: "Focus split up",
+                command_id: "view.focus_up",
+            },
+            MenuItem::Action {
+                label: "Focus split down",
+                command_id: "view.focus_down",
+            },
+            MenuItem::Separator,
+            // AI layout mode toggle (grid ↔ tabs). Same command
+            // the palette-bar AI chip menu fires.
+            MenuItem::Action {
+                label: "AI layout: Grid (splits)",
+                command_id: "view.ai_layout_grid",
+            },
+            MenuItem::Action {
+                label: "AI layout: Tabs (stack in leaf)",
+                command_id: "view.ai_layout_tabs",
             },
             MenuItem::Separator,
             MenuItem::Action {
