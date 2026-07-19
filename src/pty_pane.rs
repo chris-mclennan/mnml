@@ -695,18 +695,34 @@ impl PtySession {
     }
 }
 
+/// Flatten a single grid row to a plain string, using a space
+/// for cells whose `text` is empty (styled blanks). Without this,
+/// two adjacent styled runs with an empty spacer cell between
+/// them (e.g. `"auto mode"` `" "` `"on"`) render as `"automodeon"`
+/// — which broke `is_footer_chip` matching after a user report:
+/// row 2 read `"automodeon (shift+tabtocycle)·↵foragents"` even
+/// with the footer-chip filter in place.
+fn row_to_string(grid: &RenderGrid, row: u16) -> String {
+    let mut line = String::new();
+    for col in 0..grid.cols {
+        if let Some(c) = grid.cell(row, col) {
+            if c.text.is_empty() {
+                line.push(' ');
+            } else {
+                line.push_str(&c.text);
+            }
+        }
+    }
+    line
+}
+
 fn summarize_grid(grid: &RenderGrid) -> Option<String> {
     let mut activity: Option<String> = None;
     let mut fallback: Option<String> = None;
     // Bottom-up scan — the latest content and the status line both
     // live near the bottom.
     for row in (0..grid.rows).rev() {
-        let mut line = String::new();
-        for col in 0..grid.cols {
-            if let Some(c) = grid.cell(row, col) {
-                line.push_str(&c.text);
-            }
-        }
+        let line = row_to_string(grid, row);
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -758,12 +774,7 @@ fn summarize_grid_lines(grid: &RenderGrid, max: usize) -> Vec<String> {
     }
     let mut out: Vec<String> = Vec::with_capacity(max);
     for row in (0..grid.rows).rev() {
-        let mut line = String::new();
-        for col in 0..grid.cols {
-            if let Some(c) = grid.cell(row, col) {
-                line.push_str(&c.text);
-            }
-        }
+        let line = row_to_string(grid, row);
         let trimmed = line.trim();
         if trimmed.is_empty()
             || is_chrome_line(trimmed)
