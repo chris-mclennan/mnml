@@ -145,6 +145,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // every push survives the frame, no stale leftovers.
     app.rects.integration_icon_rects.clear();
     app.rects.launcher_icon_rects.clear();
+    // 2026-07-19 — was only cleared inside `sessions_panel::draw`,
+    // so switching away from the Sessions panel left stale
+    // session-tab rects intercepting right-clicks. Symptom: user
+    // couldn't right-click the Claude Code row in the Integrations
+    // panel because a stale session_tabs rect for a Claude Code
+    // pane was checked first in `right_click.rs` and captured the
+    // event, opening the session menu on the wrong pane (or
+    // silently returning). Clear here so the vec only ever holds
+    // this-frame rects.
+    app.rects.session_tabs.clear();
+    app.rects.session_new_chip = None;
     // cloud-power-user F1 — same pattern. Was cleared per-pane,
     // so the second CloudAgentRun pane in a split wiped the first
     // pane's chip rects.
@@ -3418,36 +3429,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // 2026-07-09 — `+ Add integration` chip at the bottom of
-    // the panel. Click → open the sibling install picker
-    // (`open_sibling_install_picker`). Same idiom as the
-    // `+ New session` chip on the Sessions panel and the
-    // `+ New note` chip on the Notes panel — a discoverable
-    // entry point that was previously palette-only.
-    let last_row = area.y + area.height.saturating_sub(1);
-    if last_row > area.y + 4 {
-        let add_rect = Rect {
-            x: area.x,
-            y: last_row,
-            width: area.width,
-            height: 1,
-        };
-        let plus = if nerd { "\u{ea60} " } else { "+ " };
-        frame.render_widget(
-            Paragraph::new(ratatui::text::Line::from(vec![
-                Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(
-                    format!("{plus}Add integration"),
-                    Style::default()
-                        .fg(t.green)
-                        .bg(bg)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])),
-            add_rect,
-        );
-        app.rects.integrations_add_chip = Some(add_rect);
-    }
+    // 2026-07-19 — the `+ Add integration` chip that used to
+    // paint here is retired. The panel now has an explicit
+    // `Marketplace` tab at the top of the header that lists
+    // everything installable — the chip was a duplicate entry
+    // point. `integrations_add_chip` rect stays in `PaneRects`
+    // as None so no click routes to it.
+    let _ = area; // width no longer consumed here
 }
 
 /// Paint a multi-tab strip above an in-split leaf, one chip per
