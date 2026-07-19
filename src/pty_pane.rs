@@ -899,6 +899,8 @@ fn is_footer_chip(s: &str) -> bool {
     let lower = s.to_ascii_lowercase();
     const MARKERS: &[&str] = &[
         "auto mode",
+        "manual mode",
+        "plan mode",
         "shift+tab to cycle",
         "shift+tab to change",
         "for agents",
@@ -916,6 +918,12 @@ fn is_footer_chip(s: &str) -> bool {
         "context left until auto-compact",
         "context left",
         "shortcuts",
+        // Startup-banner "action needed" line — the user was
+        // seeing this leak through as row 4 of the card. It's
+        // persistent chrome, not per-session context.
+        "mcp server needs authentication",
+        "mcp servers need authentication",
+        "run /mcp",
     ];
     MARKERS.iter().any(|m| lower.contains(m))
 }
@@ -1677,6 +1685,13 @@ mod tests {
         // The confirmation-menu footer added 2026-07-18.
         assert!(is_footer_chip("Esc to cancel · Tab to amend"));
         assert!(is_footer_chip("Tab to amend"));
+        // Startup-banner chrome — user screenshot 2026-07-18.
+        assert!(is_footer_chip("manual mode on"));
+        assert!(is_footer_chip("plan mode on (shift+tab to cycle)"));
+        assert!(is_footer_chip(
+            "⚠ 1 MCP server needs authentication · run /mcp"
+        ));
+        assert!(is_footer_chip("run /mcp"));
         assert!(!is_footer_chip("Sautéed for 27s"));
         assert!(!is_footer_chip("● I'll pull up TE-1234 from Jira."));
         // "2. Yes, and don't ask again ..." is menu content, not
