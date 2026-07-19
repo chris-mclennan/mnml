@@ -2291,6 +2291,15 @@ impl Config {
                 if icon.id == "codex" && icon.glyph != "\u{F1E01}" {
                     icon.glyph = "\u{F1E01}".to_string();
                 }
+                // HTTP row — cloud (U+F0590 nf-md-web) → blue
+                // paper-plane (U+F1D8 nf-fa-paper_plane). The
+                // family_catalog default was updated 2026-07-19 but
+                // saved user configs still carry the old cloud glyph
+                // (user asked "3+ times, whats wrong"). Aggressive
+                // flip so any non-F1D8 http glyph gets corrected.
+                if icon.id == "http" && icon.glyph != "\u{F1D8}" {
+                    icon.glyph = "\u{F1D8}".to_string();
+                }
                 // Amplify legacy codicon → baked AWS SVG at F1B00.
                 if icon.id == "amplify" && icon.glyph == "\u{F087D}" {
                     icon.glyph = "\u{F1B00}".to_string();
