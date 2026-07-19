@@ -93,6 +93,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         BuilderField::WidthFrac,
         BuilderField::HeightFrac,
         BuilderField::CenterFrac,
+        BuilderField::CenterXFrac,
     ]
     .iter()
     .enumerate()
@@ -186,7 +187,8 @@ fn field_label(f: BuilderField) -> &'static str {
         BuilderField::Codepoint => "codepoint",
         BuilderField::WidthFrac => "width",
         BuilderField::HeightFrac => "height",
-        BuilderField::CenterFrac => "center",
+        BuilderField::CenterFrac => "center Y",
+        BuilderField::CenterXFrac => "center X",
     }
 }
 
@@ -197,6 +199,7 @@ fn is_cycled_field(f: BuilderField) -> bool {
             | BuilderField::WidthFrac
             | BuilderField::HeightFrac
             | BuilderField::CenterFrac
+            | BuilderField::CenterXFrac
     )
 }
 
@@ -277,6 +280,9 @@ fn value_span(
         }
         BuilderField::CenterFrac => {
             vec![Span::styled(format!("{:.2}", state.center_frac), normal)]
+        }
+        BuilderField::CenterXFrac => {
+            vec![Span::styled(format!("{:.2}", state.center_x_frac), normal)]
         }
     }
 }

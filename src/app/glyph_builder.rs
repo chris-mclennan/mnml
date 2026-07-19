@@ -82,7 +82,7 @@ impl App {
 
         // 1. User meta — most recent per-bake state wins.
         let meta = load_meta();
-        let (svg, name, codepoint_hex, width, height, center, focused_field) =
+        let (svg, name, codepoint_hex, width, height, center, center_x, focused_field) =
             if let Some(entry) = meta.glyphs.iter().find(|g| g.codepoint == cp_hex) {
                 (
                     entry.svg.clone(),
@@ -91,6 +91,7 @@ impl App {
                     entry.width_frac,
                     entry.height_frac,
                     entry.center_frac,
+                    entry.center_x_frac,
                     BuilderField::WidthFrac,
                 )
             } else if let Some(bi) = builtin_for_codepoint(cp) {
@@ -107,6 +108,7 @@ impl App {
                         bi.width_frac,
                         bi.height_frac,
                         bi.center_frac,
+                        bi.center_x_frac,
                         BuilderField::WidthFrac,
                     ),
                     None => (
@@ -116,6 +118,7 @@ impl App {
                         bi.width_frac,
                         bi.height_frac,
                         bi.center_frac,
+                        bi.center_x_frac,
                         BuilderField::Path,
                     ),
                 }
@@ -139,6 +142,7 @@ impl App {
                     1.20,
                     0.85,
                     0.36,
+                    0.5,
                     BuilderField::Path,
                 )
             };
@@ -158,6 +162,7 @@ impl App {
             width_frac: width,
             height_frac: height,
             center_frac: center,
+            center_x_frac: center_x,
             focused_field,
             preview_png: None,
             preview_signature: None,
@@ -330,8 +335,8 @@ impl App {
         // Pass the tuned width/height/center as extras so the panel's
         // preview matches the baked glyph.
         let glyph_spec = format!(
-            "{svg}:{cp:04X}:{name}:width={:.2}:height={:.2}:center={:.2}",
-            s.width_frac, s.height_frac, s.center_frac
+            "{svg}:{cp:04X}:{name}:width={:.2}:height={:.2}:center={:.2}:x_center={:.2}",
+            s.width_frac, s.height_frac, s.center_frac, s.center_x_frac
         );
         let profile = crate::pty_pane::BinaryProfile {
             label: format!("bake glyph U+{cp:04X}"),
@@ -359,6 +364,7 @@ impl App {
             width_frac: s.width_frac,
             height_frac: s.height_frac,
             center_frac: s.center_frac,
+            center_x_frac: s.center_x_frac,
         });
         // Copy the codepoint char to the clipboard so the user can
         // paste it into their integration config immediately.
@@ -418,7 +424,7 @@ impl App {
             self.toast("bake AI glyphs: BUILTIN_GLYPHS missing F1E00/F1E01");
             return;
         }
-        let mut resolved: Vec<(String, u32, &'static str, f32, f32, f32)> = Vec::new();
+        let mut resolved: Vec<(String, u32, &'static str, f32, f32, f32, f32)> = Vec::new();
         for g in &ai_glyphs {
             match resolve_builtin_svg(g.svg_relpath) {
                 Some(path) => resolved.push((
@@ -428,6 +434,7 @@ impl App {
                     g.width_frac,
                     g.height_frac,
                     g.center_frac,
+                    g.center_x_frac,
                 )),
                 None => {
                     self.toast(format!("bake AI glyphs: SVG not found — {}", g.svg_relpath));
@@ -469,15 +476,12 @@ impl App {
             "--output".to_string(),
             font_out.to_string_lossy().into_owned(),
         ];
-        for (svg, cp, name, w, h, c) in &resolved {
+        for (svg, cp, name, w, h, c, cx) in &resolved {
             args.push("--glyph".to_string());
             args.push(format!(
-                "{svg}:{cp:04X}:{name}:width={:.2}:height={:.2}:center={:.2}",
-                w, h, c
+                "{svg}:{cp:04X}:{name}:width={:.2}:height={:.2}:center={:.2}:x_center={:.2}",
+                w, h, c, cx
             ));
-            // Persist to meta so the per-glyph builder loads these
-            // defaults when the user opens "Edit Claude glyph" or
-            // "Edit Codex glyph".
             crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
                 codepoint: format!("{cp:04X}"),
                 name: name.to_string(),
@@ -485,6 +489,7 @@ impl App {
                 width_frac: *w,
                 height_frac: *h,
                 center_frac: *c,
+                center_x_frac: *cx,
             });
         }
         let profile = crate::pty_pane::BinaryProfile {

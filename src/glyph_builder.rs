@@ -38,6 +38,14 @@ pub enum BuilderField {
     /// Vertical center as a fraction of em. 0.36 = Latin cap-mid on
     /// JetBrainsMono NF (recommended default). ←→ cycles 0.02.
     CenterFrac,
+    /// Horizontal center as a fraction of the cell's advance width.
+    /// 0.5 = auto-center-on-bbox (dead middle of the cell); values
+    /// below shift the glyph LEFT, values above shift RIGHT.
+    /// ←→ cycles 0.02. Useful for SVGs with padded viewBoxes or
+    /// asymmetric content — e.g. the codex.svg viewBox starts at
+    /// x=175, so its content weight sits right-of-center under
+    /// the default auto-centering.
+    CenterXFrac,
 }
 
 /// Category range plan (matches `src/icon_catalog.rs`).
@@ -104,6 +112,10 @@ pub struct GlyphBuilderState {
     pub width_frac: f32,
     pub height_frac: f32,
     pub center_frac: f32,
+    /// Horizontal center as a fraction of cell-width. 0.5 =
+    /// auto-center on the glyph bbox (historical default).
+    /// 2026-07-19 user request.
+    pub center_x_frac: f32,
     pub focused_field: BuilderField,
     /// Cached rasterized preview PNG. Recomputed whenever a field
     /// that affects the preview changes (path, w/h/center).
@@ -136,7 +148,8 @@ pub struct PreviewSignature {
     pub path: String,
     pub w: u32, // bit-cast f32 (`to_bits`)
     pub h: u32,
-    pub c: u32,
+    pub c: u32,  // center_y
+    pub cx: u32, // center_x
 }
 
 impl Default for GlyphBuilderState {
@@ -149,6 +162,7 @@ impl Default for GlyphBuilderState {
             width_frac: 1.25,
             height_frac: 0.80,
             center_frac: 0.36,
+            center_x_frac: 0.5,
             focused_field: BuilderField::Path,
             preview_png: None,
             preview_signature: None,
@@ -177,6 +191,7 @@ impl GlyphBuilderState {
             w: self.width_frac.to_bits(),
             h: self.height_frac.to_bits(),
             c: self.center_frac.to_bits(),
+            cx: self.center_x_frac.to_bits(),
         }
     }
 
@@ -199,6 +214,9 @@ impl GlyphBuilderState {
             }
             BuilderField::CenterFrac => {
                 self.center_frac = (self.center_frac + 0.02 * delta as f32).clamp(0.2, 0.6);
+            }
+            BuilderField::CenterXFrac => {
+                self.center_x_frac = (self.center_x_frac + 0.02 * delta as f32).clamp(0.2, 0.8);
             }
             _ => {}
         }
@@ -400,6 +418,7 @@ pub fn rasterize(
     width_frac: f32,
     height_frac: f32,
     center_frac: f32,
+    center_x_frac: f32,
     target_w: u32,
     target_h: u32,
 ) -> Result<Vec<u8>, String> {
@@ -463,7 +482,14 @@ pub fn rasterize(
     let px_glyph_w = src_w * scale * px_per_unit;
     let px_glyph_h = src_h * scale * px_per_unit;
     let px_center_y = (1.0 - center_frac) * pixmap_h as f32;
-    let px_left = (pixmap_w as f32 - px_glyph_w) / 2.0;
+    // Horizontal: nudge from the pixmap's midpoint. The pixmap is
+    // 1.5× cell-width; center_x_frac=0.5 puts the glyph in the
+    // dead middle (historical auto-center behavior). Values <0.5
+    // shift LEFT, values >0.5 shift RIGHT. Delta from midpoint is
+    // proportional to (center_x_frac - 0.5) × CELL_W in em-units,
+    // scaled to pixmap pixels.
+    let px_nudge_x = (center_x_frac - 0.5) * CELL_W * px_per_unit;
+    let px_left = (pixmap_w as f32 - px_glyph_w) / 2.0 + px_nudge_x;
     let px_top = px_center_y - px_glyph_h / 2.0;
 
     let mut pixmap = Pixmap::new(pixmap_w, pixmap_h).ok_or("alloc pixmap")?;
@@ -509,6 +535,10 @@ pub struct BuiltinGlyph {
     pub width_frac: f32,
     pub height_frac: f32,
     pub center_frac: f32,
+    /// Horizontal center as a fraction of cell-width; 0.5 =
+    /// auto-center-on-bbox. Optional-esque — every BUILTIN_GLYPHS
+    /// entry supplies it; historical AWS defaults are all 0.5.
+    pub center_x_frac: f32,
 }
 
 /// mnml-shipped glyphs. Codepoints match `src/icon_catalog.rs`.
@@ -521,6 +551,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B01,
@@ -529,6 +560,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B02,
@@ -537,6 +569,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B03,
@@ -545,6 +578,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B04,
@@ -553,6 +587,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B05,
@@ -561,6 +596,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B06,
@@ -569,6 +605,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B07,
@@ -577,6 +614,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B08,
@@ -585,6 +623,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B09,
@@ -593,6 +632,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B0A,
@@ -601,6 +641,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1B0B,
@@ -609,6 +650,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,
+        center_x_frac: 0.5,
     },
     // AI range (F1E00-F1EFF). 2026-07-19 — user report: the
     // JBM-NF-patched F8B0/F8B1 glyphs render visibly higher than
@@ -625,6 +667,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.20,
         height_frac: 0.75,
         center_frac: 0.28,
+        center_x_frac: 0.5,
     },
     BuiltinGlyph {
         codepoint: 0xF1E01,
@@ -633,6 +676,7 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.20,
         height_frac: 0.75,
         center_frac: 0.28,
+        center_x_frac: 0.5,
     },
 ];
 
@@ -741,6 +785,15 @@ pub struct GlyphMeta {
     pub width_frac: f32,
     pub height_frac: f32,
     pub center_frac: f32,
+    /// Horizontal center as a fraction of cell-width. Defaults to
+    /// 0.5 (auto-center-on-bbox) when absent — TOML files written
+    /// before this field existed still deserialize cleanly.
+    #[serde(default = "default_center_x_frac")]
+    pub center_x_frac: f32,
+}
+
+fn default_center_x_frac() -> f32 {
+    0.5
 }
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -813,6 +866,7 @@ pub fn maybe_refresh_preview(state: &mut GlyphBuilderState, target_w: u32, targe
         state.width_frac,
         state.height_frac,
         state.center_frac,
+        state.center_x_frac,
         target_w,
         target_h,
     ) {

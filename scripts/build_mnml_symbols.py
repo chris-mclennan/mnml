@@ -176,11 +176,19 @@ def main() -> int:
         glyph.transform((scale, 0.0, 0.0, scale, 0.0, 0.0))
 
         bbox = glyph.boundingBox()
-        dx = -bbox[0] + (cell_w - (bbox[2] - bbox[0])) / 2
+        glyph_w = bbox[2] - bbox[0]
         glyph_h = bbox[3] - bbox[1]
-        # Center vertically at 0.36 * em ≈ Latin cap-height mid-point
-        # (cap ~720 for JetBrainsMono, mid = 360). Was 0.38 which sat
-        # the glyph visibly high compared to adjacent text.
+        # Horizontal: `x_center=0.5` (default) auto-centers the
+        # glyph bbox in the cell — historical behavior. Values
+        # <0.5 shift the glyph LEFT; >0.5 shift RIGHT. Nudge is
+        # (x_center - 0.5) × cell_w in em-units.
+        x_center_frac = float(extras.get("x_center", "0.5"))
+        auto_dx = -bbox[0] + (cell_w - glyph_w) / 2
+        nudge_dx = (x_center_frac - 0.5) * cell_w
+        dx = auto_dx + nudge_dx
+        # Vertical center at 0.36 * em ≈ Latin cap-height mid-point
+        # (cap ~720 for JetBrainsMono, mid = 360). Was 0.38 which
+        # sat the glyph visibly high compared to adjacent text.
         center_frac = float(extras.get("center", "0.36"))
         target_center = em * center_frac
         dy = target_center - (bbox[1] + glyph_h / 2.0)
