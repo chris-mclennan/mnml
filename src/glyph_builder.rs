@@ -440,7 +440,14 @@ impl GlyphBuilderState {
     pub fn cycle_field(&mut self, delta: isize) {
         use BuilderField::*;
         let order = [
-            Path, Category, Name, Codepoint, WidthFrac, HeightFrac, CenterFrac,
+            Path,
+            Category,
+            Name,
+            Codepoint,
+            WidthFrac,
+            HeightFrac,
+            CenterFrac,
+            CenterXFrac,
         ];
         let cur = order
             .iter()
