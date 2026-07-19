@@ -182,6 +182,13 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
             term.clear()?;
         }
         term.draw(|f| ui::draw(f, app))?;
+        // 2026-07-19 — record frame duration RIGHT after the draw
+        // completes. The previous recording point was at the bottom
+        // of the loop AFTER `event::poll(120ms)`, which included
+        // the idle poll wait as "frame time" — the stress meter
+        // was pinned red on any idle session (user report). Now
+        // it measures the actual tick+draw work.
+        app.record_frame_duration(frame_start.elapsed().as_millis());
         emit_pending_os_notifications(app, term.backend_mut())?;
         crate::app::dispatch::emit_image_placements(app);
         if let Some(ipc) = ipc.as_mut() {
@@ -299,8 +306,8 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                 _ => {}
             }
         }
-        // Frame-duration sample for the stress meter.
-        app.record_frame_duration(frame_start.elapsed().as_millis());
+        // (Frame-duration sample moved earlier — right after
+        // term.draw — so idle poll wait doesn't count as stress.)
     }
 
     if let Some(ipc) = ipc.as_mut() {

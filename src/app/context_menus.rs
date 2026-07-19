@@ -470,6 +470,25 @@ impl App {
             "Show manifest…",
             MenuAction::ShowIntegrationManifest(id.clone()),
         ));
+        // 2026-07-19 user request — Bake glyph directly from the
+        // integration chip. Opens the glyph builder pre-loaded at
+        // this chip's current codepoint (works for BUILTIN_GLYPHS
+        // entries + user-baked custom glyphs). Nerd Font glyphs
+        // land on a fresh mnml PUA codepoint per the builder's
+        // standard behavior.
+        if let Some(cp) = self
+            .config
+            .ui
+            .integration_icons
+            .get(icon_idx)
+            .and_then(|i| i.glyph.chars().next())
+            .map(|c| c as u32)
+        {
+            items.push(MenuItem::new(
+                "Bake / tune glyph…",
+                MenuAction::OpenGlyphBuilderForCp(cp),
+            ));
+        }
         items.push(MenuItem::new("Remove", MenuAction::RemoveIntegration(id)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
@@ -666,6 +685,17 @@ impl App {
         items.push(MenuItem::new(
             "Refresh tree",
             MenuAction::Command("tree.refresh"),
+        ));
+        // 2026-07-19 user request — Collapse all / Expand all at
+        // the workspace root menu. Same palette commands the
+        // keyboard nav uses.
+        items.push(MenuItem::new(
+            "Collapse all",
+            MenuAction::Command("tree.collapse_all"),
+        ));
+        items.push(MenuItem::new(
+            "Expand all",
+            MenuAction::Command("tree.expand_all"),
         ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }

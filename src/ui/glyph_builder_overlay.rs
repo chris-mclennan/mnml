@@ -127,37 +127,41 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
         let mut spans: Vec<Span<'static>> = Vec::new();
         spans.push(Span::styled(prefix, Style::default().fg(t.cyan)));
         spans.push(Span::styled(format!("{label:<11}"), label_style));
+        // Path row gets a `[Browse]` chip painted INLINE — right
+        // after the label, before the value — so it always sits
+        // near where the user's reading and is easy to hit.
+        // Anchored-to-the-right placement made it easy to miss on
+        // wide modals (user report 2026-07-19: "why is browse so
+        // far to the right and i can't click it").
+        let browse_chip_start = if matches!(field, BuilderField::Path) {
+            let chip_label = "[Browse]";
+            spans.push(Span::styled(
+                format!("{chip_label} "),
+                Style::default()
+                    .fg(t.cyan)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            ));
+            // Chip x = the column right after label prefix (2 for
+            // prefix + 11 for padded label = 13 chars in).
+            let chip_x = row_rect.x + 2 + 11;
+            let chip_w = chip_label.chars().count() as u16;
+            Some((chip_x, chip_w))
+        } else {
+            None
+        };
         spans.extend(value_line);
         if is_focused && is_cycled_field(*field) {
             spans.push(Span::styled("  ←→", Style::default().fg(t.comment)));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
-        // Path row gets a `[Browse]` chip anchored to the right edge —
-        // click it to open a fuzzy picker over every `.svg` file in
-        // the workspace. Registered as a mouse target regardless of
-        // whether the field is focused. 2026-07-19 user request.
-        if matches!(field, BuilderField::Path) {
-            let chip_label = " [Browse] ";
-            let chip_w = chip_label.chars().count() as u16;
-            if row_rect.width > chip_w + 2 {
-                let chip_rect = Rect {
-                    x: row_rect.x + row_rect.width - chip_w - 1,
-                    y: row_rect.y,
-                    width: chip_w,
-                    height: 1,
-                };
-                frame.render_widget(
-                    Paragraph::new(Line::from(Span::styled(
-                        chip_label,
-                        Style::default()
-                            .fg(t.fg)
-                            .bg(t.bg2)
-                            .add_modifier(Modifier::BOLD),
-                    ))),
-                    chip_rect,
-                );
-                app.rects.glyph_builder_browse_chip = Some(chip_rect);
-            }
+        if let Some((chip_x, chip_w)) = browse_chip_start {
+            let chip_rect = Rect {
+                x: chip_x,
+                y: row_rect.y,
+                width: chip_w,
+                height: 1,
+            };
+            app.rects.glyph_builder_browse_chip = Some(chip_rect);
         }
     }
 
