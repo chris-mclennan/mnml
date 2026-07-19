@@ -833,6 +833,8 @@ fn is_footer_chip(s: &str) -> bool {
         "for interrupt",
         "esc to interrupt",
         "esc to close",
+        "esc to cancel",
+        "tab to amend",
         "for compact",
         "context left until auto-compact",
         "context left",
@@ -1595,8 +1597,14 @@ mod tests {
         assert!(is_footer_chip("? for shortcuts"));
         assert!(is_footer_chip("Context left until auto-compact: 43%"));
         assert!(is_footer_chip("Shift+Tab to change mode"));
+        // The confirmation-menu footer added 2026-07-18.
+        assert!(is_footer_chip("Esc to cancel · Tab to amend"));
+        assert!(is_footer_chip("Tab to amend"));
         assert!(!is_footer_chip("Sautéed for 27s"));
         assert!(!is_footer_chip("● I'll pull up TE-1234 from Jira."));
+        // "2. Yes, and don't ask again ..." is menu content, not
+        // chrome — must NOT be filtered.
+        assert!(!is_footer_chip("2. Yes, and don't ask again for plugin"));
     }
 
     #[test]

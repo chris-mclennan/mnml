@@ -319,7 +319,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (summary_lines, summary_color): (Vec<String>, _) = if s.is_exited() {
             (vec!["exited".to_string()], t.red)
         } else {
-            let lines = s.session_summary_lines(3);
+            let mut lines = s.session_summary_lines(3);
+            // `session_summary_lines` returns most-recent-first (it
+            // scans the grid bottom-up). Reverse so the card reads
+            // top-to-bottom in the same order the pty does — e.g.
+            // "1. Yes" above "2. Yes..." above "3. No" instead of
+            // the inverted "3. No / 2. Yes..." user report.
+            lines.reverse();
             if lines.is_empty() {
                 (vec!["—".to_string()], t.grey)
             } else {
