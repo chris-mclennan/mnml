@@ -904,7 +904,8 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     let total_w = SPLIT_BUTTONS_W + (ai_kinds.len() as u16) * 3;
     let mut bx = area.x + area.width - total_w;
     for kind in &ai_kinds {
-        let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(kind, &t);
+        let (ai_glyph, ai_fallback, ai_fg) =
+            theme::ai_chip_parts_for(kind, &t, app.config.ui.ai_chip_use_mnml_glyphs);
         let glyph = if nerd { ai_glyph } else { ai_fallback };
         let ai_rect = Rect {
             x: bx,

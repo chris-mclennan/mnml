@@ -833,6 +833,20 @@ pub struct UiConfig {
     /// Right-click the palette-bar AI chip to switch at runtime.
     pub ai_layout_mode: String,
 
+    /// Prefer the mnml-owned F1E00/F1E01 AI chip glyphs (baked
+    /// into `MnmlSymbols.ttf` via `integrations.bake_ai_glyphs`)
+    /// over the JBM-NF-patched F8B0/F8B1 defaults. The mnml
+    /// copies have a tunable `center_frac` so the vertical
+    /// baseline can actually be corrected — F8B0's drift is
+    /// baked into the user's Nerd Font and can't be fixed at
+    /// the codepoint layer.
+    ///
+    /// Off by default so users see SOMETHING (F8B0/F8B1 render
+    /// out-of-the-box). Turn on after running the bake + verifying
+    /// the mnml chips render — right-click the AI chip → "Use
+    /// mnml AI glyphs (baked)" toggle.
+    pub ai_chip_use_mnml_glyphs: bool,
+
     /// Auto-switch the activity panel to Sessions when a Claude
     /// Code / Codex Pty pane becomes active — via tab click,
     /// sidebar chip, split-strip cluster chip, `+ New session`,
@@ -1572,6 +1586,7 @@ impl Default for Config {
                 // `[ui] tab_bar_ai_icon = "both"` in config.
                 tab_bar_ai_icon: "claude_code".to_string(),
                 ai_layout_mode: "grid".to_string(),
+                ai_chip_use_mnml_glyphs: false,
                 auto_show_sessions_on_ai_activate: true,
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
@@ -1880,6 +1895,9 @@ struct RawUi {
     /// See [`UiConfig::ai_layout_mode`].
     #[serde(default)]
     ai_layout_mode: Option<String>,
+    /// See [`UiConfig::ai_chip_use_mnml_glyphs`].
+    #[serde(default)]
+    ai_chip_use_mnml_glyphs: Option<bool>,
     /// See [`UiConfig::auto_show_sessions_on_ai_activate`].
     #[serde(default)]
     auto_show_sessions_on_ai_activate: Option<bool>,
@@ -2316,6 +2334,9 @@ impl Config {
             if matches!(normalized.as_str(), "grid" | "tabs") {
                 self.ui.ai_layout_mode = normalized;
             }
+        }
+        if let Some(b) = raw.ui.ai_chip_use_mnml_glyphs {
+            self.ui.ai_chip_use_mnml_glyphs = b;
         }
         if let Some(b) = raw.ui.auto_show_sessions_on_ai_activate {
             self.ui.auto_show_sessions_on_ai_activate = b;

@@ -2175,6 +2175,22 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.bake_ai_glyphs_default(),
         },
         Command {
+            id: "view.ai_chip_toggle_font",
+            title: "Toggle AI chip font (JBM-NF patched ↔ mnml-baked)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let now = !app.config.ui.ai_chip_use_mnml_glyphs;
+                app.config.ui.ai_chip_use_mnml_glyphs = now;
+                let msg = if now {
+                    "AI chip font: mnml-baked (F1E00/F1E01) — bake first if you haven't"
+                } else {
+                    "AI chip font: JBM-NF patched (F8B0/F8B1)"
+                };
+                app.toast(msg);
+            },
+        },
+        Command {
             id: "integrations.edit_claude_glyph",
             title: "Integrations: open glyph builder for Claude Code (F1E00)",
             group: "integrations",

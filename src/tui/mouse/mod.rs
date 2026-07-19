@@ -812,6 +812,17 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                 }
                 return;
             }
+            // Right-click OUTSIDE the overlay closes it AND falls
+            // through so the normal right-click dispatch runs
+            // (user report 2026-07-19: opened Edit glyph, then
+            // right-click on the AI chip did nothing because the
+            // modal guard was eating every non-left click).
+            MouseEventKind::Down(MouseButton::Right)
+                if !crate::app::dispatch::contains(area, x, y) =>
+            {
+                app.close_glyph_builder();
+                // Fall through — no return.
+            }
             _ => return,
         }
     }

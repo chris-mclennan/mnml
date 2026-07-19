@@ -3667,7 +3667,8 @@ fn paint_leaf_tab_strip(
         _ => vec!["claude_code"],
     };
     for kind in &ai_kinds {
-        let (ai_glyph, ai_fallback, ai_fg) = theme::ai_chip_parts(kind, &t);
+        let (ai_glyph, ai_fallback, ai_fg) =
+            theme::ai_chip_parts_for(kind, &t, app.config.ui.ai_chip_use_mnml_glyphs);
         let glyph = if nerd { ai_glyph } else { ai_fallback };
         let ai_rect = Rect {
             x: bx,

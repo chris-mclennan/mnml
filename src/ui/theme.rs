@@ -243,26 +243,36 @@ pub fn cur() -> Theme {
 /// _ => ("\u{F8B0}", "*", t.orange) }` was copy-pasted in bufferline.rs
 /// (single-leaf strip) and ui/mod.rs (per-leaf strip painter).
 pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, ratatui::style::Color) {
+    // Default chip glyphs use the JBM-NF-patched pair (F8B0/F8B1)
+    // so the chip renders out-of-the-box. Users who've baked the
+    // mnml-owned copies into MnmlSymbols.ttf (via the AI-chip
+    // right-click "Bake AI glyphs" item) can flip to F1E00/F1E01
+    // — which HAS a tunable `center_frac` — via
+    // `[ui] ai_chip_use_mnml_glyphs = true`. This dispatcher
+    // reads that flag from the current-theme fallback path so
+    // callers don't need to plumb config through.
     match kind {
-        // 2026-07-19 — moved from the JBM-NF-patched F8B0/F8B1
-        // (which have an uncontrollable baseline drift) to the
-        // mnml-owned F1E00/F1E01 codepoints in `MnmlSymbols.ttf`.
-        // The glyph builder can tune `center_frac` for these
-        // freely — user runs `integrations.bake_ai_glyphs` (or
-        // the AI-chip right-click menu's "Bake AI glyphs" item)
-        // to install them, then iterates on centering.
-        //
-        // Fallback plan when MnmlSymbols isn't installed: users
-        // see tofu; the AI-chip menu's "Bake AI glyphs…" is the
-        // way in. See `App::bake_ai_glyphs_default`.
-        //
-        // Previous attempts (documented for future maintainers):
-        //   - EB25 codicon → mapped to no-smoking symbol in
-        //     user's Nerd Font, unusable.
-        //   - F8B0/F8B1 → JBM-NF-patched but baseline can't be
-        //     re-baked from mnml.
-        "codex" => ("\u{F1E01}", "C", t.cyan),
-        _ => ("\u{F1E00}", "*", t.orange),
+        "codex" => ("\u{F8B1}", "C", t.cyan),
+        _ => ("\u{F8B0}", "*", t.orange),
+    }
+}
+
+/// Config-aware variant — called by the callers that have access
+/// to `&App.config`. Returns the mnml-owned F1E00/F1E01 pair when
+/// the user has flipped `[ui] ai_chip_use_mnml_glyphs = true`,
+/// otherwise falls back to the JBM-NF-patched default.
+pub fn ai_chip_parts_for(
+    kind: &str,
+    t: &Theme,
+    use_mnml: bool,
+) -> (&'static str, &'static str, ratatui::style::Color) {
+    if use_mnml {
+        match kind {
+            "codex" => ("\u{F1E01}", "C", t.cyan),
+            _ => ("\u{F1E00}", "*", t.orange),
+        }
+    } else {
+        ai_chip_parts(kind, t)
     }
 }
 

@@ -1260,10 +1260,24 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             // Font glyph controls (2026-07-19). "Bake" installs the
             // AI chip glyphs into MnmlSymbols.ttf using the defaults
             // in `BUILTIN_GLYPHS`; "Edit" opens the glyph builder
-            // for iterative center_frac tuning.
+            // for iterative center_frac tuning. "Use mnml AI glyphs"
+            // flips the chip renderer from the JBM-NF-patched pair
+            // to the mnml-baked F1E00/F1E01 pair — only enable
+            // after baking, or the chip renders as tofu.
             MenuItem::new(
                 "Bake AI glyphs into MnmlSymbols",
                 MenuAction::Command("integrations.bake_ai_glyphs"),
+            ),
+            MenuItem::new(
+                {
+                    let mark = if app.config.ui.ai_chip_use_mnml_glyphs {
+                        "✓ "
+                    } else {
+                        "  "
+                    };
+                    format!("{mark}Use mnml AI glyphs (baked)")
+                },
+                MenuAction::Command("view.ai_chip_toggle_font"),
             ),
             MenuItem::new(
                 format!("Edit {kind_label} glyph… (center)"),
