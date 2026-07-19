@@ -172,14 +172,17 @@ impl App {
         self.open_picker(Picker::new(PickerKind::Files, "Open file", items));
     }
 
-    /// Fuzzy picker over every `.svg` file in the workspace tree.
-    /// Opened by the `[Browse]` chip on the glyph-builder overlay's
-    /// path row so the user doesn't have to type or paste the path.
-    /// Accept ⇒ `picker_accept` routes the id back into
-    /// `GlyphBuilderState.svg_path`.
+    /// Fuzzy picker over `.svg` files reachable from mnml — the
+    /// active workspace tree PLUS every extra workspace, common
+    /// mnml source-tree locations under `~/Projects/mnml*/` (so a
+    /// user driving from a sibling workspace can still pick the
+    /// shipped SVGs), plus `~/Downloads` and `~/Desktop` for
+    /// ad-hoc imports. 2026-07-19 — first version was scoped to
+    /// just `self.workspace` and turned up 0 matches when the
+    /// user was in a workspace whose tree had no SVGs.
     pub fn open_glyph_builder_svg_picker(&mut self) {
         use crate::picker::{PickerItem, PickerKind};
-        let workspace = self.workspace.clone();
+        use std::collections::HashSet;
         let is_svg = |p: &Path| -> bool {
             p.extension()
                 .and_then(|s| s.to_str())
@@ -191,7 +194,7 @@ impl App {
                     let s = name.to_string_lossy();
                     if matches!(
                         s.as_ref(),
-                        ".git" | "node_modules" | "target" | ".next" | "dist" | "build"
+                        ".git" | "node_modules" | "target" | ".next" | "dist" | "build" | ".cache"
                     ) {
                         return true;
                     }
@@ -199,6 +202,58 @@ impl App {
             }
             false
         };
+        // Bounded recursive walker — cap at MAX_DEPTH so we don't
+        // wander into massive `~/Projects/somebody/node_modules`
+        // trees. Depth 6 is enough to reach anything a user would
+        // reasonably want.
+        const MAX_DEPTH: usize = 6;
+        fn walk(root: &Path, max_depth: usize, sink: &mut Vec<PathBuf>) {
+            fn rec(
+                dir: &Path,
+                depth_left: usize,
+                sink: &mut Vec<PathBuf>,
+                is_noise: &dyn Fn(&Path) -> bool,
+            ) {
+                if depth_left == 0 {
+                    return;
+                }
+                let Ok(rd) = std::fs::read_dir(dir) else {
+                    return;
+                };
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    if is_noise(&path) {
+                        continue;
+                    }
+                    if path.is_dir() {
+                        rec(&path, depth_left - 1, sink, is_noise);
+                    } else {
+                        sink.push(path);
+                    }
+                }
+            }
+            rec(root, max_depth, sink, &|p| {
+                for component in p.components() {
+                    if let std::path::Component::Normal(name) = component {
+                        let s = name.to_string_lossy();
+                        if matches!(
+                            s.as_ref(),
+                            ".git"
+                                | "node_modules"
+                                | "target"
+                                | ".next"
+                                | "dist"
+                                | "build"
+                                | ".cache"
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            });
+        }
+        let workspace = self.workspace.clone();
         let make_item = |p: &Path| -> PickerItem {
             let (label, detail) = match p.strip_prefix(&workspace) {
                 Ok(rel) => (
@@ -218,15 +273,65 @@ impl App {
             };
             PickerItem::new(p.to_string_lossy().to_string(), label, detail)
         };
+        let mut seen: HashSet<PathBuf> = HashSet::new();
         let mut items: Vec<PickerItem> = Vec::new();
-        for p in self.tree.all_files() {
-            if is_svg(&p) && !is_noise(&p) {
+        let add = |p: PathBuf, items: &mut Vec<PickerItem>, seen: &mut HashSet<PathBuf>| {
+            if is_svg(&p) && !is_noise(&p) && seen.insert(p.clone()) && p.exists() {
                 items.push(make_item(&p));
             }
+        };
+        // 1. Active workspace tree (fast — already indexed).
+        for p in self.tree.all_files() {
+            add(p, &mut items, &mut seen);
         }
+        // 2. Extra workspace roots — walk each fresh.
+        for ws in &self.extra_workspaces {
+            let mut buf = Vec::new();
+            walk(&ws.root, MAX_DEPTH, &mut buf);
+            for p in buf {
+                add(p, &mut items, &mut seen);
+            }
+        }
+        // 3. Common mnml source-tree locations. Catches SVGs shipped
+        //    with mnml or in a sibling worktree when the user's
+        //    active workspace is unrelated.
+        if let Some(home) = std::env::var_os("HOME") {
+            let projects = PathBuf::from(home).join("Projects");
+            if let Ok(rd) = std::fs::read_dir(&projects) {
+                for entry in rd.flatten() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if !name_str.starts_with("mnml") {
+                        continue;
+                    }
+                    let root = entry.path();
+                    for sub in &["assets/glyphs", "scripts/glyphs"] {
+                        let dir = root.join(sub);
+                        if dir.exists() {
+                            let mut buf = Vec::new();
+                            walk(&dir, 4, &mut buf);
+                            for p in buf {
+                                add(p, &mut items, &mut seen);
+                            }
+                        }
+                    }
+                }
+            }
+            // 4. Downloads / Desktop for ad-hoc imports.
+            let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+            for sub in &["Downloads", "Desktop"] {
+                let dir = home.join(sub);
+                let mut buf = Vec::new();
+                walk(&dir, 2, &mut buf);
+                for p in buf {
+                    add(p, &mut items, &mut seen);
+                }
+            }
+        }
+        let count = items.len();
         self.open_picker(crate::picker::Picker::new(
             PickerKind::GlyphBuilderSvg,
-            "Pick an SVG file",
+            format!("Pick an SVG file ({count} found)").as_str(),
             items,
         ));
     }
