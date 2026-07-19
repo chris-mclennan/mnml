@@ -751,10 +751,15 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     BuiltinGlyph {
         codepoint: 0xF2000,
         name: "dev-btop",
+        // 2026-07-19 — potrace-traced from the official btop repo
+        // logo (aristocratos/btop/Img/logo.png). Just the leading
+        // "B" glyph, extracted from the 349×98 PNG and vectorized
+        // via `mkbitmap` + `potrace`. Sized to match the AI chip
+        // glyphs' visual weight so it doesn't read as smaller.
         svg_relpath: "assets/glyphs/dev/btop.svg",
-        width_frac: 1.10,
+        width_frac: 1.20,
         height_frac: 0.75,
-        center_frac: 0.30,
+        center_frac: 0.28,
         center_x_frac: 0.5,
     },
     BuiltinGlyph {
