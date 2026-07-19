@@ -175,7 +175,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     crate::ui::design_tokens::paint_hint_row(
         frame,
         inner,
-        "Tab field · text: ←→ Home End Ctrl+V paste · other: ←→ cycle · ↵ bake · esc",
+        "Tab field · text: ←→ Home End Ctrl+V · other: ←→ cycle · r reset · R reset all · ↵ bake · esc",
     );
 }
 

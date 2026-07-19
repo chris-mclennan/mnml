@@ -142,6 +142,18 @@ pub struct GlyphBuilderState {
     pub codepoint_hex_cursor: usize,
 }
 
+/// The values `reset_focused_to_default` / `reset_all_to_default`
+/// snap fields back to. Pulled from a matching `BuiltinGlyph`
+/// entry when the current codepoint is one mnml ships, else from
+/// the hard-coded starting defaults.
+#[derive(Debug, Clone, Copy)]
+struct FieldDefaults {
+    width_frac: f32,
+    height_frac: f32,
+    center_frac: f32,
+    center_x_frac: f32,
+}
+
 /// Hash-friendly snapshot of the fields the preview depends on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewSignature {
@@ -220,6 +232,52 @@ impl GlyphBuilderState {
             }
             _ => {}
         }
+    }
+
+    /// Reset the currently-focused numeric field to its default.
+    /// If the current codepoint matches a `BUILTIN_GLYPHS` entry,
+    /// that entry's tuned value is the default; otherwise the
+    /// hard-coded starting default (matches `Default::default()`).
+    /// No-op on text fields — those don't have "defaults" beyond
+    /// backspace-clear.
+    pub fn reset_focused_to_default(&mut self) {
+        let defaults = self.defaults_for_current_codepoint();
+        match self.focused_field {
+            BuilderField::WidthFrac => self.width_frac = defaults.width_frac,
+            BuilderField::HeightFrac => self.height_frac = defaults.height_frac,
+            BuilderField::CenterFrac => self.center_frac = defaults.center_frac,
+            BuilderField::CenterXFrac => self.center_x_frac = defaults.center_x_frac,
+            _ => {}
+        }
+    }
+
+    /// Reset every numeric field to its default (width, height,
+    /// center Y, center X). Same default-source rules as
+    /// `reset_focused_to_default`.
+    pub fn reset_all_to_default(&mut self) {
+        let defaults = self.defaults_for_current_codepoint();
+        self.width_frac = defaults.width_frac;
+        self.height_frac = defaults.height_frac;
+        self.center_frac = defaults.center_frac;
+        self.center_x_frac = defaults.center_x_frac;
+    }
+
+    fn defaults_for_current_codepoint(&self) -> FieldDefaults {
+        u32::from_str_radix(&self.codepoint_hex, 16)
+            .ok()
+            .and_then(builtin_for_codepoint)
+            .map(|bi| FieldDefaults {
+                width_frac: bi.width_frac,
+                height_frac: bi.height_frac,
+                center_frac: bi.center_frac,
+                center_x_frac: bi.center_x_frac,
+            })
+            .unwrap_or(FieldDefaults {
+                width_frac: 1.25,
+                height_frac: 0.80,
+                center_frac: 0.36,
+                center_x_frac: 0.50,
+            })
     }
 
     /// Append a char to the focused text field. No-op for non-text
@@ -953,5 +1011,47 @@ mod tests {
         s.cycle_field(-2);
         assert_eq!(s.focused_field, BuilderField::Path);
         assert_eq!(s.svg_path_cursor, 12);
+    }
+
+    #[test]
+    fn reset_focused_uses_builtin_defaults_when_present() {
+        // Codepoint matches a BUILTIN entry (F1E00 = AI Claude).
+        let mut s = GlyphBuilderState::new();
+        s.codepoint_hex = "F1E00".to_string();
+        s.focused_field = BuilderField::CenterFrac;
+        s.center_frac = 0.99; // way off
+        s.reset_focused_to_default();
+        // F1E00's tuned default is 0.28.
+        assert!((s.center_frac - 0.28).abs() < 1e-6);
+        // Other fields untouched.
+        assert!((s.width_frac - 1.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reset_all_resets_every_numeric_field() {
+        let mut s = GlyphBuilderState::new();
+        s.codepoint_hex = "F1E00".to_string();
+        s.width_frac = 0.5;
+        s.height_frac = 0.5;
+        s.center_frac = 0.5;
+        s.center_x_frac = 0.2;
+        s.reset_all_to_default();
+        // Matches BUILTIN F1E00 entry.
+        assert!((s.width_frac - 1.20).abs() < 1e-6);
+        assert!((s.height_frac - 0.75).abs() < 1e-6);
+        assert!((s.center_frac - 0.28).abs() < 1e-6);
+        assert!((s.center_x_frac - 0.50).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reset_falls_back_to_hard_defaults_for_unknown_codepoint() {
+        let mut s = GlyphBuilderState::new();
+        // Not in BUILTIN_GLYPHS.
+        s.codepoint_hex = "E123".to_string();
+        s.center_frac = 0.99;
+        s.center_x_frac = 0.1;
+        s.reset_all_to_default();
+        assert!((s.center_frac - 0.36).abs() < 1e-6);
+        assert!((s.center_x_frac - 0.50).abs() < 1e-6);
     }
 }

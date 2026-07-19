@@ -190,6 +190,23 @@ impl App {
         }
     }
 
+    /// Reset the focused numeric field back to its default. `r`
+    /// in the glyph builder overlay.
+    pub fn glyph_builder_reset_focused(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.reset_focused_to_default();
+        }
+    }
+
+    /// Reset every numeric field (width / height / center Y /
+    /// center X) back to its default. `R` (Shift+r) in the
+    /// overlay.
+    pub fn glyph_builder_reset_all(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.reset_all_to_default();
+        }
+    }
+
     pub fn glyph_builder_type_char(&mut self, ch: char) {
         if let Some(s) = self.glyph_builder.as_mut() {
             s.type_char(ch);

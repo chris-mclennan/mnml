@@ -249,6 +249,14 @@ pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
         // "can't arrow back to fix mid-string typos" — 2026-07-11).
         KeyCode::Left if !text_field => app.glyph_builder_cycle_value(-1),
         KeyCode::Right if !text_field => app.glyph_builder_cycle_value(1),
+        // Reset focused numeric field to its default: `r`. Reset
+        // all numeric fields: `R` (Shift+r). Text fields ignore
+        // both (nothing sensible to reset to). 2026-07-19 user
+        // request.
+        KeyCode::Char('r') if !text_field && !key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.glyph_builder_reset_focused();
+        }
+        KeyCode::Char('R') if !text_field => app.glyph_builder_reset_all(),
         KeyCode::Left if text_field => app.glyph_builder_move_left(),
         KeyCode::Right if text_field => app.glyph_builder_move_right(),
         KeyCode::Home if text_field => app.glyph_builder_move_home(),
