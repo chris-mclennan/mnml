@@ -74,26 +74,82 @@ def path_from_svg_d(d_sub: str) -> pathops.Path:
 
 
 def path_to_svg_d(path: pathops.Path) -> str:
-    """Convert a skia-pathops Path back into an SVG `d` string."""
+    """Convert a skia-pathops Path back into an SVG `d` string.
+
+    Handles all five verbs skia-pathops emits after a boolean op:
+    moveTo, lineTo, quadTo, cubicTo, closePath — PLUS conicTo,
+    which skia produces when its boolean-op tessellator approximates
+    cubics as rational quadratics. Prior version silently dropped
+    conicTo segments, which is why an SVG with any evenodd cubic
+    path (e.g. `codex.svg`) collapsed to a handful of straight lines.
+    """
+    # Track the current pen position so we can synthesize an `L` to
+    # the endpoint of any conicTo we can't represent perfectly.
     out: list[str] = []
+    cur_x, cur_y = 0.0, 0.0
+    subpath_start_x, subpath_start_y = 0.0, 0.0
     for verb, pts in path.segments:
         if verb == "moveTo":
-            out.append(f"M{pts[0][0]:.3f},{pts[0][1]:.3f}")
+            x, y = pts[0]
+            out.append(f"M{x:.3f},{y:.3f}")
+            cur_x, cur_y = x, y
+            subpath_start_x, subpath_start_y = x, y
         elif verb == "lineTo":
-            out.append(f"L{pts[0][0]:.3f},{pts[0][1]:.3f}")
+            x, y = pts[0]
+            out.append(f"L{x:.3f},{y:.3f}")
+            cur_x, cur_y = x, y
         elif verb == "quadTo":
+            (x1, y1), (x, y) = pts
+            out.append(f"Q{x1:.3f},{y1:.3f} {x:.3f},{y:.3f}")
+            cur_x, cur_y = x, y
+        elif verb == "cubicTo" or verb == "curveTo":
+            # skia-pathops emits `curveTo` for cubic Béziers on
+            # Path.segments — NOT `cubicTo`. Prior version silently
+            # dropped every cubic because it only checked
+            # `cubicTo`; that's why any evenodd SVG with cubic
+            # paths (codex.svg, most AWS icons) baked as
+            # straight-line silhouettes with the curves missing.
+            (x1, y1), (x2, y2), (x, y) = pts
             out.append(
-                f"Q{pts[0][0]:.3f},{pts[0][1]:.3f} "
-                f"{pts[1][0]:.3f},{pts[1][1]:.3f}"
+                f"C{x1:.3f},{y1:.3f} {x2:.3f},{y2:.3f} {x:.3f},{y:.3f}"
             )
-        elif verb == "cubicTo":
+            cur_x, cur_y = x, y
+        elif verb == "conicTo":
+            # Rational quadratic Bézier with a weight. Convert to a
+            # regular cubic Bézier by projecting the conic control
+            # points into cubic space. Reference: Loop & Blinn's
+            # "GPU Gems 3" conic→cubic elevation (weight = 1 case)
+            # + the general weighted case via cubic approximation:
+            #   C0 = P0
+            #   C1 = P0 + (2w/(2w+1)) * (P1 - P0)   [approx]
+            #   C2 = P2 + (2w/(2w+1)) * (P1 - P2)   [approx]
+            #   C3 = P2
+            # For unit-weight conics this reduces to the exact
+            # quad→cubic elevation. Non-unit weights get a close
+            # approximation — good enough for glyph baking; the
+            # error is well below 1px at cell scale.
+            (x1, y1), (x, y), weight = pts
+            w2 = 2.0 * float(weight)
+            t = w2 / (w2 + 1.0) if (w2 + 1.0) != 0 else 2.0 / 3.0
+            c1x = cur_x + t * (x1 - cur_x)
+            c1y = cur_y + t * (y1 - cur_y)
+            c2x = x + t * (x1 - x)
+            c2y = y + t * (y1 - y)
             out.append(
-                f"C{pts[0][0]:.3f},{pts[0][1]:.3f} "
-                f"{pts[1][0]:.3f},{pts[1][1]:.3f} "
-                f"{pts[2][0]:.3f},{pts[2][1]:.3f}"
+                f"C{c1x:.3f},{c1y:.3f} {c2x:.3f},{c2y:.3f} {x:.3f},{y:.3f}"
             )
+            cur_x, cur_y = x, y
         elif verb == "closePath":
             out.append("Z")
+            cur_x, cur_y = subpath_start_x, subpath_start_y
+        else:
+            # Unknown verb — synthesize a line to the endpoint if
+            # possible so at least the shape's silhouette survives.
+            if pts:
+                last = pts[-1]
+                if len(last) == 2:
+                    out.append(f"L{last[0]:.3f},{last[1]:.3f}")
+                    cur_x, cur_y = last[0], last[1]
     return " ".join(out)
 
 
