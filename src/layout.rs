@@ -221,6 +221,60 @@ impl Layout {
         }
     }
 
+    /// Smallest subtree whose leaves are exactly the given pane
+    /// set (no more, no less — extra `Empty` nodes inside the
+    /// subtree are allowed). Used by the Claude auto-tile to
+    /// locate the "Claude cluster" subtree when growing the grid.
+    ///
+    /// Returns None if no such subtree exists (the pane set is
+    /// spread across unrelated parts of the tree, or the tree
+    /// contains other panes mixed in with the target set).
+    pub fn find_pure_pane_cluster_mut(
+        &mut self,
+        set: &std::collections::HashSet<PaneId>,
+    ) -> Option<&mut Layout> {
+        fn matches(node: &Layout, set: &std::collections::HashSet<PaneId>) -> bool {
+            let leaves = node.all_panes();
+            leaves.len() == set.len() && leaves.iter().all(|p| set.contains(p))
+        }
+        fn contains_all(node: &Layout, set: &std::collections::HashSet<PaneId>) -> bool {
+            let leaves = node.all_panes();
+            set.iter().all(|p| leaves.contains(p))
+        }
+        // If neither this node nor a descendant contains the full
+        // set, bail.
+        if !contains_all(self, set) {
+            return None;
+        }
+        // Prefer descending into whichever child still contains the
+        // full set (i.e. tighter match). If neither does, this node
+        // is the smallest wrapping subtree — return it if its
+        // leaves match exactly.
+        let descend = match self {
+            Layout::Split { first, second, .. } => {
+                if contains_all(first, set) {
+                    Some(true)
+                } else if contains_all(second, set) {
+                    Some(false)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        match (descend, self) {
+            (Some(true), Layout::Split { first, .. }) => first.find_pure_pane_cluster_mut(set),
+            (Some(false), Layout::Split { second, .. }) => second.find_pure_pane_cluster_mut(set),
+            (_, node) => {
+                if matches(node, set) {
+                    Some(node)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     /// Walk the tree and replace the first `Empty` node encountered
     /// (depth-first, first-child preferred) with `subtree`.
     /// Returns true if an `Empty` was found and replaced.
@@ -1159,6 +1213,83 @@ mod tests {
             }),
         };
         assert!(l.contains_empty());
+    }
+
+    #[test]
+    fn find_pure_pane_cluster_mut_matches_exact_set() {
+        // Whole tree is exactly {0, 1, 2, 3}.
+        let mut l = Layout::Split {
+            dir: SplitDir::Vertical,
+            ratio: 50,
+            first: Box::new(Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::leaf(0)),
+                second: Box::new(Layout::leaf(1)),
+            }),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::leaf(2)),
+                second: Box::new(Layout::leaf(3)),
+            }),
+        };
+        let set: std::collections::HashSet<PaneId> = [0, 1, 2, 3].into_iter().collect();
+        assert!(l.find_pure_pane_cluster_mut(&set).is_some());
+    }
+
+    #[test]
+    fn find_pure_pane_cluster_mut_returns_smallest_subtree() {
+        // Editor on the left, {1, 2, 3, 4} 2×2 grid on the right.
+        // Cluster of {1, 2, 3, 4} must be the RIGHT subtree, not
+        // the whole tree.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 30,
+            first: Box::new(Layout::leaf(99)), // editor
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(Layout::Split {
+                    dir: SplitDir::Horizontal,
+                    ratio: 50,
+                    first: Box::new(Layout::leaf(1)),
+                    second: Box::new(Layout::leaf(2)),
+                }),
+                second: Box::new(Layout::Split {
+                    dir: SplitDir::Horizontal,
+                    ratio: 50,
+                    first: Box::new(Layout::leaf(3)),
+                    second: Box::new(Layout::leaf(4)),
+                }),
+            }),
+        };
+        let set: std::collections::HashSet<PaneId> = [1, 2, 3, 4].into_iter().collect();
+        let hit = l.find_pure_pane_cluster_mut(&set).unwrap();
+        // The cluster should have exactly 4 leaves — the 2×2.
+        assert_eq!(hit.all_panes().len(), 4);
+    }
+
+    #[test]
+    fn find_pure_pane_cluster_mut_rejects_mixed_leaves() {
+        // Set {0, 1} but the tree also has an editor (99) at the
+        // same level. There's no subtree with only {0, 1}.
+        let mut l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf(99)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::leaf(0)),
+                second: Box::new(Layout::leaf(1)),
+            }),
+        };
+        // {99, 0, 1} matches the whole tree → wrong set for the
+        // Claude case. Passing {0, 1} finds the inner split.
+        let set: std::collections::HashSet<PaneId> = [0, 1].into_iter().collect();
+        let hit = l.find_pure_pane_cluster_mut(&set).unwrap();
+        assert_eq!(hit.all_panes().len(), 2);
     }
 
     #[test]

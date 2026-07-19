@@ -654,7 +654,13 @@ impl App {
     ///     grid with the 3rd Claude on BL and an empty placeholder
     ///     on BR (`ai_placeholder_slot` marks it live).
     ///   - N == 3 with a live placeholder → fill the placeholder
-    ///     with the new Claude.
+    ///     with the new Claude → 2×2 fully populated.
+    ///   - N == 4 in a recognisable 2×2 shape → grow to 3×2 with
+    ///     placeholder → 5 Claudes + 1 placeholder in 6 slots.
+    ///   - N == 5 with placeholder → fill → 3×2 fully populated.
+    ///   - N == 6 in 3×2 shape → grow to 4×2 with placeholder.
+    ///   - N == 7 with placeholder → fill → 4×2 fully populated.
+    ///   - N >= 8 → default horizontal split (grid caps at 8).
     ///   - Otherwise → default horizontal split from the active pane.
     pub fn open_claude_code_new(&mut self) {
         if self.config.ui.auto_show_sessions_on_ai_activate {
@@ -670,7 +676,13 @@ impl App {
         let claudes = self.list_claude_pty_ids();
         match claudes.len() {
             2 if self.try_open_claude_2x2_third(claudes[0], claudes[1]) => {}
-            3 if self.ai_placeholder_slot.is_some() && self.try_open_claude_fill_placeholder() => {}
+            3 | 5 | 7
+                if self.ai_placeholder_slot.is_some()
+                    && self.try_open_claude_fill_placeholder() => {}
+            // 4 → grow 2×2 to 3×2 with slot 6 as placeholder.
+            // 6 → grow 3×2 to 4×2 with slot 8 as placeholder.
+            4 if self.try_open_claude_grid_grow(3) => {}
+            6 if self.try_open_claude_grid_grow(4) => {}
             _ => self.open_pty_dir(
                 crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone()),
                 crate::layout::SplitDir::Horizontal,
@@ -733,6 +745,79 @@ impl App {
                 second: Box::new(Layout::Empty),
             }),
         };
+        self.ai_placeholder_slot = Some(crate::app::AiPlaceholderKind::ClaudeCode);
+        self.active = Some(new_id);
+        self.focus = crate::app::Focus::Pane;
+        true
+    }
+
+    /// Grow the Claude grid from an existing N×2 shape to
+    /// `target_cols × 2`, spawning one new Claude to occupy slot
+    /// `target_cols*2 - 1` and marking slot `target_cols*2` as the
+    /// `Empty` placeholder.
+    ///
+    /// For `target_cols == 3` this expands a 2×2 (4 Claudes) →
+    /// 3×2 (5 real + 1 placeholder). For `target_cols == 4` it
+    /// expands a 3×2 (6 Claudes) → 4×2 (7 real + 1 placeholder).
+    ///
+    /// Requires that the current layout contains a subtree whose
+    /// leaves are exactly the existing Claudes (no other panes,
+    /// possibly one already-filled Empty slot). Otherwise falls
+    /// through to the default open path — the user has messed with
+    /// the layout enough that auto-tile would surprise them.
+    fn try_open_claude_grid_grow(&mut self, target_cols: usize) -> bool {
+        use crate::layout::{Layout, SplitDir};
+        let old_claudes = self.list_claude_pty_ids();
+        if old_claudes.len() != target_cols * 2 - 2 {
+            return false;
+        }
+        // Locate the existing Claude cluster (a subtree whose leaves
+        // are exactly these `old_claudes`, with maybe one filled
+        // Empty). Bail if the user's layout doesn't have a clean
+        // cluster to rewrite.
+        let old_set: std::collections::HashSet<crate::layout::PaneId> =
+            old_claudes.iter().copied().collect();
+        if self
+            .layout_mut()
+            .find_pure_pane_cluster_mut(&old_set)
+            .is_none()
+        {
+            return false;
+        }
+        let Some(new_id) = self.spawn_claude_pane() else {
+            return false;
+        };
+        // Slot layout: top row = the first `target_cols` old
+        // Claudes; bottom row = remaining old Claudes + the newly
+        // spawned Claude + one Empty placeholder in slot
+        // `target_cols*2`.
+        let top_row: Vec<crate::layout::PaneId> =
+            old_claudes.iter().copied().take(target_cols).collect();
+        let mut bottom_row: Vec<Option<crate::layout::PaneId>> = old_claudes
+            .iter()
+            .copied()
+            .skip(target_cols)
+            .map(Some)
+            .collect();
+        bottom_row.push(Some(new_id));
+        bottom_row.push(None); // Empty → placeholder
+        let new_cluster = Layout::Split {
+            dir: SplitDir::Vertical,
+            ratio: 50,
+            first: Box::new(build_equal_row(
+                top_row.into_iter().map(Layout::leaf).collect(),
+            )),
+            second: Box::new(build_equal_row(
+                bottom_row
+                    .into_iter()
+                    .map(|opt| opt.map(Layout::leaf).unwrap_or(Layout::Empty))
+                    .collect(),
+            )),
+        };
+        let Some(cluster) = self.layout_mut().find_pure_pane_cluster_mut(&old_set) else {
+            return false;
+        };
+        *cluster = new_cluster;
         self.ai_placeholder_slot = Some(crate::app::AiPlaceholderKind::ClaudeCode);
         self.active = Some(new_id);
         self.focus = crate::app::Focus::Pane;
@@ -2645,6 +2730,37 @@ impl App {
         let (job_id, _sid, _cancel) = self.spawn_ai_job(prompt);
         self.pending_amend_msg_job = Some(job_id);
         self.toast("asking Claude to rewrite HEAD's message…");
+    }
+}
+
+/// Build a horizontal row of `n` equal-width columns from the
+/// given leaves. Uses left-associative binary splits so the
+/// resulting per-column width converges to `1/n` of the row:
+///
+///   n=1 → the single leaf
+///   n=2 → HSplit{ratio=50, first, second}
+///   n=3 → HSplit{ratio=33, first, HSplit{ratio=50, second, third}}
+///   n=4 → HSplit{ratio=25, first, HSplit{ratio=33, second,
+///                          HSplit{ratio=50, third, fourth}}}
+///
+/// Every leaf ends up with ~`100/n` % of the row's width.
+fn build_equal_row(items: Vec<crate::layout::Layout>) -> crate::layout::Layout {
+    use crate::layout::{Layout, SplitDir};
+    match items.len() {
+        0 => Layout::Empty,
+        1 => items.into_iter().next().unwrap(),
+        n => {
+            let ratio = (100 / n as u16).max(1);
+            let mut iter = items.into_iter();
+            let first = iter.next().unwrap();
+            let rest: Vec<Layout> = iter.collect();
+            Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio,
+                first: Box::new(first),
+                second: Box::new(build_equal_row(rest)),
+            }
+        }
     }
 }
 
