@@ -58,6 +58,38 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.commit_pending_undo();
         return;
     }
+    // 2026-07-19 — the activity-bar icons live on a 4-cell strip at
+    // the far-left of the rail; hover-tooltips consistently report
+    // the correct section but clicks were being swallowed by stale
+    // rects from other panels (session_tabs, extra_workspace_bodies,
+    // right_panel_empty_*, and so on) that carried over from prior
+    // frames when their host panel wasn't the active section. Every
+    // fix we've shipped for that class of bug patched one panel at a
+    // time; move the activity-bar check ABOVE all the other cascade
+    // arms so no stale sibling-panel rect can ever shadow the icon
+    // strip. Small blast radius — the activity bar is a 4-column
+    // sliver and its icons are ONLY there.
+    if let Some(&(_, section)) = app
+        .rects
+        .activity_bar_icons
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.set_activity_section(section);
+        if matches!(section, crate::app::ActivitySection::Git) {
+            crate::command::run("git.graph", app);
+        }
+        if let crate::app::ActivitySection::Mount(idx) = section {
+            app.open_mount_from_manifest(idx);
+        }
+        return;
+    }
+    if let Some(r) = app.rects.activity_bar_gear
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_settings_overlay();
+        return;
+    }
     // #polish 2026-07-06 — click on the `· <repo-name>` chip in
     // the GIT rail header opens the repo switcher picker.
     if let Some(r) = app.rects.git_repo_chip
@@ -1713,43 +1745,9 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.toast(format!("language: {lang} (via file extension)"));
         return;
     }
-    // Activity bar (the 4-cell vscode-style strip on the far
-    // left of the rail). Click an icon → switch the active
-    // section. Checked before the tree-icon row + workspace
-    // toggle since the strip occupies the same x-range.
-    if let Some(&(_, section)) = app
-        .rects
-        .activity_bar_icons
-        .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-    {
-        // Git icon: switch the rail to the GitKraken-style
-        // git palette AND open the git graph as a pane in
-        // the editor area. The two work together — the
-        // rail navigates branches / worktrees / PRs while
-        // the graph shows commit history + diff. Other
-        // activity sections just switch the rail.
-        app.set_activity_section(section);
-        if matches!(section, crate::app::ActivitySection::Git) {
-            crate::command::run("git.graph", app);
-        }
-        if let crate::app::ActivitySection::Mount(idx) = section {
-            app.open_mount_from_manifest(idx);
-        }
-        return;
-    }
-    // Gear icon at the bottom of the activity bar → open the
-    // Settings overlay directly (VS Code convention: gear left-click
-    // opens Settings; right-click gives the fuller menu).
-    // mouse-round-9 SEV-3 2026-07-11 — was routing to the same
-    // context menu as right-click; that's still available via
-    // right-click.
-    if let Some(r) = app.rects.activity_bar_gear
-        && crate::app::dispatch::contains(r, x, y)
-    {
-        app.open_settings_overlay();
-        return;
-    }
+    // (activity-bar icons + gear are handled near the top of the
+    // cascade now — 2026-07-19 — to keep stale sibling-panel rects
+    // from ever shadowing them.)
     // Search activity-bar section result rows — click → open
     // the hit's file at its line:col. Checked before tree
     // icons since they may overlap (tree_icon_buttons spans
