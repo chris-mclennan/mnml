@@ -133,172 +133,31 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Block::default().style(Style::default().bg(theme::cur().bg_dark)),
         area,
     );
-    // 2026-06-27 (api-workflow-user F1+F2 fix) — clear shared rect
-    // vecs ONCE at the top of the frame. Both integration_icon_rects
-    // and launcher_icon_rects are populated from multiple painters
-    // (palette-bar gap painter + rail tree_view + rail integrations
-    // section + bufferline cluster). Letting each painter clear at
-    // entry caused (1) painters that ran LATER to wipe earlier
-    // painters' rects, breaking palette-bar chip clicks; and (2)
-    // when one painter doesn't run, the vec accumulates frame after
-    // frame and stale rects steal clicks. Single point of clear =
-    // every push survives the frame, no stale leftovers.
-    app.rects.integration_icon_rects.clear();
-    app.rects.launcher_icon_rects.clear();
-    // 2026-07-19 — was only cleared inside `sessions_panel::draw`,
-    // so switching away from the Sessions panel left stale
-    // session-tab rects intercepting right-clicks. Symptom: user
-    // couldn't right-click the Claude Code row in the Integrations
-    // panel because a stale session_tabs rect for a Claude Code
-    // pane was checked first in `right_click.rs` and captured the
-    // event, opening the session menu on the wrong pane (or
-    // silently returning). Clear here so the vec only ever holds
-    // this-frame rects.
-    app.rects.session_tabs.clear();
-    app.rects.session_new_chip = None;
-    // cloud-power-user F1 — same pattern. Was cleared per-pane,
-    // so the second CloudAgentRun pane in a split wiped the first
-    // pane's chip rects.
-    app.rects.cloud_agent_run_hits.clear();
-    // code-reviewer S2-4 — four more rect vecs that were only
-    // cleared on the zen-mode early-return path. Toggling zen ON
-    // then OFF in the same session left these accumulating from
-    // every non-zen frame.
-    app.rects.cheatsheet_headers.clear();
-    app.rects.ws_send_buttons.clear();
-    app.rects.claude_agents_topbar_chips.clear();
-    app.rects.spend_headers.clear();
-    // task #633 — cloud_agents_rows was only cleared inside
-    // cloud_agents_panel::draw; when the panel was closed and the
-    // rail painted in its place, stale row rects survived and stole
-    // right-clicks on rail workspace headers (showing the Cloud
-    // Agents "View details / Stop session" menu instead).
-    app.rects.cloud_agents_rows.clear();
-    // render-reviewer 2026-06-28 — five more leaking rect vecs:
-    //   #1 split_strip_ai_buttons missed the zen-mode clear path.
-    //   #2 request_edit_tabs never cleared at frame top (per-pane
-    //      retain leaves entries from closed request panes).
-    //   #4 extra_workspace_bodies + extra_workspace_toggles +
-    //      rail_git_header_buttons only cleared inside Explorer
-    //      section paint — section switches let stale rects
-    //      survive at on-screen positions.
-    //   #5 help_section_headers only cleared inside help_overlay
-    //      body block, not on its early-return-when-closed path.
-    app.rects.split_strip_ai_buttons.clear();
-    app.rects.request_edit_tabs.clear();
-    app.rects.request_edit_tabs_split.clear();
-    // #polish 2026-07-07 — cleared here instead of inside `draw_edit`
-    // so the secondary side of a split-edit view (drained ~200 lines
-    // above the primary drain) doesn't get wiped by the primary
-    // side's `.clear()`. Both sides append; the vec resets once per
-    // frame at the top of `ui::mod::draw`.
-    app.rects.request_vars_rows.clear();
-    app.rects.request_params_rows.clear();
-    app.rects.request_auth_rows.clear();
-    app.rects.request_edit_split_chip = None;
-    app.rects.request_edit_split_divider = None;
-    app.rects.request_var_click_rects.clear();
-    app.rects.tree_up_row = None;
-    // #polish 2026-07-07 (vscode-mouse SEV-3 #11) — the two confirm-
-    // dialog paint paths call .clear() inside their draw fns, but
-    // when no dialog is open the paint fn isn't called, so the vec
-    // keeps entries from the last dialog. Automated a11y / test
-    // tooling reading rects.json sees phantom buttons. Cleared once
-    // per frame here so state matches the visible UI.
-    app.rects.confirm_dialog_buttons.clear();
-    app.rects.extra_workspace_bodies.clear();
-    app.rects.extra_workspace_toggles.clear();
-    app.rects.extra_workspace_promote_dots.clear();
-    app.rects.rail_git_header_buttons.clear();
-    app.rects.help_section_headers.clear();
-    // render-reviewer #3 — workspace chevron + name rect were not
-    // cleared when the tree was hidden; their stale positions kept
-    // catching clicks at the top-left rail corner.
-    app.rects.workspace_picker_chevron = None;
-    app.rects.workspace_name_rect = None;
-    // 2026-06-28 v3: right_panel_tabs / right_panel_edge /
-    // right_panel_close — these all live inside the panel-visible
-    // branch and aren't cleared on the zen-mode early-return path
-    // OR the panel-just-toggled-off path. Centralize at draw entry
-    // alongside the other rect-clears. SEV-1 from render-reviewer
-    // 2026-06-28.
-    app.rects.right_panel_tabs.clear();
-    app.rects.right_panel_edge = None;
-    app.rects.right_panel_close = None;
-    app.rects.right_panel_empty_outline = None;
-    app.rects.right_panel_empty_diagnostics = None;
-    app.rects.right_panel_empty_ai = None;
-    app.rects.right_panel_empty_grep = None;
-    app.rects.right_panel_empty_test = None;
+    // 2026-07-19 STRUCTURAL FIX — wipe every rect at frame start
+    // and let each painter repopulate fresh. `PaneRects` is
+    // documented as "screen regions captured during render,
+    // consumed for mouse routing on the next event" — nothing is
+    // meant to survive across frames. Every prior stale-rect bug
+    // (session_tabs, integration_icon_rects, launcher_icon_rects,
+    // ai_placeholder_card, and several others we hand-patched)
+    // came from a panel that cleared its own rects at draw-entry
+    // but stopped drawing when the panel wasn't active — the
+    // rects then persisted into subsequent frames and stole
+    // clicks. Resetting the whole struct in ONE place kills the
+    // entire class of bug: no matter which painter runs or
+    // doesn't, `app.rects` reflects THIS frame's paint only.
+    //
+    // The per-frame cost is a `*self = Self::default()` on a
+    // struct with ~256 fields — trivial (well under 1µs on any
+    // machine that runs mnml). Trades a hand-maintained clearing
+    // list for a guarantee.
+    app.rects.reset_for_frame();
 
     // Zen mode: skip the tree, bufferline, and statusline — the editor takes
     // the full window. Returning early keeps the toggle a flat opt-out from
     // the rest of the layout pipeline.
     if app.zen_mode {
-        // qa-8th render C-1 2026-06-30 — settings overlay rects
-        // (overlay_rect, rows, save/cancel buttons) need clearing
-        // here too. If the user opens Settings then toggles zen
-        // without closing, the overlay vanishes but the rects
-        // stay live and clicks where the chips were fire the
-        // save / cancel handler invisibly.
-        app.rects.settings_overlay_rect = None;
-        app.rects.settings_rows.clear();
-        app.rects.settings_row_options.clear();
-        app.rects.settings_save_button = None;
-        app.rects.settings_cancel_button = None;
-        app.rects.integration_edit_overlay_rect = None;
-        app.rects.integration_edit_field_rows.clear();
-        app.rects.glyph_builder_overlay_rect = None;
-        app.rects.glyph_builder_field_rows.clear();
-        app.rects.tree = None;
-        app.rects.tree_toggle = None;
-        app.rects.bufferline = None;
-        app.rects.bufferline_tabs.clear();
-        app.rects.bufferline_tab_close.clear();
-        app.rects.bufferline_overflow_left = None;
-        app.rects.bufferline_overflow_right = None;
-        app.rects.bufferline_new_tab_button = None;
-        app.rects.bufferline_tab_page_chips.clear();
-        app.rects.bufferline_tab_page_close.clear();
-        app.rects.bufferline_theme_toggle = None;
-        app.rects.bufferline_window_close = None;
-        app.rects.statusline = None;
         app.rects.body = Some(area);
-        app.rects.editor_panes.clear();
-        app.rects.pane_bodies.clear();
-        app.rects.editor_gutters.clear();
-        app.rects.fold_chips.clear();
-        app.rects.fold_arrows.clear();
-        app.rects.gutter_marks.clear();
-        app.rects.code_lens_chips.clear();
-        app.rects.wip_buttons.clear();
-        app.rects.wip_file_rows.clear();
-        app.rects.wip_commit_textarea = None;
-        app.rects.git_toolbar_buttons.clear();
-        app.rects.commit_file_rows.clear();
-        app.rects.diff_toolbar_buttons.clear();
-        app.rects.diff_hunk_buttons.clear();
-        app.rects.scrollbars.clear();
-        app.rects.git_graph_detail_dividers.clear();
-        app.rects.git_graph_column_headers.clear();
-        app.rects.git_graph_lane_cells.clear();
-        app.rects.git_graph_subject_cells.clear();
-        app.rects.git_graph_repo_switch = None;
-        app.rects.request_tabs.clear();
-        app.rects.request_fields.clear();
-        app.rects.completion_rows.clear();
-        app.rects.list_rows.clear();
-        app.rects.cheatsheet_headers.clear();
-        app.rects.ws_send_buttons.clear();
-        app.rects.claude_agents_topbar_chips.clear();
-        app.rects.spend_headers.clear();
-        app.rects.claude_drill_files.clear();
-        app.rects.split_dividers.clear();
-        app.rects.split_strip_buttons.clear();
-        app.rects.split_strip_term_buttons.clear();
-        app.rects.pty_tabs.clear();
-        app.rects.pty_tab_new.clear();
-        app.rects.pty_tab_close.clear();
         // Reserve a 1-row hint footer at the bottom so the user can
         // always find their way out of zen mode. The chrome row
         // costs ~1% of the screen but eliminates the "I'm stuck"

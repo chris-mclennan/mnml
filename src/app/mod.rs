@@ -2677,6 +2677,100 @@ pub struct PaneRects {
 }
 
 impl PaneRects {
+    /// STRUCTURAL clear — resets EVERY click-rect field on this struct
+    /// so the mouse handler can never see a stale entry from a
+    /// previous frame's paint. Called at the top of `ui::draw`.
+    ///
+    /// Why this exists: `PaneRects` is a bag of ~256 fields, most of
+    /// which are populated inside a specific panel's draw function.
+    /// When a panel isn't the active section (or the pane is closed),
+    /// its draw function doesn't run, its rects don't get repopulated
+    /// — but the previous frame's values are still sitting there. The
+    /// mouse dispatcher walks the cascade and any stale rect that
+    /// happens to cover the click coord swallows the click. Over the
+    /// life of the codebase we've fixed this class of bug a dozen
+    /// times by hand-clearing one field at a time as new panels
+    /// introduce it (see the git log's chain of "fix: X panel steals
+    /// clicks" commits).
+    ///
+    /// The struct is documented as "screen regions captured during
+    /// render, consumed for mouse routing on the next event" — nothing
+    /// is meant to survive across frames. Doing `*self = Self::default()`
+    /// on 256 mostly-empty Option/Vec fields is well under a microsecond.
+    /// Trade a subtle recurring bug class for a trivial per-frame cost.
+    pub fn reset_for_frame(&mut self) {
+        // Preserve fields that are semantically drag/UI state (NOT
+        // per-frame rects): `tab_drop_target` tracks an in-flight
+        // bufferline-tab drag and MUST survive between the frame
+        // that starts the drag and the frame that renders the
+        // drop-hint overlay. Anything else added here should carry
+        // a comment explaining why it opts out of the reset.
+        let preserved_tab_drop_target = self.tab_drop_target;
+        *self = Self::default();
+        self.tab_drop_target = preserved_tab_drop_target;
+    }
+
+    /// Return the names of every rect field currently containing
+    /// `(x, y)` — the click-inspector's data source. Manually
+    /// enumerates the fields we care about; a click that doesn't
+    /// hit anything returns an empty vec. Names match the field
+    /// identifiers on `PaneRects` for grep-ability.
+    pub fn inspect_click_targets(&self, x: u16, y: u16) -> Vec<&'static str> {
+        let mut hits: Vec<&'static str> = Vec::new();
+        let hit = |r: Rect| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+        macro_rules! check_opt {
+            ($field:ident) => {
+                if let Some(r) = self.$field
+                    && hit(r)
+                {
+                    hits.push(stringify!($field));
+                }
+            };
+        }
+        macro_rules! check_vec {
+            ($field:ident) => {
+                if self.$field.iter().any(|entry| hit(entry.0)) {
+                    hits.push(stringify!($field));
+                }
+            };
+        }
+        check_opt!(tree);
+        check_opt!(tree_toggle);
+        check_opt!(bufferline);
+        check_opt!(statusline);
+        check_opt!(right_panel_edge);
+        check_opt!(right_panel_close);
+        check_opt!(right_panel_new_button);
+        check_opt!(activity_bar_gear);
+        check_opt!(bufferline_empty_plus);
+        check_opt!(ai_placeholder_card);
+        check_opt!(session_new_chip);
+        check_opt!(integrations_add_chip);
+        check_opt!(integrations_tab_installed);
+        check_opt!(integrations_tab_marketplace);
+        check_opt!(integrations_filter_chip);
+        check_opt!(sessions_panel_filter_input);
+        check_opt!(glyph_builder_overlay_rect);
+        check_opt!(settings_overlay_rect);
+        check_vec!(activity_bar_icons);
+        check_vec!(session_tabs);
+        check_vec!(integration_icon_rects);
+        check_vec!(launcher_icon_rects);
+        check_vec!(bufferline_tabs);
+        check_vec!(right_panel_tabs);
+        check_vec!(split_strip_buttons);
+        check_vec!(split_strip_ai_buttons);
+        check_vec!(split_tab_chips);
+        check_vec!(split_tab_close);
+        check_vec!(split_tab_plus_buttons);
+        check_vec!(pane_bodies);
+        check_vec!(pty_tabs);
+        check_vec!(context_menu_items);
+        check_vec!(menu_bar_words);
+        check_vec!(menu_bar_items);
+        hits
+    }
+
     /// Wipe every activity-panel-scoped click-rect. Called at the top
     /// of the section-dispatch in `ui::draw` so stale rects from a
     /// previously-visible panel can't hijack a click when the user has
@@ -4353,6 +4447,13 @@ pub struct App {
     /// any click / `view.welcome` toggles. Persists the dismiss across
     /// launches.
     pub show_welcome: bool,
+    /// When true, every left- and right-click emits a toast listing
+    /// the names of every `PaneRects` field whose rect contained the
+    /// click coord. Toggle via `debug.toggle_click_inspector`. Meant
+    /// as a diagnostic for the stale-rect / rect-shadowing bug class
+    /// — hover-tooltips + click-target lists side by side make it
+    /// obvious when a stale rect is stealing input.
+    pub debug_click_inspector: bool,
     /// Background "is there a newer release?" probe. `None` in
     /// headless mode. Toasts once (via `maybe_announce_update`) when
     /// the fetch resolves with a newer tag.
@@ -5255,6 +5356,7 @@ impl App {
             show_discovery_overlay: false,
             discovery_flash: None,
             show_welcome: false,
+            debug_click_inspector: false,
             update_check: None,
             startup_picker: None,
             show_about: false,

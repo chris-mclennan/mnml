@@ -2175,6 +2175,21 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.bake_ai_glyphs_default(),
         },
         Command {
+            id: "debug.toggle_click_inspector",
+            title: "Debug: toggle click inspector (toast rect names on each click)",
+            group: "debug",
+            keys: &[],
+            run: |app| {
+                app.debug_click_inspector = !app.debug_click_inspector;
+                let msg = if app.debug_click_inspector {
+                    "click inspector: ON — next click toasts matching PaneRects fields"
+                } else {
+                    "click inspector: OFF"
+                };
+                app.toast(msg);
+            },
+        },
+        Command {
             id: "view.ai_chip_toggle_font",
             title: "Toggle AI chip font (JBM-NF patched ↔ mnml-baked)",
             group: "view",

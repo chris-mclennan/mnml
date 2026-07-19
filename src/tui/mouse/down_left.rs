@@ -30,6 +30,15 @@ use crate::pane::Pane;
 const DOUBLE_CLICK_MAX_MS: u128 = 700;
 
 pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
+    if app.debug_click_inspector {
+        let hits = app.rects.inspect_click_targets(x, y);
+        let msg = if hits.is_empty() {
+            format!("click @ ({x}, {y}): no PaneRects hit")
+        } else {
+            format!("click @ ({x}, {y}): {}", hits.join(" · "))
+        };
+        app.toast(msg);
+    }
     // #20 Pattern B — confirm modal takes priority over every
     // other click when it's up.
     if app.pending_confirm.is_some() {

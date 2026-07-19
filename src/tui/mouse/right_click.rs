@@ -14,6 +14,15 @@ use crate::app::App;
 use crate::pane::Pane;
 
 pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
+    if app.debug_click_inspector {
+        let hits = app.rects.inspect_click_targets(x, y);
+        let msg = if hits.is_empty() {
+            format!("right-click @ ({x}, {y}): no PaneRects hit")
+        } else {
+            format!("right-click @ ({x}, {y}): {}", hits.join(" · "))
+        };
+        app.toast(msg);
+    }
     // Right-click on a `{{var}}` token → var context menu (set
     // value, jump to definition, copy name). Checked first because
     // token rects overlap the URL / body / value-cell rects that
