@@ -1275,9 +1275,12 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // one-tab-type 2026-07-18 — `+` chip in a per-leaf tab strip.
-    // Click → focus that leaf + open the file picker to add another
-    // tab in the same leaf.
-    if let Some(&(_, leaf_active)) = app
+    // Click → focus that leaf + open the SAME 10-item context menu
+    // the empty-state `+` chip uses (user report: "when I have a
+    // file open and click +, I expected the menu like we did
+    // earlier"). Behavior parity between the two `+` chips means
+    // muscle memory carries over.
+    if let Some(&(r, leaf_active)) = app
         .rects
         .split_tab_plus_buttons
         .iter()
@@ -1285,7 +1288,29 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         app.active = Some(leaf_active);
         app.focus = crate::focus::Focus::Pane;
-        crate::command::run("picker.files", app);
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
+            MenuItem::new("Open file…", MenuAction::Command("picker.files")),
+            MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
+            MenuItem::new(
+                "From clipboard",
+                MenuAction::Command("scratch.from_clipboard"),
+            ),
+            MenuItem::new("New HTTP request", MenuAction::Command("http.new")),
+            MenuItem::new("New shell", MenuAction::Command("term.shell")),
+            MenuItem::new("New browser tab", MenuAction::Command("browser.open")),
+            MenuItem::new(
+                "New Claude Code session",
+                MenuAction::Command("ai.claude_code_new"),
+            ),
+            MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
+            MenuItem::new("New tab page", MenuAction::Command("tab.new")),
+        ];
+        let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
+        menu.selected = 0;
+        menu.interacted = true;
+        app.context_menu = Some(menu);
         return;
     }
     // Claude 2×2 auto-tile placeholder card — click fills the BR

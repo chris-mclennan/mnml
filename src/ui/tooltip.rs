@@ -932,14 +932,32 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     if !cwd_str.is_empty() {
                         lines.push(format!("⌂ {cwd_str}"));
                     }
-                    let grid = s.session_summary_lines(6);
-                    if !grid.is_empty() {
+                    // Prefer the JSONL transcript at rest — a real
+                    // `you: … / claude: …` exchange reads better
+                    // than the tail of the grid. When Claude's
+                    // thinking (spinner up), stay on the grid so
+                    // the tooltip mirrors what's live on the pane.
+                    let thinking = s.current_spinner_glyph().is_some() || s.is_codex_thinking();
+                    let content: Vec<String> = if !thinking
+                        && let Some(sid) = s.profile.session_id.as_deref()
+                        && {
+                            let lines =
+                                crate::claude_agents::transcript_summary_lines(sid, &app.workspace);
+                            !lines.is_empty()
+                        } {
+                        crate::claude_agents::transcript_summary_lines(
+                            s.profile.session_id.as_deref().unwrap(),
+                            &app.workspace,
+                        )
+                    } else {
+                        // Grid: bottom-up scan → reverse for reading order.
+                        s.session_summary_lines(6).into_iter().rev().collect()
+                    };
+                    if !content.is_empty() {
                         if !lines.is_empty() {
                             lines.push(String::new());
                         }
-                        // Reverse so the tooltip reads oldest → newest —
-                        // matches how you'd read a chat transcript.
-                        for l in grid.into_iter().rev() {
+                        for l in content {
                             lines.push(l);
                         }
                     }

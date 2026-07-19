@@ -319,13 +319,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let (summary_lines, summary_color): (Vec<String>, _) = if s.is_exited() {
             (vec!["exited".to_string()], t.red)
         } else {
-            let mut lines = s.session_summary_lines(3);
-            // `session_summary_lines` returns most-recent-first (it
-            // scans the grid bottom-up). Reverse so the card reads
-            // top-to-bottom in the same order the pty does — e.g.
-            // "1. Yes" above "2. Yes..." above "3. No" instead of
-            // the inverted "3. No / 2. Yes..." user report.
-            lines.reverse();
+            let lines = session_lines_for_card(app, s, 3);
             if lines.is_empty() {
                 (vec!["—".to_string()], t.grey)
             } else {
@@ -631,6 +625,32 @@ fn sort_sessions(app: &App, indices: Vec<usize>) -> Vec<usize> {
 ///   1 = running (Claude or Codex actively thinking)
 ///   2 = idle
 ///   3 = exited
+/// Card summary picker with a rest-only JSONL fallback:
+///   - Thinking (spinner active, Codex working) → grid lines
+///     (matches the live pane in real-time — "Sautéed for 27s"
+///     etc.).
+///   - At rest with a Claude session_id + on-disk transcript →
+///     transcript exchange (`you: …`, `claude: …`). Uses
+///     `claude_agents::transcript_summary_lines`.
+///   - Fallback → grid lines (Codex, bare shells, no transcript,
+///     any read failure).
+///
+/// Returned in READ order (top-to-bottom on the card) — grid
+/// paths are scanned bottom-up so they're reversed here to
+/// match the pty's natural reading direction.
+fn session_lines_for_card(app: &App, s: &crate::pty_pane::PtySession, max: usize) -> Vec<String> {
+    let thinking = s.current_spinner_glyph().is_some() || s.is_codex_thinking();
+    if !thinking && let Some(sid) = s.profile.session_id.as_deref() {
+        let lines = crate::claude_agents::transcript_summary_lines(sid, &app.workspace);
+        if !lines.is_empty() {
+            return lines.into_iter().take(max).collect();
+        }
+    }
+    let mut lines = s.session_summary_lines(max);
+    lines.reverse();
+    lines
+}
+
 fn session_state_priority(app: &App, pid: usize) -> u8 {
     let Some(Pane::Pty(s)) = app.panes.get(pid) else {
         return 4;

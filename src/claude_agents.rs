@@ -1124,6 +1124,101 @@ pub fn preview_last_messages(session_id: &str, workspace: &std::path::Path) -> O
     }
 }
 
+/// Multi-line transcript summary for the sessions panel. Same
+/// tail-of-JSONL reader as `preview_last_messages` but returns
+/// the pieces as separate lines (`you: …`, `claude: …`) so the
+/// card can lay them across rows instead of collapsing to a
+/// one-liner. Truncates each side at 120 chars.
+pub fn transcript_summary_lines(session_id: &str, workspace: &std::path::Path) -> Vec<String> {
+    let Some(root) = home_projects_dir() else {
+        return Vec::new();
+    };
+    let encoded = workspace
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "-");
+    let candidate = root.join(&encoded).join(format!("{session_id}.jsonl"));
+    let Ok(meta) = std::fs::metadata(&candidate) else {
+        return Vec::new();
+    };
+    let bytes = meta.len();
+    let start = bytes.saturating_sub(32 * 1024);
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(&candidate) else {
+        return Vec::new();
+    };
+    if f.seek(SeekFrom::Start(start)).is_err() {
+        return Vec::new();
+    }
+    let mut buf = Vec::with_capacity(32 * 1024);
+    if f.read_to_end(&mut buf).is_err() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let mut last_user: Option<String> = None;
+    let mut last_asst: Option<String> = None;
+    for line in text.lines().rev() {
+        if !line.starts_with('{') {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let role = v
+            .get("message")
+            .and_then(|m| m.get("role"))
+            .and_then(|r| r.as_str());
+        let content = v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .or_else(|| {
+                v.get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                    // First `text` block in the content array —
+                    // skips `tool_use` / `tool_result` etc.
+                    .and_then(|a| {
+                        a.iter().find_map(|x| {
+                            let is_text = x
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                .map(|t| t == "text")
+                                .unwrap_or(true);
+                            if !is_text {
+                                return None;
+                            }
+                            x.get("text").and_then(|t| t.as_str())
+                        })
+                    })
+            });
+        let Some(c) = content else { continue };
+        // Collapse newlines + repeat whitespace to keep the row
+        // readable in a narrow card.
+        let flat: String = c.split_whitespace().collect::<Vec<_>>().join(" ");
+        if flat.is_empty() {
+            continue;
+        }
+        let snippet: String = flat.chars().take(120).collect();
+        match role {
+            Some("user") if last_user.is_none() => last_user = Some(snippet),
+            Some("assistant") if last_asst.is_none() => last_asst = Some(snippet),
+            _ => {}
+        }
+        if last_user.is_some() && last_asst.is_some() {
+            break;
+        }
+    }
+    let mut out = Vec::new();
+    if let Some(u) = last_user {
+        out.push(format!("you: {u}"));
+    }
+    if let Some(a) = last_asst {
+        out.push(format!("claude: {a}"));
+    }
+    out
+}
+
 /// Decode a `-Users-foo-Projects-bar`-style directory name into
 /// the last component (`bar`) for display purposes. Not invertible
 /// with literal dashes in path segments; the dashboard accepts that
