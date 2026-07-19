@@ -636,10 +636,30 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     },
 ];
 
+/// SVGs embedded into the binary so the AI-glyph bake path
+/// never depends on the on-disk source layout. 2026-07-19 user
+/// report: running the release binary from
+/// `~/Projects/mnml/target/release/` while the actual worktree
+/// was `~/Projects/mnml-one-tab-type/` — every on-disk fallback
+/// missed. When resolve_builtin_svg can't find one of these on
+/// disk, it drops the embedded copy into `/tmp` and returns
+/// that path.
+const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
+    (
+        "assets/glyphs/ai/claude-spark.svg",
+        include_bytes!("../assets/glyphs/ai/claude-spark.svg"),
+    ),
+    (
+        "assets/glyphs/ai/codex.svg",
+        include_bytes!("../assets/glyphs/ai/codex.svg"),
+    ),
+];
+
 /// Locate a shipped SVG on disk. Tries in order:
 ///   1. `<installed-app>/Contents/Resources/<relpath>`
 ///   2. `<mnml exe parent>/../<relpath>` (dev build inside `target/`)
-///   3. `~/Projects/mnml/<relpath>` (fallback for repo checkout)
+///   3. `~/Projects/{mnml,mnml-one-tab-type}/<relpath>` (repo checkout)
+///   4. Embedded copy → extracted to `$TMPDIR/mnml-embedded/<relpath>`
 ///
 /// Returns the first path that exists.
 pub fn resolve_builtin_svg(relpath: &str) -> Option<std::path::PathBuf> {
@@ -653,7 +673,8 @@ pub fn resolve_builtin_svg(relpath: &str) -> Option<std::path::PathBuf> {
                 return Some(cand);
             }
         }
-        // Dev build: target/debug/mnml → target/../<relpath>
+        // Dev build: target/debug/mnml → walk up looking for the
+        // asset next to a `Cargo.toml`.
         let mut cur = exe;
         while cur.pop() {
             let cand = cur.join(relpath);
@@ -663,12 +684,37 @@ pub fn resolve_builtin_svg(relpath: &str) -> Option<std::path::PathBuf> {
         }
     }
     if let Some(home) = std::env::var_os("HOME") {
-        let cand = std::path::PathBuf::from(home)
-            .join("Projects/mnml")
-            .join(relpath);
-        if cand.exists() {
-            return Some(cand);
+        // Historical layout was `~/Projects/mnml/`; worktrees now
+        // land next to it as `~/Projects/mnml-<branch>/`. Try the
+        // common suffixes so a release binary built inside one
+        // worktree can find assets from another.
+        let projects = std::path::PathBuf::from(home).join("Projects");
+        for candidate_root in &["mnml", "mnml-one-tab-type"] {
+            let cand = projects.join(candidate_root).join(relpath);
+            if cand.exists() {
+                return Some(cand);
+            }
         }
+    }
+    // Final fallback: extract the embedded copy to $TMPDIR. Cached
+    // by relpath — one write per binary run per SVG.
+    if let Some((_, bytes)) = EMBEDDED_SVGS.iter().find(|(p, _)| *p == relpath) {
+        let dir = std::env::temp_dir().join("mnml-embedded");
+        let out = dir.join(relpath);
+        if let Some(parent) = out.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Write only if missing OR if the bytes differ (rare — a
+        // stale copy from an older build could linger between
+        // versions; overwrite so the current SVG wins).
+        let stale = match std::fs::read(&out) {
+            Ok(existing) => existing.as_slice() != *bytes,
+            Err(_) => true,
+        };
+        if stale && std::fs::write(&out, bytes).is_err() {
+            return None;
+        }
+        return Some(out);
     }
     None
 }
