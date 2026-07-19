@@ -666,6 +666,12 @@ impl App {
         if self.config.ui.auto_show_sessions_on_ai_activate {
             self.set_activity_section(crate::app::ActivitySection::Sessions);
         }
+        // Tabs-only mode: new Claude becomes a tab in the active
+        // leaf, not a split. Right-click the palette-bar AI chip
+        // to switch back to grid.
+        if self.config.ui.ai_layout_mode == "tabs" && self.open_claude_as_tab() {
+            return;
+        }
         // Guard against a stale slot marker — if the user closed a
         // Claude or dragged something into the Empty quadrant, the
         // tree no longer holds our placeholder even though the flag
@@ -845,6 +851,32 @@ impl App {
         true
     }
 
+    /// Append a fresh Claude Code session as a TAB in the active
+    /// leaf (no split). Used by the `tabs` layout mode. Returns
+    /// false when there's no active leaf — caller falls through
+    /// to the default open which creates the first pane.
+    fn open_claude_as_tab(&mut self) -> bool {
+        let Some(active) = self.active else {
+            return false;
+        };
+        let Some(new_id) = self.spawn_claude_pane() else {
+            return false;
+        };
+        // Append the new pane to the target leaf's tab list.
+        let mut appended = false;
+        if let Some((leaf_active, tabs)) = self.layout_mut().leaf_containing_mut(active) {
+            tabs.push(new_id);
+            *leaf_active = new_id;
+            appended = true;
+        }
+        if !appended {
+            return false;
+        }
+        self.active = Some(new_id);
+        self.focus = crate::app::Focus::Pane;
+        true
+    }
+
     fn spawn_claude_pane(&mut self) -> Option<crate::layout::PaneId> {
         let mut profile = crate::pty_pane::BinaryProfile::claude_code(self.workspace.clone());
         // Match `open_pty_dir`'s Bridge-env injection so a
@@ -938,10 +970,47 @@ impl App {
         if self.config.ui.auto_show_sessions_on_ai_activate {
             self.set_activity_section(crate::app::ActivitySection::Sessions);
         }
+        // Tabs-only mode: new Codex becomes a tab in the active
+        // leaf, not a split.
+        if self.config.ui.ai_layout_mode == "tabs" && self.open_codex_as_tab() {
+            return;
+        }
         self.open_pty_dir(
             crate::pty_pane::BinaryProfile::codex(self.workspace.clone()),
             crate::layout::SplitDir::Horizontal,
         );
+    }
+
+    fn open_codex_as_tab(&mut self) -> bool {
+        let Some(active) = self.active else {
+            return false;
+        };
+        let mut profile = crate::pty_pane::BinaryProfile::codex(self.workspace.clone());
+        let bridge = self.bridge_env();
+        for (k, v) in bridge {
+            if !profile.env.iter().any(|(pk, _)| pk == &k) {
+                profile.env.push((k, v));
+            }
+        }
+        let new_id = match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
+            Ok(mut s) => {
+                self.apply_saved_pty_name(&mut s);
+                self.panes.push(Pane::Pty(s));
+                self.panes.len() - 1
+            }
+            Err(e) => {
+                self.toast(format!("can't open terminal: {e}"));
+                return false;
+            }
+        };
+        if let Some((leaf_active, tabs)) = self.layout_mut().leaf_containing_mut(active) {
+            tabs.push(new_id);
+            *leaf_active = new_id;
+            self.active = Some(new_id);
+            self.focus = crate::app::Focus::Pane;
+            return true;
+        }
+        false
     }
 
     /// Open the family DJ app `mixr` as a Pty pane. Reuses an

@@ -3055,6 +3055,26 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "view.ai_layout_grid",
+            title: "AI layout: grid (auto-tile splits, max 8)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.ai_layout_mode = "grid".into();
+                app.toast("AI layout: grid");
+            },
+        },
+        Command {
+            id: "view.ai_layout_tabs",
+            title: "AI layout: tabs (append to active leaf)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.ai_layout_mode = "tabs".into();
+                app.toast("AI layout: tabs");
+            },
+        },
+        Command {
             id: "markdown.preview",
             title: "Markdown: open rendered preview (split)",
             group: "view",

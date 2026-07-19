@@ -1199,6 +1199,12 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             }
         };
         let glyph_cp: u32 = if is_codex { 0xF8B1 } else { 0xF8B0 };
+        // Layout mode toggle — `[ui] ai_layout_mode` chooses
+        // whether a new AI session grows the grid (auto-tile
+        // splits, capped at 8) or just appends a tab to the
+        // active leaf (single big pane, N tabs). 2026-07-19.
+        let layout_mode = app.config.ui.ai_layout_mode.clone();
+        let layout_mark = |val: &str| if layout_mode == val { "✓ " } else { "  " };
         let items = vec![
             MenuItem::new(
                 format!("Toggle existing {kind_label} pane"),
@@ -1219,6 +1225,15 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuItem::new(
                 format!("New {kind_label} session in bottom half"),
                 MenuAction::Command(bottom_cmd),
+            ),
+            // Layout mode toggle.
+            MenuItem::new(
+                format!("{}Layout: Grid (splits)", layout_mark("grid")),
+                MenuAction::Command("view.ai_layout_grid"),
+            ),
+            MenuItem::new(
+                format!("{}Layout: Tabs (stack in leaf)", layout_mark("tabs")),
+                MenuAction::Command("view.ai_layout_tabs"),
             ),
             // Visibility submenu — pick which AI chips render in
             // this cluster.

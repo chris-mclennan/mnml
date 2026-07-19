@@ -819,6 +819,20 @@ pub struct UiConfig {
     /// ```
     pub tab_bar_ai_icon: String,
 
+    /// How a new Claude / Codex session lays out relative to the
+    /// existing panes. Two values:
+    ///   - `"grid"` (default) — the auto-tile flow (2×2 → 3×2 →
+    ///     4×2 grid with placeholders). Each session gets its own
+    ///     pane; up to 8 sessions before falling back to a default
+    ///     split.
+    ///   - `"tabs"` — new sessions ADD a tab to the active leaf
+    ///     instead of splitting. The Sessions activity panel
+    ///     stays the way you switch between them. Cleaner when
+    ///     running many agents on a single-monitor workspace.
+    ///
+    /// Right-click the palette-bar AI chip to switch at runtime.
+    pub ai_layout_mode: String,
+
     /// Auto-switch the activity panel to Sessions when a Claude
     /// Code / Codex Pty pane becomes active — via tab click,
     /// sidebar chip, split-strip cluster chip, `+ New session`,
@@ -1557,6 +1571,7 @@ impl Default for Config {
                 // Claude). Users who want Codex too can flip
                 // `[ui] tab_bar_ai_icon = "both"` in config.
                 tab_bar_ai_icon: "claude_code".to_string(),
+                ai_layout_mode: "grid".to_string(),
                 auto_show_sessions_on_ai_activate: true,
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
@@ -1862,6 +1877,9 @@ struct RawUi {
     /// See [`UiConfig::tab_bar_ai_icon`].
     #[serde(default)]
     tab_bar_ai_icon: Option<String>,
+    /// See [`UiConfig::ai_layout_mode`].
+    #[serde(default)]
+    ai_layout_mode: Option<String>,
     /// See [`UiConfig::auto_show_sessions_on_ai_activate`].
     #[serde(default)]
     auto_show_sessions_on_ai_activate: Option<bool>,
@@ -2291,6 +2309,12 @@ impl Config {
                 "none" | "claude_code" | "codex" | "both"
             ) {
                 self.ui.tab_bar_ai_icon = normalized;
+            }
+        }
+        if let Some(s) = raw.ui.ai_layout_mode {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "grid" | "tabs") {
+                self.ui.ai_layout_mode = normalized;
             }
         }
         if let Some(b) = raw.ui.auto_show_sessions_on_ai_activate {
