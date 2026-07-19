@@ -2277,18 +2277,18 @@ impl Config {
             // we know Claude Code's own idle glyph is ✳; the ✻
             // default from the first migration was wrong.
             for icon in &mut merged {
-                // 2026-07-19 — flip legacy claude/codex glyphs to the
-                // mnml-owned F1E00/F1E01 baked into MnmlSymbols.ttf.
-                // The v0.2 rollout used the JBM-NF-patched F8B0/F8B1
-                // pair or the empirical `✳ / ❯_` fallbacks; user
-                // request "put the claude code glyph back to the one
-                // we did from svg" makes F1E00/F1E01 the new default.
-                if icon.id == "claude_code"
-                    && matches!(icon.glyph.as_str(), "\u{F8B0}" | "\u{273B}" | "\u{2733}")
-                {
+                // 2026-07-19 — flip claude/codex to the mnml-owned
+                // F1E00/F1E01 baked into MnmlSymbols.ttf. Aggressive
+                // form: any glyph on the claude_code or codex row
+                // that ISN'T already F1E00/F1E01 gets flipped. Prior
+                // narrow-matches list missed several intermediate
+                // values users had accumulated (fallback char used
+                // as glyph, older bake results). User report:
+                // "i can't seem to get codex icon to use the svg".
+                if icon.id == "claude_code" && icon.glyph != "\u{F1E00}" {
                     icon.glyph = "\u{F1E00}".to_string();
                 }
-                if icon.id == "codex" && matches!(icon.glyph.as_str(), "\u{F8B1}" | "\u{276F}_") {
+                if icon.id == "codex" && icon.glyph != "\u{F1E01}" {
                     icon.glyph = "\u{F1E01}".to_string();
                 }
                 // Amplify legacy codicon → baked AWS SVG at F1B00.

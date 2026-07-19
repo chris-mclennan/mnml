@@ -774,6 +774,21 @@ impl App {
             "Refresh tree",
             MenuAction::Command("tree.refresh"),
         ));
+        // 2026-07-19 user re-report — Collapse all / Expand all
+        // also here on extra-workspace headers. Previous fix added
+        // it only to the primary workspace header
+        // (`open_workspace_header_context_menu`); the user was
+        // right-clicking `mnml` which is one of their extra
+        // workspaces and the menu didn't include them. Both
+        // menus now match.
+        items.push(MenuItem::new(
+            "Collapse all",
+            MenuAction::Command("tree.collapse_all"),
+        ));
+        items.push(MenuItem::new(
+            "Expand all",
+            MenuAction::Command("tree.expand_all"),
+        ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
