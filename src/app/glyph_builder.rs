@@ -423,22 +423,26 @@ impl App {
     }
 
     /// Bake the two mnml-owned AI chip glyphs (F1E00 claude-spark
-    /// + F1E01 codex) into `~/Library/Fonts/MnmlSymbols.ttf` using
-    /// the `BUILTIN_GLYPHS` defaults. One shell-out — fontforge
-    /// runs both bakes in a single pass. User then restarts the
-    /// terminal (font cache) to pick up the new glyphs. Iterate:
-    /// open `integrations.edit_claude_glyph`, nudge `center_frac`
-    /// with ←/→, rebake.
-    ///
-    /// User: "we need a way of choosing the image centering it".
+    /// + F1E01 codex) into `~/Library/Fonts/MnmlSymbols.ttf`.
     pub fn bake_ai_glyphs_default(&mut self) {
+        self.bake_builtin_glyphs_matching(|cp| cp == 0xF1E00 || cp == 0xF1E01);
+    }
+
+    /// Bake every mnml `BuiltinGlyph` into MnmlSymbols in one pass
+    /// — AI + AWS + Dev tools. Same shell-out shape, just a wider
+    /// filter. Used by `integrations.bake_all_glyphs`.
+    pub fn bake_all_builtin_glyphs(&mut self) {
+        self.bake_builtin_glyphs_matching(|_| true);
+    }
+
+    fn bake_builtin_glyphs_matching<F: Fn(u32) -> bool>(&mut self, keep: F) {
         use crate::glyph_builder::{BUILTIN_GLYPHS, resolve_builtin_svg};
         let ai_glyphs: Vec<_> = BUILTIN_GLYPHS
             .iter()
-            .filter(|g| g.codepoint == 0xF1E00 || g.codepoint == 0xF1E01)
+            .filter(|g| keep(g.codepoint))
             .collect();
         if ai_glyphs.is_empty() {
-            self.toast("bake AI glyphs: BUILTIN_GLYPHS missing F1E00/F1E01");
+            self.toast("bake glyphs: no builtins matched the filter");
             return;
         }
         let mut resolved: Vec<(String, u32, &'static str, f32, f32, f32, f32)> = Vec::new();

@@ -1,0 +1,13 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+  <!-- Horizontal bars: the process-list look of htop. Four rows of
+       varying widths, each with a small circle at the left as a
+       stand-in for a PID / state indicator. -->
+  <circle cx="14" cy="22" r="4" />
+  <rect x="24" y="18" width="60" height="8" />
+  <circle cx="14" cy="42" r="4" />
+  <rect x="24" y="38" width="45" height="8" />
+  <circle cx="14" cy="62" r="4" />
+  <rect x="24" y="58" width="70" height="8" />
+  <circle cx="14" cy="82" r="4" />
+  <rect x="24" y="78" width="35" height="8" />
+</svg>

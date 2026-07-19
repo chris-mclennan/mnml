@@ -529,7 +529,11 @@ pub const CATALOG: &[FamilySibling] = &[
         pinned_version: "built-in",
         one_liner: "HTTP client — .http/.curl/.rest files (built into mnml)",
         icon: IconTemplate {
-            glyph: "\u{F0590}", // nf-md-web
+            // 2026-07-19 — match the paper-airplane the rest of the
+            // app uses for HTTP (activity icon, request tabs, send
+            // chip, capture chip). Was nf-md-web (a cloud/globe) —
+            // inconsistent with every other HTTP surface.
+            glyph: "\u{F1D8}", // nf-fa-paper_plane
             fallback: "ht",
             color: "blue",
             tooltip: "HTTP client (built-in)",

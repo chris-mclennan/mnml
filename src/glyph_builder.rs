@@ -743,6 +743,38 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         center_frac: 0.28,
         center_x_frac: 0.5,
     },
+    // DevTool range (F2000-F20FF). 2026-07-19 user request:
+    // "try to get icons from svgs for btop htop and iftop".
+    // Hand-drafted simple geometric SVGs — public domain art
+    // matching each tool's visual language (bars for btop,
+    // process rows for htop, in/out arrows for iftop).
+    BuiltinGlyph {
+        codepoint: 0xF2000,
+        name: "dev-btop",
+        svg_relpath: "assets/glyphs/dev/btop.svg",
+        width_frac: 1.10,
+        height_frac: 0.75,
+        center_frac: 0.30,
+        center_x_frac: 0.5,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF2001,
+        name: "dev-htop",
+        svg_relpath: "assets/glyphs/dev/htop.svg",
+        width_frac: 1.10,
+        height_frac: 0.75,
+        center_frac: 0.30,
+        center_x_frac: 0.5,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF2002,
+        name: "dev-iftop",
+        svg_relpath: "assets/glyphs/dev/iftop.svg",
+        width_frac: 1.10,
+        height_frac: 0.65,
+        center_frac: 0.30,
+        center_x_frac: 0.5,
+    },
 ];
 
 /// SVGs embedded into the binary so the AI-glyph bake path
@@ -761,6 +793,18 @@ const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
     (
         "assets/glyphs/ai/codex.svg",
         include_bytes!("../assets/glyphs/ai/codex.svg"),
+    ),
+    (
+        "assets/glyphs/dev/btop.svg",
+        include_bytes!("../assets/glyphs/dev/btop.svg"),
+    ),
+    (
+        "assets/glyphs/dev/htop.svg",
+        include_bytes!("../assets/glyphs/dev/htop.svg"),
+    ),
+    (
+        "assets/glyphs/dev/iftop.svg",
+        include_bytes!("../assets/glyphs/dev/iftop.svg"),
     ),
 ];
 

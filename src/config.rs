@@ -1098,17 +1098,15 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "claude_code".to_string(),
-                        // 2026-07-17 v1 — dropped patched U+F8B0 SVG for ✻ (U+273B).
-                        // 2026-07-18 v2 — Claude Code v2.1.214's ACTUAL
-                        // idle glyph is `✳` (U+2733 "Eight Spoked
-                        // Asterisk"), not `✻`. Empirically measured
-                        // from the npm package's pty output — same
-                        // char it uses as the first + last frame of
-                        // its 8-frame breathing spinner. Using it
-                        // idle makes the transition into the
-                        // animation seamless (idle frame = frame 0
-                        // of the spinner).
-                        glyph: "\u{2733}".to_string(),
+                        // 2026-07-19 — swapped to the mnml-owned
+                        // F1E00 SVG glyph (via MnmlSymbols.ttf, baked
+                        // by `integrations.bake_ai_glyphs`). Matches
+                        // what the palette-bar cluster uses when
+                        // `ai_chip_use_mnml_glyphs = true`.
+                        // Fallback is the empirically-measured Claude
+                        // idle char (U+2733) so users who haven't
+                        // baked yet still see SOMETHING recognisable.
+                        glyph: "\u{F1E00}".to_string(),
                         fallback: "\u{2733}".to_string(),
                         command: "ai.claude_code".to_string(),
                         color: "orange".to_string(),
@@ -1119,14 +1117,10 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "codex".to_string(),
-                        // 2026-07-17 — was the branded Codex glyph
-                        // patched at U+F8B1 by scripts/patch_nerd_font.py.
-                        // Dropped the patched-font dep in favor of
-                        // `❯_` (U+276F + underscore), matching the
-                        // `>_` prompt motif in the OpenAI Codex CLI's
-                        // wordmark. Two-char glyph — bufferline's
-                        // icon-cell math auto-widens.
-                        glyph: "\u{276F}_".to_string(),
+                        // 2026-07-19 — swapped to F1E01 SVG glyph
+                        // (same bake path as F1E00). Fallback keeps
+                        // the `❯_` wordmark for unbaked users.
+                        glyph: "\u{F1E01}".to_string(),
                         fallback: "\u{276F}_".to_string(),
                         command: "ai.codex".to_string(),
                         color: "cyan".to_string(),
@@ -1269,7 +1263,10 @@ impl Default for Config {
                     // (`integration_detect`).
                     IntegrationIcon {
                         id: "htop".to_string(),
-                        glyph: "\u{F085A}".to_string(), // nf-md-monitor_dashboard
+                        // 2026-07-19 — mnml-owned dev-htop glyph at
+                        // F2001 (BUILTIN_GLYPHS DevTool range).
+                        // Was nf-md-monitor_dashboard.
+                        glyph: "\u{F2001}".to_string(),
                         fallback: "ht".to_string(),
                         command: "tools.htop".to_string(),
                         color: "green".to_string(),
@@ -1280,7 +1277,9 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "iftop".to_string(),
-                        glyph: "\u{F048D}".to_string(), // nf-md-network
+                        // 2026-07-19 — mnml-owned dev-iftop glyph at
+                        // F2002.
+                        glyph: "\u{F2002}".to_string(),
                         fallback: "if".to_string(),
                         command: "tools.iftop".to_string(),
                         color: "blue".to_string(),
@@ -1294,7 +1293,9 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "btop".to_string(),
-                        glyph: "\u{F085F}".to_string(), // nf-md-monitor_eye (resource monitor look)
+                        // 2026-07-19 — mnml-owned dev-btop glyph at
+                        // F2000.
+                        glyph: "\u{F2000}".to_string(),
                         fallback: "bt".to_string(),
                         command: "tools.btop".to_string(),
                         color: "purple".to_string(),
@@ -1433,7 +1434,11 @@ impl Default for Config {
                     },
                     IntegrationIcon {
                         id: "amplify".to_string(),
-                        glyph: "\u{F087D}".to_string(), // nf-md-rocket-launch
+                        // 2026-07-19 — use the branded AWS Amplify
+                        // SVG at F1B00 (BUILTIN_GLYPHS AWS series
+                        // baked into MnmlSymbols.ttf). Was
+                        // nf-md-rocket-launch — generic.
+                        glyph: "\u{F1B00}".to_string(),
                         fallback: "Am".to_string(),
                         command: ":term mnml-aws-amplify".to_string(),
                         color: "purple".to_string(),
@@ -2272,13 +2277,33 @@ impl Config {
             // we know Claude Code's own idle glyph is ✳; the ✻
             // default from the first migration was wrong.
             for icon in &mut merged {
+                // 2026-07-19 — flip legacy claude/codex glyphs to the
+                // mnml-owned F1E00/F1E01 baked into MnmlSymbols.ttf.
+                // The v0.2 rollout used the JBM-NF-patched F8B0/F8B1
+                // pair or the empirical `✳ / ❯_` fallbacks; user
+                // request "put the claude code glyph back to the one
+                // we did from svg" makes F1E00/F1E01 the new default.
                 if icon.id == "claude_code"
-                    && (icon.glyph == "\u{F8B0}" || icon.glyph == "\u{273B}")
+                    && matches!(icon.glyph.as_str(), "\u{F8B0}" | "\u{273B}" | "\u{2733}")
                 {
-                    icon.glyph = "\u{2733}".to_string();
+                    icon.glyph = "\u{F1E00}".to_string();
                 }
-                if icon.id == "codex" && icon.glyph == "\u{F8B1}" {
-                    icon.glyph = "\u{276F}_".to_string();
+                if icon.id == "codex" && matches!(icon.glyph.as_str(), "\u{F8B1}" | "\u{276F}_") {
+                    icon.glyph = "\u{F1E01}".to_string();
+                }
+                // Amplify legacy codicon → baked AWS SVG at F1B00.
+                if icon.id == "amplify" && icon.glyph == "\u{F087D}" {
+                    icon.glyph = "\u{F1B00}".to_string();
+                }
+                // btop/htop/iftop legacy codicons → baked dev SVGs.
+                if icon.id == "btop" && icon.glyph == "\u{F085F}" {
+                    icon.glyph = "\u{F2000}".to_string();
+                }
+                if icon.id == "htop" && icon.glyph == "\u{F085A}" {
+                    icon.glyph = "\u{F2001}".to_string();
+                }
+                if icon.id == "iftop" && icon.glyph == "\u{F048D}" {
+                    icon.glyph = "\u{F2002}".to_string();
                 }
             }
             self.ui.integration_icons = merged;
