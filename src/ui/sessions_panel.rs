@@ -20,12 +20,13 @@ use crate::app::App;
 use crate::pane::Pane;
 use crate::ui::theme;
 
-/// Height in rows for one session tab. 2 rows: name + summary.
-/// The old row 2 (⎇ branch · cwd) was folded into a hover tooltip
-/// — user report 2026-07-18: "not sure line 2 is that helpful
-/// showing branch and repo, maybe we could still show that but
-/// only on hover".
-const TAB_H: u16 = 2;
+/// Height in rows for one session tab. 3 rows: name + 2 lines
+/// of session summary. Old row 2 (⎇ branch · cwd) still lives in
+/// the hover tooltip — user report 2026-07-18: "not sure line 2
+/// is that helpful showing branch and repo, maybe we could still
+/// show that but only on hover" — but the summary now gets two
+/// rows because the single-line row read as too short.
+const TAB_H: u16 = 3;
 
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let t = theme::cur();
@@ -311,60 +312,61 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         // for the hover payload cached later.
         let _branch_kept_for_hover = branch_for_lookup.clone();
 
-        // Row 2: a one-line summary of what the session is doing
-        // (Claude's activity verb line when it's thinking; the last
-        // real content line otherwise) — or `exited` for a dead
-        // child. The old running/recent/idle status text was
-        // dropped: row 1's activity-color name already tells you if
-        // the session is live, and the summary makes the panel
-        // useful at a glance.
-        let (summary_text, summary_color): (String, _) = if s.is_exited() {
-            ("exited".to_string(), t.red)
+        // Rows 2 & 3: a two-line summary of what the session is
+        // doing (Claude's activity verb line + one more recent
+        // content line) — or `exited` for a dead child. The old
+        // row-2 branch/cwd display moved to the hover tooltip.
+        let (summary_lines, summary_color): (Vec<String>, _) = if s.is_exited() {
+            (vec!["exited".to_string()], t.red)
         } else {
-            match s.session_summary() {
-                Some(text) => (text, t.comment),
-                None => ("—".to_string(), t.grey),
+            let lines = s.session_summary_lines(2);
+            if lines.is_empty() {
+                (vec!["—".to_string()], t.grey)
+            } else {
+                (lines, t.comment)
             }
         };
-        // Truncate with an ellipsis so the summary doesn't run past
-        // the panel edge and stomp on the right-anchored ports chip.
-        let summary_text = {
+        let truncate_to_row = |text: &str| -> String {
             let max = (area.width as usize).saturating_sub(6).max(4);
-            let count = summary_text.chars().count();
+            let count = text.chars().count();
             if count > max {
                 let take = max.saturating_sub(1);
-                let mut out: String = summary_text.chars().take(take).collect();
+                let mut out: String = text.chars().take(take).collect();
                 out.push('…');
                 out
             } else {
-                summary_text
+                text.to_string()
             }
         };
-        let mut row2_spans = vec![
-            Span::styled("  ", Style::default().bg(bg)),
-            Span::styled(summary_text, Style::default().fg(summary_color).bg(bg)),
-        ];
-        if let Some(ticket) = detected_ticket
-            && s.display_name.is_none()
-        {
-            // Only show the ticket chip when it wasn't already
-            // used as the label (i.e. user has a custom rename).
-            row2_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
-            row2_spans.push(Span::styled(ticket, Style::default().fg(t.cyan).bg(bg)));
-        }
-        // Capture the pid before the row2 paint so we can release
+        // Capture the pid before the row paints so we can release
         // the &Pane borrow and re-borrow App mutably for the
         // session_ports cache lookup.
         let pty_pid_opt = s.pid();
-        let row2_rect = Rect {
-            x: area.x + 1,
-            y: y + 1,
-            width: area.width - 1,
-            height: 1,
-        };
-        frame.render_widget(Paragraph::new(Line::from(row2_spans)), row2_rect);
-        // Listening ports (cached) — append as a `:3000` chip
-        // after the summary on row 2.
+        for (row_off, line_text) in summary_lines.iter().enumerate().take(2) {
+            let truncated = truncate_to_row(line_text);
+            let mut row_spans = vec![
+                Span::styled("  ", Style::default().bg(bg)),
+                Span::styled(truncated, Style::default().fg(summary_color).bg(bg)),
+            ];
+            // Ticket chip: append after the FIRST summary line only
+            // (row 2). Same rule as before — hidden if the user set
+            // a custom display name.
+            if row_off == 0
+                && let Some(ticket) = detected_ticket.as_deref()
+                && s.display_name.is_none()
+            {
+                row_spans.push(Span::styled(" · ", Style::default().fg(t.comment).bg(bg)));
+                row_spans.push(Span::styled(ticket, Style::default().fg(t.cyan).bg(bg)));
+            }
+            let row_rect = Rect {
+                x: area.x + 1,
+                y: y + 1 + row_off as u16,
+                width: area.width - 1,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(Line::from(row_spans)), row_rect);
+        }
+        // Listening ports (cached) — right-anchored chip on row 2.
         if let Some(pid) = pty_pid_opt {
             let ports = app.session_ports(pid);
             if !ports.is_empty() {
@@ -374,10 +376,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                     .collect::<Vec<_>>()
                     .join(" ");
                 let chip_w = chip_text.chars().count() as u16;
-                if row2_rect.width > chip_w + 6 {
+                let row2_x = area.x + 1;
+                let row2_w = area.width - 1;
+                if row2_w > chip_w + 6 {
                     let chip_rect = Rect {
-                        x: row2_rect.x + row2_rect.width - chip_w - 1,
-                        y: row2_rect.y,
+                        x: row2_x + row2_w - chip_w - 1,
+                        y: y + 1,
                         width: chip_w,
                         height: 1,
                     };
