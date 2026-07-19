@@ -172,6 +172,65 @@ impl App {
         self.open_picker(Picker::new(PickerKind::Files, "Open file", items));
     }
 
+    /// Fuzzy picker over every `.svg` file in the workspace tree.
+    /// Opened by the `[Browse]` chip on the glyph-builder overlay's
+    /// path row so the user doesn't have to type or paste the path.
+    /// Accept ⇒ `picker_accept` routes the id back into
+    /// `GlyphBuilderState.svg_path`.
+    pub fn open_glyph_builder_svg_picker(&mut self) {
+        use crate::picker::{PickerItem, PickerKind};
+        let workspace = self.workspace.clone();
+        let is_svg = |p: &Path| -> bool {
+            p.extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.eq_ignore_ascii_case("svg"))
+        };
+        let is_noise = |path: &Path| -> bool {
+            for component in path.components() {
+                if let std::path::Component::Normal(name) = component {
+                    let s = name.to_string_lossy();
+                    if matches!(
+                        s.as_ref(),
+                        ".git" | "node_modules" | "target" | ".next" | "dist" | "build"
+                    ) {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+        let make_item = |p: &Path| -> PickerItem {
+            let (label, detail) = match p.strip_prefix(&workspace) {
+                Ok(rel) => (
+                    rel.to_string_lossy().to_string(),
+                    rel.parent()
+                        .map(|d| d.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                ),
+                Err(_) => (
+                    p.file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| p.to_string_lossy().to_string()),
+                    p.parent()
+                        .map(|d| d.to_string_lossy().to_string())
+                        .unwrap_or_default(),
+                ),
+            };
+            PickerItem::new(p.to_string_lossy().to_string(), label, detail)
+        };
+        let mut items: Vec<PickerItem> = Vec::new();
+        for p in self.tree.all_files() {
+            if is_svg(&p) && !is_noise(&p) {
+                items.push(make_item(&p));
+            }
+        }
+        self.open_picker(crate::picker::Picker::new(
+            PickerKind::GlyphBuilderSvg,
+            "Pick an SVG file",
+            items,
+        ));
+    }
+
     /// Open a fuzzy picker over `App::recent_files` (most-recent first). The
     /// items keep that order — fuzzy filtering still works on the labels but
     /// the unfiltered list is recency-sorted (the picker doesn't auto-sort
@@ -505,6 +564,17 @@ impl App {
         };
         match picker.kind {
             PickerKind::Files | PickerKind::Recent => self.open_path(Path::new(&item.id)),
+            PickerKind::GlyphBuilderSvg => {
+                // Route the picked path into the glyph builder's
+                // svg_path field. Preserves the current focused_field
+                // so the user lands back on `path` with the value
+                // populated (they can Tab away or hit Enter to bake).
+                if let Some(s) = self.glyph_builder.as_mut() {
+                    s.svg_path = item.id.clone();
+                    s.svg_path_cursor = s.svg_path.len();
+                    s.focused_field = crate::glyph_builder::BuilderField::Path;
+                }
+            }
             PickerKind::Harpoon => {
                 if let Ok(slot1) = item.id.parse::<usize>() {
                     self.harpoon_goto(slot1);

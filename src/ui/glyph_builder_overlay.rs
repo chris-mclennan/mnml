@@ -132,6 +132,33 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             spans.push(Span::styled("  ←→", Style::default().fg(t.comment)));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), row_rect);
+        // Path row gets a `[Browse]` chip anchored to the right edge —
+        // click it to open a fuzzy picker over every `.svg` file in
+        // the workspace. Registered as a mouse target regardless of
+        // whether the field is focused. 2026-07-19 user request.
+        if matches!(field, BuilderField::Path) {
+            let chip_label = " [Browse] ";
+            let chip_w = chip_label.chars().count() as u16;
+            if row_rect.width > chip_w + 2 {
+                let chip_rect = Rect {
+                    x: row_rect.x + row_rect.width - chip_w - 1,
+                    y: row_rect.y,
+                    width: chip_w,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        chip_label,
+                        Style::default()
+                            .fg(t.fg)
+                            .bg(t.bg2)
+                            .add_modifier(Modifier::BOLD),
+                    ))),
+                    chip_rect,
+                );
+                app.rects.glyph_builder_browse_chip = Some(chip_rect);
+            }
+        }
     }
 
     // No live preview — the terminal can't hot-reload the patched
@@ -175,7 +202,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
     crate::ui::design_tokens::paint_hint_row(
         frame,
         inner,
-        "Tab field · text: ←→ Home End Ctrl+V · other: ←→ cycle · r reset · R reset all · ↵ bake · esc",
+        "Tab field · text: ←→ Home End Ctrl+V · Ctrl+O browse SVG · other: ←→ cycle · r reset · R reset all · ↵ bake · esc",
     );
 }
 

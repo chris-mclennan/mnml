@@ -10,6 +10,11 @@ use crate::fuzzy::fuzzy_match;
 pub enum PickerKind {
     /// `id` = a filesystem path. Accept ⇒ open it.
     Files,
+    /// `id` = an absolute path to an SVG. Accept ⇒ populate the
+    /// glyph builder's `svg_path` field with it. Opened by the
+    /// `[Browse]` chip on the path row of the glyph-builder
+    /// overlay (user request 2026-07-19).
+    GlyphBuilderSvg,
     /// `id` = a pane index (as a string). Accept ⇒ make it active.
     Buffers,
     /// `id` = a command id. Accept ⇒ run it.

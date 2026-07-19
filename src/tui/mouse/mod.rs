@@ -785,6 +785,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     if let Some(area) = app.rects.glyph_builder_overlay_rect {
         match m.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // [Browse] chip on the path row → open the SVG
+                // fuzzy picker (user request 2026-07-19).
+                if let Some(r) = app.rects.glyph_builder_browse_chip
+                    && crate::app::dispatch::contains(r, x, y)
+                {
+                    app.open_glyph_builder_svg_picker();
+                    return;
+                }
                 if let Some(&(_, field)) = app
                     .rects
                     .glyph_builder_field_rows

@@ -218,6 +218,13 @@ pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
         app.glyph_builder_paste();
         return;
     }
+    // Ctrl+O opens the SVG fuzzy picker — keyboard parallel to
+    // the [Browse] chip. Only meaningful when the path field is
+    // focused, but harmless from any field.
+    if ctrl && matches!(key.code, KeyCode::Char('o' | 'O')) {
+        app.open_glyph_builder_svg_picker();
+        return;
+    }
     // Ctrl+A / Ctrl+E — start / end of line, VS Code + shell muscle
     // memory. Ctrl+U — delete to start.
     if ctrl && text_field {

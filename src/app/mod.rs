@@ -2360,6 +2360,9 @@ pub struct PaneRects {
     pub glyph_builder_overlay_rect: Option<Rect>,
     /// Per-field click rects for glyph_builder (row, field). Click to focus.
     pub glyph_builder_field_rows: Vec<(Rect, crate::glyph_builder::BuilderField)>,
+    /// `[Browse]` chip on the path row — click opens a fuzzy
+    /// picker over every `.svg` in the workspace. 2026-07-19.
+    pub glyph_builder_browse_chip: Option<Rect>,
     /// `(rect, row_counter_idx)` per visible Row in the settings
     /// overlay — left-click moves the focus to that row (so the user
     /// can drive settings entirely by mouse: click row to focus +
