@@ -772,7 +772,16 @@ fn summarize_grid_lines(grid: &RenderGrid, max: usize) -> Vec<String> {
     if max == 0 {
         return Vec::new();
     }
-    let mut out: Vec<String> = Vec::with_capacity(max);
+    // Two-pass:
+    //   1. Collect every dim (low-contrast) content line — those
+    //      are Claude Code's session-summary chips above the
+    //      composer. Highest signal-to-noise.
+    //   2. Fill remaining slots with plain content lines,
+    //      bottom-up.
+    // Dedup across passes so a line that qualifies as both dim
+    // AND recent isn't emitted twice.
+    let mut dim_hits: Vec<(u16, String)> = Vec::new();
+    let mut plain_hits: Vec<(u16, String)> = Vec::new();
     for row in (0..grid.rows).rev() {
         let line = row_to_string(grid, row);
         let trimmed = line.trim();
@@ -780,6 +789,7 @@ fn summarize_grid_lines(grid: &RenderGrid, max: usize) -> Vec<String> {
             || is_chrome_line(trimmed)
             || is_footer_chip(trimmed)
             || is_input_prompt(trimmed)
+            || is_worked_completion(trimmed)
         {
             continue;
         }
@@ -787,13 +797,22 @@ fn summarize_grid_lines(grid: &RenderGrid, max: usize) -> Vec<String> {
         if cleaned.chars().count() < 3 {
             continue;
         }
-        // Deduplicate against the previous line — Claude Code's
-        // status area can double-emit the activity row between
-        // spinner frames.
-        if out.last().map(|s| s == &cleaned).unwrap_or(false) {
+        if is_dim_row(grid, row) {
+            dim_hits.push((row, cleaned));
+        } else {
+            plain_hits.push((row, cleaned));
+        }
+    }
+    let mut out: Vec<String> = Vec::with_capacity(max);
+    let mut seen_rows: std::collections::HashSet<u16> = std::collections::HashSet::new();
+    for (row, text) in dim_hits.into_iter().chain(plain_hits) {
+        if !seen_rows.insert(row) {
             continue;
         }
-        out.push(cleaned);
+        if out.last().map(|s| s == &text).unwrap_or(false) {
+            continue;
+        }
+        out.push(text);
         if out.len() >= max {
             break;
         }
@@ -812,6 +831,64 @@ fn is_chrome_line(s: &str) -> bool {
         return true;
     }
     false
+}
+
+/// Claude Code paints `<spinner> Worked for Ns` as a completion
+/// summary when a turn finishes. It's structurally identical to
+/// the in-progress "Sautéed for 27s" indicator but conveys no
+/// per-session context — you just get "yes, it did something" —
+/// so treat it as chrome and hide from the sessions summary.
+/// User report 2026-07-18: "im not sure if showing ✻ Worked for
+/// 30s is very helpful."
+fn is_worked_completion(s: &str) -> bool {
+    let cleaned = strip_leading_spinner_chars(s).trim();
+    if !cleaned.starts_with("Worked for ") && !cleaned.starts_with("worked for ") {
+        return false;
+    }
+    // Bounded — anything longer is unlikely to be Claude's
+    // completion chip and might be prose that starts with "Worked
+    // for the last 5 years at ...".
+    cleaned.chars().count() < 30
+}
+
+/// Detect whether a grid row is rendered noticeably dimmer than
+/// the terminal's default foreground. Claude Code uses a
+/// low-contrast style for its "session summary" line just above
+/// the prompt — that's the row we want to surface as the primary
+/// summary when the pane is at rest. User: "claude code adds a
+/// little summary sometimes in darker text and they put it above
+/// the prompt. pretty helpful sometimes when there is a lot
+/// going on."
+fn is_dim_row(grid: &RenderGrid, row: u16) -> bool {
+    // Reference brightness — 60% of the default fg.
+    let default_bright =
+        grid.default_fg.r as u32 + grid.default_fg.g as u32 + grid.default_fg.b as u32;
+    if default_bright == 0 {
+        return false;
+    }
+    let threshold = (default_bright * 3) / 5;
+    let mut total = 0u32;
+    let mut dim = 0u32;
+    for col in 0..grid.cols {
+        let Some(cell) = grid.cell(row, col) else {
+            continue;
+        };
+        if cell.text.is_empty() || cell.text.chars().all(|c| c.is_whitespace()) {
+            continue;
+        }
+        total += 1;
+        let Some(fg) = cell.fg else {
+            continue;
+        };
+        let b = fg.r as u32 + fg.g as u32 + fg.b as u32;
+        if b < threshold {
+            dim += 1;
+        }
+    }
+    // Need enough cells to be confident + a clear supermajority
+    // (≥ 60%) of them noticeably dim. Guards against a stray
+    // syntax-colored keyword tripping the check.
+    total >= 4 && dim * 5 >= total * 3
 }
 
 /// Recognise Claude Code's persistent bottom-of-screen footer
@@ -1605,6 +1682,20 @@ mod tests {
         // "2. Yes, and don't ask again ..." is menu content, not
         // chrome — must NOT be filtered.
         assert!(!is_footer_chip("2. Yes, and don't ask again for plugin"));
+    }
+
+    #[test]
+    fn is_worked_completion_matches_claudes_done_chip() {
+        assert!(is_worked_completion("✻ Worked for 30s"));
+        assert!(is_worked_completion("· Worked for 5s"));
+        assert!(is_worked_completion("Worked for 3m 15s"));
+        // Prose that starts with "Worked for the last ..." shouldn't
+        // hit — length guard rejects it.
+        assert!(!is_worked_completion(
+            "Worked for the last 5 years at Company X on payments infrastructure"
+        ));
+        // Different verb — real activity, shouldn't be dropped.
+        assert!(!is_worked_completion("✻ Sautéed for 27s"));
     }
 
     #[test]
