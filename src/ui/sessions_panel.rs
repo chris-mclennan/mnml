@@ -282,15 +282,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
         name_spans.push(Span::styled(label, name_style));
-        if unread > 0 && !is_active {
-            let count_str = if unread > 999 {
-                "999+".to_string()
+        // "Unread" is a byte count of pty output since last focus.
+        // Startup banner + ANSI escapes easily hit 500+ bytes, so
+        // showing the raw number reads as "🔔 999+" on a session
+        // you literally just opened (user report 2026-07-19).
+        // Threshold at 1KB so noise doesn't fire the bell; drop
+        // the count digits entirely — a single dot ("has activity
+        // since you last looked at it") is the useful signal.
+        const UNREAD_BYTES_THRESHOLD: u64 = 1024;
+        if unread >= UNREAD_BYTES_THRESHOLD && !is_active {
+            let bell_glyph = if !app.config.ui.ascii_icons {
+                "\u{F0F89}" // Nerd Font bell
             } else {
-                unread.to_string()
+                "•"
             };
             name_spans.push(Span::styled("  ", Style::default().bg(bg)));
             name_spans.push(Span::styled(
-                format!("🔔 {count_str}"),
+                bell_glyph,
                 Style::default()
                     .fg(t.orange)
                     .bg(bg)
