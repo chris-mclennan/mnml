@@ -31,13 +31,28 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         return;
     };
     // Tooltip uses the shared menu chrome (square border, default fg,
-    // bg2 fill) — matches the menu bar / right-click menu aesthetic
-    // the user preferred. Two lines when a subtitle is present.
+    // bg2 fill). Sublabel may be multi-line — split on '\n' so
+    // rich tooltips (Sessions panel) can show a block of lines.
     let prim_w = label.chars().count();
-    let sub_w = sublabel.as_deref().map(|s| s.chars().count()).unwrap_or(0);
-    let inner_w = prim_w.max(sub_w) as u16;
+    let sub_lines: Vec<String> = sublabel
+        .as_deref()
+        .map(|s| s.split('\n').map(|l| l.to_string()).collect())
+        .unwrap_or_default();
+    let sub_max_w = sub_lines
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0);
+    // Cap width at ~72 cols so a very long grid line doesn't blow
+    // out the tooltip; each line is truncated below.
+    let inner_w = prim_w.max(sub_max_w).min(72) as u16;
     let w = inner_w + 4; // 2 padding + 2 borders
-    let h: u16 = if sublabel.is_some() { 4 } else { 3 };
+    // Height: 1 primary + N sublabel lines + 2 borders.
+    let h: u16 = if sub_lines.is_empty() {
+        3
+    } else {
+        (2 + 1 + sub_lines.len() as u16).min(screen.height)
+    };
     // Anchor: place above the chip when there's room; else below.
     let want_y = anchor.y.saturating_sub(h);
     let y = if anchor.y >= h {
@@ -55,8 +70,6 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     let t = theme::cur();
     frame.render_widget(Clear, area);
     let mut lines: Vec<Line<'static>> = Vec::new();
-    // Primary line: bold fg text on the menu bg (bg2). No yellow chip
-    // — matches menu bar / right-click menu label style.
     lines.push(Line::styled(
         format!(" {label} "),
         Style::default()
@@ -64,11 +77,27 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
             .bg(t.bg2)
             .add_modifier(Modifier::BOLD),
     ));
-    if let Some(s) = sublabel {
-        lines.push(Line::styled(
-            format!(" {s} "),
-            Style::default().fg(t.comment).bg(t.bg2),
-        ));
+    let cap = inner_w as usize;
+    for s in sub_lines {
+        // Truncate any line longer than the tooltip inner width.
+        let text: String = if s.chars().count() > cap {
+            let take = cap.saturating_sub(1);
+            let mut out: String = s.chars().take(take).collect();
+            out.push('…');
+            out
+        } else {
+            s
+        };
+        // Blank sub-line separator (`""`) → paint as a blank row
+        // in the tooltip bg (nice visual break between sections).
+        if text.is_empty() {
+            lines.push(Line::styled(" ", Style::default().bg(t.bg2)));
+        } else {
+            lines.push(Line::styled(
+                format!(" {text} "),
+                Style::default().fg(t.comment).bg(t.bg2),
+            ));
+        }
     }
     let block = crate::ui::design_tokens::popup_menu("");
     frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -875,16 +904,51 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             use crate::pane::Pane;
             let (title, sub) = match app.panes.get(pid) {
                 Some(Pane::Pty(s)) => {
-                    let profile_label = s.profile.label.clone();
-                    let title = format!("{profile_label} — session");
-                    // Claude sessions: try to show the last user + assistant
-                    // exchange snippet. Falls back gracefully if the
-                    // transcript can't be read (fresh session, missing
-                    // file, malformed JSONL).
-                    let preview = s.profile.session_id.as_deref().and_then(|sid| {
-                        crate::claude_agents::preview_last_messages(sid, &app.workspace)
+                    // Title: same auto-detected name the sessions
+                    // card + tab show (Jira prefixes → OSC → label).
+                    let title = s.tab_label_with_prefixes(&app.config.ui.ticket_prefixes);
+                    // Sub: multi-line block with branch, cwd, and
+                    // up to 6 grid lines of what the pty is doing.
+                    // Rendered as one-line-per-`\n` by `draw` below.
+                    let cwd = s.profile.cwd.as_ref();
+                    let branch = cwd.and_then(|p| {
+                        std::process::Command::new("git")
+                            .args(["symbolic-ref", "--short", "-q", "HEAD"])
+                            .current_dir(p)
+                            .output()
+                            .ok()
+                            .and_then(|out| {
+                                let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                                (!b.is_empty()).then_some(b)
+                            })
                     });
-                    (title, preview.or(Some("click: focus session".into())))
+                    let cwd_str = cwd
+                        .and_then(|p| p.to_str().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    let mut lines: Vec<String> = Vec::new();
+                    if let Some(b) = branch {
+                        lines.push(format!("⎇ {b}"));
+                    }
+                    if !cwd_str.is_empty() {
+                        lines.push(format!("⌂ {cwd_str}"));
+                    }
+                    let grid = s.session_summary_lines(6);
+                    if !grid.is_empty() {
+                        if !lines.is_empty() {
+                            lines.push(String::new());
+                        }
+                        // Reverse so the tooltip reads oldest → newest —
+                        // matches how you'd read a chat transcript.
+                        for l in grid.into_iter().rev() {
+                            lines.push(l);
+                        }
+                    }
+                    let block = if lines.is_empty() {
+                        "click: focus session".to_string()
+                    } else {
+                        lines.join("\n")
+                    };
+                    (title, Some(block))
                 }
                 Some(p) => (p.title(), Some("click: focus session".into())),
                 None => ("session".into(), None),

@@ -1053,6 +1053,7 @@ fn home_projects_dir() -> Option<PathBuf> {
 /// Claude session's transcript, or `None` when the file can't be read
 /// / doesn't exist. Reads at most the last ~32 KB of the JSONL so this
 /// is cheap enough to call on hover (#12).
+#[allow(dead_code)]
 pub fn preview_last_messages(session_id: &str, workspace: &std::path::Path) -> Option<String> {
     let root = home_projects_dir()?;
     // Anthropic encodes the workspace path as `-Users-...-...` — same
