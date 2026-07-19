@@ -610,6 +610,30 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         height_frac: 0.80,
         center_frac: 0.36,
     },
+    // AI range (F1E00-F1EFF). 2026-07-19 — user report: the
+    // JBM-NF-patched F8B0/F8B1 glyphs render visibly higher than
+    // adjacent codicons and can't be re-baked without messing with
+    // the user's Nerd Font. Ship mnml-owned copies in
+    // `MnmlSymbols.ttf` at F1E00 / F1E01 so the glyph builder can
+    // iterate on `center_frac` until the user's happy. Starting
+    // center_frac=0.28 is a guess based on the visual drift; user
+    // tunes down further in the builder if needed.
+    BuiltinGlyph {
+        codepoint: 0xF1E00,
+        name: "ai-claude-spark",
+        svg_relpath: "assets/glyphs/ai/claude-spark.svg",
+        width_frac: 1.20,
+        height_frac: 0.75,
+        center_frac: 0.28,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1E01,
+        name: "ai-codex",
+        svg_relpath: "assets/glyphs/ai/codex.svg",
+        width_frac: 1.20,
+        height_frac: 0.75,
+        center_frac: 0.28,
+    },
 ];
 
 /// Locate a shipped SVG on disk. Tries in order:

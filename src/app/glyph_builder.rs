@@ -399,6 +399,108 @@ impl App {
         }
     }
 
+    /// Bake the two mnml-owned AI chip glyphs (F1E00 claude-spark
+    /// + F1E01 codex) into `~/Library/Fonts/MnmlSymbols.ttf` using
+    /// the `BUILTIN_GLYPHS` defaults. One shell-out — fontforge
+    /// runs both bakes in a single pass. User then restarts the
+    /// terminal (font cache) to pick up the new glyphs. Iterate:
+    /// open `integrations.edit_claude_glyph`, nudge `center_frac`
+    /// with ←/→, rebake.
+    ///
+    /// User: "we need a way of choosing the image centering it".
+    pub fn bake_ai_glyphs_default(&mut self) {
+        use crate::glyph_builder::{BUILTIN_GLYPHS, resolve_builtin_svg};
+        let ai_glyphs: Vec<_> = BUILTIN_GLYPHS
+            .iter()
+            .filter(|g| g.codepoint == 0xF1E00 || g.codepoint == 0xF1E01)
+            .collect();
+        if ai_glyphs.is_empty() {
+            self.toast("bake AI glyphs: BUILTIN_GLYPHS missing F1E00/F1E01");
+            return;
+        }
+        let mut resolved: Vec<(String, u32, &'static str, f32, f32, f32)> = Vec::new();
+        for g in &ai_glyphs {
+            match resolve_builtin_svg(g.svg_relpath) {
+                Some(path) => resolved.push((
+                    path.to_string_lossy().into_owned(),
+                    g.codepoint,
+                    g.name,
+                    g.width_frac,
+                    g.height_frac,
+                    g.center_frac,
+                )),
+                None => {
+                    self.toast(format!("bake AI glyphs: SVG not found — {}", g.svg_relpath));
+                    return;
+                }
+            }
+        }
+        let Some(home) = std::env::var_os("HOME") else {
+            self.toast("bake AI glyphs: $HOME unset");
+            return;
+        };
+        let home = std::path::PathBuf::from(home);
+        let font_out = home.join("Library/Fonts/MnmlSymbols.ttf");
+        let script = match std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                let mut cur = p;
+                while cur.pop() {
+                    let cand = cur.join("scripts/build_mnml_symbols.py");
+                    if cand.exists() {
+                        return Some(cand);
+                    }
+                }
+                None
+            })
+            .or_else(|| {
+                let cand = home.join("Projects/mnml/scripts/build_mnml_symbols.py");
+                if cand.exists() { Some(cand) } else { None }
+            }) {
+            Some(p) => p,
+            None => {
+                self.toast("bake AI glyphs: build_mnml_symbols.py not found");
+                return;
+            }
+        };
+        let mut args: Vec<String> = vec![
+            "-script".to_string(),
+            script.to_string_lossy().into_owned(),
+            "--output".to_string(),
+            font_out.to_string_lossy().into_owned(),
+        ];
+        for (svg, cp, name, w, h, c) in &resolved {
+            args.push("--glyph".to_string());
+            args.push(format!(
+                "{svg}:{cp:04X}:{name}:width={:.2}:height={:.2}:center={:.2}",
+                w, h, c
+            ));
+            // Persist to meta so the per-glyph builder loads these
+            // defaults when the user opens "Edit Claude glyph" or
+            // "Edit Codex glyph".
+            crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
+                codepoint: format!("{cp:04X}"),
+                name: name.to_string(),
+                svg: svg.clone(),
+                width_frac: *w,
+                height_frac: *h,
+                center_frac: *c,
+            });
+        }
+        let profile = crate::pty_pane::BinaryProfile {
+            label: "bake AI glyphs".to_string(),
+            exe: "fontforge".to_string(),
+            args,
+            cwd: None,
+            env: vec![],
+            session_id: None,
+        };
+        self.open_pty(profile);
+        self.toast(
+            "baking AI chip glyphs (F1E00 + F1E01) · restart terminal after fontforge exits",
+        );
+    }
+
     /// Where the UI should look for the current focus. Used by the
     /// key handler + the renderer to keep the two in sync.
     pub fn glyph_builder_focused_field(&self) -> Option<BuilderField> {

@@ -1198,7 +1198,11 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 "  "
             }
         };
-        let glyph_cp: u32 = if is_codex { 0xF8B1 } else { 0xF8B0 };
+        // 2026-07-19 — chip renderer moved from JBM-NF-patched
+        // F8B0/F8B1 to mnml-owned F1E00/F1E01 in MnmlSymbols.ttf.
+        // Point the glyph builder at the new codepoints so
+        // "Edit glyph…" actually tunes what the chip renders.
+        let glyph_cp: u32 = if is_codex { 0xF1E01 } else { 0xF1E00 };
         // Layout mode toggle — `[ui] ai_layout_mode` chooses
         // whether a new AI session grows the grid (auto-tile
         // splits, capped at 8) or just appends a tab to the
@@ -1253,8 +1257,16 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                 format!("{}Hide these icons", mark("none")),
                 MenuAction::Command("view.tab_bar_ai_none"),
             ),
+            // Font glyph controls (2026-07-19). "Bake" installs the
+            // AI chip glyphs into MnmlSymbols.ttf using the defaults
+            // in `BUILTIN_GLYPHS`; "Edit" opens the glyph builder
+            // for iterative center_frac tuning.
             MenuItem::new(
-                format!("Edit {kind_label} glyph…"),
+                "Bake AI glyphs into MnmlSymbols",
+                MenuAction::Command("integrations.bake_ai_glyphs"),
+            ),
+            MenuItem::new(
+                format!("Edit {kind_label} glyph… (center)"),
                 MenuAction::OpenGlyphBuilderForCp(glyph_cp),
             ),
         ];

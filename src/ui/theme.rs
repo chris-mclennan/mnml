@@ -244,16 +244,25 @@ pub fn cur() -> Theme {
 /// (single-leaf strip) and ui/mod.rs (per-leaf strip painter).
 pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, ratatui::style::Color) {
     match kind {
-        // 2026-07-12 restore — briefly swapped to codicon EB25
-        // to fix vertical alignment, but that codepoint maps to
-        // a "prohibited/no-entry" icon in the user's Nerd Font
-        // (not `hubot` as I'd assumed) so the chip read as a
-        // red no-smoking symbol. Reverted to the mnml-patched
-        // Claude / Codex PUA glyphs. Any residual half-row
-        // baseline drift is a font-metric issue we can't fix at
-        // the codepoint layer.
-        "codex" => ("\u{F8B1}", "C", t.cyan),
-        _ => ("\u{F8B0}", "*", t.orange),
+        // 2026-07-19 — moved from the JBM-NF-patched F8B0/F8B1
+        // (which have an uncontrollable baseline drift) to the
+        // mnml-owned F1E00/F1E01 codepoints in `MnmlSymbols.ttf`.
+        // The glyph builder can tune `center_frac` for these
+        // freely — user runs `integrations.bake_ai_glyphs` (or
+        // the AI-chip right-click menu's "Bake AI glyphs" item)
+        // to install them, then iterates on centering.
+        //
+        // Fallback plan when MnmlSymbols isn't installed: users
+        // see tofu; the AI-chip menu's "Bake AI glyphs…" is the
+        // way in. See `App::bake_ai_glyphs_default`.
+        //
+        // Previous attempts (documented for future maintainers):
+        //   - EB25 codicon → mapped to no-smoking symbol in
+        //     user's Nerd Font, unusable.
+        //   - F8B0/F8B1 → JBM-NF-patched but baseline can't be
+        //     re-baked from mnml.
+        "codex" => ("\u{F1E01}", "C", t.cyan),
+        _ => ("\u{F1E00}", "*", t.orange),
     }
 }
 

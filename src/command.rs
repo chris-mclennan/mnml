@@ -2168,6 +2168,31 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_glyph_builder(),
         },
         Command {
+            id: "integrations.bake_ai_glyphs",
+            title: "Integrations: bake AI chip glyphs (Claude + Codex) into MnmlSymbols",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.bake_ai_glyphs_default(),
+        },
+        Command {
+            id: "integrations.edit_claude_glyph",
+            title: "Integrations: open glyph builder for Claude Code (F1E00)",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                app.open_glyph_builder_for_edit_cp(0xF1E00);
+            },
+        },
+        Command {
+            id: "integrations.edit_codex_glyph",
+            title: "Integrations: open glyph builder for Codex (F1E01)",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                app.open_glyph_builder_for_edit_cp(0xF1E01);
+            },
+        },
+        Command {
             id: "editor.jump_next_edit",
             title: "Jump to next edit position (vim `g,`)",
             group: "editor",

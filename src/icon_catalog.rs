@@ -94,8 +94,16 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     IconEntry { codepoint: "F01F0", name: "email-search", category: "msg" },
 
     // ── ai / coding ──
-    IconEntry { codepoint: "F8B0",  name: "claude-spark (mnml-patched)", category: "ai" },
-    IconEntry { codepoint: "F8B1",  name: "codex (mnml-patched)", category: "ai" },
+    // F8B0/F8B1 are the JetBrainsMono-NF-patched originals (kept
+    // for backwards compat with old configs). F1E00/F1E01 are the
+    // mnml-owned copies baked into MnmlSymbols.ttf via the glyph
+    // builder — center_frac tunable, so the user can fix baseline
+    // drift without patching their Nerd Font. AI chip renderer
+    // uses the F1E00/F1E01 pair now.
+    IconEntry { codepoint: "F8B0",  name: "claude-spark (JBM-NF-patched)", category: "ai" },
+    IconEntry { codepoint: "F8B1",  name: "codex (JBM-NF-patched)", category: "ai" },
+    IconEntry { codepoint: "F1E00", name: "ai-claude-spark", category: "ai" },
+    IconEntry { codepoint: "F1E01", name: "ai-codex", category: "ai" },
 
     // ── aws (mnml-patched from official AWS Architecture Icons ──
     // Two variants per service: inverted (transparent bg, colored
