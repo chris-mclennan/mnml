@@ -168,28 +168,40 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         || app.dragging_tree_edge
         || app.dragging_right_panel_edge
         || app.rail_section_drag.is_some();
-    if !is_any_drag_active
-        && let Some(&(rect, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
-            crate::app::dispatch::contains(*r, x, y)
-                && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
-        })
-        && let Some(Pane::Pty(session)) = app.panes.get_mut(pid)
-        && session.is_mouse_tracking()
-    {
-        forward_mouse_to_pty(session, rect, m);
-        // 2026-07-22 fix: also focus the pane on a real click so
-        // subsequent keyboard events reach THIS Pty child (not
-        // whatever was `app.active` before). Was: user clicks the
-        // top pane, click goes to child's SGR handler, but arrows
-        // stay routed to a stale `active` pane below.
-        if matches!(
-            m.kind,
-            MouseEventKind::Down(MouseButton::Left)
-                | MouseEventKind::Down(MouseButton::Right)
-                | MouseEventKind::Down(MouseButton::Middle)
-        ) && app.active != Some(pid)
-        {
-            app.active = Some(pid);
+    // 2026-07-22 — resolve the Pty-forwarding hit without any
+    // mutable borrows first, THEN mutate. The prior version's
+    // `if let ... && let ... = get_mut()` chain confused the
+    // borrow checker enough that `app.active = Some(pid)`
+    // silently no-op'd (child received the SGR click — proving
+    // the branch entered — but focus didn't update). Split into
+    // two phases guarantees the mutation lands.
+    let pty_tracking_hit: Option<(Rect, usize)> = if is_any_drag_active {
+        None
+    } else {
+        app.rects
+            .editor_panes
+            .iter()
+            .find(|(r, pid)| {
+                crate::app::dispatch::contains(*r, x, y)
+                    && matches!(
+                        app.panes.get(*pid),
+                        Some(Pane::Pty(s)) if s.is_mouse_tracking()
+                    )
+            })
+            .copied()
+    };
+    if let Some((rect, pid)) = pty_tracking_hit {
+        // Phase 1: forward the SGR to the child.
+        if let Some(Pane::Pty(session)) = app.panes.get_mut(pid) {
+            forward_mouse_to_pty(session, rect, m);
+        }
+        // Phase 2: focus this pane on any Down button so keys
+        // route here for the next event tick. Non-Down events
+        // (Moved / ScrollUp/Down) don't steal focus.
+        if matches!(m.kind, MouseEventKind::Down(_)) {
+            if app.active != Some(pid) {
+                app.active = Some(pid);
+            }
             app.focus_pane();
         }
         return;

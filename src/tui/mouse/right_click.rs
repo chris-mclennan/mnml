@@ -1393,6 +1393,15 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     {
         app.active = Some(pid);
         app.focus_pane();
+        // 2026-07-22 fix: also set `rp.focus` to the right-clicked
+        // field. The Copy/Paste/Cut/Select-all menu items read
+        // `rp.focus` — without this update they'd operate on
+        // whichever field was previously focused via Tab/click,
+        // silently producing wrong-field output that looked like
+        // "the menu items are no-ops" from the user's perspective.
+        if let Some(Pane::Request(rp)) = app.panes.get_mut(pid) {
+            rp.focus = field;
+        }
         app.open_request_field_context_menu(field, (x, y));
         return;
     }
