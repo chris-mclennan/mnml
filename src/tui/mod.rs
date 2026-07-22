@@ -2235,7 +2235,22 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     // NOT open before chord-dispatch but IS open after, re-route
     // the current key to the overlay's char-feed.
     let whichkey_was_open = app.whichkey.is_some();
-    if !vim_reserves_key && !pty_reserves_key && dispatch_chord_chain(app, key) {
+    // 2026-07-22 fix: bare `Delete` was bound globally to
+    // `file.delete` (with no Focus::Tree gate), so pressing Delete
+    // in the Request pane or the code editor teleported to the
+    // tree's file-delete-confirm dialog instead of forward-
+    // deleting a char at the caret. Skip the chord-chain machinery
+    // for lone Delete when focus is NOT on the tree AND no chord
+    // is pending — pane handlers own the key in that case.
+    let delete_owns_focus = matches!(key.code, KeyCode::Delete)
+        && key.modifiers.is_empty()
+        && !matches!(app.focus, crate::focus::Focus::Tree)
+        && app.pending_chord_seq.is_empty();
+    if !vim_reserves_key
+        && !pty_reserves_key
+        && !delete_owns_focus
+        && dispatch_chord_chain(app, key)
+    {
         return;
     }
     if !whichkey_was_open
