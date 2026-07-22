@@ -62,6 +62,16 @@ pub(crate) use coalesce::{coalesce_scroll, take_coalesce_leftover, take_scroll_b
 pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     let (x, y) = (m.column, m.row);
 
+    // 2026-07-22 — Win95 hourglass click-echo. Stamp on any Down
+    // (left/right/middle) so the renderer paints an hourglass at
+    // the cursor for ~250ms. Gives the "yes I saw your click" feel
+    // for slow ops without wiring per-command loading UI. User:
+    // "when I click and there is a wait, I tend to click, think
+    // nothing happened, click again."
+    if matches!(m.kind, MouseEventKind::Down(_)) {
+        app.click_echo = Some((x, y, std::time::Instant::now()));
+    }
+
     // LSP hover popup takes precedence when the pointer is over
     // it: wheel scrolls the content, Moved is a no-op (so hover
     // doesn't dismiss just because the pointer walked onto the

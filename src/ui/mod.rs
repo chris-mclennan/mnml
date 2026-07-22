@@ -1500,6 +1500,39 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     {
         frame.set_cursor_position((x, y));
     }
+
+    // 2026-07-22 — Win95 hourglass click-echo. Draw a yellow
+    // hourglass at the click coord for ~250ms after any Down
+    // event so the user gets immediate feedback that mnml saw
+    // the click (independent of whether the underlying command
+    // is slow). Clears itself when the elapsed time passes.
+    if let Some((x, y, started)) = app.click_echo {
+        const ECHO_MS: u128 = 250;
+        let elapsed = started.elapsed().as_millis();
+        if elapsed < ECHO_MS {
+            let area = frame.area();
+            if x < area.x + area.width && y < area.y + area.height {
+                use ratatui::style::{Color, Style};
+                use ratatui::text::Span;
+                use ratatui::widgets::Paragraph;
+                let cell = ratatui::layout::Rect {
+                    x,
+                    y,
+                    width: 1,
+                    height: 1,
+                };
+                frame.render_widget(
+                    Paragraph::new(Span::styled(
+                        "\u{f4a3}", // nf-md-timer_sand (⧗-ish hourglass)
+                        Style::default().fg(Color::Yellow),
+                    )),
+                    cell,
+                );
+            }
+        } else {
+            app.click_echo = None;
+        }
+    }
 }
 
 /// Recursively render a layout subtree into `area`: leaves draw their editor;

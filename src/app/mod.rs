@@ -3785,6 +3785,17 @@ pub struct App {
     /// different cell. Read by `dispatch_mouse` to upgrade count==2 → word
     /// select, count==3 → line select.
     pub last_click: Option<(std::time::Instant, u16, u16, u8)>,
+    /// Win95-style click-echo: on any mouse-Down we stamp
+    /// (screen_x, screen_y, start_time). The renderer paints
+    /// an hourglass glyph at that cell for the first ~250ms so
+    /// the user gets immediate "yes, I saw your click" feedback
+    /// even when the underlying action is slow. Decays naturally
+    /// as time passes; no explicit clear needed.
+    ///
+    /// 2026-07-22 user report: "when I click something and there
+    /// is a wait can some progress indicator be shown, I tend to
+    /// click, think nothing happened, click again."
+    pub click_echo: Option<(u16, u16, std::time::Instant)>,
     /// Timestamp of the last wheel-scroll event we APPLIED to a slow-
     /// scroll surface (tree / git rail / sidebar list). macOS Terminal +
     /// Ghostty + iTerm2 fire several scroll events per real wheel
@@ -5204,6 +5215,7 @@ impl App {
             nav_jump_in_progress: false,
             prev_jump_pos: None,
             last_click: None,
+            click_echo: None,
             last_list_scroll_at: None,
             scroll_bucket: 25.0,
             scroll_bucket_last_refill: None,
