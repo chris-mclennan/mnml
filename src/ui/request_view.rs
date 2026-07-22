@@ -1032,7 +1032,10 @@ pub fn draw(
     const SEND_BOX_WIDTH: u16 = 10;
     const SAVE_BOX_WIDTH: u16 = 10;
     const CLEAR_BOX_WIDTH: u16 = 11;
-    const CODE_BOX_WIDTH: u16 = 12;
+    // 2026-07-21 — was 12 (fit " </> Code "), now 16 so
+    // " </> Copy as… " renders in full instead of being
+    // truncated to " </> Copy" by the paint_box helper.
+    const CODE_BOX_WIDTH: u16 = 16;
     // Env chip — sits between URL and Send. Fixed 14 cells so a
     // short env name (`staging`, `dev`, `prod`) fits with the
     // leading `env: ` label + trailing `▾` chevron.
@@ -2271,7 +2274,7 @@ fn paint_body_regenerate_chip(
     if !matches!(detect_body_kind(body), Some("JSON")) {
         return None;
     }
-    let chip_text = " \u{21BB} Reroll ";
+    let chip_text = " \u{21BB} Regenerate ";
     let chip_w = chip_text.chars().count() as u16;
     // Anchor to the format chip's left edge minus 1 cell of gap.
     // When there IS no format chip (narrow strip), fall back to
@@ -2598,13 +2601,16 @@ fn draw_clear_box(frame: &mut Frame, rect: Rect, t: theme::Theme) -> Option<Rect
 /// Click opens a language picker (curl / Python / JS / Go / wget /
 /// HTTPie) and copies the rendered snippet to the clipboard.
 fn draw_code_box(frame: &mut Frame, rect: Rect, t: theme::Theme) -> Option<Rect> {
-    let block = crate::ui::design_tokens::bordered_plain("Code");
+    // 2026-07-21 — box label + inner chip both say "Copy as…"
+    // instead of "Code" so the copy intent isn't hidden. User:
+    // "i was expecting a copy button". Matches HTTPie Desktop.
+    let block = crate::ui::design_tokens::bordered_plain("Copy as…");
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     if inner.width == 0 || inner.height == 0 {
         return None;
     }
-    let text = " </> Code ";
+    let text = " </> Copy as… ";
     let text_w = text.chars().count() as u16;
     let mid_pad = inner.width.saturating_sub(text_w) / 2;
     let content = Line::from(vec![
@@ -3471,10 +3477,13 @@ fn draw_edit(
             Style::default().fg(t.red).bg(t.bg_dark),
         )),
         RunState::Failed(_) => {}
-        RunState::Done(r) => rows.push(plain(
-            format!("  ✓ last: {} ({} ms)", r.status, r.elapsed.as_millis()),
-            Style::default().fg(t.green).bg(t.bg_dark),
-        )),
+        // 2026-07-21 — Done state suppressed on the request side:
+        // the response pane already shows "{status} · {elapsed}ms
+        // · {bytes}" in its own header, so echoing "✓ last: 200
+        // (228 ms)" under the request body was pure redundancy.
+        // User: "why say last: 200 (228ms) if its already on the
+        // response pane?"
+        RunState::Done(_) => {}
     }
 }
 

@@ -259,6 +259,7 @@ impl App {
             cwd: None,
             env: vec![],
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
         self.toast(format!(
@@ -723,6 +724,70 @@ pub fn persist_ui_string(key: &'static str, value: &str) -> Result<std::path::Pa
         }
     }
 
+    let contents = out.join("\n") + "\n";
+    std::fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Persist the pinned-integration list to `[ui]
+/// activity_bar_pinned_integrations = […]`. Right-click "Add to
+/// activity bar" / "Remove from activity bar" write via this.
+/// Preserves comments + other keys in the file. 2026-07-20.
+pub fn persist_activity_bar_pinned_integrations(
+    ids: &[String],
+) -> Result<std::path::PathBuf, String> {
+    let path = crate::config::user_config_path()
+        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let key = "activity_bar_pinned_integrations";
+    // Serialize as a TOML array literal — escape any `"` in ids.
+    let esc = |s: &str| s.replace('\\', r"\\").replace('"', "\\\"");
+    let arr = ids
+        .iter()
+        .map(|s| format!("\"{}\"", esc(s)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let new_line = format!("{key} = [{arr}]");
+
+    let mut out: Vec<String> = Vec::new();
+    let mut in_ui = false;
+    let mut ui_header_idx: Option<usize> = None;
+    let mut key_replaced = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_ui = trimmed == "[ui]";
+            if in_ui {
+                ui_header_idx = Some(out.len());
+            }
+            out.push(line.to_string());
+            continue;
+        }
+        if in_ui
+            && !key_replaced
+            && (trimmed.starts_with(&format!("{key} ")) || trimmed.starts_with(&format!("{key}=")))
+        {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            out.push(format!("{indent}{new_line}"));
+            key_replaced = true;
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    if !key_replaced {
+        if let Some(idx) = ui_header_idx {
+            out.insert(idx + 1, new_line);
+        } else {
+            if !out.is_empty() && !out.last().is_some_and(|l| l.trim().is_empty()) {
+                out.push(String::new());
+            }
+            out.push("[ui]".to_string());
+            out.push(new_line);
+        }
+    }
     let contents = out.join("\n") + "\n";
     std::fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)

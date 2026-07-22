@@ -567,6 +567,7 @@ end tell"#,
             cwd: None,
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
         self.toast("installing Chrome for Testing… try `:browser.open` when done");

@@ -508,6 +508,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 );
                 frame.render_widget(ratatui::widgets::Paragraph::new(body), content_area);
             }
+            crate::app::ActivitySection::LauncherIcon(_) => {
+                // 2026-07-20 — LauncherIcon has no side panel; the
+                // click already fired the chip command. This arm
+                // shouldn't render in practice (the click handler
+                // never enters set_activity_section for
+                // LauncherIcon), but keep it exhaustive.
+            }
         }
         // For non-Explorer sections the tree_view click rects aren't
         // populated; ensure they're at least cleared so a stale click
@@ -1522,7 +1529,25 @@ fn render_layout(
         }
         Layout::Leaf { active: id, tabs } => {
             let focused = app.active == Some(*id);
-            let tabs_owned = tabs.clone();
+            // 2026-07-21 — filter the tab strip by active activity
+            // section. In Http activity, only Request panes show
+            // (their Response is part of the same pane, so no
+            // duplication); other activities show everything.
+            // Panes are NOT closed — they're just hidden from this
+            // strip. Switching activity brings them back. User asked
+            // for this on 2026-07-21: "we don't show files in the
+            // http area? what do you think we should do".
+            let tabs_owned: Vec<crate::layout::PaneId> =
+                if matches!(app.active_section, crate::app::ActivitySection::Http) {
+                    tabs.iter()
+                        .filter(|&&pid| {
+                            matches!(app.panes.get(pid), Some(crate::pane::Pane::Request(_)))
+                        })
+                        .copied()
+                        .collect()
+                } else {
+                    tabs.clone()
+                };
             // 2026-06-21 — VS Code-style per-split tab strip. When
             // this leaf is INSIDE a split (path non-empty) AND the
             // pane isn't a Pty (which has its own tab strip in
@@ -3678,31 +3703,46 @@ fn pty_icon(
     let tt = theme::cur();
     let profile_label = s.profile.label.as_str();
     let profile_label_lower = profile_label.to_ascii_lowercase();
-    let profile_label_normalized = profile_label_lower.replace(' ', "_");
-    let profile_args = s.profile.args.join(" ").to_ascii_lowercase();
-    let sibling_glyph = app
-        .config
-        .ui
-        .integration_icons
-        .iter()
-        .find(|ic| {
-            if ic.id.eq_ignore_ascii_case(&profile_label_normalized) {
-                return true;
-            }
-            let cmd = ic.command.as_str();
-            if !cmd.starts_with(":term ") {
-                return false;
-            }
-            let Some(bin) = cmd.strip_prefix(":term ").map(str::trim) else {
-                return false;
-            };
-            if bin.split('-').next_back() == Some(profile_label) {
-                return true;
-            }
-            profile_args.contains(&bin.to_ascii_lowercase())
-                || profile_args.contains(&profile_label_lower)
-        })
-        .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)));
+    // 2026-07-19 — deterministic matching path. When a Pty was
+    // launched from a rail chip, the dispatcher stamps that chip's
+    // `IntegrationIcon.id` onto `profile.integration_id`. Look it
+    // up by exact id — no substring guessing on labels or args.
+    // Only falls through to the label heuristic (below) for panes
+    // that weren't launched via a chip (raw `:term`, restored
+    // sessions with no stamped id, etc.).
+    let sibling_glyph = if let Some(id) = &s.profile.integration_id {
+        app.config
+            .ui
+            .integration_icons
+            .iter()
+            .find(|ic| &ic.id == id)
+            .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)))
+    } else {
+        // Legacy heuristic — profile.label case-insensitive
+        // against ic.id, then a couple of args-based fallbacks
+        // for panes older than the integration_id stamping.
+        let profile_label_normalized = profile_label_lower.replace(' ', "_");
+        let profile_args = s.profile.args.join(" ").to_ascii_lowercase();
+        app.config
+            .ui
+            .integration_icons
+            .iter()
+            .find(|ic| {
+                if ic.id.eq_ignore_ascii_case(&profile_label_normalized) {
+                    return true;
+                }
+                let cmd = ic.command.as_str();
+                let Some(bin) = cmd.strip_prefix(":term ").map(str::trim) else {
+                    return false;
+                };
+                if bin.split('-').next_back() == Some(profile_label) {
+                    return true;
+                }
+                profile_args.contains(&bin.to_ascii_lowercase())
+                    || profile_args.contains(&profile_label_lower)
+            })
+            .map(|ic| (ic.glyph.clone(), theme::color_from_slot(&ic.color, &tt)))
+    };
     let spinner = s.current_spinner_glyph();
     let is_codex = profile_label_lower == "codex";
     let codex_thinking = is_codex && s.is_codex_thinking();

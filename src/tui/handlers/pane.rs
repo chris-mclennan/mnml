@@ -2749,6 +2749,7 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 // Now Esc toggles back to Response view.
                 KeyCode::Esc => rp.view = crate::request_pane::ViewMode::Response,
                 KeyCode::Backspace => rp.backspace(),
+                KeyCode::Delete => rp.delete_forward(),
                 KeyCode::Left => rp.move_left(),
                 KeyCode::Right => rp.move_right(),
                 KeyCode::Home => rp.move_home(),

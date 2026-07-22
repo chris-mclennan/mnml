@@ -71,6 +71,10 @@ pub struct RequestPane {
     /// structured fields, then clearing.
     pub source_buffer: String,
     pub source_cursor: usize,
+    /// Placeholder cursor used by `App::http_field_*` when the
+    /// focused field is `Method` (which lacks a real cursor).
+    /// Not persisted; recomputed each call.
+    pub method_cursor_scratch: usize,
     /// The previous Done response (if any). Saved off when a new
     /// send completes — lets `:http.diff_last_two` compare the
     /// current Done against this snapshot. Cleared on a fresh
@@ -566,6 +570,7 @@ impl RequestPane {
             edit_tab: EditTab::Body,
             source_buffer: String::new(),
             source_cursor: 0,
+            method_cursor_scratch: 0,
             prev_response: None,
             filter: String::new(),
             filter_focused: false,
@@ -718,6 +723,23 @@ impl RequestPane {
             .unwrap_or(0);
         s.replace_range(prev..*cur, "");
         *cur = prev;
+    }
+
+    /// Forward-delete — remove the char AT the caret. Mirrors
+    /// `backspace` for the Delete key (macOS Fn+Delete etc.).
+    pub fn delete_forward(&mut self) {
+        let Some((s, cur)) = self.focused_text_mut() else {
+            return;
+        };
+        if *cur >= s.len() {
+            return;
+        }
+        let end = s[*cur..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| *cur + i)
+            .unwrap_or(s.len());
+        s.replace_range(*cur..end, "");
     }
 
     /// Move the focused field's caret left one char (no-op for Method).

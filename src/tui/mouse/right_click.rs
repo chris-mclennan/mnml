@@ -354,6 +354,53 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
                     MenuAction::Command("cloud_agents.new_run_wizard"),
                 ));
             }
+            // 2026-07-20 — LauncherIcon reorder + unpin actions.
+            // Replace the default items entirely — "Show
+            // Launcher" is not a real command (LauncherIcon is
+            // click-to-fire, not a section). Then Move to
+            // top / Move up / Move down / Move to bottom (matching
+            // the sidebar chip right-click order the user
+            // asked for) + Remove from activity bar.
+            ActivitySection::LauncherIcon(idx) => {
+                let idx_us = idx as usize;
+                let list = &app.config.ui.activity_bar_pinned_integrations;
+                let is_first = idx_us == 0;
+                let is_last = idx_us + 1 >= list.len();
+                let integ_id = list.get(idx_us).cloned();
+                items.clear();
+                if let Some(id) = integ_id.clone() {
+                    // Custom launch item at the top so users can
+                    // fire without hunting for the exact icon.
+                    items.push(MenuItem::new(
+                        "Launch",
+                        MenuAction::LaunchPinnedIntegration(id.clone()),
+                    ));
+                    if !is_first {
+                        items.push(MenuItem::new(
+                            "Move to top",
+                            MenuAction::MovePinnedIntegrationToTop(id.clone()),
+                        ));
+                        items.push(MenuItem::new(
+                            "Move up",
+                            MenuAction::MovePinnedIntegrationUp(id.clone()),
+                        ));
+                    }
+                    if !is_last {
+                        items.push(MenuItem::new(
+                            "Move down",
+                            MenuAction::MovePinnedIntegrationDown(id.clone()),
+                        ));
+                        items.push(MenuItem::new(
+                            "Move to bottom",
+                            MenuAction::MovePinnedIntegrationToBottom(id.clone()),
+                        ));
+                    }
+                    items.push(MenuItem::new(
+                        "Remove from activity bar",
+                        MenuAction::RemoveIntegrationFromActivityBar(id),
+                    ));
+                }
+            }
             _ => {}
         }
         app.context_menu = Some(ContextMenu::new(Some(label.to_string()), (x, y), items));

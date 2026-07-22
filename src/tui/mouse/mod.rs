@@ -130,10 +130,50 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.pty_paste_clipboard();
         return;
     }
-    if let Some(&(rect, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
-        crate::app::dispatch::contains(*r, x, y)
-            && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
-    }) && let Some(Pane::Pty(session)) = app.panes.get_mut(pid)
+    // 2026-07-19 — menu-open wins over Pty mouse-forwarding. If a
+    // context menu is up (e.g. the `+` tab "Create…" menu) and the
+    // click lands over a Pty pane whose child has enabled mouse
+    // tracking, previously the click was forwarded to the sibling
+    // and never reached the menu-dismiss branch below — the menu
+    // stayed open. User report: "when i open a menu and click away
+    // menu should close, this one does not". Let the menu handler
+    // run first (accepts the click on an item, or cancels).
+    // 2026-07-20 — same guard for tab-drag. If the user grabbed a
+    // tab and is now dragging over an integration Pty pane, the
+    // sibling's mouse tracking would swallow the drag events and
+    // the release wouldn't split — user report: "can we allow
+    // integration tabs to be moved around like we did for file
+    // tabs".
+    // Any active drag/menu takes precedence over Pty forwarding —
+    // the sibling's mouse tracking would otherwise swallow the
+    // in-progress gesture. Covers context menus, tab-drag, tree-drag,
+    // tab-page-chip drag, and dock-widget drag. User report
+    // 2026-07-20: "once i open an integration, i can then no
+    // longer drag files" — tree_drag/bufferline_drag_tab were
+    // getting stomped mid-drag when the cursor passed over the
+    // sibling's pane body.
+    let is_any_drag_active = app.context_menu.is_some()
+        || app.rects.bufferline_drag_tab.is_some()
+        || app.tree_drag.is_some()
+        || app.dragging_tab_page.is_some()
+        || app.dock_drag_id.is_some()
+        // 2026-07-21 — same class of bug as tab-drag: without
+        // these, dragging a split divider BACK into a Pty pane's
+        // area (to shrink it) let the sibling swallow the drag
+        // events, so dividers could only grow the Pty pane, not
+        // shrink it. Scrollbar / tree-edge / right-panel-edge /
+        // rail-section drags all have the same shape.
+        || app.dragging.is_some()
+        || app.dragging_scrollbar.is_some()
+        || app.dragging_tree_edge
+        || app.dragging_right_panel_edge
+        || app.rail_section_drag.is_some();
+    if !is_any_drag_active
+        && let Some(&(rect, pid)) = app.rects.editor_panes.iter().find(|(r, pid)| {
+            crate::app::dispatch::contains(*r, x, y)
+                && matches!(app.panes.get(*pid), Some(Pane::Pty(_)))
+        })
+        && let Some(Pane::Pty(session)) = app.panes.get_mut(pid)
         && session.is_mouse_tracking()
     {
         forward_mouse_to_pty(session, rect, m);

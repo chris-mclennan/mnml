@@ -503,6 +503,83 @@ fn tokenize(s: &str) -> Result<Vec<String>, ParseError> {
                     cur.push(next);
                 }
             }
+            // Bash `$'...'` C-string — interprets escapes like
+            // `\uNNNN`, `\n`, `\t`, `\r`, `\\`, `\'`. Chrome / Curl
+            // "Copy as cURL (bash)" emits this shape for payloads
+            // containing non-printable or unicode chars (e.g. the
+            // `!` in a password shows up as `!`).
+            //
+            // 2026-07-21 user report: pasted body arrived as
+            // `${"username":..,"password":"...!"}` — leading
+            // `$` came from `$` being consumed as a plain char here
+            // before the single-quote loop ran, and `!` was
+            // never decoded. Recognize the form and process it.
+            '$' if chars.peek() == Some(&'\'') => {
+                chars.next(); // consume the opening quote
+                in_token = true;
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some('\\') => match chars.next() {
+                            Some('n') => cur.push('\n'),
+                            Some('t') => cur.push('\t'),
+                            Some('r') => cur.push('\r'),
+                            Some('\\') => cur.push('\\'),
+                            Some('\'') => cur.push('\''),
+                            Some('"') => cur.push('"'),
+                            Some('0') => cur.push('\0'),
+                            Some('a') => cur.push('\x07'),
+                            Some('b') => cur.push('\x08'),
+                            Some('f') => cur.push('\x0c'),
+                            Some('v') => cur.push('\x0b'),
+                            Some('e') | Some('E') => cur.push('\x1b'),
+                            Some('u') => {
+                                // \uNNNN — 4 hex digits (bash also
+                                // accepts 1-4 but we require full
+                                // 4 for simplicity + Chrome parity).
+                                let mut hex = String::new();
+                                for _ in 0..4 {
+                                    match chars.peek() {
+                                        Some(c) if c.is_ascii_hexdigit() => {
+                                            hex.push(chars.next().unwrap());
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let Some(cp) =
+                                    u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                                {
+                                    cur.push(cp);
+                                }
+                            }
+                            Some('x') => {
+                                // \xNN — 2 hex digits
+                                let mut hex = String::new();
+                                for _ in 0..2 {
+                                    match chars.peek() {
+                                        Some(c) if c.is_ascii_hexdigit() => {
+                                            hex.push(chars.next().unwrap());
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                if let Some(cp) =
+                                    u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32)
+                                {
+                                    cur.push(cp);
+                                }
+                            }
+                            Some(other) => {
+                                cur.push('\\');
+                                cur.push(other);
+                            }
+                            None => return Err(ParseError::UnterminatedQuote),
+                        },
+                        Some(ch) => cur.push(ch),
+                        None => return Err(ParseError::UnterminatedQuote),
+                    }
+                }
+            }
             _ => {
                 in_token = true;
                 cur.push(c);

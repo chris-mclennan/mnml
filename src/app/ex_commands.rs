@@ -1676,15 +1676,82 @@ impl App {
                         self.active = Some(pid);
                         return;
                     }
-                    let label = if let Some(rest) = first.strip_prefix("mnml-") {
+                    // Derive a base label from the binary name:
+                    //   `mnml-forge-bitbucket` → `bitbucket`
+                    //   `mnml-aws-amplify`     → `amplify`
+                    //   `npm run dev`          → `npm`
+                    // Then title-case the last segment so the tab
+                    // reads "Bitbucket" not "bitbucket" (user report
+                    // 2026-07-19: "tab name needs fixed to match the
+                    // app name, right now its just lowercase").
+                    let raw = if let Some(rest) = first.strip_prefix("mnml-") {
                         rest.rsplit_once('-')
                             .map_or(rest, |(_, tail)| tail)
                             .to_string()
                     } else {
                         first.to_string()
                     };
+                    let mut chars = raw.chars();
+                    let mut label = match chars.next() {
+                        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                        None => String::new(),
+                    };
+                    // If the caller passed `--only <family>`, append
+                    // it title-cased so the two split chips each get
+                    // a distinct tab title ("Bitbucket - Pull
+                    // Requests" vs "Bitbucket - Pipelines").
+                    if let Some(pos) = cmdline.find("--only ") {
+                        let after = &cmdline[pos + "--only ".len()..];
+                        let family = after.split_whitespace().next().unwrap_or("");
+                        let suffix = match family {
+                            "prs" | "pull_requests" => Some("Pull Requests"),
+                            "pipelines" => Some("Pipelines"),
+                            "branches" => Some("Branches"),
+                            _ => None,
+                        };
+                        if let Some(s) = suffix {
+                            label = format!("{label} {s}");
+                        }
+                    }
                     let ws = self.active_workspace_path().to_path_buf();
-                    self.open_pty(crate::pty_pane::BinaryProfile::task(&label, cmdline, ws));
+                    // 2026-07-19 — deterministic tab-icon: stamp
+                    // the integration id (if any chip's `command`
+                    // matches the ex-command we're about to run)
+                    // onto the profile so pty_icon looks it up by
+                    // exact id, not by substring guessing on args.
+                    // The chip's `command` field is stored as
+                    // ":term <binary> [args…]"; `cmdline` here is
+                    // JUST the "<binary> [args…]" portion (the
+                    // "term " prefix was already consumed by the
+                    // outer match), so we reconstruct both forms.
+                    let ex_term_form = format!(":term {}", cmdline);
+                    let term_form = format!("term {}", cmdline);
+                    let integration_match = self
+                        .config
+                        .ui
+                        .integration_icons
+                        .iter()
+                        .find(|ic| {
+                            ic.command == ex_term_form
+                                || ic.command == term_form
+                                || ic.command == cmdline
+                        })
+                        .map(|ic| (ic.id.clone(), ic.tooltip.clone()));
+                    // If the ex-command matches an integration chip
+                    // AND that chip carries a `tooltip`, use the
+                    // tooltip as the tab label — that's the chip's
+                    // human-facing name (e.g. "EventBridge
+                    // Schedules", "Bitbucket Pull Requests"). Beats
+                    // the binary-name derivation which produced
+                    // "Eventbridge".
+                    if let Some((_, Some(tt))) = &integration_match {
+                        label = tt.clone();
+                    }
+                    let mut prof = crate::pty_pane::BinaryProfile::task(&label, cmdline, ws);
+                    if let Some((id, _)) = integration_match {
+                        prof = prof.with_integration(id);
+                    }
+                    self.open_pty(prof);
                 }
             }
             // `:version` — toast the build sha (formerly the bottom-right

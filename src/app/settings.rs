@@ -355,6 +355,12 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         d.ui.clock,
     ));
     out.push(bool_row(
+        "ui.stress_meter",
+        "Stress meter chip",
+        cfg.ui.stress_meter,
+        d.ui.stress_meter,
+    ));
+    out.push(bool_row(
         "ui.highlight_word_under_cursor",
         "Highlight word under cursor",
         cfg.ui.highlight_word_under_cursor,
@@ -757,6 +763,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.right_panel_visible" => set_bool(&mut cfg.ui.right_panel_visible, opt_idx),
         "ui.highlight_trailing_ws" => set_bool(&mut cfg.ui.highlight_trailing_ws, opt_idx),
         "ui.clock" => set_bool(&mut cfg.ui.clock, opt_idx),
+        "ui.stress_meter" => set_bool(&mut cfg.ui.stress_meter, opt_idx),
         "ui.highlight_word_under_cursor" => {
             set_bool(&mut cfg.ui.highlight_word_under_cursor, opt_idx)
         }

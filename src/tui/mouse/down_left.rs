@@ -84,6 +84,28 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .iter()
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
+        // 2026-07-20 — LauncherIcon is a pinned-integration shortcut:
+        // fire the underlying chip's command (spawns a Pty pane in
+        // the main area, no side panel). Skip set_activity_section
+        // so the sidebar doesn't flip to a nonexistent "Launcher"
+        // section.
+        if let crate::app::ActivitySection::LauncherIcon(idx) = section {
+            let cmd = app
+                .config
+                .ui
+                .activity_bar_pinned_integrations
+                .get(idx as usize)
+                .and_then(|id| app.config.ui.integration_icons.iter().find(|i| &i.id == id))
+                .map(|ic| ic.command.clone());
+            if let Some(cmd) = cmd {
+                if let Some(rest) = cmd.strip_prefix(':') {
+                    app.run_ex_command(rest);
+                } else {
+                    crate::command::run(&cmd, app);
+                }
+            }
+            return;
+        }
         app.set_activity_section(section);
         if matches!(section, crate::app::ActivitySection::Git) {
             crate::command::run("git.graph", app);
@@ -1330,7 +1352,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.active = Some(leaf_active);
         app.focus = crate::focus::Focus::Pane;
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![
+        let mut items = vec![
             MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
             MenuItem::new("Open file…", MenuAction::Command("picker.files")),
             MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
@@ -1348,6 +1370,22 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
             MenuItem::new("New tab page", MenuAction::Command("tab.new")),
         ];
+        // 2026-07-19 — append every enabled integration chip as its
+        // own "Open <tooltip>" menu row so users can launch a rail
+        // integration from the `+` tab menu without hunting for its
+        // chip. The chip's own command string is dispatched
+        // identically to a chip click (`:<ex>` runs as ex-command,
+        // anything else through the command registry).
+        for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
+            let label = icon
+                .tooltip
+                .clone()
+                .unwrap_or_else(|| icon.id.replace('_', " "));
+            items.push(MenuItem::new(
+                format!("Open {label}"),
+                MenuAction::RunCmd(icon.command.clone()),
+            ));
+        }
         let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);
         menu.selected = 0;
         menu.interacted = true;
@@ -1371,7 +1409,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         && crate::app::dispatch::contains(r, x, y)
     {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let items = vec![
+        let mut items = vec![
             MenuItem::new("New scratch buffer", MenuAction::Command("scratch.new")),
             MenuItem::new("Open file…", MenuAction::Command("picker.files")),
             MenuItem::new("Recent files", MenuAction::Command("picker.recent")),
@@ -1389,6 +1427,22 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             MenuItem::new("New Codex session", MenuAction::Command("ai.codex_new")),
             MenuItem::new("New tab page", MenuAction::Command("tab.new")),
         ];
+        // 2026-07-19 — append every enabled integration chip as its
+        // own "Open <tooltip>" menu row so users can launch a rail
+        // integration from the `+` tab menu without hunting for its
+        // chip. The chip's own command string is dispatched
+        // identically to a chip click (`:<ex>` runs as ex-command,
+        // anything else through the command registry).
+        for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
+            let label = icon
+                .tooltip
+                .clone()
+                .unwrap_or_else(|| icon.id.replace('_', " "));
+            items.push(MenuItem::new(
+                format!("Open {label}"),
+                MenuAction::RunCmd(icon.command.clone()),
+            ));
+        }
         // Anchor the menu near the chip so it doesn't fly to the
         // screen center — sits just below-left of the click.
         let mut menu = ContextMenu::new(Some("Create…".into()), (r.x, r.y + 1), items);

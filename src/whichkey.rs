@@ -294,10 +294,7 @@ pub fn root() -> &'static Leader {
                             ('a', cmd("forge.open_amplify", "AWS Amplify viewer")),
                             ('d', cmd("forge.open_dynamodb", "DynamoDB browser")),
                             ('L', cmd("forge.open_lambda", "Lambda functions")),
-                            (
-                                'e',
-                                cmd("forge.open_eventbridge", "EventBridge buses + rules"),
-                            ),
+                            ('e', cmd("forge.open_eventbridge", "EventBridge Schedules")),
                             ('R', cmd("forge.open_rds", "RDS databases")),
                             ('C', cmd("forge.open_ecs", "ECS clusters + services")),
                             ('E', cmd("forge.open_ecr", "ECR container registry")),

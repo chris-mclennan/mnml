@@ -324,6 +324,62 @@ impl App {
     /// Returns None if the workspace has no override. Thin wrapper
     /// around `pty_pane::resolve_launcher` — one source of truth
     /// for the TOML scrape.
+    /// True when this integration is pinned as a launcher icon in
+    /// the activity bar. Powers the right-click menu's "Add" ↔
+    /// "Remove" label switch. 2026-07-20.
+    pub fn integration_is_docked(&self, id: &str) -> bool {
+        self.config
+            .ui
+            .activity_bar_pinned_integrations
+            .iter()
+            .any(|pinned| pinned == id)
+    }
+
+    /// Right-click "Add to activity bar" — pushes the id into
+    /// `config.ui.activity_bar_pinned_integrations` + persists.
+    /// The activity bar renders a launcher icon; click fires the
+    /// chip's `command` (spawns a Pty pane in the main area — NOT
+    /// a docked side panel). 2026-07-20 user report: "I only
+    /// wanted a fucking launcher icon in the activity bar" —
+    /// this is the surface for that.
+    pub fn add_integration_to_activity_bar(&mut self, id: &str) {
+        if !self.config.ui.integration_icons.iter().any(|i| i.id == id) {
+            self.toast(format!("integration {id} not found"));
+            return;
+        }
+        if self.integration_is_docked(id) {
+            self.toast(format!("'{id}' is already on the activity bar"));
+            return;
+        }
+        self.config
+            .ui
+            .activity_bar_pinned_integrations
+            .push(id.to_string());
+        let _ = crate::app::discovery::persist_activity_bar_pinned_integrations(
+            &self.config.ui.activity_bar_pinned_integrations,
+        );
+        self.toast(format!("pinned '{id}' to activity bar"));
+    }
+
+    /// Right-click "Remove from activity bar" — removes the id
+    /// from the pinned list + persists. Sidebar chip is
+    /// untouched.
+    pub fn remove_integration_from_activity_bar(&mut self, id: &str) {
+        let before = self.config.ui.activity_bar_pinned_integrations.len();
+        self.config
+            .ui
+            .activity_bar_pinned_integrations
+            .retain(|p| p != id);
+        if self.config.ui.activity_bar_pinned_integrations.len() == before {
+            self.toast(format!("'{id}' wasn't on the activity bar"));
+            return;
+        }
+        let _ = crate::app::discovery::persist_activity_bar_pinned_integrations(
+            &self.config.ui.activity_bar_pinned_integrations,
+        );
+        self.toast(format!("unpinned '{id}' from activity bar"));
+    }
+
     pub fn integration_launcher_override(&self, id: &str) -> Option<String> {
         // resolve_launcher returns default_exe if no override; use
         // a sentinel we can compare against to detect that case.
@@ -457,6 +513,25 @@ impl App {
                 label,
                 MenuAction::SetIntegrationLauncher(id.clone()),
             ));
+        }
+        // 2026-07-20 — promote/demote to activity bar. Chips whose
+        // command is `:term <binary> [args…]` can back a Mount
+        // pane (docked activity-bar icon). Chips wired to a mnml
+        // command (e.g. `browser.open`) can't dock; we skip the
+        // menu item to avoid a click-does-nothing surface.
+        let can_dock = icon.command.starts_with(":term ") || icon.command.starts_with("term ");
+        if can_dock {
+            if self.integration_is_docked(&id) {
+                items.push(MenuItem::new(
+                    "Remove from activity bar",
+                    MenuAction::RemoveIntegrationFromActivityBar(id.clone()),
+                ));
+            } else {
+                items.push(MenuItem::new(
+                    "Add to activity bar",
+                    MenuAction::AddIntegrationToActivityBar(id.clone()),
+                ));
+            }
         }
         // 2026-07-09 user request — more integration-management
         // gestures in the right-click menu. Copy id + open the
@@ -1287,6 +1362,10 @@ impl App {
                 "Toast the current numbers",
                 MenuAction::Command("perf.toast_stress"),
             ),
+            MenuItem::new(
+                "Hide the stress meter",
+                MenuAction::Command("perf.hide_stress"),
+            ),
         ];
         self.context_menu = Some(ContextMenu::new(Some("Stress meter".into()), anchor, items));
     }
@@ -1672,6 +1751,99 @@ impl App {
                     );
                 }
             }
+            AddIntegrationToActivityBar(id) => {
+                self.add_integration_to_activity_bar(&id);
+            }
+            RemoveIntegrationFromActivityBar(id) => {
+                self.remove_integration_from_activity_bar(&id);
+            }
+            LaunchPinnedIntegration(id) => {
+                let cmd = self
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .find(|i| i.id == id)
+                    .map(|i| i.command.clone());
+                if let Some(cmd) = cmd {
+                    if let Some(rest) = cmd.strip_prefix(':') {
+                        self.run_ex_command(rest);
+                    } else {
+                        crate::command::run(&cmd, self);
+                    }
+                }
+            }
+            MovePinnedIntegrationUp(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .activity_bar_pinned_integrations
+                    .iter()
+                    .position(|p| p == &id)
+                    && pos > 0
+                {
+                    self.config
+                        .ui
+                        .activity_bar_pinned_integrations
+                        .swap(pos, pos - 1);
+                    let _ = crate::app::discovery::persist_activity_bar_pinned_integrations(
+                        &self.config.ui.activity_bar_pinned_integrations,
+                    );
+                }
+            }
+            MovePinnedIntegrationDown(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .activity_bar_pinned_integrations
+                    .iter()
+                    .position(|p| p == &id)
+                    && pos + 1 < self.config.ui.activity_bar_pinned_integrations.len()
+                {
+                    self.config
+                        .ui
+                        .activity_bar_pinned_integrations
+                        .swap(pos, pos + 1);
+                    let _ = crate::app::discovery::persist_activity_bar_pinned_integrations(
+                        &self.config.ui.activity_bar_pinned_integrations,
+                    );
+                }
+            }
+            MovePinnedIntegrationToTop(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .activity_bar_pinned_integrations
+                    .iter()
+                    .position(|p| p == &id)
+                    && pos > 0
+                {
+                    let it = self.config.ui.activity_bar_pinned_integrations.remove(pos);
+                    self.config
+                        .ui
+                        .activity_bar_pinned_integrations
+                        .insert(0, it);
+                    let _ = crate::app::discovery::persist_activity_bar_pinned_integrations(
+                        &self.config.ui.activity_bar_pinned_integrations,
+                    );
+                }
+            }
+            MovePinnedIntegrationToBottom(id) => {
+                if let Some(pos) = self
+                    .config
+                    .ui
+                    .activity_bar_pinned_integrations
+                    .iter()
+                    .position(|p| p == &id)
+                    && pos + 1 < self.config.ui.activity_bar_pinned_integrations.len()
+                {
+                    let it = self.config.ui.activity_bar_pinned_integrations.remove(pos);
+                    self.config.ui.activity_bar_pinned_integrations.push(it);
+                    let _ = crate::app::discovery::persist_activity_bar_pinned_integrations(
+                        &self.config.ui.activity_bar_pinned_integrations,
+                    );
+                }
+            }
             ToggleLauncherEnabled(id) => {
                 if let Some(slot) = self
                     .config
@@ -1702,6 +1874,13 @@ impl App {
             }
             Command(id) => {
                 crate::command::run(id, self);
+            }
+            RunCmd(cmd) => {
+                if let Some(rest) = cmd.strip_prefix(':') {
+                    self.run_ex_command(rest);
+                } else {
+                    crate::command::run(&cmd, self);
+                }
             }
             OpenGlyphBuilderForCp(cp) => {
                 if !self.open_glyph_builder_for_edit_cp(cp) {

@@ -45,6 +45,7 @@ impl App {
             cwd: Some(workspace),
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
         self.toast(
@@ -767,6 +768,7 @@ impl App {
             cwd: Some(cwd),
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
     }

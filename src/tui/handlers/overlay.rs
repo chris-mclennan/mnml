@@ -784,6 +784,7 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
                 p.backspace();
             }
         }
+        KeyCode::Delete => p.delete_forward(),
         KeyCode::Char('w') if ctrl => p.delete_word(),
         KeyCode::Char('u') if ctrl => {
             p.input.clear();

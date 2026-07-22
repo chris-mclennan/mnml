@@ -51,6 +51,14 @@ pub struct MountManifest {
     /// Optional hover tooltip; falls back to `name`.
     #[serde(default)]
     pub tooltip: Option<String>,
+    /// Args passed to `binary` at spawn. Enables docking siblings
+    /// that need CLI flags (e.g. `mnml-forge-bitbucket --only
+    /// prs`). Defaults to empty for backwards compat with older
+    /// manifests. 2026-07-20 — "add integration to activity bar"
+    /// right-click promotion writes these when the chip's command
+    /// is `:term <binary> <args...>`.
+    #[serde(default)]
+    pub args: Vec<String>,
     /// Source path (for debug + ability to reload the same file).
     #[serde(skip)]
     pub source_path: PathBuf,

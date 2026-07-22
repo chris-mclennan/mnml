@@ -487,11 +487,7 @@ impl App {
         .iter()
         .map(|(id, name, hint)| PickerItem::new(id.to_string(), name.to_string(), hint.to_string()))
         .collect();
-        self.open_picker(Picker::new(
-            PickerKind::HttpGenerateCode,
-            "Generate code as:",
-            items,
-        ));
+        self.open_picker(Picker::new(PickerKind::HttpGenerateCode, "Copy as:", items));
     }
 
     /// Copy the active Request pane's Done response body to the
@@ -1881,6 +1877,8 @@ impl App {
             let refreshed = crate::http::template::expand(&normalized, &env);
             rp.body_cursor = refreshed.len();
             rp.request.body = Some(refreshed);
+            // 2026-07-21 — regenerate commits the preview state.
+            rp.is_preview = false;
             self.toast("body: regenerated (fresh timestamps + UUIDs)");
         }
     }
@@ -2112,14 +2110,139 @@ impl App {
         }
     }
 
+    // ── Field-aware clipboard (URL / Method / Headers / Body) ──
+    //
+    // 2026-07-21 SEV-1 fix. The Request-field right-click menu
+    // previously wired Copy/Paste/Cut/Select-all to `editor.*`
+    // commands, which route through `active_editor_mut()` — that
+    // ONLY matches `Pane::Editor`, so on a Request pane the items
+    // were silent no-ops. These four `http.field_*` variants
+    // operate on `RequestPane` fields directly.
+    fn field_text_and_cursor(rp: &crate::request_pane::RequestPane) -> (&str, usize) {
+        use crate::request_pane::EditField;
+        match rp.focus {
+            EditField::Url => (rp.request.url.as_str(), rp.url_cursor),
+            EditField::Method => (rp.request.method.as_str(), 0),
+            EditField::Headers => (rp.headers_buffer.as_str(), rp.headers_cursor),
+            EditField::Body => (rp.request.body.as_deref().unwrap_or(""), rp.body_cursor),
+            EditField::Source => (rp.source_buffer.as_str(), rp.source_cursor),
+        }
+    }
+
+    fn field_text_mut(rp: &mut crate::request_pane::RequestPane) -> (&mut String, &mut usize) {
+        use crate::request_pane::EditField;
+        match rp.focus {
+            EditField::Url => (&mut rp.request.url, &mut rp.url_cursor),
+            EditField::Method => {
+                // Method has no cursor of its own; return the method
+                // string and a dummy cursor kept in a scratch field.
+                rp.method_cursor_scratch = rp.request.method.len();
+                (&mut rp.request.method, &mut rp.method_cursor_scratch)
+            }
+            EditField::Headers => (&mut rp.headers_buffer, &mut rp.headers_cursor),
+            EditField::Body => {
+                let body = rp.request.body.get_or_insert_with(String::new);
+                (body, &mut rp.body_cursor)
+            }
+            EditField::Source => (&mut rp.source_buffer, &mut rp.source_cursor),
+        }
+    }
+
+    /// `http.field_copy` — copy the focused Request-field's text
+    /// to the clipboard. No selection model yet; copies the whole
+    /// field.
+    pub fn http_field_copy(&mut self) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Request(rp)) = self.panes.get(cur) else {
+            self.toast("field_copy: no active Request pane");
+            return;
+        };
+        let (text, _) = Self::field_text_and_cursor(rp);
+        let text = text.to_string();
+        if text.is_empty() {
+            self.toast("nothing to copy — field is empty");
+            return;
+        }
+        self.clipboard.set(text, false);
+        self.toast("copied field");
+    }
+
+    /// `http.field_paste` — insert clipboard text at the focused
+    /// Request field's cursor.
+    pub fn http_field_paste(&mut self) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Request(_)) = self.panes.get(cur) else {
+            self.toast("field_paste: no active Request pane");
+            return;
+        };
+        let clip = self.clipboard.text();
+        if clip.is_empty() {
+            self.toast("clipboard empty");
+            return;
+        }
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let (buf, cursor) = Self::field_text_mut(rp);
+            let insert_at = (*cursor).min(buf.len());
+            buf.insert_str(insert_at, &clip);
+            *cursor = insert_at + clip.len();
+            rp.is_preview = false;
+        }
+        self.toast("pasted");
+    }
+
+    /// `http.field_cut` — copy the focused field's text then clear
+    /// the field. Same "whole field" semantics as copy.
+    pub fn http_field_cut(&mut self) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Request(rp)) = self.panes.get(cur) else {
+            self.toast("field_cut: no active Request pane");
+            return;
+        };
+        let (text, _) = Self::field_text_and_cursor(rp);
+        let text = text.to_string();
+        if text.is_empty() {
+            self.toast("nothing to cut — field is empty");
+            return;
+        }
+        self.clipboard.set(text, false);
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let (buf, cursor) = Self::field_text_mut(rp);
+            buf.clear();
+            *cursor = 0;
+            rp.is_preview = false;
+        }
+        self.toast("cut field");
+    }
+
+    /// `http.field_select_all` — no selection model on Request
+    /// fields yet; snap the cursor to the END of the field so the
+    /// next Ctrl+Backspace / Delete gesture at least reaches
+    /// everything. Also copies the full text to clipboard so
+    /// select-all-then-copy is a two-tap noop → single-tap noop.
+    pub fn http_field_select_all(&mut self) {
+        let Some(cur) = self.active else { return };
+        let Some(Pane::Request(rp)) = self.panes.get(cur) else {
+            self.toast("field_select_all: no active Request pane");
+            return;
+        };
+        let (text, _) = Self::field_text_and_cursor(rp);
+        let text = text.to_string();
+        if !text.is_empty() {
+            self.clipboard.set(text.clone(), false);
+        }
+        if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+            let (buf, cursor) = Self::field_text_mut(rp);
+            *cursor = buf.len();
+        }
+        self.toast("field: cursor to end + copied to clipboard");
+    }
+
     /// Right-click on any Request pane Edit-mode field row →
     /// field-aware context menu. Common actions (Send / Copy as
     /// curl / Switch to Response) appear for every field; the
     /// Method row adds "Cycle method" so users can change the
     /// verb without keyboard. v2 ideas: "Format JSON" on Body,
-    /// "Paste cookies" on Headers. 2026-06-19 — vscode-user-mouse
-    /// agent flagged the earlier "Request" title + URL-only naming
-    /// as misleading.
+    /// "Paste cookies" on Headers.
     pub fn open_request_field_context_menu(
         &mut self,
         field: crate::request_pane::EditField,
@@ -2127,18 +2250,41 @@ impl App {
     ) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         use crate::request_pane::EditField;
+        // 2026-07-21 — Send/Copy on top, then editing operations,
+        // then curl paste at the bottom (still discoverable but not
+        // the ONLY paste option). User: "right click only provides
+        // paste curl, where are other paste options".
         let mut items = vec![
             MenuItem::new("Send", MenuAction::Command("http.send")),
+            // 2026-07-21 — was `editor.copy` / `editor.paste` /
+            // `editor.cut` / `editor.select_all`, which noop'd on
+            // Request panes (they only match Pane::Editor).
+            // Wired to the new field-aware variants.
+            MenuItem::new("Copy", MenuAction::Command("http.field_copy")),
+            MenuItem::new("Paste", MenuAction::Command("http.field_paste")),
+            MenuItem::new("Cut", MenuAction::Command("http.field_cut")),
+            MenuItem::new("Select all", MenuAction::Command("http.field_select_all")),
+        ];
+        // 2026-07-21 — Body-tab-specific: expose Format alongside
+        // the general edit ops, since it lives on the Body chip
+        // strip and users might miss it.
+        if matches!(field, EditField::Body) {
+            items.push(MenuItem::new(
+                "Format body (JSON)",
+                MenuAction::Command("http.format_body"),
+            ));
+        }
+        items.extend([
+            MenuItem::new("Copy as curl", MenuAction::Command("http.copy_curl")),
             MenuItem::new(
                 "Paste curl from clipboard",
                 MenuAction::Command("http.paste_curl"),
             ),
-            MenuItem::new("Copy as curl", MenuAction::Command("http.copy_curl")),
             MenuItem::new(
                 "Switch to Response",
                 MenuAction::Command("http.toggle_view"),
             ),
-        ];
+        ]);
         if matches!(field, EditField::Method) {
             items.insert(
                 0,
@@ -3994,6 +4140,12 @@ impl App {
             // Auto-format the body before send so what gets fired
             // matches what the user just saw pretty-printed.
             self.maybe_auto_format_active_body();
+            // 2026-07-21 — sending commits the preview state.
+            // Prevents the pane from being silently force-closed
+            // when the user later switches activity sections.
+            if let Some(Pane::Request(rp)) = self.panes.get_mut(cur) {
+                rp.is_preview = false;
+            }
             self.refire_request(cur);
             return;
         }
@@ -4330,6 +4482,12 @@ impl App {
             rp.view = crate::request_pane::ViewMode::Edit;
             rp.focus = crate::request_pane::EditField::Url;
             rp.edit_tab = crate::request_pane::EditTab::Body;
+            // 2026-07-21 — a paste_curl populates the pane, which
+            // counts as a commit. Without this, switching activity
+            // sections would silently force-close the pane because
+            // `is_preview` is only cleared by literal KeyCode
+            // char events. SEV-1 from api-workflow-user.
+            rp.is_preview = false;
         }
         // Auto-format the just-pasted body when the config is on —
         // curl paste often dumps a compressed one-line JSON blob.

@@ -435,6 +435,21 @@ impl Prompt {
         self.refresh_suggestions();
     }
 
+    /// Delete — remove the char AT the caret (forward-delete).
+    /// Complements `backspace` (which deletes BEFORE the caret).
+    pub fn delete_forward(&mut self) {
+        if self.cursor >= self.input.len() {
+            return;
+        }
+        let next = self.input[self.cursor..]
+            .char_indices()
+            .nth(1)
+            .map(|(i, _)| self.cursor + i)
+            .unwrap_or(self.input.len());
+        self.input.replace_range(self.cursor..next, "");
+        self.refresh_suggestions();
+    }
+
     /// Delete the word (and trailing run of spaces) before the caret — Ctrl+W.
     pub fn delete_word(&mut self) {
         let head = &self.input[..self.cursor];

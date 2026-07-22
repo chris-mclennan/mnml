@@ -129,6 +129,15 @@ pub struct BinaryProfile {
     /// For `claude` profiles: the `--session-id` / `--resume` id, so mnml can
     /// open a transcript mirror of this session. `None` for shells / codex.
     pub session_id: Option<String>,
+    /// The `IntegrationIcon.id` this pane was launched from
+    /// ("btop" / "amplify" / "bitbucket_pipelines" / …). Set by the
+    /// chip-click dispatcher; `None` for shells and any other pane
+    /// not tied to a rail integration. The tab-icon resolver in
+    /// `ui::mod::pty_icon` prefers this over label-based matching
+    /// so the glyph is a deterministic lookup, not a substring
+    /// guess. tree-redesign 2026-07-19 — user asked for
+    /// "predictable and deterministic" tab glyph matching.
+    pub integration_id: Option<String>,
 }
 
 impl BinaryProfile {
@@ -143,6 +152,7 @@ impl BinaryProfile {
             cwd,
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         }
     }
 
@@ -172,6 +182,7 @@ impl BinaryProfile {
             cwd: Some(workspace),
             env: Vec::new(),
             session_id: Some(sid),
+            integration_id: Some("claude_code".to_string()),
         }
     }
 
@@ -196,6 +207,7 @@ impl BinaryProfile {
             cwd: Some(workspace),
             env: Vec::new(),
             session_id: Some(session_id),
+            integration_id: Some("claude_code".to_string()),
         }
     }
 
@@ -215,6 +227,7 @@ impl BinaryProfile {
             cwd: Some(cwd),
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         }
     }
 
@@ -230,6 +243,7 @@ impl BinaryProfile {
             cwd: Some(workspace),
             env: Vec::new(),
             session_id: None,
+            integration_id: Some("codex".to_string()),
         }
     }
 
@@ -245,7 +259,18 @@ impl BinaryProfile {
             cwd: Some(workspace),
             env: Vec::new(),
             session_id: None,
+            integration_id: Some("mixr".to_string()),
         }
+    }
+
+    /// Chainable setter — stamp an `IntegrationIcon.id` onto a
+    /// profile built by `task()` (used by the rail-chip click
+    /// dispatcher). Returns `self` so `BinaryProfile::task(...)
+    /// .with_integration("btop")` reads left-to-right.
+    /// tree-redesign 2026-07-19.
+    pub fn with_integration(mut self, id: impl Into<String>) -> Self {
+        self.integration_id = Some(id.into());
+        self
     }
 }
 
@@ -326,6 +351,12 @@ impl PtySession {
         if let Some(dirs) = terminfo_search_dirs() {
             cmd.env("TERMINFO_DIRS", dirs);
         }
+        // 2026-07-20 — stamp `MNML_PANE=1` on every Pty child so
+        // siblings can detect they're running inside mnml and
+        // adjust their chrome (drop border block, since mnml
+        // already draws pane borders). User asked for this on
+        // amplify + bitbucket panes so the in-mnml view is flush.
+        cmd.env("MNML_PANE", "1");
         for (k, v) in &profile.env {
             cmd.env(k, v);
         }

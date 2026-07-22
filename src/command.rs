@@ -1775,7 +1775,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "forge.open_eventbridge",
-            title: "Forge: open EventBridge buses + rules (mnml-aws-eventbridge)",
+            title: "Forge: open EventBridge Schedules (mnml-aws-eventbridge)",
             group: "forge",
             keys: &[],
             run: |app| app.run_ex_command("term mnml-aws-eventbridge"),
@@ -2624,6 +2624,31 @@ fn builtin_commands() -> Vec<Command> {
                 app.toast(format!(
                     "stress {score}/100 · p50 {p50}ms · p95 {p95}ms · max {max}ms · {n} samples"
                 ));
+            },
+        },
+        Command {
+            id: "perf.hide_stress",
+            title: "Perf: hide the stress meter chip",
+            group: "perf",
+            keys: &[],
+            run: |app| {
+                app.config.ui.stress_meter = false;
+                app.toast("stress meter hidden — Settings › UI › stress_meter to re-enable");
+            },
+        },
+        Command {
+            id: "perf.toggle_stress",
+            title: "Perf: toggle the stress meter chip",
+            group: "perf",
+            keys: &[],
+            run: |app| {
+                app.config.ui.stress_meter = !app.config.ui.stress_meter;
+                let on = app.config.ui.stress_meter;
+                app.toast(if on {
+                    "stress meter: shown"
+                } else {
+                    "stress meter: hidden"
+                });
             },
         },
         Command {
@@ -4922,6 +4947,38 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.http_format_body(),
         },
+        // 2026-07-21 SEV-1 — field-aware clipboard ops on the
+        // Request pane's focused field. Fixes silent noops from
+        // the earlier `editor.copy` wiring (which only matches
+        // Pane::Editor).
+        Command {
+            id: "http.field_copy",
+            title: "HTTP: copy focused Request field to clipboard",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_field_copy(),
+        },
+        Command {
+            id: "http.field_paste",
+            title: "HTTP: paste clipboard at Request field cursor",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_field_paste(),
+        },
+        Command {
+            id: "http.field_cut",
+            title: "HTTP: cut focused Request field to clipboard",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_field_cut(),
+        },
+        Command {
+            id: "http.field_select_all",
+            title: "HTTP: snap cursor to end + copy field",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_field_select_all(),
+        },
         Command {
             id: "http.copy_ai_prompt",
             title: "HTTP: copy AI-ready \"debug this failure\" prompt to clipboard",
@@ -5115,8 +5172,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.http_save_or_prompt_save_as(),
         },
         Command {
+            id: "http.copy_as",
+            title: "HTTP: copy request as code (curl / Python / JS / Go / wget / HTTPie)",
+            group: "http",
+            keys: &[],
+            run: |app| app.http_generate_code_prompt(),
+        },
+        // 2026-07-21 — old id kept as alias so palette history +
+        // any external `:http.generate_code` invocations still work.
+        Command {
             id: "http.generate_code",
-            title: "HTTP: generate code snippet from the active request",
+            title: "HTTP: copy request as code (alias for http.copy_as)",
             group: "http",
             keys: &[],
             run: |app| app.http_generate_code_prompt(),

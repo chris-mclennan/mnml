@@ -369,6 +369,7 @@ impl App {
             cwd: None,
             env: vec![],
             session_id: None,
+            integration_id: None,
         };
         // Persist the build metadata so the "edit existing" flow
         // (picker `e` key) can re-load it. Best-effort — write
@@ -520,6 +521,7 @@ impl App {
             cwd: None,
             env: vec![],
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
         self.toast(

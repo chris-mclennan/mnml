@@ -331,6 +331,18 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     let (_, _, label, _) = section.meta();
                     return Some((rect, label.to_string(), None));
                 }
+                ActivitySection::LauncherIcon(idx) => {
+                    // Show the pinned integration's tooltip.
+                    let label = app
+                        .config
+                        .ui
+                        .activity_bar_pinned_integrations
+                        .get(idx as usize)
+                        .and_then(|id| app.config.ui.integration_icons.iter().find(|i| &i.id == id))
+                        .and_then(|i| i.tooltip.clone())
+                        .unwrap_or_else(|| "Pinned integration".to_string());
+                    return Some((rect, label, Some("click: launch".to_string())));
+                }
             };
             Some((rect, primary.to_string(), secondary.map(String::from)))
         }

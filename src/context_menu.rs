@@ -275,6 +275,27 @@ pub enum MenuAction {
     /// Move an integration chip to the last position. No-op when
     /// already there. Persists.
     MoveIntegrationToBottom(String),
+    /// Right-click "Add to activity bar" on an integration chip
+    /// row — writes a mount manifest for this integration so its
+    /// icon appears in the activity bar and clicking it opens the
+    /// sibling as a docked Mount pane. 2026-07-20.
+    AddIntegrationToActivityBar(String),
+    /// Right-click "Remove from activity bar" on an integration
+    /// chip row whose manifest already exists — deletes the
+    /// `~/.config/mnml/mounts/<id>.toml` file + refreshes.
+    RemoveIntegrationFromActivityBar(String),
+    /// Right-click on a pinned launcher icon in the activity
+    /// bar → "Launch" — fires the underlying chip's command.
+    LaunchPinnedIntegration(String),
+    /// Reorder actions on the pinned launcher icons —
+    /// move the id up, down, to the top, or to the bottom of
+    /// `config.ui.activity_bar_pinned_integrations`. Match the
+    /// integration-chip right-click's set + order.
+    /// 2026-07-20.
+    MovePinnedIntegrationUp(String),
+    MovePinnedIntegrationDown(String),
+    MovePinnedIntegrationToTop(String),
+    MovePinnedIntegrationToBottom(String),
     /// Toggle a launcher chip's `enabled` field by `id`.
     ToggleLauncherEnabled(String),
     /// Set `[ui] top_bar_cluster_mode` to one of
@@ -330,6 +351,14 @@ pub enum MenuAction {
     GitIgnoreExtension(String),
     /// `git stash push -u -- <rel>` — stash just this file's changes.
     GitStashFile(PathBuf),
+    /// Run an owned command string. Same dispatch shape as an
+    /// integration chip click: `":<ex>"` runs as an ex-command,
+    /// anything else goes through the command registry. Used by
+    /// the `+` tab menu's integrations tail so dynamically-loaded
+    /// chip commands (`:term mnml-forge-bitbucket --only prs`) can
+    /// be invoked from a menu that only sees `&'static str` for the
+    /// legacy `MenuAction::Command`.
+    RunCmd(String),
 }
 
 #[derive(Debug, Clone)]

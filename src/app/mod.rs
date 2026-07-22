@@ -1508,6 +1508,12 @@ pub enum SessionsSortMode {
 /// land independently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivitySection {
+    /// Launcher icon pinned to the activity bar by right-clicking
+    /// an integration chip. `u16` indexes into
+    /// `config.ui.activity_bar_pinned_integrations`. Click fires
+    /// the integration chip's `command` (spawns a Pty pane); no
+    /// side panel — unlike `Mount(N)`. 2026-07-20.
+    LauncherIcon(u16),
     /// File tree + integrations + git (the pre-activity-bar default).
     Explorer,
     Search,
@@ -1594,6 +1600,11 @@ impl ActivitySection {
             // resolves it dynamically. This `meta()` arm is a
             // placeholder so the static API stays infallible.
             Self::Mount(_) => ("\u{F0BD3}", "M", "Mount", ""),
+            // Launcher icons are placeholders here — the actual
+            // glyph/color/tooltip come from the integration_icon
+            // referenced by the u16 index, resolved at render
+            // time in `ui::activity_bar`.
+            Self::LauncherIcon(_) => ("\u{F0415}", "L", "Launcher", ""),
         }
     }
 
@@ -1632,6 +1643,12 @@ impl ActivitySection {
             Self::Notes => Some("notes".to_string()),
             Self::Todos => Some("todos".to_string()),
             Self::Mount(idx) => app.mount_manifests.get(*idx as usize).map(|m| m.id.clone()),
+            Self::LauncherIcon(idx) => app
+                .config
+                .ui
+                .activity_bar_pinned_integrations
+                .get(*idx as usize)
+                .cloned(),
         }
     }
 }
@@ -2703,14 +2720,37 @@ impl PaneRects {
     /// Trade a subtle recurring bug class for a trivial per-frame cost.
     pub fn reset_for_frame(&mut self) {
         // Preserve fields that are semantically drag/UI state (NOT
-        // per-frame rects): `tab_drop_target` tracks an in-flight
-        // bufferline-tab drag and MUST survive between the frame
-        // that starts the drag and the frame that renders the
-        // drop-hint overlay. Anything else added here should carry
-        // a comment explaining why it opts out of the reset.
+        // per-frame rects). Anything added here MUST carry a
+        // comment explaining why it opts out of the reset.
+        //
+        // - `tab_drop_target` tracks an in-flight bufferline-tab
+        //   drag; MUST survive between the frame that starts the
+        //   drag and the frame that renders the drop-hint overlay.
+        // - `bufferline_drag_tab` is the drag SOURCE (armed on
+        //   Down, read on every Drag/Move, cleared on Up). Not
+        //   preserving it wiped the arm on the first render after
+        //   Down, so subsequent Drag events saw `None` and the
+        //   drop handler in up_left never fired — regression
+        //   noticed 2026-07-21 as "drag stops working when an
+        //   integration Pty is open" (the integration just made
+        //   the render cadence tight enough to be visible; every
+        //   file drag was silently losing arm too whenever a
+        //   render happened between Down and Drag).
+        // - `bufferline_drag_ghost` is the cursor position drawn
+        //   as a floating ghost during the drag; wipe would blank
+        //   the ghost.
+        // - `tab_insert_hint` is the between-tab caret position
+        //   drawn while dragging over a strip; wipe would blank
+        //   the insert marker.
         let preserved_tab_drop_target = self.tab_drop_target;
+        let preserved_bufferline_drag_tab = self.bufferline_drag_tab;
+        let preserved_bufferline_drag_ghost = self.bufferline_drag_ghost;
+        let preserved_tab_insert_hint = self.tab_insert_hint;
         *self = Self::default();
         self.tab_drop_target = preserved_tab_drop_target;
+        self.bufferline_drag_tab = preserved_bufferline_drag_tab;
+        self.bufferline_drag_ghost = preserved_bufferline_drag_ghost;
+        self.tab_insert_hint = preserved_tab_insert_hint;
     }
 
     /// Return the names of every rect field currently containing
@@ -8134,6 +8174,7 @@ impl App {
         };
         let binary = manifest.binary.clone();
         let label = manifest.name.clone();
+        let args = manifest.args.clone();
         // Focus an existing Mount for this binary if there is one
         // (matches the "click activity bar icon to re-focus" muscle
         // memory of every other section).
@@ -8151,7 +8192,7 @@ impl App {
             self.focus_pane();
             return;
         }
-        self.open_mount_with_label(&binary, &label);
+        self.open_mount_with_args(&binary, &label, &args);
     }
 
     /// Set or clear an activity-bar notification badge. `count = 0`
@@ -8587,6 +8628,7 @@ impl App {
             cwd: Some(self.workspace.clone()),
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
         self.toast(format!("tailing {log_group} · filter={filter}"));
@@ -8619,6 +8661,7 @@ impl App {
             cwd: Some(self.workspace.clone()),
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
         self.toast(format!("browsing s3://{bucket}/{prefix}"));
@@ -9020,7 +9063,15 @@ impl App {
             if tool.needs_sudo {
                 maybe_show_sudo_tools_hint(self);
             }
-            self.open_pty(crate::pty_pane::BinaryProfile::task("tools", &cmdline, ws));
+            // 2026-07-19 — was hardcoded "tools" as the pane tab
+            // label. Use the tool's `id` for the label AND stamp
+            // the integration_id so the tab-icon resolver reads
+            // the chip glyph via a deterministic id lookup rather
+            // than a fuzzy substring match on args/label.
+            self.open_pty(
+                crate::pty_pane::BinaryProfile::task(tool.id, &cmdline, ws)
+                    .with_integration(tool.id),
+            );
             return;
         }
         // Not installed. On macOS + Linux we offer to install via

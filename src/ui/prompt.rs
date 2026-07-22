@@ -55,7 +55,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
     };
 
     let w = (title.chars().count().max(56) as u16 + 4).min(screen.width.saturating_sub(2));
-    let base_h = 5u16;
+    // 2026-07-19 — was 5, is 4. Row 0 was `field_y = inner.y + 1`
+    // which left a blank line between the title border and the input.
+    // User asked to drop it — the compact layout reads cleaner.
+    let base_h = 4u16;
     let h = (base_h + extra_rows).min(screen.height.saturating_sub(2));
     let area = Rect {
         x: screen.x + (screen.width.saturating_sub(w)) / 2,
@@ -72,11 +75,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         return;
     }
 
-    // Place the input field at a fixed offset from the top of the inner
-    // area (row 1). For the no-suggestions case this matches the prior
-    // centered layout pretty closely; with suggestions, the field moves
-    // up so the suggestion list has room below.
-    let field_y = inner.y + 1;
+    // Place the input directly against the top border. Was
+    // `inner.y + 1` (leaving a blank line above the input); user
+    // asked to drop that row so the input sits right under the title.
+    let field_y = inner.y;
     let pad = 1u16;
     let avail = inner.width.saturating_sub(pad) as usize;
     let chars: Vec<char> = input.chars().collect();

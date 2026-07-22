@@ -95,6 +95,7 @@ impl App {
             cwd: Some(self.workspace.clone()),
             env: Vec::new(),
             session_id: None,
+            integration_id: None,
         };
         self.open_pty(profile);
         let install_pane = self.active;
@@ -330,6 +331,13 @@ impl App {
     /// used by manifest mounts so the pane tab shows the manifest
     /// `name` instead of the raw binary basename.
     pub fn open_mount_with_label(&mut self, binary: &str, label: &str) {
+        self.open_mount_with_args(binary, label, &[]);
+    }
+
+    /// Full form — accepts extra CLI args to hand to the mount
+    /// binary. Used by manifest mounts whose sibling needs flags
+    /// (e.g. `mnml-forge-bitbucket --only prs`). 2026-07-20.
+    pub fn open_mount_with_args(&mut self, binary: &str, label: &str, args: &[String]) {
         let geometry = mnml_bridge::Geometry { cols: 80, rows: 24 };
         let env = self.bridge_env();
         let workspace = self.workspace.clone();
@@ -337,7 +345,7 @@ impl App {
             &workspace,
             label.to_string(),
             binary,
-            &[],
+            args,
             &env,
             Some(&workspace),
             geometry,

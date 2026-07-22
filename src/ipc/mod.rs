@@ -1125,6 +1125,7 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
                     cwd: Some(cwd_path),
                     env: Vec::new(),
                     session_id: None,
+                    integration_id: None,
                 };
                 app.open_pty(profile);
                 json_event(&[("event", "open_pty"), ("exe", &exe)])

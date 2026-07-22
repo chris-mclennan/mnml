@@ -717,19 +717,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     //   20-40 → 2 blocks (yellow)
     //   40-70 → 3 blocks (orange)
     //   70+   → 4 blocks (red, bold)
-    // Hidden entirely when the score is exactly 0 (fresh boot with
-    // no samples yet) so it doesn't clutter idle sessions. User
-    // request 2026-07-11.
-    let stress = app.stress_score();
-    if stress > 0 {
+    // 2026-07-20 — always render when `[ui] stress_meter = true`
+    // (default). Previously the chip hid when score == 0 to keep
+    // idle sessions clean, but the score routinely crosses zero as
+    // frame times bucket in/out — users saw it flicker. `stress
+    // = false` in config or the right-click "Hide" action drops
+    // it entirely; empty bar (score 0) still paints so the slot
+    // stays visually anchored.
+    if app.config.ui.stress_meter {
+        let stress = app.stress_score();
         let (filled, color) = if stress >= 70 {
             (4, theme::cur().red)
         } else if stress >= 40 {
             (3, theme::cur().orange)
         } else if stress >= 20 {
             (2, theme::cur().yellow)
-        } else {
+        } else if stress > 0 {
             (1, theme::cur().green)
+        } else {
+            (0, theme::cur().comment)
         };
         let mut bar = String::from(" ");
         for i in 0..4 {

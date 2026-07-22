@@ -619,6 +619,20 @@ pub struct UiConfig {
     /// `:set [no]clock` toggles at runtime. Local-time offset is read
     /// from `$TZ_OFFSET_HOURS` (default 0 = UTC).
     pub clock: bool,
+    /// Show the four-block stress-meter chip in the statusline
+    /// (statusline-right + palette-bar mirror). Default `true`.
+    /// Right-click the chip to toggle. User asked 2026-07-20:
+    /// "just show it all the time" + "add right click option to
+    /// hide it" + "maybe add to settings the hide/show too".
+    pub stress_meter: bool,
+    /// Integration ids pinned as launcher icons at the bottom of
+    /// the activity bar. Clicking an icon fires that integration
+    /// chip's `command` (spawns a Pty pane in the main area) —
+    /// NOT a docked Mount panel. Populated by right-click →
+    /// "Add to activity bar" on an integration chip.
+    /// 2026-07-20 user report: "I only wanted a fucking launcher
+    /// icon in the activity bar" — this field is that surface.
+    pub activity_bar_pinned_integrations: Vec<String>,
     /// When the cursor is on an identifier (`[A-Za-z0-9_]+`), paint other
     /// occurrences of the same word in the visible viewport with a subtle
     /// background tint. Off by default — can be noisy in dense files.
@@ -1045,6 +1059,8 @@ impl Default for Config {
                 scrollbar: true,
                 highlight_trailing_ws: false,
                 clock: true,
+                stress_meter: true,
+                activity_bar_pinned_integrations: Vec::new(),
                 highlight_word_under_cursor: false,
                 auto_md_preview: false,
                 color_column: 0,
@@ -1129,17 +1145,32 @@ impl Default for Config {
                         in_palette_bar: false,
                         manifest_can_override: true,
                     },
+                    // 2026-07-19 — the single "bitbucket" chip was
+                    // replaced by two chips ("bitbucket_pull_requests"
+                    // and "bitbucket_pipelines") that both launch the
+                    // same sibling with `--only prs` / `--only
+                    // pipelines`. Each drops the user into a single
+                    // view with no tab-strip. Old `id = "bitbucket"`
+                    // entries in user configs still merge from those
+                    // — the migration below routes them away.
                     IntegrationIcon {
-                        id: "bitbucket".to_string(),
-                        glyph: "\u{E703}".to_string(), // nf-dev-bitbucket
-                        fallback: "B".to_string(),
-                        // Launches the standalone mnml-forge-bitbucket
-                        // viewer as a Pty pane. User must have it
-                        // installed (`cargo install --git
-                        // https://github.com/chris-mclennan/mnml-forge-bitbucket`).
-                        command: ":term mnml-forge-bitbucket".to_string(),
+                        id: "bitbucket_pull_requests".to_string(),
+                        glyph: "\u{F00A8}".to_string(), // nf-md-source_pull
+                        fallback: "PR".to_string(),
+                        command: ":term mnml-forge-bitbucket --only prs".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some("Bitbucket pipelines + PRs".to_string()),
+                        tooltip: Some("Bitbucket Pull Requests".to_string()),
+                        enabled: false,
+                        in_palette_bar: false,
+                        manifest_can_override: true,
+                    },
+                    IntegrationIcon {
+                        id: "bitbucket_pipelines".to_string(),
+                        glyph: "\u{F00A8}".to_string(),
+                        fallback: "Pl".to_string(),
+                        command: ":term mnml-forge-bitbucket --only pipelines".to_string(),
+                        color: "cyan".to_string(),
+                        tooltip: Some("Bitbucket Pipelines".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         manifest_can_override: true,
@@ -1475,7 +1506,7 @@ impl Default for Config {
                         fallback: "EB".to_string(),
                         command: ":term mnml-aws-eventbridge".to_string(),
                         color: "pink".to_string(),
-                        tooltip: Some("EventBridge buses + rules".to_string()),
+                        tooltip: Some("EventBridge Schedules".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         manifest_can_override: true,
@@ -1846,6 +1877,8 @@ struct RawUi {
     scrollbar: Option<bool>,
     highlight_trailing_ws: Option<bool>,
     clock: Option<bool>,
+    stress_meter: Option<bool>,
+    activity_bar_pinned_integrations: Option<Vec<String>>,
     highlight_word_under_cursor: Option<bool>,
     auto_md_preview: Option<bool>,
     color_column: Option<usize>,
@@ -2085,6 +2118,12 @@ impl Config {
         if let Some(v) = raw.ui.clock {
             self.ui.clock = v;
         }
+        if let Some(v) = raw.ui.stress_meter {
+            self.ui.stress_meter = v;
+        }
+        if let Some(v) = raw.ui.activity_bar_pinned_integrations {
+            self.ui.activity_bar_pinned_integrations = v;
+        }
         if let Some(v) = raw.ui.highlight_word_under_cursor {
             self.ui.highlight_word_under_cursor = v;
         }
@@ -2315,6 +2354,22 @@ impl Config {
                     icon.glyph = "\u{F2002}".to_string();
                 }
             }
+            // 2026-07-19 — the single "bitbucket" chip was split into
+            // `bitbucket_pull_requests` + `bitbucket_pipelines` (each
+            // launching the sibling with a `--only` flag). Drop any
+            // legacy `id = "bitbucket"` entries that survived the
+            // merge so the old "Bitbucket pipelines + PRs" chip stops
+            // showing up alongside the two new ones. Users who want
+            // it back can add a `[[ui.integration_icon]]` block by
+            // hand, but the split chips are the recommended UX.
+            // 2026-07-19 — kill the "bitbucket" catch-all + three
+            // legacy chips the user asked to remove ("linear",
+            // "gitlab", "cypress"). Both the built-in defaults and
+            // any installed sibling manifests can re-inject these,
+            // so the retain runs after both merge paths.
+            merged.retain(|i| {
+                !matches!(i.id.as_str(), "bitbucket" | "linear" | "gitlab" | "cypress")
+            });
             self.ui.integration_icons = merged;
         }
         // `ticket_prefixes` — pty-tab auto-naming from scrollback.

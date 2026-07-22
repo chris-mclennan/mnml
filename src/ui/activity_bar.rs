@@ -247,4 +247,61 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         app.rects.activity_bar_icons.push((row, section));
         y = y.saturating_add(2);
     }
+    // 2026-07-20 — user-pinned integration launcher icons. Each
+    // fires the integration chip's `command` on click (spawns a
+    // Pty pane), no side panel. Rendered AFTER Mount manifests so
+    // the visual grouping is: builtins · manifest mounts · pins.
+    let pinned = app.config.ui.activity_bar_pinned_integrations.clone();
+    for (idx, integ_id) in pinned.iter().enumerate() {
+        if y >= icons_end_y {
+            break;
+        }
+        let Some(icon) = app
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .find(|i| &i.id == integ_id)
+        else {
+            // Pinned id vanished from integration list — skip
+            // silently. The right-click menu will offer "Add" (not
+            // "Remove") next time since integration_is_docked
+            // reads the list.
+            continue;
+        };
+        let section = crate::app::ActivitySection::LauncherIcon(idx as u16);
+        let is_active = app.active_section == section;
+        let glyph = if nerd {
+            icon.glyph.as_str()
+        } else {
+            icon.fallback.as_str()
+        };
+        let color = crate::ui::theme::color_from_slot(&icon.color, &t);
+        let style = if is_active {
+            Style::default()
+                .fg(color)
+                .bg(bar_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(color)
+                .bg(bar_bg)
+                .add_modifier(Modifier::DIM)
+        };
+        let row = Rect {
+            x: area.x,
+            y,
+            width: area.width,
+            height: 1,
+        };
+        let glyph_rect = Rect {
+            x: icon_x,
+            y,
+            width: area.width.saturating_sub(1),
+            height: 1,
+        };
+        frame.render_widget(Paragraph::new(Line::from(glyph)).style(style), glyph_rect);
+        app.rects.activity_bar_icons.push((row, section));
+        y = y.saturating_add(2);
+    }
 }

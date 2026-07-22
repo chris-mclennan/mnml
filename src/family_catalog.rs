@@ -245,12 +245,12 @@ pub const CATALOG: &[FamilySibling] = &[
         category: Category::Aws,
         repo_url: "https://github.com/chris-mclennan/mnml-aws-eventbridge",
         pinned_version: "main",
-        one_liner: "EventBridge buses + rules + per-rule targets",
+        one_liner: "EventBridge Schedules (time + target JSON editor)",
         icon: IconTemplate {
             glyph: "\u{F0CE0}",
             fallback: "EB",
             color: "pink",
-            tooltip: "EventBridge buses + rules",
+            tooltip: "EventBridge Schedules",
         },
     },
     FamilySibling {
