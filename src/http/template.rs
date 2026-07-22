@@ -151,8 +151,12 @@ impl EnvSet {
 pub fn dynamic_var(name: &str) -> Option<String> {
     match name {
         "uuid" | "guid" => Some(uuid_v4()),
-        "timestamp" | "epochMs" => Some(unix_ms().to_string()),
-        "epoch" | "epochS" => Some((unix_ms() / 1000).to_string()),
+        // 2026-07-21 fix: `$timestamp` now returns SECONDS (Postman
+        // convention + what JWT `iat`/`exp` + most REST APIs expect).
+        // For milliseconds, use `$epochMs` explicitly. Was previously
+        // ms which surprised users importing Postman-style requests.
+        "timestamp" | "epoch" | "epochS" => Some((unix_ms() / 1000).to_string()),
+        "epochMs" => Some(unix_ms().to_string()),
         // ISO 8601 UTC timestamp with fractional seconds + `Z` — the
         // format Tattle-style .NET APIs emit ("2026-07-09T17:35:39.4944815Z").
         // 2026-07-09 — added for the discover normalization pass so
@@ -506,6 +510,29 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_digit())
         );
+    }
+
+    #[test]
+    fn timestamp_returns_seconds_epoch_ms_returns_ms() {
+        // Postman convention: `$timestamp` = unix seconds (10 digits
+        // through 2286). `$epochMs` = milliseconds (13 digits).
+        let e = EnvSet::empty();
+        let ts = expand("{{$timestamp}}", &e);
+        let ms = expand("{{$epochMs}}", &e);
+        assert!(ts.chars().all(|c| c.is_ascii_digit()), "ts={ts}");
+        assert!(ms.chars().all(|c| c.is_ascii_digit()), "ms={ms}");
+        assert!(
+            ts.len() == 10 || ts.len() == 11,
+            "expected seconds (~10 digits), got {ts} ({} chars)",
+            ts.len()
+        );
+        assert!(
+            ms.len() >= 13,
+            "expected milliseconds (13+ digits), got {ms}"
+        );
+        // $epoch and $epochS remain seconds aliases.
+        let ep = expand("{{$epoch}}", &e);
+        assert_eq!(ep.len(), ts.len(), "$epoch should match $timestamp shape");
     }
 
     #[test]
