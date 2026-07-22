@@ -955,9 +955,20 @@ impl RequestPane {
 
     /// Go (net/http).
     pub fn as_go(&self) -> String {
-        let mut out = String::from(
-            "package main\n\nimport (\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n\t\"strings\"\n)\n\nfunc main() {\n",
-        );
+        // 2026-07-21 fix: `strings` was unconditionally imported
+        // but only USED when the body was non-empty — Go compile
+        // error ("imported and not used") on bodyless requests.
+        // Also fixed a `push_str` block that had `{{ }}` in a raw
+        // string (not a format!), leaking literal double-braces
+        // into the snippet — was `if err != nil {{ panic(err) }}`
+        // in the output.
+        let has_body = self.request.body.is_some();
+        let mut out =
+            String::from("package main\n\nimport (\n\t\"fmt\"\n\t\"io\"\n\t\"net/http\"\n");
+        if has_body {
+            out.push_str("\t\"strings\"\n");
+        }
+        out.push_str(")\n\nfunc main() {\n");
         let body_expr = if let Some(b) = &self.request.body {
             format!("strings.NewReader({b:?})")
         } else {
@@ -973,7 +984,7 @@ impl RequestPane {
             out.push_str(&format!("\treq.Header.Set({k:?}, {v:?})\n"));
         }
         out.push_str(
-            "\tresp, err := http.DefaultClient.Do(req)\n\tif err != nil {{ panic(err) }}\n\tdefer resp.Body.Close()\n\tbody, _ := io.ReadAll(resp.Body)\n\tfmt.Println(resp.Status)\n\tfmt.Println(string(body))\n}\n",
+            "\tresp, err := http.DefaultClient.Do(req)\n\tif err != nil { panic(err) }\n\tdefer resp.Body.Close()\n\tbody, _ := io.ReadAll(resp.Body)\n\tfmt.Println(resp.Status)\n\tfmt.Println(string(body))\n}\n",
         );
         out
     }
@@ -1199,5 +1210,34 @@ mod tests {
         p.url_cursor = len;
         p.move_right(); // no-op at end
         assert_eq!(p.url_cursor, len);
+    }
+
+    #[test]
+    fn as_go_no_body_omits_strings_import_and_uses_single_braces() {
+        // No body → don't import "strings" (unused-import compile
+        // error in Go); the response-error block should use single
+        // braces, not `{{ … }}`.
+        let mut p = pane();
+        p.request.method = "GET".into();
+        p.request.url = "https://api.example.com/x".into();
+        p.request.body = None;
+        let go = p.as_go();
+        assert!(!go.contains("\"strings\""), "no strings import:\n{go}");
+        assert!(!go.contains("{{"), "no leaked double-braces:\n{go}");
+        assert!(
+            go.contains("if err != nil { panic(err) }"),
+            "single-brace panic block:\n{go}"
+        );
+    }
+
+    #[test]
+    fn as_go_with_body_imports_strings() {
+        let mut p = pane();
+        p.request.method = "POST".into();
+        p.request.url = "https://api.example.com/x".into();
+        p.request.body = Some(r#"{"a":1}"#.into());
+        let go = p.as_go();
+        assert!(go.contains("\"strings\""), "strings imported:\n{go}");
+        assert!(go.contains("strings.NewReader"), "strings used:\n{go}");
     }
 }
