@@ -1361,19 +1361,15 @@ impl Default for Config {
                         in_palette_bar: false,
                         manifest_can_override: true,
                     },
-                    IntegrationIcon {
-                        id: "slack".to_string(),
-                        glyph: "\u{F03EF}".to_string(), // nf-md-slack
-                        fallback: "Sk".to_string(),
-                        command: ":term mnml-msg-slack".to_string(),
-                        color: "magenta".to_string(),
-                        tooltip: Some(
-                            "Slack — channels + DMs + threads + search + post".to_string(),
-                        ),
-                        enabled: false,
-                        in_palette_bar: false,
-                        manifest_can_override: true,
-                    },
+                    // 2026-07-22 — the built-in `slack` chip was
+                    // replaced by two sibling-owned chips
+                    // (`slack_channels` + `slack_canvases`) that both
+                    // launch `mnml-msg-slack` with a `--only` filter.
+                    // The sibling installs its own manifests, so the
+                    // legacy built-in default is dropped here. The
+                    // migration retain below wipes any stale `slack`
+                    // config entries so fresh mnml runs don't show
+                    // three chips.
                     IntegrationIcon {
                         id: "teams".to_string(),
                         glyph: "\u{F0FA1}".to_string(), // nf-md-microsoft_teams
@@ -2368,7 +2364,10 @@ impl Config {
             // any installed sibling manifests can re-inject these,
             // so the retain runs after both merge paths.
             merged.retain(|i| {
-                !matches!(i.id.as_str(), "bitbucket" | "linear" | "gitlab" | "cypress")
+                !matches!(
+                    i.id.as_str(),
+                    "bitbucket" | "linear" | "gitlab" | "cypress" | "slack"
+                )
             });
             self.ui.integration_icons = merged;
         }
