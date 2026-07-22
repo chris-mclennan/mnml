@@ -177,6 +177,21 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         && session.is_mouse_tracking()
     {
         forward_mouse_to_pty(session, rect, m);
+        // 2026-07-22 fix: also focus the pane on a real click so
+        // subsequent keyboard events reach THIS Pty child (not
+        // whatever was `app.active` before). Was: user clicks the
+        // top pane, click goes to child's SGR handler, but arrows
+        // stay routed to a stale `active` pane below.
+        if matches!(
+            m.kind,
+            MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Down(MouseButton::Right)
+                | MouseEventKind::Down(MouseButton::Middle)
+        ) && app.active != Some(pid)
+        {
+            app.active = Some(pid);
+            app.focus_pane();
+        }
         return;
     }
 
