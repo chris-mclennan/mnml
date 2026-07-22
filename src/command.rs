@@ -5288,10 +5288,41 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "term.shell",
-            title: "Terminal: open a NEW shell (split below)",
+            title: "Terminal: open a NEW shell (split beside)",
             group: "term",
             keys: &[],
             run: |app| app.open_shell(),
+        },
+        // 2026-07-22 — placement variants to match the AI chip
+        // right-click menu. Split-strip terminal chip surfaces
+        // these; palette users get them too.
+        Command {
+            id: "term.shell_left",
+            title: "Terminal: new shell in left half",
+            group: "term",
+            keys: &[],
+            run: |app| app.open_shell_at(crate::app::ai::PanePlacement::LeftHalf),
+        },
+        Command {
+            id: "term.shell_right",
+            title: "Terminal: new shell in right half",
+            group: "term",
+            keys: &[],
+            run: |app| app.open_shell_at(crate::app::ai::PanePlacement::RightHalf),
+        },
+        Command {
+            id: "term.shell_top",
+            title: "Terminal: new shell in top half",
+            group: "term",
+            keys: &[],
+            run: |app| app.open_shell_at(crate::app::ai::PanePlacement::TopHalf),
+        },
+        Command {
+            id: "term.shell_bottom",
+            title: "Terminal: new shell in bottom half",
+            group: "term",
+            keys: &[],
+            run: |app| app.open_shell_at(crate::app::ai::PanePlacement::BottomHalf),
         },
         Command {
             id: "mount.open",

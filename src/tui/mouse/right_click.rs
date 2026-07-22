@@ -1183,8 +1183,27 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         if let Some(la) = leaf_active {
             app.active = Some(la);
         }
+        // 2026-07-22 — match the AI-chip menu shape. Was: 2-item menu
+        // (Open shell / Open scratch). User: "the terminal icon when
+        // right clicked should allow more placement options."
         let items = vec![
-            MenuItem::new("Open shell", MenuAction::Command("term.shell")),
+            MenuItem::new("Open shell (beside)", MenuAction::Command("term.shell")),
+            MenuItem::new(
+                "Open shell in left half",
+                MenuAction::Command("term.shell_left"),
+            ),
+            MenuItem::new(
+                "Open shell in right half",
+                MenuAction::Command("term.shell_right"),
+            ),
+            MenuItem::new(
+                "Open shell in top half",
+                MenuAction::Command("term.shell_top"),
+            ),
+            MenuItem::new(
+                "Open shell in bottom half",
+                MenuAction::Command("term.shell_bottom"),
+            ),
             MenuItem::new(
                 "Open scratch terminal",
                 MenuAction::Command("term.scratch_toggle"),

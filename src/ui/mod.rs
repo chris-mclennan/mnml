@@ -3746,11 +3746,22 @@ fn pty_icon(
     let spinner = s.current_spinner_glyph();
     let is_codex = profile_label_lower == "codex";
     let codex_thinking = is_codex && s.is_codex_thinking();
+    // 2026-07-22 — plain shells (label "shell" / "zsh" / "bash") get
+    // the same codicon `` (U+EA85) that the split-strip terminal
+    // chip uses in the CC/H/V cluster. Was falling through to
+    // `\u{F001D}` (a generic file/rocket) which didn't match. User:
+    // "can we make the terminal icon on the tab match the one in
+    // the CC/H/V cluster."
+    let is_plain_shell = matches!(
+        profile_label_lower.as_str(),
+        "shell" | "zsh" | "bash" | "sh" | "fish" | "nu" | "nushell"
+    );
     match (sibling_glyph, spinner, codex_thinking) {
         (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
         (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),
         (Some((g, c)), _, _) if nerd => (g, c),
         (None, Some(g), _) if nerd => (g.to_string(), tt.teal),
+        _ if is_plain_shell && nerd => ("\u{ea85}".to_string(), tt.comment),
         _ => ((if nerd { "\u{F001D}" } else { "▶" }).to_string(), tt.teal),
     }
 }

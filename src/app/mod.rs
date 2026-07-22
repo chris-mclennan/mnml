@@ -9014,8 +9014,25 @@ impl App {
         // Spawn in the *active* workspace — so in a multi-workspace
         // setup, term.shell opens in the focused workspace's directory,
         // not the launch primary.
+        //
+        // 2026-07-22 — user asked for side-by-side (Horizontal) as
+        // the default terminal placement to match Claude/Codex. Was
+        // Vertical (stacked below). Explicit placement variants
+        // (`term.shell_left/right/top/bottom`) let the right-click
+        // menu override per gesture.
         let cwd = self.active_workspace_path().to_path_buf();
-        self.open_pty(crate::pty_pane::BinaryProfile::shell(Some(cwd)));
+        self.open_pty_dir(
+            crate::pty_pane::BinaryProfile::shell(Some(cwd)),
+            crate::layout::SplitDir::Horizontal,
+        );
+    }
+
+    /// Placement-aware variant of `open_shell` — used by the split-
+    /// strip terminal chip's right-click menu so users can pick
+    /// where a new shell lands (left / right / top / bottom half).
+    pub fn open_shell_at(&mut self, placement: crate::app::ai::PanePlacement) {
+        let cwd = self.active_workspace_path().to_path_buf();
+        self.open_pty_at_placement(crate::pty_pane::BinaryProfile::shell(Some(cwd)), placement);
     }
 
     /// External-tool launcher — htop / iftop / btop / etc. If the

@@ -928,7 +928,7 @@ impl App {
         );
     }
 
-    fn open_pty_at_placement(
+    pub(crate) fn open_pty_at_placement(
         &mut self,
         profile: crate::pty_pane::BinaryProfile,
         placement: PanePlacement,
