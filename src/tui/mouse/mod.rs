@@ -113,7 +113,18 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         let col = x.saturating_sub(rect.x);
         let row = y.saturating_sub(rect.y);
         app.pty_drag_select = Some((pid, (col, row), (col, row)));
-        // Don't return — let the click also focus the pane below.
+        // 2026-07-22 — ALSO focus the pane here so a click on a
+        // non-mouse-tracking Pty (Slack, plain shells) routes
+        // subsequent arrows to THIS pane's stdin. Was: focus stayed
+        // on whichever pane was previously active, so arrows never
+        // reached the clicked pane. The generic handler at the
+        // bottom of `handle_down_left` also sets active for editor
+        // panes but only fires if no earlier handler returned; a
+        // pty-drag-select-armed click could take a different code
+        // path before ever reaching it. Belt-and-suspenders.
+        app.active = Some(pid);
+        app.focus_pane();
+        // Don't return — let subsequent handlers (drag) still run.
     }
     // Middle-click on a Pty pane → paste from clipboard (X11 primary-
     // selection convention). Runs even when the child has mouse
