@@ -1501,27 +1501,71 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.set_cursor_position((x, y));
     }
 
-    // 2026-07-23 — subtle click-echo v3. Was reverse-video (too
-    // loud). Now: underline the click cell for 80ms — barely
-    // perceptible unless the user's specifically watching for it.
-    // No glyph substitution → zero `?`-mark risk.
+    // 2026-07-23 — subtle click-echo v4. Underline the WORD /
+    // TOKEN under the click for ~120ms, not just the single cell.
+    // Reads as "I saw you click this thing" instead of a random
+    // single-char blip. Walks left/right from the click point
+    // until a non-word char (space / punctuation-only-if-surrounded
+    // by whitespace) or a row edge. Preserves the underline
+    // fallback single-cell if the click landed on whitespace.
     if let Some((x, y, started)) = app.click_echo {
-        const ECHO_MS: u128 = 80;
+        const ECHO_MS: u128 = 120;
         let elapsed = started.elapsed().as_millis();
         if elapsed < ECHO_MS {
             let area = frame.area();
             if x < area.x + area.width && y < area.y + area.height {
+                let (x0, x1) = word_bounds_at(frame.buffer_mut(), x, y);
                 let buf = frame.buffer_mut();
-                let cell = &mut buf[(x, y)];
-                cell.set_style(
-                    cell.style()
-                        .add_modifier(ratatui::style::Modifier::UNDERLINED),
-                );
+                for cx in x0..=x1 {
+                    let cell = &mut buf[(cx, y)];
+                    cell.set_style(
+                        cell.style()
+                            .add_modifier(ratatui::style::Modifier::UNDERLINED),
+                    );
+                }
             }
         } else {
             app.click_echo = None;
         }
     }
+}
+
+/// Return the inclusive column range of the "word" the click cell
+/// is on. A word here is any run of NON-whitespace cells — chip
+/// labels ("Slack Channels" underlines "Slack" or "Channels"), row
+/// text, chevrons — all clean-bounded by the surrounding space.
+/// Whitespace click → returns the single cell.
+fn word_bounds_at(buf: &ratatui::buffer::Buffer, x: u16, y: u16) -> (u16, u16) {
+    let is_word = |ch: &str| -> bool {
+        // Multi-char (emoji-ish) always counts as a word cell.
+        // Single-char: any non-whitespace.
+        if ch.chars().count() > 1 {
+            return true;
+        }
+        ch.chars().next().is_some_and(|c| !c.is_whitespace())
+    };
+    let here = buf[(x, y)].symbol().to_string();
+    if !is_word(&here) {
+        return (x, x);
+    }
+    let mut lo = x;
+    while lo > buf.area.x {
+        let prev = lo - 1;
+        if !is_word(buf[(prev, y)].symbol()) {
+            break;
+        }
+        lo = prev;
+    }
+    let right_edge = buf.area.x + buf.area.width;
+    let mut hi = x;
+    while hi + 1 < right_edge {
+        let next = hi + 1;
+        if !is_word(buf[(next, y)].symbol()) {
+            break;
+        }
+        hi = next;
+    }
+    (lo, hi)
 }
 
 /// Recursively render a layout subtree into `area`: leaves draw their editor;
