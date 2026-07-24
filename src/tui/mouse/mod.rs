@@ -70,6 +70,13 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // nothing happened, click again."
     if matches!(m.kind, MouseEventKind::Down(_)) {
         app.click_echo = Some((x, y, std::time::Instant::now()));
+        // `mouse_down_at` is a SEPARATE field from `click_echo`
+        // because the visual-echo renderer clears click_echo
+        // after 120ms — but the tab-jitter guard needs to compare
+        // Down↔Up regardless of hold time (a hold > 120ms
+        // otherwise falsely reports "no Down" and the drop path
+        // reshuffles the tab).
+        app.mouse_down_at = Some((x, y));
     }
 
     // LSP hover popup takes precedence when the pointer is over

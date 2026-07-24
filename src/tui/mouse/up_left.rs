@@ -240,9 +240,14 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
         // `remove_leaf(src)` + reinsert, which under some subtle
         // pane-storage state ends up ORPHANING the tab (video
         // repro from user 2026-07-24). Just clear the drag arm.
+        // 2026-07-24 (v2): use `mouse_down_at` not `click_echo`.
+        // click_echo is cleared by the renderer after 120ms so a
+        // >120ms hold falsely reported "no down" here, letting
+        // the drop path run and orphan the tab. mouse_down_at
+        // has no expiry — it's cleanly overwritten on next Down.
         let jitter_only = matches!(
-            app.click_echo,
-            Some((dx, dy, _))
+            app.mouse_down_at,
+            Some((dx, dy))
                 if x.abs_diff(dx) <= 1 && y.abs_diff(dy) <= 1
         );
         if jitter_only {

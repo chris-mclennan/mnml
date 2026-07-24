@@ -3796,6 +3796,15 @@ pub struct App {
     /// is a wait can some progress indicator be shown, I tend to
     /// click, think nothing happened, click again."
     pub click_echo: Option<(u16, u16, std::time::Instant)>,
+    /// Last mouse-Down coord, cleared on Up. Used by the tab-drag
+    /// jitter guard in `up_left.rs` to detect "was this really a
+    /// drag or just a click that drifted 1 cell?" Separate from
+    /// `click_echo` because click_echo has its own visual-decay
+    /// timer (renderer clears it after 120ms), and a mouse hold
+    /// longer than that (or a paint gap between Down/Up) would
+    /// falsely report "no down" to the jitter guard — tester
+    /// found tabs still orphaning on ≥120ms holds. 2026-07-24.
+    pub mouse_down_at: Option<(u16, u16)>,
     /// Timestamp of the last wheel-scroll event we APPLIED to a slow-
     /// scroll surface (tree / git rail / sidebar list). macOS Terminal +
     /// Ghostty + iTerm2 fire several scroll events per real wheel
@@ -5216,6 +5225,7 @@ impl App {
             prev_jump_pos: None,
             last_click: None,
             click_echo: None,
+            mouse_down_at: None,
             last_list_scroll_at: None,
             scroll_bucket: 25.0,
             scroll_bucket_last_refill: None,
