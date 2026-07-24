@@ -1501,16 +1501,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         frame.set_cursor_position((x, y));
     }
 
-    // 2026-07-23 — subtle click-echo. Was a yellow hourglass at
-    // the click cell for 250ms — but the user's Ghostty Nerd Font
-    // was missing the codepoint (rendered as `?`) and even where
-    // it worked the yellow-hourglass-in-your-face was too loud.
-    //
-    // New shape: flip the cell's foreground and background for
-    // ~120ms. No new glyph = zero `?`-mark risk. Reverse-video
-    // reads as a soft "flash" against whatever's underneath.
+    // 2026-07-23 — subtle click-echo v3. Was reverse-video (too
+    // loud). Now: underline the click cell for 80ms — barely
+    // perceptible unless the user's specifically watching for it.
+    // No glyph substitution → zero `?`-mark risk.
     if let Some((x, y, started)) = app.click_echo {
-        const ECHO_MS: u128 = 120;
+        const ECHO_MS: u128 = 80;
         let elapsed = started.elapsed().as_millis();
         if elapsed < ECHO_MS {
             let area = frame.area();
@@ -1519,7 +1515,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 let cell = &mut buf[(x, y)];
                 cell.set_style(
                     cell.style()
-                        .add_modifier(ratatui::style::Modifier::REVERSED),
+                        .add_modifier(ratatui::style::Modifier::UNDERLINED),
                 );
             }
         } else {
