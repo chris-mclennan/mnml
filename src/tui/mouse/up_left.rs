@@ -231,6 +231,25 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
         // Clear visuals first.
         app.rects.bufferline_drag_ghost = None;
         app.rects.tab_insert_hint = None;
+        // 2026-07-24 — jitter guard. Ghostty (and most terminals)
+        // fire Up at a slightly-shifted cell from Down even for a
+        // pure click if the pointer drifts between press+release.
+        // The down_left handler ALREADY switched to this tab; if
+        // the mouse hasn't moved (or moved ≤1 cell), we don't
+        // want to also fire any drop handlers — those all run
+        // `remove_leaf(src)` + reinsert, which under some subtle
+        // pane-storage state ends up ORPHANING the tab (video
+        // repro from user 2026-07-24). Just clear the drag arm.
+        let jitter_only = matches!(
+            app.click_echo,
+            Some((dx, dy, _))
+                if x.abs_diff(dx) <= 1 && y.abs_diff(dy) <= 1
+        );
+        if jitter_only {
+            app.rects.bufferline_drag_tab = None;
+            app.rects.tab_drop_target = None;
+            return;
+        }
         // Released on a per-leaf tab strip → insert at the
         // computed position. Tries this BEFORE other drop
         // handlers so the strip area wins over the pane
@@ -285,6 +304,8 @@ pub(super) fn handle_up_left(app: &mut App, x: u16, y: u16) {
             app.rects.tab_drop_target = None;
             return;
         }
+        // The earlier jitter-guard already returned; if we're
+        // here, the pointer moved > 1 cell — a genuine drag.
         if over_body {
             app.drop_tab_on_pane(src, x, y);
         } else {
