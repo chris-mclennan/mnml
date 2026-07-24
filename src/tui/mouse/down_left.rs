@@ -1019,8 +1019,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
                 // click x - rect.x - label_offset. Convert
                 // visual column to a byte position via
                 // char_indices(); clamp to value length.
+                //
+                // 2026-07-24 fix: request_view.rs moved "URL" to
+                // the pane border title; the value row now starts
+                // just 1 cell in (a single leading space padding).
+                // Old `label_offset = 6` (from the inline
+                // " URL  <value>" layout) mis-clamped clicks by 5
+                // chars. api-workflow-user finding 2026-07-24.
                 let dx = x.saturating_sub(rect.x);
-                let label_offset: u16 = 6;
+                let label_offset: u16 = 1;
                 let visual_col = dx.saturating_sub(label_offset) as usize;
                 let url = &rp.request.url;
                 let byte_pos = url
