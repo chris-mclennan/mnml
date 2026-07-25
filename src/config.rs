@@ -1175,22 +1175,14 @@ impl Default for Config {
                         in_palette_bar: false,
                         manifest_can_override: true,
                     },
-                    IntegrationIcon {
-                        id: "jira".to_string(),
-                        glyph: "\u{F0411}".to_string(), // nf-md-jira
-                        fallback: "J".to_string(),
-                        // Launches the standalone mnml-tracker-jira
-                        // viewer as a Pty pane. User must have it
-                        // installed (`cargo install --git
-                        // https://github.com/chris-mclennan/mnml-tracker-jira`)
-                        // and a populated `~/.config/mnml-tracker-jira{.toml,/token}`.
-                        command: ":term mnml-tracker-jira".to_string(),
-                        color: "blue".to_string(),
-                        tooltip: Some("Jira tracker".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        manifest_can_override: true,
-                    },
+                    // 2026-07-25 — combined "jira" chip removed. The
+                    // mnml-tracker-jira sibling now ships three split
+                    // chips (jira_work / jira_fix_versions /
+                    // jira_boards) via its own --install manifests,
+                    // matching the bitbucket split pattern. Any user
+                    // config still referencing the old `id = "jira"`
+                    // is silently dropped by the merge — they just
+                    // enable the split chips from Marketplace instead.
                     // HTTP is built-in (activity section + sidebar +
                     // HttpHome dashboard + Pane::Request + capture /
                     // history / mocks / chains / sources / discover),
