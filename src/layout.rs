@@ -544,26 +544,18 @@ impl Layout {
         }
     }
 
-    /// Reset every `Split` in the tree to a 50/50 ratio. Vim `Ctrl+W =` —
-    /// "equalize all splits" with a poor-man's "even at every level".
-    /// (True equalization across the *visible* viewport would weight by
-    /// pane count rather than tree level; for a binary tree this is a
-    /// good-enough approximation that matches how vim behaves on
-    /// nested splits.)
+    /// Vim `Ctrl+W =` — equalize all splits so every LEAF renders
+    /// at (approximately) the same size, regardless of tree shape.
+    ///
+    /// 2026-07-25 — rewritten from the old "50/50 at each level"
+    /// approximation. The old impl produced 50/25/25 on an
+    /// unbalanced 3-leaf tree (`Split(Leaf, Split(Leaf, Leaf))`);
+    /// the user report: "when I open 4, close 1, and equalize,
+    /// it makes 2 equal not 3." Delegates to `rebalance_leaves`
+    /// which weights each Split node by the leaf count of its
+    /// children — matches actual vim behavior.
     pub fn equalize_splits(&mut self) {
-        match self {
-            Layout::Split {
-                ratio,
-                first,
-                second,
-                ..
-            } => {
-                *ratio = 50;
-                first.equalize_splits();
-                second.equalize_splits();
-            }
-            Layout::Empty | Layout::Leaf { .. } => {}
-        }
+        self.rebalance_leaves();
     }
 
     /// Set the `ratio` of the `Split` reached by following `path` from the root
@@ -1057,10 +1049,17 @@ mod tests {
             }),
         };
         l.equalize_splits();
+        // 2026-07-25 — equalize now weights ratios by leaf count
+        // (was: 50/50 at every level). For an unbalanced 3-leaf
+        // tree `Split(Leaf, Split(Leaf, Leaf))` this means the
+        // outer ratio becomes 33 (1 leaf : 2 leaves) and the
+        // inner stays 50 (1 : 1). Result: all three panes render
+        // at ~33% of the total area, which is what "equalize"
+        // is supposed to mean.
         let Layout::Split { ratio, second, .. } = &l else {
             panic!()
         };
-        assert_eq!(*ratio, 50);
+        assert_eq!(*ratio, 33);
         let Layout::Split { ratio: inner, .. } = &**second else {
             panic!()
         };

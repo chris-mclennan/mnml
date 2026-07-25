@@ -1335,10 +1335,17 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.equalize_splits",
-            title: "Equalize every split's ratio to 50/50 (vim `Ctrl+W =`)",
+            title: "Equalize every split so all panes render at equal size (vim `Ctrl+W =`)",
             group: "view",
             keys: &[],
             run: |app| app.equalize_splits(),
+        },
+        Command {
+            id: "view.toggle_auto_equalize_splits",
+            title: "Auto-equalize splits on split / close (toggle)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_auto_equalize_splits(),
         },
         Command {
             id: "view.rotate_splits",

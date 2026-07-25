@@ -436,6 +436,10 @@ fn window_menu() -> MenuDef {
                 label: "Equalize splits",
                 command_id: "view.equalize_splits",
             },
+            MenuItem::Action {
+                label: "Auto-equalize on split / close (toggle)",
+                command_id: "view.toggle_auto_equalize_splits",
+            },
             MenuItem::Separator,
             // Resize the active split.
             MenuItem::Action {

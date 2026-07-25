@@ -781,13 +781,17 @@ impl App {
                 second: Box::new(Layout::leaf(new_id)),
             },
         );
-        // 2026-07-25 — after every split, rebalance the whole tree
-        // so all leaves render at equal size. Without this, opening
-        // a 3rd pane by splitting the current leaf gives 50/25/25
-        // (nested Split inside one half); user wanted 33/33/33.
-        // rebalance_leaves walks the tree and rewrites every ratio
-        // so leaf sizes are proportional to 1/N.
-        self.layout_mut().rebalance_leaves();
+        // 2026-07-25 — auto-equalize toggle. When on (`[ui]
+        // auto_equalize_splits = true` or via Window menu), any
+        // new split rebalances the whole tree so all leaves stay
+        // equal-size (33/33/33 for 3, 25×4 for 4, etc.). When off
+        // (default), the new pane takes half of its parent leaf
+        // — vim / tmux convention. Users on manual-drag-resize
+        // workflows don't want their panes snapped back on every
+        // open.
+        if self.config.ui.auto_equalize_splits {
+            self.layout_mut().rebalance_leaves();
+        }
         new_id
     }
 
@@ -850,10 +854,31 @@ impl App {
         }
     }
 
-    /// `view.equalize_splits` — vim `Ctrl+W =`. Reset every split's ratio to
-    /// 50/50 so the panes share the screen evenly at every nesting level.
+    /// `view.equalize_splits` — vim `Ctrl+W =`. Rewrite every
+    /// split's ratio so all leaves render at equal size regardless
+    /// of tree shape. 2026-07-25 — previously did 50/50 at each
+    /// level, which gave 50/25/25 on unbalanced 3-leaf trees;
+    /// user's ask "make all 3 equal" is now honored.
     pub fn equalize_splits(&mut self) {
         self.layout_mut().equalize_splits();
+    }
+
+    /// `view.toggle_auto_equalize_splits` — flip the config toggle
+    /// that auto-rebalances splits on every open / close. Toast
+    /// the new state so the user sees the change reflected.
+    pub fn toggle_auto_equalize_splits(&mut self) {
+        self.config.ui.auto_equalize_splits = !self.config.ui.auto_equalize_splits;
+        let msg = if self.config.ui.auto_equalize_splits {
+            "auto-equalize splits: ON — new panes will rebalance"
+        } else {
+            "auto-equalize splits: OFF — panes keep their manual ratios"
+        };
+        self.toast(msg);
+        // Rebalance NOW so flipping the flag on gives immediate
+        // visual feedback (matches what the next split would do).
+        if self.config.ui.auto_equalize_splits {
+            self.layout_mut().rebalance_leaves();
+        }
     }
 
     /// `view.maximize_height` — vim `Ctrl+W _`. Push the active leaf's
@@ -1103,6 +1128,14 @@ impl App {
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);
+            // 2026-07-25 — auto-equalize on close. Without this,
+            // closing one of four equal panes leaves the remaining
+            // three at 50/25/25 (the surviving Split's ratio was
+            // set for its original sibling count). Only fires when
+            // the user opted in — matches the split-time behavior.
+            if self.config.ui.auto_equalize_splits {
+                self.layout_mut().rebalance_leaves();
+            }
         }
         if self.active == Some(id) {
             self.active = self.layout().first_leaf();

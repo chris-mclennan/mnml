@@ -577,6 +577,13 @@ pub struct UiConfig {
     /// Default width of the right side panel in cells. Drag-resize
     /// at runtime sticks via session.json.
     pub right_panel_width: u16,
+    /// 2026-07-25 — after every split / close, rewrite every
+    /// pane's ratio so all leaves render at equal size. Matches
+    /// what a Ctrl+W= press would do, applied automatically.
+    /// Off by default — users on manual-drag-resize workflows
+    /// don't want their carefully-sized panes snapped back to
+    /// equal every time they open a new one.
+    pub auto_equalize_splits: bool,
     /// Hybrid relative line numbers — the cursor line shows its absolute number,
     /// every other line the distance from the cursor. `:set relativenumber`.
     pub relative_line_numbers: bool,
@@ -1048,6 +1055,7 @@ impl Default for Config {
                 tree_width: 30,
                 right_panel_visible: false,
                 right_panel_width: 32,
+                auto_equalize_splits: false,
                 relative_line_numbers: false,
                 line_numbers: true,
                 cursor_line: false,
@@ -1854,6 +1862,7 @@ struct RawUi {
     tree_width: Option<u16>,
     right_panel_visible: Option<bool>,
     right_panel_width: Option<u16>,
+    auto_equalize_splits: Option<bool>,
     relative_line_numbers: Option<bool>,
     line_numbers: Option<bool>,
     cursor_line: Option<bool>,
@@ -2072,6 +2081,9 @@ impl Config {
         }
         if let Some(v) = raw.ui.right_panel_width {
             self.ui.right_panel_width = v.clamp(10, 80);
+        }
+        if let Some(v) = raw.ui.auto_equalize_splits {
+            self.ui.auto_equalize_splits = v;
         }
         if let Some(v) = raw.ui.relative_line_numbers {
             self.ui.relative_line_numbers = v;
@@ -3498,9 +3510,17 @@ repo  = "example-knowledge"
             ids.contains(&"codex"),
             "integration_icons must include codex"
         );
+        // 2026-07-25 — combined "bitbucket" chip was split into
+        // bitbucket_pull_requests + bitbucket_pipelines; combined
+        // "jira" chip was removed (sibling manifests own the
+        // three splits). Assert on the survivors.
         assert!(
-            ids.contains(&"bitbucket"),
-            "integration_icons must include bitbucket"
+            ids.contains(&"bitbucket_pull_requests"),
+            "integration_icons must include bitbucket_pull_requests"
+        );
+        assert!(
+            ids.contains(&"bitbucket_pipelines"),
+            "integration_icons must include bitbucket_pipelines"
         );
         assert!(
             ids.contains(&"github"),
@@ -3540,7 +3560,7 @@ id = "github"
 [[ui.integration_icon]]
 id = "claude_code"
 [[ui.integration_icon]]
-id = "bitbucket"
+id = "bitbucket_pull_requests"
 "#
         )
         .unwrap();
@@ -3553,9 +3573,12 @@ id = "bitbucket"
             .map(|i| i.id.as_str())
             .collect();
         // The three user entries must appear FIRST, in file order.
+        // 2026-07-25 — combined "bitbucket" chip was split into
+        // bitbucket_pull_requests + bitbucket_pipelines; the test
+        // uses the pull-requests split as a stand-in.
         assert_eq!(
             &ids[..3],
-            &["github", "claude_code", "bitbucket"],
+            &["github", "claude_code", "bitbucket_pull_requests"],
             "user-file order must be preserved verbatim; got {ids:?}"
         );
         // Any built-in the user file didn't list must still be
