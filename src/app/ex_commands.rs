@@ -1703,10 +1703,20 @@ impl App {
                     if let Some(pos) = cmdline.find("--only ") {
                         let after = &cmdline[pos + "--only ".len()..];
                         let family = after.split_whitespace().next().unwrap_or("");
+                        // 2026-07-25 — Jira split values added
+                        // (work / fix-versions / boards). Was only
+                        // handling Bitbucket's family names, so the
+                        // three Jira split chips all rendered as
+                        // plain "Jira" in the tab. Both hyphen and
+                        // underscore accepted — matches TabFamily's
+                        // CLI parser.
                         let suffix = match family {
                             "prs" | "pull_requests" => Some("Pull Requests"),
                             "pipelines" => Some("Pipelines"),
                             "branches" => Some("Branches"),
+                            "work" | "jira_work" => Some("Work"),
+                            "fix-versions" | "fix_versions" | "fix_version" => Some("Fix Versions"),
+                            "boards" | "jira_boards" => Some("Boards"),
                             _ => None,
                         };
                         if let Some(s) = suffix {
