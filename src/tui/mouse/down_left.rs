@@ -1082,9 +1082,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // qa-feature 2026-07-01 — Installed / Marketplace tab chips in the
     // Integrations panel. Click switches the active sub-view; also
     // resets the panel scroll so the new list starts at the top.
+    // 2026-07-25 — move focus to Tree so subsequent keyboard nav
+    // (arrows, `/` filter, Enter) targets the panel instead of a
+    // previously-focused pane.
     if let Some(rect) = app.rects.integrations_tab_installed
         && crate::app::dispatch::contains(rect, x, y)
     {
+        app.focus = crate::focus::Focus::Tree;
         app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
         app.integrations_panel_scroll = 0;
         return;
@@ -1092,14 +1096,21 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(rect) = app.rects.integrations_tab_marketplace
         && crate::app::dispatch::contains(rect, x, y)
     {
+        app.focus = crate::focus::Focus::Tree;
         app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
         app.integrations_panel_scroll = 0;
         return;
     }
     // Integrations filter chip — click to focus filter input.
+    // 2026-07-25 — also move `app.focus` back to Tree. Otherwise if
+    // the user had an integration pane open (focus == Focus::Pane),
+    // clicking the filter chip flipped `_filter_focused` but the
+    // key-absorption block in tui/mod.rs is gated on `focus == Tree`,
+    // so typed chars fell through to the open pane instead.
     if let Some(rect) = app.rects.integrations_filter_chip
         && crate::app::dispatch::contains(rect, x, y)
     {
+        app.focus = crate::focus::Focus::Tree;
         app.integrations_panel_filter_focused = true;
         return;
     }
