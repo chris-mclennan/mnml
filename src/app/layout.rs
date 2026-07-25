@@ -781,6 +781,13 @@ impl App {
                 second: Box::new(Layout::leaf(new_id)),
             },
         );
+        // 2026-07-25 — after every split, rebalance the whole tree
+        // so all leaves render at equal size. Without this, opening
+        // a 3rd pane by splitting the current leaf gives 50/25/25
+        // (nested Split inside one half); user wanted 33/33/33.
+        // rebalance_leaves walks the tree and rewrites every ratio
+        // so leaf sizes are proportional to 1/N.
+        self.layout_mut().rebalance_leaves();
         new_id
     }
 

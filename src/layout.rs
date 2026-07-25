@@ -720,6 +720,48 @@ impl DividerHit {
     }
 }
 
+impl Layout {
+    /// 2026-07-25 — walk the tree and rewrite every split's ratio
+    /// so all LEAVES render at equal size regardless of tree
+    /// shape. For each `Split { first, second }` node, the ratio
+    /// becomes `leaves(first) / (leaves(first) + leaves(second))`.
+    ///
+    /// Examples on a binary tree:
+    ///   3 panes: `Split(a, Split(b, c))` → outer ratio = 1/3,
+    ///     inner ratio = 1/2 → panes render at 33/33.5/33.5.
+    ///   4 panes: two Splits with ratio 50/50 at each level → 25 each.
+    ///   5 panes: mixed — the algorithm keeps each leaf's target
+    ///     size proportional to 1/N regardless of tree shape.
+    ///
+    /// Returns the leaf count of this subtree (used internally
+    /// during recursion; callers usually ignore it).
+    pub fn rebalance_leaves(&mut self) -> usize {
+        match self {
+            Layout::Empty => 0,
+            Layout::Leaf { .. } => 1,
+            Layout::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                let n_first = first.rebalance_leaves();
+                let n_second = second.rebalance_leaves();
+                let total = n_first + n_second;
+                if total > 0 {
+                    let r = ((n_first as u32 * 100) / total as u32) as u16;
+                    // Clamp so no leaf collapses to zero cells — the
+                    // 10..=90 clamp in split_rects would clip anyway,
+                    // but doing it here keeps the stored ratio and
+                    // rendered ratio consistent.
+                    *ratio = r.clamp(10, 90);
+                }
+                total
+            }
+        }
+    }
+}
+
 /// Carve `area` into `(first, divider, second)` for a split. The divider is one
 /// cell on the split axis (omitted — zero-sized — if `area` is too small).
 pub fn split_rects(area: Rect, dir: SplitDir, ratio: u16) -> (Rect, Rect, Rect) {
