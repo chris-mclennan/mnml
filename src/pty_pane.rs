@@ -47,6 +47,8 @@ pub struct RenderCell {
 
 /// A whole-frame snapshot of the visible grid — produced by
 /// [`PtySession::render_grid`], consumed by the pty renderers.
+/// 2026-07-26 — Clone added for the per-session render cache.
+#[derive(Clone)]
 pub struct RenderGrid {
     pub rows: u16,
     pub cols: u16,
@@ -319,6 +321,28 @@ pub struct PtySession {
     /// …) used by the sessions panel. `None` ⇒ default active-
     /// color. Reset to `None` via the kebab's "None" choice.
     pub accent_color: Option<String>,
+    /// 2026-07-26 — render-grid cache. `render_grid()` is called
+    /// once per visible pane per frame (25 FPS while any pty is
+    /// open); each call runs a full libghostty-vt snapshot + copy
+    /// of the whole terminal grid. For an 80×50 pane that's 4K
+    /// cell allocations per frame per pane — with 5+ panes it
+    /// dominates the frame budget even when the pty produced zero
+    /// output.
+    ///
+    /// Cache is invalidated when `bytes_processed()` moves OR the
+    /// rendered size changes. Wrapped in RefCell so the &self
+    /// render_grid can update it.
+    render_cache: RefCell<Option<RenderCache>>,
+}
+
+/// 2026-07-26 — cached snapshot invalidation key + payload.
+struct RenderCache {
+    /// bytes_processed() at snapshot time. Mismatch = pty has new
+    /// output → recompute.
+    bytes_at_snapshot: u64,
+    /// (rows, cols) at snapshot time. Mismatch = resize → recompute.
+    size: (u16, u16),
+    grid: RenderGrid,
 }
 
 impl PtySession {
@@ -456,6 +480,7 @@ impl PtySession {
             last_output_at: None,
             last_bytes_snapshot: 0,
             accent_color: None,
+            render_cache: RefCell::new(None),
         })
     }
 
@@ -482,7 +507,30 @@ impl PtySession {
     /// index directly — all of libghostty's lending-iterator + FFI-lifetime
     /// handling stays inside [`snapshot_grid`].
     pub fn render_grid(&self) -> RenderGrid {
-        snapshot_grid(&self.term, &mut self.render_state.borrow_mut())
+        // 2026-07-26 — cache-hit path. When the pty has produced
+        // zero new bytes since last snapshot AND the pane size
+        // hasn't changed, return the cached grid. Eliminates the
+        // per-frame full-terminal snapshot cost when idle pty
+        // panes are on-screen (which was O(N_panes × 4000 cells)
+        // per frame at 25 FPS).
+        let now_bytes = self.bytes_processed();
+        let size = self.last_size;
+        {
+            let cache = self.render_cache.borrow();
+            if let Some(c) = cache.as_ref()
+                && c.bytes_at_snapshot == now_bytes
+                && c.size == size
+            {
+                return c.grid.clone();
+            }
+        }
+        let grid = snapshot_grid(&self.term, &mut self.render_state.borrow_mut());
+        *self.render_cache.borrow_mut() = Some(RenderCache {
+            bytes_at_snapshot: now_bytes,
+            size,
+            grid: grid.clone(),
+        });
+        grid
     }
 
     /// Reset the unread counter to "all read" — called when the
