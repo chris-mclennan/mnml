@@ -8923,7 +8923,7 @@ impl App {
         let Some(Pane::Pty(session)) = self.panes.get_mut(pane_id) else {
             return;
         };
-        let grid = session.render_grid();
+        let grid = session.render_grid(false);
         let (cols, rows) = (grid.cols, grid.rows);
         // Order origin/cur in row-major reading order.
         let (start, end) = {

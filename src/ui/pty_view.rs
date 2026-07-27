@@ -73,7 +73,7 @@ pub fn draw(
     };
     session.resize(area.height, area.width);
     let exited = session.is_exited();
-    let grid = session.render_grid();
+    let grid = session.render_grid(focused);
     let (rows, cols) = (grid.rows, grid.cols);
 
     let def_fg = theme::cur().fg;

@@ -338,12 +338,25 @@ pub struct PtySession {
 /// 2026-07-26 — cached snapshot invalidation key + payload.
 struct RenderCache {
     /// bytes_processed() at snapshot time. Mismatch = pty has new
-    /// output → recompute.
+    /// output → recompute (subject to the unfocused-throttle below).
     bytes_at_snapshot: u64,
     /// (rows, cols) at snapshot time. Mismatch = resize → recompute.
     size: (u16, u16),
+    /// Wall-clock instant of the snapshot. Used by the unfocused
+    /// throttle — unfocused panes hold onto their cache for
+    /// UNFOCUSED_MIN_INTERVAL_MS regardless of new pty bytes, so
+    /// Claude Code's ~5-Hz thinking spinner doesn't force every
+    /// background pane to re-snapshot on every frame. 2026-07-27.
+    snapshot_at: std::time::Instant,
     grid: RenderGrid,
 }
+
+/// 2026-07-27 — minimum wall-clock interval between snapshots on
+/// UNFOCUSED pty panes. 60ms ≈ 16 FPS — smooth-looking spinner
+/// animation without paying the full snapshot cost every 40ms
+/// tick. The focused pane always re-snapshots at the frame cadence
+/// so keystroke echo stays instant.
+const UNFOCUSED_MIN_INTERVAL_MS: u128 = 60;
 
 impl PtySession {
     pub fn spawn(profile: BinaryProfile, rows: u16, cols: u16) -> Result<Self, String> {
@@ -506,28 +519,43 @@ impl PtySession {
     /// Snapshot the visible grid into a flat, owned [`RenderGrid`] the renderers
     /// index directly — all of libghostty's lending-iterator + FFI-lifetime
     /// handling stays inside [`snapshot_grid`].
-    pub fn render_grid(&self) -> RenderGrid {
-        // 2026-07-26 — cache-hit path. When the pty has produced
-        // zero new bytes since last snapshot AND the pane size
-        // hasn't changed, return the cached grid. Eliminates the
-        // per-frame full-terminal snapshot cost when idle pty
-        // panes are on-screen (which was O(N_panes × 4000 cells)
-        // per frame at 25 FPS).
+    pub fn render_grid(&self, is_focused: bool) -> RenderGrid {
+        // 2026-07-26/27 — two-tier cache. Skipping the full
+        // libghostty-vt snapshot + grid copy when nothing meaningful
+        // has changed. Tiers:
+        //
+        //   Tier 1 (both focused + unfocused): identical bytes
+        //     count AND size → hit. Zero-cost.
+        //
+        //   Tier 2 (unfocused only): bytes moved but < 60ms
+        //     elapsed since last snapshot → hit. Caps unfocused
+        //     panes at ~16 FPS, invisible in practice for spinner-
+        //     style animation. User: with 8 Claude panes, Claude's
+        //     ~5-Hz thinking spinner + typing on ONE pane made the
+        //     other 7 re-snapshot on every 40ms frame → dominated
+        //     the frame budget → keystroke lag.
         let now_bytes = self.bytes_processed();
         let size = self.last_size;
+        let now = std::time::Instant::now();
         {
             let cache = self.render_cache.borrow();
-            if let Some(c) = cache.as_ref()
-                && c.bytes_at_snapshot == now_bytes
-                && c.size == size
-            {
-                return c.grid.clone();
+            if let Some(c) = cache.as_ref() {
+                if c.bytes_at_snapshot == now_bytes && c.size == size {
+                    return c.grid.clone();
+                }
+                if !is_focused
+                    && c.size == size
+                    && now.duration_since(c.snapshot_at).as_millis() < UNFOCUSED_MIN_INTERVAL_MS
+                {
+                    return c.grid.clone();
+                }
             }
         }
         let grid = snapshot_grid(&self.term, &mut self.render_state.borrow_mut());
         *self.render_cache.borrow_mut() = Some(RenderCache {
             bytes_at_snapshot: now_bytes,
             size,
+            snapshot_at: now,
             grid: grid.clone(),
         });
         grid
@@ -666,7 +694,7 @@ impl PtySession {
     pub fn tab_label_with_prefixes(&self, prefixes: &[String]) -> String {
         let osc = self.term.title().map(|s| s.to_string()).unwrap_or_default();
         let screen_text = if self.display_name.is_none() && !prefixes.is_empty() {
-            let grid = self.render_grid();
+            let grid = self.render_grid(false);
             Some(grid_to_text(&grid))
         } else {
             None
@@ -728,7 +756,7 @@ impl PtySession {
         // won't be locked to Claude's clock, but the sequence,
         // rate, and character set are Claude's own so the tab
         // reads as an in-family mirror.
-        if !is_claude_thinking(&self.render_grid()) {
+        if !is_claude_thinking(&self.render_grid(false)) {
             return None;
         }
         const CYCLE_MS: u128 = 110;
@@ -747,7 +775,7 @@ impl PtySession {
     /// present in the bottom rows AND a "Working" label or an
     /// elapsed-time token like `12s` / `1m 32s`.
     pub fn is_codex_thinking(&self) -> bool {
-        detect_codex_thinking(&self.render_grid())
+        detect_codex_thinking(&self.render_grid(false))
     }
 
     /// One-line summary of what the session is currently doing —
@@ -760,7 +788,7 @@ impl PtySession {
     /// pane, cleared terminal). The caller is responsible for
     /// truncating to fit its row.
     pub fn session_summary(&self) -> Option<String> {
-        summarize_grid(&self.render_grid())
+        summarize_grid(&self.render_grid(false))
     }
 
     /// Up to `max` lines of grid content for the Sessions-panel
@@ -770,7 +798,7 @@ impl PtySession {
     /// pane's screen right now" rather than a bare one-liner.
     /// Most-recent-first (bottom-of-grid → top).
     pub fn session_summary_lines(&self, max: usize) -> Vec<String> {
-        summarize_grid_lines(&self.render_grid(), max)
+        summarize_grid_lines(&self.render_grid(false), max)
     }
 }
 

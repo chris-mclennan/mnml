@@ -49,7 +49,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let session = &mut scratch.session;
     session.resize(inner.height, inner.width);
-    let grid = session.render_grid();
+    let grid = session.render_grid(false);
     let (rows, cols) = (grid.rows, grid.cols);
 
     let def_fg = t.fg;
