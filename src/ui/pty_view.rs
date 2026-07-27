@@ -93,36 +93,43 @@ pub fn draw(
         }
         _ => None,
     };
-    let mut lines: Vec<Line> = Vec::with_capacity(rows as usize);
+    // 2026-07-27 — write cells directly to the ratatui Buffer,
+    // bypassing the Vec<Line> / Vec<Span> / Paragraph pipeline.
+    // For N Pty panes at 25 FPS, the old path allocated Vec<Line>
+    // + per-row Vec<Span> + per-run String on EVERY frame — the
+    // dominant frame cost with 6+ Claude panes. Direct buffer
+    // writes avoid all of that; ratatui's cell diff still runs.
+    let buf = frame.buffer_mut();
     for r in 0..rows {
-        let mut spans: Vec<Span> = Vec::new();
-        let mut text = String::new();
-        let mut style: Option<Style> = None;
         for c in 0..cols {
-            let Some(cell) = grid.cell(r, c) else {
-                push_run(&mut spans, &mut text, &mut style, " ", Style::default());
+            let x = area.x + c;
+            let y = area.y + r;
+            if x >= area.x + area.width || y >= area.y + area.height {
                 continue;
+            }
+            let (glyph, mut style) = match grid.cell(r, c) {
+                Some(cell) => {
+                    let s = cell_style(cell, def_fg, def_bg, &grid.ansi_palette);
+                    let g: &str = if cell.text.is_empty() {
+                        " "
+                    } else {
+                        &cell.text
+                    };
+                    (g, s)
+                }
+                None => (" ", Style::default()),
             };
-            let mut s = cell_style(cell, def_fg, def_bg, &grid.ansi_palette);
             if let Some((lo, hi)) = sel_range {
                 let idx = r as usize * cols as usize + c as usize;
                 if idx >= lo && idx <= hi {
-                    s = s.add_modifier(Modifier::REVERSED);
+                    style = style.add_modifier(Modifier::REVERSED);
                 }
             }
-            let g: &str = if cell.text.is_empty() {
-                " "
-            } else {
-                &cell.text
-            };
-            push_run(&mut spans, &mut text, &mut style, g, s);
+            let cell = &mut buf[(x, y)];
+            cell.set_symbol(glyph);
+            cell.set_style(style);
         }
-        if let Some(s) = style {
-            spans.push(Span::styled(text, s));
-        }
-        lines.push(Line::from(spans));
     }
-    frame.render_widget(Paragraph::new(lines), area);
 
     if exited && area.height >= 1 {
         // A thin banner on the bottom row so the user knows the child is gone.
@@ -301,25 +308,6 @@ fn draw_tab_strip(frame: &mut Frame, app: &mut App, active_id: PaneId, strip: Re
         ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), strip);
-}
-
-fn push_run(
-    spans: &mut Vec<Span<'static>>,
-    text: &mut String,
-    style: &mut Option<Style>,
-    g: &str,
-    s: Style,
-) {
-    match style {
-        Some(cur) if *cur == s => text.push_str(g),
-        _ => {
-            if let Some(cur) = style.take() {
-                spans.push(Span::styled(std::mem::take(text), cur));
-            }
-            text.push_str(g);
-            *style = Some(s);
-        }
-    }
 }
 
 fn cell_style(
