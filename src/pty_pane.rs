@@ -551,7 +551,15 @@ impl PtySession {
                 }
             }
         }
-        let grid = snapshot_grid(&self.term, &mut self.render_state.borrow_mut());
+        // 2026-07-29 — pass the prior cached grid into snapshot_grid
+        // so libghostty's per-row dirty tracking can skip clean rows
+        // (copies their cells from the prior grid instead of re-
+        // reading via the cell iterator). Biggest single lever for
+        // multi-Claude-pane performance.
+        let prior = self.render_cache.borrow();
+        let prior_ref = prior.as_ref().map(|c| &c.grid);
+        let grid = snapshot_grid(&self.term, &mut self.render_state.borrow_mut(), prior_ref);
+        drop(prior);
         *self.render_cache.borrow_mut() = Some(RenderCache {
             bytes_at_snapshot: now_bytes,
             size,
@@ -1123,7 +1131,18 @@ fn theme_color_to_rgb(c: ratatui::style::Color) -> RgbColor {
 }
 
 /// by [`PtySession::render_grid`] and the unit tests).
-fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> RenderGrid {
+///
+/// 2026-07-29 — `prior` is the previously-snapshotted grid, if
+/// any. When libghostty reports `Dirty::PartiallyDirty`, we skip
+/// re-reading rows whose `row.dirty()` is false, carrying their
+/// cells over from `prior`. For a Claude pane with only a
+/// spinner ticking, this drops per-frame work from
+/// O(rows × cols) to O(1 row × cols) — ~50× on a 50-row pane.
+fn snapshot_grid<'a>(
+    term: &Terminal<'a, 'a>,
+    rs: &mut RenderState<'a>,
+    prior: Option<&RenderGrid>,
+) -> RenderGrid {
     let cols = term.cols().unwrap_or(0);
     // Pull defaults from the active mnml theme so uncolored terminal
     // text blends with the editor color scheme instead of the
@@ -1158,10 +1177,51 @@ fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> Rende
         grid.cursor = Some((x, y));
     }
 
+    // 2026-07-29 — check global dirty state up front. Clean means
+    // libghostty says NOTHING changed since our last set_dirty
+    // reset; return the prior grid unchanged. This is the fast
+    // path for panes whose bytes_processed moved via non-visible
+    // control codes (rare but possible).
+    let global_dirty = snapshot.dirty().ok();
+    if let Some(prior) = prior
+        && matches!(global_dirty, Some(libghostty_vt::render::Dirty::Clean))
+        && prior.cols == cols
+    {
+        // Reset dirty bookkeeping so the next call sees clean state.
+        let _ = snapshot.set_dirty(libghostty_vt::render::Dirty::Clean);
+        return prior.clone();
+    }
+    // For PartiallyDirty, walk rows and reuse clean-row cells
+    // from `prior` when the row indices align. Full dirty (or no
+    // prior) → walk everything.
+    let use_row_selective = prior.is_some()
+        && matches!(global_dirty, Some(libghostty_vt::render::Dirty::Partial))
+        && prior.map(|p| p.cols == cols).unwrap_or(false);
+    let prior_cells: &[RenderCell] = prior.map(|p| p.cells.as_slice()).unwrap_or(&[]);
+    let mut row_idx: u16 = 0;
     if let (Ok(mut rows_h), Ok(mut cells_h)) = (RowIterator::new(), CellIterator::new())
         && let Ok(mut row_iter) = rows_h.update(&snapshot)
     {
         while let Some(row) = row_iter.next() {
+            // Fast path: this row is clean, we have a prior at the
+            // same index → copy the row's cells verbatim.
+            if use_row_selective
+                && let Ok(false) = row.dirty()
+                && let Some(prior_grid) = prior
+                && row_idx < prior_grid.rows
+            {
+                let start = row_idx as usize * cols as usize;
+                let end = start + cols as usize;
+                if end <= prior_cells.len() {
+                    grid.cells.extend_from_slice(&prior_cells[start..end]);
+                    grid.rows += 1;
+                    row_idx += 1;
+                    // Clear the row-level dirty flag so next tick's
+                    // per-row check accurately reflects new changes.
+                    let _ = row.set_dirty(false);
+                    continue;
+                }
+            }
             let mut row_cells: Vec<RenderCell> = Vec::with_capacity(cols as usize);
             if let Ok(mut cell_iter) = cells_h.update(row) {
                 while let Some(cell) = cell_iter.next() {
@@ -1207,6 +1267,9 @@ fn snapshot_grid<'a>(term: &Terminal<'a, 'a>, rs: &mut RenderState<'a>) -> Rende
             row_cells.resize(cols as usize, RenderCell::default());
             grid.cells.extend(row_cells);
             grid.rows += 1;
+            row_idx += 1;
+            // Clear this row's dirty flag now that we've read it.
+            let _ = row.set_dirty(false);
         }
     }
     // Clear libghostty's dirty bookkeeping now that we've consumed
@@ -1656,7 +1719,7 @@ mod tests {
             term.vt_write(c);
         }
         let mut rs = RenderState::new().unwrap();
-        snapshot_grid(&term, &mut rs)
+        snapshot_grid(&term, &mut rs, None)
     }
 
     #[test]
