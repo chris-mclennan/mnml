@@ -17,7 +17,7 @@ pub(crate) use mouse::coalesce_scroll;
 pub use mouse::dispatch_mouse;
 
 use std::io::{self, Stdout};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -167,6 +167,10 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
     // real terminal loop only (headless / e2e skip it).
     app.start_now_playing_poller();
 
+    // 2026-07-29 — IPC dump throttle bookkeeping. See the block
+    // near the dump call for rationale.
+    let mut last_ipc_dump: Option<Instant> = None;
+
     loop {
         let frame_start = std::time::Instant::now();
         app.tick();
@@ -192,7 +196,23 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
         emit_pending_os_notifications(app, term.backend_mut())?;
         crate::app::dispatch::emit_image_placements(app);
         if let Some(ipc) = ipc.as_mut() {
-            ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
+            // 2026-07-29 — throttle the IPC screen/status/rects
+            // dump to ~10 Hz. Previously ran on every tick — at 40ms
+            // (Pty-open cadence) that's 75 sync disk writes/sec just
+            // for IPC introspection. On a macOS system with any I/O
+            // pressure this added noticeable typing lag. IPC
+            // consumers (headless test drivers, click-audit scripts)
+            // don't need more than ~10 fps of ground truth.
+            // COMMAND draining still runs every tick so keystrokes /
+            // IPC commands stay instant — only the DUMPS are throttled.
+            const IPC_DUMP_MIN_MS: u128 = 100;
+            if last_ipc_dump
+                .map(|t: Instant| t.elapsed().as_millis() >= IPC_DUMP_MIN_MS)
+                .unwrap_or(true)
+            {
+                ipc::dump_screen_status(ipc, term.current_buffer_mut(), app);
+                last_ipc_dump = Some(Instant::now());
+            }
             ipc::drain_commands(ipc, app);
             ipc::drain_plugin_events(ipc, app);
         }
