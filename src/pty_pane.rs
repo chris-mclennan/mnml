@@ -336,6 +336,12 @@ pub struct PtySession {
 }
 
 /// 2026-07-26 — cached snapshot invalidation key + payload.
+/// 2026-07-29 — grid stored in an `Rc` so cache-hits share one
+/// backing allocation across callers. Was cloning the whole grid
+/// (~200KB for 80x50) on every hit, and with bufferline +
+/// sessions_panel + pty_view each calling render_grid per pane per
+/// frame, N=8 panes @ 25 FPS meant ~120 MB/sec of allocation
+/// churn even when nothing changed.
 struct RenderCache {
     /// bytes_processed() at snapshot time. Mismatch = pty has new
     /// output → recompute (subject to the unfocused-throttle below).
@@ -348,7 +354,7 @@ struct RenderCache {
     /// Claude Code's ~5-Hz thinking spinner doesn't force every
     /// background pane to re-snapshot on every frame. 2026-07-27.
     snapshot_at: std::time::Instant,
-    grid: RenderGrid,
+    grid: Rc<RenderGrid>,
 }
 
 /// 2026-07-27 — minimum wall-clock interval between snapshots on
@@ -519,7 +525,7 @@ impl PtySession {
     /// Snapshot the visible grid into a flat, owned [`RenderGrid`] the renderers
     /// index directly — all of libghostty's lending-iterator + FFI-lifetime
     /// handling stays inside [`snapshot_grid`].
-    pub fn render_grid(&self, is_focused: bool) -> RenderGrid {
+    pub fn render_grid(&self, is_focused: bool) -> Rc<RenderGrid> {
         // 2026-07-26/27 — two-tier cache. Skipping the full
         // libghostty-vt snapshot + grid copy when nothing meaningful
         // has changed. Tiers:
@@ -541,13 +547,13 @@ impl PtySession {
             let cache = self.render_cache.borrow();
             if let Some(c) = cache.as_ref() {
                 if c.bytes_at_snapshot == now_bytes && c.size == size {
-                    return c.grid.clone();
+                    return Rc::clone(&c.grid);
                 }
                 if !is_focused
                     && c.size == size
                     && now.duration_since(c.snapshot_at).as_millis() < UNFOCUSED_MIN_INTERVAL_MS
                 {
-                    return c.grid.clone();
+                    return Rc::clone(&c.grid);
                 }
             }
         }
@@ -557,16 +563,17 @@ impl PtySession {
         // reading via the cell iterator). Biggest single lever for
         // multi-Claude-pane performance.
         let prior = self.render_cache.borrow();
-        let prior_ref = prior.as_ref().map(|c| &c.grid);
+        let prior_ref = prior.as_ref().map(|c| c.grid.as_ref());
         let grid = snapshot_grid(&self.term, &mut self.render_state.borrow_mut(), prior_ref);
         drop(prior);
+        let grid_rc = Rc::new(grid);
         *self.render_cache.borrow_mut() = Some(RenderCache {
             bytes_at_snapshot: now_bytes,
             size,
             snapshot_at: now,
-            grid: grid.clone(),
+            grid: Rc::clone(&grid_rc),
         });
-        grid
+        grid_rc
     }
 
     /// Reset the unread counter to "all read" — called when the
@@ -1566,6 +1573,82 @@ impl Drop for PtySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-07-29 — bench: measure snapshot_grid cost on N real
+    /// pty children emitting spinner output. Not a "test" in the
+    /// pass/fail sense — reports timings to stderr. Run with:
+    ///   cargo test --release pty_render_scaling_bench -- --nocapture --ignored
+    #[test]
+    #[ignore = "perf bench; run with --nocapture --ignored"]
+    fn pty_render_scaling_bench() {
+        use std::time::{Duration, Instant};
+        let sizes = [(80u16, 50u16)];
+        let counts = [1usize, 2, 4, 8];
+        // Spinner script emitting ~50 bytes every 100ms, matching
+        // the shape of Claude Code's "thinking" indicator.
+        let spinner_script = r#"
+            i=0
+            while :; do
+              for f in / - '\' '|' '/' '-' '\' '|'; do
+                printf "\r%s spinning frame=%d payload=abcdefghij" "$f" $i
+                i=$((i+1))
+                sleep 0.1
+              done
+            done
+        "#;
+        for &(rows, cols) in &sizes {
+            for &n in &counts {
+                let mut sessions = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let profile = BinaryProfile {
+                        label: "bench".into(),
+                        exe: "bash".into(),
+                        args: vec!["-c".into(), spinner_script.into()],
+                        cwd: None,
+                        env: Vec::new(),
+                        session_id: None,
+                        integration_id: None,
+                    };
+                    let s = PtySession::spawn(profile, rows, cols).expect("spawn pty");
+                    sessions.push(s);
+                }
+                // Warm up: pump for 1 second so spinner output
+                // populates the terminal grid.
+                let warmup_end = Instant::now() + Duration::from_millis(1000);
+                while Instant::now() < warmup_end {
+                    for s in sessions.iter_mut() {
+                        s.pump();
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                // Measure: 200 render iterations. Each iteration
+                // pumps once then calls render_grid on every pane
+                // (mimics the real render loop, focused=false so we
+                // exercise the throttle + dirty-row paths).
+                let iters = 200;
+                let start = Instant::now();
+                for _ in 0..iters {
+                    for s in sessions.iter_mut() {
+                        s.pump();
+                    }
+                    for s in sessions.iter() {
+                        let _ = s.render_grid(false);
+                    }
+                }
+                let elapsed = start.elapsed();
+                let per_iter_us = elapsed.as_micros() as f64 / iters as f64;
+                let per_pane_us = per_iter_us / n as f64;
+                eprintln!(
+                    "N={n:2} panes @ {rows}x{cols}: {per_iter_us:6.1} µs/frame  ({per_pane_us:5.1} µs/pane)  total {:>4}ms over {iters} iters",
+                    elapsed.as_millis()
+                );
+                // Explicitly drop sessions here so the spinner
+                // processes get killed before the next N.
+                drop(sessions);
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
 
     #[test]
     fn strip_leading_spinner_chars_scrubs_osc_prefix() {

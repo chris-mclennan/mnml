@@ -65,6 +65,7 @@ pub fn run(mut app: App) -> Result<bool, String> {
             );
             return Ok(false);
         }
+        let frame_start = std::time::Instant::now();
         app.tick();
         // Chord-chain timeout fallback — same call the terminal loop
         // makes between tick() and draw(). Without this, a `Ctrl+K`
@@ -74,6 +75,9 @@ pub fn run(mut app: App) -> Result<bool, String> {
         terminal
             .draw(|f| ui::draw(f, &mut app))
             .map_err(|e| format!("render: {e}"))?;
+        // 2026-07-29 — headless frame-duration recording, parity with
+        // the crossterm loop. Feeds stress_score for perf tests.
+        app.record_frame_duration(frame_start.elapsed().as_millis());
         ipc::dump_screen_status(&ipc, terminal.backend().buffer(), &app);
         if app.should_quit {
             app.save_session_on_quit();
