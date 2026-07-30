@@ -347,8 +347,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         // Capture the pid before the row paints so we can release
         // the &Pane borrow and re-borrow App mutably for the
-        // session_ports cache lookup.
-        let pty_pid_opt = s.pid();
+        // session_ports cache lookup. Skip on exited sessions —
+        // `s.pid()` returns the last-known pid even after reap, and
+        // the 30 s port_cache TTL would show stale chips next to the
+        // red "exited" label. (Was invisible at 2 s TTL; noticeable
+        // now.) tester agent 2026-07-30 SEV-3.
+        let pty_pid_opt = if s.is_exited() { None } else { s.pid() };
         for (row_off, line_text) in summary_lines.iter().enumerate().take(3) {
             let truncated = truncate_to_row(line_text);
             let mut row_spans = vec![

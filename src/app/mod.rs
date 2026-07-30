@@ -1368,8 +1368,16 @@ fn scan_listening_ports(root_pid: u32) -> Vec<u16> {
     if pid_arg.is_empty() {
         return ports;
     }
+    // `-a` is critical: without it lsof combines `-i` and `-p` with
+    // OR, so this returns every listening TCP socket on the machine
+    // instead of just this pid set's. On a dev box with mongod / ssh
+    // / rapportd / ControlCenter listeners that's 70+ lines of noise
+    // and the row2 width guard silently swallows the chip entirely —
+    // the port feature never renders. `-a` intersects the filters.
+    // Regression from the port-detection commit; the recent 30 s TTL
+    // bump made it more visible so a tester agent finally noticed.
     let out = std::process::Command::new("lsof")
-        .args(["-iTCP", "-sTCP:LISTEN", "-n", "-P", "-p", &pid_arg])
+        .args(["-a", "-iTCP", "-sTCP:LISTEN", "-n", "-P", "-p", &pid_arg])
         .output();
     if let Ok(o) = out
         && o.status.success()
