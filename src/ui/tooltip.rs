@@ -646,6 +646,19 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 Some("click: switch · middle: close · right: menu".into()),
             ))
         }
+        HoverChip::SplitTabPlus(leaf_active) => {
+            let rect = app
+                .rects
+                .split_tab_plus_buttons
+                .iter()
+                .find(|(_, p)| *p == leaf_active)
+                .map(|(r, _)| *r)?;
+            Some((
+                rect,
+                "add to this leaf".into(),
+                Some("click: Create… menu (new scratch buffer, terminal, split)".into()),
+            ))
+        }
         HoverChip::SplitTabClose(pid) => {
             let rect = app
                 .rects

@@ -1460,6 +1460,19 @@ pub fn rects_dump_json(app: &App) -> String {
             *r,
         );
     }
+    // vscode-user-mouse 2026-07-30 SEV-3 #7 — per-leaf `+` chip's
+    // click rect populated in `App::rects.split_tab_plus_buttons`
+    // (paint site: src/ui/mod.rs paint_leaf_tab_strip) but never
+    // exposed to rects.json. Tooling couldn't observe it; same class
+    // of gap as the right_panel_tabs / bufferline_overflow_* fixes.
+    for (r, leaf_pane) in &app.rects.split_tab_plus_buttons {
+        push_rect(
+            &mut out,
+            &mut first,
+            &format!("split_tab_plus:{leaf_pane}"),
+            *r,
+        );
+    }
     // 2026-07-08 — expose pane body rects for tree-drag-to-split
     // debugging. If pane_bodies is empty, drag-to-split can't hit-
     // test a target and the drop overlay never appears.

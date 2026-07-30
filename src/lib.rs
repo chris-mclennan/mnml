@@ -395,6 +395,9 @@ pub enum HoverChip {
     SplitTabChip(crate::layout::PaneId),
     /// Per-leaf split tab strip close badge.
     SplitTabClose(crate::layout::PaneId),
+    /// Per-leaf split tab strip `+` chip (stores the leaf's active
+    /// pane id — same key `split_tab_plus_buttons` uses).
+    SplitTabPlus(crate::layout::PaneId),
     /// Agents-panel header chip — type encodes which one (New
     /// session, from PR, or view toggle).
     AgentsPanelChip(AgentsPanelChipKind),

@@ -3086,7 +3086,11 @@ fn builtin_commands() -> Vec<Command> {
             id: "theme.toggle",
             title: "Theme: toggle (light ↔ dark)",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard 2026-07-30 KB-05 — mouse-clickable
+            // via the ●━ pill in the top-right cluster, but had no
+            // keyboard chord. `Ctrl+K t` (T = Theme) parallels the
+            // Sessions leader chord above.
+            keys: &["ctrl+k t"],
             run: |app| app.toggle_theme(),
         },
         // mouse-round-8 SEV-3 2026-07-12 — theme-toggle chip
@@ -3386,7 +3390,12 @@ fn builtin_commands() -> Vec<Command> {
             id: "view.activity_sessions",
             title: "Activity: show Sessions (vertical session tabs)",
             group: "view",
-            keys: &[],
+            // vscode-user-keyboard 2026-07-30 KB-07 — peer activities
+            // all have Ctrl+Shift+<letter> bindings; Sessions had
+            // none. VS Code has no analog so `Ctrl+K s` leader chord
+            // is a natural mnemonic (S = Sessions) that doesn't
+            // collide with any VS-Code muscle memory.
+            keys: &["ctrl+k s"],
             run: |app| app.set_activity_section(crate::app::ActivitySection::Sessions),
         },
         Command {

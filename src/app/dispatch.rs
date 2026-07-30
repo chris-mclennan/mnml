@@ -755,6 +755,18 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
         let _ = leaf_active;
         return Some(crate::HoverChip::SplitTabChip(tab_pane));
     }
+    // vscode-user-mouse 2026-07-30 SEV-3 #5 — per-leaf `+` chip had
+    // no hover tooltip so users didn't know what it did until they
+    // clicked (and were surprised — SEV-2 #2). Match `split_tab_chips`
+    // above: stores (rect, leaf_active_pane).
+    if let Some(&(_, leaf_active)) = app
+        .rects
+        .split_tab_plus_buttons
+        .iter()
+        .find(|(r, _)| contains(*r, x, y))
+    {
+        return Some(crate::HoverChip::SplitTabPlus(leaf_active));
+    }
     // Right-panel tab strip chips. v3 polish.
     if let Some(&(_, tab_idx)) = app
         .rects
