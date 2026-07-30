@@ -1099,11 +1099,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         app.rects.bufferline_tab_close.clear();
         app.rects.bufferline_overflow_left = None;
         app.rects.bufferline_overflow_right = None;
-        app.rects.bufferline_new_tab_button = None;
-        app.rects.bufferline_tab_page_chips.clear();
-        app.rects.bufferline_tab_page_close.clear();
-        app.rects.bufferline_theme_toggle = None;
-        app.rects.bufferline_window_close = None;
+        // NOTE: do NOT clear `bufferline_new_tab_button`,
+        // `bufferline_tab_page_*`, `bufferline_theme_toggle`, or
+        // `bufferline_window_close` here. Since the 2026-07-18
+        // one-tab-type refactor, those rects belong to the PALETTE
+        // BAR's right cluster (paint_right_cluster called from
+        // draw_palette_bar), which already ran EARLIER this frame.
+        // Clearing them here nuked the palette bar's `+ ▤ ×`
+        // click targets whenever any pane was open — user reported
+        // "the plus, slider, red x — none do anything".
     }
 
     // ── the split-tree of pane bodies ──
