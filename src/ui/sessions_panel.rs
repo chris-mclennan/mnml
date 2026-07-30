@@ -649,7 +649,36 @@ fn sort_sessions(app: &App, indices: Vec<usize>) -> Vec<usize> {
 fn session_lines_for_card(app: &App, s: &crate::pty_pane::PtySession, max: usize) -> Vec<String> {
     let thinking = s.current_spinner_glyph().is_some() || s.is_codex_thinking();
     if !thinking && let Some(sid) = s.profile.session_id.as_deref() {
-        let lines = crate::claude_agents::transcript_summary_lines(sid, &app.workspace);
+        // 2026-07-29 — TTL cache for transcript reads. Previously
+        // opened + seeked + parsed the JSONL file per session per
+        // frame — 200 file opens/sec at N=8, ~6 MB/sec disk reads.
+        // Transcripts update on Claude's own cadence (seconds), so
+        // 2s stale is invisible.
+        thread_local! {
+            static TCACHE: std::cell::RefCell<
+                std::collections::HashMap<
+                    String,
+                    (std::time::Instant, Vec<String>)
+                >
+            > = std::cell::RefCell::new(std::collections::HashMap::new());
+        }
+        const TTL: std::time::Duration = std::time::Duration::from_secs(2);
+        let now = std::time::Instant::now();
+        let cache_key = format!("{}::{max}", sid);
+        let cached = TCACHE.with(|c| {
+            c.borrow()
+                .get(&cache_key)
+                .filter(|(t, _)| now.duration_since(*t) < TTL)
+                .map(|(_, v)| v.clone())
+        });
+        let lines = match cached {
+            Some(v) => v,
+            None => {
+                let v = crate::claude_agents::transcript_summary_lines(sid, &app.workspace);
+                TCACHE.with(|c| c.borrow_mut().insert(cache_key, (now, v.clone())));
+                v
+            }
+        };
         if !lines.is_empty() {
             return lines.into_iter().take(max).collect();
         }
@@ -660,26 +689,53 @@ fn session_lines_for_card(app: &App, s: &crate::pty_pane::PtySession, max: usize
 }
 
 fn session_state_priority(app: &App, pid: usize) -> u8 {
+    // 2026-07-29 — TTL cache. This is called from sort_by_key on
+    // every frame (once per session), and each uncached call does
+    // 3 grid walks (session_summary + is_claude_thinking +
+    // is_codex_thinking) plus String allocs. Sort order rarely
+    // needs to change mid-frame, so 500ms stale is fine — a
+    // "thinking → done" transition surfaces in half a second.
+    // Keyed by (pid, bytes_processed) so a session that has moved
+    // (new output) re-evaluates; idle sessions hit cache instantly.
     let Some(Pane::Pty(s)) = app.panes.get(pid) else {
         return 4;
     };
     if s.is_exited() {
         return 3;
     }
+    thread_local! {
+        static PCACHE: std::cell::RefCell<
+            std::collections::HashMap<usize, (std::time::Instant, u64, u8)>
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    const TTL: std::time::Duration = std::time::Duration::from_millis(500);
+    let now = std::time::Instant::now();
+    let bytes = s.bytes_processed();
+    let cached = PCACHE.with(|c| {
+        c.borrow()
+            .get(&pid)
+            .filter(|(t, b, _)| now.duration_since(*t) < TTL && *b == bytes)
+            .map(|(_, _, v)| *v)
+    });
+    if let Some(v) = cached {
+        return v;
+    }
+    // Compute.
     // "Action needed" heuristic: the summary picker skips known
     // footer chips, so a summary that STILL mentions "approval"
     // or "accept" is likely Claude Code's confirmation prompt.
-    if let Some(summary) = s.session_summary() {
-        let lower = summary.to_ascii_lowercase();
-        if lower.contains("approval") || lower.contains("do you want") {
-            return 0;
-        }
-    }
-    let thinking = s.current_spinner_glyph().is_some() || s.is_codex_thinking();
-    if thinking {
-        return 1;
-    }
-    2
+    let priority = if let Some(summary) = s.session_summary()
+        && (summary.to_ascii_lowercase().contains("approval")
+            || summary.to_ascii_lowercase().contains("do you want"))
+    {
+        0
+    } else if s.current_spinner_glyph().is_some() || s.is_codex_thinking() {
+        1
+    } else {
+        2
+    };
+    PCACHE.with(|c| c.borrow_mut().insert(pid, (now, bytes, priority)));
+    priority
 }
 
 /// Cheap git branch lookup — shells out to `git symbolic-ref --short HEAD`.
