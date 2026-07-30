@@ -333,6 +333,23 @@ pub struct PtySession {
     /// rendered size changes. Wrapped in RefCell so the &self
     /// render_grid can update it.
     render_cache: RefCell<Option<RenderCache>>,
+    /// 2026-07-29 — cache derived-from-grid values (session
+    /// summary, summary_lines, tab_label_with_prefixes) keyed by
+    /// bytes_processed. Sessions_panel calls all three per session
+    /// per frame; each was a full grid walk + String allocations
+    /// per row. Cache hit = zero work; invalidates when the pty
+    /// has produced new output.
+    derived_cache: RefCell<DerivedCache>,
+}
+
+#[derive(Default)]
+struct DerivedCache {
+    bytes_at_cache: u64,
+    summary: Option<Option<String>>,
+    /// (max_requested, lines)
+    summary_lines: Option<(usize, Vec<String>)>,
+    /// (prefix_hash, label)
+    tab_label: Option<(u64, String)>,
 }
 
 /// 2026-07-26 — cached snapshot invalidation key + payload.
@@ -500,6 +517,7 @@ impl PtySession {
             last_bytes_snapshot: 0,
             accent_color: None,
             render_cache: RefCell::new(None),
+            derived_cache: RefCell::new(DerivedCache::default()),
         })
     }
 
@@ -707,6 +725,31 @@ impl PtySession {
     /// it as the tab name. Falls through to OSC title / profile label
     /// when no match is found.
     pub fn tab_label_with_prefixes(&self, prefixes: &[String]) -> String {
+        // 2026-07-29 — cache. This walks the WHOLE grid
+        // (grid_to_text = O(rows*cols) String), called per session
+        // per frame from bufferline + sessions_panel. Prefix set
+        // hashed into the cache key so config changes invalidate.
+        let prefix_hash = {
+            let mut h: u64 = 0xcbf29ce484222325; // FNV-1a offset
+            for p in prefixes {
+                for b in p.as_bytes() {
+                    h ^= *b as u64;
+                    h = h.wrapping_mul(0x100000001b3);
+                }
+                h ^= 0xff;
+            }
+            h
+        };
+        let now_bytes = self.bytes_processed();
+        {
+            let cache = self.derived_cache.borrow();
+            if cache.bytes_at_cache == now_bytes
+                && let Some((h, s)) = &cache.tab_label
+                && *h == prefix_hash
+            {
+                return s.clone();
+            }
+        }
         let osc = self.term.title().map(|s| s.to_string()).unwrap_or_default();
         let screen_text = if self.display_name.is_none() && !prefixes.is_empty() {
             let grid = self.render_grid(false);
@@ -717,11 +760,18 @@ impl PtySession {
 
         // Priority: user rename > ticket scan > OSC title > profile.label.
         let ticket = screen_text.and_then(|t| scan_for_ticket(&t, prefixes));
-        if let Some(t) = ticket {
+        let label = if let Some(t) = ticket {
             t
         } else {
             resolve_tab_label(self.display_name.as_deref(), &osc, &self.profile.label)
+        };
+        let mut cache = self.derived_cache.borrow_mut();
+        if cache.bytes_at_cache != now_bytes {
+            *cache = DerivedCache::default();
+            cache.bytes_at_cache = now_bytes;
         }
+        cache.tab_label = Some((prefix_hash, label.clone()));
+        label
     }
 
     /// The current thinking-spinner glyph, if this session's rendered
@@ -803,7 +853,24 @@ impl PtySession {
     /// pane, cleared terminal). The caller is responsible for
     /// truncating to fit its row.
     pub fn session_summary(&self) -> Option<String> {
-        summarize_grid(&self.render_grid(false))
+        // 2026-07-29 — cache on derived_cache.
+        let now_bytes = self.bytes_processed();
+        {
+            let cache = self.derived_cache.borrow();
+            if cache.bytes_at_cache == now_bytes
+                && let Some(v) = &cache.summary
+            {
+                return v.clone();
+            }
+        }
+        let v = summarize_grid(&self.render_grid(false));
+        let mut cache = self.derived_cache.borrow_mut();
+        if cache.bytes_at_cache != now_bytes {
+            *cache = DerivedCache::default();
+            cache.bytes_at_cache = now_bytes;
+        }
+        cache.summary = Some(v.clone());
+        v
     }
 
     /// Up to `max` lines of grid content for the Sessions-panel
@@ -813,7 +880,27 @@ impl PtySession {
     /// pane's screen right now" rather than a bare one-liner.
     /// Most-recent-first (bottom-of-grid → top).
     pub fn session_summary_lines(&self, max: usize) -> Vec<String> {
-        summarize_grid_lines(&self.render_grid(false), max)
+        // 2026-07-29 — cache. Key includes `max` because callers
+        // may request different truncations; usually stable per
+        // panel so cache hit is common.
+        let now_bytes = self.bytes_processed();
+        {
+            let cache = self.derived_cache.borrow();
+            if cache.bytes_at_cache == now_bytes
+                && let Some((m, lines)) = &cache.summary_lines
+                && *m == max
+            {
+                return lines.clone();
+            }
+        }
+        let lines = summarize_grid_lines(&self.render_grid(false), max);
+        let mut cache = self.derived_cache.borrow_mut();
+        if cache.bytes_at_cache != now_bytes {
+            *cache = DerivedCache::default();
+            cache.bytes_at_cache = now_bytes;
+        }
+        cache.summary_lines = Some((max, lines.clone()));
+        lines
     }
 }
 
