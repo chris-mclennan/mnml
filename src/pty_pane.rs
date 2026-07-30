@@ -350,6 +350,11 @@ struct DerivedCache {
     summary_lines: Option<(usize, Vec<String>)>,
     /// (prefix_hash, label)
     tab_label: Option<(u64, String)>,
+    /// True/false for is_claude_thinking + is_codex_thinking —
+    /// both walk the grid, called per session per frame from
+    /// session_lines_for_card and session_state_priority.
+    claude_thinking: Option<bool>,
+    codex_thinking: Option<bool>,
 }
 
 /// 2026-07-26 — cached snapshot invalidation key + payload.
@@ -821,7 +826,31 @@ impl PtySession {
         // won't be locked to Claude's clock, but the sequence,
         // rate, and character set are Claude's own so the tab
         // reads as an in-family mirror.
-        if !is_claude_thinking(&self.render_grid(false)) {
+        // 2026-07-29 — cache the thinking bool on DerivedCache.
+        // Walks the grid otherwise; called per session per frame.
+        let now_bytes = self.bytes_processed();
+        let cached = {
+            let cache = self.derived_cache.borrow();
+            if cache.bytes_at_cache == now_bytes {
+                cache.claude_thinking
+            } else {
+                None
+            }
+        };
+        let thinking = match cached {
+            Some(v) => v,
+            None => {
+                let v = is_claude_thinking(&self.render_grid(false));
+                let mut cache = self.derived_cache.borrow_mut();
+                if cache.bytes_at_cache != now_bytes {
+                    *cache = DerivedCache::default();
+                    cache.bytes_at_cache = now_bytes;
+                }
+                cache.claude_thinking = Some(v);
+                v
+            }
+        };
+        if !thinking {
             return None;
         }
         const CYCLE_MS: u128 = 110;
@@ -840,7 +869,27 @@ impl PtySession {
     /// present in the bottom rows AND a "Working" label or an
     /// elapsed-time token like `12s` / `1m 32s`.
     pub fn is_codex_thinking(&self) -> bool {
-        detect_codex_thinking(&self.render_grid(false))
+        // 2026-07-29 — cache on DerivedCache.
+        let now_bytes = self.bytes_processed();
+        let cached = {
+            let cache = self.derived_cache.borrow();
+            if cache.bytes_at_cache == now_bytes {
+                cache.codex_thinking
+            } else {
+                None
+            }
+        };
+        if let Some(v) = cached {
+            return v;
+        }
+        let v = detect_codex_thinking(&self.render_grid(false));
+        let mut cache = self.derived_cache.borrow_mut();
+        if cache.bytes_at_cache != now_bytes {
+            *cache = DerivedCache::default();
+            cache.bytes_at_cache = now_bytes;
+        }
+        cache.codex_thinking = Some(v);
+        v
     }
 
     /// One-line summary of what the session is currently doing —
