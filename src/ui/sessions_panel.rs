@@ -232,20 +232,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 }
             }
         };
-        for row in 0..TAB_H {
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(
-                    " ",
-                    Style::default().bg(accent_color),
-                ))),
-                Rect {
-                    x: area.x,
-                    y: y + row,
-                    width: 1,
-                    height: 1,
-                },
-            );
-        }
+        // 2026-07-30 — was a per-row loop calling render_widget
+        // for a single-cell paragraph, TAB_H times. For 8 sessions
+        // × ~5 rows that's 40 tiny widgets per frame just for the
+        // accent bar. Collapsed to one Block covering all rows.
+        frame.render_widget(
+            Block::default().style(Style::default().bg(accent_color)),
+            Rect {
+                x: area.x,
+                y,
+                width: 1,
+                height: TAB_H,
+            },
+        );
 
         // Row 1: name (bold when active) + optional bell badge.
         // 2026-07-18 — use `tab_label_with_prefixes` so the session
