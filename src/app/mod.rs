@@ -8508,7 +8508,14 @@ impl App {
     /// pid shells out to `lsof` + `pgrep`. Empty vec on
     /// unavailable / not-listening / lsof failure.
     pub fn session_ports(&mut self, root_pid: u32) -> Vec<u16> {
-        const TTL: std::time::Duration = std::time::Duration::from_secs(2);
+        // 2026-07-30 — was 2s. With 8 Claude sessions in the panel,
+        // that meant ~4 cache misses/sec, each firing pgrep +
+        // lsof subprocesses on the render thread. sessions_panel
+        // instrumentation showed `ports=32ms/frame` — the single
+        // biggest hot path in the panel. Ports change rarely
+        // during a session (a dev server sticks on 3000 the whole
+        // time); 30s stale is fine for the chip.
+        const TTL: std::time::Duration = std::time::Duration::from_secs(30);
         if let Some((at, ports)) = self.session_port_cache.get(&root_pid)
             && at.elapsed() < TTL
         {
