@@ -684,17 +684,46 @@ fn session_state_priority(app: &App, pid: usize) -> u8 {
 
 /// Cheap git branch lookup — shells out to `git symbolic-ref --short HEAD`.
 /// Returns None for non-repos / detached HEAD.
+///
+/// 2026-07-29 — was called on every frame from sessions_panel per
+/// session (line 257 for detected_ticket + line 579 for the row-2
+/// branch chip). With 8 sessions @ 25 FPS = 400 git spawns/sec.
+/// Each spawn is 5-30ms on macOS, so it was eating 2-12 seconds of
+/// CPU per wall-clock second — the actual "left panel makes mnml
+/// slow" the user reported. Now cached per-cwd with a 5s TTL via a
+/// thread-local (this whole render path is single-threaded on the
+/// UI thread anyway). Stale-by-5s is fine for the branch display —
+/// git checkouts inside sessions rarely happen mid-frame.
 fn current_branch(cwd: &std::path::Path) -> Option<String> {
+    thread_local! {
+        static CACHE: std::cell::RefCell<
+            std::collections::HashMap<std::path::PathBuf, (std::time::Instant, Option<String>)>
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    const TTL: std::time::Duration = std::time::Duration::from_secs(5);
+    let now = std::time::Instant::now();
+    let key = cwd.to_path_buf();
+    if let Some(cached) = CACHE.with(|c| {
+        c.borrow()
+            .get(&key)
+            .filter(|(t, _)| now.duration_since(*t) < TTL)
+            .map(|(_, v)| v.clone())
+    }) {
+        return cached;
+    }
     let out = std::process::Command::new("git")
         .args(["symbolic-ref", "--short", "-q", "HEAD"])
         .current_dir(cwd)
         .output()
         .ok()?;
     if !out.status.success() {
+        CACHE.with(|c| c.borrow_mut().insert(key, (now, None)));
         return None;
     }
     let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!b.is_empty()).then_some(b)
+    let result = (!b.is_empty()).then_some(b);
+    CACHE.with(|c| c.borrow_mut().insert(key, (now, result.clone())));
+    result
 }
 
 #[cfg(test)]
