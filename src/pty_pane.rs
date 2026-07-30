@@ -344,17 +344,18 @@ pub struct PtySession {
 
 #[derive(Default)]
 struct DerivedCache {
-    bytes_at_cache: u64,
-    summary: Option<Option<String>>,
-    /// (max_requested, lines)
-    summary_lines: Option<(usize, Vec<String>)>,
-    /// (prefix_hash, label)
-    tab_label: Option<(u64, String)>,
-    /// True/false for is_claude_thinking + is_codex_thinking —
-    /// both walk the grid, called per session per frame from
-    /// session_lines_for_card and session_state_priority.
-    claude_thinking: Option<bool>,
-    codex_thinking: Option<bool>,
+    /// 2026-07-30 — each field carries its OWN bytes_at_cache stamp
+    /// so a stale getter for one field doesn't clobber the other
+    /// fields that were freshly computed in the same frame. Was:
+    /// a single `bytes_at_cache` per struct → every getter's cache
+    /// miss reset the whole cache, so all N callers per frame per
+    /// session recomputed from scratch during typing. That was the
+    /// 165 ms/frame in sessions_panel with 8 Claudes.
+    summary: Option<(u64, Option<String>)>,
+    summary_lines: Option<(u64, usize, Vec<String>)>, // (bytes, max, lines)
+    tab_label: Option<(u64, u64, String)>,            // (bytes, prefix_hash, label)
+    claude_thinking: Option<(u64, bool)>,
+    codex_thinking: Option<(u64, bool)>,
 }
 
 /// 2026-07-26 — cached snapshot invalidation key + payload.
@@ -730,12 +731,8 @@ impl PtySession {
     /// it as the tab name. Falls through to OSC title / profile label
     /// when no match is found.
     pub fn tab_label_with_prefixes(&self, prefixes: &[String]) -> String {
-        // 2026-07-29 — cache. This walks the WHOLE grid
-        // (grid_to_text = O(rows*cols) String), called per session
-        // per frame from bufferline + sessions_panel. Prefix set
-        // hashed into the cache key so config changes invalidate.
         let prefix_hash = {
-            let mut h: u64 = 0xcbf29ce484222325; // FNV-1a offset
+            let mut h: u64 = 0xcbf29ce484222325;
             for p in prefixes {
                 for b in p.as_bytes() {
                     h ^= *b as u64;
@@ -748,8 +745,8 @@ impl PtySession {
         let now_bytes = self.bytes_processed();
         {
             let cache = self.derived_cache.borrow();
-            if cache.bytes_at_cache == now_bytes
-                && let Some((h, s)) = &cache.tab_label
+            if let Some((b, h, s)) = &cache.tab_label
+                && *b == now_bytes
                 && *h == prefix_hash
             {
                 return s.clone();
@@ -762,20 +759,13 @@ impl PtySession {
         } else {
             None
         };
-
-        // Priority: user rename > ticket scan > OSC title > profile.label.
         let ticket = screen_text.and_then(|t| scan_for_ticket(&t, prefixes));
         let label = if let Some(t) = ticket {
             t
         } else {
             resolve_tab_label(self.display_name.as_deref(), &osc, &self.profile.label)
         };
-        let mut cache = self.derived_cache.borrow_mut();
-        if cache.bytes_at_cache != now_bytes {
-            *cache = DerivedCache::default();
-            cache.bytes_at_cache = now_bytes;
-        }
-        cache.tab_label = Some((prefix_hash, label.clone()));
+        self.derived_cache.borrow_mut().tab_label = Some((now_bytes, prefix_hash, label.clone()));
         label
     }
 
@@ -826,27 +816,19 @@ impl PtySession {
         // won't be locked to Claude's clock, but the sequence,
         // rate, and character set are Claude's own so the tab
         // reads as an in-family mirror.
-        // 2026-07-29 — cache the thinking bool on DerivedCache.
-        // Walks the grid otherwise; called per session per frame.
         let now_bytes = self.bytes_processed();
         let cached = {
             let cache = self.derived_cache.borrow();
-            if cache.bytes_at_cache == now_bytes {
-                cache.claude_thinking
-            } else {
-                None
+            match cache.claude_thinking {
+                Some((b, v)) if b == now_bytes => Some(v),
+                _ => None,
             }
         };
         let thinking = match cached {
             Some(v) => v,
             None => {
                 let v = is_claude_thinking(&self.render_grid(false));
-                let mut cache = self.derived_cache.borrow_mut();
-                if cache.bytes_at_cache != now_bytes {
-                    *cache = DerivedCache::default();
-                    cache.bytes_at_cache = now_bytes;
-                }
-                cache.claude_thinking = Some(v);
+                self.derived_cache.borrow_mut().claude_thinking = Some((now_bytes, v));
                 v
             }
         };
@@ -869,26 +851,17 @@ impl PtySession {
     /// present in the bottom rows AND a "Working" label or an
     /// elapsed-time token like `12s` / `1m 32s`.
     pub fn is_codex_thinking(&self) -> bool {
-        // 2026-07-29 — cache on DerivedCache.
         let now_bytes = self.bytes_processed();
-        let cached = {
+        {
             let cache = self.derived_cache.borrow();
-            if cache.bytes_at_cache == now_bytes {
-                cache.codex_thinking
-            } else {
-                None
+            if let Some((b, v)) = cache.codex_thinking
+                && b == now_bytes
+            {
+                return v;
             }
-        };
-        if let Some(v) = cached {
-            return v;
         }
         let v = detect_codex_thinking(&self.render_grid(false));
-        let mut cache = self.derived_cache.borrow_mut();
-        if cache.bytes_at_cache != now_bytes {
-            *cache = DerivedCache::default();
-            cache.bytes_at_cache = now_bytes;
-        }
-        cache.codex_thinking = Some(v);
+        self.derived_cache.borrow_mut().codex_thinking = Some((now_bytes, v));
         v
     }
 
@@ -902,23 +875,17 @@ impl PtySession {
     /// pane, cleared terminal). The caller is responsible for
     /// truncating to fit its row.
     pub fn session_summary(&self) -> Option<String> {
-        // 2026-07-29 — cache on derived_cache.
         let now_bytes = self.bytes_processed();
         {
             let cache = self.derived_cache.borrow();
-            if cache.bytes_at_cache == now_bytes
-                && let Some(v) = &cache.summary
+            if let Some((b, v)) = &cache.summary
+                && *b == now_bytes
             {
                 return v.clone();
             }
         }
         let v = summarize_grid(&self.render_grid(false));
-        let mut cache = self.derived_cache.borrow_mut();
-        if cache.bytes_at_cache != now_bytes {
-            *cache = DerivedCache::default();
-            cache.bytes_at_cache = now_bytes;
-        }
-        cache.summary = Some(v.clone());
+        self.derived_cache.borrow_mut().summary = Some((now_bytes, v.clone()));
         v
     }
 
@@ -929,26 +896,18 @@ impl PtySession {
     /// pane's screen right now" rather than a bare one-liner.
     /// Most-recent-first (bottom-of-grid → top).
     pub fn session_summary_lines(&self, max: usize) -> Vec<String> {
-        // 2026-07-29 — cache. Key includes `max` because callers
-        // may request different truncations; usually stable per
-        // panel so cache hit is common.
         let now_bytes = self.bytes_processed();
         {
             let cache = self.derived_cache.borrow();
-            if cache.bytes_at_cache == now_bytes
-                && let Some((m, lines)) = &cache.summary_lines
+            if let Some((b, m, lines)) = &cache.summary_lines
+                && *b == now_bytes
                 && *m == max
             {
                 return lines.clone();
             }
         }
         let lines = summarize_grid_lines(&self.render_grid(false), max);
-        let mut cache = self.derived_cache.borrow_mut();
-        if cache.bytes_at_cache != now_bytes {
-            *cache = DerivedCache::default();
-            cache.bytes_at_cache = now_bytes;
-        }
-        cache.summary_lines = Some((max, lines.clone()));
+        self.derived_cache.borrow_mut().summary_lines = Some((now_bytes, max, lines.clone()));
         lines
     }
 }

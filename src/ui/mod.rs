@@ -455,7 +455,36 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 git_palette::draw(frame, app, content_area);
             }
             crate::app::ActivitySection::Sessions => {
+                // 2026-07-30 — instrument sessions panel draw time.
+                // Every 60th call, dump avg µs to /tmp/mnml-perf.log
+                // so we can see if this fn is actually the culprit
+                // vs some other O(N)-with-panes hot path.
+                thread_local! {
+                    static PERF: std::cell::RefCell<(u64, u128, std::time::Instant)> =
+                        std::cell::RefCell::new((0, 0, std::time::Instant::now()));
+                }
+                let t0 = std::time::Instant::now();
                 sessions_panel::draw(frame, app, content_area);
+                let elapsed = t0.elapsed().as_micros();
+                PERF.with(|p| {
+                    let mut p = p.borrow_mut();
+                    p.0 += 1;
+                    p.1 += elapsed;
+                    if p.0 >= 60 {
+                        let avg = p.1 / p.0 as u128;
+                        let _ = std::fs::write(
+                            "/tmp/mnml-perf.log",
+                            format!(
+                                "sessions_panel::draw avg={avg}µs samples={} n_panes={}\n",
+                                p.0,
+                                app.panes.len()
+                            ),
+                        );
+                        p.0 = 0;
+                        p.1 = 0;
+                        p.2 = std::time::Instant::now();
+                    }
+                });
             }
             crate::app::ActivitySection::Agents => {
                 agents_panel::draw(frame, app, content_area);
