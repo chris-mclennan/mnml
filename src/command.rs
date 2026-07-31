@@ -2717,7 +2717,14 @@ fn builtin_commands() -> Vec<Command> {
             id: "tab.new",
             title: "New tab page",
             group: "tab",
-            keys: &[],
+            // vscode-user-keyboard 2026-07-30 KB-04 — no chord for
+            // creating a new tab page (vim-style workspace) except
+            // clicking the palette-bar `+`. `Ctrl+K n` (N = New)
+            // stays in the mnml-specific leader-chord family so it
+            // doesn't collide with VS Code's Ctrl+T (workspace
+            // symbols) or Ctrl+N (new file). Complements the
+            // `gt`/`gT` navigation between tab pages.
+            keys: &["ctrl+k n"],
             run: |app| app.tab_new(None),
         },
         Command {
