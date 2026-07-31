@@ -828,10 +828,16 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         }
         HoverChip::BufferlineNewTab => {
             let rect = app.rects.bufferline_new_tab_button?;
+            // vscode-user-mouse 2026-07-30 SEV-3 #4: was "new scratch
+            // buffer" which read like VS-Code's "add a tab to this
+            // group". This `+` opens a fresh TAB PAGE (a vim-style
+            // desktop workspace with its own layout tree) — an empty
+            // canvas independent of whatever's open now. The Alt+1..9
+            // hint helps mouse-only users discover the switch chords.
             Some((
                 rect,
-                "new tab".into(),
-                Some("click: open a new scratch buffer".into()),
+                "new tab page".into(),
+                Some("click: open a new empty tab page (workspace) · Alt+1..9 to switch".into()),
             ))
         }
         HoverChip::BufferlineTabsLabel => {

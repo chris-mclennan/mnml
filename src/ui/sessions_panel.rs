@@ -185,12 +185,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         y += 2;
     }
 
-    // Clamp the cursor to the filtered list so keyboard nav
-    // stays in-bounds after a filter narrows.
-    let clamped_cursor = app
-        .sessions_panel_cursor
-        .min(pty_indices.len().saturating_sub(1));
+    // Clamp the cursor to the filtered list PLUS ONE extra slot
+    // for the `+ New session` chip at the bottom (KB-08 fix
+    // 2026-07-30). Cursor value == pty_indices.len() means "on the
+    // New session chip"; the chip highlight + activation check
+    // below reads that same value.
+    let clamped_cursor = app.sessions_panel_cursor.min(pty_indices.len());
     app.sessions_panel_cursor = clamped_cursor;
+    let cursor_on_new_chip = clamped_cursor == pty_indices.len();
     let active_pid = app.active;
     for (row_i, &pid) in pty_indices.iter().enumerate() {
         if y + TAB_H > area.y + area.height {
@@ -494,6 +496,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // of the panel. Click → spawn a Claude Code pane (the most
     // common single-click case). A future picker could let the
     // user pick Claude / Codex / shell here.
+    //
+    // KB-08 2026-07-30 — cursor can land on this chip via ↓ past
+    // the last session (or immediately in the empty state). Paint
+    // an accent background when cursored so it reads as "focused"
+    // and Enter matches expectation.
     if y < area.y + area.height {
         let new_rect = Rect {
             x: area.x,
@@ -501,13 +508,23 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             width: area.width,
             height: 1,
         };
+        let chip_bg = if cursor_on_new_chip { t.bg2 } else { bg };
+        let chip_fg = if cursor_on_new_chip { t.fg } else { t.comment };
+        // Paint the bg first so the highlight fills the whole row.
+        if cursor_on_new_chip {
+            frame.render_widget(
+                Paragraph::new(" ".repeat(new_rect.width as usize))
+                    .style(Style::default().bg(chip_bg)),
+                new_rect,
+            );
+        }
         let line = Line::from(vec![
-            Span::styled("  ", Style::default().bg(bg)),
+            Span::styled("  ", Style::default().bg(chip_bg)),
             Span::styled(
                 "+ New session",
                 Style::default()
-                    .fg(t.comment)
-                    .bg(bg)
+                    .fg(chip_fg)
+                    .bg(chip_bg)
                     .add_modifier(Modifier::BOLD),
             ),
         ]);

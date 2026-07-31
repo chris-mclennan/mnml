@@ -564,9 +564,30 @@ pub fn pick_cluster_mode(
 /// cluster doesn't fit). Keeps the most-clicked chrome
 /// (+ new-tab, theme toggle, × window-close); drops TABS label
 /// and per-tab-page chips.
-pub fn compact_cluster_width(_app: &App) -> u16 {
+///
+/// 2026-07-30 — when there are ≥2 tab pages, reserves 5 more cells
+/// for a `▾ 1/2` current-tab-page indicator. Otherwise clicking `+`
+/// creates a 2nd tab page that has no visible switch-back handle in
+/// compact mode. See vscode-user-mouse SEV-2 #1.
+pub fn compact_cluster_width(app: &App) -> u16 {
     // ` + ` (3) + theme toggle pill (4) + ` × ` (3)
-    3 + 4 + 3
+    let base: u16 = 3 + 4 + 3;
+    if app.layouts.len() >= 2 {
+        base + tab_page_indicator_width(app)
+    } else {
+        base
+    }
+}
+
+/// Width of the compact-mode current-tab-page indicator chip
+/// (` ▾ N/M `). Depends on digit counts so `10/12` still fits.
+fn tab_page_indicator_width(app: &App) -> u16 {
+    let n = app.layouts.len();
+    let cur = app.active_layout + 1;
+    // ` ▾ N/M ` — 1 (leading space) + 1 (chevron) + 1 (space) + digits + 1 (slash) + digits + 1 (trailing space)
+    let cur_digits = cur.to_string().chars().count() as u16;
+    let n_digits = n.to_string().chars().count() as u16;
+    1 + 1 + 1 + cur_digits + 1 + n_digits + 1
 }
 
 /// User-forced cluster mode overrides. Threaded from `[ui]
@@ -684,6 +705,45 @@ pub fn paint_right_cluster(
     // is discoverable). Compact mode drops both. User can force the
     // mode via `[ui] top_bar_cluster_mode = "compact" | "expanded"`,
     // otherwise the space-tight auto-fallback picks.
+    // Compact mode with ≥2 tab pages: paint a `▾ N/M` indicator so
+    // the user can see they have multiple tab pages AND click to
+    // switch. Without this, `+` creates a 2nd tab page whose only
+    // discovery path is Alt+1..9 muscle memory. Register the rect
+    // on `bufferline_tab_page_chips` under the CURRENT index so the
+    // existing left-click handler (switches to the clicked tab
+    // page) fires — but we're already on that page. Instead: point
+    // it at the NEXT page so click cycles forward. Right-click on
+    // the chip should still open the tab-page menu (uses the
+    // TABS-label rect path — reuse it).
+    if compact && app.layouts.len() >= 2 {
+        let cur = app.active_layout + 1;
+        let total = app.layouts.len();
+        let label = format!(" \u{25BE} {cur}/{total} ");
+        let label_w = label.chars().count() as u16;
+        spans.push(Span::styled(
+            label,
+            Style::default()
+                .fg(t.bg_darker)
+                .bg(t.blue)
+                .add_modifier(Modifier::BOLD),
+        ));
+        let indicator_rect = Rect {
+            x: cluster_x,
+            y: area.y,
+            width: label_w,
+            height: 1,
+        };
+        // Wire click → next tab page (wraps at end). Register under
+        // the NEXT layout index so `bufferline_tab_page_chips`
+        // dispatch works out of the box.
+        let next = app.active_layout.wrapping_add(1) % app.layouts.len();
+        app.rects
+            .bufferline_tab_page_chips
+            .push((indicator_rect, next));
+        // Right-click / tooltip land on the TABS-label rect path.
+        app.rects.bufferline_tabs_label = Some(indicator_rect);
+        cluster_x += label_w;
+    }
     if !compact {
         // `TABS` label — decorative click target: right-click opens
         // the Expanded/Compact/Auto mode chooser.

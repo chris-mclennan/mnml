@@ -936,12 +936,12 @@ impl App {
     }
 
     pub fn sessions_panel_cursor_down(&mut self) {
+        // vscode-user-keyboard 2026-07-30 KB-08 — extend cursor range
+        // by 1 so ↓ reaches the `+ New session` chip at the bottom.
+        // Empty state: cursor 0 = the chip (only interactive row).
         let n = self.sessions_filtered_ids().len();
-        if n == 0 {
-            self.sessions_panel_cursor = 0;
-            return;
-        }
-        self.sessions_panel_cursor = (self.sessions_panel_cursor + 1).min(n - 1);
+        let max = n; // valid range: 0..=n, where n = "on + New session"
+        self.sessions_panel_cursor = (self.sessions_panel_cursor + 1).min(max);
     }
 
     pub fn sessions_panel_cursor_up(&mut self) {
@@ -949,11 +949,15 @@ impl App {
     }
 
     pub fn sessions_panel_activate(&mut self) {
-        if let Some(pid) = self
-            .sessions_filtered_ids()
-            .into_iter()
-            .nth(self.sessions_panel_cursor)
-        {
+        let ids = self.sessions_filtered_ids();
+        // Cursor past the last session = the `+ New session` chip.
+        // Mirrors the mouse-click path (down_left.rs). Empty state
+        // starts here so Enter immediately spawns.
+        if self.sessions_panel_cursor >= ids.len() {
+            crate::command::run("ai.claude_code_new", self);
+            return;
+        }
+        if let Some(pid) = ids.into_iter().nth(self.sessions_panel_cursor) {
             self.reveal_pane(pid);
         }
     }
