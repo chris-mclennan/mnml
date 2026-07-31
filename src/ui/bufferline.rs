@@ -526,8 +526,14 @@ pub fn right_cluster_width(app: &App) -> u16 {
     w += 6;
     for i in 0..app.layouts.len() {
         let dig = (i + 1).to_string().chars().count() as u16;
-        let dirty = if app.tab_has_dirty_buffer(i) { 1 } else { 0 };
-        w += 2 + dig + dirty;
+        // 2026-07-31 — paint always emits ` {marker}{i+1} ` (space +
+        // marker char + digit(s) + space) whether the tab is clean or
+        // dirty; the marker is either "●" or " " but reserves the same
+        // 1 cell either way. Was `2 + dig + dirty`, which undercounted
+        // every clean tab by 1 cell. With 4-5 tab pages open the `×`
+        // window-close overshot the right edge (user reported clipped
+        // off-screen).
+        w += 3 + dig;
         if i == app.active_layout {
             w += 2;
         }
