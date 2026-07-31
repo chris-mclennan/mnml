@@ -146,12 +146,93 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.http_panel_collection_new_chip = None;
     app.rects.http_panel_import_chip = None;
 
-    let files_len = app.http_panel_files_cache.len();
-    let recent_len = app.http_panel_recent_cache.len();
-    let captured_len = app.http_panel_captured_cache.len();
-    let envs_len = app.http_panel_envs_cache.len();
-    let chains_len = app.http_panel_chains_cache.len();
-    let mocks_len = app.http_panel_mocks_cache.len();
+    // api-workflow-user 2026-07-30 SEV-3 — section header badges
+    // (`▼ RECENT (11)`) used to render the raw cache length even
+    // when the filter narrowed the body to zero rows underneath.
+    // Compute filtered counts here so the badges are honest.
+    let filter_lc = app.http_panel_filter.to_ascii_lowercase();
+    let files_len = if filter_lc.is_empty() {
+        app.http_panel_files_cache.len()
+    } else {
+        app.http_panel_files_cache
+            .iter()
+            .filter(|p| {
+                p.strip_prefix(&app.workspace)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains(&filter_lc)
+            })
+            .count()
+    };
+    let recent_len = if filter_lc.is_empty() {
+        app.http_panel_recent_cache.len()
+    } else {
+        app.http_panel_recent_cache
+            .iter()
+            .filter(|entry| {
+                let method = entry
+                    .get("method")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("GET");
+                let url = entry.get("url").and_then(|s| s.as_str()).unwrap_or("");
+                format!("{method} {url}")
+                    .to_ascii_lowercase()
+                    .contains(&filter_lc)
+            })
+            .count()
+    };
+    let captured_len = if filter_lc.is_empty() {
+        app.http_panel_captured_cache.len()
+    } else {
+        app.http_panel_captured_cache
+            .iter()
+            .filter(|row| {
+                format!("{} {}", row.method, row.url)
+                    .to_ascii_lowercase()
+                    .contains(&filter_lc)
+            })
+            .count()
+    };
+    let envs_len = if filter_lc.is_empty() {
+        app.http_panel_envs_cache.len()
+    } else {
+        app.http_panel_envs_cache
+            .iter()
+            .filter(|n| n.to_ascii_lowercase().contains(&filter_lc))
+            .count()
+    };
+    let chains_len = if filter_lc.is_empty() {
+        app.http_panel_chains_cache.len()
+    } else {
+        app.http_panel_chains_cache
+            .iter()
+            .filter(|p| {
+                let name = p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .trim_end_matches(".chain.json")
+                    .to_ascii_lowercase();
+                name.contains(&filter_lc)
+            })
+            .count()
+    };
+    let mocks_len = if filter_lc.is_empty() {
+        app.http_panel_mocks_cache.len()
+    } else {
+        app.http_panel_mocks_cache
+            .iter()
+            .filter(|p| {
+                let rel = p
+                    .strip_prefix(&app.workspace)
+                    .unwrap_or(p)
+                    .to_string_lossy()
+                    .to_ascii_lowercase();
+                rel.trim_end_matches(".mock.json").contains(&filter_lc)
+            })
+            .count()
+    };
     let ascii = app.config.ui.ascii_icons;
 
     // Filter input on row 1 (immediately under the HTTP header).

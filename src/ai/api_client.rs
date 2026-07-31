@@ -601,6 +601,15 @@ pub fn agent_to_channel(
         "content": user_content(&cleaned_prompt, &images),
     })];
     let mut full_text = String::new();
+    // multilang-dev-user 2026-07-30 SEV-1 — track the LAST turn's
+    // text separately from the concatenated `full_text`. Consumers
+    // like `git.ai_commit` / `ai.write_branch_name` grab line-1 of
+    // the Done payload; when a turn-1 preamble ("Let me check the
+    // codebase before writing the commit message…") preceded a
+    // tool-use block, that preamble ended up as the commit message.
+    // The FINAL answer is always the last-turn text. Overwritten
+    // each iteration; the value at loop exit is what we ship.
+    let mut last_turn_text = String::new();
     // Token usage summed across every turn — each turn is billed for
     // the full context it sends, so summing per-turn is the true total.
     let mut total_in: u64 = 0;
@@ -644,6 +653,7 @@ pub fn agent_to_channel(
                 full_text.push_str("\n\n");
             }
             full_text.push_str(&turn_text);
+            last_turn_text = turn_text.clone();
         }
         // Record the assistant turn so the next request has context.
         let mut content = Vec::new();
@@ -764,7 +774,20 @@ pub fn agent_to_channel(
             },
         ));
     }
-    let _ = sink.send((job_id, AiMsg::Done(full_text.trim().to_string())));
+    // multilang-dev-user 2026-07-30 SEV-1 — Done payload is the
+    // FINAL-turn text (the answer), not the concatenation of every
+    // turn's narration. Line-1-extracting consumers were pulling
+    // preamble sentences ("Let me check the codebase…") into commit
+    // messages / branch names on every diff big enough to trigger a
+    // tool-use turn. Fall back to `full_text` for edge cases (no
+    // turns produced text, tool-iter cap hit — the cap-hit note
+    // lives on `full_text` only).
+    let payload = if last_turn_text.trim().is_empty() {
+        full_text.trim().to_string()
+    } else {
+        last_turn_text.trim().to_string()
+    };
+    let _ = sink.send((job_id, AiMsg::Done(payload)));
 }
 
 /// Block until the user answers a tool-confirmation prompt. Polls

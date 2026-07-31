@@ -2777,8 +2777,6 @@ impl App {
             rp.focus = EditField::Url;
             rp.state = RunState::Failed("not sent yet · press `r` to fire".to_string());
             rp.url_cursor = rp.request.url.len();
-            rp.body_cursor = 0;
-            rp.headers_cursor = 0;
             rp.scroll = 0;
             // Rebuild the headers text buffer from the freshly-loaded request.
             rp.headers_buffer = rp
@@ -2788,6 +2786,16 @@ impl App {
                 .map(|(k, v)| format!("{k}: {v}"))
                 .collect::<Vec<_>>()
                 .join("\n");
+            // api-workflow-user 2026-07-30 SEV-2 — cursor was reset to
+            // 0 for both body + headers, but every OTHER code path in
+            // this file sets each to end-of-buffer. Consequence: after
+            // `http.next_block`, typing in Headers PREPENDED the new
+            // header onto the existing line with no separator (e.g.
+            // `X-Injected: yesContent-Type: application/json`) —
+            // corruption gets sent on the wire on the next `r`. Match
+            // the pattern the other 9 call sites use.
+            rp.headers_cursor = rp.headers_buffer.len();
+            rp.body_cursor = rp.request.body.as_deref().unwrap_or_default().len();
             // api-workflow round-9 SEV-2 2026-07-11 — refresh the
             // tab title's summary from the newly-active block's own
             // leading `# ...` comment. Was stale on the tab strip

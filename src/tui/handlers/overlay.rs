@@ -790,6 +790,16 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             p.input.clear();
             p.cursor = 0;
         }
+        // api-workflow-user 2026-07-30 SEV-3 — Ctrl+A on a seeded
+        // prompt (e.g. right-click var → "Set value…") used to
+        // silently drop through to the char handler below, so typed
+        // text appended to the seeded value and got written to the
+        // env file. Emacs/readline convention: Ctrl+A moves to line
+        // start; users who want "select all + replace" chain Ctrl+A
+        // then Ctrl+U. Cover both intents in one keystroke class:
+        // Ctrl+A moves to start (Emacs); Ctrl+E moves to end.
+        KeyCode::Char('a' | 'A') if ctrl => p.move_home(),
+        KeyCode::Char('e' | 'E') if ctrl => p.move_end(),
         // Ctrl+V — clipboard paste. On macOS Ghostty (and most macOS
         // terminals) Cmd+V translates to a bracketed-paste event
         // and hits the Event::Paste path in tui/mod.rs. Ctrl+V is
