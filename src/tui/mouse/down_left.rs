@@ -1855,6 +1855,30 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         let _ = crate::command::run(cmd_id, app);
         return;
     }
+    // 2026-07-31 — Integration detail pane button click. Focus the
+    // pane, move the cursor to the clicked row, then fire it. Runs
+    // BEFORE the activity-panel `integration_icon_rects` cascade
+    // because the detail pane's own rects overlay the same area
+    // if a click lands there.
+    if let Some(&(_, pane_id, action_idx)) = app
+        .rects
+        .integration_detail_buttons
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.active = Some(pane_id);
+        // If it's a right-panel host, refocus the right panel too.
+        if app.right_panel_panes.contains(&pane_id) {
+            app.focus = crate::focus::Focus::RightPanel;
+        } else {
+            app.focus_pane();
+        }
+        if let Some(crate::pane::Pane::IntegrationDetail(d)) = app.panes.get_mut(pane_id) {
+            d.cursor = action_idx;
+        }
+        crate::ui::integration_detail_view::fire_action(app, pane_id, action_idx);
+        return;
+    }
     // INTEGRATIONS icon — hand off to the configured command.
     // Two command forms supported:
     //   `:<ex>`  → mnml ex command

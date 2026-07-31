@@ -2078,6 +2078,10 @@ mod tests {
             }),
             requires: None,
             source_path: std::path::PathBuf::new(),
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
         });
         apply(
             &mut app,

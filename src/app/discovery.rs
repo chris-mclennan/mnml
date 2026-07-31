@@ -366,6 +366,13 @@ impl App {
             enabled: true,
             in_palette_bar: false,
             manifest_can_override: false,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
         };
         match panel.mode {
             IntegrationEditMode::Edit => {
@@ -1059,6 +1066,13 @@ color = \"blue\"
                 tooltip: Some("Lambda".to_string()),
                 enabled: false,
                 in_palette_bar: false,
+                description: None,
+                homepage: None,
+                docs: None,
+                repository: None,
+                author: None,
+                version: None,
+                commands: Vec::new(),
                 manifest_can_override: false,
             },
             IntegrationIcon {
@@ -1070,6 +1084,13 @@ color = \"blue\"
                 tooltip: None,
                 enabled: false,
                 in_palette_bar: false,
+                description: None,
+                homepage: None,
+                docs: None,
+                repository: None,
+                author: None,
+                version: None,
+                commands: Vec::new(),
                 manifest_can_override: false,
             },
         ];
@@ -1094,6 +1115,13 @@ color = \"blue\"
             tooltip: None,
             enabled: false,
             in_palette_bar: false,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
             manifest_can_override: false,
         }];
         let first = append_integration_icon_blocks("", &icons);
@@ -1124,6 +1152,13 @@ color = \"blue\"
             tooltip: Some("My App".to_string()),
             enabled: true,
             in_palette_bar: false,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
             manifest_can_override: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);
@@ -1154,6 +1189,13 @@ color = \"blue\"
             tooltip: None,
             enabled: false,
             in_palette_bar: false,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
             manifest_can_override: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);

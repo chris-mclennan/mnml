@@ -139,6 +139,16 @@ pub enum Pane {
     /// Vercel/Cloudflare/Modal/etc). See
     /// `src/new_cloud_agent_wizard.rs`.
     NewCloudAgentWizard(crate::new_cloud_agent_wizard::NewCloudAgentWizardPane),
+    /// 2026-07-31 — a VS-Code-extension-detail-style view of ONE
+    /// integration. Description, byline, action buttons
+    /// (Enable/Disable/Uninstall/Bake/Refresh + Edit manifest),
+    /// declared palette commands, and Homepage / Repository /
+    /// Docs links. Read-only apart from the buttons — never
+    /// mutates the integration itself; every action dispatches
+    /// through an existing command. Hosted in the right panel
+    /// (same as Outline / Diagnostics), opened via
+    /// `integrations.show_details`.
+    IntegrationDetail(IntegrationDetailPane),
     // `HttpHome` variant was removed 2026-07-05. It shipped as an
     // early "hub" dashboard for the HTTP activity section, but the
     // activity icon now opens a blank Request pane directly (per
@@ -418,6 +428,56 @@ pub struct DebugPane {
     pub section: DebugSection,
 }
 
+/// State for [`Pane::IntegrationDetail`] — the VS-Code-extension-
+/// detail-page equivalent for one mnml integration.
+///
+/// Owns nothing but the integration's `id` + a cursor into the
+/// button row. Everything visible on screen (name / description /
+/// version / commands / links) is resolved on each `draw()` from
+/// `App.config.ui.integration_icons` so a manifest refresh or a
+/// user toggle is picked up without touching pane state.
+///
+/// `last_action_toast` is a per-pane one-shot for post-click
+/// feedback ("Enabled", "Manifest opened", …) that the pane
+/// renders inline so the user sees confirmation next to the
+/// button, not just at the bottom of the screen.
+#[derive(Debug, Clone)]
+pub struct IntegrationDetailPane {
+    /// Stable integration id. Immutable for the life of the pane
+    /// — a different integration = a different pane.
+    pub id: String,
+    /// Cursor into the pane's actionable-button list. Row order:
+    /// `[Enable/Disable] [Uninstall] [Bake glyph] [Refresh] [Edit
+    /// manifest] [Copy id]` followed by one row per link, one row
+    /// per command. Rebuilt on every draw so unavailable buttons
+    /// (e.g. Bake when the glyph has no codepoint) are skipped.
+    pub cursor: usize,
+    /// Optional inline confirmation after the last button fire.
+    /// Cleared by the pane after `TOAST_TTL` seconds — see
+    /// `integration_detail_view::draw`.
+    pub last_action: Option<(std::time::Instant, String)>,
+}
+
+impl IntegrationDetailPane {
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            cursor: 0,
+            last_action: None,
+        }
+    }
+    /// Short chrome for the bufferline tab / right-panel tab strip.
+    pub fn tab_title(&self) -> String {
+        format!("Integration · {}", self.id)
+    }
+    /// Called by the App after a button dispatches. Renders as an
+    /// inline "✓ {msg}" line under the button strip for a few
+    /// seconds.
+    pub fn set_action_toast(&mut self, msg: impl Into<String>) {
+        self.last_action = Some((std::time::Instant::now(), msg.into()));
+    }
+}
+
 /// Vim's command-line window — `q:` opens a read-only list of recent ex
 /// commands. Up/Down navigate; Enter re-fires the selected entry.
 #[derive(Debug, Clone, Default)]
@@ -654,6 +714,7 @@ impl Pane {
             Pane::CloudAgentRun(p) => format!("☁ {}", p.ticket),
             Pane::NewCloudAgentWizard(_) => "+ New Agent from PR".to_string(),
             Pane::NewCloudRunWizard(_) => "+ New Cloud Run".to_string(),
+            Pane::IntegrationDetail(d) => d.tab_title(),
         }
     }
 
@@ -686,7 +747,8 @@ impl Pane {
             | Pane::Mount(_)
             | Pane::CloudAgentRun(_)
             | Pane::NewCloudAgentWizard(_)
-            | Pane::NewCloudRunWizard(_) => false,
+            | Pane::NewCloudRunWizard(_)
+            | Pane::IntegrationDetail(_) => false,
         }
     }
 

@@ -75,6 +75,7 @@ pub mod help_overlay;
 pub mod hover;
 pub mod icons;
 pub mod image_view;
+pub mod integration_detail_view;
 pub mod integration_edit_overlay;
 // log_tail_view moved to mnml-aws-codebuild.
 pub mod md_inline_overlay;
@@ -589,6 +590,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 crate::pane::Pane::Ai(a) => a.tab_title(),
                 crate::pane::Pane::Tests(t) => t.tab_title(),
                 crate::pane::Pane::Grep(g) => g.tab_title(),
+                crate::pane::Pane::IntegrationDetail(d) => d.tab_title(),
                 _ => "PANEL".to_string(),
             };
             let Some(budget) = max_chars else { return full };
@@ -924,6 +926,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 }
                 Some(crate::pane::Pane::Diagnostics(_)) => {
                     diagnostics_view::draw(frame, app, pid, body, focused);
+                }
+                Some(crate::pane::Pane::IntegrationDetail(_)) => {
+                    integration_detail_view::draw(frame, app, pid, body, focused);
                 }
                 Some(crate::pane::Pane::Tests(_)) => {
                     tests_view::draw(frame, app, pid, body, focused);
@@ -1690,6 +1695,7 @@ fn render_layout(
                 Some(crate::pane::Pane::CloudAgentRun(_)) => 38,
                 Some(crate::pane::Pane::NewCloudAgentWizard(_)) => 39,
                 Some(crate::pane::Pane::NewCloudRunWizard(_)) => 40,
+                Some(crate::pane::Pane::IntegrationDetail(_)) => 41,
                 _ => 0,
             };
             match kind {
@@ -1753,6 +1759,7 @@ fn render_layout(
                     new_cloud_run_wizard_view::draw(frame, app, *id, area, focused);
                     None
                 }
+                41 => integration_detail_view::draw(frame, app, *id, area, focused),
                 _ => editor_view::draw_pane(frame, app, *id, area, focused),
             }
         }
@@ -3928,6 +3935,7 @@ fn icon_for_pane(
         Pane::CloudAgentRun(_) => s(if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
         Pane::NewCloudAgentWizard(_) => s(if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green),
         Pane::NewCloudRunWizard(_) => s(if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
+        Pane::IntegrationDetail(_) => s(if nerd { "\u{F09FF}" } else { "◈" }, theme::cur().cyan),
     }
 }
 

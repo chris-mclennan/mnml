@@ -117,6 +117,18 @@ pub struct IntegrationManifest {
     pub binary: String,
     #[serde(default)]
     pub category: Option<String>,
+    // ── Detail-pane metadata (all optional) ────
+    // 2026-07-31 — for `Pane::IntegrationDetail`. Rendered as
+    // clickable "↗ Homepage / Repository / Docs" rows + a byline
+    // "vX.Y.Z by author".
+    #[serde(default)]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub docs: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
 
     // ── Registered surfaces ────────────────────
     #[serde(default)]
@@ -535,6 +547,10 @@ color = "nonsense-neon"
             notifications: None,
             requires: None,
             source_path: PathBuf::new(),
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
         };
         assert!(m.is_ready());
 

@@ -277,6 +277,13 @@ pub fn root() -> &'static Leader {
                     group(
                         "+integrations",
                         vec![
+                            (
+                                'd',
+                                cmd(
+                                    "integrations.show_details",
+                                    "detail pane (description / buttons / links)",
+                                ),
+                            ),
                             ('b', cmd("forge.open_bitbucket", "Bitbucket viewer")),
                             ('g', cmd("forge.open_github", "GitHub viewer")),
                             ('l', cmd("forge.open_gitlab", "GitLab viewer")),

@@ -1534,6 +1534,14 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 // Wizard pane content is short and fits a single
                 // page; no scroll affordance needed for v1.
             }
+            Some(Pane::IntegrationDetail(_)) => {
+                // Wheel walks the actionable-row cursor (buttons +
+                // command rows + link rows). Matches ↑/↓ from the
+                // keyboard handler.
+                let d = delta.signum() as isize;
+                let n = delta.unsigned_abs() as isize;
+                app.integration_detail_cursor_move(d * n);
+            }
             Some(Pane::CloudAgentRun(p)) => {
                 // Scroll the logs viewport. Negative delta = scroll up
                 // (older lines); positive = down. Crossing past the

@@ -38,6 +38,7 @@ pub(crate) mod glyph_builder;
 mod grep;
 pub(crate) mod help;
 mod http;
+pub(crate) mod integration_detail;
 mod layout;
 mod lsp;
 mod macros_marks;
@@ -2083,6 +2084,15 @@ pub struct PaneRects {
     /// picker. Prior to this the flow was
     /// `:sibling.install` palette-only, which is undiscoverable.
     pub integrations_add_chip: Option<Rect>,
+    /// 2026-07-31 — `Pane::IntegrationDetail` button rects. Each
+    /// entry is `(rect, pane_id, button_idx)` where `button_idx`
+    /// is the pane's own dense list of actionable rows (buttons +
+    /// command rows + link rows). Click routing walks this in
+    /// `tui/mouse/down_left.rs`.
+    pub integration_detail_buttons: Vec<(Rect, PaneId, usize)>,
+    /// 2026-07-31 — `Pane::IntegrationDetail` link rects — right-
+    /// click on one copies the URL. `(rect, pane_id, url)`.
+    pub integration_detail_links: Vec<(Rect, PaneId, String)>,
     /// Click rect for the filter input at the top of the panel.
     pub agents_panel_filter_input: Option<Rect>,
     /// Click rect for the `+ New` row at the top of the panel.
@@ -5594,6 +5604,24 @@ impl App {
                 in_palette_bar: chip.in_palette_bar,
                 // A later manifest re-scan can re-apply/override.
                 manifest_can_override: true,
+                // 2026-07-31 — detail-pane metadata piped through
+                // from the sibling manifest so `Pane::IntegrationDetail`
+                // can render description / links / command list without
+                // a second `IntegrationManifest` lookup.
+                description: m.description.clone(),
+                homepage: m.homepage.clone(),
+                docs: m.docs.clone(),
+                repository: m.repository.clone(),
+                author: m.author.clone(),
+                version: m.version.clone(),
+                commands: m
+                    .commands
+                    .iter()
+                    .map(|c| crate::config::IntegrationIconCommand {
+                        id: c.id.clone(),
+                        title: c.title.clone(),
+                    })
+                    .collect(),
             };
             match self
                 .config
@@ -11628,6 +11656,7 @@ impl App {
             Pane::CloudAgentRun(p) => Some((format!("☁ {}", p.ticket), false)),
             Pane::NewCloudAgentWizard(_) => Some(("+ New Agent from PR".to_string(), false)),
             Pane::NewCloudRunWizard(_) => Some(("+ New Cloud Run".to_string(), false)),
+            Pane::IntegrationDetail(d) => Some((d.tab_title(), false)),
         }
     }
 
@@ -15007,6 +15036,13 @@ mod tests {
                 tooltip: None,
                 enabled: true,
                 in_palette_bar: false,
+                description: None,
+                homepage: None,
+                docs: None,
+                repository: None,
+                author: None,
+                version: None,
+                commands: Vec::new(),
                 manifest_can_override: false,
             });
         let before = app.config.ui.integration_icons.len();

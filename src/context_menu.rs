@@ -56,6 +56,12 @@ pub enum MenuAction {
     /// Surfaced by the integration-chip right-click menu so users
     /// can tweak a chip without going through the discovery overlay.
     EditIntegration(String),
+    /// 2026-07-31 — Open the read-only `Pane::IntegrationDetail`
+    /// pane in the right side panel for a specific integration id.
+    /// Surfaced on the integration-chip right-click menu ("View
+    /// details") + also fires from `integrations.show_details` when
+    /// the palette command takes an id.
+    ShowIntegrationDetails(String),
     /// Drop the integration from the rail (config + persist). Same
     /// effect as clicking the chip's row in the discovery overlay
     /// when it's already InRail. Surfaced by the chip right-click

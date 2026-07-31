@@ -486,6 +486,13 @@ impl App {
             toggle_label,
             MenuAction::ToggleIntegrationEnabled(id.clone()),
         ));
+        // 2026-07-31 — Open the read-only detail pane. Sits above
+        // Move / Edit / Remove so the discoverability path from
+        // "right-click a chip → what is this thing?" is one hop.
+        items.push(MenuItem::new(
+            "View details",
+            MenuAction::ShowIntegrationDetails(id.clone()),
+        ));
         if !is_first {
             items.push(MenuItem::new(
                 "Move to top",
@@ -1638,6 +1645,9 @@ impl App {
             }
             EditIntegration(id) => {
                 self.open_integration_edit_by_id(&id);
+            }
+            ShowIntegrationDetails(id) => {
+                self.open_integration_detail_pane(&id);
             }
             SetIntegrationLauncher(id) => {
                 self.open_integration_launcher_prompt(id);

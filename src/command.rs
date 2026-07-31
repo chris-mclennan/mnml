@@ -4325,6 +4325,38 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_outline_pane(),
         },
+        // 2026-07-31 — Integration detail pane (`Pane::IntegrationDetail`).
+        // Opens VS-Code-extension-detail-style read-only view of one
+        // integration in the right side panel. The `<leader>i d`
+        // (`Ctrl+K i d`) chord picks the currently-focused activity-
+        // panel row, else the first Installed integration. `View
+        // details` menu items open a specific id.
+        Command {
+            id: "integrations.show_details",
+            title: "Integrations: open detail pane for the focused integration",
+            group: "integrations",
+            keys: &["ctrl+k i d"],
+            run: |app| {
+                let target = app
+                    .config
+                    .ui
+                    .integration_icons
+                    .iter()
+                    .find(|i| i.enabled)
+                    .map(|i| i.id.clone())
+                    .or_else(|| {
+                        app.config
+                            .ui
+                            .integration_icons
+                            .first()
+                            .map(|i| i.id.clone())
+                    });
+                match target {
+                    Some(id) => app.open_integration_detail_pane(&id),
+                    None => app.toast("no integrations installed yet"),
+                }
+            },
+        },
         Command {
             id: "lsp.next_diagnostic",
             title: "LSP: next diagnostic",

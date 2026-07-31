@@ -1131,6 +1131,20 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_workspace_header_context_menu((x, y));
         return;
     }
+    // 2026-07-31 — Right-click on a detail-pane link row → copy the
+    // URL. Runs before the activity-panel chip check because a
+    // click can land on both when the detail pane covers the
+    // integration-panel area (right-panel host).
+    if let Some((_, pane_id, url)) = app
+        .rects
+        .integration_detail_links
+        .iter()
+        .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+        .map(|(r, pid, url)| (*r, *pid, url.clone()))
+    {
+        crate::ui::integration_detail_view::copy_link_url(app, pane_id, url);
+        return;
+    }
     // Right-click on an integration chip → Edit / Remove
     // quick-actions. Lets a user tweak a chip without
     // going through the discovery overlay first.

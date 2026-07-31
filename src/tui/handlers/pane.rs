@@ -243,6 +243,7 @@ fn is_view_only_pane(pane: Option<&Pane>) -> bool {
             | Some(Pane::Tests(_))
             | Some(Pane::Flaky(_))
             | Some(Pane::Debug(_))
+            | Some(Pane::IntegrationDetail(_))
     )
 }
 
@@ -803,6 +804,31 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     app.focus_pane_or_tree();
                 }
             }
+            _ => {}
+        }
+        return;
+    }
+    // 2026-07-31 — Integration detail pane: Tab / ↑↓ / ←→ walk the
+    // actionable-row list (buttons + declared commands + link
+    // rows), Enter / Space fire the focused row, Esc closes the
+    // right panel (deferred to `focus_pane_or_tree` so the app-
+    // wide "Esc unfocuses view panes" convention holds).
+    if matches!(app.panes.get(i), Some(Pane::IntegrationDetail(_))) {
+        match key.code {
+            KeyCode::Up | KeyCode::Left | KeyCode::BackTab | KeyCode::Char('k') => {
+                app.integration_detail_cursor_move(-1);
+            }
+            KeyCode::Down | KeyCode::Right | KeyCode::Tab | KeyCode::Char('j') => {
+                app.integration_detail_cursor_move(1);
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                app.integration_detail_cursor_move(isize::MIN / 2);
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                app.integration_detail_cursor_move(isize::MAX / 2);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => app.integration_detail_fire_focused(),
+            KeyCode::Esc => app.focus_pane_or_tree(),
             _ => {}
         }
         return;
