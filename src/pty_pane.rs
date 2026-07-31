@@ -301,6 +301,12 @@ pub struct PtySession {
     child: Box<dyn Child + Send + Sync>,
     /// Set by the reader thread when the pty hits EOF / error (child gone).
     exited: Arc<Mutex<bool>>,
+    /// Populated by `pump()` after the child reaps — `None` while
+    /// running, `Some(code)` after. Powers success/failure glyphs on
+    /// the tab title and statusline chip so a successful `npm test`
+    /// gets `✓` and a failing one gets `✗` (multilang-dev-user
+    /// 2026-07-30 SEV-2 — used to always show `✗` regardless).
+    exit_code: Option<i32>,
     /// Last `(rows, cols)` sent to the pty — skip the resize (and its SIGWINCH /
     /// child-redraw flicker) when the rendered size hasn't changed.
     last_size: (u16, u16),
@@ -516,6 +522,7 @@ impl PtySession {
             reader: Some(reader),
             child,
             exited,
+            exit_code: None,
             last_size: (rows, cols),
             bytes_seen,
             bytes_seen_on_focus: 0,
@@ -544,6 +551,30 @@ impl PtySession {
                 out.clear();
             }
         }
+        // Reap the child's exit status once the reader thread has
+        // signaled EOF. `child.try_wait()` is non-blocking; call once
+        // and cache. `ExitStatus::exit_code()` returns u32; convert
+        // to i32 with 0 = success (used by `is_exited_success`).
+        if self.exit_code.is_none()
+            && self.exited.lock().map(|e| *e).unwrap_or(false)
+            && let Ok(Some(status)) = self.child.try_wait()
+        {
+            self.exit_code = Some(status.exit_code() as i32);
+        }
+    }
+
+    /// Exit code once the child has been reaped; `None` while the
+    /// child is still running OR while the reap is pending (pump
+    /// hasn't captured it yet).
+    pub fn exit_code(&self) -> Option<i32> {
+        self.exit_code
+    }
+
+    /// True when the pty exited with status 0. `false` for still-
+    /// running (`is_exited() == false`) AND for any non-zero exit.
+    /// Used by the tab title / statusline chip to pick ✓ vs ✗.
+    pub fn is_exited_success(&self) -> bool {
+        self.exit_code == Some(0)
     }
 
     /// Snapshot the visible grid into a flat, owned [`RenderGrid`] the renderers
@@ -701,11 +732,22 @@ impl PtySession {
 
     pub fn title(&self) -> String {
         let base = self.tab_label();
-        if self.is_exited() {
-            format!("{base} ✗")
-        } else {
-            base
+        if !self.is_exited() {
+            return base;
         }
+        // multilang-dev-user 2026-07-30 SEV-2 — was always `✗` on
+        // exit regardless of code. `npm test` passing (exit 0) read
+        // as failed; the whole point of a `🧪` chip is a real
+        // pass/fail signal. Show ✓ for success, ✗ for failure. When
+        // the reap hasn't landed yet (exit_code == None but exited
+        // == true, brief window in the same frame), fall back to the
+        // conservative ✗ so we never claim success we can't prove.
+        let glyph = if self.is_exited_success() {
+            "✓"
+        } else {
+            "✗"
+        };
+        format!("{base} {glyph}")
     }
 
     /// The session's tab/title label. The *name* is the user-set

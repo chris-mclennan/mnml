@@ -123,6 +123,18 @@ impl App {
             return;
         }
         if matches!(self.focus, crate::focus::Focus::Tree) {
+            // vscode-user-keyboard 2026-07-30 KB-09 — was firing the
+            // tree's file context menu regardless of active section,
+            // so a Sessions/Debug/Notes user got the wrong menu based
+            // on the stale tree cursor. Only route to the tree file
+            // menu when Explorer is actually the active section.
+            if !matches!(self.active_section, crate::app::ActivitySection::Explorer) {
+                self.toast(format!(
+                    "Shift+F10: no context menu for the {:?} section (yet)",
+                    self.active_section
+                ));
+                return;
+            }
             if let Some(row) = self.tree.selected_row() {
                 // Anchor x: rail's left edge plus a few cells; y: try
                 // to grab the y of the selected row from

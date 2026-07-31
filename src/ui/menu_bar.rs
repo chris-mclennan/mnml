@@ -88,9 +88,18 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         };
         let line = match item {
             MenuItem::Action { label, .. } => {
-                let pad = inner.width.saturating_sub(label.chars().count() as u16 + 1) as usize;
+                // nvchad-user + vscode-user-keyboard 2026-07-30 —
+                // color-only highlight was invisible in headless
+                // (screen.txt strips ANSI) and in low-color terminals.
+                // Add a leading `▸ ` on the selected row so cursor
+                // position reads in the text grid too.
+                let marker = if is_highlighted { "\u{25B8} " } else { "  " };
+                let pad = inner
+                    .width
+                    .saturating_sub(label.chars().count() as u16 + marker.chars().count() as u16)
+                    as usize;
                 Line::from(vec![
-                    Span::styled(" ", row_style),
+                    Span::styled(marker, row_style),
                     Span::styled(label.to_string(), row_style),
                     Span::styled(" ".repeat(pad), row_style),
                 ])

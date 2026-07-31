@@ -576,12 +576,24 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         // so the renderer paints its close `×` glyph on hover (not
         // just when active). Rebuilt every Moved event so leaving
         // the strip clears it.
+        //
+        // vscode-user-mouse 2026-07-30 SEV-2 #3 — after the one-tab-
+        // type refactor, per-leaf `split_tab_chips` are the real
+        // tab UI; the top `bufferline_tabs` is usually empty. Fall
+        // back to the split-tab family so hover-× works there too.
         app.hovered_bufferline_tab = app
             .rects
             .bufferline_tabs
             .iter()
             .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-            .map(|&(_, pid)| pid);
+            .map(|&(_, pid)| pid)
+            .or_else(|| {
+                app.rects
+                    .split_tab_chips
+                    .iter()
+                    .find(|(r, _, _)| crate::app::dispatch::contains(*r, x, y))
+                    .map(|&(_, _, tab_pane)| tab_pane)
+            });
         // 2026-06-28 — hover-highlight on context menu items.
         // The hover-tooltip Moved handler used to return early,
         // which meant the dedicated context-menu hover block at

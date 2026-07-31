@@ -926,6 +926,22 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.context_menu = Some(ContextMenu::new(Some("Theme".to_string()), (x, y), items));
         return;
     }
+    // vscode-user-mouse 2026-07-30 SEV-3 #6 — right-click on the
+    // `×` window-close chip. Left-click always fires quit-confirm;
+    // right-click gives quick access to Save-all-and-quit / Force-
+    // quit (no-save) without going through the dialog.
+    if let Some(r) = app.rects.bufferline_window_close
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![
+            MenuItem::new("Quit (with confirm)", MenuAction::Command("app.quit")),
+            MenuItem::new("Save all", MenuAction::Command("file.save_all")),
+            MenuItem::new("Restart", MenuAction::Command("app.restart")),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some("mnml".to_string()), (x, y), items));
+        return;
+    }
     // Undo chip right-click — dismiss without committing. Left-click
     // commits; right-click cancels. mouse-round-10 SEV-3 2026-07-12.
     if let Some(r) = app.rects.pending_undo_chip
