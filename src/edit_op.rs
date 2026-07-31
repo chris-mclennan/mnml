@@ -12,6 +12,13 @@ pub enum EditOp {
     MoveDown,
     MoveWordLeft,
     MoveWordRight,
+    /// Same as `MoveWordRight` but stops at end-of-line rather than
+    /// crossing a newline. Vim's special-case for `dw` / `yw` / etc.:
+    /// when the current word ends at EOL, the operator does NOT
+    /// include the newline. Emitted by the vim handler for
+    /// operator+word motions; standalone `w` / `Ctrl+Right` keep the
+    /// cross-line MoveWordRight behavior. nvchad-user 2026-07-30 SEV-2.
+    MoveWordRightNoCrossLine,
     MoveWordEnd,
     /// vim `ge` — move to the END of the previous word (one char left of the
     /// boundary `MoveWordLeft` lands on, walking past whitespace first).
@@ -462,6 +469,7 @@ impl EditOp {
             | MoveDown
             | MoveWordLeft
             | MoveWordRight
+            | MoveWordRightNoCrossLine
             | MoveWordEnd
             | MoveWordEndBack
             | MoveBigWordRight

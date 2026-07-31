@@ -2475,6 +2475,22 @@ impl VimInputHandler {
                 // Unsupported op falls through to the generic path.
             }
             if let Some(m) = Self::motion(effective_code) {
+                // nvchad-user 2026-07-30 SEV-2 — vim `dw` / `yw`
+                // at end-of-line does NOT consume the newline; only
+                // deletes/yanks up to the newline. Swap plain `w`
+                // under Delete/Yank to the no-cross-line variant.
+                // Count > 1 keeps cross-line behavior (real `d3w`
+                // still spans multiple lines like vim). `W` (WORD)
+                // follows the same rule but not covered here yet —
+                // add MoveBigWordRightNoCrossLine when someone flags.
+                let m = if n == 1
+                    && matches!(op, PendingOp::Delete | PendingOp::Yank)
+                    && matches!(m, MoveWordRight)
+                {
+                    MoveWordRightNoCrossLine
+                } else {
+                    m
+                };
                 let mut ops = vec![SelectStart];
                 if n > 1 {
                     ops.push(Repeat(n, Box::new(m)));
@@ -4054,14 +4070,38 @@ mod tests {
             v.handle_key(k('d'), &ctx()),
             InputResult::Consumed
         ));
+        // nvchad-user 2026-07-30 SEV-2 — `dw` uses the no-cross-line
+        // variant so at EOL the newline is preserved (vim behavior).
         assert_eq!(
             ops(v.handle_key(k('w'), &ctx())),
             vec![
                 EditOp::SelectStart,
-                EditOp::MoveWordRight,
+                EditOp::MoveWordRightNoCrossLine,
                 EditOp::DeleteSelection
             ]
         );
+    }
+
+    #[test]
+    fn d3w_still_crosses_lines() {
+        // n > 1 keeps the plain MoveWordRight so `d3w` spans lines
+        // like real vim. Only the count == 1 special-case clamps.
+        let mut v = h();
+        assert!(matches!(
+            v.handle_key(k('3'), &ctx()),
+            InputResult::Consumed
+        ));
+        assert!(matches!(
+            v.handle_key(k('d'), &ctx()),
+            InputResult::Consumed
+        ));
+        let out = ops(v.handle_key(k('w'), &ctx()));
+        // Sequence: SelectStart, Repeat(3, MoveWordRight), DeleteSelection.
+        assert_eq!(out.first(), Some(&EditOp::SelectStart));
+        assert!(
+            matches!(&out[1], EditOp::Repeat(3, inner) if matches!(**inner, EditOp::MoveWordRight))
+        );
+        assert_eq!(out.last(), Some(&EditOp::DeleteSelection));
     }
 
     #[test]

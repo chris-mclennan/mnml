@@ -2075,6 +2075,20 @@ impl Editor {
                 self.move_word_right();
                 self.move_extras_with(Self::word_right_target_from);
             }
+            MoveWordRightNoCrossLine => {
+                // vim `dw` special-case (nvchad-user 2026-07-30
+                // SEV-2). Behaves like MoveWordRight but clamps to
+                // end-of-line so the operator range doesn't consume
+                // the newline. Cursor lands on the newline byte itself
+                // when the current word ends at EOL.
+                let line = self.current_line();
+                let line_end = self.line_end(line);
+                self.move_word_right();
+                if self.cursor > line_end {
+                    self.cursor = line_end;
+                }
+                self.move_extras_with(Self::word_right_target_from);
+            }
             MoveWordLeft => {
                 self.move_word_left();
                 self.move_extras_with(Self::word_left_target_from);
