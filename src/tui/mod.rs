@@ -634,6 +634,22 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
                 })
                 .collect();
             if let Some(&first) = matches.first() {
+                // nvchad-user + vscode-user-keyboard 2026-07-30 both
+                // flagged: pressing `s` for Save only highlighted the
+                // row (Enter still required). Every OS menu bar fires
+                // on the mnemonic directly. Compromise: single match
+                // → fire immediately; multiple matches → cycle-then-
+                // Enter so the 7-item `View → Toggle*` case still
+                // works (repeat-tap `t` cycles between them).
+                if matches.len() == 1
+                    && let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
+                        menu.items.get(first)
+                {
+                    let id = command_id.to_string();
+                    app.menu_open = None;
+                    crate::command::run(&id, app);
+                    return true;
+                }
                 // Repeat press of same letter → advance to next match
                 // (wraps). Different letter → land on first match.
                 let target = if open.last_mnemonic == Some(lower) && matches.len() > 1 {
