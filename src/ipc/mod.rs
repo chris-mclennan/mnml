@@ -983,7 +983,23 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             ])
         }
         IpcCommand::Wait { ms } => {
-            std::thread::sleep(std::time::Duration::from_millis(*ms));
+            // vscode-user-keyboard 2026-07-30 KB-02 investigation —
+            // was one big blocking sleep, which meant deadline-based
+            // fallbacks (chord-chain timeout, tick_pending_undo,
+            // etc.) never fired during the wait. A `Ctrl+K` then
+            // `wait_ms 1500` then snapshot showed no whichkey menu
+            // because the leader-timeout fallback couldn't run until
+            // AFTER the snapshot. Tick the chord-chain every 40ms
+            // (matches the headless POLL_SLEEP cadence) during the
+            // wait so deferred UI state advances in real time.
+            let step = std::time::Duration::from_millis(40);
+            let total = std::time::Duration::from_millis(*ms);
+            let start = std::time::Instant::now();
+            while start.elapsed() < total {
+                let remaining = total.saturating_sub(start.elapsed());
+                std::thread::sleep(step.min(remaining));
+                crate::tui::tick_chord_chain(app);
+            }
             json_event(&[("event", "wait_ms"), ("ms", &ms.to_string())])
         }
         IpcCommand::ExpectScreen { text, contains } => {

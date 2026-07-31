@@ -926,6 +926,32 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.context_menu = Some(ContextMenu::new(Some("Theme".to_string()), (x, y), items));
         return;
     }
+    // vscode-user-mouse 2026-07-30 SEV-3 #10 — right-click on menu-
+    // bar words. Was dead; users expect a "customize menu bar" or
+    // mode-toggle affordance given every other chip has right-click.
+    // Minimal menu: cycle menu-bar mode (auto / always / hidden).
+    if app
+        .rects
+        .menu_bar_words
+        .iter()
+        .any(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let cur = app.config.ui.menu_bar.as_str();
+        let items = vec![
+            MenuItem::new(format!("Menu bar: {cur}"), MenuAction::Command("noop.info")),
+            MenuItem::new(
+                "Cycle mode (auto → always → hidden)",
+                MenuAction::Command("view.menu_bar_cycle"),
+            ),
+        ];
+        app.context_menu = Some(ContextMenu::new(
+            Some("Menu Bar".to_string()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
     // vscode-user-mouse 2026-07-30 SEV-3 #6 — right-click on the
     // `×` window-close chip. Left-click always fires quit-confirm;
     // right-click gives quick access to Save-all-and-quit / Force-
