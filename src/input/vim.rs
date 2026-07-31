@@ -2475,19 +2475,19 @@ impl VimInputHandler {
                 // Unsupported op falls through to the generic path.
             }
             if let Some(m) = Self::motion(effective_code) {
-                // nvchad-user 2026-07-30 SEV-2 — vim `dw` / `yw`
-                // at end-of-line does NOT consume the newline; only
-                // deletes/yanks up to the newline. Swap plain `w`
-                // under Delete/Yank to the no-cross-line variant.
-                // Count > 1 keeps cross-line behavior (real `d3w`
-                // still spans multiple lines like vim). `W` (WORD)
-                // follows the same rule but not covered here yet —
-                // add MoveBigWordRightNoCrossLine when someone flags.
-                let m = if n == 1
-                    && matches!(op, PendingOp::Delete | PendingOp::Yank)
-                    && matches!(m, MoveWordRight)
-                {
-                    MoveWordRightNoCrossLine
+                // nvchad-user 2026-07-30 SEV-2 — vim `dw` / `yw` /
+                // `dW` / `yW` at end-of-line do NOT consume the
+                // newline; only delete/yank up to the newline. Swap
+                // plain w / W under Delete/Yank to the no-cross-line
+                // variants at count == 1. Count > 1 keeps cross-line
+                // behavior (real `d3w` still spans multiple lines
+                // like vim).
+                let m = if n == 1 && matches!(op, PendingOp::Delete | PendingOp::Yank) {
+                    match m {
+                        MoveWordRight => MoveWordRightNoCrossLine,
+                        MoveBigWordRight => MoveBigWordRightNoCrossLine,
+                        other => other,
+                    }
                 } else {
                     m
                 };

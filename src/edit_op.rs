@@ -25,6 +25,11 @@ pub enum EditOp {
     MoveWordEndBack,
     /// vim `W` — move to the start of the next WORD (whitespace-delimited).
     MoveBigWordRight,
+    /// Same as `MoveBigWordRight` but stops at end-of-line rather
+    /// than crossing a newline. Vim's `dW` special-case, mirror of
+    /// [`MoveWordRightNoCrossLine`]. Emitted by the vim handler for
+    /// operator+WORD motions at count == 1.
+    MoveBigWordRightNoCrossLine,
     /// vim `B` — move to the start of the previous WORD (whitespace-delimited).
     MoveBigWordLeft,
     /// vim `E` — move to the end of the current/next WORD (whitespace-delimited).
@@ -471,6 +476,7 @@ impl EditOp {
             | MoveWordRight
             | MoveWordRightNoCrossLine
             | MoveWordEnd
+            | MoveBigWordRightNoCrossLine
             | MoveWordEndBack
             | MoveBigWordRight
             | MoveBigWordLeft

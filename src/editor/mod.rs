@@ -2096,6 +2096,14 @@ impl Editor {
             MoveWordEnd => self.move_word_end(),
             MoveWordEndBack => self.move_word_end_back(),
             MoveBigWordRight => self.move_big_word_right(),
+            MoveBigWordRightNoCrossLine => {
+                let line = self.current_line();
+                let line_end = self.line_end(line);
+                self.move_big_word_right();
+                if self.cursor > line_end {
+                    self.cursor = line_end;
+                }
+            }
             MoveBigWordLeft => self.move_big_word_left(),
             MoveBigWordEnd => self.move_big_word_end(),
             MoveBigWordEndBack => self.move_big_word_end_back(),
