@@ -15854,6 +15854,11 @@ mod tests {
         cfg.editor.input_style = "standard".to_string();
         let mut app = App::new(d.path().to_path_buf(), cfg).unwrap();
         let initial_tree = app.tree_visible;
+        // 2026-07-31 — snapshot theme too. Since `ctrl+k t → theme.toggle`
+        // was bound (fda7ef1f) the run-leaf firing shows up as a theme
+        // change, not a tree toggle. Test asserts "progressed" so both
+        // observable side-effects count.
+        let initial_theme = crate::ui::theme::cur().name.to_string();
 
         // `Ctrl+K` opens the leader chord chain — pending state set.
         crate::tui::dispatch_key(
@@ -15877,10 +15882,18 @@ mod tests {
         // is a Cmd leaf (e.g. toggle tree), the command fired
         // and the overlay closed. Either is acceptable —
         // crucially it must NOT have been dropped.
-        let progressed = app.whichkey.is_some() || app.tree_visible != initial_tree;
+        let theme_changed = crate::ui::theme::cur().name != initial_theme;
+        // `theme.toggle` opens the theme picker when no alt theme
+        // is configured (default) — that counts as "the leaf
+        // fired". Check picker state too.
+        let picker_open = app.picker.is_some();
+        let progressed = app.whichkey.is_some()
+            || app.tree_visible != initial_tree
+            || theme_changed
+            || picker_open;
         assert!(
             progressed,
-            "after Ctrl+K t the whichkey overlay should be open on a sub-trie OR a single-letter leaf should have fired"
+            "after Ctrl+K t the whichkey overlay should be open on a sub-trie OR a single-letter leaf should have fired (tree toggle / theme toggle / picker / …)"
         );
     }
 }
