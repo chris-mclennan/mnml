@@ -2062,7 +2062,7 @@ mod tests {
             label: "Silent".into(),
             description: None,
             version: None,
-            binary: "mnml-silent".into(),
+            binary: Some("mnml-silent".into()),
             category: None,
             chip: None,
             commands: vec![],

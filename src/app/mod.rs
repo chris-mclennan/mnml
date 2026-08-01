@@ -5642,7 +5642,14 @@ impl App {
                             c.id.clone()
                         }
                     })
-                    .unwrap_or_else(|| format!("term {}", m.binary)),
+                    .unwrap_or_else(|| match &m.binary {
+                        Some(b) => format!("term {}", b),
+                        // Launcher with no binary + no commands is a
+                        // degenerate case (the manifest wouldn't do
+                        // anything). Fall back to the id so the chip
+                        // fires the id as a registered command.
+                        None => m.id.clone(),
+                    }),
                 color: chip.color.clone(),
                 // 2026-08-01 — label moved from chip.tooltip up to
                 // manifest.label (identity, not chip visuals).
@@ -6994,6 +7001,30 @@ impl App {
     }
     pub fn active_editor_mut(&mut self) -> Option<&mut Buffer> {
         self.active_pane_mut().and_then(Pane::as_editor_mut)
+    }
+
+    /// Snapshot of runtime context for launcher template expansion.
+    /// See `crate::launcher_template` for the substitution engine.
+    /// Assembled fresh on each call — cheap (all field reads, one
+    /// clone of the workspace PathBuf).
+    pub fn launcher_template_ctx(&self) -> crate::launcher_template::TemplateContext {
+        let (current_file, cursor_line, cursor_col) = match self.active_editor() {
+            Some(b) => (
+                b.path.clone(),
+                Some(b.editor.row_col().0 + 1),
+                Some(b.editor.row_col().1 + 1),
+            ),
+            None => (None, None, None),
+        };
+        // Selection support arrives with P5's launcher edit overlay —
+        // needs the editor's selection accessor, not blocking P3.
+        crate::launcher_template::TemplateContext {
+            workspace: self.workspace.clone(),
+            current_file,
+            cursor_line,
+            cursor_col,
+            selection: None,
+        }
     }
 
     /// multilang 3rd 2026-06-28 SEV-2: in a monorepo, runner

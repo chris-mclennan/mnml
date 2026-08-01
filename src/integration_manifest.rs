@@ -121,7 +121,12 @@ pub struct IntegrationManifest {
     pub description: Option<String>,
     #[serde(default)]
     pub version: Option<String>,
-    pub binary: String,
+    /// The compiled sibling's binary name (`mnml-aws-amplify`, etc.).
+    /// `None` = this manifest is a launcher — no binary of its own,
+    /// its actions launch external CLIs via templated `run` strings.
+    /// See `crate::launcher_template` for the substitution engine.
+    #[serde(default)]
+    pub binary: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
     // ── Detail-pane metadata (all optional) ────
@@ -357,7 +362,12 @@ fn scan_dir(dir: &Path, out: &mut Vec<IntegrationManifest>) {
         };
         match toml::from_str::<IntegrationManifest>(&text) {
             Ok(mut m) => {
-                if m.id.is_empty() || m.label.is_empty() || m.binary.is_empty() {
+                // 2026-08-01 (P3) — `binary` is now Option: launchers
+                // (data-only manifests, no compiled sibling) leave it
+                // unset. Validate id + label; binary check happens at
+                // spawn time in run_ex_command when the manifest
+                // actually runs.
+                if m.id.is_empty() || m.label.is_empty() {
                     continue;
                 }
                 // Sanitize unknown chip color → None (renderer
@@ -424,7 +434,7 @@ binary = "mnml-msg-slack"
         let m: IntegrationManifest = toml::from_str(toml).unwrap();
         assert_eq!(m.id, "slack");
         assert_eq!(m.label, "Slack");
-        assert_eq!(m.binary, "mnml-msg-slack");
+        assert_eq!(m.binary.as_deref(), Some("mnml-msg-slack"));
         assert!(m.chip.is_none());
         assert!(m.commands.is_empty());
         assert!(m.notifications.is_none());
@@ -557,7 +567,7 @@ color = "nonsense-neon"
             label: "X".into(),
             description: None,
             version: None,
-            binary: "mnml-x".into(),
+            binary: Some("mnml-x".into()),
             category: None,
             chip: None,
             commands: vec![],

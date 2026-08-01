@@ -908,6 +908,19 @@ impl App {
         if line.is_empty() {
             return;
         }
+        // 2026-08-01 (P3) — launcher template expansion. Any
+        // `{{workspace}}`, `{{current_file}}`, etc. tokens in the
+        // command get resolved to their runtime values before
+        // parsing. Unknown tokens stay literal (see
+        // launcher_template::expand). Zero cost when the string
+        // has no `{{` — the engine early-outs on the search.
+        let expanded_string;
+        let line = if line.contains("{{") {
+            expanded_string = crate::launcher_template::expand(line, &self.launcher_template_ctx());
+            expanded_string.as_str()
+        } else {
+            line
+        };
         // nvchad-round-10 SEV-2 2026-07-11 — `:w | e other.txt` and
         // friends. Split on ` | ` (space-pipe-space) only so we don't
         // break `:s/foo|bar/z/` or path/URL-style pipes. Recurse on
