@@ -8,7 +8,7 @@
 //! All four code paths funnel through `install_sibling` so the
 //! spawn shape, env var setup, and progress UX stay identical.
 
-use crate::family_catalog::{FamilySibling, MountStub, mount_stub_for};
+use crate::family_catalog::{IntegrationApp, MountStub, mount_stub_for};
 
 /// What to do once a sibling install finishes successfully.
 /// Captured at prompt time so users don't have to re-trigger their
@@ -47,7 +47,7 @@ pub enum InstallKind {
 
 /// Look up a family entry by id. Wrapper so callers don't need to
 /// import the catalog directly.
-pub fn lookup(id: &str) -> Option<&'static FamilySibling> {
+pub fn lookup(id: &str) -> Option<&'static IntegrationApp> {
     crate::family_catalog::CATALOG.iter().find(|s| s.id == id)
 }
 
@@ -55,7 +55,7 @@ pub fn lookup(id: &str) -> Option<&'static FamilySibling> {
 /// `repo_url` + `pinned_version`. When the pin is `"main"` we drop
 /// the `--tag` flag so cargo follows HEAD (used for in-development
 /// siblings that haven't tagged a release yet).
-pub fn cargo_install_argv(sibling: &FamilySibling) -> Vec<String> {
+pub fn cargo_install_argv(sibling: &IntegrationApp) -> Vec<String> {
     let mut argv = vec![
         "cargo".to_string(),
         "install".to_string(),
@@ -87,7 +87,7 @@ pub const TARGET: &str = env!("MNML_TARGET");
 /// On Windows mnml falls through to cargo install today; the
 /// prebuilt zip extraction story for PowerShell isn't worth the
 /// shell-quoting pain when the macOS/Linux paths are the priority.
-pub fn install_pipeline_argv(sibling: &FamilySibling) -> Vec<String> {
+pub fn install_pipeline_argv(sibling: &IntegrationApp) -> Vec<String> {
     if TARGET.contains("windows") {
         return cargo_install_argv(sibling);
     }
@@ -170,7 +170,7 @@ mod tests {
         // (2026-06-26 audit; see TODO.md). This test pins the
         // tagged-install path independently so the --tag emission
         // stays under coverage regardless of catalog state.
-        let sib = crate::family_catalog::FamilySibling {
+        let sib = crate::family_catalog::IntegrationApp {
             id: "synth",
             binary: "mnml-synth",
             category: crate::family_catalog::Category::Other,

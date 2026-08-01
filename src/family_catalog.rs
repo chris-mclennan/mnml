@@ -89,7 +89,7 @@ pub fn mount_stub_for(id: &str) -> Option<MountStub> {
 const MOUNT_STUBS: &[(&str, MountStub)] = &[];
 
 #[derive(Copy, Clone, Debug)]
-pub struct FamilySibling {
+pub struct IntegrationApp {
     /// Stable id (matches the `IntegrationIcon.id` we'd register).
     pub id: &'static str,
     /// Binary leaf name probed by `integration_detect`.
@@ -102,7 +102,7 @@ pub struct FamilySibling {
     pub icon: IconTemplate,
 }
 
-impl FamilySibling {
+impl IntegrationApp {
     /// `true` when this catalog entry isn't a separate cargo-install
     /// sibling but is built into mnml core (HTTP client today, maybe
     /// more in future). Marked by `pinned_version == "built-in"` as
@@ -175,9 +175,9 @@ impl FamilySibling {
 
 /// The catalog. Order here is the in-overlay order (grouped by
 /// category by the renderer).
-pub const CATALOG: &[FamilySibling] = &[
+pub const CATALOG: &[IntegrationApp] = &[
     // ── AWS ───────────────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "codebuild",
         binary: "mnml-aws-codebuild",
         category: Category::Aws,
@@ -191,7 +191,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "AWS CodeBuild",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "cloudwatch_logs",
         binary: "mnml-aws-cloudwatch-logs",
         category: Category::Aws,
@@ -211,7 +211,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "CloudWatch Logs live tail",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "amplify",
         binary: "mnml-aws-amplify",
         category: Category::Aws,
@@ -225,7 +225,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Amplify apps + deploys",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "lambda",
         binary: "mnml-aws-lambda",
         category: Category::Aws,
@@ -239,7 +239,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Lambda function browser",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "eventbridge",
         binary: "mnml-aws-eventbridge",
         category: Category::Aws,
@@ -253,7 +253,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "EventBridge Schedules",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "rds",
         binary: "mnml-aws-rds",
         category: Category::Aws,
@@ -267,7 +267,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "RDS database browser",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "ecs",
         binary: "mnml-aws-ecs",
         category: Category::Aws,
@@ -281,7 +281,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "ECS clusters + services",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "ecr",
         binary: "mnml-aws-ecr",
         category: Category::Aws,
@@ -295,7 +295,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "ECR container registry",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "cognito",
         binary: "mnml-aws-cognito",
         category: Category::Aws,
@@ -309,7 +309,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Cognito User Pools + users",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "sqs",
         binary: "mnml-aws-sqs",
         category: Category::Aws,
@@ -323,7 +323,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "SQS queues",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "sns",
         binary: "mnml-aws-sns",
         category: Category::Aws,
@@ -341,7 +341,7 @@ pub const CATALOG: &[FamilySibling] = &[
     // mixr is the family's DJ app. 2026-06-22 — was a docked
     // panel via mixr_host; now opens as a Pty pane via the
     // `mixr.show` palette command.
-    FamilySibling {
+    IntegrationApp {
         id: "mixr",
         binary: "mixr",
         category: Category::Music,
@@ -356,7 +356,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Filesystem / Storage ──────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "s3",
         binary: "mnml-fs-s3",
         category: Category::Fs,
@@ -370,7 +370,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Amazon S3 browser",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "azure_blob",
         binary: "mnml-fs-azure-blob",
         category: Category::Fs,
@@ -385,7 +385,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Databases ─────────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "dynamodb",
         binary: "mnml-db-dynamodb",
         category: Category::Db,
@@ -400,7 +400,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Forges (SCM) ──────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "bitbucket",
         binary: "mnml-forge-bitbucket",
         category: Category::Forge,
@@ -414,7 +414,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Bitbucket viewer",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "github",
         binary: "mnml-forge-github",
         category: Category::Forge,
@@ -428,7 +428,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "GitHub viewer",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "gitlab",
         binary: "mnml-forge-gitlab",
         category: Category::Forge,
@@ -442,7 +442,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "GitLab viewer",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "azdevops",
         binary: "mnml-forge-azdevops",
         category: Category::Forge,
@@ -457,7 +457,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Trackers ──────────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "jira",
         binary: "mnml-tracker-jira",
         category: Category::Tracker,
@@ -471,7 +471,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Jira tickets",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "linear",
         binary: "mnml-tracker-linear",
         category: Category::Tracker,
@@ -486,7 +486,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Test runners ──────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "playwright",
         binary: "mnml-test-playwright",
         category: Category::Test,
@@ -500,7 +500,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Playwright traces",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "cypress",
         binary: "mnml-test-cypress",
         category: Category::Test,
@@ -521,7 +521,7 @@ pub const CATALOG: &[FamilySibling] = &[
     // catalog so it shows up in the `+` Add integration overlay
     // as a built-in. The `install_command` rendered to users is
     // a no-op note since you can't `cargo install` a built-in.
-    FamilySibling {
+    IntegrationApp {
         id: "http",
         binary: "http",
         category: Category::Web,
@@ -540,7 +540,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Observability ─────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "datadog",
         binary: "mnml-obs-datadog",
         category: Category::Obs,
@@ -555,7 +555,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Messaging ─────────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "buttondown",
         binary: "mnml-msg-buttondown",
         category: Category::Msg,
@@ -569,7 +569,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Buttondown newsletter browser",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "slack",
         binary: "mnml-msg-slack",
         category: Category::Msg,
@@ -583,7 +583,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Slack browse + post",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "teams",
         binary: "mnml-msg-teams",
         category: Category::Msg,
@@ -597,7 +597,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Microsoft Teams browse + post",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "mandrill",
         binary: "mnml-msg-mandrill",
         category: Category::Msg,
@@ -611,7 +611,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Mandrill transactional email browser",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "gmail",
         binary: "mnml-msg-gmail",
         category: Category::Msg,
@@ -625,7 +625,7 @@ pub const CATALOG: &[FamilySibling] = &[
             label: "Gmail browse + send (per-user GCP project required)",
         },
     },
-    FamilySibling {
+    IntegrationApp {
         id: "gcal",
         binary: "mnml-msg-gcal",
         category: Category::Msg,
@@ -640,7 +640,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── CDN / Edge ────────────────────────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "cloudflare",
         binary: "mnml-cdn-cloudflare",
         category: Category::Cdn,
@@ -655,7 +655,7 @@ pub const CATALOG: &[FamilySibling] = &[
         },
     },
     // ── Virtualization & containers ───────────────────────────
-    FamilySibling {
+    IntegrationApp {
         id: "docker",
         binary: "mnml-virt-docker",
         category: Category::Virt,
@@ -671,12 +671,12 @@ pub const CATALOG: &[FamilySibling] = &[
     },
 ];
 
-pub fn catalog() -> &'static [FamilySibling] {
+pub fn catalog() -> &'static [IntegrationApp] {
     CATALOG
 }
 
 /// Find a catalog entry by binary name.
-pub fn find_by_binary(name: &str) -> Option<&'static FamilySibling> {
+pub fn find_by_binary(name: &str) -> Option<&'static IntegrationApp> {
     CATALOG.iter().find(|s| s.binary == name)
 }
 
@@ -689,7 +689,7 @@ pub fn find_by_binary(name: &str) -> Option<&'static FamilySibling> {
 /// the user already has the binary. The `+` overlay surfaces these
 /// as installed-but-not-yet-in-rail, with `i` and `y` no-ops.
 #[derive(Debug, Clone)]
-pub struct DiscoveredSibling {
+pub struct DiscoveredApp {
     pub id: String,
     pub binary: String,
     pub category: Category,
@@ -705,9 +705,9 @@ pub struct OwnedIconTemplate {
     pub label: String,
 }
 
-impl DiscoveredSibling {
+impl DiscoveredApp {
     /// Stringly `:term <binary>` invocation. Mirrors
-    /// `FamilySibling::launch_command()`.
+    /// `IntegrationApp::launch_command()`.
     pub fn launch_command(&self) -> String {
         format!(":term {}", self.binary)
     }
@@ -717,64 +717,64 @@ impl DiscoveredSibling {
 /// or an auto-discovered one. Lets the discovery overlay render
 /// both kinds with one code path.
 #[derive(Debug, Clone)]
-pub enum SiblingRef {
-    Catalog(&'static FamilySibling),
-    Discovered(DiscoveredSibling),
+pub enum AppRef {
+    Catalog(&'static IntegrationApp),
+    Discovered(DiscoveredApp),
 }
 
-impl SiblingRef {
+impl AppRef {
     pub fn id(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.id,
-            SiblingRef::Discovered(s) => &s.id,
+            AppRef::Catalog(s) => s.id,
+            AppRef::Discovered(s) => &s.id,
         }
     }
     pub fn binary(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.binary,
-            SiblingRef::Discovered(s) => &s.binary,
+            AppRef::Catalog(s) => s.binary,
+            AppRef::Discovered(s) => &s.binary,
         }
     }
     pub fn category(&self) -> Category {
         match self {
-            SiblingRef::Catalog(s) => s.category,
-            SiblingRef::Discovered(s) => s.category,
+            AppRef::Catalog(s) => s.category,
+            AppRef::Discovered(s) => s.category,
         }
     }
     pub fn one_liner(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.one_liner,
-            SiblingRef::Discovered(s) => &s.one_liner,
+            AppRef::Catalog(s) => s.one_liner,
+            AppRef::Discovered(s) => &s.one_liner,
         }
     }
     pub fn icon_glyph(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.icon.glyph,
-            SiblingRef::Discovered(s) => &s.icon.glyph,
+            AppRef::Catalog(s) => s.icon.glyph,
+            AppRef::Discovered(s) => &s.icon.glyph,
         }
     }
     pub fn icon_fallback(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.icon.fallback,
-            SiblingRef::Discovered(s) => &s.icon.fallback,
+            AppRef::Catalog(s) => s.icon.fallback,
+            AppRef::Discovered(s) => &s.icon.fallback,
         }
     }
     pub fn icon_color(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.icon.color,
-            SiblingRef::Discovered(s) => &s.icon.color,
+            AppRef::Catalog(s) => s.icon.color,
+            AppRef::Discovered(s) => &s.icon.color,
         }
     }
     pub fn icon_label(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.icon.label,
-            SiblingRef::Discovered(s) => &s.icon.label,
+            AppRef::Catalog(s) => s.icon.label,
+            AppRef::Discovered(s) => &s.icon.label,
         }
     }
     pub fn launch_command(&self) -> String {
         match self {
-            SiblingRef::Catalog(s) => s.launch_command(),
-            SiblingRef::Discovered(s) => s.launch_command(),
+            AppRef::Catalog(s) => s.launch_command(),
+            AppRef::Discovered(s) => s.launch_command(),
         }
     }
     /// Install command — `Some(cargo cmd)` for cargo-install catalog
@@ -783,9 +783,9 @@ impl SiblingRef {
     /// mnml core). Drives the `i`/`y` actions in the discovery overlay.
     pub fn install_command(&self) -> Option<String> {
         match self {
-            SiblingRef::Catalog(s) if s.is_builtin() => None,
-            SiblingRef::Catalog(s) => Some(s.install_command()),
-            SiblingRef::Discovered(_) => None,
+            AppRef::Catalog(s) if s.is_builtin() => None,
+            AppRef::Catalog(s) => Some(s.install_command()),
+            AppRef::Discovered(_) => None,
         }
     }
 
@@ -793,20 +793,20 @@ impl SiblingRef {
     /// than a standalone install. Built-ins always count as installed
     /// by the discovery overlay.
     pub fn is_builtin(&self) -> bool {
-        matches!(self, SiblingRef::Catalog(s) if s.is_builtin())
+        matches!(self, AppRef::Catalog(s) if s.is_builtin())
     }
     pub fn is_discovered(&self) -> bool {
-        matches!(self, SiblingRef::Discovered(_))
+        matches!(self, AppRef::Discovered(_))
     }
 }
 
-/// Walk `$PATH` + well-known dirs and synthesize a `DiscoveredSibling`
+/// Walk `$PATH` + well-known dirs and synthesize a `DiscoveredApp`
 /// for every `mnml-<class>-<name>` binary that ISN'T already in the
 /// hardcoded `CATALOG`. Categories are derived from the class prefix
 /// (`aws` → `Aws`, `db` → `Db`, etc.); unknown classes land in
 /// `Other`. Icon templates use category-derived defaults so the
 /// rows render with the right family-feel.
-pub fn discover_uncataloged() -> Vec<DiscoveredSibling> {
+pub fn discover_uncataloged() -> Vec<DiscoveredApp> {
     let cataloged: std::collections::HashSet<&str> = CATALOG.iter().map(|s| s.binary).collect();
     let mut out = Vec::new();
     for binary in crate::integration_detect::discover_mnml_binaries() {
@@ -818,7 +818,7 @@ pub fn discover_uncataloged() -> Vec<DiscoveredSibling> {
         let icon = synth_icon_for(category, name);
         let id = name.replace('-', "_");
         let one_liner = format!("auto-discovered {} sibling", class);
-        out.push(DiscoveredSibling {
+        out.push(DiscoveredApp {
             id,
             binary,
             category,
@@ -930,7 +930,7 @@ mod tests {
         // (2026-06-26 audit; see TODO.md). This test exercises the
         // tagged path explicitly so the --tag emission stays under
         // test coverage regardless of catalog state.
-        let synth = FamilySibling {
+        let synth = IntegrationApp {
             id: "synth",
             binary: "mnml-synth",
             category: Category::Other,
@@ -1018,7 +1018,7 @@ mod tests {
     #[test]
     fn sibling_ref_catalog_passthrough_methods() {
         let s = CATALOG.first().unwrap();
-        let r = SiblingRef::Catalog(s);
+        let r = AppRef::Catalog(s);
         assert_eq!(r.id(), s.id);
         assert_eq!(r.binary(), s.binary);
         assert_eq!(r.category(), s.category);
@@ -1030,7 +1030,7 @@ mod tests {
     fn builtin_catalog_entry_has_no_install_command() {
         let http = find_by_binary("http").expect("http entry present");
         assert!(http.is_builtin());
-        let r = SiblingRef::Catalog(http);
+        let r = AppRef::Catalog(http);
         assert!(r.is_builtin());
         assert!(r.install_command().is_none());
         // Launch command for built-in is the per-id palette command,
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[test]
     fn sibling_ref_discovered_has_no_install_command() {
-        let d = DiscoveredSibling {
+        let d = DiscoveredApp {
             id: "x".into(),
             binary: "mnml-other-x".into(),
             category: Category::Other,
@@ -1052,7 +1052,7 @@ mod tests {
                 label: "mnml-other-x".into(),
             },
         };
-        let r = SiblingRef::Discovered(d);
+        let r = AppRef::Discovered(d);
         assert!(r.is_discovered());
         assert!(r.install_command().is_none());
         assert_eq!(r.launch_command(), ":term mnml-other-x");
