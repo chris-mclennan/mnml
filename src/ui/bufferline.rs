@@ -570,9 +570,25 @@ pub fn pick_cluster_mode(
 /// cluster doesn't fit). Keeps the most-clicked chrome
 /// (+ new-tab, theme toggle, × window-close); drops TABS label
 /// and per-tab-page chips.
-pub fn compact_cluster_width(_app: &App) -> u16 {
+pub fn compact_cluster_width(app: &App) -> u16 {
     // ` + ` (3) + theme toggle pill (4) + ` × ` (3)
-    3 + 4 + 3
+    let mut w: u16 = 3 + 4 + 3;
+    // 2026-08-01 — compact mode now shows numbered chips + close
+    // on active when there are 2+ tab pages (user asked). Reserve
+    // that width so the picker knows compact is wider than the
+    // no-chips minimum. Same shape as the expanded per-chip loop
+    // — 3 cells for ` <marker><n> ` plus 2 for the × on active.
+    // No TABS label in compact.
+    if app.layouts.len() >= 2 {
+        for i in 0..app.layouts.len() {
+            let dig = (i + 1).to_string().chars().count() as u16;
+            w += 3 + dig; // ` <marker><digits> `
+            if i == app.active_layout {
+                w += 2; // ` × `
+            }
+        }
+    }
+    w
 }
 
 /// User-forced cluster mode overrides. Threaded from `[ui]
@@ -690,7 +706,15 @@ pub fn paint_right_cluster(
     // is discoverable). Compact mode drops both. User can force the
     // mode via `[ui] top_bar_cluster_mode = "compact" | "expanded"`,
     // otherwise the space-tight auto-fallback picks.
-    if !compact {
+    // 2026-08-01 — user redesign of compact mode: hide the "TABS"
+    // label always; hide the numbered chip when there's only 1 tab
+    // page (no switching to do); show chips + close only when 2+
+    // tab pages exist. Expanded mode keeps the full "TABS 1 2 …"
+    // layout with the label. Net: compact reads as `+ ●━ ×` on a
+    // single-tab session and `+ 1 2 × ●━ ×` once you open a 2nd.
+    let show_tabs_label = !compact;
+    let show_chips = !compact || app.layouts.len() >= 2;
+    if show_tabs_label {
         // `TABS` label — decorative click target: right-click opens
         // the Expanded/Compact/Auto mode chooser.
         spans.push(Span::styled(
@@ -707,6 +731,8 @@ pub fn paint_right_cluster(
             height: 1,
         });
         cluster_x += 6;
+    }
+    if show_chips {
         // Per-tab-page chips with close on active.
         for i in 0..app.layouts.len() {
             let active = i == app.active_layout;
