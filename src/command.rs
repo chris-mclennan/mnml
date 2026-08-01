@@ -2189,6 +2189,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.bake_all_builtin_glyphs(),
         },
         Command {
+            id: "integrations.bake_sibling_glyphs",
+            title: "Integrations: bake sibling-shipped SVGs from ~/.config/mnml/glyphs/ into MnmlSymbols",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.bake_sibling_glyphs(),
+        },
+        Command {
             id: "debug.toggle_click_inspector",
             title: "Debug: toggle click inspector (toast rect names on each click)",
             group: "debug",
