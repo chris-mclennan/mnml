@@ -60,14 +60,7 @@ impl App {
                     (rect.x, rect.y + 1),
                 ))
             }
-            crate::HoverChip::LauncherIcon(idx) => {
-                let &(rect, _) = self
-                    .rects
-                    .launcher_icon_rects
-                    .iter()
-                    .find(|(_, i)| i == idx)?;
-                Some((crate::HoverChip::LauncherIcon(*idx), (rect.x, rect.y + 1)))
-            }
+            // 2026-08-01 (P2) — LauncherIcon variant removed.
             crate::HoverChip::ActivityBarGear => self
                 .rects
                 .activity_bar_gear
@@ -99,9 +92,6 @@ impl App {
             match chip {
                 crate::HoverChip::IntegrationIcon(idx) => {
                     self.open_integration_chip_context_menu(idx, anchor);
-                }
-                crate::HoverChip::LauncherIcon(idx) => {
-                    self.open_launcher_chip_context_menu(idx, anchor);
                 }
                 crate::HoverChip::ActivityBarGear => {
                     self.open_gear_context_menu(anchor);
@@ -174,9 +164,6 @@ impl App {
             match chip {
                 crate::HoverChip::IntegrationIcon(idx) => {
                     self.open_integration_chip_context_menu(idx, anchor);
-                }
-                crate::HoverChip::LauncherIcon(idx) => {
-                    self.open_launcher_chip_context_menu(idx, anchor);
                 }
                 crate::HoverChip::ActivityBarGear => {
                     self.open_gear_context_menu(anchor);
@@ -619,28 +606,9 @@ impl App {
         ));
     }
 
-    pub fn open_launcher_chip_context_menu(&mut self, icon_idx: usize, anchor: (u16, u16)) {
-        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let Some(icon) = self.config.ui.launcher_icons.get(icon_idx) else {
-            return;
-        };
-        let title = icon
-            .tooltip
-            .clone()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| icon.id.clone());
-        let id = icon.id.clone();
-        let toggle_label = if icon.enabled {
-            "Disable (hide chip)"
-        } else {
-            "Enable (show chip)"
-        };
-        let items = vec![MenuItem::new(
-            toggle_label,
-            MenuAction::ToggleLauncherEnabled(id),
-        )];
-        self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
-    }
+    // 2026-08-01 (P2) — open_launcher_chip_context_menu deleted
+    // with the LauncherIcon retirement. Chip context menus route
+    // through open_integration_chip_context_menu.
 
     /// Right-click context menu for a right-panel tab chip. v3
     /// polish — mouse-hunter SEV-2 F.
@@ -1866,28 +1834,11 @@ impl App {
                     );
                 }
             }
-            ToggleLauncherEnabled(id) => {
-                if let Some(slot) = self
-                    .config
-                    .ui
-                    .launcher_icons
-                    .iter_mut()
-                    .find(|i| i.id == id)
-                {
-                    slot.enabled = !slot.enabled;
-                    let now = slot.enabled;
-                    self.toast(format!(
-                        "launcher {id} {}",
-                        if now { "enabled" } else { "disabled" }
-                    ));
-                    // Persist via the launcher-icons writer. 2026-06-28
-                    // fix for the prior TODO — was using the integrations
-                    // path which silently dropped launcher toggles on
-                    // restart.
-                    let _ = crate::app::discovery::persist_launcher_icons(
-                        &self.config.ui.launcher_icons,
-                    );
-                }
+            ToggleLauncherEnabled(_id) => {
+                // 2026-08-01 (P2) — LauncherIcon retired. Kept the
+                // MenuAction variant as a no-op so any lingering
+                // menu items don't fail to dispatch; will be removed
+                // when the enum is next touched.
             }
             SetTopBarClusterMode(mode) => {
                 self.config.ui.top_bar_cluster_mode = mode.to_string();

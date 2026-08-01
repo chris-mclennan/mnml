@@ -207,19 +207,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: goto line".into(),
             None,
         )),
-        HoverChip::LauncherIcon(idx) => {
-            let icon = app.config.ui.launcher_icons.get(idx)?;
-            let &(rect, _) = app
-                .rects
-                .launcher_icon_rects
-                .iter()
-                .find(|(_, i)| *i == idx)?;
-            let label = icon
-                .tooltip
-                .clone()
-                .unwrap_or_else(|| format!("click: {}", icon.command));
-            Some((rect, label, None))
-        }
+        // 2026-08-01 (P2) — HoverChip::LauncherIcon match deleted.
         HoverChip::IntegrationIcon(idx) => {
             let icon = app.config.ui.integration_icons.get(idx)?;
             let &(rect, _) = app

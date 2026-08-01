@@ -1245,21 +1245,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     }
     // Launcher-icon strip — click hands off to the configured
     // command (registered command id, or ex-cmdline string).
-    if let Some(&(_, icon_idx)) = app
-        .rects
-        .launcher_icon_rects
-        .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        && let Some(icon) = app.config.ui.launcher_icons.get(icon_idx)
-    {
-        let cmd = icon.command.clone();
-        if let Some(rest) = cmd.strip_prefix(':') {
-            app.run_ex_command(rest);
-        } else {
-            crate::command::run(&cmd, app);
-        }
-        return;
-    }
+    // 2026-08-01 (P2) — launcher_icon_rects click routing deleted.
     if let Some(r) = app.rects.bufferline_new_tab_button
         && crate::app::dispatch::contains(r, x, y)
     {

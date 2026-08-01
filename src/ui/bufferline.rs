@@ -511,12 +511,12 @@ pub(crate) fn mode_chip_for_pane(
 /// buttons are NOT part of this — they live on the bufferline
 /// (tab bar) right end, not the chrome row.
 pub fn right_cluster_width(app: &App) -> u16 {
-    // 2026-06-27 — launchers + integrations now paint in the gap
+    // 2026-06-27 — launchers + integrations paint in the gap
     // between the palette dropdown and this cluster (closer to
     // where the user expects to find them). The right cluster
     // is just: ` + ` new-tab + ` TABS ` + tab-page chips + theme
     // + close.
-    let _ = app.config.ui.launcher_icons.len();
+    let _ = app;
     // ` + ` new-tab button — always present.
     let mut w: u16 = 3;
     // ` TABS ` label + per-tab-page chips — always present in the

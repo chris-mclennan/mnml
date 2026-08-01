@@ -1433,9 +1433,7 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, section) in &app.rects.activity_bar_icons {
         push_rect(&mut out, &mut first, &format!("activity:{section:?}"), *r);
     }
-    for (r, idx) in &app.rects.launcher_icon_rects {
-        push_rect(&mut out, &mut first, &format!("launcher:{idx}"), *r);
-    }
+    // 2026-08-01 (P2) — launcher_icon_rects removed.
     // Extra rect families added per reviewer feedback (overstated
     // "every registered click rect" claim) — the ones most likely
     // to be subject to the same chip-overlap bug pattern that

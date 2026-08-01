@@ -162,11 +162,9 @@ impl App {
                 taken.insert(c as u32);
             }
         }
-        for li in &self.config.ui.launcher_icons {
-            if let Some(c) = li.glyph.chars().next() {
-                taken.insert(c as u32);
-            }
-        }
+        // 2026-08-01 (P2) — launcher_icons scan deleted with the
+        // LauncherIcon retirement. All chip glyphs are in
+        // integration_icons above.
         // Walk U+F1B00 → U+F1FFF (well past MDI end at U+F1AF0, well
         // inside the Supplementary Private Use Area).
         let mut cp = 0xF1B00u32;
@@ -809,86 +807,9 @@ pub fn persist_top_bar_cluster_mode(mode: &'static str) -> Result<std::path::Pat
     persist_ui_string("top_bar_cluster_mode", mode)
 }
 
-pub fn persist_launcher_icons(
-    icons: &[crate::config::LauncherIcon],
-) -> Result<std::path::PathBuf, String> {
-    let path = crate::config::user_config_path()
-        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-    }
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let stripped = strip_launcher_icon_blocks(&existing);
-    let appended = append_launcher_icon_blocks(&stripped, icons);
-    std::fs::write(&path, appended).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(path)
-}
-
-/// Mirror of `MANAGED_BANNER_MARKER` for the launcher_icons section.
-const MANAGED_LAUNCHER_BANNER_MARKER: &str = "# ── mnml-managed launcher icons";
-
-/// Remove every existing `[[ui.launcher_icon]]` block (and its
-/// managed-section banner) from `src`.
-fn strip_launcher_icon_blocks(src: &str) -> String {
-    let mut out = String::with_capacity(src.len());
-    let mut skipping = false;
-    let mut last_was_blank = false;
-    for line in src.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with(MANAGED_LAUNCHER_BANNER_MARKER) {
-            skipping = true;
-            continue;
-        }
-        if trimmed == "[[ui.launcher_icon]]" {
-            skipping = true;
-            continue;
-        }
-        if skipping {
-            if (trimmed.starts_with('[') && !trimmed.starts_with("[ "))
-                && trimmed != "[[ui.launcher_icon]]"
-            {
-                skipping = false;
-            } else {
-                continue;
-            }
-        }
-        if line.trim().is_empty() {
-            if last_was_blank {
-                continue;
-            }
-            last_was_blank = true;
-        } else {
-            last_was_blank = false;
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
-}
-
-fn append_launcher_icon_blocks(existing: &str, icons: &[crate::config::LauncherIcon]) -> String {
-    let mut out = existing.trim_end().to_string();
-    if !out.is_empty() {
-        out.push_str("\n\n");
-    }
-    out.push_str("# ── mnml-managed launcher icons ──────────────────────────────────────\n");
-    out.push_str("# Written by the integration / launcher right-click menus. Edit by\n");
-    out.push_str("# hand or via the chip context menu — re-saves replace this section.\n\n");
-    for ic in icons {
-        out.push_str("[[ui.launcher_icon]]\n");
-        out.push_str(&format!("id = {}\n", toml_str(&ic.id)));
-        out.push_str(&format!("glyph = {}\n", toml_str(&ic.glyph)));
-        out.push_str(&format!("fallback = {}\n", toml_str(&ic.fallback)));
-        out.push_str(&format!("command = {}\n", toml_str(&ic.command)));
-        out.push_str(&format!("color = {}\n", toml_str(&ic.color)));
-        if let Some(t) = &ic.tooltip {
-            out.push_str(&format!("tooltip = {}\n", toml_str(t)));
-        }
-        out.push_str(&format!("enabled = {}\n", ic.enabled));
-        out.push('\n');
-    }
-    out
-}
+// 2026-08-01 (P2) — persist_launcher_icons + strip/append helpers
+// deleted with the LauncherIcon retirement. Chip persistence now
+// goes through persist_integration_icons (slim entries).
 
 /// Identifies our managed-section banner so the strip pass can
 /// recognise it and remove it along with the blocks it heads.
@@ -1210,24 +1131,6 @@ color = \"blue\"
         );
     }
 
-    #[test]
-    fn append_launcher_icon_blocks_serializes_enabled_field() {
-        let icons = vec![crate::config::LauncherIcon {
-            id: "browser".to_string(),
-            glyph: "\u{F0239}".to_string(),
-            fallback: "B".to_string(),
-            command: "view.browser".to_string(),
-            color: "blue".to_string(),
-            tooltip: Some("Open browser pane".to_string()),
-            enabled: true,
-        }];
-        let toml_out = append_launcher_icon_blocks("", &icons);
-        assert!(toml_out.contains("[[ui.launcher_icon]]"));
-        assert!(toml_out.contains("enabled = true"));
-        let stripped = strip_launcher_icon_blocks(&toml_out);
-        assert!(
-            !stripped.contains("[[ui.launcher_icon]]"),
-            "strip should remove launcher blocks; got:\n{stripped}"
-        );
-    }
+    // 2026-08-01 (P2) — append_launcher_icon_blocks_serializes_enabled_field
+    // deleted with the LauncherIcon retirement.
 }

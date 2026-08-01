@@ -2098,14 +2098,10 @@ fn paint_integration_chips_in_gap(
     // configured-but-hidden until the user opts in (right-click →
     // Enable, or the discovery overlay). Browser is the only
     // default-enabled integration; keeps first-run quiet.
-    let enabled_launchers: Vec<(usize, &crate::config::LauncherIcon)> = app
-        .config
-        .ui
-        .launcher_icons
-        .iter()
-        .enumerate()
-        .filter(|(_, i)| i.enabled)
-        .collect();
+    //
+    // 2026-08-01 (P2) — the separate `enabled_launchers` Vec was
+    // deleted with the LauncherIcon retirement. Palette bar now
+    // paints only integration chips (launcher chips folded in).
     // design-critic Issue 1 — apply the SAME filter as the rail:
     // gate on enabled=true AND binary-present (or built-in). Without
     // the binary check, a chip with enabled=true but uninstalled
@@ -2131,12 +2127,8 @@ fn paint_integration_chips_in_gap(
             }
         })
         .collect();
-    let n_launcher = enabled_launchers.len();
     let n_integration = enabled_integrations.len();
-    let total_wanted = n_launcher + n_integration;
-    let to_paint = total_wanted.min(chip_count);
-    let launcher_paint = n_launcher.min(to_paint);
-    let integration_paint = to_paint - launcher_paint;
+    let integration_paint = n_integration.min(chip_count);
     // qa-feature 2026-07-01 — exactly 1 empty cell between the
     // right-panel toggle's visible glyph and the first chip's
     // visible glyph. Chip starts at avail_left (= toggle rect's
@@ -2152,21 +2144,6 @@ fn paint_integration_chips_in_gap(
     // cluster) instead of the per-icon color slot. The user asked
     // for these top-row icons to read as flat chrome, not
     // decorated app links. Bold is dropped for the same reason.
-    for &(i, icon) in enabled_launchers.iter().take(launcher_paint) {
-        let glyph = if nerd { &icon.glyph } else { &icon.fallback };
-        let chip_rect = Rect {
-            x,
-            y,
-            width: 3,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(crate::ui::design_tokens::chip_bar_span(glyph, false)),
-            chip_rect,
-        );
-        app.rects.launcher_icon_rects.push((chip_rect, i));
-        x = x.saturating_add(chip_stride);
-    }
     for &(i, icon) in enabled_integrations.iter().take(integration_paint) {
         let glyph = if nerd { &icon.glyph } else { &icon.fallback };
         let chip_rect = Rect {
@@ -4113,31 +4090,13 @@ mod palette_bar_tests {
     fn full_draw_keeps_cluster_click_rects_registered() {
         let d = tempfile::tempdir().unwrap();
         let ws = d.path().to_path_buf();
-        let mut cfg = Config::default();
-        // Seed a launcher icon so we can verify launcher_icon_rects
-        // gets populated (and survives the full draw).
-        cfg.ui.launcher_icons.push(crate::config::LauncherIcon {
-            id: "test_launcher".to_string(),
-            glyph: "\u{F0E58}".to_string(),
-            fallback: "C".to_string(),
-            command: ":noop".to_string(),
-            color: "orange".to_string(),
-            tooltip: Some("test launcher".to_string()),
-            enabled: true,
-        });
+        // 2026-08-01 (P2) — launcher_icon_rects assertion deleted
+        // with the LauncherIcon retirement. Test still verifies the
+        // rest of the cluster (new-tab, theme toggle, window close).
+        let cfg = Config::default();
         let mut app = App::new(ws, cfg).unwrap();
         let mut term = Terminal::new(TestBackend::new(200, 30)).unwrap();
         term.draw(|f| draw(f, &mut app)).unwrap();
-
-        // After a full draw, every cluster chip's rect must still
-        // be registered — confirming the bufferline-clears-after-
-        // palette-paint bug doesn't reappear.
-        assert!(
-            !app.rects.launcher_icon_rects.is_empty(),
-            "launcher_icon_rects empty post-draw: cluster rects must be registered \
-             (bufferline_visible={})",
-            app.bufferline_visible,
-        );
         assert!(
             app.rects.bufferline_new_tab_button.is_some(),
             "new tab button rect missing post-draw"

@@ -1814,11 +1814,9 @@ pub struct PaneRects {
     pub bufferline_theme_toggle: Option<Rect>,
     pub bufferline_window_close: Option<Rect>,
     /// Bufferline launcher-icon strip — one entry per icon rendered, in
-    /// the order configured. `(rect, icon_idx)` where `icon_idx` indexes
-    /// `App.config.ui.launcher_icons`. Replaces the older fixed
-    /// `bufferline_claude_button` / `bufferline_codex_button` fields —
-    /// Claude + Codex are now built-in defaults in that config Vec.
-    pub launcher_icon_rects: Vec<(Rect, usize)>,
+    // 2026-08-01 (P2) — launcher_icon_rects deleted with the
+    // LauncherIcon retirement. Integration chip clicks route through
+    // integration_icon_rects.
     /// Centered "search files, run commands…" chip in the palette
     /// top-bar. Click → `app.open_command_palette()`.
     pub palette_search_chip: Option<Rect>,
@@ -2817,7 +2815,6 @@ impl PaneRects {
         check_vec!(activity_bar_icons);
         check_vec!(session_tabs);
         check_vec!(integration_icon_rects);
-        check_vec!(launcher_icon_rects);
         check_vec!(bufferline_tabs);
         check_vec!(right_panel_tabs);
         check_vec!(split_strip_buttons);

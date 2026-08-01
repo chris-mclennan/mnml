@@ -295,10 +295,9 @@ pub enum HoverChip {
     StatuslineFilesize,
     StatuslineLnCol,
     /// Bufferline launcher-icon — the `usize` indexes
-    /// `App.config.ui.launcher_icons`. Built-in defaults are
-    /// `0 = Claude`, `1 = Codex`; users can replace / append via
-    /// `[[ui.launcher_icon]]` in their config.
-    LauncherIcon(usize),
+    // 2026-08-01 (P2) — LauncherIcon variant deleted with the
+    // LauncherIcon struct retirement. All chip hover-tooltip
+    // routing goes through IntegrationIcon.
     /// File-tree toolbar icon row at the top of the rail. The
     /// `&'static str` is the command id (e.g. `"file.new_folder"`)
     /// stored alongside the rect in `app.rects.tree_icon_buttons`.

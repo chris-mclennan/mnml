@@ -712,14 +712,10 @@ pub struct UiConfig {
     /// doesn't cover the code below). Any other value falls back to
     /// `"center"`.
     pub picker_position: String,
-    /// Configurable launcher-icon strip on the right side of the
-    /// bufferline. Each entry renders as a 4-cell colored chip that
-    /// runs `command` on click. Default has Claude Code + Codex; users
-    /// can append entries via `[[ui.launcher_icon]]` in their config to
-    /// add `:term <binary>` shortcuts for sibling tool integrations
-    /// (database viewers, ticket viewers, etc.) or any registered
-    /// command. See [`LauncherIcon`].
-    pub launcher_icons: Vec<LauncherIcon>,
+    // 2026-08-01 (P2) — `launcher_icons` field deleted; the
+    // bufferline launcher strip is folded into `integration_icons`.
+    // Every chip in mnml is now an IntegrationIcon; the rail
+    // renderer filters/paints them. One type, one source of truth.
     /// Plain-glyph icons stacked in the rail's INTEGRATIONS section
     /// (under GIT). Each runs `command` on click; no chip background.
     /// Defaults empty — populate via `[[ui.integration_icon]]` entries
@@ -1007,53 +1003,7 @@ pub struct IntegrationIconCommand {
     pub title: String,
 }
 
-/// One entry in the bufferline's right-side launcher-icon strip.
-///
-/// ```toml
-/// # An icon for a private terminal binary you've built locally:
-/// [[ui.launcher_icon]]
-/// id       = "myapp"
-/// glyph    = "\U000F0668"       # nf-md-test-tube (TOML 8-digit form)
-/// fallback = "MA"               # when --ascii / [ui] ascii_icons = true
-/// command  = ":term myapp"  # leading `:` ⇒ ex-cmdline string
-/// color    = "teal"             # theme slot name for the chip bg
-/// tooltip  = "My private terminal app"
-///
-/// # Or fire any registered command directly (no leading `:`):
-/// [[ui.launcher_icon]]
-/// id       = "mixr"
-/// glyph    = "\U000F1011"       # nf-md-music (TOML 8-digit form)
-/// fallback = "♪"
-/// command  = "mixr.show"
-/// color    = "purple"
-/// ```
-#[derive(Debug, Clone)]
-pub struct LauncherIcon {
-    /// Stable identifier — used for the hover-tooltip rect key + as a
-    /// debug hint. Should be unique within the strip.
-    pub id: String,
-    /// Nerd-Font glyph (single char, e.g. `"\u{F0E2D}"`). The 4-cell
-    /// chip paints the glyph centred on a colored background.
-    pub glyph: String,
-    /// ASCII fallback when `[ui] ascii_icons = true` or `--ascii` is on.
-    /// Typically 1-2 chars (e.g. `"CC"`).
-    pub fallback: String,
-    /// What to fire on click. Either a registered command id
-    /// (`"ai.claude_code"`, `"mixr.show"`) or a colon-prefixed cmdline
-    /// string that goes through `run_ex_command` (`":term /bin"`).
-    pub command: String,
-    /// Theme slot name for the chip background. Recognized: `"orange"`,
-    /// `"cyan"`, `"blue"`, `"green"`, `"yellow"`, `"purple"`, `"red"`,
-    /// `"teal"`, `"bg2"`. Anything else falls back to `bg2` (dark chip).
-    pub color: String,
-    /// Optional hover-tooltip text. When `None`, the tooltip shows
-    /// the `command` string verbatim as a debug hint.
-    pub tooltip: Option<String>,
-    /// Visibility opt-in. Default `false` — chips don't show
-    /// until the user explicitly enables them. Only the browser
-    /// launcher is enabled by default.
-    pub enabled: bool,
-}
+// LauncherIcon type + docs deleted 2026-08-01 (P2). See git history.
 
 impl Default for Config {
     fn default() -> Self {
@@ -1113,11 +1063,6 @@ impl Default for Config {
                 git_graph_author_col: None,
                 git_graph_detail_col: None,
                 picker_position: "center".to_string(),
-                // Launcher chips on the bufferline-right are empty by
-                // default now — Claude + Codex moved into INTEGRATIONS
-                // (rail) below. Users can still add chips here via
-                // `[[ui.launcher_icon]]`.
-                launcher_icons: vec![],
                 // Default INTEGRATIONS row — Claude / Codex / Bitbucket /
                 // GitHub. Replace or extend via `[[ui.integration_icon]]`
                 // in user config; empty array there removes the section.
@@ -1508,13 +1453,14 @@ struct RawUi {
     /// (even as `[]`), it **replaces** the built-in Claude+Codex defaults.
     /// Users who just want to *append* can copy the defaults from
     /// `LauncherIcon` docs and add their own entries.
-    #[serde(default, rename = "launcher_icon")]
-    launcher_icons: Option<Vec<RawLauncherIcon>>,
+    // 2026-08-01 (P2) — `launcher_icon` parse entry deleted with the
+    // LauncherIcon struct retirement. All chip config uses
+    // `[[ui.integration_icon]]` now.
     /// Array of `[[ui.integration_icon]]` entries for the rail's
     /// INTEGRATIONS section. Replaces the built-in defaults (currently
     /// empty) when present.
     #[serde(default, rename = "integration_icon")]
-    integration_icons: Option<Vec<RawLauncherIcon>>,
+    integration_icons: Option<Vec<RawIntegrationIcon>>,
     /// Ticket prefixes for pty-tab auto-naming. See
     /// [`UiConfig::ticket_prefixes`].
     #[serde(default)]
@@ -1571,13 +1517,13 @@ struct RawUi {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct RawLauncherIcon {
+struct RawIntegrationIcon {
     id: Option<String>,
-    glyph: Option<String>,
-    fallback: Option<String>,
+    // 2026-08-01 — glyph/fallback/color/tooltip fields dropped.
+    // User config is slim (id + enabled + in_palette_bar); every
+    // other field reads from the built-in default or the sibling
+    // manifest.
     command: Option<String>,
-    color: Option<String>,
-    tooltip: Option<String>,
     /// Visibility opt-in. None in raw → false in resolved config.
     enabled: Option<bool>,
     /// qa-feature 2026-07-01 — palette-bar visibility. None → false.
@@ -1778,36 +1724,10 @@ impl Config {
         if let Some(v) = raw.ui.picker_position {
             self.ui.picker_position = v;
         }
-        // `[[ui.launcher_icon]]` replaces the built-in defaults entirely
-        // when set — that lets users start from scratch. Empty array is
-        // valid and means "no launcher icons at all."
-        if let Some(raws) = raw.ui.launcher_icons {
-            self.ui.launcher_icons = raws
-                .into_iter()
-                .filter_map(|r| {
-                    let glyph = r.glyph?;
-                    let command = r.command?;
-                    // Generate a stable id from the command if not given.
-                    let id = r.id.unwrap_or_else(|| {
-                        command
-                            .trim_start_matches(':')
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or("launcher")
-                            .to_string()
-                    });
-                    Some(LauncherIcon {
-                        id,
-                        glyph,
-                        fallback: r.fallback.unwrap_or_else(|| "*".to_string()),
-                        command,
-                        color: r.color.unwrap_or_else(|| "bg2".to_string()),
-                        tooltip: r.tooltip,
-                        enabled: r.enabled.unwrap_or(false),
-                    })
-                })
-                .collect();
-        }
+        // 2026-08-01 (P2) — `[[ui.launcher_icon]]` parse block deleted
+        // with LauncherIcon retirement. Config was already merged into
+        // integration_icons semantics; the launcher_icons block was
+        // dormant (empty by default) and dead surface anyway.
         // `[[ui.integration_icon]]` — rail INTEGRATIONS section.
         // 2026-06-19 — vscode-user-mouse second hunt SEV-3: prior
         // semantics replaced the entire default vec, so a user
@@ -1834,8 +1754,8 @@ impl Config {
             // Prior version walked built-ins in default order and
             // layered users on top, which silently reset any manual
             // reorder back to the built-in sequence.
-            let user_raws: Vec<RawLauncherIcon> = raws;
-            let id_of_raw = |r: &RawLauncherIcon| -> Option<String> {
+            let user_raws: Vec<RawIntegrationIcon> = raws;
+            let id_of_raw = |r: &RawIntegrationIcon| -> Option<String> {
                 if let Some(id) = &r.id {
                     return Some(id.clone());
                 }
@@ -3271,10 +3191,6 @@ repo  = "example-knowledge"
         // Everything else comes from installed sibling manifests
         // at ~/.config/mnml/integrations/ or (P3+) launcher entries.
         let cfg = Config::default();
-        assert!(
-            cfg.ui.launcher_icons.is_empty(),
-            "launcher_icons (bufferline chips) default to empty"
-        );
         let ids: Vec<&str> = cfg
             .ui
             .integration_icons
@@ -3346,72 +3262,7 @@ id = "browser"
         );
     }
 
-    #[test]
-    fn launcher_icons_config_replaces_defaults() {
-        let dir = tempfile::tempdir().unwrap();
-        let cfg_path = dir.path().join("config.toml");
-        let mut f = std::fs::File::create(&cfg_path).unwrap();
-        writeln!(
-            f,
-            r#"
-[[ui.launcher_icon]]
-glyph    = "M"
-fallback = "MA"
-command  = ":term myapp"
-color    = "teal"
-tooltip  = "myapp browser"
-
-[[ui.launcher_icon]]
-id       = "db"
-glyph    = "D"
-fallback = "DB"
-command  = "psql-viewer"
-color    = "purple"
-"#
-        )
-        .unwrap();
-
-        let mut cfg = Config::default();
-        cfg.apply_file_pub(&cfg_path);
-        // Setting `[[ui.launcher_icon]]` replaces, not appends — built-in
-        // Claude+Codex defaults are gone.
-        assert_eq!(cfg.ui.launcher_icons.len(), 2);
-        // First entry — id auto-derived from the command's first token
-        // when omitted (`term` here, leading `:` stripped).
-        assert_eq!(cfg.ui.launcher_icons[0].id, "term");
-        assert_eq!(cfg.ui.launcher_icons[0].command, ":term myapp");
-        assert_eq!(cfg.ui.launcher_icons[0].color, "teal");
-        assert_eq!(
-            cfg.ui.launcher_icons[0].tooltip.as_deref(),
-            Some("myapp browser")
-        );
-        // Second entry — explicit id, command without leading `:`
-        // (interpreted as a registered command id by the dispatcher).
-        assert_eq!(cfg.ui.launcher_icons[1].id, "db");
-        assert_eq!(cfg.ui.launcher_icons[1].command, "psql-viewer");
-        assert!(cfg.ui.launcher_icons[1].tooltip.is_none());
-    }
-
-    #[test]
-    fn launcher_icons_empty_array_clears_defaults() {
-        // `launcher_icon = []` would be ambiguous in TOML; the proper
-        // form is no `[[ui.launcher_icon]]` blocks at all + the key
-        // set explicitly to an empty array. Verify we accept it.
-        let dir = tempfile::tempdir().unwrap();
-        let cfg_path = dir.path().join("config.toml");
-        let mut f = std::fs::File::create(&cfg_path).unwrap();
-        // `launcher_icon = []` under `[ui]`.
-        writeln!(
-            f,
-            r#"
-[ui]
-launcher_icon = []
-"#
-        )
-        .unwrap();
-
-        let mut cfg = Config::default();
-        cfg.apply_file_pub(&cfg_path);
-        assert!(cfg.ui.launcher_icons.is_empty());
-    }
+    // 2026-08-01 (P2) — launcher_icons_config_replaces_defaults +
+    // launcher_icons_empty_array_clears_defaults tests deleted with
+    // the LauncherIcon retirement.
 }

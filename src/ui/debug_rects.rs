@@ -47,9 +47,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     for (r, _) in &app.rects.activity_bar_icons {
         paint_single(frame, Some(*r), Color::LightBlue);
     }
-    for (r, _) in &app.rects.launcher_icon_rects {
-        paint_single(frame, Some(*r), Color::LightYellow);
-    }
+    // 2026-08-01 (P2) — launcher_icon_rects removed.
 
     // 2026-06-19 — vscode-user-mouse agent flagged that ~30 of
     // ~40 rect families were uncovered. Adding the high-impact

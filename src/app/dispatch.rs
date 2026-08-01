@@ -627,14 +627,8 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineLnCol);
     }
-    if let Some(&(_, icon_idx)) = app
-        .rects
-        .launcher_icon_rects
-        .iter()
-        .find(|(r, _)| contains(*r, x, y))
-    {
-        return Some(crate::HoverChip::LauncherIcon(icon_idx));
-    }
+    // 2026-08-01 (P2) — launcher_icon_rects hit-test removed with
+    // the LauncherIcon retirement.
     if let Some(&(_, cmd_id)) = app
         .rects
         .tree_icon_buttons
