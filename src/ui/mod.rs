@@ -3210,7 +3210,15 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                     " Nothing installed yet — try the Marketplace tab".to_string()
                 }
                 crate::app::IntegrationsPanelTab::Marketplace => {
-                    " Everything is installed (nice)".to_string()
+                    // 2026-08-01 (P4b) — if the user has never fetched
+                    // the marketplace, guide them to the refresh
+                    // command. Once entries land they get rendered
+                    // instead of hitting this empty state.
+                    if app.marketplace_entries.is_empty() {
+                        " No marketplace entries yet — run `marketplace.refresh`".to_string()
+                    } else {
+                        " Everything is installed (nice)".to_string()
+                    }
                 }
             }
         };

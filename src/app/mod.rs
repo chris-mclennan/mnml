@@ -3493,6 +3493,20 @@ pub struct App {
     /// ToolInstallConfirm prompt. See `run_external_tool` +
     /// `accept_tool_install`.
     pub pending_tool_install: Option<(String, String)>, // (id, install_cmd)
+    /// P4b — cached marketplace entries + in-flight fetch receivers.
+    /// Populated by `App::refresh_marketplace()` (spawns a fetch
+    /// thread per configured source) + drained by
+    /// `drain_marketplace_fetches()` on each tick. Rendered by the
+    /// Integrations panel Marketplace tab.
+    pub marketplace_entries: Vec<crate::marketplace::MarketplaceEntry>,
+    pub marketplace_pending: Vec<(
+        String, // source id
+        std::sync::mpsc::Receiver<Result<Vec<crate::marketplace::MarketplaceEntry>, String>>,
+    )>,
+    /// Unix seconds when the marketplace cache was last successfully
+    /// written. 0 means "never fetched this session"; the disk cache
+    /// may still be readable.
+    pub marketplace_last_fetched: u64,
     pub pending_install_family_id: Option<String>,
     /// Action captured alongside `pending_install_family_id` — the
     /// thing the user was originally trying to do when they hit
@@ -5180,6 +5194,9 @@ impl App {
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
             pending_tool_install: None,
+            marketplace_entries: Vec::new(),
+            marketplace_pending: Vec::new(),
+            marketplace_last_fetched: 0,
             pending_install_family_id: None,
             pending_install_after_action: None,
             install_post_actions: std::collections::HashMap::new(),
@@ -5734,6 +5751,11 @@ impl App {
     fn with_integration_manifests_merged(mut self) -> Self {
         self.discover_sibling_glyphs();
         self.merge_integration_manifests();
+        // 2026-08-01 (P4b) — populate marketplace entries from the
+        // on-disk cache so the Marketplace tab has something to
+        // render on cold start. First actual fetch is user-triggered
+        // via `marketplace.refresh` palette command.
+        self.load_marketplace_cache();
         self
     }
 
@@ -6994,6 +7016,111 @@ impl App {
         for pid in panes {
             self.force_close_pane(pid);
         }
+    }
+
+    // ── Marketplace (P4b) ─────────────────────────────────────
+    //
+    // Async fetch pattern: `refresh_marketplace()` spawns one thread
+    // per configured source, each posts to an mpsc. `drain_marketplace()`
+    // (called on each event loop tick) polls the receivers and merges
+    // arrived entries into `marketplace_entries`, then persists to
+    // the on-disk cache. Chunked delivery — the tab renders whatever's
+    // arrived without waiting for every source.
+
+    /// Load the on-disk marketplace cache into `marketplace_entries`.
+    /// Best-effort — silent no-op if the cache is missing / malformed.
+    /// Called once at App::new so a fresh mnml has something to render
+    /// even before the first fetch completes.
+    pub fn load_marketplace_cache(&mut self) {
+        let Some(path) = crate::marketplace::MarketplaceCache::path() else {
+            return;
+        };
+        let Some(cache) = crate::marketplace::MarketplaceCache::load_from(&path) else {
+            return;
+        };
+        self.marketplace_entries = cache.entries;
+        self.marketplace_last_fetched = cache.fetched_at;
+    }
+
+    /// Spawn a fetch thread for every configured marketplace source.
+    /// Non-blocking — results arrive via `drain_marketplace()`.
+    /// No-op when `config.marketplace.enabled = false`.
+    pub fn refresh_marketplace(&mut self) {
+        if !self.config.marketplace.enabled {
+            self.toast("marketplace disabled — enable in config".to_string());
+            return;
+        }
+        self.marketplace_pending.clear();
+        for source in self.config.marketplace.effective_sources() {
+            let id = source.id().to_string();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let result = crate::marketplace::fetch_source(&source);
+                let _ = tx.send(result);
+            });
+            self.marketplace_pending.push((id, rx));
+        }
+        self.toast(format!(
+            "marketplace: refreshing {} source(s)…",
+            self.marketplace_pending.len()
+        ));
+    }
+
+    /// Poll every pending marketplace fetch. Called from the event
+    /// loop's per-tick drain. Returns true when at least one source
+    /// delivered — the render layer uses that to know it needs to
+    /// repaint.
+    pub fn drain_marketplace(&mut self) -> bool {
+        let mut any = false;
+        let mut errored: Vec<(String, String)> = Vec::new();
+        let mut delivered: Vec<(String, Vec<crate::marketplace::MarketplaceEntry>)> = Vec::new();
+        self.marketplace_pending
+            .retain_mut(|(source_id, rx)| match rx.try_recv() {
+                Ok(Ok(entries)) => {
+                    delivered.push((source_id.clone(), entries));
+                    false
+                }
+                Ok(Err(e)) => {
+                    errored.push((source_id.clone(), e));
+                    false
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+            });
+        for (source_id, entries) in delivered {
+            any = true;
+            // Replace entries for this source (a re-fetch fully
+            // supersedes prior entries; no stale-entry merge).
+            self.marketplace_entries
+                .retain(|e| e.source_id != source_id);
+            self.marketplace_entries.extend(entries);
+        }
+        for (source_id, e) in errored {
+            eprintln!("marketplace: {source_id}: {e}");
+        }
+        if any {
+            // Persist to on-disk cache. Best-effort — a write failure
+            // just means next launch re-fetches.
+            self.marketplace_last_fetched = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            if let Some(path) = crate::marketplace::MarketplaceCache::path() {
+                let cache = crate::marketplace::MarketplaceCache {
+                    fetched_at: self.marketplace_last_fetched,
+                    ttl_secs: self.config.marketplace.cache_ttl_secs,
+                    entries: self.marketplace_entries.clone(),
+                };
+                let _ = cache.save_to(&path);
+            }
+            if self.marketplace_pending.is_empty() {
+                self.toast(format!(
+                    "marketplace: {} entries",
+                    self.marketplace_entries.len()
+                ));
+            }
+        }
+        any
     }
 
     pub fn active_editor(&self) -> Option<&Buffer> {
@@ -13946,6 +14073,7 @@ impl App {
         }
         self.drain_ai_jobs();
         self.drain_ai_session_search();
+        self.drain_marketplace();
         self.drain_suggestions();
         self.maybe_fire_suggestion();
         self.drain_tests_jobs();

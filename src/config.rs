@@ -103,6 +103,52 @@ pub struct Config {
     /// the file-tree rail (alongside the launched workspace at the top).
     /// Each entry is a `(name, path)` pair; `~` is expanded.
     pub workspaces: Vec<WorkspaceConfig>,
+    /// `[marketplace]` — federated app + launcher discovery. See
+    /// [`MarketplaceConfig`]. Defaults ship enabled with two sources
+    /// (crates.io keyword + chris-mclennan/mnml-integrations).
+    pub marketplace: MarketplaceConfig,
+}
+
+/// `[marketplace]` — federated app + launcher discovery config.
+#[derive(Debug, Clone)]
+pub struct MarketplaceConfig {
+    /// Master switch. `false` disables all fetches — Marketplace tab
+    /// stays empty. Default: `true`.
+    pub enabled: bool,
+    /// Cache TTL in seconds. Default 3600 (1h). Set to 0 to always
+    /// refetch (not recommended — hits rate limits fast).
+    pub cache_ttl_secs: u64,
+    /// Merge user-configured `[[marketplace.source]]` entries with
+    /// the shipping defaults when true (default); replace defaults
+    /// entirely when false.
+    pub use_defaults: bool,
+    /// User-configured additional sources.
+    pub sources: Vec<crate::marketplace::Source>,
+}
+
+impl Default for MarketplaceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            cache_ttl_secs: 3600,
+            use_defaults: true,
+            sources: Vec::new(),
+        }
+    }
+}
+
+impl MarketplaceConfig {
+    /// Effective source list — the shipping defaults + user-added
+    /// entries (or just user entries when `use_defaults = false`).
+    pub fn effective_sources(&self) -> Vec<crate::marketplace::Source> {
+        let mut out = if self.use_defaults {
+            crate::marketplace::default_sources()
+        } else {
+            Vec::new()
+        };
+        out.extend(self.sources.iter().cloned());
+        out
+    }
 }
 
 /// One additional workspace surfaced alongside the launched one. Lets the
@@ -1209,6 +1255,7 @@ impl Default for Config {
             playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
             workspaces: Vec::new(),
+            marketplace: MarketplaceConfig::default(),
             cloud_run: CloudRunConfig::default(),
             jira: JiraConfig::default(),
             cloud_agents: CloudAgentsConfig::default(),
@@ -1264,6 +1311,64 @@ struct RawConfig {
     jira: RawJira,
     #[serde(default)]
     cloud_agents: RawCloudAgents,
+    #[serde(default)]
+    marketplace: RawMarketplace,
+}
+
+/// Raw `[marketplace]` section — parses user-authored fields with
+/// per-key defaults so a partial section (e.g. just `enabled = false`)
+/// still validates. See [`MarketplaceConfig`] for the runtime form.
+#[derive(Debug, Default, Deserialize)]
+struct RawMarketplace {
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    cache_ttl_secs: Option<u64>,
+    #[serde(default)]
+    use_defaults: Option<bool>,
+    #[serde(default, rename = "source")]
+    sources: Vec<RawMarketplaceSource>,
+}
+
+/// One `[[marketplace.source]]` entry. Sum type over the two source
+/// kinds — parsed via serde's `type = "..."` tag. Missing / invalid
+/// entries are silently dropped on merge; only whole-config parse
+/// errors bubble up (matches how `[[workspaces]]` etc. handle bad
+/// input).
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RawMarketplaceSource {
+    CratesKeyword {
+        #[serde(default)]
+        id: Option<String>,
+        keyword: String,
+    },
+    GithubLauncherFolder {
+        #[serde(default)]
+        id: Option<String>,
+        repo: String,
+        path: String,
+    },
+}
+
+impl RawMarketplaceSource {
+    fn into_source(self) -> crate::marketplace::Source {
+        match self {
+            RawMarketplaceSource::CratesKeyword { id, keyword } => {
+                crate::marketplace::Source::CratesKeyword {
+                    id: id.unwrap_or_else(|| format!("crates:{keyword}")),
+                    keyword,
+                }
+            }
+            RawMarketplaceSource::GithubLauncherFolder { id, repo, path } => {
+                crate::marketplace::Source::GithubLauncherFolder {
+                    id: id.unwrap_or_else(|| repo.clone()),
+                    repo,
+                    path,
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -2150,6 +2255,19 @@ impl Config {
                 path: expanded,
                 group: w.group,
             });
+        }
+        // [marketplace] — federated app + launcher discovery.
+        if let Some(v) = raw.marketplace.enabled {
+            self.marketplace.enabled = v;
+        }
+        if let Some(v) = raw.marketplace.cache_ttl_secs {
+            self.marketplace.cache_ttl_secs = v;
+        }
+        if let Some(v) = raw.marketplace.use_defaults {
+            self.marketplace.use_defaults = v;
+        }
+        for s in raw.marketplace.sources {
+            self.marketplace.sources.push(s.into_source());
         }
         // Cloud Run defaults — empty strings mean "not set yet"
         // (the UI checks .is_empty() to route Enter to the
@@ -3265,4 +3383,94 @@ id = "browser"
     // 2026-08-01 (P2) — launcher_icons_config_replaces_defaults +
     // launcher_icons_empty_array_clears_defaults tests deleted with
     // the LauncherIcon retirement.
+
+    #[test]
+    fn marketplace_config_defaults() {
+        let cfg = Config::default();
+        assert!(cfg.marketplace.enabled);
+        assert_eq!(cfg.marketplace.cache_ttl_secs, 3600);
+        assert!(cfg.marketplace.use_defaults);
+        assert!(cfg.marketplace.sources.is_empty());
+        // Effective source list picks up the built-in defaults when
+        // use_defaults is on and no user sources are set.
+        assert_eq!(cfg.marketplace.effective_sources().len(), 2);
+    }
+
+    #[test]
+    fn marketplace_user_source_appends_to_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[marketplace]
+cache_ttl_secs = 7200
+
+[[marketplace.source]]
+type = "github_launcher_folder"
+id = "acme"
+repo = "acme-corp/mnml-launchers"
+path = "."
+"#
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert_eq!(cfg.marketplace.cache_ttl_secs, 7200);
+        assert_eq!(cfg.marketplace.sources.len(), 1);
+        // Effective = built-in defaults + user entry (use_defaults on).
+        let effective = cfg.marketplace.effective_sources();
+        assert_eq!(effective.len(), 3);
+        assert_eq!(effective[2].id(), "acme");
+    }
+
+    #[test]
+    fn marketplace_use_defaults_false_replaces_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[marketplace]
+use_defaults = false
+
+[[marketplace.source]]
+type = "crates_keyword"
+keyword = "my-own-keyword"
+"#
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        let effective = cfg.marketplace.effective_sources();
+        assert_eq!(effective.len(), 1);
+    }
+
+    #[test]
+    fn marketplace_disabled_still_parses_sources() {
+        // A user can turn the marketplace off without losing their
+        // configured sources — flipping enabled back on picks them
+        // up unchanged.
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[marketplace]
+enabled = false
+
+[[marketplace.source]]
+type = "crates_keyword"
+keyword = "test"
+"#
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file_pub(&cfg_path);
+        assert!(!cfg.marketplace.enabled);
+        assert_eq!(cfg.marketplace.sources.len(), 1);
+    }
 }

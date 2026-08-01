@@ -5448,6 +5448,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.refresh_integration_manifests(),
         },
         Command {
+            id: "marketplace.refresh",
+            title: "Marketplace: refresh (fetch published apps + community launchers)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.refresh_marketplace(),
+        },
+        Command {
             id: "mounts.install",
             title: "Mounts: install a Mount-capable family sibling (auto-registers manifest)",
             group: "mount",
