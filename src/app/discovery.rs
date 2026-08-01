@@ -947,12 +947,12 @@ fn append_integration_icon_blocks(existing: &str, icons: &[IntegrationIcon]) -> 
     out.push_str("# ── mnml-managed integration icons ──────────────────────────────────\n");
     out.push_str("# 2026-08-01 — slim entries. Only `enabled` +\n");
     out.push_str("# `in_palette_bar` (and file order) come from here now;\n");
-    out.push_str("# glyph / tooltip / command / color / fallback all read from\n");
-    out.push_str("# the sibling's installed manifest (or a built-in default in\n");
-    out.push_str("# mnml core). This section is rewritten in place on every\n");
-    out.push_str("# right-click toggle. Any fields you add by hand will get\n");
-    out.push_str("# dropped on next save — add an override mechanism if you\n");
-    out.push_str("# need per-user glyph/tooltip customization.\n\n");
+    out.push_str("# glyph / label / command / color / fallback / description\n");
+    out.push_str("# all read from the sibling's installed manifest (or a\n");
+    out.push_str("# built-in default in mnml core). This section is rewritten\n");
+    out.push_str("# in place on every right-click toggle. Any fields you add\n");
+    out.push_str("# by hand will get dropped on next save — add an override\n");
+    out.push_str("# mechanism if you need per-user glyph/label customization.\n\n");
     for ic in icons {
         out.push_str("[[ui.integration_icon]]\n");
         out.push_str(&format!("id = {}\n", toml_str(&ic.id)));
