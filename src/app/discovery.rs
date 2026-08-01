@@ -45,8 +45,11 @@ pub struct IntegrationEditState {
     /// Theme color name (`orange` / `cyan` / `purple` / …). Cycled
     /// with ←→ from a fixed palette.
     pub color: String,
-    /// Hover tooltip shown by the bufferline chip.
-    pub tooltip: String,
+    /// Short display name for the chip / tree row / picker / detail
+    /// pane header. Persists to `IntegrationIcon.label`. Was named
+    /// `tooltip` pre-2026-08-01 — renamed for consistency with the
+    /// runtime type.
+    pub label: String,
     /// Which field has the input cursor.
     pub focused_field: IntegrationEditField,
     /// Per-field byte-offset cursor. Same shape as the glyph-builder
@@ -57,7 +60,7 @@ pub struct IntegrationEditState {
     pub command_cursor: usize,
     pub glyph_cursor: usize,
     pub fallback_cursor: usize,
-    pub tooltip_cursor: usize,
+    pub label_cursor: usize,
 }
 
 /// Whether the panel is editing an existing entry or adding a fresh
@@ -81,7 +84,7 @@ pub enum IntegrationEditField {
     Glyph,
     Fallback,
     Color,
-    Tooltip,
+    Label,
 }
 
 /// Closed-form color palette the `Color` field cycles through.
@@ -111,8 +114,8 @@ impl App {
         let command_cursor = icon.command.len();
         let glyph_cursor = icon.glyph.len();
         let fallback_cursor = icon.fallback.len();
-        let tooltip = icon.label.unwrap_or_default();
-        let tooltip_cursor = tooltip.len();
+        let label = icon.label.unwrap_or_default();
+        let label_cursor = label.len();
         self.integration_edit = Some(IntegrationEditState {
             mode: IntegrationEditMode::Edit,
             id: icon.id,
@@ -120,13 +123,13 @@ impl App {
             glyph: icon.glyph,
             fallback: icon.fallback,
             color: icon.color,
-            tooltip,
+            label,
             focused_field: IntegrationEditField::Glyph,
             id_cursor,
             command_cursor,
             glyph_cursor,
             fallback_cursor,
-            tooltip_cursor,
+            label_cursor,
         });
     }
 
@@ -358,10 +361,10 @@ impl App {
             },
             command: command.to_string(),
             color: panel.color.trim().to_string(),
-            label: if panel.tooltip.trim().is_empty() {
+            label: if panel.label.trim().is_empty() {
                 None
             } else {
-                Some(panel.tooltip.trim().to_string())
+                Some(panel.label.trim().to_string())
             },
             enabled: true,
             in_palette_bar: false,
@@ -415,8 +418,8 @@ impl App {
     /// the panel is in `Edit` mode (those fields are read-only).
     pub fn integration_edit_cycle_field(&mut self, delta: isize) {
         use IntegrationEditField::*;
-        let order_full = [Id, Command, Glyph, Fallback, Color, Tooltip];
-        let order_edit = [Glyph, Fallback, Color, Tooltip];
+        let order_full = [Id, Command, Glyph, Fallback, Color, Label];
+        let order_edit = [Glyph, Fallback, Color, Label];
         let Some(panel) = self.integration_edit.as_mut() else {
             return;
         };
@@ -438,7 +441,7 @@ impl App {
             Command => panel.command_cursor = panel.command_cursor.min(panel.command.len()),
             Glyph => panel.glyph_cursor = panel.glyph_cursor.min(panel.glyph.len()),
             Fallback => panel.fallback_cursor = panel.fallback_cursor.min(panel.fallback.len()),
-            Tooltip => panel.tooltip_cursor = panel.tooltip_cursor.min(panel.tooltip.len()),
+            Label => panel.label_cursor = panel.label_cursor.min(panel.label.len()),
             Color => {}
         }
     }
@@ -475,7 +478,7 @@ impl App {
             IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor, 128),
             IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor, 1),
             IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor, 8),
-            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor, 128),
+            IntegrationEditField::Label => (&mut panel.label, &mut panel.label_cursor, 128),
             IntegrationEditField::Color => return,
         };
         if buf.chars().count() >= cap {
@@ -508,7 +511,7 @@ impl App {
             IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor, 128),
             IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor, 1),
             IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor, 8),
-            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor, 128),
+            IntegrationEditField::Label => (&mut panel.label, &mut panel.label_cursor, 128),
             IntegrationEditField::Color => return,
         };
         let existing = buf.chars().count();
@@ -532,7 +535,7 @@ impl App {
             IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor),
             IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor),
             IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor),
-            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor),
+            IntegrationEditField::Label => (&mut panel.label, &mut panel.label_cursor),
             IntegrationEditField::Color => return,
         };
         let cur = (*cursor).min(buf.len());
@@ -558,7 +561,7 @@ impl App {
             IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor),
             IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor),
             IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor),
-            IntegrationEditField::Tooltip => (&mut panel.tooltip, &mut panel.tooltip_cursor),
+            IntegrationEditField::Label => (&mut panel.label, &mut panel.label_cursor),
             IntegrationEditField::Color => return,
         };
         let cur = (*cursor).min(buf.len());
@@ -582,7 +585,7 @@ impl App {
             IntegrationEditField::Command => (&panel.command, &mut panel.command_cursor),
             IntegrationEditField::Glyph => (&panel.glyph, &mut panel.glyph_cursor),
             IntegrationEditField::Fallback => (&panel.fallback, &mut panel.fallback_cursor),
-            IntegrationEditField::Tooltip => (&panel.tooltip, &mut panel.tooltip_cursor),
+            IntegrationEditField::Label => (&panel.label, &mut panel.label_cursor),
             IntegrationEditField::Color => return,
         };
         let cur = (*cursor).min(buf.len());
@@ -606,7 +609,7 @@ impl App {
             IntegrationEditField::Command => (&panel.command, &mut panel.command_cursor),
             IntegrationEditField::Glyph => (&panel.glyph, &mut panel.glyph_cursor),
             IntegrationEditField::Fallback => (&panel.fallback, &mut panel.fallback_cursor),
-            IntegrationEditField::Tooltip => (&panel.tooltip, &mut panel.tooltip_cursor),
+            IntegrationEditField::Label => (&panel.label, &mut panel.label_cursor),
             IntegrationEditField::Color => return,
         };
         let cur = (*cursor).min(buf.len());
@@ -630,7 +633,7 @@ impl App {
             IntegrationEditField::Command => panel.command_cursor = 0,
             IntegrationEditField::Glyph => panel.glyph_cursor = 0,
             IntegrationEditField::Fallback => panel.fallback_cursor = 0,
-            IntegrationEditField::Tooltip => panel.tooltip_cursor = 0,
+            IntegrationEditField::Label => panel.label_cursor = 0,
             IntegrationEditField::Color => {}
         }
     }
@@ -644,7 +647,7 @@ impl App {
             IntegrationEditField::Command => panel.command_cursor = panel.command.len(),
             IntegrationEditField::Glyph => panel.glyph_cursor = panel.glyph.len(),
             IntegrationEditField::Fallback => panel.fallback_cursor = panel.fallback.len(),
-            IntegrationEditField::Tooltip => panel.tooltip_cursor = panel.tooltip.len(),
+            IntegrationEditField::Label => panel.label_cursor = panel.label.len(),
             IntegrationEditField::Color => {}
         }
     }
@@ -1006,13 +1009,13 @@ mod tests {
             glyph: "\u{F0001}".to_string(), // 4-byte MDI
             fallback: String::new(),
             color: "cyan".to_string(),
-            tooltip: String::new(),
+            label: String::new(),
             focused_field: IntegrationEditField::Glyph,
             id_cursor: 0,
             command_cursor: 0,
             glyph_cursor: 4, // end of 4-byte glyph
             fallback_cursor: 0,
-            tooltip_cursor: 0,
+            label_cursor: 0,
         });
         // Simulate the picker swap: replace with a 3-byte BMP glyph.
         // Old (buggy) behavior left glyph_cursor at 4, past the new

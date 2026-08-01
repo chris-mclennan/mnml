@@ -128,7 +128,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
             IntegrationEditField::Id
                 | IntegrationEditField::Command
                 | IntegrationEditField::Fallback
-                | IntegrationEditField::Tooltip
+                | IntegrationEditField::Label
         );
         if is_focused && text_field && !readonly {
             let caret_style = Style::default().fg(t.bg_dark).bg(t.cyan);
@@ -136,14 +136,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, parent: Rect) {
                 IntegrationEditField::Id => &panel.id,
                 IntegrationEditField::Command => &panel.command,
                 IntegrationEditField::Fallback => &panel.fallback,
-                IntegrationEditField::Tooltip => &panel.tooltip,
+                IntegrationEditField::Label => &panel.label,
                 _ => "",
             };
             let cursor = match field {
                 IntegrationEditField::Id => panel.id_cursor,
                 IntegrationEditField::Command => panel.command_cursor,
                 IntegrationEditField::Fallback => panel.fallback_cursor,
-                IntegrationEditField::Tooltip => panel.tooltip_cursor,
+                IntegrationEditField::Label => panel.label_cursor,
                 _ => 0,
             }
             .min(raw.len());
@@ -207,7 +207,7 @@ fn visible_fields(panel: &IntegrationEditState) -> Vec<IntegrationEditField> {
             IntegrationEditField::Glyph,
             IntegrationEditField::Fallback,
             IntegrationEditField::Color,
-            IntegrationEditField::Tooltip,
+            IntegrationEditField::Label,
         ],
         IntegrationEditMode::AddCustom => vec![
             IntegrationEditField::Id,
@@ -215,7 +215,7 @@ fn visible_fields(panel: &IntegrationEditState) -> Vec<IntegrationEditField> {
             IntegrationEditField::Glyph,
             IntegrationEditField::Fallback,
             IntegrationEditField::Color,
-            IntegrationEditField::Tooltip,
+            IntegrationEditField::Label,
         ],
     }
 }
@@ -227,7 +227,7 @@ fn field_label(field: IntegrationEditField) -> &'static str {
         IntegrationEditField::Glyph => "glyph",
         IntegrationEditField::Fallback => "fallback",
         IntegrationEditField::Color => "color",
-        IntegrationEditField::Tooltip => "tooltip",
+        IntegrationEditField::Label => "label",
     }
 }
 
@@ -241,7 +241,7 @@ fn field_value(panel: &IntegrationEditState, field: IntegrationEditField) -> (St
         IntegrationEditField::Glyph => (panel.glyph.clone(), normal),
         IntegrationEditField::Fallback => (panel.fallback.clone(), dim),
         IntegrationEditField::Color => (panel.color.clone(), color_style(&panel.color)),
-        IntegrationEditField::Tooltip => (panel.tooltip.clone(), dim),
+        IntegrationEditField::Label => (panel.label.clone(), dim),
     };
     if raw.is_empty() && !matches!(field, IntegrationEditField::Color) {
         ("(empty)".to_string(), dim)

@@ -877,8 +877,8 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
                                 panel.fallback_cursor =
                                     panel.fallback_cursor.min(panel.fallback.len())
                             }
-                            F::Tooltip => {
-                                panel.tooltip_cursor = panel.tooltip_cursor.min(panel.tooltip.len())
+                            F::Label => {
+                                panel.label_cursor = panel.label_cursor.min(panel.label.len())
                             }
                             F::Color => {}
                         }

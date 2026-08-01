@@ -138,7 +138,7 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         Some(IntegrationEditField::Id)
             | Some(IntegrationEditField::Command)
             | Some(IntegrationEditField::Fallback)
-            | Some(IntegrationEditField::Tooltip)
+            | Some(IntegrationEditField::Label)
     );
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     // Ctrl+V paste (2026-07-11 user request — was missing).
