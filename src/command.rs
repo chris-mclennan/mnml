@@ -3096,6 +3096,46 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.open_theme_picker(),
         },
+        // 2026-08-01 — escape hatch for the top-bar cluster mode
+        // setting. Palette entries so users who set `compact`
+        // (which drops both TABS label + numbered chips, leaving
+        // no visible right-click target) can get back to `auto`
+        // / `expanded` without hand-editing config.toml. User
+        // ran into this: right-clicked TABS, chose Compact,
+        // couldn't undo because no chip left to right-click.
+        Command {
+            id: "view.cluster_mode_expanded",
+            title: "Top-bar cluster mode: Expanded",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.top_bar_cluster_mode = "expanded".to_string();
+                let _ = crate::app::discovery::persist_top_bar_cluster_mode("expanded");
+                app.toast("top-bar cluster: expanded");
+            },
+        },
+        Command {
+            id: "view.cluster_mode_compact",
+            title: "Top-bar cluster mode: Compact",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.top_bar_cluster_mode = "compact".to_string();
+                let _ = crate::app::discovery::persist_top_bar_cluster_mode("compact");
+                app.toast("top-bar cluster: compact");
+            },
+        },
+        Command {
+            id: "view.cluster_mode_auto",
+            title: "Top-bar cluster mode: Auto",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.config.ui.top_bar_cluster_mode = "auto".to_string();
+                let _ = crate::app::discovery::persist_top_bar_cluster_mode("auto");
+                app.toast("top-bar cluster: auto");
+            },
+        },
         Command {
             id: "theme.toggle",
             title: "Theme: toggle (light ↔ dark)",
