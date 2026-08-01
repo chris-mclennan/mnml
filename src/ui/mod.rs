@@ -1623,6 +1623,17 @@ fn render_layout(
                 } else {
                     tabs.clone()
                 };
+            // 2026-08-01 — count non-Request tabs that were hidden
+            // by the HTTP-section filter, so `paint_leaf_tab_strip`
+            // can render a `+N hidden` chip. User asked "just make
+            // it work and hide" — hiding stays, but the chip tells
+            // the user their tabs weren't lost.
+            let hidden_tab_count: usize =
+                if matches!(app.active_section, crate::app::ActivitySection::Http) {
+                    tabs.len().saturating_sub(tabs_owned.len())
+                } else {
+                    0
+                };
             // 2026-06-21 — VS Code-style per-split tab strip. When
             // this leaf is INSIDE a split (path non-empty) AND the
             // pane isn't a Pty (which has its own tab strip in
@@ -1651,7 +1662,15 @@ fn render_layout(
                 // `pane_id` keys the strip to its leaf so the
                 // drop handler can find the right tab list.
                 app.rects.split_tab_strip_areas.push((strip, *id));
-                paint_leaf_tab_strip(frame, app, *id, &tabs_owned, strip, focused);
+                paint_leaf_tab_strip_with_hidden(
+                    frame,
+                    app,
+                    *id,
+                    &tabs_owned,
+                    hidden_tab_count,
+                    strip,
+                    focused,
+                );
                 ratatui::layout::Rect {
                     x: area.x,
                     y: area.y + 1,
@@ -3407,11 +3426,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
 /// matching the top bufferline. Layout math (overflow, gap
 /// between chips, right-cluster reservation) stays here.
 /// Click chip → switch active. Click × → close that tab.
-fn paint_leaf_tab_strip(
+#[allow(clippy::too_many_arguments)]
+fn paint_leaf_tab_strip_with_hidden(
     frame: &mut Frame,
     app: &mut App,
     active: crate::layout::PaneId,
     tabs: &[crate::layout::PaneId],
+    hidden_tab_count: usize,
     strip: Rect,
     leaf_focused: bool,
 ) {
@@ -3568,6 +3589,38 @@ fn paint_leaf_tab_strip(
             plus_rect,
         );
         app.rects.split_tab_plus_buttons.push((plus_rect, active));
+    }
+    // 2026-08-01 — "+N hidden" chip when the caller filtered tabs
+    // out of the strip (currently only ActivitySection::Http does).
+    // Signals that the missing tabs still exist, so switching back
+    // to Explorer brings them back. Chip paints just past the last
+    // tab / `+` chip, still bounded by mode chip + split buttons.
+    if hidden_tab_count > 0 {
+        // Recompute the leftmost x this chip could occupy — it's
+        // the same slot `+` would go into, offset by the `+` width
+        // when the `+` was drawn.
+        let after_plus_x = if chip_x + plus_w <= strip_right.saturating_sub(reserved_right) {
+            chip_x + plus_w
+        } else {
+            chip_x
+        };
+        let label = format!(" +{hidden_tab_count} hidden ");
+        let label_w = label.chars().count() as u16;
+        if after_plus_x + label_w <= strip_right.saturating_sub(reserved_right) {
+            let chip_rect = Rect {
+                x: after_plus_x,
+                y: strip.y,
+                width: label_w,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    label,
+                    Style::default().fg(t.comment).bg(t.bg2),
+                ))),
+                chip_rect,
+            );
+        }
     }
 
     // #polish 2026-07-06 — mode chip (Preview / Edit) painted in the
