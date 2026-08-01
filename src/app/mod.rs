@@ -5596,7 +5596,25 @@ impl App {
                 command: m
                     .commands
                     .first()
-                    .map(|c| c.id.clone())
+                    .map(|c| {
+                        // 2026-07-31 — prefer the raw `run` string
+                        // when it starts with `:term …`, so the
+                        // chip's context menu can offer "Add to
+                        // activity bar" (which gates on that
+                        // prefix — dockable panes need a bare
+                        // terminal command, not a palette command
+                        // id). User reported the DB chip missing
+                        // "Add to activity bar" for exactly this
+                        // reason. Non-terminal-launching commands
+                        // (e.g. `db.open` running `browser.open`)
+                        // keep the id-based dispatch.
+                        let run = c.run.trim();
+                        if run.starts_with(":term ") || run.starts_with("term ") {
+                            run.to_string()
+                        } else {
+                            c.id.clone()
+                        }
+                    })
                     .unwrap_or_else(|| format!("term {}", m.binary)),
                 color: chip.color.clone(),
                 tooltip: chip.tooltip.clone(),
