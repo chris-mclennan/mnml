@@ -3198,7 +3198,14 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // Empty-state per tab.
-    if icons.is_empty() {
+    // 2026-08-01 (P4c) — on Marketplace, only show empty-state when
+    // BOTH the icons list AND the marketplace_entries list are
+    // empty. If entries are present, we render them below (rows
+    // painted after the icons loop).
+    let show_empty_state = icons.is_empty()
+        && !(matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace)
+            && !app.marketplace_entries.is_empty());
+    if show_empty_state {
         let msg = if !app.integrations_panel_filter.is_empty() {
             format!(
                 " No matches for \"{}\" — Esc clears",
@@ -3341,6 +3348,85 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         app.rects.integration_icon_rects.push((row2, idx));
 
         y = y.saturating_add(3);
+    }
+
+    // 2026-08-01 (P4c) — under the icon rows on the Marketplace tab,
+    // paint the fetched marketplace_entries as browsable rows.
+    // Each entry: 3 rows — label + source tag, description, install
+    // hint. Left-click on any row → install action.
+    if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
+        let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
+        for (idx, entry) in app.marketplace_entries.iter().enumerate() {
+            // Filter by the same query string the icon list uses.
+            if !filter_lc_mp.is_empty() {
+                let hay = format!(
+                    "{} {} {}",
+                    entry.label,
+                    entry.id,
+                    entry.description.as_deref().unwrap_or("")
+                )
+                .to_ascii_lowercase();
+                if !hay.contains(&filter_lc_mp) {
+                    continue;
+                }
+            }
+            if y + 1 >= area.y + area.height {
+                break;
+            }
+            let kind_tag = match entry.kind {
+                crate::marketplace::MarketplaceKind::App => "[app]",
+                crate::marketplace::MarketplaceKind::Launcher => "[launcher]",
+            };
+            let kind_fg = match entry.kind {
+                crate::marketplace::MarketplaceKind::App => t.orange,
+                crate::marketplace::MarketplaceKind::Launcher => t.cyan,
+            };
+            let row1 = Rect {
+                x: area.x,
+                y,
+                width: area.width,
+                height: 1,
+            };
+            let name_spans: Vec<Span<'static>> = vec![
+                Span::styled(
+                    format!("  {kind_tag} "),
+                    Style::default().fg(kind_fg).bg(bg),
+                ),
+                Span::styled(entry.label.clone(), Style::default().fg(t.fg).bg(bg)),
+                Span::styled(
+                    format!("  ({})", entry.source_id),
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ),
+            ];
+            frame.render_widget(Paragraph::new(ratatui::text::Line::from(name_spans)), row1);
+            app.rects.marketplace_row_rects.push((row1, idx));
+
+            if y + 2 >= area.y + area.height {
+                y = y.saturating_add(3);
+                continue;
+            }
+            let row2 = Rect {
+                x: area.x,
+                y: y + 1,
+                width: area.width,
+                height: 1,
+            };
+            let desc = entry.description.as_deref().unwrap_or("(no description)");
+            frame.render_widget(
+                Paragraph::new(ratatui::text::Line::from(format!("    {}", desc))).style(
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(bg)
+                        .add_modifier(Modifier::DIM),
+                ),
+                row2,
+            );
+            app.rects.marketplace_row_rects.push((row2, idx));
+            y = y.saturating_add(3);
+        }
     }
 
     // 2026-07-03 — scrollbar on the far-right column of the

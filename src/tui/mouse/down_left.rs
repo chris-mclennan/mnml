@@ -1870,6 +1870,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     //   `:<ex>`  → mnml ex command
     //   `<id>`   → mnml registered command id
     // Check BEFORE the section-toggle below.
+    // P4c (2026-08-01) — click on a marketplace entry row → install
+    // action. Checked BEFORE the integration icon row cascade below,
+    // so a marketplace row doesn't get swallowed by a co-located
+    // icon rect (unlikely — different tabs — but safest).
+    if let Some(&(_, mp_idx)) = app
+        .rects
+        .marketplace_row_rects
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        app.install_marketplace_entry(mp_idx);
+        return;
+    }
     if let Some(&(_, icon_idx)) = app
         .rects
         .integration_icon_rects

@@ -1340,6 +1340,45 @@ pub fn binary_on_path(name: &str) -> bool {
 /// Repeats step 1 transitively to scoop up grandchildren (a
 /// shell that spawned `node server.js` etc.). Failed shell-outs
 /// are silently skipped — empty vec is fine for the renderer.
+/// P4c — download a launcher TOML from `url` and write it to the
+/// user's integrations dir at `<id>.toml`. Blocking (small files,
+/// runs on the main loop tick where the user clicks install).
+/// Returns the written path or an error string.
+fn install_launcher_from_url(id: &str, url: &str) -> Result<std::path::PathBuf, String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!(
+            "mnml-launcher-install/{}",
+            env!("CARGO_PKG_VERSION")
+        ))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("http client: {e}"))?;
+    let body = client
+        .get(url)
+        .send()
+        .and_then(|r| r.error_for_status())
+        .and_then(|r| r.text())
+        .map_err(|e| format!("fetch: {e}"))?;
+    // Parse first — refuse to install a broken TOML rather than
+    // dropping garbage in ~/.config/mnml/integrations/.
+    let parsed: crate::integration_manifest::IntegrationManifest =
+        toml::from_str(&body).map_err(|e| format!("parse toml: {e}"))?;
+    if parsed.id != id {
+        return Err(format!(
+            "manifest id {:?} doesn't match expected {:?}",
+            parsed.id, id
+        ));
+    }
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "no $HOME".to_string())?;
+    let dir = home.join(".config").join("mnml").join("integrations");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let path = dir.join(format!("{id}.toml"));
+    std::fs::write(&path, body).map_err(|e| format!("write: {e}"))?;
+    Ok(path)
+}
+
 fn scan_listening_ports(root_pid: u32) -> Vec<u16> {
     let mut pids: Vec<u32> = vec![root_pid];
     let mut frontier: Vec<u32> = vec![root_pid];
@@ -1863,6 +1902,10 @@ pub struct PaneRects {
     /// `tui.rs` runs the icon's `command`; hover tooltip in
     /// `ui::tooltip` looks up the entry's label.
     pub integration_icon_rects: Vec<(Rect, usize)>,
+    /// P4c — clickable rects for the Marketplace tab's browsable
+    /// entries. Each `(rect, idx)` where `idx` indexes into
+    /// `app.marketplace_entries`. Left-click → install action.
+    pub marketplace_row_rects: Vec<(Rect, usize)>,
     /// Activity-bar icon rects (the far-left vscode-style strip) —
     /// `(rect, section)`. Click dispatcher in `tui.rs` flips
     /// `App.active_section`.
@@ -7121,6 +7164,48 @@ impl App {
             }
         }
         any
+    }
+
+    /// P4c — install action for a marketplace entry. Dispatches by
+    /// entry kind:
+    ///
+    /// - **App** (`InstallSpec::Cargo`) — spawn `cargo install <name>`
+    ///   as a Pty pane so the user sees compile output. On success,
+    ///   the sibling's own `--install` subcommand handles manifest
+    ///   registration; user runs it manually after cargo finishes.
+    /// - **Launcher** (`InstallSpec::LauncherToml`) — download the
+    ///   TOML via blocking HTTP + write to
+    ///   `~/.config/mnml/integrations/<id>.toml`. Toast on success.
+    ///
+    /// Blocking on the launcher path is fine because the file is tiny
+    /// (kilobytes) and the request completes in ~200ms. Cargo install
+    /// is naturally async via the Pty.
+    pub fn install_marketplace_entry(&mut self, idx: usize) {
+        let Some(entry) = self.marketplace_entries.get(idx).cloned() else {
+            return;
+        };
+        match &entry.install {
+            crate::marketplace::InstallSpec::Cargo { name } => {
+                self.toast(format!("installing {name}…"));
+                // Spawn `cargo install <name>` in a Pty pane via mnml's
+                // :term handler — user sees compile output there. The
+                // sibling's own `--install` step (writing its manifest)
+                // is a separate command the user runs afterward.
+                self.run_ex_command(&format!("term cargo install {name}"));
+            }
+            crate::marketplace::InstallSpec::LauncherToml { url } => {
+                let id = entry.id.clone();
+                let url = url.clone();
+                self.toast(format!("fetching launcher {id}…"));
+                match install_launcher_from_url(&id, &url) {
+                    Ok(path) => self.toast(format!("installed {id} → {}", path.display())),
+                    Err(e) => self.toast(format!("install failed: {e}")),
+                }
+                // Manifest just landed on disk — re-scan so the
+                // Installed tab picks it up without a restart.
+                self.refresh_integration_manifests();
+            }
+        }
     }
 
     pub fn active_editor(&self) -> Option<&Buffer> {
