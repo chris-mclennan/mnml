@@ -17,7 +17,6 @@
 //! twice reuses the same pane (matches Outline / Diagnostics).
 
 use crate::app::App;
-use crate::focus::Focus;
 use crate::layout::PaneId;
 use crate::pane::{IntegrationDetailPane, Pane};
 
@@ -44,36 +43,28 @@ impl App {
             self.reveal_or_bring_to_front(pid);
             return;
         }
+        // 2026-08-01 — was hosted in the right panel (narrow column).
+        // User: "the integration page is showing up on right slide out
+        // panel but should take the center like the http area does."
+        // Host as a regular pane so it gets the full body area, tab
+        // strip, drag-to-split behavior, and Ctrl+W close semantics
+        // like every other center-hosted pane (Editor / Request / etc).
         let pane = Pane::IntegrationDetail(IntegrationDetailPane::new(id.to_string()));
-        if self.right_panel_visible {
-            self.panes.push(pane);
-            let new_id = self.panes.len() - 1;
-            self.right_panel_push(new_id);
-            self.focus = Focus::RightPanel;
-            return;
-        }
-        // Right panel closed — open the panel first, then host in
-        // it. The detail pane's whole design assumes the narrow-
-        // column right-panel layout; a body split would work but
-        // wastes editor real estate.
-        self.right_panel_visible = true;
         self.panes.push(pane);
         let new_id = self.panes.len() - 1;
-        self.right_panel_push(new_id);
-        self.focus = Focus::RightPanel;
+        self.reveal_pane(new_id);
     }
 
-    /// Best-effort reveal of an existing pane — if it's a
-    /// right-panel host, switch its tab; else route through
-    /// `reveal_pane`.
+    /// Reveal an existing detail pane. Previously handled a right-
+    /// panel branch; now that the detail pane lives in the center
+    /// like any other pane, just delegate. (Kept the helper for
+    /// callers instead of inlining `reveal_pane` at every open site.)
     fn reveal_or_bring_to_front(&mut self, pid: PaneId) {
-        if let Some(idx) = self.right_panel_panes.iter().position(|&p| p == pid) {
-            self.right_panel_visible = true;
-            self.right_panel_active_idx = idx;
-            self.focus = Focus::RightPanel;
-        } else {
-            self.reveal_pane(pid);
-        }
+        // Legacy: if a prior session left a copy of this pane in the
+        // right panel, drop it there so we don't render twice — the
+        // new center-hosted copy is the authoritative one.
+        self.right_panel_panes.retain(|&p| p != pid);
+        self.reveal_pane(pid);
     }
 
     /// Flip enabled/disabled for the integration with `id`, toast,
