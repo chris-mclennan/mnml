@@ -55,7 +55,7 @@ eula = false
 # Bridge / Mount protocol — the wire types siblings use to render
 # into mnml panes. Workspace path-dep; published separately so
 # sibling repos can depend on it without depending on all of mnml.
-mnml-bridge = { path = "crates/mnml-bridge", version = "0.3.0" }
+mnml-bridge = { path = "crates/mnml-bridge", version = "0.4.0" }
 # TUI — use ratatui's re-exported crossterm to avoid version skew.
 ratatui = { version = "0.30", features = ["crossterm"] }
 # Embedded local FIM code completion (candle + quantized qwen2.5-coder).

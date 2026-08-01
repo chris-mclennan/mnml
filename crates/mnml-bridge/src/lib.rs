@@ -53,7 +53,8 @@ pub mod ipc;
 pub use install::{
     ChipSpec, CommandSpec, ContextMenuEntry, IntegrationSpec, MenuBarEntry, NotificationsSpec,
     OsNotifyPolicy, Requires, SettingsPage, StatuslineSpec, install_integration,
-    integration_manifest_path, list_installed_integrations, uninstall_integration,
+    integration_manifest_path, list_installed_integrations, sibling_glyphs_dir,
+    uninstall_integration,
 };
 pub use ipc::{
     NotifyOpts, ProgressStatus, SegmentSide, ToastLevel, notify, progress_end, progress_start,

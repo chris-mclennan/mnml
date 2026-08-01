@@ -313,10 +313,15 @@ impl App {
     /// the change without restarting mnml).
     pub fn refresh_integration_manifests(&mut self) {
         self.integration_manifests = crate::integration_manifest::load_all(&self.workspace);
+        // 2026-07-31 — re-run sibling-glyph discovery FIRST so any
+        // newly-installed SVG in ~/.config/mnml/glyphs/ shows up
+        // before the merge pass fills IntegrationIcon.glyph.
+        self.discover_sibling_glyphs();
         self.merge_integration_manifests();
         self.toast(format!(
-            "integrations: {} manifest(s) loaded",
-            self.integration_manifests.len()
+            "integrations: {} manifest(s) loaded ({} sibling glyph(s))",
+            self.integration_manifests.len(),
+            self.sibling_glyph_svgs.len(),
         ));
     }
 

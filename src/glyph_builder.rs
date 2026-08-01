@@ -52,7 +52,11 @@ pub enum BuilderField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuilderCategory {
     Aws,
-    Gcp,
+    /// U+F1C00-F1CFF — sibling-shipped icons (auto-assigned when a
+    /// sibling drops an SVG via `mnml-bridge::install_integration`
+    /// with `ChipSpec::glyph_svg`). Manual builder use is fine too;
+    /// the codepoint pool is shared.
+    SiblingSvg,
     Azure,
     Ai,
     Saas,
@@ -62,7 +66,7 @@ pub enum BuilderCategory {
 impl BuilderCategory {
     pub const ALL: &'static [BuilderCategory] = &[
         BuilderCategory::Aws,
-        BuilderCategory::Gcp,
+        BuilderCategory::SiblingSvg,
         BuilderCategory::Azure,
         BuilderCategory::Ai,
         BuilderCategory::Saas,
@@ -72,7 +76,7 @@ impl BuilderCategory {
     pub fn label(self) -> &'static str {
         match self {
             BuilderCategory::Aws => "aws",
-            BuilderCategory::Gcp => "gcp",
+            BuilderCategory::SiblingSvg => "sibling",
             BuilderCategory::Azure => "azure",
             BuilderCategory::Ai => "ai",
             BuilderCategory::Saas => "saas",
@@ -83,7 +87,7 @@ impl BuilderCategory {
     pub fn range_start(self) -> u32 {
         match self {
             BuilderCategory::Aws => 0xF1B00,
-            BuilderCategory::Gcp => 0xF1C00,
+            BuilderCategory::SiblingSvg => 0xF1C00,
             BuilderCategory::Azure => 0xF1D00,
             BuilderCategory::Ai => 0xF1E00,
             BuilderCategory::Saas => 0xF1F00,

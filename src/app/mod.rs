@@ -51,6 +51,7 @@ mod playwright;
 mod scm;
 mod session;
 pub(crate) mod settings;
+pub(crate) mod sibling_glyphs;
 pub(crate) mod sibling_install_methods;
 mod snippets;
 mod startup_picker;
@@ -3464,6 +3465,18 @@ pub struct App {
     /// kept so `integrations.refresh` can re-scan without
     /// restart.
     pub integration_manifests: Vec<crate::integration_manifest::IntegrationManifest>,
+    /// 2026-07-31 — sibling-icons SDK. Discovered SVGs under
+    /// `~/.config/mnml/glyphs/` populated at startup + on
+    /// `integrations.refresh`. `Vec<(id, absolute_path)>`, sorted
+    /// stably by id. The parallel [`Self::sibling_glyph_codepoints`]
+    /// map holds each id's assigned codepoint. See
+    /// `src/app/sibling_glyphs.rs`.
+    pub sibling_glyph_svgs: Vec<(String, std::path::PathBuf)>,
+    /// Sibling-id → codepoint map. Refreshed alongside
+    /// `sibling_glyph_svgs`. `merge_integration_manifests` uses it
+    /// to fill `IntegrationIcon.glyph` when the manifest set
+    /// `chip.glyph_svg` but left `chip.glyph` empty.
+    pub sibling_glyph_codepoints: std::collections::HashMap<String, u32>,
     /// Notification badges on activity-bar sections — keyed by
     /// the section's serialized id (e.g. `"agents"`, `"cloud_agents"`,
     /// manifest mount id). Set by siblings via the
@@ -5165,6 +5178,8 @@ impl App {
             active_section: ActivitySection::Explorer,
             mount_manifests,
             integration_manifests,
+            sibling_glyph_svgs: Vec::new(),
+            sibling_glyph_codepoints: std::collections::HashMap::new(),
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
             pending_tool_install: None,
@@ -5589,9 +5604,24 @@ impl App {
     pub fn merge_integration_manifests(&mut self) {
         for m in &self.integration_manifests {
             let Some(chip) = &m.chip else { continue };
+            // 2026-07-31 — sibling-icons SDK. If the manifest
+            // declared `glyph_svg` but left `glyph` empty, resolve
+            // the assigned codepoint from the discovery pass and
+            // build the glyph string from it. Explicit `chip.glyph`
+            // always wins — a sibling that also picks a Nerd Font
+            // glyph is allowed to override its own SVG assignment.
+            let glyph = if chip.glyph.is_empty()
+                && chip.glyph_svg.is_some()
+                && let Some(cp) = self.sibling_glyph_codepoints.get(&m.id).copied()
+                && let Some(ch) = char::from_u32(cp)
+            {
+                ch.to_string()
+            } else {
+                chip.glyph.clone()
+            };
             let new_icon = crate::config::IntegrationIcon {
                 id: m.id.clone(),
-                glyph: chip.glyph.clone(),
+                glyph,
                 fallback: chip.fallback.clone(),
                 command: m
                     .commands
@@ -5660,8 +5690,14 @@ impl App {
     }
 
     /// Consuming helper — used by `App::new` to fold the manifest
-    /// merge into the constructor.
+    /// merge into the constructor. Also runs the sibling-glyph
+    /// discovery pass BEFORE the merge so
+    /// `merge_integration_manifests` can fill the `IntegrationIcon.glyph`
+    /// field from the assigned codepoint when the manifest opted
+    /// into the sibling-icons SDK (`chip.glyph_svg` set, `chip.glyph`
+    /// empty).
     fn with_integration_manifests_merged(mut self) -> Self {
+        self.discover_sibling_glyphs();
         self.merge_integration_manifests();
         self
     }

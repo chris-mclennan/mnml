@@ -19,7 +19,14 @@
 //! Nerd Font leaves untouched. Reserved blocks:
 //!
 //! - `U+F1B00 – U+F1BFF` — AWS Architecture (256 slots)
-//! - `U+F1C00 – U+F1CFF` — Google Cloud (reserved, unused)
+//! - `U+F1C00 – U+F1CFF` — Sibling-shipped icons (SDK feature 2026-07-31)
+//!   Auto-assigned by mnml at startup for any SVG a sibling drops into
+//!   `~/.config/mnml/glyphs/<id>.svg` via `mnml-bridge`'s
+//!   `install_integration` when `ChipSpec::glyph_svg` is set. Siblings
+//!   don't hardcode codepoints from this block unless they explicitly
+//!   set `ChipSpec::glyph_codepoint` (usually just for backwards-compat
+//!   with a codepoint mnml core used to bake). See
+//!   `src/app/sibling_glyphs.rs`.
 //! - `U+F1D00 – U+F1DFF` — Azure (reserved, unused)
 //! - `U+F1E00 – U+F1EFF` — AI tools: Claude Code, Codex, Copilot, Cursor, Aider, etc.
 //! - `U+F1F00 – U+F1FFF` — SaaS integrations: Datadog, PagerDuty, Notion, Linear, …

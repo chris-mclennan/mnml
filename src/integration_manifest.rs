@@ -168,6 +168,23 @@ pub struct ChipSpec {
     pub in_palette_bar: bool,
     #[serde(default)]
     pub badge_key: Option<String>,
+    /// 2026-07-31 — sibling-icons SDK. When set, mnml-bridge's
+    /// `install_integration` copied a SVG (owned by the sibling)
+    /// to `~/.config/mnml/glyphs/<id>.svg`. mnml discovers it at
+    /// startup + on `integrations.refresh`, assigns a codepoint in
+    /// the sibling PUA range (`U+F1C00-F1CFF`), and bakes it into
+    /// MnmlSymbols.ttf on `integrations.bake_sibling_glyphs`. The
+    /// manifest's own `glyph` string takes precedence if set —
+    /// this only kicks in when `glyph` is empty AND an SVG exists.
+    #[serde(default)]
+    pub glyph_svg: Option<String>,
+    /// 2026-07-31 — explicit codepoint override for the SVG bake.
+    /// Uppercase hex, no `U+` prefix (e.g. `"F1B00"`). Trusted;
+    /// no range check. Used by siblings that used to depend on
+    /// mnml core having baked their glyph at a fixed codepoint,
+    /// so an upgrade to the SDK doesn't move their icon.
+    #[serde(default)]
+    pub glyph_codepoint: Option<String>,
 }
 
 fn default_enabled() -> bool {
