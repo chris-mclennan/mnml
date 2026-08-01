@@ -65,6 +65,7 @@ pub(crate) mod git;
 pub mod glyph_builder;
 pub mod icon_catalog;
 pub mod launcher_template;
+pub mod marketplace;
 pub(crate) mod peek_overlay;
 // `mod github` was split out to the standalone mnml-forge-github
 // binary in 2026-06.
