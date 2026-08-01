@@ -612,6 +612,15 @@ pub struct BuiltinGlyph {
 
 /// mnml-shipped glyphs. Codepoints match `src/icon_catalog.rs`.
 /// Defaults match the tuned `scripts/build_mnml_symbols.sh`.
+///
+/// 2026-08-01 — Stage 2 of the sibling-owned icon SDK removed the
+/// per-service AWS SVGs that used to live here (cloudwatch / codebuild
+/// / cognito / ecr / ecs / eventbridge / lambda / rds / sns / sqs).
+/// Each is now shipped by its own `mnml-aws-*` sibling via
+/// `ChipSpec::glyph_svg + glyph_codepoint`. Only `amplify` (kept as
+/// a transition — see `config.rs` compat shim at `id == "amplify"`)
+/// and `dynamodb` (deferred, will migrate to `mnml-db`) still live
+/// in mnml core.
 pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     BuiltinGlyph {
         codepoint: 0xF1B00,
@@ -623,99 +632,9 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         center_x_frac: 0.5,
     },
     BuiltinGlyph {
-        codepoint: 0xF1B01,
-        name: "aws-lambda-inv",
-        svg_relpath: "assets/glyphs/aws/lambda.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B02,
-        name: "aws-ecs-inv",
-        svg_relpath: "assets/glyphs/aws/ecs.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B03,
-        name: "aws-ecr-inv",
-        svg_relpath: "assets/glyphs/aws/ecr.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B04,
-        name: "aws-rds-inv",
-        svg_relpath: "assets/glyphs/aws/rds.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B05,
-        name: "aws-sqs-inv",
-        svg_relpath: "assets/glyphs/aws/sqs.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B06,
-        name: "aws-sns-inv",
-        svg_relpath: "assets/glyphs/aws/sns.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
         codepoint: 0xF1B07,
         name: "aws-dynamodb-inv",
         svg_relpath: "assets/glyphs/aws/dynamodb.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B08,
-        name: "aws-cognito-inv",
-        svg_relpath: "assets/glyphs/aws/cognito.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B09,
-        name: "aws-cloudwatch-inv",
-        svg_relpath: "assets/glyphs/aws/cloudwatch.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B0A,
-        name: "aws-codebuild-inv",
-        svg_relpath: "assets/glyphs/aws/codebuild.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF1B0B,
-        name: "aws-eventbridge-inv",
-        svg_relpath: "assets/glyphs/aws/eventbridge.svg",
         width_frac: 1.25,
         height_frac: 0.80,
         center_frac: 0.36,

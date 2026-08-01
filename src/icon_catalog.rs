@@ -123,30 +123,21 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     // Alpine mountain logo for our "amplify" codepoint. U+F1AF1+ is
     // truly free (past the end of Material Design Icons at U+F1AF0)
     // so no Nerd Font ever claims these codepoints.
+    //
+    // 2026-08-01 — Stage 2 of the sibling-owned icon SDK moved
+    // per-service AWS SVGs into their own `mnml-aws-*` sibling repos
+    // (each sibling pins its old codepoint via `ChipSpec::glyph_codepoint`
+    // so upgrading users' configs keep rendering). Only amplify + dynamodb
+    // entries remain in this picker: amplify is kept as a config-compat
+    // transition (see `config.rs`), dynamodb is deferred until it moves
+    // to `mnml-db`. Migrated codepoints (F1B01-F1B06, F1B08-F1B0B, and
+    // their F1B1X color variants) are still valid — mnml discovers each
+    // sibling's SVG on `integrations.refresh` and bakes it at the pinned
+    // codepoint on `integrations.bake_sibling_glyphs`.
     IconEntry { codepoint: "F1B00", name: "aws-amplify (inverted)", category: "aws" },
     IconEntry { codepoint: "F1B10", name: "aws-amplify (color)", category: "aws" },
-    IconEntry { codepoint: "F1B01", name: "aws-lambda (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B11", name: "aws-lambda (color)", category: "aws" },
-    IconEntry { codepoint: "F1B02", name: "aws-ecs (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B12", name: "aws-ecs (color)", category: "aws" },
-    IconEntry { codepoint: "F1B03", name: "aws-ecr (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B13", name: "aws-ecr (color)", category: "aws" },
-    IconEntry { codepoint: "F1B04", name: "aws-rds (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B14", name: "aws-rds (color)", category: "aws" },
-    IconEntry { codepoint: "F1B05", name: "aws-sqs (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B15", name: "aws-sqs (color)", category: "aws" },
-    IconEntry { codepoint: "F1B06", name: "aws-sns (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B16", name: "aws-sns (color)", category: "aws" },
     IconEntry { codepoint: "F1B07", name: "aws-dynamodb (inverted)", category: "aws" },
     IconEntry { codepoint: "F1B17", name: "aws-dynamodb (color)", category: "aws" },
-    IconEntry { codepoint: "F1B08", name: "aws-cognito (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B18", name: "aws-cognito (color)", category: "aws" },
-    IconEntry { codepoint: "F1B09", name: "aws-cloudwatch (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B19", name: "aws-cloudwatch (color)", category: "aws" },
-    IconEntry { codepoint: "F1B0A", name: "aws-codebuild (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B1A", name: "aws-codebuild (color)", category: "aws" },
-    IconEntry { codepoint: "F1B0B", name: "aws-eventbridge (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B1B", name: "aws-eventbridge (color)", category: "aws" },
     IconEntry { codepoint: "F085B", name: "brain", category: "ai" },
     IconEntry { codepoint: "F02D3", name: "robot", category: "ai" },
 
