@@ -189,16 +189,9 @@ mod tests {
         assert!(argv.iter().any(|a| a == sib.pinned_version));
     }
 
-    #[test]
-    fn cargo_install_skips_tag_for_main() {
-        // Any "main"-pinned entry does — pick the first.
-        let sib = crate::family_catalog::CATALOG
-            .iter()
-            .find(|s| s.pinned_version == "main")
-            .expect("catalog has at least one main-pinned entry");
-        let argv = cargo_install_argv(sib);
-        assert!(!argv.iter().any(|a| a == "--tag"));
-    }
+    // 2026-08-01 (P1b) — cargo_install_skips_tag_for_main deleted
+    // with the CATALOG emptying. Marketplace is the source of truth
+    // for available apps now.
 
     #[test]
     fn install_kind_pty_for_unknown_id() {
