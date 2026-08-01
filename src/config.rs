@@ -1205,661 +1205,13 @@ impl Default for Config {
                         commands: Vec::new(),
                         manifest_can_override: true,
                     },
-                    // 2026-07-19 — the single "bitbucket" chip was
-                    // replaced by two chips ("bitbucket_pull_requests"
-                    // and "bitbucket_pipelines") that both launch the
-                    // same sibling with `--only prs` / `--only
-                    // pipelines`. Each drops the user into a single
-                    // view with no tab-strip. Old `id = "bitbucket"`
-                    // entries in user configs still merge from those
-                    // — the migration below routes them away.
-                    IntegrationIcon {
-                        id: "bitbucket_pull_requests".to_string(),
-                        glyph: "\u{F00A8}".to_string(), // nf-md-source_pull
-                        fallback: "PR".to_string(),
-                        command: ":term mnml-forge-bitbucket --only prs".to_string(),
-                        color: "blue".to_string(),
-                        label: Some("Bitbucket Pull Requests".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "bitbucket_pipelines".to_string(),
-                        glyph: "\u{F00A8}".to_string(),
-                        fallback: "Pl".to_string(),
-                        command: ":term mnml-forge-bitbucket --only pipelines".to_string(),
-                        color: "cyan".to_string(),
-                        label: Some("Bitbucket Pipelines".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    // 2026-07-25 — combined "jira" chip removed. The
-                    // mnml-tracker-jira sibling now ships three split
-                    // chips (jira_work / jira_fix_versions /
-                    // jira_boards) via its own --install manifests,
-                    // matching the bitbucket split pattern. Any user
-                    // config still referencing the old `id = "jira"`
-                    // is silently dropped by the merge — they just
-                    // enable the split chips from Marketplace instead.
-                    // HTTP is built-in (activity section + sidebar +
-                    // HttpHome dashboard + Pane::Request + capture /
-                    // history / mocks / chains / sources / discover),
-                    // not a sibling integration. The old `http` +
-                    // `http_new` IntegrationIcon entries lived here
-                    // as opt-in palette-bar chips before the HTTP
-                    // section shipped; removed 2026-07-05 to stop
-                    // presenting core surface as an integration.
-                    // Users who had them enabled fall back to the
-                    // HTTP activity icon + :http.send / :http.new
-                    // palette commands — no data loss.
-                    IntegrationIcon {
-                        id: "codebuild".to_string(),
-                        glyph: "\u{F0492}".to_string(), // nf-md-hammer-wrench
-                        fallback: "C".to_string(),
-                        // Launches the standalone mnml-aws-codebuild
-                        // viewer as a Pty pane. User must have
-                        // it installed (`cargo install --git
-                        // https://github.com/chris-mclennan/mnml-aws-codebuild`).
-                        command: ":term mnml-aws-codebuild".to_string(),
-                        color: "yellow".to_string(),
-                        label: Some("AWS CodeBuild + logs".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "github".to_string(),
-                        glyph: "\u{F02A4}".to_string(), // nf-md-github
-                        fallback: "G".to_string(),
-                        // Launches the standalone mnml-forge-github
-                        // viewer as a Pty pane. User must have
-                        // it installed (`cargo install --git
-                        // https://github.com/chris-mclennan/mnml-forge-github`).
-                        command: ":term mnml-forge-github".to_string(),
-                        color: "fg".to_string(),
-                        label: Some("GitHub Actions + PRs".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "azdevops".to_string(),
-                        glyph: "\u{EBE8}".to_string(), // nf-cod-azure
-                        fallback: "A".to_string(),
-                        // Launches the standalone mnml-forge-azdevops
-                        // viewer as a Pty pane. User must have it
-                        // installed (`cargo install --git
-                        // https://github.com/chris-mclennan/mnml-forge-azdevops`).
-                        command: ":term mnml-forge-azdevops".to_string(),
-                        color: "blue".to_string(),
-                        label: Some("Azure DevOps PRs + builds".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "gitlab".to_string(),
-                        glyph: "\u{F296}".to_string(), // nf-fa-gitlab
-                        fallback: "L".to_string(),
-                        // Launches the standalone mnml-forge-gitlab
-                        // viewer as a Pty pane. User must have it
-                        // installed (`cargo install --git
-                        // https://github.com/chris-mclennan/mnml-forge-gitlab`).
-                        command: ":term mnml-forge-gitlab".to_string(),
-                        color: "orange".to_string(),
-                        label: Some("GitLab MRs + Pipelines".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "s3".to_string(),
-                        glyph: "\u{F0EBC}".to_string(), // nf-md-aws
-                        fallback: "S3".to_string(),
-                        // Launches the standalone mnml-fs-s3 viewer
-                        // as a Pty pane. User must have it
-                        // installed (`cargo install --git
-                        // https://github.com/chris-mclennan/mnml-fs-s3`).
-                        command: ":term mnml-fs-s3".to_string(),
-                        color: "orange".to_string(),
-                        label: Some("Amazon S3 browser".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "azure_blob".to_string(),
-                        glyph: "\u{F0805}".to_string(), // nf-md-microsoft_azure
-                        fallback: "Az".to_string(),
-                        command: ":term mnml-fs-azure-blob".to_string(),
-                        color: "blue".to_string(),
-                        label: Some("Azure Blob Storage browser".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    // Terminal-native diagnostic tools. Open as Pty
-                    // panes inside mnml's layout. The sidebar filter
-                    // shows them only when the binary is on PATH
-                    // (`integration_detect`).
-                    IntegrationIcon {
-                        id: "htop".to_string(),
-                        // 2026-07-19 — mnml-owned dev-htop glyph at
-                        // F2001 (BUILTIN_GLYPHS DevTool range).
-                        // Was nf-md-monitor_dashboard.
-                        glyph: "\u{F2001}".to_string(),
-                        fallback: "ht".to_string(),
-                        command: "tools.htop".to_string(),
-                        color: "green".to_string(),
-                        label: Some("htop — interactive process viewer".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "iftop".to_string(),
-                        // 2026-07-19 — mnml-owned dev-iftop glyph at
-                        // F2002.
-                        glyph: "\u{F2002}".to_string(),
-                        fallback: "if".to_string(),
-                        command: "tools.iftop".to_string(),
-                        color: "blue".to_string(),
-                        label: Some(
-                            "iftop — interactive bandwidth monitor (needs raw-socket privs)"
-                                .to_string(),
-                        ),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "btop".to_string(),
-                        // 2026-07-19 — mnml-owned dev-btop glyph at
-                        // F2000.
-                        glyph: "\u{F2000}".to_string(),
-                        fallback: "bt".to_string(),
-                        command: "tools.btop".to_string(),
-                        color: "purple".to_string(),
-                        label: Some("btop — resource monitor (cpu / mem / disk / net)".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "datadog".to_string(),
-                        glyph: "\u{F1A0F}".to_string(), // nf-md-dog
-                        fallback: "Dd".to_string(),
-                        command: ":term mnml-obs-datadog".to_string(),
-                        color: "purple".to_string(),
-                        label: Some(
-                            "Datadog — monitors + dashboards + logs + incidents".to_string(),
-                        ),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "buttondown".to_string(),
-                        glyph: "\u{F0EB1}".to_string(), // nf-md-email_newsletter
-                        fallback: "Bd".to_string(),
-                        command: ":term mnml-msg-buttondown".to_string(),
-                        color: "green".to_string(),
-                        label: Some("Buttondown — drafts + sent + subscribers".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    // 2026-07-22 — the built-in `slack` chip was
-                    // replaced by two sibling-owned chips
-                    // (`slack_channels` + `slack_canvases`) that both
-                    // launch `mnml-msg-slack` with a `--only` filter.
-                    // The sibling installs its own manifests, so the
-                    // legacy built-in default is dropped here. The
-                    // migration retain below wipes any stale `slack`
-                    // config entries so fresh mnml runs don't show
-                    // three chips.
-                    IntegrationIcon {
-                        id: "teams".to_string(),
-                        glyph: "\u{F0FA1}".to_string(), // nf-md-microsoft_teams
-                        fallback: "Tm".to_string(),
-                        command: ":term mnml-msg-teams".to_string(),
-                        color: "blue".to_string(),
-                        label: Some("Microsoft Teams — teams + chats + threads + post".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "mandrill".to_string(),
-                        glyph: "\u{F01EF}".to_string(), // nf-md-email_check_outline
-                        fallback: "Md".to_string(),
-                        command: ":term mnml-msg-mandrill".to_string(),
-                        color: "red".to_string(),
-                        label: Some(
-                            "Mandrill — transactional email messages + templates + tags"
-                                .to_string(),
-                        ),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "gmail".to_string(),
-                        glyph: "\u{F03BC}".to_string(), // nf-md-gmail
-                        fallback: "Gm".to_string(),
-                        command: ":term mnml-msg-gmail".to_string(),
-                        color: "red".to_string(),
-                        label: Some("Gmail — inbox + sent + labels + search + compose".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "gcal".to_string(),
-                        glyph: "\u{F0EDE}".to_string(), // nf-md-calendar_month
-                        fallback: "Ca".to_string(),
-                        command: ":term mnml-msg-gcal".to_string(),
-                        color: "blue".to_string(),
-                        label: Some(
-                            "Google Calendar — today + week + upcoming meetings + create"
-                                .to_string(),
-                        ),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "docker".to_string(),
-                        glyph: "\u{F0868}".to_string(), // nf-md-docker
-                        fallback: "Dk".to_string(),
-                        command: ":term mnml-virt-docker".to_string(),
-                        color: "blue".to_string(),
-                        label: Some(
-                            "Docker — containers + images + volumes + networks".to_string(),
-                        ),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "cloudflare".to_string(),
-                        glyph: "\u{F0E7B}".to_string(), // nf-md-cloud_outline
-                        fallback: "Cf".to_string(),
-                        command: ":term mnml-cdn-cloudflare".to_string(),
-                        color: "orange".to_string(),
-                        label: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "cloudwatch_logs".to_string(),
-                        glyph: "\u{F0E5C}".to_string(), // nf-md-text-box-search
-                        fallback: "CW".to_string(),
-                        command: ":term mnml-aws-cloudwatch-logs".to_string(),
-                        color: "yellow".to_string(),
-                        label: Some("CloudWatch Logs live tail".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "amplify".to_string(),
-                        // 2026-07-19 — use the branded AWS Amplify
-                        // SVG at F1B00 (BUILTIN_GLYPHS AWS series
-                        // baked into MnmlSymbols.ttf). Was
-                        // nf-md-rocket-launch — generic.
-                        glyph: "\u{F1B00}".to_string(),
-                        fallback: "Am".to_string(),
-                        command: ":term mnml-aws-amplify".to_string(),
-                        color: "purple".to_string(),
-                        label: Some("Amplify apps + deploys".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "dynamodb".to_string(),
-                        glyph: "\u{F1C0}".to_string(), // nf-fa-database
-                        fallback: "Dy".to_string(),
-                        command: ":term mnml-db-dynamodb".to_string(),
-                        color: "teal".to_string(),
-                        label: Some("DynamoDB table browser".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "lambda".to_string(),
-                        glyph: "\u{F0EBF}".to_string(), // nf-md-lambda
-                        fallback: "La".to_string(),
-                        command: ":term mnml-aws-lambda".to_string(),
-                        color: "orange".to_string(),
-                        label: Some("Lambda function browser".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "eventbridge".to_string(),
-                        glyph: "\u{F0CE0}".to_string(), // nf-md-bus
-                        fallback: "EB".to_string(),
-                        command: ":term mnml-aws-eventbridge".to_string(),
-                        color: "pink".to_string(),
-                        label: Some("EventBridge Schedules".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "rds".to_string(),
-                        // code-reviewer S3-5 — was F1C0 (same as
-                        // DynamoDB). F0F12 nf-md-server reads as
-                        // "managed relational service" vs DDB's
-                        // generic database glyph.
-                        glyph: "\u{F0F12}".to_string(),
-                        fallback: "RD".to_string(),
-                        command: ":term mnml-aws-rds".to_string(),
-                        color: "blue".to_string(),
-                        label: Some("RDS database browser".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "ecs".to_string(),
-                        glyph: "\u{F0F12}".to_string(), // nf-md-server
-                        fallback: "EC".to_string(),
-                        command: ":term mnml-aws-ecs".to_string(),
-                        color: "green".to_string(),
-                        label: Some("ECS clusters + services".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "ecr".to_string(),
-                        glyph: "\u{F03D7}".to_string(), // nf-md-archive
-                        fallback: "ER".to_string(),
-                        command: ":term mnml-aws-ecr".to_string(),
-                        color: "purple".to_string(),
-                        label: Some("ECR container registry".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "cognito".to_string(),
-                        glyph: "\u{F0004}".to_string(), // nf-md-account_circle
-                        fallback: "Co".to_string(),
-                        command: ":term mnml-aws-cognito".to_string(),
-                        color: "cyan".to_string(),
-                        label: Some("Cognito User Pools + users".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "sqs".to_string(),
-                        glyph: "\u{F09FE}".to_string(), // nf-md-mailbox_outline
-                        fallback: "Sq".to_string(),
-                        command: ":term mnml-aws-sqs".to_string(),
-                        color: "yellow".to_string(),
-                        label: Some("SQS queues".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    IntegrationIcon {
-                        id: "sns".to_string(),
-                        glyph: "\u{F0A0F}".to_string(), // nf-md-bullhorn_outline
-                        fallback: "Sn".to_string(),
-                        command: ":term mnml-aws-sns".to_string(),
-                        color: "yellow".to_string(),
-                        label: Some("SNS topics + subscriptions".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    // mixr rail chip — opens the family DJ app via
-                    // `mixr.show` as a Pty pane.
-                    IntegrationIcon {
-                        id: "mixr".to_string(),
-                        glyph: "\u{F075A}".to_string(), // nf-md-music_note
-                        fallback: "♪".to_string(),
-                        command: "mixr.show".to_string(),
-                        color: "pink".to_string(),
-                        label: Some("mixr DJ".to_string()),
-                        enabled: false,
-                        in_palette_bar: false,
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: true,
-                    },
-                    // 2026-06-19 — removed a duplicate `id: "http"`
-                    // entry that lived here. The earlier `IntegrationIcon`
-                    // around line 654 covers HTTP already (paper-plane
-                    // glyph, `http.send` command). Having both produced
-                    // two visually distinct rail chips for the same
-                    // command — confusing on first launch. Reported
-                    // by vscode-user-mouse second hunt as SEV-3.
+                    // 2026-08-01 — stripped ~35 hardcoded IntegrationIcon
+                    // defaults from mnml core. Everything except the four
+                    // first-party surfaces (browser, claude_code, codex, http)
+                    // now lives in sibling manifests at ~/.config/mnml/integrations/
+                    // (installed via <sibling> --install) or in launcher entries
+                    // (planned P3). mnml no longer pretends to know about a fixed
+                    // set of integrations — the manifest folder is ground truth.
                 ],
                 ticket_prefixes: Vec::new(),
                 // qa-feature 2026-07-02 — default "mixr" instead of
@@ -3912,17 +3264,16 @@ repo  = "example-knowledge"
     }
 
     #[test]
-    fn default_integration_icons_has_claude_codex_bitbucket_github() {
-        // Claude + Codex moved from the bufferline `launcher_icons` to
-        // the rail's INTEGRATIONS row (`integration_icons`) so they sit
-        // alongside Bitbucket / HTTP / Playwright / CodeBuild / GitHub
-        // — see commit bf5c874 for the rail reorg. Launcher icons are
-        // now empty by default; integration icons carry the AI + git
-        // host defaults.
+    fn default_integration_icons_are_first_party_only() {
+        // 2026-08-01 — mnml core stopped hardcoding integration
+        // knowledge. Only the four first-party surfaces stay as
+        // built-in defaults (browser, claude_code, codex, http).
+        // Everything else comes from installed sibling manifests
+        // at ~/.config/mnml/integrations/ or (P3+) launcher entries.
         let cfg = Config::default();
         assert!(
             cfg.ui.launcher_icons.is_empty(),
-            "launcher_icons (bufferline chips) default to empty now"
+            "launcher_icons (bufferline chips) default to empty"
         );
         let ids: Vec<&str> = cfg
             .ui
@@ -3930,30 +3281,15 @@ repo  = "example-knowledge"
             .iter()
             .map(|i| i.id.as_str())
             .collect();
-        assert!(
-            ids.contains(&"claude_code"),
-            "integration_icons must include claude_code"
-        );
-        assert!(
-            ids.contains(&"codex"),
-            "integration_icons must include codex"
-        );
-        // 2026-07-25 — combined "bitbucket" chip was split into
-        // bitbucket_pull_requests + bitbucket_pipelines; combined
-        // "jira" chip was removed (sibling manifests own the
-        // three splits). Assert on the survivors.
-        assert!(
-            ids.contains(&"bitbucket_pull_requests"),
-            "integration_icons must include bitbucket_pull_requests"
-        );
-        assert!(
-            ids.contains(&"bitbucket_pipelines"),
-            "integration_icons must include bitbucket_pipelines"
-        );
-        assert!(
-            ids.contains(&"github"),
-            "integration_icons must include github"
-        );
+        // First-party surfaces present.
+        assert!(ids.contains(&"browser"));
+        assert!(ids.contains(&"claude_code"));
+        assert!(ids.contains(&"codex"));
+        // Formerly-hardcoded entries are no longer built-in.
+        assert!(!ids.contains(&"bitbucket_pull_requests"));
+        assert!(!ids.contains(&"bitbucket_pipelines"));
+        assert!(!ids.contains(&"github"));
+        assert!(!ids.contains(&"dynamodb"));
         // Spot-check the Claude entry to catch glyph/color regressions.
         let claude = cfg
             .ui
@@ -3977,18 +3313,20 @@ repo  = "example-knowledge"
     fn user_reorder_of_integration_icons_survives_reload() {
         let dir = tempfile::tempdir().unwrap();
         let cfg_path = dir.path().join("config.toml");
-        // Write out a config that puts `github` (built-in) at the
-        // very top even though it defaults later in the list.
+        // Write out a config that reorders the first-party built-ins.
+        // 2026-08-01 — mnml core no longer hardcodes third-party
+        // integrations, so the test uses only first-party surfaces
+        // (browser, claude_code, codex) as the reorder subjects.
         let mut f = std::fs::File::create(&cfg_path).unwrap();
         writeln!(
             f,
             r#"
 [[ui.integration_icon]]
-id = "github"
+id = "codex"
 [[ui.integration_icon]]
 id = "claude_code"
 [[ui.integration_icon]]
-id = "bitbucket_pull_requests"
+id = "browser"
 "#
         )
         .unwrap();
@@ -4001,20 +3339,10 @@ id = "bitbucket_pull_requests"
             .map(|i| i.id.as_str())
             .collect();
         // The three user entries must appear FIRST, in file order.
-        // 2026-07-25 — combined "bitbucket" chip was split into
-        // bitbucket_pull_requests + bitbucket_pipelines; the test
-        // uses the pull-requests split as a stand-in.
         assert_eq!(
             &ids[..3],
-            &["github", "claude_code", "bitbucket_pull_requests"],
+            &["codex", "claude_code", "browser"],
             "user-file order must be preserved verbatim; got {ids:?}"
-        );
-        // Any built-in the user file didn't list must still be
-        // present (appended at the end) so newly-shipped chips
-        // don't vanish for existing users.
-        assert!(
-            ids.contains(&"codex"),
-            "built-ins the user didn't list must still be present; got {ids:?}"
         );
     }
 
