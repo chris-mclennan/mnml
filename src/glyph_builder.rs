@@ -615,22 +615,11 @@ pub struct BuiltinGlyph {
 ///
 /// 2026-08-01 — Stage 2 of the sibling-owned icon SDK removed the
 /// per-service AWS SVGs that used to live here (cloudwatch / codebuild
-/// / cognito / ecr / ecs / eventbridge / lambda / rds / sns / sqs).
-/// Each is now shipped by its own `mnml-aws-*` sibling via
-/// `ChipSpec::glyph_svg + glyph_codepoint`. Only `amplify` (kept as
-/// a transition — see `config.rs` compat shim at `id == "amplify"`)
-/// and `dynamodb` (deferred, will migrate to `mnml-db`) still live
-/// in mnml core.
+/// / cognito / ecr / ecs / eventbridge / lambda / rds / sns / sqs
+/// + amplify). Each is now shipped by its own `mnml-aws-*` sibling
+/// via `ChipSpec::glyph_svg + glyph_codepoint`. Only `dynamodb`
+/// (deferred, will migrate to `mnml-db`) still lives in mnml core.
 pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
-    BuiltinGlyph {
-        codepoint: 0xF1B00,
-        name: "aws-amplify-inv",
-        svg_relpath: "assets/glyphs/aws/amplify.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
     BuiltinGlyph {
         codepoint: 0xF1B07,
         name: "aws-dynamodb-inv",

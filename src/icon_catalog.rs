@@ -128,14 +128,12 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     // per-service AWS SVGs into their own `mnml-aws-*` sibling repos
     // (each sibling pins its old codepoint via `ChipSpec::glyph_codepoint`
     // so upgrading users' configs keep rendering). Only amplify + dynamodb
-    // entries remain in this picker: amplify is kept as a config-compat
+    // entries remain in this picker: only dynamodb (deferred until
     // transition (see `config.rs`), dynamodb is deferred until it moves
     // to `mnml-db`. Migrated codepoints (F1B01-F1B06, F1B08-F1B0B, and
     // their F1B1X color variants) are still valid — mnml discovers each
     // sibling's SVG on `integrations.refresh` and bakes it at the pinned
     // codepoint on `integrations.bake_sibling_glyphs`.
-    IconEntry { codepoint: "F1B00", name: "aws-amplify (inverted)", category: "aws" },
-    IconEntry { codepoint: "F1B10", name: "aws-amplify (color)", category: "aws" },
     IconEntry { codepoint: "F1B07", name: "aws-dynamodb (inverted)", category: "aws" },
     IconEntry { codepoint: "F1B17", name: "aws-dynamodb (color)", category: "aws" },
     IconEntry { codepoint: "F085B", name: "brain", category: "ai" },
