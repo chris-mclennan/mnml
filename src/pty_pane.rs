@@ -77,15 +77,28 @@ impl RenderGrid {
     }
 }
 
-/// Look up the per-workspace launcher override for a built-in
-/// integration. Reads `<workspace>/.mnml/integrations/<id>.toml`
-/// for a `launcher = "..."` line; returns that path if present,
-/// otherwise `default_exe`. Intentionally hand-scraped to avoid
-/// pulling a TOML parser into the hot spawn path — the file only
-/// ever has one field.
+/// Look up the per-workspace launcher override for an integration.
+/// Reads `<workspace>/.mnml/integrations/<id>.toml` for a
+/// `launcher = "..."` line; returns that path (expanded via the
+/// launcher template engine so `{{workspace}}` etc. work) if
+/// present, otherwise `default_exe`.
 ///
 /// The right-click "Set launcher script…" writes this file; users
 /// can also hand-edit it. Empty launcher / missing file = default.
+///
+/// P6 (2026-08-01) — absorbed into the launcher class model via
+/// two adjustments to the historical narrow-shim:
+///   1. Templates: the returned path is passed through
+///      `launcher_template::expand` with the workspace-only
+///      context. `launcher = "{{workspace}}/bin/claude-multi.sh"`
+///      resolves to the absolute path at spawn time.
+///   2. Unknown fields tolerated. The narrow single-field parser
+///      still works but future workspace-scoped manifests can carry
+///      any IntegrationManifest field (proper TOML) without
+///      breaking this path.
+///
+/// Still hand-scraped rather than using the toml crate to keep the
+/// hot spawn path lightweight — the file has ~1 meaningful line.
 pub fn resolve_launcher(workspace: &std::path::Path, id: &str, default_exe: &str) -> String {
     let path = workspace
         .join(".mnml")
@@ -107,7 +120,10 @@ pub fn resolve_launcher(workspace: &std::path::Path, id: &str, default_exe: &str
             {
                 let val = &inner[..end];
                 if !val.is_empty() {
-                    return val.to_string();
+                    let ctx = crate::launcher_template::TemplateContext::workspace_only(
+                        workspace.to_path_buf(),
+                    );
+                    return crate::launcher_template::expand(val, &ctx);
                 }
             }
         }
@@ -1952,6 +1968,64 @@ mod tests {
         assert_eq!(
             resolve_launcher(dir.path(), "claude_code", "claude"),
             "claude"
+        );
+    }
+
+    #[test]
+    fn resolve_launcher_expands_workspace_template() {
+        // P6 (2026-08-01) — templated launcher paths become
+        // absolute at spawn time. Users can write portable overrides
+        // like `launcher = "{{workspace}}/bin/multi.sh"` and mnml
+        // resolves it against the actual workspace.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/claude_code.toml"),
+            "launcher = \"{{workspace}}/bin/multi.sh\"\n",
+        )
+        .unwrap();
+        let expected = format!("{}/bin/multi.sh", dir.path().display());
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            expected
+        );
+    }
+
+    #[test]
+    fn resolve_launcher_expands_workspace_name_token() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/claude_code.toml"),
+            "launcher = \"echo-{{workspace_name}}\"\n",
+        )
+        .unwrap();
+        let name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            format!("echo-{name}")
+        );
+    }
+
+    #[test]
+    fn resolve_launcher_unknown_template_token_stays_literal() {
+        // A user misspells `{{workspce}}` — the launcher path stays
+        // literal (easier to debug than silent substitution failure).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".mnml/integrations")).unwrap();
+        std::fs::write(
+            dir.path().join(".mnml/integrations/claude_code.toml"),
+            "launcher = \"{{workspce}}/bin/multi.sh\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_launcher(dir.path(), "claude_code", "claude"),
+            "{{workspce}}/bin/multi.sh"
         );
     }
 
