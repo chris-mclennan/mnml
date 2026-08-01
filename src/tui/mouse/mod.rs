@@ -203,7 +203,16 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // silently no-op'd (child received the SGR click — proving
     // the branch entered — but focus didn't update). Split into
     // two phases guarantees the mutation lands.
-    let pty_tracking_hit: Option<(Rect, usize)> = if is_any_drag_active {
+    // 2026-07-31 user report — clicking the [Remove] button on the
+    // integration-remove confirm dialog silently did nothing (arrow
+    // + Enter worked). Root cause: the confirm popup overlaps a Pty
+    // pane whose child has mouse tracking (AWS CodeBuild); the
+    // Pty-forward path below fired first and swallowed the click.
+    // Any modal prompt / overlay / picker owns clicks over the
+    // sibling — the sibling can't focus a control that's covered.
+    let modal_wants_click =
+        app.prompt.is_some() || app.picker.is_some() || app.context_menu.is_some();
+    let pty_tracking_hit: Option<(Rect, usize)> = if is_any_drag_active || modal_wants_click {
         None
     } else {
         app.rects

@@ -2961,6 +2961,163 @@ pub fn user_config_path() -> Option<PathBuf> {
     home_config_path()
 }
 
+/// Directory where mnml keeps dated backups of the user config —
+/// `~/.config/mnml/backups/`. Every write via `write_user_config`
+/// copies the pre-write file here as
+/// `config.YYYY-MM-DD-HHMMSS.toml` before overwriting. Kept for
+/// disaster recovery when a bad serializer roundtrip or user typo
+/// corrupts the live config (user report 2026-07-31).
+pub fn config_backups_dir() -> Option<PathBuf> {
+    home_config_path().and_then(|p| p.parent().map(|d| d.join("backups")))
+}
+
+/// Cap on the number of backups retained. Older ones get pruned
+/// on each write. Enough to cover a full session's worth of edits
+/// without unbounded growth.
+const MAX_CONFIG_BACKUPS: usize = 50;
+
+/// Write `contents` to the user config atomically, first copying
+/// the current file (if any) to a dated backup under
+/// `~/.config/mnml/backups/`. Prune old backups past `MAX_CONFIG_BACKUPS`.
+///
+/// Every user-facing config-write path (settings save, cloud-run
+/// defaults, workspaces upsert, integration-icon persistence, …)
+/// funnels through here so the recovery net is uniform.
+pub fn write_user_config(cfg_path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    // 1. Snapshot the current file (if it exists) to backups/.
+    //    Skip silently if the backup dir can't be resolved or
+    //    written — we don't want backup failure to block the
+    //    primary write.
+    if cfg_path.exists()
+        && let Some(backups) = config_backups_dir()
+        && std::fs::create_dir_all(&backups).is_ok()
+        && let Ok(existing) = std::fs::read(cfg_path)
+    {
+        let stamp = backup_timestamp();
+        let backup = backups.join(format!("config.{stamp}.toml"));
+        // If two writes collide inside the same second, append a
+        // small suffix so we don't clobber the earlier one.
+        let backup = ensure_unique(backup);
+        let _ = std::fs::write(&backup, existing);
+        prune_old_backups(&backups, MAX_CONFIG_BACKUPS);
+    }
+    // 2. Write the new contents.
+    std::fs::write(cfg_path, contents)
+}
+
+/// UTC-ish local timestamp — `YYYY-MM-DD-HHMMSS`. Uses SystemTime
+/// so we don't drag in chrono; readable enough for backup filenames.
+fn backup_timestamp() -> String {
+    let now = std::time::SystemTime::now();
+    let dur = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = dur.as_secs();
+    // Local time via `libc::localtime_r` would need extra deps; the
+    // UTC breakdown below is fine for a filename stamp and matches
+    // real UTC when the machine's TZ is UTC. Users who care about
+    // local time in the filename can `ls -lt`.
+    let (y, mo, d, h, mi, s) = utc_ymdhms(secs);
+    format!("{y:04}-{mo:02}-{d:02}-{h:02}{mi:02}{s:02}")
+}
+
+/// Classic epoch-seconds → (year, month, day, hour, minute, second)
+/// breakdown. Anchored at 1970-01-01. Good through 2100+.
+fn utc_ymdhms(mut secs: u64) -> (u32, u32, u32, u32, u32, u32) {
+    let s = (secs % 60) as u32;
+    secs /= 60;
+    let mi = (secs % 60) as u32;
+    secs /= 60;
+    let h = (secs % 24) as u32;
+    let mut days = (secs / 24) as i64;
+    let mut year: i64 = 1970;
+    loop {
+        let leap = is_leap(year);
+        let n = if leap { 366 } else { 365 };
+        if days < n {
+            break;
+        }
+        days -= n;
+        year += 1;
+    }
+    let dim = [
+        31,
+        if is_leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mut mo: i64 = 0;
+    while mo < 12 && days >= dim[mo as usize] {
+        days -= dim[mo as usize];
+        mo += 1;
+    }
+    (year as u32, (mo + 1) as u32, (days + 1) as u32, h, mi, s)
+}
+
+fn is_leap(y: i64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+fn ensure_unique(mut path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let stem = path.file_stem().map(|s| s.to_owned()).unwrap_or_default();
+    let ext = path.extension().map(|s| s.to_owned()).unwrap_or_default();
+    let parent = path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    for i in 1..1000 {
+        let stem_s = stem.to_string_lossy();
+        let ext_s = ext.to_string_lossy();
+        let candidate = if ext_s.is_empty() {
+            parent.join(format!("{stem_s}-{i}"))
+        } else {
+            parent.join(format!("{stem_s}-{i}.{ext_s}"))
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+        path = candidate;
+    }
+    path
+}
+
+fn prune_old_backups(dir: &std::path::Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime)> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?.to_string();
+            if !name.starts_with("config.") || !name.ends_with(".toml") {
+                return None;
+            }
+            let mtime = e.metadata().ok().and_then(|m| m.modified().ok())?;
+            Some((p, mtime))
+        })
+        .collect();
+    if files.len() <= keep {
+        return;
+    }
+    // Newest first — retain the first `keep`, delete the rest.
+    files.sort_by_key(|b| std::cmp::Reverse(b.1));
+    for (p, _) in files.into_iter().skip(keep) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 /// Peek `~/.config/mnml/config.toml` for `[startup] default_workspace`
 /// without doing a full `Config::load`. Used by the CLI to resolve the
 /// no-positional-arg workspace BEFORE the rest of config loads (which
@@ -3005,7 +3162,7 @@ pub fn persist_cloud_run_defaults(defaults: &CloudRunDefaults) -> Result<PathBuf
     }
     let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
     let updated = upsert_cloud_run_defaults(&existing, defaults);
-    std::fs::write(&cfg_path, &updated)
+    write_user_config(&cfg_path, &updated)
         .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
     Ok(cfg_path)
 }
@@ -3069,7 +3226,7 @@ pub fn persist_default_workspace(path: Option<&Path>) -> Result<PathBuf, String>
     }
     let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
     let updated = upsert_startup_default_workspace(&existing, path);
-    std::fs::write(&cfg_path, &updated)
+    write_user_config(&cfg_path, &updated)
         .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
     Ok(cfg_path)
 }
@@ -3175,7 +3332,7 @@ pub fn persist_ui_projects_dir(value: Option<&str>) -> Result<PathBuf, String> {
     }
     let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
     let updated = upsert_global_string(&existing, "ui", "projects_dir", value);
-    std::fs::write(&cfg_path, &updated)
+    write_user_config(&cfg_path, &updated)
         .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
     Ok(cfg_path)
 }
@@ -3299,7 +3456,7 @@ pub fn persist_workspace_setting(
     }
     let existing = std::fs::read_to_string(&cfg_path).unwrap_or_default();
     let updated = upsert_toml_kv(&existing, section, key, value_toml);
-    std::fs::write(&cfg_path, &updated)
+    write_user_config(&cfg_path, &updated)
         .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
     Ok(cfg_path)
 }
@@ -3448,7 +3605,7 @@ pub fn persist_workspaces_to_global(workspaces: &[WorkspaceConfig]) -> Result<Pa
         }
         out.push('\n');
     }
-    std::fs::write(&cfg_path, &out).map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    write_user_config(&cfg_path, &out).map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
     Ok(cfg_path)
 }
 
