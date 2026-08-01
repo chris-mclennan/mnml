@@ -5671,6 +5671,13 @@ impl App {
                     })
                     .collect(),
             };
+            // 2026-08-01 — always merge sibling-owned fields.
+            // Preserve `enabled` + `in_palette_bar` from the
+            // existing slot (those are user prefs, everything else
+            // is sibling-authored default). `manifest_can_override`
+            // no longer gates the overwrite — user config is
+            // slim-only after the precedence flip in
+            // `config::finalize`.
             match self
                 .config
                 .ui
@@ -5678,8 +5685,12 @@ impl App {
                 .iter_mut()
                 .find(|i| i.id == m.id)
             {
-                Some(slot) if slot.manifest_can_override => *slot = new_icon,
-                Some(_) => {} // user-authored — leave alone
+                Some(slot) => {
+                    let mut merged = new_icon;
+                    merged.enabled = slot.enabled;
+                    merged.in_palette_bar = slot.in_palette_bar;
+                    *slot = merged;
+                }
                 None => self.config.ui.integration_icons.push(new_icon),
             }
         }

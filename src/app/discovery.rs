@@ -942,19 +942,21 @@ fn append_integration_icon_blocks(existing: &str, icons: &[IntegrationIcon]) -> 
         out.push_str("\n\n");
     }
     out.push_str("# ── mnml-managed integration icons ──────────────────────────────────\n");
-    out.push_str("# Written by the chip right-click → Edit panel. Edit by hand or via\n");
-    out.push_str("# the panel — re-saves replace this section in place.\n\n");
+    out.push_str("# 2026-08-01 — slim entries. Only `enabled` +\n");
+    out.push_str("# `in_palette_bar` (and file order) come from here now;\n");
+    out.push_str("# glyph / tooltip / command / color / fallback all read from\n");
+    out.push_str("# the sibling's installed manifest (or a built-in default in\n");
+    out.push_str("# mnml core). This section is rewritten in place on every\n");
+    out.push_str("# right-click toggle. Any fields you add by hand will get\n");
+    out.push_str("# dropped on next save — add an override mechanism if you\n");
+    out.push_str("# need per-user glyph/tooltip customization.\n\n");
     for ic in icons {
         out.push_str("[[ui.integration_icon]]\n");
         out.push_str(&format!("id = {}\n", toml_str(&ic.id)));
-        out.push_str(&format!("glyph = {}\n", toml_str(&ic.glyph)));
-        out.push_str(&format!("fallback = {}\n", toml_str(&ic.fallback)));
-        out.push_str(&format!("command = {}\n", toml_str(&ic.command)));
-        out.push_str(&format!("color = {}\n", toml_str(&ic.color)));
-        if let Some(t) = &ic.tooltip {
-            out.push_str(&format!("tooltip = {}\n", toml_str(t)));
-        }
         out.push_str(&format!("enabled = {}\n", ic.enabled));
+        if ic.in_palette_bar {
+            out.push_str("in_palette_bar = true\n");
+        }
         out.push('\n');
     }
     out

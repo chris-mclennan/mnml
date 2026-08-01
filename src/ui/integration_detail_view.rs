@@ -866,12 +866,15 @@ mod tests {
         let mut cfg = Config::default();
         cfg.ui.integration_icons.push(sample_icon());
         let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
-        // Cold open: right panel closes to start; open_integration_detail_pane
-        // should turn it on + host the detail pane.
-        assert!(!app.right_panel_visible);
+        // 2026-08-01 — detail pane now hosts in the center like
+        // Editor/Request (user asked to move it out of the right
+        // panel). Find the pane by its kind.
         app.open_integration_detail_pane("slack");
-        assert!(app.right_panel_visible);
-        let pid = app.right_panel_active_pane_id().unwrap();
+        let pid = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::IntegrationDetail(d) if d.id == "slack"))
+            .unwrap();
         assert!(matches!(
             app.panes.get(pid),
             Some(Pane::IntegrationDetail(d)) if d.id == "slack"
@@ -900,7 +903,13 @@ mod tests {
         cfg.ui.integration_icons.push(sample_icon());
         let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
         app.open_integration_detail_pane("slack");
-        let pid = app.right_panel_active_pane_id().unwrap();
+        // 2026-08-01 — detail pane hosts in the center now, not
+        // the right panel. Find the newly-created pane by kind.
+        let pid = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::IntegrationDetail(d) if d.id == "slack"))
+            .unwrap();
         // 7 buttons + 1 command + 2 links = 10.
         assert_eq!(action_count(&app, pid), 10);
     }
@@ -912,7 +921,13 @@ mod tests {
         cfg.ui.integration_icons.push(sample_icon());
         let mut app = crate::app::App::new(d.path().to_path_buf(), cfg).unwrap();
         app.open_integration_detail_pane("slack");
-        let pid = app.right_panel_active_pane_id().unwrap();
+        // 2026-08-01 — detail pane hosts in the center now, not
+        // the right panel. Find the newly-created pane by kind.
+        let pid = app
+            .panes
+            .iter()
+            .position(|p| matches!(p, Pane::IntegrationDetail(d) if d.id == "slack"))
+            .unwrap();
         // Overshoot down + up — cursor must land at valid bounds.
         app.integration_detail_cursor_move(999);
         let cursor = match app.panes.get(pid) {

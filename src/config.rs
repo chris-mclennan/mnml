@@ -2512,61 +2512,55 @@ impl Config {
             //    inheritance if a matching built-in exists;
             //    otherwise it stands on its own (must carry
             //    glyph + command).
+            // 2026-08-01 — precedence flip. User config is now
+            // authoritative for order + `enabled` + `in_palette_bar`
+            // ONLY. All other fields (glyph, tooltip, color, command,
+            // fallback, description, links) come from the built-in
+            // default (or, later, the sibling manifest via
+            // `merge_integration_manifests`). Fixes the "you changed
+            // the default in Rust source but my chip still shows the
+            // old snapshotted value" bug.
+            //
+            // Entries in user config for an unknown id (no matching
+            // built-in) are dropped — an integration is either a
+            // sibling (which installs a manifest) or a built-in.
+            // User config is not a valid source for a fresh chip
+            // definition anymore; add `[[ui.integration_icon]]` there
+            // was always meant for overrides, not authoring.
             for r in &user_raws {
                 let Some(id) = id_of_raw(r) else { continue };
                 if consumed.contains(&id) {
-                    // Duplicate id in the file — first entry wins.
                     continue;
                 }
-                let icon = match builtins_by_id.get(&id) {
-                    Some(builtin) => IntegrationIcon {
-                        id: builtin.id.clone(),
-                        glyph: r.glyph.clone().unwrap_or_else(|| builtin.glyph.clone()),
-                        fallback: r
-                            .fallback
-                            .clone()
-                            .unwrap_or_else(|| builtin.fallback.clone()),
-                        command: r.command.clone().unwrap_or_else(|| builtin.command.clone()),
-                        color: r.color.clone().unwrap_or_else(|| builtin.color.clone()),
-                        tooltip: r.tooltip.clone().or_else(|| builtin.tooltip.clone()),
-                        enabled: r.enabled.unwrap_or(builtin.enabled),
-                        in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),
-                        // User explicitly authored this override —
-                        // no sibling manifest may overwrite it.
-                        description: None,
-                        homepage: None,
-                        docs: None,
-                        repository: None,
-                        author: None,
-                        version: None,
-                        commands: Vec::new(),
-                        manifest_can_override: false,
-                    },
-                    None => {
-                        let (Some(glyph), Some(command)) = (r.glyph.clone(), r.command.clone())
-                        else {
-                            continue;
-                        };
-                        IntegrationIcon {
-                            id: id.clone(),
-                            glyph,
-                            fallback: r.fallback.clone().unwrap_or_else(|| "*".to_string()),
-                            command,
-                            color: r.color.clone().unwrap_or_else(|| "fg".to_string()),
-                            tooltip: r.tooltip.clone(),
-                            enabled: r.enabled.unwrap_or(false),
-                            in_palette_bar: r.in_palette_bar.unwrap_or(false),
-                            // User-authored — sibling manifests can't override.
-                            description: None,
-                            homepage: None,
-                            docs: None,
-                            repository: None,
-                            author: None,
-                            version: None,
-                            commands: Vec::new(),
-                            manifest_can_override: false,
-                        }
-                    }
+                let Some(builtin) = builtins_by_id.get(&id) else {
+                    // No built-in match — drop the entry. A sibling
+                    // manifest with this id (if any) will re-add it
+                    // later via merge_integration_manifests, with
+                    // its own enabled/in_palette_bar defaults.
+                    consumed.insert(id);
+                    continue;
+                };
+                let icon = IntegrationIcon {
+                    id: builtin.id.clone(),
+                    glyph: builtin.glyph.clone(),
+                    fallback: builtin.fallback.clone(),
+                    command: builtin.command.clone(),
+                    color: builtin.color.clone(),
+                    tooltip: builtin.tooltip.clone(),
+                    // User-controlled fields:
+                    enabled: r.enabled.unwrap_or(builtin.enabled),
+                    in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),
+                    description: builtin.description.clone(),
+                    homepage: builtin.homepage.clone(),
+                    docs: builtin.docs.clone(),
+                    repository: builtin.repository.clone(),
+                    author: builtin.author.clone(),
+                    version: builtin.version.clone(),
+                    commands: builtin.commands.clone(),
+                    // Sibling manifests may still override — they
+                    // supersede built-in defaults for anything with
+                    // an installed `~/.config/mnml/integrations/<id>.toml`.
+                    manifest_can_override: true,
                 };
                 consumed.insert(id);
                 merged.push(icon);
