@@ -463,7 +463,7 @@ impl App {
             return;
         };
         let title = icon
-            .tooltip
+            .label
             .clone()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| icon.id.clone());

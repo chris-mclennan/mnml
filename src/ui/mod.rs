@@ -3193,7 +3193,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             let hay = format!(
                 "{} {} {}",
-                icon.tooltip.as_deref().unwrap_or(""),
+                icon.label.as_deref().unwrap_or(""),
                 icon.id,
                 icon.command,
             )
@@ -3205,13 +3205,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
         icons.sort_by(|(_, a), (_, b)| {
             let key_a = a
-                .tooltip
+                .label
                 .clone()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| a.id.clone())
                 .to_ascii_lowercase();
             let key_b = b
-                .tooltip
+                .label
                 .clone()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| b.id.clone())
@@ -3291,7 +3291,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         };
         let fg = theme::color_from_slot(icon.color.as_str(), &t);
         let name = icon
-            .tooltip
+            .label
             .as_deref()
             .filter(|s| !s.is_empty())
             .unwrap_or(icon.id.as_str())

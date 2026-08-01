@@ -32,7 +32,7 @@
 //! glyph          = "9"                # Nerd Font glyph
 //! fallback       = "Sk"                     # 2-char text
 //! color          = "purple"                 # theme color name
-//! tooltip        = "Slack"
+//! label          = "Slack"
 //! enabled        = true                     # rendered by default
 //! in_palette_bar = false                    # false → INTEGRATIONS section
 //! badge_key      = "slack"                  # section id for badges
@@ -109,7 +109,14 @@ pub enum OsNotifyPolicy {
 pub struct IntegrationManifest {
     // ── Identity ───────────────────────────────
     pub id: String,
-    pub name: String,
+    /// Short display name (~20 chars). Rendered as the chip hover,
+    /// the tree row label in the Integrations panel, the picker
+    /// row, and the detail-pane header. Was `chip.tooltip` before
+    /// 2026-08-01; moved up to top level next to `description`
+    /// since it's integration-identity, not chip-visuals.
+    pub label: String,
+    /// One-sentence longer form. Rendered in the detail-pane
+    /// subtitle. Optional.
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -160,8 +167,6 @@ pub struct ChipSpec {
     pub glyph: String,
     pub fallback: String,
     pub color: String,
-    #[serde(default)]
-    pub tooltip: Option<String>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
     #[serde(default)]
@@ -352,7 +357,7 @@ fn scan_dir(dir: &Path, out: &mut Vec<IntegrationManifest>) {
         };
         match toml::from_str::<IntegrationManifest>(&text) {
             Ok(mut m) => {
-                if m.id.is_empty() || m.name.is_empty() || m.binary.is_empty() {
+                if m.id.is_empty() || m.label.is_empty() || m.binary.is_empty() {
                     continue;
                 }
                 // Sanitize unknown chip color → None (renderer
@@ -413,12 +418,12 @@ mod tests {
     fn parses_minimal_manifest() {
         let toml = r#"
 id = "slack"
-name = "Slack"
+label = "Slack"
 binary = "mnml-msg-slack"
 "#;
         let m: IntegrationManifest = toml::from_str(toml).unwrap();
         assert_eq!(m.id, "slack");
-        assert_eq!(m.name, "Slack");
+        assert_eq!(m.label, "Slack");
         assert_eq!(m.binary, "mnml-msg-slack");
         assert!(m.chip.is_none());
         assert!(m.commands.is_empty());
@@ -429,7 +434,7 @@ binary = "mnml-msg-slack"
     fn parses_full_manifest() {
         let toml = r#"
 id = "slack"
-name = "Slack"
+label = "Slack"
 description = "Slack browse + post"
 version = "0.1.0"
 binary = "mnml-msg-slack"
@@ -439,7 +444,6 @@ category = "msg"
 glyph = "S"
 fallback = "Sk"
 color = "purple"
-tooltip = "Slack"
 enabled = true
 in_palette_bar = false
 badge_key = "slack"
@@ -496,14 +500,14 @@ binary = "mnml-msg-slack"
         writeln!(
             f,
             r#"id = "foo"
-name = "Workspace Foo"
+label = "Workspace Foo"
 binary = "mnml-foo"
 "#
         )
         .unwrap();
         let manifests = load_all_with_user_base(&ws, None);
         assert_eq!(manifests.len(), 1);
-        assert_eq!(manifests[0].name, "Workspace Foo");
+        assert_eq!(manifests[0].label, "Workspace Foo");
     }
 
     #[test]
@@ -517,7 +521,7 @@ binary = "mnml-foo"
         writeln!(
             f,
             r#"id = "foo"
-name = "Foo"
+label = "Foo"
 binary = "mnml-foo"
 
 [chip]
@@ -550,7 +554,7 @@ color = "nonsense-neon"
         // No requires → always ready.
         let m = IntegrationManifest {
             id: "x".into(),
-            name: "X".into(),
+            label: "X".into(),
             description: None,
             version: None,
             binary: "mnml-x".into(),

@@ -740,7 +740,7 @@ fn draw_integration_section(
         .iter()
         .map(|&i| {
             let ic = &app.config.ui.integration_icons[i];
-            let label = ic.tooltip.clone().unwrap_or_else(|| ic.id.clone());
+            let label = ic.label.clone().unwrap_or_else(|| ic.id.clone());
             (
                 i,
                 ic.glyph.clone(),

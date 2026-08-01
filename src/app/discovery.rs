@@ -111,7 +111,7 @@ impl App {
         let command_cursor = icon.command.len();
         let glyph_cursor = icon.glyph.len();
         let fallback_cursor = icon.fallback.len();
-        let tooltip = icon.tooltip.unwrap_or_default();
+        let tooltip = icon.label.unwrap_or_default();
         let tooltip_cursor = tooltip.len();
         self.integration_edit = Some(IntegrationEditState {
             mode: IntegrationEditMode::Edit,
@@ -358,7 +358,7 @@ impl App {
             },
             command: command.to_string(),
             color: panel.color.trim().to_string(),
-            tooltip: if panel.tooltip.trim().is_empty() {
+            label: if panel.tooltip.trim().is_empty() {
                 None
             } else {
                 Some(panel.tooltip.trim().to_string())
@@ -1065,7 +1065,7 @@ color = \"blue\"
                 fallback: "L".to_string(),
                 command: ":term mnml-aws-lambda".to_string(),
                 color: "orange".to_string(),
-                tooltip: Some("Lambda".to_string()),
+                label: Some("Lambda".to_string()),
                 enabled: false,
                 in_palette_bar: false,
                 description: None,
@@ -1083,7 +1083,7 @@ color = \"blue\"
                 fallback: "S3".to_string(),
                 command: ":term mnml-fs-s3".to_string(),
                 color: "orange".to_string(),
-                tooltip: None,
+                label: None,
                 enabled: false,
                 in_palette_bar: false,
                 description: None,
@@ -1114,7 +1114,7 @@ color = \"blue\"
             fallback: "L".to_string(),
             command: ":term mnml-aws-lambda".to_string(),
             color: "orange".to_string(),
-            tooltip: None,
+            label: None,
             enabled: false,
             in_palette_bar: false,
             description: None,
@@ -1151,7 +1151,7 @@ color = \"blue\"
             fallback: "M".to_string(),
             command: ":term myapp".to_string(),
             color: "cyan".to_string(),
-            tooltip: Some("My App".to_string()),
+            label: Some("My App".to_string()),
             enabled: true,
             in_palette_bar: false,
             description: None,
@@ -1188,7 +1188,7 @@ color = \"blue\"
             fallback: "D".to_string(),
             command: ":term disabled_one".to_string(),
             color: "red".to_string(),
-            tooltip: None,
+            label: None,
             enabled: false,
             in_palette_bar: false,
             description: None,

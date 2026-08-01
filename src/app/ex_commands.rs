@@ -1746,7 +1746,7 @@ impl App {
                                 || ic.command == term_form
                                 || ic.command == cmdline
                         })
-                        .map(|ic| (ic.id.clone(), ic.tooltip.clone()));
+                        .map(|ic| (ic.id.clone(), ic.label.clone()));
                     // If the ex-command matches an integration chip
                     // AND that chip carries a `tooltip`, use the
                     // tooltip as the tab label — that's the chip's

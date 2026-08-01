@@ -5647,7 +5647,9 @@ impl App {
                     })
                     .unwrap_or_else(|| format!("term {}", m.binary)),
                 color: chip.color.clone(),
-                tooltip: chip.tooltip.clone(),
+                // 2026-08-01 — label moved from chip.tooltip up to
+                // manifest.label (identity, not chip visuals).
+                label: Some(m.label.clone()),
                 enabled: chip.enabled,
                 in_palette_bar: chip.in_palette_bar,
                 // A later manifest re-scan can re-apply/override.
@@ -15098,7 +15100,7 @@ mod tests {
                 fallback: "T".to_string(),
                 command: ":palette".to_string(),
                 color: "blue".to_string(),
-                tooltip: None,
+                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 description: None,

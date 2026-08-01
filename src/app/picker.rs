@@ -1179,7 +1179,7 @@ impl App {
             .iter()
             .map(|ic| {
                 let state = if ic.enabled { "on" } else { "off" };
-                let tooltip = ic.tooltip.clone().unwrap_or_default();
+                let tooltip = ic.label.clone().unwrap_or_default();
                 PickerItem {
                     id: format!("{action_prefix}:{}", ic.id),
                     label: format!("{} ({state}) — {}", ic.id, tooltip),

@@ -2061,7 +2061,7 @@ mod tests {
         let mut app = App::new(dir.path().to_path_buf(), Config::default()).unwrap();
         app.integration_manifests.push(IntegrationManifest {
             id: "silent".into(),
-            name: "Silent".into(),
+            label: "Silent".into(),
             description: None,
             version: None,
             binary: "mnml-silent".into(),

@@ -153,7 +153,7 @@ pub fn draw(
         .unwrap_or(t.fg);
     let title_name = icon
         .as_ref()
-        .and_then(|i| i.tooltip.clone().filter(|s| !s.is_empty()))
+        .and_then(|i| i.label.clone().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| id.clone());
     lines.push(Line::from(vec![
         Span::styled(
@@ -798,7 +798,7 @@ mod tests {
             fallback: "Sk".to_string(),
             command: "slack.open".to_string(),
             color: "purple".to_string(),
-            tooltip: Some("Slack".to_string()),
+            label: Some("Slack".to_string()),
             enabled: true,
             in_palette_bar: false,
             manifest_can_override: true,

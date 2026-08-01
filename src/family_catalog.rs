@@ -55,7 +55,7 @@ pub struct IconTemplate {
     pub glyph: &'static str,
     pub fallback: &'static str,
     pub color: &'static str,
-    pub tooltip: &'static str,
+    pub label: &'static str,
 }
 
 /// Mount manifest stub — present for catalog entries whose sibling
@@ -188,7 +188,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0E7B}", // nf-md-package_variant
             fallback: "CB",
             color: "yellow",
-            tooltip: "AWS CodeBuild",
+            label: "AWS CodeBuild",
         },
     },
     FamilySibling {
@@ -208,7 +208,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0E5C}", // nf-md-text-box-search
             fallback: "CW",
             color: "yellow",
-            tooltip: "CloudWatch Logs live tail",
+            label: "CloudWatch Logs live tail",
         },
     },
     FamilySibling {
@@ -222,7 +222,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F087D}", // nf-md-rocket-launch
             fallback: "Am",
             color: "purple",
-            tooltip: "Amplify apps + deploys",
+            label: "Amplify apps + deploys",
         },
     },
     FamilySibling {
@@ -236,7 +236,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0EBF}",
             fallback: "La",
             color: "orange",
-            tooltip: "Lambda function browser",
+            label: "Lambda function browser",
         },
     },
     FamilySibling {
@@ -250,7 +250,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0CE0}",
             fallback: "EB",
             color: "pink",
-            tooltip: "EventBridge Schedules",
+            label: "EventBridge Schedules",
         },
     },
     FamilySibling {
@@ -264,7 +264,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F1C0}", // nf-fa-database
             fallback: "RD",
             color: "blue",
-            tooltip: "RDS database browser",
+            label: "RDS database browser",
         },
     },
     FamilySibling {
@@ -278,7 +278,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0F12}", // nf-md-server
             fallback: "EC",
             color: "green",
-            tooltip: "ECS clusters + services",
+            label: "ECS clusters + services",
         },
     },
     FamilySibling {
@@ -292,7 +292,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F03D7}", // nf-md-archive
             fallback: "ER",
             color: "purple",
-            tooltip: "ECR container registry",
+            label: "ECR container registry",
         },
     },
     FamilySibling {
@@ -306,7 +306,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0004}", // nf-md-account_circle
             fallback: "Co",
             color: "cyan",
-            tooltip: "Cognito User Pools + users",
+            label: "Cognito User Pools + users",
         },
     },
     FamilySibling {
@@ -320,7 +320,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F09FE}", // nf-md-mailbox_outline
             fallback: "Sq",
             color: "yellow",
-            tooltip: "SQS queues",
+            label: "SQS queues",
         },
     },
     FamilySibling {
@@ -334,7 +334,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0A0F}", // nf-md-bullhorn_outline
             fallback: "Sn",
             color: "yellow",
-            tooltip: "SNS topics + subscriptions",
+            label: "SNS topics + subscriptions",
         },
     },
     // ── Music ─────────────────────────────────────────────────
@@ -352,7 +352,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F075A}", // nf-md-music_note
             fallback: "♪",
             color: "pink",
-            tooltip: "mixr DJ",
+            label: "mixr DJ",
         },
     },
     // ── Filesystem / Storage ──────────────────────────────────
@@ -367,7 +367,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0162}", // nf-md-bucket_outline
             fallback: "S3",
             color: "orange",
-            tooltip: "Amazon S3 browser",
+            label: "Amazon S3 browser",
         },
     },
     FamilySibling {
@@ -381,7 +381,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0805}", // nf-md-microsoft_azure
             fallback: "Az",
             color: "blue",
-            tooltip: "Azure Blob Storage browser",
+            label: "Azure Blob Storage browser",
         },
     },
     // ── Databases ─────────────────────────────────────────────
@@ -396,7 +396,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F1C0}", // nf-fa-database
             fallback: "Dy",
             color: "teal",
-            tooltip: "DynamoDB table browser",
+            label: "DynamoDB table browser",
         },
     },
     // ── Forges (SCM) ──────────────────────────────────────────
@@ -411,7 +411,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0CB1}",
             fallback: "BB",
             color: "blue",
-            tooltip: "Bitbucket viewer",
+            label: "Bitbucket viewer",
         },
     },
     FamilySibling {
@@ -425,7 +425,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F02A4}",
             fallback: "GH",
             color: "green",
-            tooltip: "GitHub viewer",
+            label: "GitHub viewer",
         },
     },
     FamilySibling {
@@ -439,7 +439,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0BA3}",
             fallback: "GL",
             color: "orange",
-            tooltip: "GitLab viewer",
+            label: "GitLab viewer",
         },
     },
     FamilySibling {
@@ -453,7 +453,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0805}",
             fallback: "AZ",
             color: "cyan",
-            tooltip: "Azure DevOps viewer",
+            label: "Azure DevOps viewer",
         },
     },
     // ── Trackers ──────────────────────────────────────────────
@@ -468,7 +468,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0824}",
             fallback: "Ji",
             color: "blue",
-            tooltip: "Jira tickets",
+            label: "Jira tickets",
         },
     },
     FamilySibling {
@@ -482,7 +482,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F12F2}",
             fallback: "Ln",
             color: "purple",
-            tooltip: "Linear issues",
+            label: "Linear issues",
         },
     },
     // ── Test runners ──────────────────────────────────────────
@@ -497,7 +497,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0E66}",
             fallback: "Pw",
             color: "green",
-            tooltip: "Playwright traces",
+            label: "Playwright traces",
         },
     },
     FamilySibling {
@@ -511,7 +511,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0E66}",
             fallback: "Cy",
             color: "green",
-            tooltip: "Cypress results",
+            label: "Cypress results",
         },
     },
     // ── Web ───────────────────────────────────────────────────
@@ -536,7 +536,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F1D8}", // nf-fa-paper_plane
             fallback: "ht",
             color: "blue",
-            tooltip: "HTTP client (built-in)",
+            label: "HTTP client (built-in)",
         },
     },
     // ── Observability ─────────────────────────────────────────
@@ -551,7 +551,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F1A0F}", // nf-md-dog
             fallback: "Dd",
             color: "purple",
-            tooltip: "Datadog observability browser",
+            label: "Datadog observability browser",
         },
     },
     // ── Messaging ─────────────────────────────────────────────
@@ -566,7 +566,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0EB1}", // nf-md-email_newsletter
             fallback: "Bd",
             color: "green",
-            tooltip: "Buttondown newsletter browser",
+            label: "Buttondown newsletter browser",
         },
     },
     FamilySibling {
@@ -580,7 +580,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F03EF}", // nf-md-slack
             fallback: "Sk",
             color: "magenta",
-            tooltip: "Slack browse + post",
+            label: "Slack browse + post",
         },
     },
     FamilySibling {
@@ -594,7 +594,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0FA1}", // nf-md-microsoft_teams
             fallback: "Tm",
             color: "blue",
-            tooltip: "Microsoft Teams browse + post",
+            label: "Microsoft Teams browse + post",
         },
     },
     FamilySibling {
@@ -608,7 +608,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F01EF}", // nf-md-email_check_outline
             fallback: "Md",
             color: "red",
-            tooltip: "Mandrill transactional email browser",
+            label: "Mandrill transactional email browser",
         },
     },
     FamilySibling {
@@ -622,7 +622,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F03BC}", // nf-md-gmail
             fallback: "Gm",
             color: "red",
-            tooltip: "Gmail browse + send (per-user GCP project required)",
+            label: "Gmail browse + send (per-user GCP project required)",
         },
     },
     FamilySibling {
@@ -636,7 +636,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0EDE}", // nf-md-calendar_month
             fallback: "Ca",
             color: "blue",
-            tooltip: "Google Calendar browse + create (per-user GCP project required)",
+            label: "Google Calendar browse + create (per-user GCP project required)",
         },
     },
     // ── CDN / Edge ────────────────────────────────────────────
@@ -651,7 +651,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0E7B}", // nf-md-cloud_outline (Cloudflare's brand glyph isn't in nerd fonts)
             fallback: "Cf",
             color: "orange",
-            tooltip: "Cloudflare CDN browser",
+            label: "Cloudflare CDN browser",
         },
     },
     // ── Virtualization & containers ───────────────────────────
@@ -666,7 +666,7 @@ pub const CATALOG: &[FamilySibling] = &[
             glyph: "\u{F0868}", // nf-md-docker
             fallback: "Dk",
             color: "blue",
-            tooltip: "Docker container browser",
+            label: "Docker container browser",
         },
     },
 ];
@@ -702,7 +702,7 @@ pub struct OwnedIconTemplate {
     pub glyph: String,
     pub fallback: String,
     pub color: String,
-    pub tooltip: String,
+    pub label: String,
 }
 
 impl DiscoveredSibling {
@@ -765,10 +765,10 @@ impl SiblingRef {
             SiblingRef::Discovered(s) => &s.icon.color,
         }
     }
-    pub fn icon_tooltip(&self) -> &str {
+    pub fn icon_label(&self) -> &str {
         match self {
-            SiblingRef::Catalog(s) => s.icon.tooltip,
-            SiblingRef::Discovered(s) => &s.icon.tooltip,
+            SiblingRef::Catalog(s) => s.icon.label,
+            SiblingRef::Discovered(s) => &s.icon.label,
         }
     }
     pub fn launch_command(&self) -> String {
@@ -883,12 +883,12 @@ fn synth_icon_for(category: Category, name: &str) -> OwnedIconTemplate {
         Category::Other => "cyan",
     }
     .to_string();
-    let tooltip = format!("mnml-{}-{}", category_class(category), name);
+    let label = format!("mnml-{}-{}", category_class(category), name);
     OwnedIconTemplate {
         glyph,
         fallback,
         color,
-        tooltip,
+        label,
     }
 }
 
@@ -941,7 +941,7 @@ mod tests {
                 glyph: "X",
                 fallback: "Sy",
                 color: "white",
-                tooltip: "synth",
+                label: "synth",
             },
         };
         let cmd = synth.install_command();
@@ -1049,7 +1049,7 @@ mod tests {
                 glyph: "g".into(),
                 fallback: "Ot".into(),
                 color: "cyan".into(),
-                tooltip: "mnml-other-x".into(),
+                label: "mnml-other-x".into(),
             },
         };
         let r = SiblingRef::Discovered(d);

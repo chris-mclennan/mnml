@@ -953,7 +953,12 @@ pub struct IntegrationIcon {
     pub fallback: String,
     pub command: String,
     pub color: String,
-    pub tooltip: Option<String>,
+    /// Short display name (~20 chars). Rendered as the chip hover,
+    /// the tree row label in the Integrations panel, the picker
+    /// row, and the detail-pane header. Was `tooltip` before
+    /// 2026-08-01 — renamed since it renders as more than a hover
+    /// on most surfaces.
+    pub label: Option<String>,
     /// Visibility opt-in. Default `false` — chips don't show
     /// until the user explicitly enables them (via right-click →
     /// "Enable" or the discovery overlay). Only the browser
@@ -1139,7 +1144,7 @@ impl Default for Config {
                         fallback: "B".to_string(),
                         command: "browser.open".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some(
+                        label: Some(
                             "Browser (CDP Chrome-for-testing; can be captured in mnml)".to_string(),
                         ),
                         enabled: true,
@@ -1167,7 +1172,7 @@ impl Default for Config {
                         fallback: "\u{2733}".to_string(),
                         command: "ai.claude_code".to_string(),
                         color: "orange".to_string(),
-                        tooltip: Some("Claude Code".to_string()),
+                        label: Some("Claude Code".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1188,7 +1193,7 @@ impl Default for Config {
                         fallback: "\u{276F}_".to_string(),
                         command: "ai.codex".to_string(),
                         color: "cyan".to_string(),
-                        tooltip: Some("Codex".to_string()),
+                        label: Some("Codex".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1214,7 +1219,7 @@ impl Default for Config {
                         fallback: "PR".to_string(),
                         command: ":term mnml-forge-bitbucket --only prs".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some("Bitbucket Pull Requests".to_string()),
+                        label: Some("Bitbucket Pull Requests".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1232,7 +1237,7 @@ impl Default for Config {
                         fallback: "Pl".to_string(),
                         command: ":term mnml-forge-bitbucket --only pipelines".to_string(),
                         color: "cyan".to_string(),
-                        tooltip: Some("Bitbucket Pipelines".to_string()),
+                        label: Some("Bitbucket Pipelines".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1273,7 +1278,7 @@ impl Default for Config {
                         // https://github.com/chris-mclennan/mnml-aws-codebuild`).
                         command: ":term mnml-aws-codebuild".to_string(),
                         color: "yellow".to_string(),
-                        tooltip: Some("AWS CodeBuild + logs".to_string()),
+                        label: Some("AWS CodeBuild + logs".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1295,7 +1300,7 @@ impl Default for Config {
                         // https://github.com/chris-mclennan/mnml-forge-github`).
                         command: ":term mnml-forge-github".to_string(),
                         color: "fg".to_string(),
-                        tooltip: Some("GitHub Actions + PRs".to_string()),
+                        label: Some("GitHub Actions + PRs".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1317,7 +1322,7 @@ impl Default for Config {
                         // https://github.com/chris-mclennan/mnml-forge-azdevops`).
                         command: ":term mnml-forge-azdevops".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some("Azure DevOps PRs + builds".to_string()),
+                        label: Some("Azure DevOps PRs + builds".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1339,7 +1344,7 @@ impl Default for Config {
                         // https://github.com/chris-mclennan/mnml-forge-gitlab`).
                         command: ":term mnml-forge-gitlab".to_string(),
                         color: "orange".to_string(),
-                        tooltip: Some("GitLab MRs + Pipelines".to_string()),
+                        label: Some("GitLab MRs + Pipelines".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1361,7 +1366,7 @@ impl Default for Config {
                         // https://github.com/chris-mclennan/mnml-fs-s3`).
                         command: ":term mnml-fs-s3".to_string(),
                         color: "orange".to_string(),
-                        tooltip: Some("Amazon S3 browser".to_string()),
+                        label: Some("Amazon S3 browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1379,7 +1384,7 @@ impl Default for Config {
                         fallback: "Az".to_string(),
                         command: ":term mnml-fs-azure-blob".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some("Azure Blob Storage browser".to_string()),
+                        label: Some("Azure Blob Storage browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1404,7 +1409,7 @@ impl Default for Config {
                         fallback: "ht".to_string(),
                         command: "tools.htop".to_string(),
                         color: "green".to_string(),
-                        tooltip: Some("htop — interactive process viewer".to_string()),
+                        label: Some("htop — interactive process viewer".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1424,7 +1429,7 @@ impl Default for Config {
                         fallback: "if".to_string(),
                         command: "tools.iftop".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some(
+                        label: Some(
                             "iftop — interactive bandwidth monitor (needs raw-socket privs)"
                                 .to_string(),
                         ),
@@ -1447,9 +1452,7 @@ impl Default for Config {
                         fallback: "bt".to_string(),
                         command: "tools.btop".to_string(),
                         color: "purple".to_string(),
-                        tooltip: Some(
-                            "btop — resource monitor (cpu / mem / disk / net)".to_string(),
-                        ),
+                        label: Some("btop — resource monitor (cpu / mem / disk / net)".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1467,7 +1470,7 @@ impl Default for Config {
                         fallback: "Dd".to_string(),
                         command: ":term mnml-obs-datadog".to_string(),
                         color: "purple".to_string(),
-                        tooltip: Some(
+                        label: Some(
                             "Datadog — monitors + dashboards + logs + incidents".to_string(),
                         ),
                         enabled: false,
@@ -1487,7 +1490,7 @@ impl Default for Config {
                         fallback: "Bd".to_string(),
                         command: ":term mnml-msg-buttondown".to_string(),
                         color: "green".to_string(),
-                        tooltip: Some("Buttondown — drafts + sent + subscribers".to_string()),
+                        label: Some("Buttondown — drafts + sent + subscribers".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1514,9 +1517,7 @@ impl Default for Config {
                         fallback: "Tm".to_string(),
                         command: ":term mnml-msg-teams".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some(
-                            "Microsoft Teams — teams + chats + threads + post".to_string(),
-                        ),
+                        label: Some("Microsoft Teams — teams + chats + threads + post".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1534,7 +1535,7 @@ impl Default for Config {
                         fallback: "Md".to_string(),
                         command: ":term mnml-msg-mandrill".to_string(),
                         color: "red".to_string(),
-                        tooltip: Some(
+                        label: Some(
                             "Mandrill — transactional email messages + templates + tags"
                                 .to_string(),
                         ),
@@ -1555,9 +1556,7 @@ impl Default for Config {
                         fallback: "Gm".to_string(),
                         command: ":term mnml-msg-gmail".to_string(),
                         color: "red".to_string(),
-                        tooltip: Some(
-                            "Gmail — inbox + sent + labels + search + compose".to_string(),
-                        ),
+                        label: Some("Gmail — inbox + sent + labels + search + compose".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1575,7 +1574,7 @@ impl Default for Config {
                         fallback: "Ca".to_string(),
                         command: ":term mnml-msg-gcal".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some(
+                        label: Some(
                             "Google Calendar — today + week + upcoming meetings + create"
                                 .to_string(),
                         ),
@@ -1596,7 +1595,7 @@ impl Default for Config {
                         fallback: "Dk".to_string(),
                         command: ":term mnml-virt-docker".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some(
+                        label: Some(
                             "Docker — containers + images + volumes + networks".to_string(),
                         ),
                         enabled: false,
@@ -1616,7 +1615,7 @@ impl Default for Config {
                         fallback: "Cf".to_string(),
                         command: ":term mnml-cdn-cloudflare".to_string(),
                         color: "orange".to_string(),
-                        tooltip: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
+                        label: Some("Cloudflare — zones + DNS + Workers + Pages".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1634,7 +1633,7 @@ impl Default for Config {
                         fallback: "CW".to_string(),
                         command: ":term mnml-aws-cloudwatch-logs".to_string(),
                         color: "yellow".to_string(),
-                        tooltip: Some("CloudWatch Logs live tail".to_string()),
+                        label: Some("CloudWatch Logs live tail".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1656,7 +1655,7 @@ impl Default for Config {
                         fallback: "Am".to_string(),
                         command: ":term mnml-aws-amplify".to_string(),
                         color: "purple".to_string(),
-                        tooltip: Some("Amplify apps + deploys".to_string()),
+                        label: Some("Amplify apps + deploys".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1674,7 +1673,7 @@ impl Default for Config {
                         fallback: "Dy".to_string(),
                         command: ":term mnml-db-dynamodb".to_string(),
                         color: "teal".to_string(),
-                        tooltip: Some("DynamoDB table browser".to_string()),
+                        label: Some("DynamoDB table browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1692,7 +1691,7 @@ impl Default for Config {
                         fallback: "La".to_string(),
                         command: ":term mnml-aws-lambda".to_string(),
                         color: "orange".to_string(),
-                        tooltip: Some("Lambda function browser".to_string()),
+                        label: Some("Lambda function browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1710,7 +1709,7 @@ impl Default for Config {
                         fallback: "EB".to_string(),
                         command: ":term mnml-aws-eventbridge".to_string(),
                         color: "pink".to_string(),
-                        tooltip: Some("EventBridge Schedules".to_string()),
+                        label: Some("EventBridge Schedules".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1732,7 +1731,7 @@ impl Default for Config {
                         fallback: "RD".to_string(),
                         command: ":term mnml-aws-rds".to_string(),
                         color: "blue".to_string(),
-                        tooltip: Some("RDS database browser".to_string()),
+                        label: Some("RDS database browser".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1750,7 +1749,7 @@ impl Default for Config {
                         fallback: "EC".to_string(),
                         command: ":term mnml-aws-ecs".to_string(),
                         color: "green".to_string(),
-                        tooltip: Some("ECS clusters + services".to_string()),
+                        label: Some("ECS clusters + services".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1768,7 +1767,7 @@ impl Default for Config {
                         fallback: "ER".to_string(),
                         command: ":term mnml-aws-ecr".to_string(),
                         color: "purple".to_string(),
-                        tooltip: Some("ECR container registry".to_string()),
+                        label: Some("ECR container registry".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1786,7 +1785,7 @@ impl Default for Config {
                         fallback: "Co".to_string(),
                         command: ":term mnml-aws-cognito".to_string(),
                         color: "cyan".to_string(),
-                        tooltip: Some("Cognito User Pools + users".to_string()),
+                        label: Some("Cognito User Pools + users".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1804,7 +1803,7 @@ impl Default for Config {
                         fallback: "Sq".to_string(),
                         command: ":term mnml-aws-sqs".to_string(),
                         color: "yellow".to_string(),
-                        tooltip: Some("SQS queues".to_string()),
+                        label: Some("SQS queues".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1822,7 +1821,7 @@ impl Default for Config {
                         fallback: "Sn".to_string(),
                         command: ":term mnml-aws-sns".to_string(),
                         color: "yellow".to_string(),
-                        tooltip: Some("SNS topics + subscriptions".to_string()),
+                        label: Some("SNS topics + subscriptions".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -1842,7 +1841,7 @@ impl Default for Config {
                         fallback: "♪".to_string(),
                         command: "mixr.show".to_string(),
                         color: "pink".to_string(),
-                        tooltip: Some("mixr DJ".to_string()),
+                        label: Some("mixr DJ".to_string()),
                         enabled: false,
                         in_palette_bar: false,
                         description: None,
@@ -2546,7 +2545,7 @@ impl Config {
                     fallback: builtin.fallback.clone(),
                     command: builtin.command.clone(),
                     color: builtin.color.clone(),
-                    tooltip: builtin.tooltip.clone(),
+                    label: builtin.label.clone(),
                     // User-controlled fields:
                     enabled: r.enabled.unwrap_or(builtin.enabled),
                     in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),

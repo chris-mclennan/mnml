@@ -181,7 +181,7 @@ mod tests {
                 glyph: "X",
                 fallback: "Sy",
                 color: "white",
-                tooltip: "synth",
+                label: "synth",
             },
         };
         let argv = cargo_install_argv(&sib);

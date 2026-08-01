@@ -26,7 +26,7 @@
 //!         glyph: "\u{F0839}".into(),
 //!         fallback: "Sk".into(),
 //!         color: "purple".into(),
-//!         tooltip: Some("Slack".into()),
+//!         label: Some("Slack".into()),
 //!         enabled: true,
 //!         in_palette_bar: false,
 //!         badge_key: Some("slack".into()),
@@ -49,12 +49,21 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Complete integration description written to the manifest
-/// file. Only `id`, `name`, and `binary` are required — everything
-/// else defaults to sensible empty values.
+/// file. Only `id`, `label`, and `binary` are required —
+/// everything else defaults to sensible empty values.
+///
+/// 2026-08-01 — the identity strings live here at the top level:
+///   * `label` — short display name (chip hover, tree row, picker,
+///     detail-pane header). Required. ~20 chars max.
+///   * `description` — one-sentence longer form for the detail
+///     pane subtitle. ~80 chars.
+///
+/// The old `name` field was dead code (never rendered); dropped.
+/// The old `chip.tooltip` field is folded into top-level `label`.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct IntegrationSpec {
     pub id: String,
-    pub name: String,
+    pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,13 +90,14 @@ pub struct IntegrationSpec {
     pub requires: Option<Requires>,
 }
 
+/// Visual + interaction settings for the sibling's chip. Display
+/// strings (label, description) live at `IntegrationSpec` top
+/// level, not here — the chip is about rendering, not identity.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ChipSpec {
     pub glyph: String,
     pub fallback: String,
     pub color: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tooltip: Option<String>,
     pub enabled: bool,
     pub in_palette_bar: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -484,7 +494,7 @@ mod tests {
                 glyph: "S".into(),
                 fallback: "Sk".into(),
                 color: "purple".into(),
-                tooltip: None,
+                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
@@ -518,7 +528,7 @@ mod tests {
                 glyph: "\u{F1B00}".into(),
                 fallback: "Am".into(),
                 color: "purple".into(),
-                tooltip: None,
+                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
@@ -551,7 +561,7 @@ mod tests {
                 glyph: "A".into(),
                 fallback: "Am".into(),
                 color: "purple".into(),
-                tooltip: None,
+                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
@@ -590,7 +600,7 @@ mod tests {
                 glyph: "B".into(),
                 fallback: "Br".into(),
                 color: "red".into(),
-                tooltip: None,
+                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,

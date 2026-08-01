@@ -228,7 +228,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 .iter()
                 .find(|(_, i)| *i == idx)?;
             let label = icon
-                .tooltip
+                .label
                 .clone()
                 .unwrap_or_else(|| format!("click: {}", icon.command));
             Some((rect, label, None))
@@ -339,7 +339,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                         .activity_bar_pinned_integrations
                         .get(idx as usize)
                         .and_then(|id| app.config.ui.integration_icons.iter().find(|i| &i.id == id))
-                        .and_then(|i| i.tooltip.clone())
+                        .and_then(|i| i.label.clone())
                         .unwrap_or_else(|| "Pinned integration".to_string());
                     return Some((rect, label, Some("click: launch".to_string())));
                 }

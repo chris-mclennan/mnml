@@ -1396,7 +1396,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         // anything else through the command registry).
         for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
             let label = icon
-                .tooltip
+                .label
                 .clone()
                 .unwrap_or_else(|| icon.id.replace('_', " "));
             items.push(MenuItem::new(
@@ -1453,7 +1453,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         // anything else through the command registry).
         for icon in app.config.ui.integration_icons.iter().filter(|i| i.enabled) {
             let label = icon
-                .tooltip
+                .label
                 .clone()
                 .unwrap_or_else(|| icon.id.replace('_', " "));
             items.push(MenuItem::new(
@@ -1897,7 +1897,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         // so the user knows the menu is available.
         if !icon.enabled {
             let label = icon
-                .tooltip
+                .label
                 .clone()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| icon.id.clone());
