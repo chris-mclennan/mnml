@@ -531,59 +531,123 @@ impl<'i> Cell<'i> {
 
     /// Return the cell's grapheme cluster as a sequence of `char`s.
     ///
-    /// Uses ghostty's `GRAPHEMES_UTF8` query which uniformly handles
-    /// single-codepoint cells + multi-codepoint clusters (emoji flags,
-    /// combining marks). Returns `Ok(vec![])` for empty cells.
+    /// Uses `GRAPHEMES_LEN` (probe size) + `GRAPHEMES_BUF` (write u32
+    /// codepoints straight into our buffer). One allocation, no UTF-8
+    /// decode step. Returns `Ok(vec![])` for empty cells.
     ///
-    /// mnml's typical usage is `.into_iter().collect::<String>()`.
+    /// # ABI gotcha
+    ///
+    /// `GRAPHEMES_BUF`'s output type is a **raw `uint32_t*`**, NOT a
+    /// `GhosttyCodepoints*` (that struct is only used as an INPUT type
+    /// for `ghostty_terminal_select_word_between` etc.). Pass the
+    /// buffer pointer directly as the `out` argument. Wrapping it in
+    /// `GhosttyCodepoints` will silently return `SUCCESS` with nothing
+    /// written — the failure mode that made us pivot to the UTF-8 path
+    /// initially.
     pub fn graphemes(&self) -> Result<Vec<char>, Error> {
-        // Query 1: cap=0, ptr=null → GHOSTTY_OUT_OF_SPACE with the
-        // required size in `len`. For empty cells the C API returns
-        // SUCCESS with len=0.
-        let mut buf = sys::GhosttyBuffer {
-            ptr: std::ptr::null_mut(),
-            cap: 0,
-            len: 0,
-        };
+        let mut len = MaybeUninit::<u32>::uninit();
         let r = unsafe {
             sys::ghostty_render_state_row_cells_get(
                 self.handle,
-                sys::GhosttyRenderStateRowCellsData::GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
-                &mut buf as *mut _ as *mut _,
-            )
-        };
-        match r {
-            sys::GhosttyResult::GHOSTTY_SUCCESS => {
-                // Empty cell.
-                return Ok(Vec::new());
-            }
-            sys::GhosttyResult::GHOSTTY_OUT_OF_SPACE => {
-                // Fall through — `buf.len` now holds the required cap.
-            }
-            other => return Err(other.into()),
-        }
-
-        let needed = buf.len;
-        if needed == 0 {
-            return Ok(Vec::new());
-        }
-        let mut bytes: Vec<u8> = vec![0u8; needed];
-        let mut buf = sys::GhosttyBuffer {
-            ptr: bytes.as_mut_ptr(),
-            cap: needed,
-            len: 0,
-        };
-        let r = unsafe {
-            sys::ghostty_render_state_row_cells_get(
-                self.handle,
-                sys::GhosttyRenderStateRowCellsData::GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8,
-                &mut buf as *mut _ as *mut _,
+                sys::GhosttyRenderStateRowCellsData::GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
+                len.as_mut_ptr().cast(),
             )
         };
         check(r)?;
-        bytes.truncate(buf.len);
-        // Ghostty encodes valid UTF-8; be defensive and use lossy on
-        // the render path so a rogue byte never panics.
-        Ok(String::from_utf8_lossy(&bytes).chars().collect())
+        let len = unsafe { len.assume_init() } as usize;
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+        let mut buf: Vec<u32> = vec![0u32; len];
+        let r = unsafe {
+            sys::ghostty_render_state_row_cells_get(
+                self.handle,
+                sys::GhosttyRenderStateRowCellsData::GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
+                buf.as_mut_ptr().cast(),
+            )
+        };
+        check(r)?;
+        Ok(buf.into_iter().filter_map(char::from_u32).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Grapheme-extraction regression tests.
+    //!
+    //! Locks in the LEN + BUF pathway's contract — specifically that
+    //! `GRAPHEMES_BUF` takes a raw `uint32_t*` out-parameter (not a
+    //! `GhosttyCodepoints` struct). Wrapping the pointer in that struct
+    //! silently returns SUCCESS with nothing written, which was the
+    //! subtle failure that made us pivot to `GRAPHEMES_UTF8` initially.
+
+    use super::*;
+    use crate::terminal::{Terminal, TerminalOptions};
+
+    /// Read cells from a terminal after feeding it `chunks`, returning
+    /// `graphemes()` per row-major cell up to `count`.
+    fn read_cells(rows: u16, cols: u16, chunks: &[&[u8]], count: usize) -> Vec<Vec<char>> {
+        let mut term = Terminal::new(TerminalOptions {
+            cols,
+            rows,
+            max_scrollback: 0,
+        })
+        .unwrap();
+        for c in chunks {
+            term.vt_write(c).unwrap();
+        }
+        let mut rs = RenderState::new().unwrap();
+        let snapshot = rs.update(&term).unwrap();
+        let mut rows_h = RowIterator::new().unwrap();
+        let mut cells_h = CellIterator::new().unwrap();
+        let mut row_iter = rows_h.update(&snapshot).unwrap();
+        let mut out = Vec::with_capacity(count);
+        while let Some(row) = row_iter.next() {
+            let mut cell_iter = cells_h.update(&row).unwrap();
+            while let Some(cell) = cell_iter.next() {
+                if out.len() >= count {
+                    return out;
+                }
+                out.push(cell.graphemes().unwrap());
+            }
+        }
+        out
+    }
+
+    /// Single-codepoint ASCII cells — the common case. Every printed
+    /// char should come back verbatim via the LEN+BUF pathway.
+    #[test]
+    fn graphemes_reads_ascii() {
+        let cells = read_cells(4, 10, &[b"hello"], 5);
+        assert_eq!(cells[0], vec!['h']);
+        assert_eq!(cells[1], vec!['e']);
+        assert_eq!(cells[2], vec!['l']);
+        assert_eq!(cells[3], vec!['l']);
+        assert_eq!(cells[4], vec!['o']);
+    }
+
+    /// Multi-codepoint grapheme cluster (e + U+0301 combining acute):
+    /// `graphemes_len` = 2, base written first, combining mark second.
+    /// This is the case the LEN+BUF path must handle correctly.
+    #[test]
+    fn graphemes_reads_combining_mark() {
+        // "he" + U+0301 (COMBINING ACUTE ACCENT, UTF-8 = 0xCC 0x81) + "llo"
+        // The 'e' cell should carry BOTH codepoints as one grapheme.
+        let cells = read_cells(4, 10, &[b"he\xCC\x81llo"], 5);
+        assert_eq!(cells[0], vec!['h']);
+        assert_eq!(cells[1], vec!['e', '\u{301}']);
+        assert_eq!(cells[2], vec!['l']);
+    }
+
+    /// Empty cells past the printed region return an empty codepoint
+    /// list (graphemes_len = 0 → no BUF query, no allocation).
+    #[test]
+    fn graphemes_empty_cell_returns_empty() {
+        let cells = read_cells(4, 10, &[b"hi"], 5);
+        assert_eq!(cells[0], vec!['h']);
+        assert_eq!(cells[1], vec!['i']);
+        assert_eq!(cells[2], Vec::<char>::new());
+        assert_eq!(cells[3], Vec::<char>::new());
+        assert_eq!(cells[4], Vec::<char>::new());
     }
 }
