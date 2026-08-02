@@ -10,9 +10,15 @@ Ghostty's official C headers, rather than depending on a third-party
 
 ## Linking
 
-The default `pkg-config` feature consumes the vendored prebuilt static
-`libghostty-vt.a` via pkg-config. mnml's `.cargo/config.toml` sets
-`PKG_CONFIG_PATH` per target triple.
+`build.rs` clones ghostty at the pinned `GHOSTTY_COMMIT` (kept in
+lock-step with the vendored headers) and runs `zig build -Demit-lib-vt`,
+then links the produced static `.a`. Needs zig 0.15.2 + git on PATH;
+the resulting `.a` is cached under `target/` between cargo runs.
+
+A `pkg-config` feature is default-on and tried first — if a
+`libghostty-vt-static.pc` shows up on `PKG_CONFIG_PATH` (e.g. a future
+prebuilt setup), that path wins and zig isn't invoked. As of 2026-08-02
+no such `.pc` is checked in, so every host source-builds by default.
 
 ## Ergonomic wrapper
 

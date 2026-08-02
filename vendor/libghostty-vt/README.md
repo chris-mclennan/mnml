@@ -1,57 +1,38 @@
-# vendored libghostty-vt (cross-built prebuilt)
+# vendored libghostty-vt (headers only)
 
-ghostty pins Zig 0.15.2, which **cannot link on macOS 26** (Darwin 25). So we
-cross-build `libghostty-vt.a` from Linux (Zig is a cross-compiler) and link the
-prebuilt via pkg-config — no Zig needed on macOS. `libghostty-vt-sys`'s
-`pkg-config` feature (see Cargo.toml + .cargo/config.toml) consumes the .pc here.
+Just the C headers under `include/ghostty/` remain here — the `.a` files +
+pkg-config plumbing were retired 2026-08-02 when the pinned ghostty commit
+bumped to `a887df42` (matches upstream `libghostty-vt-sys` 0.2.1) and the
+0.1.0-dev prebuilts on GitHub Releases went stale against the new headers.
 
-## Where the .a files live
+## How the library gets built now
 
-The static libs are **not** tracked in git (3 targets × ~10-14MB = ~37MB
-together — too big for the repo). They live on a GitHub release:
+`crates/mnml-vt-sys/build.rs` clones ghostty at `GHOSTTY_COMMIT` (currently
+`a887df42…`, kept in lock-step with the headers here) and runs `zig build
+-Demit-lib-vt` on every target. Needs zig 0.15.2 + git on PATH.
 
-  <https://github.com/chris-mclennan/mnml/releases/tag/vendored-libghostty-vt-0.1.0>
+Empirically zig 0.15.2 links fine on macOS 26 for ghostty at this commit —
+the earlier "cannot link on macOS 26" workaround that motivated the
+prebuilt path is no longer needed. If it ever regresses, the fix is either
+a newer zig (waiting on ghostty to bump its pin) or reintroducing
+cross-built prebuilts here.
 
-To fetch them on a fresh clone (or after a `git clean`):
+## Regenerating headers
 
-    ./vendor/libghostty-vt/fetch-prebuilts.sh
+Whenever `GHOSTTY_COMMIT` bumps in `crates/mnml-vt-sys/build.rs`, re-sync
+the headers so bindgen sees the same shape as the compiled `.a`:
 
-The script is idempotent — it skips files already present at the expected
-size. CI runs it once before `cargo build`; `./run.sh` runs it on every
-launch so you don't have to remember.
+    git clone --filter=blob:none --no-checkout https://github.com/ghostty-org/ghostty.git /tmp/g
+    (cd /tmp/g && git checkout <new-commit> -- include/ghostty/)
+    rm -rf vendor/libghostty-vt/include/ghostty
+    cp -R /tmp/g/include/ghostty vendor/libghostty-vt/include/
 
-## Supported targets
+## Bringing prebuilts back (if needed)
 
-| Target | Path | Built by |
-|---|---|---|
-| aarch64-apple-darwin | `lib-aarch64-darwin/libghostty-vt.a` | the original libghostty-vt port |
-| x86_64-unknown-linux-gnu | `lib-x86_64-linux/libghostty-vt.a` | `build-linux-x86_64-from-arm64.sh` |
-| aarch64-unknown-linux-gnu | `lib-aarch64-linux/libghostty-vt.a` | `build-aarch64-linux-from-arm64.sh` |
-
-`.cargo/config.toml` picks the matching pkgconfig dir per host triple.
-
-## Regenerating the .a files
-
-Rare — only when ghostty bumps its pinned commit. From this directory:
-
-    colima start  # ensure docker is available
-    docker run --rm --platform linux/arm64 \
-      -v "$PWD/out":/out -v "$PWD/build-<target>.sh":/build.sh:ro \
-      debian:bookworm-slim bash /build.sh
-
-The script downloads Zig 0.15.2 (linux aarch64), clones ghostty at the
-pinned commit, runs `zig build -Demit-lib-vt=true -Dapp-runtime=none
--Demit-xcframework=false -Doptimize=ReleaseFast -Dcpu=baseline
--Dtarget=<target> --prefix /out`, then writes the .a to `out/lib/`.
-
-After regenerating, upload to the release and bump the script's expected-size
-constants:
-
-    gh release upload vendored-libghostty-vt-0.1.0 \
-      out/lib/libghostty-vt.a#libghostty-vt-<target>.a --clobber
-
-## Roadmap
-
-This is a BRIDGE until ghostty adopts Zig 0.16 (which links on macOS 26);
-then drop the prebuilt + pkg-config feature and let the crate build from
-source.
+If we ever want to skip the zig source-build on macOS/Linux (e.g. to
+shorten CI first-build time), the shape lives in git history from before
+2026-08-02: `pkgconfig-*/` dirs + a `fetch-prebuilts.sh` + per-target
+`.cargo/config.toml` env blocks + the CI "Fetch libghostty-vt prebuilts"
+step. Bringing them back requires cross-building the `.a` for each target
+(the `build-*.sh` scripts here are the starting point but reference the
+old ghostty commit) and uploading to a fresh GitHub release.
