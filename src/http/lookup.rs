@@ -425,9 +425,12 @@ mod tests {
                     .into_owned()
             })
             .collect();
+        // Normalize path separators so the assertion works on both
+        // Windows (`\`) and Unix (`/`).
+        let s = std::path::MAIN_SEPARATOR;
         assert!(suffixes.contains("top.curl"));
-        assert!(suffixes.contains("auth/login.curl"));
-        assert!(suffixes.contains("billing/nested/ping.curl"));
+        assert!(suffixes.contains(&format!("auth{s}login.curl")));
+        assert!(suffixes.contains(&format!("billing{s}nested{s}ping.curl")));
         assert_eq!(found.len(), 3);
     }
 

@@ -5217,6 +5217,12 @@ mod ex_commands_tests {
         assert_eq!(lines, vec!["alpha", "beta", "alpha", "gamma"]);
     }
 
+    // `sort` / `false` are Unix shell built-ins that don't exist (or
+    // behave incompatibly) under Windows cmd/PowerShell. The feature
+    // being tested (`:!<cmd>` shell-filter) currently uses `sh -c` on
+    // Unix; Windows support would need a `cmd /c` branch which isn't
+    // implemented yet. Gate the tests to unix so Windows CI stays green.
+    #[cfg(unix)]
     #[test]
     fn run_filter_through_shell_sorts_buffer() {
         let (_d, mut app) = app_with_buffer("charlie\nalpha\nbravo\n");
@@ -5229,6 +5235,7 @@ mod ex_commands_tests {
         assert_eq!(lines, vec!["alpha", "bravo", "charlie"]);
     }
 
+    #[cfg(unix)]
     #[test]
     fn run_filter_through_shell_non_zero_exit_leaves_buffer_untouched() {
         // `false` exits non-zero with no stdout. Buffer must be untouched.
