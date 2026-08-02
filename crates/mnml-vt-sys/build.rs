@@ -234,6 +234,12 @@ fn source_build() {
         build.arg(format!("-Dtarget={zig_target}"));
     }
 
+    // Log the exact zig invocation so CI logs make it obvious which
+    // target zig actually built for (auto-detected vs explicit) — the
+    // Windows AV debug hunt needs to see whether -Dtarget=…-msvc
+    // reached zig or was silently dropped.
+    eprintln!("mnml-vt-sys: {build:?}");
+
     run(build, "zig build libghostty-vt");
 
     let lib_dir = install_prefix.join("lib");

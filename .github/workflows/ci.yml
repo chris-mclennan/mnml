@@ -65,4 +65,15 @@ jobs:
 
       - name: test
         working-directory: mnml
-        run: cargo test
+        # Windows: single-threaded + nocapture, so the crashing test's
+        # NAME shows up in the log immediately before the AV. Default
+        # parallel harness only prints "ok" after a test completes, so
+        # a crashing test is invisible in the log — makes bisection
+        # much harder. macOS/Linux stay parallel.
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cargo test -- --test-threads=1 --nocapture
+          else
+            cargo test
+          fi

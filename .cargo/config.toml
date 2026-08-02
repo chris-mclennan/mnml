@@ -4,3 +4,17 @@
 # now source-builds libghostty-vt via zig on every target — no pkg-config
 # path needed. If we bring the prebuilts back, this file gets the target
 # blocks back too (see git log for the original shape).
+
+# Force STATIC MSVC C runtime on Windows so we match ghostty's zig build.
+# Ghostty's build.zig links against LIBCMT (static MSVC CRT); Rust
+# defaults to MSVCRT (dynamic). Mixing produces the
+# `LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs` warning
+# — a real functional problem: two C runtimes in the same address space
+# with independent heap state, TLS, and errno-alikes, so the first
+# cross-runtime allocation/exception is undefined behaviour. Suspect
+# root cause of the Windows STATUS_ACCESS_VIOLATION.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
