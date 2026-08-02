@@ -17,7 +17,7 @@
 //!
 //! install_integration(&IntegrationSpec {
 //!     id: "slack".into(),
-//!     name: "Slack".into(),
+//!     label: "Slack".into(),
 //!     description: Some("Slack browse + post".into()),
 //!     version: Some(env!("CARGO_PKG_VERSION").into()),
 //!     binary: "mnml-msg-slack".into(),
@@ -474,7 +474,7 @@ mod tests {
     fn serializes_minimal_spec_to_toml() {
         let spec = IntegrationSpec {
             id: "slack".into(),
-            name: "Slack".into(),
+            label: "Slack".into(),
             binary: "mnml-msg-slack".into(),
             ..Default::default()
         };
@@ -488,13 +488,12 @@ mod tests {
     fn serializes_full_spec_with_chip_and_commands() {
         let spec = IntegrationSpec {
             id: "slack".into(),
-            name: "Slack".into(),
+            label: "Slack".into(),
             binary: "mnml-msg-slack".into(),
             chip: Some(ChipSpec {
                 glyph: "S".into(),
                 fallback: "Sk".into(),
                 color: "purple".into(),
-                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
@@ -522,13 +521,12 @@ mod tests {
     fn glyph_svg_and_codepoint_serialize_when_set() {
         let spec = IntegrationSpec {
             id: "amplify".into(),
-            name: "Amplify".into(),
+            label: "Amplify".into(),
             binary: "mnml-aws-amplify".into(),
             chip: Some(ChipSpec {
                 glyph: "\u{F1B00}".into(),
                 fallback: "Am".into(),
                 color: "purple".into(),
-                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
@@ -555,13 +553,12 @@ mod tests {
 
         let spec = IntegrationSpec {
             id: "amplify".into(),
-            name: "Amplify".into(),
+            label: "Amplify".into(),
             binary: "mnml-aws-amplify".into(),
             chip: Some(ChipSpec {
                 glyph: "A".into(),
                 fallback: "Am".into(),
                 color: "purple".into(),
-                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
@@ -594,13 +591,12 @@ mod tests {
 
         let spec = IntegrationSpec {
             id: "broken".into(),
-            name: "Broken".into(),
+            label: "Broken".into(),
             binary: "mnml-broken".into(),
             chip: Some(ChipSpec {
                 glyph: "B".into(),
                 fallback: "Br".into(),
                 color: "red".into(),
-                label: None,
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
@@ -627,7 +623,7 @@ mod tests {
 
         let spec = IntegrationSpec {
             id: "roundtrip".into(),
-            name: "Round Trip".into(),
+            label: "Round Trip".into(),
             binary: "mnml-rt".into(),
             ..Default::default()
         };
