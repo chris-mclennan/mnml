@@ -189,10 +189,21 @@ pub(crate) fn copy_recursively(src: &Path, dst: &Path) -> Result<(), String> {
             std::os::unix::fs::symlink(&target, dst)
                 .map_err(|e| format!("symlink {}: {e}", dst.display()))?;
         }
-        #[cfg(not(unix))]
+        // Windows symlinks require admin/dev-mode; fall back to
+        // copying the resolved target (matches Git-for-Windows
+        // behavior — visible file content, no dangling reference).
+        #[cfg(windows)]
         {
-            let _ = target;
-            return Err("symlink copy unsupported on this platform".to_string());
+            let resolved = if target.is_absolute() {
+                target
+            } else {
+                src.parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join(&target)
+            };
+            std::fs::copy(&resolved, dst)
+                .map(|_| ())
+                .map_err(|e| format!("symlink-as-copy {}: {e}", dst.display()))?;
         }
         Ok(())
     } else {

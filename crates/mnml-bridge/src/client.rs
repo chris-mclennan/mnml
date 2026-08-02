@@ -8,8 +8,15 @@
 //! `write_message` directly.
 
 use std::io::{BufReader, BufWriter, Read, Write};
+// UDS on Unix; `uds_windows` wraps Windows 10 v1803+ AF_UNIX with a
+// std-mirror API — `connect`, `try_clone`, `set_read_timeout`,
+// `Read`/`Write` all match. Mirror of the host-side gate in
+// mnml/src/mount.rs.
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
+#[cfg(windows)]
+use uds_windows::UnixStream;
 
 use crate::{
     Cell, Geometry, HostMessage, InputEvent, RgbOrIndex, SiblingMessage, modifier, read_message,
