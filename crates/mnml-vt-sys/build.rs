@@ -248,34 +248,62 @@ fn source_build() {
     if target.contains("windows") {
         search_dirs.push(install_prefix.join("bin"));
     }
-    // Windows artifact naming splits on ABI:
-    //   -windows-msvc → `ghostty-vt-static.lib` (MSVC convention)
-    //   -windows-gnu  → `libghostty-vt.a`      (MinGW/Unix convention)
-    // Everything else uses the Unix `libghostty-vt.a` name too. Getting
-    // this wrong produces `error: could not find native static library
-    // 'ghostty-vt', perhaps an -L flag is missing?` from Rust's linker.
-    let a_name = if target.contains("windows-msvc") {
-        "ghostty-vt-static.lib"
-    } else {
-        "libghostty-vt.a"
-    };
-    assert!(
-        search_dirs.iter().any(|d| d.join(a_name).exists()),
-        "expected {a_name} in one of {search_dirs:?} after zig build"
+
+    // Scan the install dirs for anything ghostty-vt-shaped rather than
+    // hardcode a single name — zig emits a different filename per
+    // (ABI, linkage) combination and the tree isn't documented anywhere
+    // we can grep:
+    //   Linux/macOS:     `libghostty-vt.a`
+    //   -windows-msvc:   `ghostty-vt-static.lib` + `ghostty-vt.lib` (dylib)
+    //   -windows-gnu:    empirically NEITHER of the above — CI hit the
+    //                    assert. Log what's actually there so future
+    //                    contributors don't have to re-guess.
+    let mut found: Option<PathBuf> = None;
+    let mut all_files: Vec<String> = Vec::new();
+    for dir in &search_dirs {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    all_files.push(format!("{}/{}", dir.display(), name));
+                    // Match any static-lib-shaped file naming ghostty-vt.
+                    // `libghostty-vt.a` (Unix/MinGW), `ghostty-vt-static.lib`
+                    // (MSVC), `libghostty-vt-static.a` (theoretical), etc.
+                    let is_static = name.ends_with(".a") || name.ends_with(".lib");
+                    let is_ghostty = name.contains("ghostty-vt");
+                    let is_dylib = name.contains(".dll") || name.contains(".dylib");
+                    if is_static && is_ghostty && !is_dylib && found.is_none() {
+                        found = Some(path);
+                    }
+                }
+            }
+        }
+    }
+    let a_path = found.unwrap_or_else(|| {
+        panic!(
+            "no ghostty-vt static library found after zig build. \
+             search_dirs: {search_dirs:?}. all files seen: {all_files:?}"
+        )
+    });
+    println!(
+        "cargo:warning=libghostty-vt static artifact: {}",
+        a_path.display()
     );
 
     for dir in &search_dirs {
         println!("cargo:rustc-link-search=native={}", dir.display());
     }
-    // Cargo's search-by-name resolves `static=ghostty-vt` to `libghostty-vt.a`
-    // (Unix/MinGW) or `ghostty-vt.lib` (MSVC). Zig on MSVC actually produces
-    // `ghostty-vt-static.lib` — so if we ever re-enable the -windows-msvc
-    // target (see the reverted forcing above + upstream marks it "doesn't
-    // work yet"), this line will need to become `static=ghostty-vt-static`
-    // on that branch, or the `.lib` will need renaming. Dormant today
-    // because the supported Windows target is `-windows-gnu`, whose
-    // `libghostty-vt.a` resolves cleanly by this name.
-    println!("cargo:rustc-link-lib=static=ghostty-vt");
+    // Derive the link-lib name from the actual artifact filename so we
+    // stay in sync with whatever zig emitted — see the naming table on
+    // the search block above. Strip the leading `lib` (Unix convention)
+    // and the trailing `.a` / `.lib` extension; whatever remains is the
+    // symbol name cargo passes to the linker.
+    let link_name = a_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.strip_prefix("lib").unwrap_or(s))
+        .expect("artifact path has no filename stem");
+    println!("cargo:rustc-link-lib=static={link_name}");
     emit_platform_link_libs();
 }
 
