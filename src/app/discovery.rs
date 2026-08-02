@@ -98,6 +98,33 @@ pub const INTEGRATION_EDIT_COLORS: &[&str] = &[
 impl App {
     /// Open the integration-edit panel for the integration with the
     /// given id. Surfaced from the chip's right-click context menu.
+    /// P5 (2026-08-01) — palette command entry point for "add a
+    /// local launcher." Opens the same edit overlay
+    /// `open_integration_edit_by_id` uses but in AddCustom mode with
+    /// an empty ChipSpec. Users type an id, label, glyph, fallback,
+    /// color, and command; Save writes the entry to
+    /// `[[ui.integration_icon]]` in user config.
+    ///
+    /// Handles private local launchers that don't warrant a shared
+    /// catalog PR — quick-and-yours setup.
+    pub fn open_launcher_add_local(&mut self) {
+        self.integration_edit = Some(IntegrationEditState {
+            mode: IntegrationEditMode::AddCustom,
+            id: String::new(),
+            command: ":term ".to_string(),
+            glyph: String::new(),
+            fallback: String::new(),
+            color: "cyan".to_string(),
+            label: String::new(),
+            focused_field: IntegrationEditField::Id,
+            id_cursor: 0,
+            command_cursor: 6, // land after ":term "
+            glyph_cursor: 0,
+            fallback_cursor: 0,
+            label_cursor: 0,
+        });
+    }
+
     pub fn open_integration_edit_by_id(&mut self, id: &str) {
         let icon = self
             .config

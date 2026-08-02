@@ -5455,6 +5455,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.refresh_marketplace(),
         },
         Command {
+            id: "launcher.add_local",
+            title: "Launcher: add a local chip (glyph / label / :term <cmd>)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.open_launcher_add_local(),
+        },
+        Command {
             id: "mounts.install",
             title: "Mounts: install a Mount-capable family sibling (auto-registers manifest)",
             group: "mount",
