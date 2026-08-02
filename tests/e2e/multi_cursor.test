@@ -45,15 +45,18 @@ key l
 command editor.add_cursor_at_next_word
 command editor.add_cursor_at_next_word
 # `i` after a selection acts as `c` (change: delete selection,
-# enter Insert). Primary's "foo" (anchor 0, cursor 3) gets
-# wiped; typing X inserts at the primary and at the extra
-# cursor (whose position shifted after the deletion).
-# Empirical result 2026-07-10: `"X bar foo baXz foo"`.
+# enter Insert). BOTH selected "foo"s (primary + extra cursor)
+# are wiped; typing X inserts at both positions.
+# 2026-07-10 empirical result was `"X bar foo baXz foo"` — that
+# was a bug where the extra cursor's position was miscomputed
+# after the primary's deletion. Fix landed later; the current
+# consistent behavior is `"X bar X baz foo"` (both "foo"s → X),
+# matching what a VS Code Ctrl+D user expects.
 key i
 key X
 key escape
 command file.save
-expect file rename.txt contains "X bar foo baXz foo"
+expect file rename.txt contains "X bar X baz foo"
 
 # Word delete + newline insert fan out too. Cursors at end of "old" on
 # each row; Ctrl+W (insert-mode delete-prev-word) wipes it.

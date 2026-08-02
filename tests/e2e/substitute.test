@@ -14,33 +14,38 @@ command file.save
 expect file doc.txt contains "ALPHA"
 expect file doc.txt lacks "alpha"
 
-# ─── :%s/old/new/i — case-insensitive ───────────────────────────────
+# ─── :%s/old/new/gi — case-insensitive, all matches ──────────────────
+# Vim canonical: `/g` is required to replace every match on a line
+# (nvchad-round-12 SEV-2 2026-07-14 fix — was implicitly global before).
 write case.txt "Foo bar FOO baz foO"
 open case.txt
 command editor.use_vim
-type ":%s/foo/Q/i"
+type ":%s/foo/Q/gi"
 key enter
 command file.save
-# All three variants replaced via the i flag.
+# All three variants replaced via the i flag + g for per-line-global.
 expect file case.txt contains "Q bar Q baz Q"
 
 # ─── :%s/old// — empty replacement deletes ──────────────────────────
+# Substitute is regex-first (nvchad-round-7 SEV-2 2026-07-11) so `[` /
+# `]` are character-class metachars — escape with `\[` / `\]` for a
+# literal bracket match.
 write del.txt "keep [drop] keep"
 open del.txt
 command editor.use_vim
-type ":%s/[drop] //"
+type ":%s/\[drop\] //"
 key enter
 command file.save
 expect file del.txt contains "keep keep"
 
-# ─── :s/old/new/ — current-line scope only ──────────────────────────
+# ─── :s/old/new/g — current-line scope only, all matches on line ─────
 write scope.txt "x x x\ny y y\nz z z"
 open scope.txt
 command editor.use_vim
 # Move to line 2 (the y's). Then bare :s should only touch that line.
 key j
-type ":s/y/W/"
+type ":s/y/W/g"
 key enter
 command file.save
-# All three y's on row 2 replaced (g is implicit in mnml), other rows untouched.
+# All three y's on row 2 replaced (needs /g), other rows untouched.
 expect file scope.txt contains "x x x\nW W W\nz z z"

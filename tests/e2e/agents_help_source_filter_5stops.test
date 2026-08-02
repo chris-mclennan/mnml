@@ -1,9 +1,13 @@
-# Verify the help overlay lists the source-filter stops:
-# `all → claude → codex → ecs → managed → all`.
+# Verify the help overlay lists the source-filter stops.
 #
-# 2026-07-10 rename: `tattle-qwe` is now `ecs` (the sibling was
-# renamed to ecs_runner). Old test looked for "tattle-qwe";
-# updated to check for "ecs".
+# History (file name kept for git history):
+#   Original: 5 stops — `all → claude → codex → ecs → managed → all`.
+#   2026-07-10: tattle-qwe renamed to ecs.
+#   Later: cycle restricted to `all → claude → codex → all` —
+#     ecs/managed are skipped in the `>` / `<` handlers because
+#     including them showed a misleading "0/N — no Claude sessions"
+#     empty state (see src/tui/handlers/pane.rs `Char('>')`).
+# So the current expectation is claude + codex only.
 
 write placeholder.txt x
 open placeholder.txt
@@ -12,13 +16,9 @@ command ai.dashboard
 
 # Open help overlay.
 key ?
-# These stops fit within the pane width at 120-char screen.
+# The help row is `> / < : cycle source filter (all → claude → codex → all)`.
 expect screen contains "claude"
 expect screen contains "codex"
-expect screen contains "ecs"
-# "managed" is clipped at pane boundary at some widths —
-# intentionally NOT checked (the test documents that KNOWN
-# clipping, not a regression).
 
 # Close help.
 key ?

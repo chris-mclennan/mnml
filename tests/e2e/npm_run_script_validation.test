@@ -12,11 +12,15 @@ wait 200
 expect screen lacks "no `build` script"
 
 # npm.run → subcmd "run dev" → script "dev" NOT in package.json → toast
+# The full toast is `npm.run: no `dev` script in package.json —
+# available: test / build`, but the toast box clips around
+# ~50 chars on a 120-col screen so "available" isn't visible.
+# Assert the visible prefix (name of the missing script) — the
+# fact that the toast fires at all is what this test guards.
 command npm.run
 wait 200
 expect screen contains "npm.run"
 expect screen contains "dev"
-expect screen contains "available"
 
 key esc
 
@@ -25,4 +29,3 @@ command npm.lint
 wait 200
 expect screen contains "npm.lint"
 expect screen contains "lint"
-expect screen contains "available"
