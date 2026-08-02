@@ -52,8 +52,17 @@ pub enum Underline {
 impl Underline {
     /// Ghostty stores `underline` on `GhosttyStyle` as a `c_int` whose
     /// value is one of `GHOSTTY_SGR_UNDERLINE_*`. Convert here.
+    ///
+    /// The `as _` on the wrapping call is deliberate: bindgen picks a
+    /// different backing repr for `GhosttySgrUnderline` on Windows
+    /// (`c_int`) vs. macOS/Linux (`c_uint`) — C compilers can choose
+    /// signed or unsigned when all enum values fit either. Inference
+    /// picks the right one.
     fn from_sgr_int(v: std::os::raw::c_int) -> Self {
-        match sys::GhosttySgrUnderline(v as std::os::raw::c_uint) {
+        // `as _` picks c_uint on macOS/Linux (real cast) and c_int on
+        // Windows (identity). Clippy would flag the identity case.
+        #[allow(clippy::unnecessary_cast)]
+        match sys::GhosttySgrUnderline(v as _) {
             sys::GhosttySgrUnderline::GHOSTTY_SGR_UNDERLINE_NONE => Underline::None,
             sys::GhosttySgrUnderline::GHOSTTY_SGR_UNDERLINE_SINGLE => Underline::Single,
             sys::GhosttySgrUnderline::GHOSTTY_SGR_UNDERLINE_DOUBLE => Underline::Double,
