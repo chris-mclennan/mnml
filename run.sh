@@ -181,11 +181,15 @@ case "${1:-start}" in
   start) [ "$#" -gt 0 ] && shift ;;   # the implicit default when run with no args
 esac
 
-# Make sure the libghostty-vt prebuilts are present (idempotent —
-# script skips files already at the right size). Required for any
-# cargo build of mnml; the prebuilts live on a GitHub release
-# rather than in git to keep the repo lean.
-bash "$REPO/vendor/libghostty-vt/fetch-prebuilts.sh" >/dev/null
+# libghostty-vt is now built from source by mnml-vt-sys's build.rs
+# (see `GHOSTTY_COMMIT` there). First `cargo build` clones ghostty +
+# runs `zig build` (needs zig 0.15.2 on PATH — this script prepends
+# it above). Subsequent builds hit the zig + cargo caches.
+#
+# 2026-08-02 — the prebuilt fetch (`vendor/.../fetch-prebuilts.sh`)
+# retired here; the 0.2.0 GitHub release is stale against the newer
+# vendored headers and would ABI-mismatch. If we bring prebuilts back,
+# put the fetch call back too.
 
 # Build profile.
 if [ "${MNML_RELEASE:-0}" = "1" ]; then

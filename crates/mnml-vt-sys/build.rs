@@ -37,7 +37,16 @@ use std::process::Command;
 /// the commit the vendored headers under `vendor/libghostty-vt/include/`
 /// come from — bindgen and link ABI must match.
 const GHOSTTY_REPO: &str = "https://github.com/ghostty-org/ghostty.git";
-const GHOSTTY_COMMIT: &str = "fdbf9ff3a31d7531b691cb49c98fc465a1a503a0";
+// 2026-08-02 bumped from `fdbf9ff` (matched libghostty-vt-sys 0.2.0) to
+// `a887df42` (matches 0.2.1). Delta is 14 upstream commits with two
+// candidates for auto-fixing the Windows STATUS_ACCESS_VIOLATION crash:
+// `20a1bfa5f fix: pass RGB color inputs by pointer` (ABI hygiene) and
+// `446f80f4e terminal: render state update optimizations` (Windows
+// synchronization). Vendored headers under `vendor/libghostty-vt/include/`
+// were re-synced from this commit; the prebuilt .a files under
+// `vendor/libghostty-vt/lib-*` are STALE against the new headers, so
+// they'll be rebuilt by the source-build path (pkg-config disabled below).
+const GHOSTTY_COMMIT: &str = "a887df42c56f6de86c0fe6da9c4eeca37931e083";
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

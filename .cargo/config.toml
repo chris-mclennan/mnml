@@ -1,23 +1,6 @@
-# Link the cross-built libghostty-vt prebuilt (see vendor/libghostty-vt/).
-# libghostty-vt-sys's pkg-config feature consumes these .pc files instead
-# of building ghostty from Zig source (Zig 0.15.2 can't link on macOS 26;
-# and CI Linux runners don't have a Zig toolchain handy either).
-#
-# Per-target paths so the static .a matches the host architecture:
-#   aarch64-apple-darwin → lib-aarch64-darwin/libghostty-vt.a
-#   x86_64-unknown-linux-gnu → lib-x86_64-linux/libghostty-vt.a
-#   aarch64-unknown-linux-gnu → lib-aarch64-linux/libghostty-vt.a
-#
-# `[target.<triple>.env]` only accepts plain string values (the
-# `{ value = ..., relative = true }` table form is top-level-only),
-# so these paths are relative to cargo's working directory (the
-# workspace root in normal use).
-
-[target.aarch64-apple-darwin.env]
-PKG_CONFIG_PATH = "vendor/libghostty-vt/pkgconfig-darwin"
-
-[target.x86_64-unknown-linux-gnu.env]
-PKG_CONFIG_PATH = "vendor/libghostty-vt/pkgconfig-linux"
-
-[target.aarch64-unknown-linux-gnu.env]
-PKG_CONFIG_PATH = "vendor/libghostty-vt/pkgconfig-linux-arm64"
+# 2026-08-02 — the per-target `PKG_CONFIG_PATH` bindings that lived here
+# (pointing at `vendor/libghostty-vt/pkgconfig-*`) were retired when we
+# bumped the vendored ghostty commit past the 0.2.0 prebuilts. mnml-vt-sys
+# now source-builds libghostty-vt via zig on every target — no pkg-config
+# path needed. If we bring the prebuilts back, this file gets the target
+# blocks back too (see git log for the original shape).
