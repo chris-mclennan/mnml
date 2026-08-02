@@ -1,0 +1,339 @@
+//! `Terminal` — the top-level libghostty-vt handle.
+//!
+//! Owns the C `GhosttyTerminal *`, tears it down on `Drop`. Holds
+//! the user-installed `write_pty` callback in a boxed closure whose
+//! address is passed to Ghostty as `userdata`. A tiny extern-C
+//! trampoline forwards C-invoked calls into the Rust closure.
+
+use crate::error::{Error, check};
+use libghostty_vt_sys as sys;
+use std::mem::MaybeUninit;
+use std::os::raw::c_void;
+use std::ptr;
+
+/// Terminal construction options — mirrors `GhosttyTerminalOptions`.
+#[derive(Debug, Copy, Clone)]
+pub struct TerminalOptions {
+    /// Width in cells. Must be > 0.
+    pub cols: u16,
+    /// Height in cells. Must be > 0.
+    pub rows: u16,
+    /// Maximum number of scrollback lines.
+    pub max_scrollback: usize,
+}
+
+impl From<TerminalOptions> for sys::GhosttyTerminalOptions {
+    fn from(o: TerminalOptions) -> Self {
+        sys::GhosttyTerminalOptions {
+            cols: o.cols,
+            rows: o.rows,
+            max_scrollback: o.max_scrollback,
+        }
+    }
+}
+
+/// Behavior tag for [`Terminal::scroll_viewport`].
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ScrollViewport {
+    /// Scroll to the top of the scrollback.
+    Top,
+    /// Scroll to the bottom (active area).
+    Bottom,
+    /// Scroll by a delta amount. Positive = down, negative = up.
+    Delta(isize),
+}
+
+/// The libghostty-vt terminal.
+///
+/// Lifetimes `'alloc, 'sys` are placeholder generic parameters preserved
+/// from the pre-existing wrapper API for source compatibility with mnml.
+/// They aren't presently used to bound anything the wrapper stores
+/// (the terminal owns its own allocations via the C API's default
+/// allocator), but they let callers write `Terminal<'static, 'static>`
+/// without touching call sites.
+pub struct Terminal<'alloc, 'sys> {
+    handle: sys::GhosttyTerminal,
+    /// Raw pointer to a heap-allocated `Box<dyn FnMut(&[u8])>`. Boxed
+    /// twice so the outer pointer is thin (fat `Box<dyn Trait>`s can't
+    /// round-trip through `*mut c_void`). Freed in `Drop`.
+    write_pty_cb: Option<*mut Box<WritePtyCallback>>,
+    _marker: std::marker::PhantomData<(&'alloc (), &'sys ())>,
+}
+
+/// Type of the user-installed pty-write callback.
+///
+/// The closure receives just the byte slice ghostty wants written back
+/// to the pty. A `&Terminal` used to be passed alongside (uzaaft's
+/// original design) but nothing consumed it — libghostty forbids
+/// re-entering `vt_write` from the callback, so a handle would be
+/// misleading. Callers that need to touch the terminal buffer the
+/// bytes and flush after `vt_write` returns (this is mnml's pattern).
+type WritePtyCallback = dyn FnMut(&[u8]) + 'static;
+
+impl<'alloc, 'sys> Terminal<'alloc, 'sys> {
+    /// Create a terminal with the default allocator.
+    pub fn new(options: TerminalOptions) -> Result<Self, Error> {
+        let mut handle: sys::GhosttyTerminal = ptr::null_mut();
+        // SAFETY: NULL allocator → default. `handle` receives an owned
+        // pointer we release in `Drop`.
+        let r = unsafe { sys::ghostty_terminal_new(ptr::null(), &mut handle, options.into()) };
+        check(r)?;
+        Ok(Terminal {
+            handle,
+            write_pty_cb: None,
+            _marker: std::marker::PhantomData,
+        })
+    }
+
+    /// Install a callback invoked when the terminal needs to write
+    /// bytes back to the pty (device-status queries, mode reports).
+    ///
+    /// libghostty forbids calling [`Terminal::vt_write`] from inside
+    /// this callback (no reentrancy). Buffer the bytes and flush them
+    /// after `vt_write` returns.
+    pub fn on_pty_write<F>(&mut self, f: F) -> Result<(), Error>
+    where
+        F: FnMut(&[u8]) + 'static,
+    {
+        // Drop the previous callback, if any, before installing the new
+        // one. (Two `on_pty_write` calls would otherwise leak the first.)
+        if let Some(prev) = self.write_pty_cb.take() {
+            // SAFETY: `prev` was produced by Box::into_raw in a prior
+            // successful call to this method.
+            unsafe { drop(Box::from_raw(prev)) };
+        }
+
+        // Double-box the closure so we hold a THIN pointer we can send
+        // through ghostty's `*mut c_void` userdata slot.
+        let inner: Box<WritePtyCallback> = Box::new(f);
+        let outer: *mut Box<WritePtyCallback> = Box::into_raw(Box::new(inner));
+
+        // Install userdata (thin pointer to the outer box).
+        // `ghostty_terminal_set` reads the value at `value` per its
+        // documented shape for pointer-typed options — for
+        // OPT_USERDATA the value is a raw pointer, so we pass a
+        // pointer-to-pointer.
+        let userdata: *const c_void = outer as *const c_void;
+        // SAFETY: valid handle; `value` points at a `*const c_void`
+        // just as ghostty expects for pointer-typed options.
+        let r = unsafe {
+            sys::ghostty_terminal_set(
+                self.handle,
+                sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_USERDATA,
+                &userdata as *const _ as *const c_void,
+            )
+        };
+        if let Err(e) = check(r) {
+            // Reclaim + drop the outer box before propagating.
+            unsafe { drop(Box::from_raw(outer)) };
+            return Err(e);
+        }
+
+        // Install the trampoline.
+        let fnptr: sys::GhosttyTerminalWritePtyFn = Some(write_pty_trampoline);
+        let r = unsafe {
+            sys::ghostty_terminal_set(
+                self.handle,
+                sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+                &fnptr as *const _ as *const c_void,
+            )
+        };
+        if let Err(e) = check(r) {
+            // Best-effort: clear userdata to null before dropping the
+            // box so ghostty doesn't retain a dangling pointer.
+            unsafe {
+                let null = ptr::null::<c_void>();
+                sys::ghostty_terminal_set(
+                    self.handle,
+                    sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_USERDATA,
+                    &null as *const _ as *const c_void,
+                );
+                drop(Box::from_raw(outer));
+            }
+            return Err(e);
+        }
+
+        // Retain the outer pointer so `Drop` can free it later.
+        self.write_pty_cb = Some(outer);
+        Ok(())
+    }
+
+    /// Feed bytes into the terminal parser.
+    pub fn vt_write(&mut self, data: &[u8]) -> Result<(), Error> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        // SAFETY: `data.as_ptr()` valid for `data.len()` bytes.
+        unsafe {
+            sys::ghostty_terminal_vt_write(self.handle, data.as_ptr(), data.len());
+        }
+        Ok(())
+    }
+
+    /// Resize the terminal.
+    pub fn resize(
+        &mut self,
+        cols: u16,
+        rows: u16,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) -> Result<(), Error> {
+        // SAFETY: valid terminal handle.
+        let r = unsafe {
+            sys::ghostty_terminal_resize(self.handle, cols, rows, cell_width_px, cell_height_px)
+        };
+        check(r)
+    }
+
+    /// Column count (cells).
+    pub fn cols(&self) -> Result<u16, Error> {
+        let mut out = MaybeUninit::<u16>::uninit();
+        // SAFETY: out matches documented COLS output type (`uint16_t *`).
+        let r = unsafe {
+            sys::ghostty_terminal_get(
+                self.handle,
+                sys::GhosttyTerminalData::GHOSTTY_TERMINAL_DATA_COLS,
+                out.as_mut_ptr().cast(),
+            )
+        };
+        check(r)?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    /// Row count (cells).
+    pub fn rows(&self) -> Result<u16, Error> {
+        let mut out = MaybeUninit::<u16>::uninit();
+        let r = unsafe {
+            sys::ghostty_terminal_get(
+                self.handle,
+                sys::GhosttyTerminalData::GHOSTTY_TERMINAL_DATA_ROWS,
+                out.as_mut_ptr().cast(),
+            )
+        };
+        check(r)?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    /// Whether any mouse-tracking mode is active.
+    pub fn is_mouse_tracking(&self) -> Result<bool, Error> {
+        let mut out = MaybeUninit::<bool>::uninit();
+        // SAFETY: MOUSE_TRACKING documented output type `bool *`.
+        let r = unsafe {
+            sys::ghostty_terminal_get(
+                self.handle,
+                sys::GhosttyTerminalData::GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
+                out.as_mut_ptr().cast(),
+            )
+        };
+        check(r)?;
+        Ok(unsafe { out.assume_init() })
+    }
+
+    /// Current terminal title (set via OSC 0/2), or `None` if unset /
+    /// empty.
+    ///
+    /// The returned string is copied out of the C-side buffer so callers
+    /// don't have to worry about the "valid until next vt_write" contract
+    /// on the borrowed buffer.
+    pub fn title(&self) -> Option<String> {
+        let mut out = MaybeUninit::<sys::GhosttyString>::uninit();
+        // SAFETY: TITLE returns a GhosttyString*.
+        let r = unsafe {
+            sys::ghostty_terminal_get(
+                self.handle,
+                sys::GhosttyTerminalData::GHOSTTY_TERMINAL_DATA_TITLE,
+                out.as_mut_ptr().cast(),
+            )
+        };
+        if r != sys::GhosttyResult::GHOSTTY_SUCCESS {
+            return None;
+        }
+        let s = unsafe { out.assume_init() };
+        if s.ptr.is_null() || s.len == 0 {
+            return None;
+        }
+        // SAFETY: ghostty guarantees valid UTF-8 for OSC titles; if it
+        // isn't, we drop bytes rather than panicking on the render loop.
+        let bytes = unsafe { std::slice::from_raw_parts(s.ptr, s.len) };
+        Some(String::from_utf8_lossy(bytes).into_owned())
+    }
+
+    /// Scroll the viewport.
+    pub fn scroll_viewport(&mut self, sv: ScrollViewport) {
+        let (tag, value) = match sv {
+            ScrollViewport::Top => (
+                sys::GhosttyTerminalScrollViewportTag::GHOSTTY_SCROLL_VIEWPORT_TOP,
+                sys::GhosttyTerminalScrollViewportValue { delta: 0 },
+            ),
+            ScrollViewport::Bottom => (
+                sys::GhosttyTerminalScrollViewportTag::GHOSTTY_SCROLL_VIEWPORT_BOTTOM,
+                sys::GhosttyTerminalScrollViewportValue { delta: 0 },
+            ),
+            ScrollViewport::Delta(d) => (
+                sys::GhosttyTerminalScrollViewportTag::GHOSTTY_SCROLL_VIEWPORT_DELTA,
+                sys::GhosttyTerminalScrollViewportValue { delta: d },
+            ),
+        };
+        let behavior = sys::GhosttyTerminalScrollViewport { tag, value };
+        // SAFETY: valid terminal handle + valid tagged union.
+        unsafe {
+            sys::ghostty_terminal_scroll_viewport(self.handle, behavior);
+        }
+    }
+
+    /// Raw handle — for advanced callers that need to interop with the
+    /// sys-level API (e.g. the render state, which takes the C handle).
+    pub(crate) fn as_raw(&self) -> sys::GhosttyTerminal {
+        self.handle
+    }
+}
+
+impl Drop for Terminal<'_, '_> {
+    fn drop(&mut self) {
+        // Order matters: clear callback + userdata FIRST so ghostty
+        // stops reading the box pointer, THEN free the box, THEN free
+        // the terminal.
+        // SAFETY: `handle` is still valid before ghostty_terminal_free.
+        unsafe {
+            let null = ptr::null::<c_void>();
+            sys::ghostty_terminal_set(
+                self.handle,
+                sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+                &null as *const _ as *const c_void,
+            );
+            sys::ghostty_terminal_set(
+                self.handle,
+                sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_USERDATA,
+                &null as *const _ as *const c_void,
+            );
+        }
+        if let Some(outer) = self.write_pty_cb.take() {
+            // SAFETY: pointer came from Box::into_raw in `on_pty_write`.
+            unsafe { drop(Box::from_raw(outer)) };
+        }
+        // SAFETY: freeing our own allocation. Ghostty accepts NULL too.
+        unsafe { sys::ghostty_terminal_free(self.handle) };
+    }
+}
+
+// SAFETY: `write_pty_trampoline` is invoked by libghostty-vt with the
+// userdata pointer we registered — a thin `*mut Box<WritePtyCallback>`
+// produced by `Box::into_raw` in `on_pty_write`. Ghostty guarantees
+// `data`/`len` describe a valid byte range for the call.
+unsafe extern "C" fn write_pty_trampoline(
+    _terminal: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    data: *const u8,
+    len: usize,
+) {
+    if userdata.is_null() || data.is_null() {
+        return;
+    }
+    // SAFETY: userdata was Box::into_raw(Box::new(inner_box)); it lives
+    // until Terminal::Drop frees it. Reborrow mutably for the callback.
+    let outer = userdata as *mut Box<WritePtyCallback>;
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    unsafe {
+        (**outer)(bytes);
+    }
+}

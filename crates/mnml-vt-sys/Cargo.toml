@@ -12,12 +12,7 @@ readme = "README.md"
 # goes through pkg-config against the vendored prebuilt static .a
 # (see `vendor/libghostty-vt/pkgconfig-*`).
 #
-# `links` is set to a unique name (not "ghostty-vt") during the transition
-# period so this crate and uzaaft's `libghostty-vt-sys` can coexist in the
-# workspace while the safe wrapper is being built out. When the alias swap
-# lands and the crates.io deps are removed, this can be renamed back to
-# "ghostty-vt" — cargo's rule is just "unique within the dep graph."
-links = "mnml-ghostty-vt"
+links = "ghostty-vt"
 
 [lib]
 name = "libghostty_vt_sys"

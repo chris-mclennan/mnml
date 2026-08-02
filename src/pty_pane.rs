@@ -478,7 +478,7 @@ impl PtySession {
         let responses = Rc::new(RefCell::new(Vec::new()));
         {
             let sink = Rc::clone(&responses);
-            term.on_pty_write(move |_term, data| {
+            term.on_pty_write(move |data| {
                 sink.borrow_mut().extend_from_slice(data);
             })
             .map_err(|e| format!("ghostty on_pty_write: {e:?}"))?;
@@ -556,7 +556,7 @@ impl PtySession {
     pub fn pump(&mut self) {
         let mut wrote = false;
         while let Ok(chunk) = self.rx.try_recv() {
-            self.term.vt_write(&chunk);
+            let _ = self.term.vt_write(&chunk);
             wrote = true;
         }
         if wrote {
@@ -1383,7 +1383,7 @@ fn snapshot_grid<'a>(
                 }
             }
             let mut row_cells: Vec<RenderCell> = Vec::with_capacity(cols as usize);
-            if let Ok(mut cell_iter) = cells_h.update(row) {
+            if let Ok(mut cell_iter) = cells_h.update(&row) {
                 while let Some(cell) = cell_iter.next() {
                     // Wide-char handling: libghostty marks the 2nd
                     // column of a CJK/emoji glyph as `SpacerTail` (or
@@ -1876,7 +1876,7 @@ mod tests {
         })
         .unwrap();
         for c in chunks {
-            term.vt_write(c);
+            let _ = term.vt_write(c);
         }
         let mut rs = RenderState::new().unwrap();
         snapshot_grid(&term, &mut rs, None)

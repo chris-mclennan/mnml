@@ -119,13 +119,12 @@ portable-pty = "0.8"
 # Zig 0.15.2, which can't link on macOS 26. The `pkg-config` feature on the -sys
 # crate makes it consume the prebuilt instead of building ghostty from source.
 #
-# 2026-08-01: `crates/mnml-vt-sys/` + `crates/mnml-vt/` are being built out
-# in parallel as first-party bindings we own (bindgen against Ghostty's
-# vendored vt.h). They share `links = "ghostty-vt"` with uzaaft's crate, so
-# they can't both be in the dep graph until the wrapper is ready and we swap
-# the aliases. Cargo currently uses the crates.io ones.
-libghostty-vt = "=0.2.0"
-libghostty-vt-sys = { version = "=0.2.0", features = ["pkg-config"] }
+# 2026-08-01: swapped off crates.io `libghostty-vt` / `-sys` (uzaaft's third-
+# party crates) onto first-party bindings we own — `mnml-vt` (safe wrapper) +
+# `mnml-vt-sys` (bindgen against Ghostty's vendored vt.h). Package aliases
+# preserve `libghostty_vt::…` imports across the codebase.
+libghostty-vt = { package = "mnml-vt", path = "crates/mnml-vt", version = "0.2.0" }
+libghostty-vt-sys = { package = "mnml-vt-sys", path = "crates/mnml-vt-sys", version = "0.2.0" }
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
 tree-sitter-ruby = "0.23.1"
