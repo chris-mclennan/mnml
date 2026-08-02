@@ -94,6 +94,8 @@ extern "C" {
  * | `GHOSTTY_TERMINAL_OPT_COLOR_SCHEME`     | `GhosttyTerminalColorSchemeFn`    | Color scheme query (CSI ? 996 n)          |
  * | `GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES`| `GhosttyTerminalDeviceAttributesFn`| Device attributes query (CSI c / > c / = c)|
  * | `GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE`  | `GhosttyTerminalClipboardWriteFn` | Clipboard write via OSC 52 / OSC 1337     |
+ * | `GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION`| `GhosttyTerminalDesktopNotificationFn` | Desktop notification via OSC 9 / OSC 777 |
+ * | `GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT`  | `GhosttyTerminalProgressReportFn` | Progress report via OSC 9;4               |
  *
  * ### Defining a write_pty callback
  * @snippet c-vt-effects/src/main.c effects-write-pty
@@ -171,26 +173,6 @@ extern "C" {
  *
  * @{
  */
-
-/**
- * Terminal initialization options.
- *
- * @ingroup terminal
- */
-typedef struct {
-  /** Terminal width in cells. Must be greater than zero. */
-  uint16_t cols;
-
-  /** Terminal height in cells. Must be greater than zero. */
-  uint16_t rows;
-
-  /** Maximum number of lines to keep in scrollback history. */
-  size_t max_scrollback;
-
-  // TODO: Consider ABI compatibility implications of this struct.
-  // We may want to artificially pad it significantly to support
-  // future options.
-} GhosttyTerminalOptions;
 
 /**
  * Amount of compression work to perform before returning.
@@ -466,6 +448,100 @@ typedef GhosttyClipboardWriteResult (*GhosttyTerminalClipboardWriteFn)(
     GhosttyTerminal terminal,
     void* userdata,
     const GhosttyClipboardWrite* write);
+
+/**
+ * A request to show a desktop notification.
+ *
+ * This is a sized struct. The callback must only access fields present in the
+ * size reported by `size`. Both strings are borrowed and valid only for the
+ * duration of the callback.
+ *
+ * @ingroup terminal
+ */
+typedef struct {
+  /** Size of this struct in bytes. */
+  size_t size;
+
+  /** Notification title, or an empty string when the protocol omits it. */
+  GhosttyString title;
+
+  /** Notification body. */
+  GhosttyString body;
+} GhosttyTerminalDesktopNotification;
+
+/**
+ * Callback function type for desktop notifications.
+ *
+ * Called synchronously when the terminal receives OSC 9 or OSC 777.
+ *
+ * @param terminal The terminal handle
+ * @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+ * @param notification Borrowed desktop notification request
+ *
+ * @ingroup terminal
+ */
+typedef void (*GhosttyTerminalDesktopNotificationFn)(
+    GhosttyTerminal terminal,
+    void* userdata,
+    const GhosttyTerminalDesktopNotification* notification);
+
+/**
+ * State of a terminal progress report.
+ *
+ * @ingroup terminal
+ */
+typedef enum GHOSTTY_ENUM_TYPED {
+  /** Remove any visible progress indication. */
+  GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE = 0,
+
+  /** Show determinate progress. */
+  GHOSTTY_TERMINAL_PROGRESS_STATE_SET = 1,
+
+  /** Show a failed progress state. */
+  GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR = 2,
+
+  /** Show indeterminate progress. */
+  GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE = 3,
+
+  /** Show paused progress. */
+  GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE = 4,
+  GHOSTTY_TERMINAL_PROGRESS_STATE_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
+} GhosttyTerminalProgressState;
+
+/**
+ * A progress report emitted by the running program.
+ *
+ * This is a sized struct. The callback must only access fields present in the
+ * size reported by `size`.
+ *
+ * @ingroup terminal
+ */
+typedef struct {
+  /** Size of this struct in bytes. */
+  size_t size;
+
+  /** Literal progress state reported by the running program. */
+  GhosttyTerminalProgressState state;
+
+  /** Progress percentage from 0 through 100, or -1 when omitted. */
+  int8_t progress;
+} GhosttyTerminalProgressReport;
+
+/**
+ * Callback function type for progress reports.
+ *
+ * Called synchronously when the terminal receives OSC 9;4.
+ *
+ * @param terminal The terminal handle
+ * @param userdata The userdata pointer set via GHOSTTY_TERMINAL_OPT_USERDATA
+ * @param report Borrowed progress report
+ *
+ * @ingroup terminal
+ */
+typedef void (*GhosttyTerminalProgressReportFn)(
+    GhosttyTerminal terminal,
+    void* userdata,
+    const GhosttyTerminalProgressReport* report);
 
 /**
  * Callback function type for color scheme queries (CSI ? 996 n).
@@ -785,12 +861,13 @@ typedef enum GHOSTTY_ENUM_TYPED {
   GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE = 16,
 
   /**
-   * Enable or disable Kitty image loading via the temporary file medium.
+   * Enable Kitty image loading via the temporary file medium, restricted to
+   * the provided directory. The string data is copied into the terminal.
    *
-   * A NULL value pointer is a no-op. Has no effect when Kitty graphics
-   * are disabled at build time.
+   * A NULL value pointer disables the temporary file medium. Has no effect
+   * when Kitty graphics are disabled at build time.
    *
-   * Input type: bool*
+   * Input type: GhosttyString*
    */
   GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE = 17,
 
@@ -887,6 +964,69 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * Input type: GhosttyTerminalClipboardWriteFn
    */
   GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE = 26,
+
+  /**
+   * Set the maximum scrollback allocation in bytes.
+   *
+   * This is an estimate. Internally, libghostty only prunes bytes up 
+   * to a "page"-granularity. A page is the minimum allocated unit of
+   * grid space within Ghostty. A page at the time of writing these docs
+   * is about 400KB, so the byte limit will be within this delta.
+   *
+   * This works alongside the line limit configuration. If both are set,
+   * the first-reached limit is used first. Both limits are dependent
+   * on external state (byte limit can be reached with less lines if
+   * more styles are used for example, line limit can be reached with
+   * a narrower terminal viewport). So, they are useful together.
+   *
+   * Lowering the limit immediately removes eligible complete historical
+   * pages. A value of zero disables scrollback and erases retained history.
+   * A NULL value pointer removes the byte limit.
+   *
+   * Input type: size_t*
+   */
+  GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES = 27,
+
+  /**
+   * Set the maximum number of physical lines retained in scrollback.
+   *
+   * This is an estimate. Internally, libghostty only prunes lines up 
+   * to a "page"-granularity. A page is the minimum allocated unit of
+   * grid space within Ghostty. As a result, the actual available scrollback
+   * lines will almost always be higher than configured. The magnitude 
+   * of the difference depends on the number of used styles, graphemes, etc.
+   * since the row-count in a page is dynamic based on that. In general,
+   * it ranges from dozens to a hundred or so lines.
+   *
+   * This works alongside the line limit configuration. If both are set,
+   * the first-reached limit is used first. Both limits are dependent
+   * on external state (byte limit can be reached with less lines if
+   * more styles are used for example, line limit can be reached with
+   * a narrower terminal viewport). So, they are useful together.
+   *
+   * Lowering the limit immediately removes eligible complete historical
+   * pages. A NULL value pointer removes the line limit.
+   *
+   * Input type: size_t*
+   */
+  GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES = 28,
+
+  /**
+   * Callback invoked when the running program requests a desktop
+   * notification via OSC 9 or OSC 777. Set to NULL to ignore desktop
+   * notification requests.
+   *
+   * Input type: GhosttyTerminalDesktopNotificationFn
+   */
+  GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION = 29,
+
+  /**
+   * Callback invoked when the running program reports progress via OSC 9;4.
+   * Set to NULL to ignore progress reports.
+   *
+   * Input type: GhosttyTerminalProgressReportFn
+   */
+  GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT = 30,
   GHOSTTY_TERMINAL_OPT_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttyTerminalOption;
 
@@ -1139,12 +1279,13 @@ typedef enum GHOSTTY_ENUM_TYPED {
   GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_FILE = 27,
 
   /**
-   * Whether the temporary file medium is enabled for Kitty image loading
-   * on the active screen.
+   * The directory allowed for Kitty image loading via the temporary file
+   * medium on the active screen. The string is empty when the medium is
+   * disabled.
    *
    * Returns GHOSTTY_NO_VALUE when Kitty graphics are disabled at build time.
    *
-   * Output type: bool *
+   * Output type: GhosttyString *
    */
   GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_TEMP_FILE = 28,
 
@@ -1197,22 +1338,66 @@ typedef enum GHOSTTY_ENUM_TYPED {
    * Output type: bool *
    */
   GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE = 32,
+
+  /**
+   * Whether VT processing encountered a non-gracefully handled error that may
+   * have prevented a terminal-owned semantic update.
+   *
+   * Processing remains best-effort, and ghostty_terminal_reset() does not 
+   * clear it. Gracefully handled protocol failures, configured limits, 
+   * malformed or unsupported input, and failures limited to external effects 
+   * or query responses do not set it.
+   *
+   * This can't currently be unset. This is purely informational to consumers
+   * if there was some error that happened at some point during VT processing.
+   *
+   * Output type: bool *
+   */
+  GHOSTTY_TERMINAL_DATA_VT_PROCESSING_ERROR = 33,
+
+  /**
+   * The configured maximum scrollback allocation in bytes.
+   *
+   * This always reports the primary screen's configured value, including
+   * while an alternate screen is active. Returns GHOSTTY_NO_VALUE when the
+   * configured byte limit is unlimited.
+   *
+   * Output type: size_t *
+   */
+  GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_BYTES = 34,
+
+  /**
+   * The configured maximum number of physical scrollback lines.
+   *
+   * This always reports the primary screen's configured value, including
+   * while an alternate screen is active. Returns GHOSTTY_NO_VALUE when the
+   * configured line limit is unlimited.
+   *
+   * Output type: size_t *
+   */
+  GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_LINES = 35,
   GHOSTTY_TERMINAL_DATA_MAX_VALUE = GHOSTTY_ENUM_MAX_VALUE,
 } GhosttyTerminalData;
 
 /**
  * Create a new terminal instance.
  *
+ * The terminal starts with various reasonable defaults e.g. around
+ * scrollback limits. Use ghostty_terminal_set() to change any options
+ * prior to using the terminal.
+ *
  * @param allocator Pointer to allocator, or NULL to use the default allocator
  * @param terminal Pointer to store the created terminal handle
- * @param options Terminal initialization options
+ * @param cols Terminal width in cells (must be greater than zero)
+ * @param rows Terminal height in cells (must be greater than zero)
  * @return GHOSTTY_SUCCESS on success, or an error code on failure
  *
  * @ingroup terminal
  */
 GHOSTTY_API GhosttyResult ghostty_terminal_new(const GhosttyAllocator* allocator,
-                                   GhosttyTerminal* terminal,
-                                   GhosttyTerminalOptions options);
+                                               GhosttyTerminal* terminal,
+                                               uint16_t cols,
+                                               uint16_t rows);
 
 /**
  * Free a terminal instance.
@@ -1273,7 +1458,8 @@ GHOSTTY_API GhosttyResult ghostty_terminal_resize(GhosttyTerminal terminal,
  * write_pty callback and userdata pointer. The value is passed
  * directly for pointer types (callbacks, userdata) or as a pointer
  * to the value for non-pointer types (e.g. GhosttyString*).
- * NULL clears the option to its default.
+ * The behavior of a NULL value is specific to each option and is
+ * documented by the corresponding GhosttyTerminalOption value.
  *
  * Callbacks are invoked synchronously during ghostty_terminal_vt_write().
  * Callbacks must not call ghostty_terminal_vt_write() on the same

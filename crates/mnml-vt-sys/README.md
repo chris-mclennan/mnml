@@ -12,7 +12,7 @@ Ghostty's official C headers, rather than depending on a third-party
 
 `build.rs` clones ghostty at the pinned `GHOSTTY_COMMIT` (kept in
 lock-step with the vendored headers) and runs `zig build -Demit-lib-vt`,
-then links the produced static `.a`. Needs zig 0.15.2 + git on PATH;
+then links the produced static `.a`. Needs zig 0.16.0 + git on PATH;
 the resulting `.a` is cached under `target/` between cargo runs.
 
 A `pkg-config` feature is default-on and tried first — if a

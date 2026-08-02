@@ -22,15 +22,11 @@ pub struct TerminalOptions {
     pub max_scrollback: usize,
 }
 
-impl From<TerminalOptions> for sys::GhosttyTerminalOptions {
-    fn from(o: TerminalOptions) -> Self {
-        sys::GhosttyTerminalOptions {
-            cols: o.cols,
-            rows: o.rows,
-            max_scrollback: o.max_scrollback,
-        }
-    }
-}
+// Note: upstream ghostty removed `GhosttyTerminalOptions` in the July 2026
+// libghostty-vt refactor — `ghostty_terminal_new` now takes `cols` + `rows`
+// directly and scrollback is set post-hoc via
+// `ghostty_terminal_set(OPT_SCROLLBACK_MAX_LINES, &size_t)`. `TerminalOptions`
+// remains as our ergonomic bundle so callers don't have to change.
 
 /// Behavior tag for [`Terminal::scroll_viewport`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -76,8 +72,24 @@ impl<'alloc, 'sys> Terminal<'alloc, 'sys> {
         let mut handle: sys::GhosttyTerminal = ptr::null_mut();
         // SAFETY: NULL allocator → default. `handle` receives an owned
         // pointer we release in `Drop`.
-        let r = unsafe { sys::ghostty_terminal_new(ptr::null(), &mut handle, options.into()) };
+        let r = unsafe {
+            sys::ghostty_terminal_new(ptr::null(), &mut handle, options.cols, options.rows)
+        };
         check(r)?;
+
+        // Scrollback line limit is post-construction — `size_t*` value pointer.
+        // NULL clears; passing `&count` sets the limit.
+        // SAFETY: `handle` valid; `&scrollback` is a pointer to a stack size_t
+        // which ghostty reads once during the set call.
+        let scrollback: usize = options.max_scrollback;
+        unsafe {
+            sys::ghostty_terminal_set(
+                handle,
+                sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+                &scrollback as *const _ as *const c_void,
+            );
+        }
+
         Ok(Terminal {
             handle,
             write_pty_cb: None,

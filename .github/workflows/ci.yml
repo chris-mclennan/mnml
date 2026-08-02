@@ -12,7 +12,7 @@ env:
 jobs:
   # macOS-arm64 + ubuntu-latest (x86_64) + windows-latest all run the
   # full suite. mnml-vt-sys source-builds libghostty-vt via `zig build`
-  # on every target (see the "Install zig 0.15.2" step below).
+  # on every target (see the "Install zig 0.16.0" step below).
   check:
     name: fmt · clippy · test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -39,10 +39,10 @@ jobs:
       # fallback: git-clone ghostty at the pinned commit + `zig build`.
       # Adds ~2-5 min to first-time builds; Swatinem/rust-cache below
       # keeps subsequent runs warm.
-      - name: Install zig 0.15.2
+      - name: Install zig 0.16.0
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

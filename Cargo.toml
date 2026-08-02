@@ -120,11 +120,11 @@ portable-pty = "0.8"
 # `mnml-vt-sys` (bindgen against Ghostty's vendored vt.h). Package aliases
 # preserve `libghostty_vt::…` imports across the codebase.
 #
-# 2026-08-02: pinned ghostty commit bumped to `a887df42` (matches upstream
-# 0.2.1) + retired the prebuilt `.a` + pkg-config path. `mnml-vt-sys` now
-# source-builds libghostty-vt via `zig build` on every target (default
-# `source-build` feature). Needs zig 0.15.2 + git on PATH. `.a` cached in
-# `target/` after first build.
+# 2026-08-02: pinned ghostty commit bumped to origin/main HEAD (post the
+# July 25-26 Windows static-lib linking fixes) and zig requirement bumped
+# to 0.16.0. `mnml-vt-sys` now source-builds libghostty-vt via `zig build`
+# on every target (default `source-build` feature). Needs zig 0.16.0 + git
+# on PATH. `.a` cached in `target/` after first build.
 libghostty-vt = { package = "mnml-vt", path = "crates/mnml-vt", version = "0.2.0" }
 libghostty-vt-sys = { package = "mnml-vt-sys", path = "crates/mnml-vt-sys", version = "0.2.0" }
 tree-sitter-c = "0.24.2"

@@ -10,7 +10,7 @@
 //! build "just works" on every host:
 //!
 //! - **`source-build`** — git-clone ghostty at [`GHOSTTY_COMMIT`] into
-//!   `OUT_DIR` and run `zig build`. Requires zig 0.15.2 + git on PATH.
+//!   `OUT_DIR` and run `zig build`. Requires zig 0.16.0 + git on PATH.
 //!   This is the live default on every target as of 2026-08-02 —
 //!   there's no vendored `.pc` or `.a` checked in.
 //! - **`pkg-config`** — resolve `libghostty-vt-static` via
@@ -39,16 +39,30 @@ use std::process::Command;
 /// the commit the vendored headers under `vendor/libghostty-vt/include/`
 /// come from — bindgen and link ABI must match.
 const GHOSTTY_REPO: &str = "https://github.com/ghostty-org/ghostty.git";
-// 2026-08-02 bumped from `fdbf9ff` (matched libghostty-vt-sys 0.2.0) to
-// `a887df42` (matches 0.2.1). Delta is 14 upstream commits with two
-// candidates for auto-fixing the Windows STATUS_ACCESS_VIOLATION crash:
-// `20a1bfa5f fix: pass RGB color inputs by pointer` (ABI hygiene) and
-// `446f80f4e terminal: render state update optimizations` (Windows
-// synchronization). Vendored headers under `vendor/libghostty-vt/include/`
-// were re-synced from this commit; the prebuilt .a files under
-// `vendor/libghostty-vt/lib-*` are STALE against the new headers, so
-// they'll be rebuilt by the source-build path (pkg-config disabled below).
-const GHOSTTY_COMMIT: &str = "a887df42c56f6de86c0fe6da9c4eeca37931e083";
+// 2026-08-02 bumped from `a887df42` (0.2.1) to origin/main HEAD after
+// research turned up specific upstream Windows fixes that landed between
+// July 26 and Aug 2 2026:
+//
+//   24f7fb983  build: fix static libghostty-vt linking on Windows (#13452)
+//              — the direct linking fix, discovered via Neovim's zig build
+//   84254a9d8  build: avoid MSVC C++ runtime in no-libcxx builds
+//   1fe1b2d23  build: fix static libghostty-vt linking on Windows
+//   a062c16e1  libghostty: pass pointer options directly to terminal_set
+//              — same bug our code-reviewer caught in mnml-vt; upstream
+//                also had a mirrored version that ghostty had to fix
+//                on their side
+//   7114721bd  build: fix C++ linking and enum signedness on MSVC
+//
+// Plus the full March 2026 MSVC compatibility sweep. Our previous pin
+// predated all of these — Windows CI reproduced the STATUS_ACCESS_VIOLATION
+// exactly, on the SAME test, with the exact same `mnml-<hash>.exe` binary
+// hash both times, meaning nothing in the 14-commit `fdbf9ff → a887df42`
+// delta touched the crash path.
+//
+// Re-sync vendored headers under `vendor/libghostty-vt/include/` when
+// bumping this constant (see vendor README's "Regenerating headers"
+// section).
+const GHOSTTY_COMMIT: &str = "6837d7027f226355db661e8215a3ad24ffaf4eb5";
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -112,7 +126,7 @@ fn link_ghostty_vt() {
     {
         println!(
             "cargo:warning=libghostty-vt: pkg-config unavailable, falling back to zig source-build \
-             (needs zig 0.15.2 + git on PATH)"
+             (needs zig 0.16.0 + git on PATH)"
         );
         source_build();
     }

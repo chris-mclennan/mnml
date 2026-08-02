@@ -9,9 +9,9 @@ bumped to `a887df42` (matches upstream `libghostty-vt-sys` 0.2.1) and the
 
 `crates/mnml-vt-sys/build.rs` clones ghostty at `GHOSTTY_COMMIT` (currently
 `a887df42…`, kept in lock-step with the headers here) and runs `zig build
--Demit-lib-vt` on every target. Needs zig 0.15.2 + git on PATH.
+-Demit-lib-vt` on every target. Needs zig 0.16.0 + git on PATH.
 
-Empirically zig 0.15.2 links fine on macOS 26 for ghostty at this commit —
+Empirically zig 0.16.0 links fine on macOS 26 for ghostty at this commit —
 the earlier "cannot link on macOS 26" workaround that motivated the
 prebuilt path is no longer needed. If it ever regresses, the fix is either
 a newer zig (waiting on ghostty to bump its pin) or reintroducing
