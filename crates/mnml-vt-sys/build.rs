@@ -214,22 +214,20 @@ fn source_build() {
         .arg(&zig_cache_dir)
         .current_dir(&ghostty_dir);
 
-    // Windows ABI trap: zig's auto-detection on a Windows host defaults to
-    // `-windows-gnu` (MinGW C runtime), but Rust's `windows-latest` target
-    // is `x86_64-pc-windows-msvc` — the two ABIs don't mix (different C
-    // runtime, different SEH unwinder, different stack layout), producing
-    // a link-clean binary that STATUS_ACCESS_VIOLATIONs the first time it
-    // reaches into ghostty. Ghostty's own MSVC-specific fixes upstream
-    // (`build.zig`'s `if (target.result.abi == .msvc) { … }` blocks — the
-    // stack-protector-off, ntdll+kernel32 link, _fltused export etc. from
-    // PRs #13452 / #11812 / #11856) also stay DORMANT unless zig is
-    // explicitly targeting msvc.
+    // Pass zig an explicit `-Dtarget` only on genuine cross-compiles.
+    // For same-target-as-host, let zig auto-detect — matches what
+    // upstream ghostty does in its own CI (build-libghostty-vt-windows
+    // in test.yml runs `zig build -Demit-lib-vt` with no -Dtarget).
     //
-    // Force the zig target to match the Rust target whenever we're
-    // cross-compiling OR whenever the Rust target is windows-msvc — even
-    // when target == host, since "host is Windows" isn't the same as
-    // "host's default zig target is Windows-MSVC" on GitHub Actions.
-    if target != host || target.contains("windows-msvc") {
+    // 2026-08-02: earlier code added `|| target.contains("windows-msvc")`
+    // to force MSVC ABI on the Windows runner. That was based on the
+    // hypothesis that zig defaults to gnu on Windows hosts, causing an
+    // ABI mismatch with Rust's default msvc. Turned out upstream ghostty
+    // explicitly marks `x86_64-windows-msvc` as "doesn't work yet, we
+    // need a way to find msvc libc/c++ headers" in their CI matrix —
+    // the SUPPORTED Windows path is `x86_64-windows-gnu`. Reverted the
+    // msvc-forcing; CI now builds Rust for the gnu target too.
+    if target != host {
         let zig_target = zig_target(&target);
         build.arg(format!("-Dtarget={zig_target}"));
     }

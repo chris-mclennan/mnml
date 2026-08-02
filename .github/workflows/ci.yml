@@ -44,10 +44,18 @@ jobs:
         with:
           version: 0.16.0
 
+      # Windows: build for the `x86_64-pc-windows-gnu` (MinGW) target,
+      # not the default `x86_64-pc-windows-msvc`. Upstream ghostty
+      # explicitly marks msvc as "doesn't work yet" in their own CI
+      # matrix (see test.yml `build-libghostty-vt-*`); the supported
+      # combo is windows-gnu. MinGW-w64 GCC is preinstalled on
+      # windows-latest runners under C:\ProgramData\mingw64, so
+      # rustup only needs the target stdlib.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: ${{ matrix.os == 'windows-latest' && 'x86_64-pc-windows-gnu' || '' }}
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
@@ -61,19 +69,25 @@ jobs:
 
       - name: clippy
         working-directory: mnml
-        run: cargo clippy --all-targets -- -D warnings
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cargo clippy --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+          else
+            cargo clippy --all-targets -- -D warnings
+          fi
 
       - name: test
         working-directory: mnml
         # Windows: single-threaded + nocapture, so the crashing test's
-        # NAME shows up in the log immediately before the AV. Default
-        # parallel harness only prints "ok" after a test completes, so
-        # a crashing test is invisible in the log — makes bisection
-        # much harder. macOS/Linux stay parallel.
+        # NAME shows up in the log immediately before any crash.
+        # Default parallel harness only prints "ok" after a test
+        # completes, so a crashing test is invisible in the log —
+        # makes bisection much harder. macOS/Linux stay parallel.
         shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cargo test -- --test-threads=1 --nocapture
+            cargo test --target x86_64-pc-windows-gnu -- --test-threads=1 --nocapture
           else
             cargo test
           fi

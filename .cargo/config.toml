@@ -4,29 +4,8 @@
 # now source-builds libghostty-vt via zig on every target — no pkg-config
 # path needed. If we bring the prebuilts back, this file gets the target
 # blocks back too (see git log for the original shape).
-
-# Force STATIC MSVC C runtime on Windows so we match ghostty's zig build.
 #
-# 2026-08-02 attempt-2: reintroduced after the first-attempt revert.
-# The revert was defensive — reviewer flagged we hadn't proven ghostty
-# was actually linking LIBCMT (static MSVC CRT) vs. MSVCRT (dynamic).
-# Second Windows CI cycle proved:
-#   1. `-Dtarget=x86_64-windows-msvc` IS reaching zig (verified via the
-#      `cargo:warning=zig invocation:…` echo in build.rs) — so both sides
-#      are MSVC ABI, the earlier GNU-vs-MSVC hypothesis is fully answered.
-#   2. `LNK4098: defaultlib 'LIBCMT' conflicts with use of other libs`
-#      still fires — the warning explicitly names LIBCMT, meaning ghostty
-#      IS pulling in LIBCMT (the static MSVC CRT), while Rust defaults to
-#      MSVCRT.dll (the dynamic MSVC CRT). Two variants of the same
-#      runtime = independent heap state, TLS, errno-alikes, and MSVC
-#      security-cookie state = UB the moment ghostty allocates / raises
-#      / touches CRT state.
-#
-# `+crt-static` on Rust flips it to LIBCMT too, so both sides converge on
-# one CRT. If the AV is CRT-mismatch, this fixes it. If not, at least
-# LNK4098 should go away (removing noise for the next debug round).
-[target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
-
-[target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+# Also gone: the `+crt-static` rustflags experiment for the msvc target.
+# Turned out we shouldn't be on msvc at all — upstream ghostty officially
+# supports `x86_64-windows-gnu` (MinGW) for libghostty-vt, not msvc.
+# Windows CI now builds Rust for the gnu target too (see ci.yml).
