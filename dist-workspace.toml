@@ -10,20 +10,30 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell", "msi"]
 # Target platforms to build apps for (Rust target-triple syntax).
-# `aarch64-pc-windows-msvc` is OUT again. Two attempts so far:
+#
+# 2026-08-02 — Windows target flipped from `x86_64-pc-windows-msvc` to
+# `x86_64-pc-windows-gnu` (MinGW). Upstream ghostty explicitly marks
+# `x86_64-windows-msvc` as "doesn't work yet" for libghostty-vt in
+# their own CI; the SUPPORTED combo is windows-gnu. Under msvc we hit
+# a runtime STATUS_ACCESS_VIOLATION in `ghostty_terminal_vt_write`
+# regardless of build flags (verified across ~7 CI cycles). The gnu
+# path uses the MinGW-w64 GCC toolchain pre-installed on
+# windows-latest runners at `C:\ProgramData\mingw64\`.
+#
+# `aarch64-pc-windows-msvc` is OUT. Two prior attempts:
 #   v0.1.3 — Linux container + cargo-xwin: ring's clang `/imsvc`
 #            invocation fails. Dropped.
 #   v0.1.4 — re-added on native `windows-11-arm` runner (GA 2026-01-29).
 #            Rust compile succeeds, but the MSI step fails: WiX
 #            (`candle`) is NOT pre-installed on windows-11-arm runners
 #            (whereas `windows-2022` has it). Dropped again.
-# ARM Windows users have two paths today: install the x86_64 MSI (runs
-# on ARM Windows under Microsoft's emulation), or grab the raw
-# x86_64-pc-windows-msvc.zip. Native arm64 returns whenever either
+# ARM Windows users can install the x86_64 MSI (runs on ARM Windows
+# under Microsoft's emulation), or grab the raw
+# x86_64-pc-windows-gnu.zip. Native arm64 returns whenever either
 # (a) cargo-dist exposes a per-target installer override (no MSI on
 # arm64-windows, keep .zip) or (b) windows-11-arm runners get WiX
 # bundled, whichever happens first.
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu"]
 # Which actions to run on pull requests
 pr-run-mode = "upload"
 # YAML snippet injected into every build job's `steps:` array,

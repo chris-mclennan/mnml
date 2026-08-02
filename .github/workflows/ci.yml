@@ -57,6 +57,19 @@ jobs:
           components: rustfmt, clippy
           targets: ${{ matrix.os == 'windows-latest' && 'x86_64-pc-windows-gnu' || '' }}
 
+      # Sanity-check that MinGW-w64 GCC (needed as the linker for the
+      # -pc-windows-gnu target) is actually resolvable on PATH. Windows
+      # runners preinstall it, but the specific path + PATH state can
+      # drift between images — surfacing it here with a clear failure
+      # beats a cryptic `linker gcc.exe not found` deep in a cargo build.
+      - name: Sanity — MinGW-w64 GCC (Windows only)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          gcc --version
+          which gcc
+          which x86_64-w64-mingw32-gcc || echo "(x86_64-w64-mingw32-gcc unspecific — using bare gcc)"
+
       - name: Cache
         uses: Swatinem/rust-cache@v2
         with:
