@@ -267,6 +267,14 @@ fn source_build() {
     for dir in &search_dirs {
         println!("cargo:rustc-link-search=native={}", dir.display());
     }
+    // Cargo's search-by-name resolves `static=ghostty-vt` to `libghostty-vt.a`
+    // (Unix/MinGW) or `ghostty-vt.lib` (MSVC). Zig on MSVC actually produces
+    // `ghostty-vt-static.lib` — so if we ever re-enable the -windows-msvc
+    // target (see the reverted forcing above + upstream marks it "doesn't
+    // work yet"), this line will need to become `static=ghostty-vt-static`
+    // on that branch, or the `.lib` will need renaming. Dormant today
+    // because the supported Windows target is `-windows-gnu`, whose
+    // `libghostty-vt.a` resolves cleanly by this name.
     println!("cargo:rustc-link-lib=static=ghostty-vt");
     emit_platform_link_libs();
 }
