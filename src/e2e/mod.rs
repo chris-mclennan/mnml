@@ -606,8 +606,9 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
                      set MNML_E2E_ALLOW_SHELL=1 to opt in (only for trusted repos)."
                 ));
             }
-            // POSIX shells go through $SHELL -c; Windows uses cmd.exe /C.
-            // Workspace is cwd so paths in `<cmd>` resolve naturally.
+            // POSIX shells go through `$SHELL -c`; Windows uses Git Bash
+            // (see below). Workspace is cwd so paths in `<cmd>` resolve
+            // naturally.
             //
             // Windows uses `bash` (Git Bash), not `cmd /C` — .test scripts
             // are written in Unix shell syntax (`mkdir -p`, pipes, `sort`)
