@@ -330,17 +330,46 @@ fn source_build() {
     for dir in &search_dirs {
         println!("cargo:rustc-link-search=native={}", dir.display());
     }
-    // Derive the link-lib name from the actual artifact filename so we
-    // stay in sync with whatever zig emitted — see the naming table on
-    // the search block above. Strip the leading `lib` (Unix convention)
-    // and the trailing `.a` / `.lib` extension; whatever remains is the
-    // symbol name cargo passes to the linker.
-    let link_name = a_path
-        .file_stem()
+
+    // Tell cargo how to link the artifact. Two shapes:
+    //
+    // A) Bare name (`static=NAME`) — cargo transforms per target convention:
+    //    Unix/MinGW → `libNAME.a`, MSVC → `NAME.lib`. Works when zig
+    //    emitted a filename matching the target's convention.
+    // B) Verbatim (`static:+verbatim=FULL.FILENAME.EXT`) — cargo passes
+    //    the literal filename to the linker with no transformation.
+    //    Needed when zig's filename doesn't match the target convention.
+    //
+    // Zig on `-Dtarget=x86_64-windows-gnu` empirically emits
+    // `ghostty-vt-static.lib` (MSVC-style), NOT `libghostty-vt-static.a`
+    // (MinGW-style). Rust's `windows-gnu` target expects the MinGW
+    // shape via bare-name lookup, so `static=ghostty-vt-static` fails
+    // with "could not find native static library". Fix: detect the
+    // mismatch (artifact file extension vs. Rust target ABI) and use
+    // verbatim in that case. Same-convention cases stay on bare name
+    // so we don't lose the cross-platform simplicity elsewhere.
+    let a_filename = a_path
+        .file_name()
         .and_then(|s| s.to_str())
-        .map(|s| s.strip_prefix("lib").unwrap_or(s))
-        .expect("artifact path has no filename stem");
-    println!("cargo:rustc-link-lib=static={link_name}");
+        .expect("artifact path has no filename");
+    let target_wants_lib = target.contains("windows-msvc");
+    let target_wants_a = !target.contains("windows-msvc");
+    let file_is_lib = a_filename.ends_with(".lib");
+    let file_is_a = a_filename.ends_with(".a");
+    let convention_mismatch = (target_wants_lib && file_is_a) || (target_wants_a && file_is_lib);
+
+    if convention_mismatch {
+        println!("cargo:rustc-link-lib=static:+verbatim={a_filename}");
+    } else {
+        // Strip `lib` prefix + `.a`/`.lib` extension to get the bare
+        // symbol name cargo will re-transform per target.
+        let link_name = a_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.strip_prefix("lib").unwrap_or(s))
+            .expect("artifact path has no filename stem");
+        println!("cargo:rustc-link-lib=static={link_name}");
+    }
     emit_platform_link_libs();
 }
 
