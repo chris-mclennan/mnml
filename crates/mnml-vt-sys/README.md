@@ -19,5 +19,14 @@ The default `pkg-config` feature consumes the vendored prebuilt static
 Application code should depend on [`mnml-vt`] (the safe wrapper), not this
 sys crate directly.
 
+## `[lib].name` is `libghostty_vt_sys`
+
+The Cargo package is `mnml-vt-sys` but the Rust `[lib].name` is set to
+`libghostty_vt_sys`, so `use libghostty_vt_sys::…` is the import path — not
+`use mnml_vt_sys::…`. mnml itself masks this via `libghostty-vt-sys = {
+package = "mnml-vt-sys", ... }` in its `Cargo.toml`; consumers reaching for
+this crate directly (without the package rename) still need
+`use libghostty_vt_sys::…`.
+
 [libghostty-vt]: https://github.com/ghostty-org/ghostty/tree/main/include/ghostty
 [`mnml-vt`]: ../mnml-vt

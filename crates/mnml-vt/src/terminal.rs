@@ -108,45 +108,49 @@ impl<'alloc, 'sys> Terminal<'alloc, 'sys> {
         let inner: Box<WritePtyCallback> = Box::new(f);
         let outer: *mut Box<WritePtyCallback> = Box::into_raw(Box::new(inner));
 
-        // Install userdata (thin pointer to the outer box).
-        // `ghostty_terminal_set` reads the value at `value` per its
-        // documented shape for pointer-typed options — for
-        // OPT_USERDATA the value is a raw pointer, so we pass a
-        // pointer-to-pointer.
-        let userdata: *const c_void = outer as *const c_void;
-        // SAFETY: valid handle; `value` points at a `*const c_void`
-        // just as ghostty expects for pointer-typed options.
+        // Install userdata + the trampoline.
+        //
+        // ABI gotcha: `ghostty_terminal_set`'s `value` arg for POINTER-
+        // typed options (OPT_USERDATA, OPT_WRITE_PTY) IS the pointer
+        // itself — not a pointer-to-pointer. See vt/terminal.h line
+        // 1073–1075: "The value is passed directly for pointer types
+        // (callbacks, userdata) or as a pointer to the value for non-
+        // pointer types". Passing `&outer as *const _` (a stack-slot
+        // address holding the real pointer) registers a pointer to a
+        // local that goes out of scope the moment this fn returns —
+        // ghostty will later dereference stale/reused stack memory when
+        // it fires the callback. That was the STATUS_ACCESS_VIOLATION.
+        // SAFETY: valid handle; `outer` was Box::into_raw'd and lives
+        // until Drop or the next `on_pty_write` call, and the fn
+        // pointer has 'static lifetime.
         let r = unsafe {
             sys::ghostty_terminal_set(
                 self.handle,
                 sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_USERDATA,
-                &userdata as *const _ as *const c_void,
+                outer as *const c_void,
             )
         };
         if let Err(e) = check(r) {
-            // Reclaim + drop the outer box before propagating.
             unsafe { drop(Box::from_raw(outer)) };
             return Err(e);
         }
 
-        // Install the trampoline.
-        let fnptr: sys::GhosttyTerminalWritePtyFn = Some(write_pty_trampoline);
         let r = unsafe {
             sys::ghostty_terminal_set(
                 self.handle,
                 sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_WRITE_PTY,
-                &fnptr as *const _ as *const c_void,
+                write_pty_trampoline as *const c_void,
             )
         };
         if let Err(e) = check(r) {
-            // Best-effort: clear userdata to null before dropping the
-            // box so ghostty doesn't retain a dangling pointer.
+            // Best-effort: clear userdata to NULL before dropping the
+            // box so ghostty doesn't retain a dangling pointer. NULL
+            // here means "clear the option to default" per the header.
             unsafe {
-                let null = ptr::null::<c_void>();
                 sys::ghostty_terminal_set(
                     self.handle,
                     sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_USERDATA,
-                    &null as *const _ as *const c_void,
+                    ptr::null(),
                 );
                 drop(Box::from_raw(outer));
             }
@@ -292,19 +296,19 @@ impl Drop for Terminal<'_, '_> {
     fn drop(&mut self) {
         // Order matters: clear callback + userdata FIRST so ghostty
         // stops reading the box pointer, THEN free the box, THEN free
-        // the terminal.
+        // the terminal. NULL as the `value` arg tells ghostty to clear
+        // the option (per vt/terminal.h line 1076).
         // SAFETY: `handle` is still valid before ghostty_terminal_free.
         unsafe {
-            let null = ptr::null::<c_void>();
             sys::ghostty_terminal_set(
                 self.handle,
                 sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_WRITE_PTY,
-                &null as *const _ as *const c_void,
+                ptr::null(),
             );
             sys::ghostty_terminal_set(
                 self.handle,
                 sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_USERDATA,
-                &null as *const _ as *const c_void,
+                ptr::null(),
             );
         }
         if let Some(outer) = self.write_pty_cb.take() {
@@ -335,5 +339,111 @@ unsafe extern "C" fn write_pty_trampoline(
     let bytes = unsafe { std::slice::from_raw_parts(data, len) };
     unsafe {
         (**outer)(bytes);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Terminal callback regression tests.
+    //!
+    //! Locks in the pointer-typed-option ABI contract: pass the pointer
+    //! VALUE directly, not a pointer-to-pointer. Getting this wrong lets
+    //! ghostty read stack-slot-turned-garbage the next time it fires
+    //! the callback — the STATUS_ACCESS_VIOLATION we shipped as UB on
+    //! macOS/Linux and shattered on Windows CI.
+
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// Feed a Device Status Report query (`ESC [ 6 n`) — ghostty replies
+    /// with the cursor position via the `write_pty` callback. Verifies
+    /// the trampoline actually fires with meaningful bytes, so the
+    /// pointer-typed-option registration must be correct.
+    #[test]
+    fn on_pty_write_receives_dsr_reply() {
+        let mut term = Terminal::new(TerminalOptions {
+            cols: 20,
+            rows: 5,
+            max_scrollback: 0,
+        })
+        .unwrap();
+        let sink: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+        {
+            let sink = Rc::clone(&sink);
+            term.on_pty_write(move |bytes| {
+                sink.borrow_mut().extend_from_slice(bytes);
+            })
+            .unwrap();
+        }
+        // DSR-6 (cursor position report). Ghostty replies with `ESC [ y ; x R`.
+        term.vt_write(b"\x1b[6n").unwrap();
+        let reply = sink.borrow();
+        assert!(
+            reply.starts_with(b"\x1b["),
+            "expected CSI-prefixed DSR reply, got {reply:?}"
+        );
+        assert!(
+            reply.ends_with(b"R"),
+            "expected DSR reply to terminate with 'R', got {reply:?}"
+        );
+    }
+
+    /// Two consecutive `on_pty_write` installs — the old boxed closure
+    /// must be freed, and the new one must receive the callback bytes.
+    /// If drop-order were wrong (or the outer box leaked), miri /
+    /// address-sanitizer would flag it.
+    #[test]
+    fn on_pty_write_can_be_reinstalled() {
+        let mut term = Terminal::new(TerminalOptions {
+            cols: 20,
+            rows: 5,
+            max_scrollback: 0,
+        })
+        .unwrap();
+        let first: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+        {
+            let first = Rc::clone(&first);
+            term.on_pty_write(move |b| first.borrow_mut().extend_from_slice(b))
+                .unwrap();
+        }
+        let second: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+        {
+            let second = Rc::clone(&second);
+            term.on_pty_write(move |b| second.borrow_mut().extend_from_slice(b))
+                .unwrap();
+        }
+        term.vt_write(b"\x1b[6n").unwrap();
+        assert!(
+            first.borrow().is_empty(),
+            "old callback should have been unregistered"
+        );
+        assert!(
+            !second.borrow().is_empty(),
+            "new callback should have received DSR reply"
+        );
+    }
+
+    /// Dropping a Terminal that has an installed callback must not leak
+    /// or double-free — the Drop path clears userdata+trampoline before
+    /// freeing the closure box.
+    #[test]
+    fn drop_after_on_pty_write_is_clean() {
+        let mut term = Terminal::new(TerminalOptions {
+            cols: 20,
+            rows: 5,
+            max_scrollback: 0,
+        })
+        .unwrap();
+        let sink: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+        {
+            let sink = Rc::clone(&sink);
+            term.on_pty_write(move |b| sink.borrow_mut().extend_from_slice(b))
+                .unwrap();
+        }
+        term.vt_write(b"\x1b[6n").unwrap();
+        drop(term);
+        // If we get here without a double-free / segfault, Drop is sound.
+        assert!(!sink.borrow().is_empty());
     }
 }
