@@ -63,10 +63,10 @@ enum Step {
         trigger: String,
         expansion: String,
     },
-    /// Run `<cmd>` via `$SHELL -c` (POSIX) / `cmd.exe /C` (Windows) in the
-    /// workspace tempdir. Non-zero exit fails the test with stderr in the
-    /// message. Useful for fixture setup that mnml itself can't do —
-    /// `git init`, creating non-text files, etc.
+    /// Run `<cmd>` via `$SHELL -c` (POSIX) / `bash -c` via Git Bash
+    /// (Windows) in the workspace tempdir. Non-zero exit fails the test
+    /// with stderr in the message. Useful for fixture setup that mnml
+    /// itself can't do — `git init`, creating non-text files, etc.
     Shell(String),
     /// Inject an AI ghost-text suggestion onto the active editor — the
     /// real suggestion path is a worker thread (API / local model) that
