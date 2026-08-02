@@ -326,6 +326,8 @@ fn generate_bindings(vt_h: &Path, vendor_include: &Path) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let bindings_out = out_dir.join("bindings.rs");
 
+    // `mut` only used on macOS (SDK-path override); silenced on other targets.
+    #[allow(unused_mut)]
     let mut builder = bindgen::Builder::default()
         .header(vt_h.to_string_lossy())
         .clang_arg(format!("-I{}", vendor_include.display()))
