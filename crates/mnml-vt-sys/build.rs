@@ -9,17 +9,19 @@
 //! Two features gate WHERE the `.a` comes from. Both are default so the
 //! build "just works" on every host:
 //!
-//! - **`pkg-config`** — consume the vendored prebuilt via
-//!   `PKG_CONFIG_PATH` (mnml's `.cargo/config.toml` wires this per target
-//!   for macOS + Linux). No Zig needed.
 //! - **`source-build`** — git-clone ghostty at [`GHOSTTY_COMMIT`] into
 //!   `OUT_DIR` and run `zig build`. Requires zig 0.15.2 + git on PATH.
-//!   Used by Windows CI (no vendored `.a` for that target) and by devs
-//!   pointing `GHOSTTY_SOURCE_DIR` at a local checkout.
+//!   This is the live default on every target as of 2026-08-02 —
+//!   there's no vendored `.pc` or `.a` checked in.
+//! - **`pkg-config`** — resolve `libghostty-vt-static` via
+//!   `PKG_CONFIG_PATH`. Present so a future prebuilt setup can plug in
+//!   without changing the crate; currently a no-op since no `.pc` ships
+//!   in the tree. Downstream callers who bring their own prebuilt can
+//!   still opt in.
 //!
-//! When both features are on, pkg-config is tried first. Falling back to
-//! source-build emits a `cargo:warning=` so silent slow builds don't
-//! surprise anyone.
+//! When both features are on, pkg-config is tried first; if it can't
+//! find a `.pc`, source-build kicks in and emits a `cargo:warning=` so
+//! unintentional slow builds are visible.
 //!
 //! # Bindings
 //!
@@ -60,7 +62,8 @@ fn main() {
 
     if !vt_h.exists() {
         panic!(
-            "vendored vt.h not found at {}. Re-run vendor/libghostty-vt/fetch-prebuilts.sh.",
+            "vendored vt.h not found at {}. Re-vendor the ghostty headers \
+             matching GHOSTTY_COMMIT (see vendor/libghostty-vt/README.md).",
             vt_h.display()
         );
     }

@@ -10,10 +10,9 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Both macOS-arm64 and ubuntu-latest (x86_64) run the full suite.
-  # libghostty-vt prebuilts for both platforms live under
-  # vendor/libghostty-vt/lib-{aarch64-darwin,x86_64-linux}/; .cargo/
-  # config.toml picks the right pkgconfig dir per target.
+  # macOS-arm64 + ubuntu-latest (x86_64) + windows-latest all run the
+  # full suite. mnml-vt-sys source-builds libghostty-vt via `zig build`
+  # on every target (see the "Install zig 0.15.2" step below).
   check:
     name: fmt · clippy · test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
