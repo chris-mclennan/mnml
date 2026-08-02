@@ -254,11 +254,17 @@ fn source_build() {
     // (ABI, linkage) combination and the tree isn't documented anywhere
     // we can grep:
     //   Linux/macOS:     `libghostty-vt.a`
-    //   -windows-msvc:   `ghostty-vt-static.lib` + `ghostty-vt.lib` (dylib)
+    //   -windows-msvc:   `ghostty-vt-static.lib` + `ghostty-vt.lib` (DLL import stub)
     //   -windows-gnu:    empirically NEITHER of the above — CI hit the
     //                    assert. Log what's actually there so future
     //                    contributors don't have to re-guess.
-    let mut found: Option<PathBuf> = None;
+    //
+    // The MSVC case matters: a bare `.lib` extension is used both for
+    // real static libs AND for DLL import stubs — the extension alone
+    // can't distinguish them. So we collect ALL matches, then explicitly
+    // prefer names containing `-static` (matches ghostty's actual naming
+    // convention) so we never silently pick the DLL-import stub.
+    let mut candidates: Vec<PathBuf> = Vec::new();
     let mut all_files: Vec<String> = Vec::new();
     for dir in &search_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
@@ -266,25 +272,56 @@ fn source_build() {
                 let path = entry.path();
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     all_files.push(format!("{}/{}", dir.display(), name));
-                    // Match any static-lib-shaped file naming ghostty-vt.
-                    // `libghostty-vt.a` (Unix/MinGW), `ghostty-vt-static.lib`
-                    // (MSVC), `libghostty-vt-static.a` (theoretical), etc.
                     let is_static = name.ends_with(".a") || name.ends_with(".lib");
-                    let is_ghostty = name.contains("ghostty-vt");
-                    let is_dylib = name.contains(".dll") || name.contains(".dylib");
-                    if is_static && is_ghostty && !is_dylib && found.is_none() {
-                        found = Some(path);
+                    // Anchor on `ghostty-vt` as a token (start of the
+                    // stem, after optional `lib` prefix) — avoids false
+                    // matches on hypothetical names like
+                    // `libghostty-vtable-support.a`.
+                    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+                    let unprefixed = stem.strip_prefix("lib").unwrap_or(stem);
+                    let is_ghostty_vt = unprefixed == "ghostty-vt"
+                        || unprefixed.starts_with("ghostty-vt-")
+                        || unprefixed.starts_with("ghostty-vt.");
+                    // MinGW DLL import libs are named e.g.
+                    // `libghostty-vt.dll.a` — extension-check misses
+                    // them; substring match is the reliable exclusion.
+                    let is_import_stub = name.contains(".dll.") || name.contains(".dylib");
+                    if is_static && is_ghostty_vt && !is_import_stub {
+                        candidates.push(path);
                     }
                 }
             }
         }
     }
-    let a_path = found.unwrap_or_else(|| {
+
+    if candidates.is_empty() {
         panic!(
             "no ghostty-vt static library found after zig build. \
              search_dirs: {search_dirs:?}. all files seen: {all_files:?}"
-        )
+        );
+    }
+
+    // Prefer names containing `-static` — on MSVC we get BOTH
+    // `ghostty-vt-static.lib` (real) and `ghostty-vt.lib` (DLL import
+    // stub); picking the wrong one would silently link against the
+    // stub and produce a binary that expects ghostty-vt.dll at runtime.
+    candidates.sort_by_key(|p| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        // `false` sorts BEFORE `true`, so `!contains("static")` puts
+        // static-containing names FIRST.
+        !name.contains("-static")
     });
+    if candidates.len() > 1 {
+        println!(
+            "cargo:warning=multiple ghostty-vt static candidates found ({}); \
+             using the first after -static preference. all matches: {candidates:?}",
+            candidates.len()
+        );
+    }
+    let a_path = candidates
+        .into_iter()
+        .next()
+        .expect("checked non-empty above");
     println!(
         "cargo:warning=libghostty-vt static artifact: {}",
         a_path.display()
