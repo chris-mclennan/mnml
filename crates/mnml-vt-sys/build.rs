@@ -237,8 +237,11 @@ fn source_build() {
     // Log the exact zig invocation so CI logs make it obvious which
     // target zig actually built for (auto-detected vs explicit) — the
     // Windows AV debug hunt needs to see whether -Dtarget=…-msvc
-    // reached zig or was silently dropped.
-    eprintln!("mnml-vt-sys: {build:?}");
+    // reached zig or was silently dropped. `cargo:warning=` is the only
+    // build.rs output cargo surfaces on SUCCESS; eprintln! gets dropped
+    // (learned this the hard way — the previous CI push had eprintln
+    // here and it was invisible in the log).
+    println!("cargo:warning=zig invocation: {build:?}");
 
     run(build, "zig build libghostty-vt");
 
