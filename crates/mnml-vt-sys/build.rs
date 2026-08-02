@@ -248,7 +248,13 @@ fn source_build() {
     if target.contains("windows") {
         search_dirs.push(install_prefix.join("bin"));
     }
-    let a_name = if target.contains("windows") {
+    // Windows artifact naming splits on ABI:
+    //   -windows-msvc → `ghostty-vt-static.lib` (MSVC convention)
+    //   -windows-gnu  → `libghostty-vt.a`      (MinGW/Unix convention)
+    // Everything else uses the Unix `libghostty-vt.a` name too. Getting
+    // this wrong produces `error: could not find native static library
+    // 'ghostty-vt', perhaps an -L flag is missing?` from Rust's linker.
+    let a_name = if target.contains("windows-msvc") {
         "ghostty-vt-static.lib"
     } else {
         "libghostty-vt.a"
