@@ -82,12 +82,18 @@ impl<'alloc, 'sys> Terminal<'alloc, 'sys> {
         // SAFETY: `handle` valid; `&scrollback` is a pointer to a stack size_t
         // which ghostty reads once during the set call.
         let scrollback: usize = options.max_scrollback;
-        unsafe {
+        let r = unsafe {
             sys::ghostty_terminal_set(
                 handle,
                 sys::GhosttyTerminalOption::GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
                 &scrollback as *const _ as *const c_void,
-            );
+            )
+        };
+        if let Err(e) = check(r) {
+            // SAFETY: `handle` came from a successful `_new`; freeing it
+            // here reclaims resources before we return the error.
+            unsafe { sys::ghostty_terminal_free(handle) };
+            return Err(e);
         }
 
         Ok(Terminal {
@@ -433,6 +439,44 @@ mod tests {
         assert!(
             !second.borrow().is_empty(),
             "new callback should have received DSR reply"
+        );
+    }
+
+    /// The scrollback line limit passed via `TerminalOptions.max_scrollback`
+    /// must actually reach the C side. Round-trip via
+    /// `ghostty_terminal_get(DATA_SCROLLBACK_MAX_LINES)`.
+    ///
+    /// Regression coverage: without this test, a swallowed `GhosttyResult`
+    /// on the internal `_set(OPT_SCROLLBACK_MAX_LINES, …)` call would
+    /// silently ship a Terminal running on ghostty's default limit rather
+    /// than the configured one — the same failure-shape as the pointer-
+    /// typed-option bug the reviewer caught a few commits ago.
+    #[test]
+    fn scrollback_max_lines_round_trips() {
+        let requested: usize = 123;
+        let term = Terminal::new(TerminalOptions {
+            cols: 20,
+            rows: 5,
+            max_scrollback: requested,
+        })
+        .unwrap();
+        let mut out = std::mem::MaybeUninit::<usize>::uninit();
+        let r = unsafe {
+            sys::ghostty_terminal_get(
+                term.handle,
+                sys::GhosttyTerminalData::GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_LINES,
+                out.as_mut_ptr().cast(),
+            )
+        };
+        assert_eq!(
+            r,
+            sys::GhosttyResult::GHOSTTY_SUCCESS,
+            "SCROLLBACK_MAX_LINES query should succeed for a configured limit"
+        );
+        assert_eq!(
+            unsafe { out.assume_init() },
+            requested,
+            "configured limit must round-trip through _set/_get"
         );
     }
 

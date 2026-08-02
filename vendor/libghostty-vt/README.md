@@ -2,13 +2,15 @@
 
 Just the C headers under `include/ghostty/` remain here — the `.a` files +
 pkg-config plumbing were retired 2026-08-02 when the pinned ghostty commit
-bumped to `a887df42` (matches upstream `libghostty-vt-sys` 0.2.1) and the
-0.1.0-dev prebuilts on GitHub Releases went stale against the new headers.
+bumped past the 0.2.1 pin and the 0.1.0-dev prebuilts on GitHub Releases
+went stale against the new headers. Same day, the pin bumped again to
+origin/main HEAD to pick up the July 25-26 upstream Windows static-lib
+linking fixes (ghostty PRs #13452, #13473) — those require zig 0.16.0.
 
 ## How the library gets built now
 
 `crates/mnml-vt-sys/build.rs` clones ghostty at `GHOSTTY_COMMIT` (currently
-`a887df42…`, kept in lock-step with the headers here) and runs `zig build
+`6837d7027…`, kept in lock-step with the headers here) and runs `zig build
 -Demit-lib-vt` on every target. Needs zig 0.16.0 + git on PATH.
 
 Empirically zig 0.16.0 links fine on macOS 26 for ghostty at this commit —
