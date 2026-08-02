@@ -158,11 +158,31 @@ pub struct BinaryProfile {
     pub integration_id: Option<String>,
 }
 
+/// Fallback shell binary when `$SHELL` is unset. `/bin/sh` on Unix,
+/// `bash` on Windows (Git Bash — preinstalled on `windows-latest` CI
+/// runners and on any developer machine with Git for Windows). Users
+/// who prefer `cmd`/`pwsh` can set `SHELL` to override.
+fn default_shell() -> String {
+    #[cfg(windows)]
+    {
+        "bash".to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        "/bin/sh".to_string()
+    }
+}
+
 impl BinaryProfile {
-    /// The user's `$SHELL` (interactive), or `/bin/sh`.
+    /// The user's `$SHELL` (interactive), or the platform default
+    /// (see [`default_shell`]).
     pub fn shell(cwd: Option<PathBuf>) -> Self {
-        let exe = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-        let name = exe.rsplit('/').next().unwrap_or("shell").to_string();
+        let exe = std::env::var("SHELL").unwrap_or_else(|_| default_shell());
+        let name = exe
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or("shell")
+            .to_string();
         BinaryProfile {
             label: format!("terminal ({name})"),
             exe,
@@ -232,7 +252,7 @@ impl BinaryProfile {
     /// A named `[tasks.<name>]` entry — run `cmdline` via `$SHELL -c` in a pty pane.
     /// `cwd` defaults to the workspace.
     pub fn task(name: &str, cmdline: &str, cwd: PathBuf) -> Self {
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| default_shell());
         // multilang-dev-user F3 — drop the redundant 'task: ' prefix
         // so a bufferline tab for 'npm run dev' reads 'npm run dev'
         // not 'task: npm run dev'. The bufferline is already context

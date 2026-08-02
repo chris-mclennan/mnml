@@ -608,10 +608,16 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             }
             // POSIX shells go through $SHELL -c; Windows uses cmd.exe /C.
             // Workspace is cwd so paths in `<cmd>` resolve naturally.
+            //
+            // Windows uses `bash` (Git Bash), not `cmd /C` — .test scripts
+            // are written in Unix shell syntax (`mkdir -p`, pipes, `sort`)
+            // which `cmd` can't parse. Git Bash is preinstalled on
+            // `windows-latest` GH runners at `C:\Program Files\Git\bin\bash.exe`
+            // (on PATH) and ships MSYS2 utils, so scripts run unchanged.
             #[cfg(windows)]
-            let mut shell = std::process::Command::new("cmd");
+            let mut shell = std::process::Command::new("bash");
             #[cfg(windows)]
-            shell.args(["/C", cmd]);
+            shell.args(["-c", cmd]);
             #[cfg(not(windows))]
             let shell_path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
             #[cfg(not(windows))]

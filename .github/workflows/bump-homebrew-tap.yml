@@ -53,7 +53,7 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: chris-mclennan/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}

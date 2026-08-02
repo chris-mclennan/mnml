@@ -24,11 +24,11 @@ jobs:
       # mnml depends on the fim-engine sibling crate by path (../fim-engine),
       # so check it out alongside this repo for the path dep to resolve.
       - name: Checkout mnml
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: mnml
       - name: Checkout fim-engine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: chris-mclennan/fim-engine
           path: fim-engine
