@@ -68,10 +68,12 @@ jobs:
             echo "PKG_CONFIG_PATH=${{ github.workspace }}/mnml/vendor/libghostty-vt/pkgconfig-linux" >> "$GITHUB_ENV"
           fi
 
-      # Windows has no prebuilt libghostty-vt.a yet, so
-      # libghostty-vt-sys' build.rs will vendored-build from source
-      # — that needs zig 0.15.2 on PATH. Same story as the release
-      # workflow's zig install.
+      # Windows has no prebuilt libghostty-vt.a, so mnml-vt-sys's
+      # build.rs falls back to its `source-build` feature: git-clone
+      # ghostty at the pinned commit + `zig build`. Needs zig 0.15.2 +
+      # git on PATH. Windows runners ship git; setup-zig gives us the
+      # zig toolchain. (macOS + Linux hit the pkg-config path against
+      # the vendored .a from the step above.)
       - name: Install zig 0.15.2 (Windows)
         if: matrix.os == 'windows-latest'
         uses: mlugg/setup-zig@v2

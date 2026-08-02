@@ -1,29 +1,43 @@
 //! Build script for `mnml-vt-sys`.
 //!
-//! Runs bindgen against Ghostty's official `vt.h` header (vendored under
-//! the workspace at `vendor/libghostty-vt/include/`), and — when the
-//! `pkg-config` feature is on — locates the prebuilt `libghostty-vt.a`
-//! via pkg-config so cargo can link it.
+//! Two responsibilities:
+//! 1. Locate a `libghostty-vt.a` and tell cargo how to link it.
+//! 2. Generate Rust bindings via bindgen against the vendored `vt.h`.
 //!
-//! # Vendored header set
+//! # Link paths
 //!
-//! The header tree matches the one shipped by the pinned ghostty commit
-//! that produced the prebuilt `.a` files under
-//! `vendor/libghostty-vt/lib-*`. Bumping the .a requires re-vendoring the
-//! headers in lock-step (bindgen re-runs on `cargo build`).
+//! Two features gate WHERE the `.a` comes from. Both are default so the
+//! build "just works" on every host:
 //!
-//! # Feature flags
+//! - **`pkg-config`** — consume the vendored prebuilt via
+//!   `PKG_CONFIG_PATH` (mnml's `.cargo/config.toml` wires this per target
+//!   for macOS + Linux). No Zig needed.
+//! - **`source-build`** — git-clone ghostty at [`GHOSTTY_COMMIT`] into
+//!   `OUT_DIR` and run `zig build`. Requires zig 0.15.2 + git on PATH.
+//!   Used by Windows CI (no vendored `.a` for that target) and by devs
+//!   pointing `GHOSTTY_SOURCE_DIR` at a local checkout.
 //!
-//! - `pkg-config` (default) — consume the vendored prebuilt via
-//!   `PKG_CONFIG_PATH` (mnml's `.cargo/config.toml` sets this per-target).
-//!   No Zig toolchain required.
+//! When both features are on, pkg-config is tried first. Falling back to
+//! source-build emits a `cargo:warning=` so silent slow builds don't
+//! surprise anyone.
 //!
-//! Source-built (`zig build`) mode is deliberately NOT implemented here —
-//! Ghostty pins Zig 0.15.2, which can't link on macOS 26. We ship
-//! prebuilts and let bindgen re-generate against the frozen headers.
+//! # Bindings
+//!
+//! Bindings are always generated against the vendored headers under
+//! `vendor/libghostty-vt/include/ghostty/`. That header set matches the
+//! ABI of the prebuilt `.a` files under `vendor/libghostty-vt/lib-*`.
+//! When we bump [`GHOSTTY_COMMIT`], the vendored headers get re-vendored
+//! from the same commit so bindgen + link ABI stay in lock-step.
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// The upstream ghostty commit our source-build path checks out. Also
+/// the commit the vendored headers under `vendor/libghostty-vt/include/`
+/// come from — bindgen and link ABI must match.
+const GHOSTTY_REPO: &str = "https://github.com/ghostty-org/ghostty.git";
+const GHOSTTY_COMMIT: &str = "fdbf9ff3a31d7531b691cb49c98fc465a1a503a0";
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -44,98 +58,295 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", vt_h.display());
-    // Re-run on any header change under the vendored tree.
     println!(
         "cargo:rerun-if-changed={}",
         vendor_include.join("ghostty/vt").display()
     );
+    println!("cargo:rerun-if-env-changed=GHOSTTY_SOURCE_DIR");
+    println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
 
-    // ---- 1. Locate / link the prebuilt `.a` --------------------------------
+    // ---- 1. Locate / link the `.a` ---------------------------------------
+    link_ghostty_vt();
+
+    // ---- 2. Generate bindings --------------------------------------------
+    generate_bindings(&vt_h, &vendor_include);
+}
+
+/// Try each configured link path in order and emit `rustc-link-*` metadata
+/// once one succeeds.
+fn link_ghostty_vt() {
+    // Local dev override — an explicit ghostty checkout always wins.
+    if env::var_os("GHOSTTY_SOURCE_DIR").is_some() {
+        #[cfg(feature = "source-build")]
+        {
+            source_build();
+            return;
+        }
+        #[cfg(not(feature = "source-build"))]
+        panic!(
+            "GHOSTTY_SOURCE_DIR is set but the `source-build` feature is disabled. \
+             Either drop the env var or enable the feature."
+        );
+    }
 
     #[cfg(feature = "pkg-config")]
     {
-        // `.cargo/config.toml` sets PKG_CONFIG_PATH per target triple. The
-        // static feature exposes the .a directly so we don't need shared-lib
-        // rpath handling.
-        let lib = pkg_config::Config::new()
-            .statik(true)
-            .probe("libghostty-vt-static")
-            .or_else(|_| {
-                pkg_config::Config::new()
-                    .statik(true)
-                    .probe("libghostty-vt")
-            })
-            .expect(
-                "pkg-config could not locate libghostty-vt. \
-                 Ensure PKG_CONFIG_PATH points at vendor/libghostty-vt/pkgconfig-<host>/ \
-                 (see workspace `.cargo/config.toml`).",
-            );
-        // Emit link + search-path lines from what pkg-config reported.
-        for path in &lib.link_paths {
-            println!("cargo:rustc-link-search=native={}", path.display());
-        }
-        for l in &lib.libs {
-            println!("cargo:rustc-link-lib=static={l}");
-        }
-        // The vendored .a uses a handful of platform C++ / system symbols
-        // (libunwind on Linux, Foundation on macOS). Belt-and-suspenders:
-        // pkg-config's `Requires.private` / `Libs.private` usually cover
-        // these, but link them explicitly on macOS where the vendored .pc
-        // is minimal.
-        #[cfg(target_os = "macos")]
-        {
-            println!("cargo:rustc-link-lib=framework=CoreFoundation");
-            println!("cargo:rustc-link-lib=framework=CoreText");
-            println!("cargo:rustc-link-lib=framework=CoreGraphics");
-            println!("cargo:rustc-link-lib=framework=CoreServices");
-            println!("cargo:rustc-link-lib=framework=Foundation");
-            println!("cargo:rustc-link-lib=framework=IOSurface");
-            println!("cargo:rustc-link-lib=c++");
-        }
-        #[cfg(all(target_os = "linux", not(target_arch = "wasm32")))]
-        {
-            println!("cargo:rustc-link-lib=stdc++");
-            println!("cargo:rustc-link-lib=m");
+        if try_pkg_config() {
+            return;
         }
     }
 
-    // ---- 2. Generate bindings ---------------------------------------------
+    #[cfg(feature = "source-build")]
+    {
+        println!(
+            "cargo:warning=libghostty-vt: pkg-config unavailable, falling back to zig source-build \
+             (needs zig 0.15.2 + git on PATH)"
+        );
+        source_build();
+    }
 
+    #[cfg(not(feature = "source-build"))]
+    panic!(
+        "libghostty-vt: no link path succeeded. Enable `source-build` or set PKG_CONFIG_PATH to \
+         point at a `libghostty-vt.pc` — see workspace `.cargo/config.toml`."
+    );
+}
+
+#[cfg(feature = "pkg-config")]
+fn try_pkg_config() -> bool {
+    let lib = match pkg_config::Config::new()
+        .statik(true)
+        .cargo_metadata(false)
+        .probe("libghostty-vt-static")
+        .or_else(|_| {
+            pkg_config::Config::new()
+                .statik(true)
+                .cargo_metadata(false)
+                .probe("libghostty-vt")
+        }) {
+        Ok(l) => l,
+        Err(_) => return false,
+    };
+
+    for path in &lib.link_paths {
+        println!("cargo:rustc-link-search=native={}", path.display());
+    }
+    // Our vendored `.pc` uses `Libs: ${libdir}/libghostty-vt.a` (direct
+    // path, not `-L… -l…`) so pkg-config populates `link_files` — take
+    // the parent as an extra search dir.
+    for file in &lib.link_files {
+        if let Some(parent) = file.parent() {
+            println!("cargo:rustc-link-search=native={}", parent.display());
+        }
+    }
+    println!("cargo:rustc-link-lib=static=ghostty-vt");
+    for l in &lib.libs {
+        if l != "ghostty-vt" {
+            println!("cargo:rustc-link-lib={l}");
+        }
+    }
+    emit_platform_link_libs();
+    true
+}
+
+/// git-clone ghostty at [`GHOSTTY_COMMIT`] into OUT_DIR and run
+/// `zig build -Demit-lib-vt`, then link the resulting `.a`.
+#[cfg(feature = "source-build")]
+fn source_build() {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR set by cargo"));
+    let target = env::var("TARGET").expect("TARGET set by cargo");
+    let host = env::var("HOST").expect("HOST set by cargo");
+
+    // Where's the ghostty source? Env override wins; otherwise clone.
+    let ghostty_dir = match env::var("GHOSTTY_SOURCE_DIR") {
+        Ok(dir) => {
+            let p = PathBuf::from(dir);
+            assert!(
+                p.join("build.zig").exists(),
+                "GHOSTTY_SOURCE_DIR does not contain build.zig: {}",
+                p.display()
+            );
+            p
+        }
+        Err(_) => fetch_ghostty(&out_dir),
+    };
+
+    let install_prefix = out_dir.join("ghostty-install");
+    let zig_cache_dir = out_dir.join("zig-cache");
+    let optimize = zig_optimize_mode();
+
+    let mut build = Command::new("zig");
+    build
+        .arg("build")
+        .arg("-Demit-lib-vt")
+        .arg(format!("-Doptimize={optimize}"))
+        .arg("-Demit-xcframework=false")
+        .arg("-Dapp-runtime=none")
+        .arg("--prefix")
+        .arg(&install_prefix)
+        .arg("--cache-dir")
+        .arg(&zig_cache_dir)
+        .current_dir(&ghostty_dir);
+
+    if target != host {
+        let zig_target = zig_target(&target);
+        build.arg(format!("-Dtarget={zig_target}"));
+    }
+
+    run(build, "zig build libghostty-vt");
+
+    let lib_dir = install_prefix.join("lib");
+    let mut search_dirs = vec![lib_dir.clone()];
+    if target.contains("windows") {
+        search_dirs.push(install_prefix.join("bin"));
+    }
+    let a_name = if target.contains("windows") {
+        "ghostty-vt-static.lib"
+    } else {
+        "libghostty-vt.a"
+    };
+    assert!(
+        search_dirs.iter().any(|d| d.join(a_name).exists()),
+        "expected {a_name} in one of {search_dirs:?} after zig build"
+    );
+
+    for dir in &search_dirs {
+        println!("cargo:rustc-link-search=native={}", dir.display());
+    }
+    println!("cargo:rustc-link-lib=static=ghostty-vt");
+    emit_platform_link_libs();
+}
+
+/// The prebuilt `.a` we ship uses platform-system symbols (Foundation +
+/// friends on macOS, stdc++/m on Linux). Emit them regardless of which
+/// link path found the archive.
+fn emit_platform_link_libs() {
+    #[cfg(target_os = "macos")]
+    {
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        println!("cargo:rustc-link-lib=framework=CoreText");
+        println!("cargo:rustc-link-lib=framework=CoreGraphics");
+        println!("cargo:rustc-link-lib=framework=CoreServices");
+        println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rustc-link-lib=framework=IOSurface");
+        println!("cargo:rustc-link-lib=c++");
+    }
+    #[cfg(all(target_os = "linux", not(target_arch = "wasm32")))]
+    {
+        println!("cargo:rustc-link-lib=stdc++");
+        println!("cargo:rustc-link-lib=m");
+    }
+    // Windows: zig's ghostty build links MSVCRT + advapi32 + userenv + ws2_32
+    // implicitly via COFF directives in the .a; nothing to emit here.
+}
+
+#[cfg(feature = "source-build")]
+fn fetch_ghostty(out_dir: &Path) -> PathBuf {
+    let src_dir = out_dir.join("ghostty-src");
+    let stamp = src_dir.join(".ghostty-commit");
+
+    // Skip re-clone if the stamp says we're already on the right commit.
+    if stamp.exists()
+        && let Ok(existing) = std::fs::read_to_string(&stamp)
+        && existing.trim() == GHOSTTY_COMMIT
+    {
+        return src_dir;
+    }
+
+    if src_dir.exists() {
+        std::fs::remove_dir_all(&src_dir)
+            .unwrap_or_else(|e| panic!("failed to remove {}: {e}", src_dir.display()));
+    }
+
+    eprintln!("mnml-vt-sys: cloning ghostty @ {GHOSTTY_COMMIT}");
+
+    let mut clone = Command::new("git");
+    clone
+        .arg("clone")
+        .arg("--filter=blob:none")
+        .arg("--no-checkout")
+        .arg(GHOSTTY_REPO)
+        .arg(&src_dir);
+    run(clone, "git clone ghostty");
+
+    let mut checkout = Command::new("git");
+    checkout
+        .arg("checkout")
+        .arg(GHOSTTY_COMMIT)
+        .current_dir(&src_dir);
+    run(checkout, "git checkout ghostty commit");
+
+    std::fs::write(&stamp, GHOSTTY_COMMIT)
+        .unwrap_or_else(|e| panic!("failed to write commit stamp: {e}"));
+    src_dir
+}
+
+#[cfg(feature = "source-build")]
+fn zig_optimize_mode() -> &'static str {
+    // Match cargo's profile choice so dev builds are debuggable.
+    if env::var("DEBUG").as_deref() == Ok("true") {
+        "Debug"
+    } else {
+        match env::var("OPT_LEVEL").as_deref() {
+            Ok("s") | Ok("z") => "ReleaseSmall",
+            _ => "ReleaseFast",
+        }
+    }
+}
+
+/// Convert a Rust target triple to the zig triple ghostty's build.zig
+/// understands. Covers the four we ship (linux + darwin + windows).
+#[cfg(feature = "source-build")]
+fn zig_target(target: &str) -> String {
+    let v = match target {
+        "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu",
+        "x86_64-unknown-linux-musl" => "x86_64-linux-musl",
+        "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu",
+        "aarch64-unknown-linux-musl" => "aarch64-linux-musl",
+        "aarch64-apple-darwin" => "aarch64-macos-none",
+        "x86_64-apple-darwin" => "x86_64-macos-none",
+        "x86_64-pc-windows-gnu" => "x86_64-windows-gnu",
+        "aarch64-pc-windows-gnullvm" => "aarch64-windows-gnu",
+        "x86_64-pc-windows-msvc" => "x86_64-windows-msvc",
+        "aarch64-pc-windows-msvc" => "aarch64-windows-msvc",
+        other => panic!("mnml-vt-sys: unsupported target for source-build: {other}"),
+    };
+    v.to_owned()
+}
+
+#[cfg(feature = "source-build")]
+fn run(mut command: Command, context: &str) {
+    let status = command
+        .status()
+        .unwrap_or_else(|e| panic!("failed to execute {context}: {e}"));
+    assert!(status.success(), "{context} failed with status {status}");
+}
+
+fn generate_bindings(vt_h: &Path, vendor_include: &Path) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let bindings_out = out_dir.join("bindings.rs");
 
     let mut builder = bindgen::Builder::default()
         .header(vt_h.to_string_lossy())
         .clang_arg(format!("-I{}", vendor_include.display()))
-        // libghostty-vt is a pure C API; force C mode so bindgen skips C++
-        // decls (there are none).
         .clang_arg("-xc")
         .clang_arg("-std=c11")
-        // Only pull in ghostty-owned decls; skip stdint / stddef spam.
         .allowlist_type("GhosttyVt.*")
         .allowlist_type("Ghostty.*")
         .allowlist_function("ghostty_.*")
         .allowlist_var("GHOSTTY_.*")
         .allowlist_var("Ghostty.*")
-        // Recursively include types referenced by the above.
         .allowlist_recursively(true)
-        // Layout tests would need the .a to run — skip.
         .layout_tests(false)
-        // Newtype enums so we get exhaustive matches on Rust side but retain
-        // fwd-compat if ghostty adds a variant.
         .default_enum_style(bindgen::EnumVariation::NewType {
             is_bitfield: false,
             is_global: false,
         })
-        // ghostty's typedef'd struct handles are pointer-shaped opaque —
-        // bindgen would emit them as `[u8; 0]` blocks otherwise, which
-        // breaks null-checks. Force pointer-sized opaques.
         .blocklist_type("__.*")
         .generate_comments(true)
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
 
-    // macOS SDK path — bindgen needs the sysroot to resolve `<stddef.h>`,
-    // etc. when clang isn't preconfigured with it (common on CI).
+    // macOS SDK path so clang can resolve `<stddef.h>` etc.
     #[cfg(target_os = "macos")]
     if let Ok(sdk) = std::process::Command::new("xcrun")
         .args(["--sdk", "macosx", "--show-sdk-path"])

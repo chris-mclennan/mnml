@@ -23,10 +23,20 @@ bindgen = "0.71"
 pkg-config = "0.3"
 
 [features]
-default = ["pkg-config"]
-# Consume the vendored prebuilt .a via pkg-config. This is what mnml's
-# .cargo/config.toml wires up per target — no Zig toolchain required.
+# Both link paths are enabled by default and tried in order:
+#   1. `pkg-config` — resolve `libghostty-vt-static` via `PKG_CONFIG_PATH`
+#      (Linux + macOS use the vendored prebuilt under `vendor/libghostty-vt/`
+#      wired up in `.cargo/config.toml`)
+#   2. `source-build` — git-clone ghostty at a pinned commit into `OUT_DIR`
+#      and run `zig build`. Requires zig 0.15.2 + git on PATH. Used by
+#      Windows CI (no vendored `.a`) and any dev who wants to iterate on
+#      a local ghostty checkout via `GHOSTTY_SOURCE_DIR`.
+#
+# Downstream callers can pick one explicitly with
+# `--no-default-features --features pkg-config` etc.
+default = ["pkg-config", "source-build"]
 pkg-config = []
+source-build = []
 
 [package.metadata.docs.rs]
 # docs.rs has no libghostty-vt.a nor pkg-config wiring, so skip the actual
