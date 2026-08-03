@@ -759,16 +759,34 @@ pub fn persist_integration_icons(icons: &[IntegrationIcon]) -> Result<std::path:
 }
 
 /// Write an `<id>.override.toml` sidecar next to the canonical
-/// manifest at `~/.config/mnml/integrations/<id>.toml`. Called from
-/// the integration-edit overlay's Save action in Edit mode. Emits
-/// the full field set that the overlay exposes — the loader only
-/// applies fields that are present + non-null, and re-emitting a
-/// value equal to the base is a no-op at merge time.
+/// manifest at `~/.config/mnml/integrations/<id>.toml` — BUT ONLY
+/// if a base manifest exists. If it doesn't, promote the write to a
+/// full `<id>.toml` authorial manifest instead: an orphan override
+/// with no base is silently dropped at the next scan
+/// (`integration_manifest.rs::scan_dir`), so writing one for a chip
+/// whose "canonical" is a Rust-hardcoded builtin (browser,
+/// claude_code, codex — `config.rs::default_integration_icons`)
+/// would round-trip to nothing on restart. Reviewer flagged this
+/// as reintroducing the exact resurrection-bug class the folder-
+/// override arc was fixing (#851 code review, Critical #1).
+///
+/// Emits the full field set that the overlay exposes — the loader
+/// only applies fields that are present + non-null, and
+/// re-emitting a value equal to the base is a no-op at merge time.
 ///
 /// Returns the written path on success.
 pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf, String> {
     let dir = integrations_dir_or_err()?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let base_path = dir.join(format!("{}.toml", icon.id));
+    if !base_path.exists() {
+        // No canonical → promote to authored full manifest. This
+        // covers first-party builtins (browser/claude_code/codex)
+        // and any user-added rail chip that predates the manifest
+        // era. Next scan finds the file and merges as if
+        // upstream-installed.
+        return write_authored_manifest_toml(icon);
+    }
     let path = dir.join(format!("{}.override.toml", icon.id));
     let mut body = String::new();
     body.push_str(&format!("id = {}\n", toml_str(&icon.id)));
@@ -1409,6 +1427,9 @@ enabled = true
     /// `<id>.override.toml`, not to `[[ui.integration_icon]]` in
     /// config.toml. Assert the file content contains the fields
     /// the loader reads (id, chip.glyph, chip.color, etc.).
+    /// A base `<id>.toml` is seeded first so the promotion path
+    /// (see `write_override_toml_promotes_to_authored_when_no_base`)
+    /// doesn't fire and we exercise the true override write.
     #[test]
     fn write_override_toml_emits_loader_readable_shape() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1421,6 +1442,15 @@ enabled = true
                 None => std::env::remove_var("HOME"),
             }
         };
+        // Seed a canonical `myint.toml` so write_override_toml
+        // stays on the override path (vs the no-base promotion).
+        let dir = tmp.path().join(".config").join("mnml").join("integrations");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("myint.toml"),
+            "id = \"myint\"\nlabel = \"canonical\"\n",
+        )
+        .unwrap();
         let icon = IntegrationIcon {
             id: "myint".to_string(),
             glyph: "M".to_string(),
@@ -1450,5 +1480,56 @@ enabled = true
         assert!(body.contains("in_palette_bar = true"));
         // File landed in the integrations dir under HOME.
         assert!(path.ends_with("myint.override.toml"));
+    }
+
+    /// #851 code review Critical #1 — Edit on a chip with no base
+    /// `<id>.toml` (e.g., the three first-party Rust-hardcoded
+    /// defaults browser/claude_code/codex) must NOT silently drop
+    /// on next scan. Prior behavior wrote `<id>.override.toml` for
+    /// them, which the loader discarded as an orphan override.
+    /// Fix: promote to a full authored `<id>.toml` when no base
+    /// exists.
+    #[test]
+    fn write_override_toml_promotes_to_authored_when_no_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = home_lock().lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let restore = |h: Option<std::ffi::OsString>| unsafe {
+            match h {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        };
+        let icon = IntegrationIcon {
+            id: "claude_code".to_string(),
+            glyph: "C".to_string(),
+            fallback: "C".to_string(),
+            command: "ai.claude_code".to_string(),
+            color: "orange".to_string(),
+            label: Some("Claude".to_string()),
+            enabled: true,
+            in_palette_bar: false,
+            manifest_can_override: false,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
+        };
+        // No base `<id>.toml` exists at HOME/.config/mnml/integrations/.
+        let path = write_override_toml(&icon).expect("write");
+        let dir = tmp.path().join(".config").join("mnml").join("integrations");
+        let base = dir.join("claude_code.toml");
+        let over = dir.join("claude_code.override.toml");
+        restore(prev_home);
+        assert!(
+            path.ends_with("claude_code.toml"),
+            "expected authored .toml, got {path:?}"
+        );
+        assert!(base.exists(), "base file must exist after promotion");
+        assert!(!over.exists(), "no override sidecar for a promoted write");
     }
 }
