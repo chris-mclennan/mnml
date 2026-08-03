@@ -857,6 +857,14 @@ fn screen_text(buf: &ratatui::buffer::Buffer) -> String {
 
 /// Run every `*.test` under `root` (recursively), or `root` itself if it's a file.
 /// Returns `(outcomes, all_passed)`.
+///
+/// Each file runs on its own worker thread guarded by a 120-second
+/// deadline (override via `MNML_E2E_FILE_TIMEOUT_SECS`). If a test
+/// hangs — e.g. a Windows `bash -c` subprocess that never returns —
+/// the worker is abandoned, a failing outcome is synthesized, and
+/// the suite continues instead of blocking the whole CI job. Each
+/// file's name is printed before it runs so `--nocapture` reveals
+/// which file was in flight when a hang or panic occurred.
 pub fn run_path(root: &Path) -> (Vec<TestOutcome>, bool) {
     let mut files: Vec<PathBuf> = Vec::new();
     if root.is_file() {
@@ -870,9 +878,47 @@ pub fn run_path(root: &Path) -> (Vec<TestOutcome>, bool) {
         }
     }
     files.sort();
-    let outcomes: Vec<TestOutcome> = files.iter().map(|p| run_test(p)).collect();
+    let per_file_timeout = std::env::var("MNML_E2E_FILE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Duration::from_secs(120));
+    let outcomes: Vec<TestOutcome> = files
+        .iter()
+        .map(|p| run_test_with_timeout(p, per_file_timeout))
+        .collect();
     let all_passed = outcomes.iter().all(|o| o.passed);
     (outcomes, all_passed)
+}
+
+/// Wrap [`run_test`] with a hard wall-clock deadline. On timeout the
+/// worker thread is abandoned (Rust has no safe way to cancel it) and
+/// a synthesized failing outcome is returned so the surrounding suite
+/// can keep going. The abandoned thread will die with the process.
+fn run_test_with_timeout(path: &Path, timeout: Duration) -> TestOutcome {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    println!("▶ e2e: {name}");
+    let owned = path.to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = run_test(&owned);
+        let _ = tx.send(outcome);
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(outcome) => outcome,
+        Err(_) => TestOutcome {
+            name,
+            passed: false,
+            message: Some(format!(
+                "TIMEOUT after {}s (worker abandoned — a step never returned; \
+                 override via MNML_E2E_FILE_TIMEOUT_SECS)",
+                timeout.as_secs()
+            )),
+        },
+    }
 }
 
 #[cfg(test)]
