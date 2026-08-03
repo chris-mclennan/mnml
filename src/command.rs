@@ -6131,6 +6131,20 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.close_active_pane(),
         },
+        Command {
+            id: "layout.merge_to_tabs",
+            title: "Layout: merge splits into tabs (splits→tabs)",
+            group: "view",
+            keys: &[],
+            run: |app| app.merge_splits_to_tabs(),
+        },
+        Command {
+            id: "layout.spread_to_splits",
+            title: "Layout: spread tabs into splits (tabs→splits)",
+            group: "view",
+            keys: &[],
+            run: |app| app.spread_tabs_to_splits(),
+        },
         // qa-6th keyboard SEV-2 2026-06-29: Shift+F10 chip-menu
         // fallback required `hover_chip` to be set within 2s, but
         // hover_chip only fires on mouse movement — keyboard

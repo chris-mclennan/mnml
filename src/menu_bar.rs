@@ -441,6 +441,19 @@ fn window_menu() -> MenuDef {
                 command_id: "view.toggle_auto_equalize_splits",
             },
             MenuItem::Separator,
+            // #856/#857 — reversible layout reshape. Merge collapses
+            // the whole split tree into one leaf's tabs; spread lays
+            // each tab out into its own split via the auto-tile
+            // shape heuristic. Reversible via each other.
+            MenuItem::Action {
+                label: "Merge splits into tabs",
+                command_id: "layout.merge_to_tabs",
+            },
+            MenuItem::Action {
+                label: "Spread tabs into splits",
+                command_id: "layout.spread_to_splits",
+            },
+            MenuItem::Separator,
             // Resize the active split.
             MenuItem::Action {
                 label: "Grow split width",

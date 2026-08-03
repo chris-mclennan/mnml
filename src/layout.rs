@@ -294,6 +294,79 @@ impl Layout {
         }
     }
 
+    /// #856 — `splits→tabs`. Collapse the entire tree into a single
+    /// leaf whose `tabs` is every pane in the tree (in walk order:
+    /// depth-first, first-side then second-side). Preserves the
+    /// currently-active pane as the new `active` when possible.
+    ///
+    /// Idempotent: a single-leaf layout returns unchanged (aside
+    /// from the fresh Vec allocation). Empty layouts stay Empty.
+    ///
+    /// Used by the `layout.merge_to_tabs` palette command +
+    /// `Sessions view` chip. Reverse: [`Layout::spread_to_splits`].
+    pub fn merge_to_tabs(&self, active_hint: PaneId) -> Layout {
+        match self {
+            Layout::Empty => Layout::Empty,
+            _ => {
+                let panes = self.all_panes();
+                if panes.is_empty() {
+                    return Layout::Empty;
+                }
+                let active = if panes.contains(&active_hint) {
+                    active_hint
+                } else {
+                    panes[0]
+                };
+                Layout::Leaf {
+                    active,
+                    tabs: panes,
+                }
+            }
+        }
+    }
+
+    /// #857 — `tabs→splits`. Take a single-leaf layout with N tabs
+    /// and produce a split tree with each tab in its own leaf.
+    /// Falls through unchanged if the layout is Empty or already
+    /// has any splits (nothing sensible to spread).
+    ///
+    /// Layout choice matches the multi-Claude auto-tile heuristic
+    /// (task #799) so the two features stay visually consistent:
+    /// - 1 → single leaf (unchanged)
+    /// - 2 → H-split (side by side)
+    /// - 3 → left leaf + right V-split (2 stacked on the right)
+    /// - 4 → 2×2 grid (H-split, each half V-split)
+    /// - 5-6 → 3×2 grid (2 or 3 columns × 2 rows)
+    /// - 7-8 → 4×2 grid
+    /// - 9+ → caps at 8 splits, remaining tabs stack on the last
+    ///   leaf as tabs (so no pane vanishes).
+    ///
+    /// Used by the `layout.spread_to_splits` palette command +
+    /// Sessions view chip. Reverse: [`Layout::merge_to_tabs`].
+    pub fn spread_to_splits(&self) -> Layout {
+        let Layout::Leaf { tabs, active } = self else {
+            return self.clone();
+        };
+        if tabs.len() <= 1 {
+            return self.clone();
+        }
+        // Cap at 8 slots (last slot absorbs remainder as tabs).
+        let n_slots = tabs.len().min(8);
+        let (slot_tabs, tail) = tabs.split_at(n_slots.saturating_sub(1));
+        // Build individual single-pane leaves for the first n-1 tabs.
+        let mut leaves: Vec<Layout> = slot_tabs.iter().map(|&id| Layout::leaf(id)).collect();
+        // Last leaf carries the remainder as tabs; active stays
+        // whichever pane the caller had focused (falls back to
+        // the first tail pane).
+        let tail_active = if tail.contains(active) {
+            *active
+        } else {
+            tail[0]
+        };
+        leaves.push(Layout::leaf_with_tabs(tail_active, tail.to_vec()));
+        build_grid(&leaves, tabs.len().min(8))
+    }
+
     /// True if the tree contains any `Empty` node.
     pub fn contains_empty(&self) -> bool {
         match self {
@@ -751,6 +824,133 @@ impl Layout {
                 total
             }
         }
+    }
+}
+
+/// Assemble `leaves` into a grid Layout matching one of a small
+/// set of shapes:
+///
+/// - n=1 → leaves[0]
+/// - n=2 → H-split (side by side, 50/50)
+/// - n=3 → left leaf + right V-split (2 stacked on the right)
+/// - n=4 → 2×2 grid
+/// - n=5-6 → 3×2 grid (3 columns, 2 rows; last column may hold 1)
+/// - n=7-8 → 4×2 grid
+///
+/// Panics on n>8 — callers should cap in advance
+/// ([`Layout::spread_to_splits`] does).
+fn build_grid(leaves: &[Layout], n: usize) -> Layout {
+    assert!((1..=8).contains(&n), "build_grid n must be 1..=8, got {n}");
+    let clone = |i: usize| leaves[i].clone();
+    match n {
+        1 => clone(0),
+        2 => Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(clone(0)),
+            second: Box::new(clone(1)),
+        },
+        3 => Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(clone(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(clone(1)),
+                second: Box::new(clone(2)),
+            }),
+        },
+        4 => Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(clone(0)),
+                second: Box::new(clone(1)),
+            }),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(clone(2)),
+                second: Box::new(clone(3)),
+            }),
+        },
+        5 | 6 => {
+            // 3 columns; leftmost holds leaves 0-1, middle 2-3, right 4[-5].
+            let col = |a: usize, b: Option<usize>| -> Layout {
+                match b {
+                    Some(i) => Layout::Split {
+                        dir: SplitDir::Vertical,
+                        ratio: 50,
+                        first: Box::new(clone(a)),
+                        second: Box::new(clone(i)),
+                    },
+                    None => clone(a),
+                }
+            };
+            let c0 = col(0, Some(1));
+            let c1 = col(2, Some(3));
+            let c2 = if n == 6 {
+                col(4, Some(5))
+            } else {
+                col(4, None)
+            };
+            // Horizontal cascade: c0 | (c1 | c2)
+            Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 33,
+                first: Box::new(c0),
+                second: Box::new(Layout::Split {
+                    dir: SplitDir::Horizontal,
+                    ratio: 50,
+                    first: Box::new(c1),
+                    second: Box::new(c2),
+                }),
+            }
+        }
+        7 | 8 => {
+            // 4 columns × 2 rows. Column i holds leaves 2i, 2i+1
+            // (with the last column single when n=7).
+            let col = |a: usize, b: Option<usize>| -> Layout {
+                match b {
+                    Some(i) => Layout::Split {
+                        dir: SplitDir::Vertical,
+                        ratio: 50,
+                        first: Box::new(clone(a)),
+                        second: Box::new(clone(i)),
+                    },
+                    None => clone(a),
+                }
+            };
+            let c0 = col(0, Some(1));
+            let c1 = col(2, Some(3));
+            let c2 = col(4, Some(5));
+            let c3 = if n == 8 {
+                col(6, Some(7))
+            } else {
+                col(6, None)
+            };
+            // Cascade H-splits with balanced ratios: (c0 | c1) | (c2 | c3).
+            Layout::Split {
+                dir: SplitDir::Horizontal,
+                ratio: 50,
+                first: Box::new(Layout::Split {
+                    dir: SplitDir::Horizontal,
+                    ratio: 50,
+                    first: Box::new(c0),
+                    second: Box::new(c1),
+                }),
+                second: Box::new(Layout::Split {
+                    dir: SplitDir::Horizontal,
+                    ratio: 50,
+                    first: Box::new(c2),
+                    second: Box::new(c3),
+                }),
+            }
+        }
+        _ => unreachable!("caller must cap n at 8"),
     }
 }
 
@@ -1331,6 +1531,139 @@ mod tests {
         let set: std::collections::HashSet<PaneId> = [0, 1].into_iter().collect();
         let hit = l.find_pure_pane_cluster_mut(&set).unwrap();
         assert_eq!(hit.all_panes().len(), 2);
+    }
+
+    #[test]
+    fn merge_to_tabs_flattens_split_tree_into_one_leaf() {
+        // 3-way split (H(0, V(1, 2))) should collapse to a leaf with
+        // [0, 1, 2] tabs, keeping active on 1 (the hint).
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::Split {
+                dir: SplitDir::Vertical,
+                ratio: 50,
+                first: Box::new(Layout::leaf(1)),
+                second: Box::new(Layout::leaf(2)),
+            }),
+        };
+        let merged = l.merge_to_tabs(1);
+        let Layout::Leaf { active, tabs } = merged else {
+            panic!("expected leaf")
+        };
+        assert_eq!(active, 1);
+        assert_eq!(tabs, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn merge_to_tabs_preserves_background_tabs_from_every_leaf() {
+        // Each side has multiple tabs — they must all survive.
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf_with_tabs(1, vec![0, 1, 2])),
+            second: Box::new(Layout::leaf_with_tabs(4, vec![3, 4, 5])),
+        };
+        let merged = l.merge_to_tabs(4);
+        let Layout::Leaf { active, tabs } = merged else {
+            panic!()
+        };
+        assert_eq!(active, 4);
+        assert_eq!(tabs, vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn merge_to_tabs_falls_back_to_first_when_hint_missing() {
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
+        };
+        let merged = l.merge_to_tabs(99);
+        let Layout::Leaf { active, .. } = merged else {
+            panic!()
+        };
+        assert_eq!(active, 0);
+    }
+
+    #[test]
+    fn merge_to_tabs_on_single_leaf_is_idempotent() {
+        let l = Layout::leaf_with_tabs(2, vec![1, 2, 3]);
+        let merged = l.merge_to_tabs(2);
+        let Layout::Leaf { active, tabs } = merged else {
+            panic!()
+        };
+        assert_eq!(active, 2);
+        assert_eq!(tabs, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn merge_to_tabs_on_empty_stays_empty() {
+        assert!(matches!(Layout::Empty.merge_to_tabs(0), Layout::Empty));
+    }
+
+    #[test]
+    fn spread_to_splits_pair_produces_horizontal_split() {
+        let l = Layout::leaf_with_tabs(0, vec![0, 1]);
+        let spread = l.spread_to_splits();
+        let Layout::Split {
+            dir, first, second, ..
+        } = spread
+        else {
+            panic!("expected 2-way split")
+        };
+        assert_eq!(dir, SplitDir::Horizontal);
+        assert!(matches!(*first, Layout::Leaf { active: 0, .. }));
+        assert!(matches!(*second, Layout::Leaf { active: 1, .. }));
+    }
+
+    #[test]
+    fn spread_to_splits_single_tab_is_noop() {
+        let l = Layout::leaf(0);
+        let spread = l.spread_to_splits();
+        assert!(matches!(spread, Layout::Leaf { active: 0, .. }));
+    }
+
+    #[test]
+    fn spread_to_splits_ignores_already_split_layout() {
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf(0)),
+            second: Box::new(Layout::leaf(1)),
+        };
+        let spread = l.spread_to_splits();
+        // Unchanged shape.
+        assert!(matches!(spread, Layout::Split { .. }));
+        assert_eq!(spread.all_panes(), vec![0, 1]);
+    }
+
+    #[test]
+    fn spread_to_splits_beyond_8_stacks_remainder_as_tabs() {
+        // 10 tabs → 8 slots; slot 8 (the last) hosts tabs [7, 8, 9].
+        let l = Layout::leaf_with_tabs(0, (0..10).collect());
+        let spread = l.spread_to_splits();
+        let leaves_of_layout = |lay: &Layout| lay.leaves();
+        assert_eq!(leaves_of_layout(&spread).len(), 8);
+        assert_eq!(spread.all_panes().len(), 10);
+    }
+
+    #[test]
+    fn merge_then_spread_round_trips_pane_set() {
+        // Start from a mixed split with background tabs, merge to
+        // tabs, spread back to splits — the pane set stays the same.
+        let l = Layout::Split {
+            dir: SplitDir::Horizontal,
+            ratio: 50,
+            first: Box::new(Layout::leaf_with_tabs(1, vec![0, 1])),
+            second: Box::new(Layout::leaf_with_tabs(2, vec![2, 3])),
+        };
+        let before = l.all_panes();
+        let merged = l.merge_to_tabs(1);
+        let spread = merged.spread_to_splits();
+        assert_eq!(spread.all_panes(), before);
     }
 
     #[test]

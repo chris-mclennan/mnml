@@ -23,6 +23,64 @@ impl App {
         &mut self.layouts[self.active_layout]
     }
 
+    /// #856 — `layout.merge_to_tabs` palette command. Flatten the
+    /// current tab page's split tree into a single leaf whose tabs
+    /// carry every pane from every leaf. Focus stays on the
+    /// currently-active pane. No-op on Empty / single-leaf layouts.
+    ///
+    /// Toast reports the shape change so users know what happened
+    /// (e.g. "merged 4 splits into 4 tabs"). Reverse:
+    /// [`App::spread_tabs_to_splits`].
+    pub fn merge_splits_to_tabs(&mut self) {
+        let panes_before = self.layout().all_panes();
+        if panes_before.len() <= 1 {
+            self.toast("layout: nothing to merge");
+            return;
+        }
+        let leaf_count = self.layout().leaves().len();
+        if leaf_count <= 1 {
+            self.toast("layout: already a single leaf");
+            return;
+        }
+        let active_hint = self.active.unwrap_or(panes_before[0]);
+        *self.layout_mut() = self.layout().merge_to_tabs(active_hint);
+        self.toast(format!(
+            "layout: merged {leaf_count} splits into {} tabs",
+            panes_before.len()
+        ));
+    }
+
+    /// #857 — `layout.spread_to_splits` palette command. Take the
+    /// current tab page (must be a single leaf with N tabs) and
+    /// spread each tab into its own split via the same shape
+    /// heuristic multi-Claude auto-tile uses (1 leaf / H-split / 3
+    /// / 2×2 / 3×2 / 4×2). No-op on layouts that already have any
+    /// splits, or on single-tab leaves.
+    ///
+    /// Toast reports the shape change. Reverse:
+    /// [`App::merge_splits_to_tabs`].
+    pub fn spread_tabs_to_splits(&mut self) {
+        let (n_tabs, has_split) = match self.layout() {
+            Layout::Empty => (0, false),
+            Layout::Leaf { tabs, .. } => (tabs.len(), false),
+            Layout::Split { .. } => (0, true),
+        };
+        if has_split {
+            self.toast("layout: already has splits; merge to tabs first");
+            return;
+        }
+        if n_tabs <= 1 {
+            self.toast("layout: nothing to spread");
+            return;
+        }
+        let new_layout = self.layout().spread_to_splits();
+        *self.layout_mut() = new_layout;
+        let n_leaves = self.layout().leaves().len();
+        self.toast(format!(
+            "layout: spread {n_tabs} tabs into {n_leaves} splits"
+        ));
+    }
+
     /// Right-click on a bufferline tab (the pane `id`) at screen cell `anchor`.
     pub fn open_tab_context_menu(&mut self, id: PaneId, anchor: (u16, u16)) {
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
