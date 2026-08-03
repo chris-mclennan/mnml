@@ -376,22 +376,25 @@ fn unescape(s: &str) -> String {
 /// dies with "WSL has no installed distributions". Prefer the
 /// Git Bash install path (Git for Windows is preinstalled on GH
 /// runners + a very common dev install). Env override wins for
-/// MSYS2 / Cygwin users. Falls back to bare `bash` as last resort.
+/// MSYS2 / Cygwin users. Returns `None` when nothing plausible was
+/// found so the caller can surface an actionable error instead of
+/// silently reproducing the WSL-launcher bug.
 #[cfg(windows)]
-fn git_bash_path() -> String {
+fn git_bash_path() -> Option<String> {
     if let Ok(explicit) = std::env::var("MNML_BASH") {
-        return explicit;
+        return Some(explicit);
     }
     for candidate in [
         r"C:\Program Files\Git\bin\bash.exe",
         r"C:\Program Files\Git\usr\bin\bash.exe",
         r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\usr\bin\bash.exe",
     ] {
         if std::path::Path::new(candidate).exists() {
-            return candidate.to_string();
+            return Some(candidate.to_string());
         }
     }
-    "bash".to_string()
+    None
 }
 
 /// Run one `.test` file. Never panics — a parse error / IO error / failed
@@ -642,7 +645,16 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             // so every shell step dies with "WSL has no installed
             // distributions". Point at the Git-for-Windows bash directly.
             #[cfg(windows)]
-            let mut shell = std::process::Command::new(git_bash_path());
+            let bash = git_bash_path().ok_or_else(|| {
+                format!(
+                    "shell `{cmd}`: no Git-for-Windows bash found at the usual \
+                     install paths. Install Git for Windows or set \
+                     MNML_BASH=<path to bash.exe>. (Plain `bash` on Windows \
+                     resolves to the WSL launcher, which won't work here.)"
+                )
+            })?;
+            #[cfg(windows)]
+            let mut shell = std::process::Command::new(bash);
             #[cfg(windows)]
             shell.args(["-c", cmd]);
             #[cfg(not(windows))]
