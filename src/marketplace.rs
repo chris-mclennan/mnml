@@ -70,6 +70,13 @@ pub struct MarketplaceEntry {
     /// it; renderers use it as a sort key.
     #[serde(default)]
     pub stats: EntryStats,
+    /// #849 — tagged at fetch time by matching `source_id` against
+    /// [`default_sources()`]. Official entries render with a green
+    /// badge and sort first; Community entries with a grey badge.
+    /// `#[serde(default)]` = older caches deserialize as
+    /// `Community` (safe under-count).
+    #[serde(default)]
+    pub provenance: Provenance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +87,54 @@ pub enum MarketplaceKind {
     /// TOML descriptor. Install by downloading the file to
     /// `~/.config/mnml/integrations/<id>.toml`.
     Launcher,
+}
+
+/// #849 — provenance of a marketplace entry. Tagged at fetch time
+/// by matching the entry's source-id against the shipped default
+/// list — NOT a manifest field (any author could set that). The
+/// gatekeeper is who has write access to the source repo /
+/// crates-io-keyword-cache, and that's exactly what
+/// `default_sources()` catalogs.
+///
+/// Rendering:
+/// - Official entries get a green `✓ Official` chip in the
+///   marketplace tab row.
+/// - Community entries get a grey `~ Community` chip.
+/// - Default sort puts Official first, then Community, alphabetical
+///   within each group.
+///
+/// Users overriding a default via a custom-id source (adding
+/// `chris-mclennan/mnml-integrations` under a different id) still
+/// get the Official tag because the repo URL / crates-keyword
+/// matches — see `provenance_for()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Provenance {
+    /// First-party — an entry from a source in
+    /// [`default_sources()`], matched by source id.
+    Official,
+    /// Third-party — a user-added source, or any source whose id
+    /// isn't in the built-in defaults. Default when deserializing
+    /// older caches that predate the field.
+    #[serde(other)]
+    #[default]
+    Community,
+}
+
+/// Determine the provenance for a source id by matching against
+/// the shipped defaults. Any source that matches a default-source
+/// id is Official; everything else is Community.
+///
+/// This is a fetch-time function that runs when an entry is being
+/// constructed. Serialized entries carry their provenance in the
+/// cache directly (see `MarketplaceEntry::provenance`), so
+/// consumers reading the cache don't need to re-derive it.
+pub fn provenance_for(source_id: &str) -> Provenance {
+    if default_sources().iter().any(|s| s.id() == source_id) {
+        Provenance::Official
+    } else {
+        Provenance::Community
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +234,7 @@ struct CratesCrate {
 pub fn parse_crates_response(source_id: &str, body: &str) -> Result<Vec<MarketplaceEntry>, String> {
     let resp: CratesResponse =
         serde_json::from_str(body).map_err(|e| format!("crates.io json: {e}"))?;
+    let provenance = provenance_for(source_id);
     let out = resp
         .crates
         .into_iter()
@@ -196,6 +252,7 @@ pub fn parse_crates_response(source_id: &str, body: &str) -> Result<Vec<Marketpl
                     stars: None,
                     updated_at: c.updated_at.and_then(|s| parse_iso8601_secs(&s)),
                 },
+                provenance,
             }
         })
         .collect();
@@ -251,6 +308,7 @@ pub fn parse_launcher_toml(
             url: download_url.to_string(),
         },
         stats: EntryStats::default(),
+        provenance: provenance_for(source_id),
     })
 }
 
@@ -619,6 +677,7 @@ run = ":term htop"
                     stars: None,
                     updated_at: Some(1_753_000_000),
                 },
+                provenance: Provenance::Official,
             }],
         };
         original.save_to(&path).unwrap();
@@ -626,6 +685,56 @@ run = ":term htop"
         assert_eq!(loaded.entries.len(), 1);
         assert_eq!(loaded.entries[0].id, "mnml-x");
         assert_eq!(loaded.fetched_at, 1_754_000_000);
+    }
+
+    /// #849 — the two default-source ids get `Official`; anything
+    /// else is `Community`. Round-trips through the `default_sources()`
+    /// list so any future addition of a default source is
+    /// automatically covered.
+    #[test]
+    fn provenance_for_default_source_ids_is_official() {
+        for source in default_sources() {
+            assert_eq!(
+                provenance_for(source.id()),
+                Provenance::Official,
+                "default source {:?} should be Official",
+                source.id()
+            );
+        }
+    }
+
+    #[test]
+    fn provenance_for_user_added_source_is_community() {
+        for id in ["my-catalog", "some-other-source", ""] {
+            assert_eq!(
+                provenance_for(id),
+                Provenance::Community,
+                "unknown source id {id:?} should be Community"
+            );
+        }
+    }
+
+    /// Old cache entries lacking the field deserialize as
+    /// `Community` (the `#[serde(default)]`). Users on stale
+    /// caches never see false-Official labels for arbitrary crates.
+    #[test]
+    fn old_cache_entries_default_to_community_provenance() {
+        let old_shape = r#"{
+            "fetched_at": 1754000000,
+            "ttl_secs": 3600,
+            "entries": [{
+                "source_id": "crates.io",
+                "kind": "app",
+                "id": "foo",
+                "label": "Foo",
+                "description": null,
+                "install": {"kind": "cargo", "name": "foo"},
+                "stats": {}
+            }]
+        }"#;
+        let cache: MarketplaceCache = serde_json::from_str(old_shape).unwrap();
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.entries[0].provenance, Provenance::Community);
     }
 
     #[test]
