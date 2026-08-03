@@ -714,6 +714,31 @@ run = ":term htop"
         }
     }
 
+    /// Unrecognized provenance string (say a future variant an
+    /// older mnml doesn't know about) deserializes as Community
+    /// via `#[serde(other)]`. Distinct from the "field missing"
+    /// case above — both mechanisms are required, both land on
+    /// the same safe under-count.
+    #[test]
+    fn unknown_provenance_string_deserializes_as_community() {
+        let unknown_variant = r#"{
+            "fetched_at": 1754000000,
+            "ttl_secs": 3600,
+            "entries": [{
+                "source_id": "crates.io",
+                "kind": "app",
+                "id": "foo",
+                "label": "Foo",
+                "description": null,
+                "install": {"kind": "cargo", "name": "foo"},
+                "stats": {},
+                "provenance": "premium"
+            }]
+        }"#;
+        let cache: MarketplaceCache = serde_json::from_str(unknown_variant).unwrap();
+        assert_eq!(cache.entries[0].provenance, Provenance::Community);
+    }
+
     /// Old cache entries lacking the field deserialize as
     /// `Community` (the `#[serde(default)]`). Users on stale
     /// caches never see false-Official labels for arbitrary crates.
