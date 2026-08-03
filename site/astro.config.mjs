@@ -1,10 +1,31 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+// #859 — read the mnml crate version from ../Cargo.toml at build
+// time so install / index / footer can render "v0.2.0" beside the
+// download links without hard-coding it in each page. The regex
+// deliberately matches the FIRST top-level `version = "…"` — that
+// is the [package] block, followed by any nested workspace deps.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const cargoToml = readFileSync(resolve(__dirname, '..', 'Cargo.toml'), 'utf8');
+const versionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
+const MNML_VERSION = versionMatch ? versionMatch[1] : 'unknown';
 
 // https://astro.build/config
 export default defineConfig({
   site: 'https://mnml.sh',
+  vite: {
+    // Compile-time constant every page can read via
+    // `import.meta.env.MNML_VERSION`. Rebuilt on `npm run build`
+    // whenever ../Cargo.toml changes.
+    define: {
+      'import.meta.env.MNML_VERSION': JSON.stringify(MNML_VERSION),
+    },
+  },
   integrations: [
     starlight({
       title: 'mnml',

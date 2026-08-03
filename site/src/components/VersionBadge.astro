@@ -1,0 +1,27 @@
+---
+// #859 — render the mnml crate version alongside install-page
+// download links. Version is injected at build time via
+// `astro.config.mjs`'s `vite.define`, sourced from ../Cargo.toml.
+const version = import.meta.env.MNML_VERSION ?? 'unknown';
+---
+
+<span class="version-badge" title={`mnml v${version} — sourced from Cargo.toml at build time`}>
+  v{version}
+</span>
+
+<style>
+  .version-badge {
+    display: inline-block;
+    padding: 0.15em 0.5em;
+    border-radius: 4px;
+    background: var(--sl-color-gray-6, #f0f0f0);
+    color: var(--sl-color-gray-1, #333);
+    font: 0.85em/1 var(--sl-font-system-mono);
+    letter-spacing: 0.02em;
+    vertical-align: middle;
+  }
+  :root[data-theme='dark'] .version-badge {
+    background: var(--sl-color-gray-6, #2a2a2a);
+    color: var(--sl-color-gray-1, #ddd);
+  }
+</style>
