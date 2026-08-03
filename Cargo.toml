@@ -125,8 +125,8 @@ portable-pty = "0.8"
 # to 0.16.0. `mnml-vt-sys` now source-builds libghostty-vt via `zig build`
 # on every target (default `source-build` feature). Needs zig 0.16.0 + git
 # on PATH. `.a` cached in `target/` after first build.
-libghostty-vt = { package = "mnml-vt", path = "crates/mnml-vt", version = "0.2.0" }
-libghostty-vt-sys = { package = "mnml-vt-sys", path = "crates/mnml-vt-sys", version = "0.2.0" }
+libghostty-vt = { package = "mnml-vt", path = "crates/mnml-vt", version = "0.2.1" }
+libghostty-vt-sys = { package = "mnml-vt-sys", path = "crates/mnml-vt-sys", version = "0.2.1" }
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
 tree-sitter-ruby = "0.23.1"

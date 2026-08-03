@@ -2274,14 +2274,14 @@ dependencies = [
 
 [[package]]
 name = "mnml-vt"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "mnml-vt-sys",
 ]
 
 [[package]]
 name = "mnml-vt-sys"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bindgen",
  "pkg-config",
