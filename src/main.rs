@@ -115,12 +115,12 @@ struct TuiArgs {
     ascii: bool,
     config_path: Option<PathBuf>,
     startup_picker: bool,
-    /// Preview mode: launched via `./run.sh preview` in a tempdir
+    /// Sandbox mode: launched via `./run.sh sandbox` in a tempdir
     /// with `$HOME` + `$XDG_CONFIG_HOME` redirected. mnml treats
     /// this as first-launch (welcome overlay fires, empty
     /// integrations dir, no session to restore). Adds a persistent
     /// banner reminding the user their real config is safe.
-    preview: bool,
+    sandbox: bool,
     /// After startup, dispatch `view.activity_<name>` to open a
     /// specific activity-bar section — e.g. `--show integrations`
     /// lands the user on the Integrations panel. Skipped if the
@@ -136,7 +136,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut config_path = None;
     let mut startup_picker = false;
     let mut no_workspace = false;
-    let mut preview = false;
+    let mut sandbox = false;
     let mut show_panel: Option<String> = None;
 
     let mut it = argv.into_iter();
@@ -157,7 +157,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
             }
             "--startup-picker" => startup_picker = true,
             "--no-workspace" => no_workspace = true,
-            "--preview" => preview = true,
+            "--sandbox" => sandbox = true,
             "--show" => {
                 show_panel = Some(
                     it.next()
@@ -168,12 +168,12 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace] [--preview] [--show PANEL]\n  \
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace] [--sandbox] [--show PANEL]\n  \
                        mnml run FILE [--env NAME] [--workspace DIR]\n\n\
                      flags:\n  \
                        --startup-picker      show a JetBrains-style chooser overlay on launch\n                                         (also enabled by MNML_STARTUP_PICKER=1)\n  \
                        --no-workspace        land in the empty-state ($HOME) instead of resolving\n                                         [startup] default_workspace; used by the .app icon\n                                         launcher so clicking the icon doesn't auto-open a folder\n  \
-                       --preview             show a persistent \"preview mode\" banner. Meant to be\n                                         paired with `./run.sh preview`, which redirects HOME +\n                                         XDG_CONFIG_HOME to a tempdir so your real config stays\n                                         untouched. Use to see what a brand-new user would see.\n  \
+                       --sandbox             show a persistent \"sandbox mode\" banner. Meant to be\n                                         paired with `./run.sh sandbox`, which redirects HOME +\n                                         XDG_CONFIG_HOME to a tempdir so your real config stays\n                                         untouched. Use to see what a brand-new user would see.\n                                         If HOME isn't actually redirected the banner downgrades\n                                         to a warning so you don't get a false safety promise.\n  \
                        --show PANEL          after startup, focus the given activity-bar section\n                                         (e.g. `--show integrations`). PANEL is any suffix of\n                                         `view.activity_<panel>` — integrations, sessions, agents,\n                                         http, explorer, search, debug, notes.\n"
                 );
                 std::process::exit(0);
@@ -229,7 +229,7 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         ascii,
         config_path,
         startup_picker,
-        preview,
+        sandbox,
         show_panel,
     })
 }
@@ -278,18 +278,41 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if mnml::app::App::want_startup_picker(args.startup_picker) {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());
     }
-    // Preview mode banner + optional panel focus. The `./run.sh preview`
-    // wrapper redirects $HOME + $XDG_CONFIG_HOME to a tempdir before
-    // launching mnml — this flag just signals "make it look like preview
-    // mode from the user's POV." Toast is persistent so it stays visible
-    // for the whole session.
-    if args.preview {
-        app.toast_persistent(
-            "preview-mode",
-            "PREVIEW MODE — sandboxed tempdir, no persistence. Your real \
-             config at ~/.config/mnml/ is untouched. Exit to discard.",
-            mnml::app::ToastLevel::Info,
-        );
+    // Sandbox mode banner + optional panel focus. The `./run.sh sandbox`
+    // wrapper redirects $HOME + $XDG_CONFIG_HOME to a tempdir BEFORE
+    // launching mnml — this flag just signals "paint the banner." We
+    // verify HOME actually points at a tempdir before promising safety
+    // (reviewer 2026-08-03): a bare `mnml --sandbox` invocation without
+    // the wrapper would happily paint "sandboxed" while writing to the
+    // real ~/.config/mnml/. When we detect that gap, the banner
+    // downgrades to a warning so the user isn't lied to.
+    if args.sandbox {
+        let home_is_temp = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .is_some_and(|home| {
+                let tmp = std::env::temp_dir();
+                home.starts_with(&tmp)
+                    || home
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| n.starts_with("mnml-sandbox-"))
+            });
+        if home_is_temp {
+            app.toast_persistent(
+                "sandbox-mode",
+                "SANDBOX MODE — real config safe. Nothing here persists. \
+                 Exit to discard.",
+                mnml::app::ToastLevel::Info,
+            );
+        } else {
+            app.toast_persistent(
+                "sandbox-mode",
+                "--sandbox flag set but $HOME is NOT redirected to a tempdir. \
+                 This session will touch your real ~/.config/mnml/. Use \
+                 `./run.sh sandbox` for a true sandbox.",
+                mnml::app::ToastLevel::Warn,
+            );
+        }
     }
     if let Some(panel) = &args.show_panel {
         let cmd_id = format!("view.activity_{panel}");
