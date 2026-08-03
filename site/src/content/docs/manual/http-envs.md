@@ -174,4 +174,4 @@ The two layers don't fight — `.mnml/` overrides on a per-key basis, so a parti
 - [HTTP lookups](/manual/http-lookup/) — the multi-stage flow that writes captured ids back to `.env`
 - [HTTP history](/manual/http-history/) — every fired request is logged whether or not the env resolved cleanly
 - [HTTP helpers — JWT & bearer](/manual/http-helpers/) — `jwt.decode` and `auth.extract_bearer` for inspecting and rotating tokens
-- [Configuration](/reference/configuration/) — TOML schema for the `[browser]` / `[http]` knobs
+- [Configuration](/manual/settings/) — TOML schema for the `[browser]` / `[http]` knobs

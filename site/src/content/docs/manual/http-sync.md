@@ -170,4 +170,4 @@ This is a forward-compat hook — drop-in support for other importers (Bruno, In
 - [HTTP client](/manual/http/) — the parent overview, with `mnml discover` for the single-source case
 - [HTTP envs & templating](/manual/http-envs/) — `{{BASE_URL}}` resolution, which the synced stubs rely on
 - [HTTP history](/manual/http-history/) — every send the synced stubs fire is logged here
-- [Configuration](/reference/configuration/) — TOML schema for the `[http]` section
+- [Configuration](/manual/settings/) — TOML schema for the `[http]` section

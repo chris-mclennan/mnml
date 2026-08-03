@@ -231,5 +231,5 @@ These are deliberate — the savings from not implementing them yet outweigh the
 
 - [Editing](/manual/editing/) — the buffer whose mutations the LSP sees
 - [Git](/manual/git/) — the gutter that shares space with the LSP gutter
-- [Configuration](/reference/configuration/) — `[lsp.<name>]` and `[editor]` reference
-- [Keybindings](/reference/keybindings/) — every default key, including the leader `<space>l*` group
+- [Configuration](/manual/settings/) — `[lsp.<name>]` and `[editor]` reference
+- [Keybindings](/manual/cheatsheet-all/) — every default key, including the leader `<space>l*` group

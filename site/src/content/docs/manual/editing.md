@@ -312,7 +312,7 @@ Everything in this list is keymap-driven by config (`[keys.global]` for cross-mo
 
 ## Next
 
-- [Configuration](/reference/configuration/) — full TOML schema
-- [Keybindings](/reference/keybindings/) — every default key in both modes
-- [Panes & layout](/manual/panes/) — how to lay out multiple buffers/diffs/terminals side-by-side
+- [Configuration](/manual/settings/) — full TOML schema
+- [Keybindings](/manual/cheatsheet-all/) — every default key in both modes
+- [Panes & layout](/manual/right-panel/) — how to lay out multiple buffers/diffs/terminals side-by-side
 - [Language intelligence (LSP)](/manual/lsp/) — completion, navigation, refactors

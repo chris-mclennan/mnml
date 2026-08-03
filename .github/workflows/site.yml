@@ -1,0 +1,50 @@
+# #860 — build the site + run the smoke test (dead-link + download-URL
+# HEAD probes) on every push touching `site/**` and on PRs. Prevents
+# the manual-writer drift + renamed-slug bugs from shipping.
+#
+# The download-HEAD checks hit GitHub `releases/latest/download/…`
+# URLs. GitHub occasionally rate-limits or 5xx's transiently — the
+# smoke script distinguishes hard 404s (fail the run) from other
+# statuses (soft warn, don't fail).
+name: site
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'Cargo.toml'
+      - '.github/workflows/site.yml'
+  pull_request:
+    paths:
+      - 'site/**'
+      - 'Cargo.toml'
+      - '.github/workflows/site.yml'
+  # Run daily too — the download-URL probes catch cases where a
+  # release was deleted / re-tagged without a site edit.
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: site/package-lock.json
+      - name: Install site deps
+        working-directory: site
+        run: npm ci --no-audit --no-fund
+      - name: Build site
+        working-directory: site
+        run: npm run build
+      - name: Smoke — internal links + download HEAD
+        working-directory: site
+        # PR builds run without download probes to avoid rate-limiting
+        # noise on branches; main + scheduled runs hit the real URLs.
+        env:
+          SKIP_DOWNLOAD_CHECKS: ${{ github.event_name == 'pull_request' && '1' || '' }}
+        run: npm run smoke

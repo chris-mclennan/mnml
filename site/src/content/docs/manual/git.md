@@ -14,7 +14,7 @@ The user-facing pieces are layered over that:
 5. **The branch rail** lives in the left sidebar — current repo's local branches, linked worktrees, and open PRs/MRs (when the SCM dashboards are wired up).
 6. **Sync** — fetch, pull (`--ff-only`), push, cherry-pick, revert, tags, stash list, reflog, plus an operation-level undo / redo stack.
 
-This page covers each in depth. Keybindings live where the keys live — global chords in the [keybinding reference](/reference/keybindings/), pane-local chords inline below.
+This page covers each in depth. Keybindings live where the keys live — global chords in the [keybinding reference](/manual/cheatsheet-all/), pane-local chords inline below.
 
 ## Statusline & gutter
 
@@ -259,7 +259,7 @@ While editing, `[c` and `]c` (in vim mode) jump to the previous / next changed h
 ## Next
 
 - [Editing](/manual/editing/) — the buffer that's diffed and committed
-- [Configuration](/reference/configuration/) — `[keys.global]` / `[keys.vim]` / `[keys.standard]` for remapping every git chord
-- [Keybindings](/reference/keybindings/) — every default key, including the full git palette
+- [Configuration](/manual/settings/) — `[keys.global]` / `[keys.vim]` / `[keys.standard]` for remapping every git chord
+- [Keybindings](/manual/cheatsheet-all/) — every default key, including the full git palette
 - [Integrations overview](/manual/integrations/overview/) — the marketplace + manifest model that ships the `mnml-forge-*` viewers (Bitbucket, GitHub, GitLab, Azure DevOps) that replaced the in-tree SCM dashboards
-- [AI panes](/manual/ai/) — the Claude / Codex integration that drives `git.ai_commit` and `git.ai_recompose`
+- [AI panes](/manual/ai-panes/) — the Claude / Codex integration that drives `git.ai_commit` and `git.ai_recompose`

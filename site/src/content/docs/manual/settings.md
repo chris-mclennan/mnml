@@ -212,7 +212,7 @@ ticket_prefixes = ["TE-", "MIX-", "PROJ-"]  # see below
 
 #### Theme
 
-`theme` is the active palette; `theme_toggle` (optional) is the *other* member of a light/dark pair. The slider button in the bufferline flips between them on click; when `theme_toggle` is unset, the slider falls back to opening the full theme picker. See the [Themes](/manual/themes/) page for the list.
+`theme` is the active palette; `theme_toggle` (optional) is the *other* member of a light/dark pair. The slider button in the bufferline flips between them on click; when `theme_toggle` is unset, the slider falls back to opening the full theme picker. The full list of built-in themes lives in the theme picker (`Ctrl+Shift+P` → `theme.pick`).
 
 #### `ticket_prefixes`
 
@@ -310,7 +310,7 @@ Skipped automatically in `--headless` mode (no surface for inline image escape s
 now_playing_source = "auto"       # "auto" (default) | "mixr" | "macos"
 ```
 
-The statusline `♪` miniplayer chip can read from two sources — the sibling [mixr](/family/mixr/) DJ app (via the `~/.mixr/quick.txt` flat file it writes on track changes) and the macOS Music / Spotify apps (via an `osascript` AppleScript poll). `now_playing_source` picks which:
+The statusline `♪` miniplayer chip can read from two sources — the sibling [mixr](https://mixr.sh) DJ app (via the `~/.mixr/quick.txt` flat file it writes on track changes) and the macOS Music / Spotify apps (via an `osascript` AppleScript poll). `now_playing_source` picks which:
 
 - `"auto"` (default) — try mixr first (a cheap file read), fall back to macOS Music / Spotify when mixr is idle. The "show whatever's actually playing" mode.
 - `"mixr"` — only read mixr. Skips the macOS `osascript` poll entirely, which is useful if you don't use Music or Spotify and want to shave the only non-trivial cost off the now-playing poller.
@@ -382,7 +382,7 @@ Keymaps are **key spec → command id** (the same shape as VSCode's `keybindings
 - Unknown command ids are tolerated — they just never fire (handy when sharing a config across mnml versions).
 - **Unbinding**: set the value to `""`, `"none"`, or `"unbound"` to drop a default binding.
 
-The full command-id catalog lives in the command palette (`Ctrl+Shift+P` or `:`) — every command shows its id alongside its label. Defaults are documented in the [Keybindings reference](/reference/keybindings/).
+The full command-id catalog lives in the command palette (`Ctrl+Shift+P` or `:`) — every command shows its id alongside its label. Defaults are documented in the [Keybindings reference](/manual/cheatsheet-all/).
 
 **Shortcut to get started:** run `:keys.edit` (or pick *Customize keybindings…* from the palette) — opens `config.toml`, jumps the cursor into `[keys.standard]`, and appends a documented stub with three worked examples (rebind / add / unbind) if the section doesn't exist yet. Use `:Maps` (or `:Keys`) at any time to dump the resolved chord → command table, optionally filtered: `:Maps git` shows every chord whose bound command id starts with `git`.
 

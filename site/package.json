@@ -7,7 +7,8 @@
     "start": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "astro": "astro"
+    "astro": "astro",
+    "smoke": "node scripts/smoke-links.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.39.2",

@@ -331,5 +331,5 @@ And the surrounding context:
 
 - [Editing](/manual/editing/) — the buffer your `.http` files live in
 - [Git](/manual/git/) — version-controlling the request files alongside the code
-- [Configuration](/reference/configuration/) — `[keys.global]` for rebinding `http.*` chords; `MNML_ENV` and `--env` semantics
+- [Configuration](/manual/settings/) — `[keys.global]` for rebinding `http.*` chords; `MNML_ENV` and `--env` semantics
 - [AI panes](/manual/ai-panes/) — what `http.ai_debug` plugs into when a request is mis-firing

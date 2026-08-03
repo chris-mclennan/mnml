@@ -255,4 +255,4 @@ The toast fires from `App::tick` — not at `:ai.spend_today` time. The old inli
 - [Editing](/manual/editing/) — vim or standard keymap; the same edits work whether you're typing into Claude or into a `.rs` file
 - [Git](/manual/git/) — the AI commit-message action (`C` in the staging view) shells out to the same `claude -p` that backs the panes
 - [HTTP client](/manual/http/) — another pane class with its own dedicated UI
-- The [keybinding reference](/reference/keybindings/) for every default chord, including the `<leader> a *` AI group
+- The [keybinding reference](/manual/cheatsheet-all/) for every default chord, including the `<leader> a *` AI group

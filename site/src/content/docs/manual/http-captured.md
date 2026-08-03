@@ -179,4 +179,4 @@ Auto-capture means a workspace that uses the browser pane regularly will accumul
 - [HTTP history](/manual/http-history/) — for what mnml *fired*, distinct from what the browser *saw*
 - [HTTP mocks](/manual/http-mocks/) — freeze a response so you can iterate offline
 - [HTTP envs & templating](/manual/http-envs/) — when you re-fire a captured request through `http.send`, the env applies
-- [Configuration](/reference/configuration/) — `[browser] autocapture_to_log` and the rest of the browser-pane config
+- [Configuration](/manual/settings/) — `[browser] autocapture_to_log` and the rest of the browser-pane config
