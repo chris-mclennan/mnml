@@ -1737,9 +1737,19 @@ fn detect_spinner_glyph(grid: &RenderGrid) -> Option<char> {
 impl Drop for PtySession {
     fn drop(&mut self) {
         let _ = self.child.kill();
-        if let Some(j) = self.reader.take() {
-            let _ = j.join();
-        }
+        // Detach the reader instead of joining. Fields drop after this
+        // fn body in declaration order (writer → master → reader), so
+        // `master` closes and the reader's `read()` gets EOF *after*
+        // Drop::drop returns. If we joined here first, we'd deadlock
+        // on Windows/ConPTY: killing the child does not itself EOF the
+        // master's read side, and the reader would block forever
+        // waiting for bytes. Dropping the JoinHandle detaches the
+        // thread; the OS reaps it once `master` closes below.
+        // Pre-2026-08 this hung the entire e2e suite on Windows CI —
+        // 16 of 222 .test files that spawn a Pty (`go.test`, `npm.run`,
+        // `pytest_runner_*`, …) timed out at 120s each because the
+        // App-drop chain blocked on this join().
+        let _ = self.reader.take();
     }
 }
 
