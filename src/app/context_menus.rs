@@ -572,10 +572,26 @@ impl App {
             // #814 — one-tap rebake. Uses the last-baked meta (or
             // the builtin catalog fallback) verbatim; no visual
             // builder. Handy after editing a builtin SVG on disk.
-            items.push(MenuItem::new(
-                "Rebake glyph now",
-                MenuAction::RebakeGlyphForCp(cp),
-            ));
+            //
+            // Tester-round SEV-3 fix — only offer when there IS
+            // something to rebake. Nerd Font codicons (e.g. the
+            // default `browser` chip at U+EB01) have no builtin
+            // catalog entry AND no meta entry until the user has
+            // opened the visual builder at least once; showing
+            // "Rebake glyph now" for those was a dead-end that
+            // toasted "no stored meta or builtin".
+            let cp_hex = format!("{cp:04X}");
+            let has_meta = crate::glyph_builder::load_meta()
+                .glyphs
+                .iter()
+                .any(|g| g.codepoint == cp_hex);
+            let has_builtin = crate::glyph_builder::builtin_for_codepoint(cp).is_some();
+            if has_meta || has_builtin {
+                items.push(MenuItem::new(
+                    "Rebake glyph now",
+                    MenuAction::RebakeGlyphForCp(cp),
+                ));
+            }
         }
         items.push(MenuItem::new("Remove", MenuAction::RemoveIntegration(id)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));

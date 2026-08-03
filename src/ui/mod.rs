@@ -3580,6 +3580,12 @@ fn paint_leaf_tab_strip_with_hidden(
     // identical to the top strip; the divergence that produced
     // "gremlins" is gone. Layout math (overflow break, gap between
     // chips) stays here; the caller still owns rect registration.
+    //
+    // Tester-round SEV-2 fix — track how many tabs we couldn't fit
+    // so the "+N hidden" chip surfaces the overflow (previously only
+    // the ActivitySection::Http filter path fed `hidden_tab_count`;
+    // strip clipping was silent).
+    let mut painted_count: usize = 0;
     for &id in tabs {
         if chip_x >= tabs_right {
             break;
@@ -3631,8 +3637,16 @@ fn paint_leaf_tab_strip_with_hidden(
         chip_x = chip_x.saturating_add(rects.chip.width);
         // 1-cell gap between chips (strip bg shows through).
         chip_x = chip_x.saturating_add(1);
+        painted_count += 1;
     }
     let _ = leaf_focused;
+    // Roll silently-clipped tabs into the same `+N hidden` chip the
+    // HTTP filter uses. Both paths converge here so a leaf that's
+    // filtered AND overflowing reports the total (fix for SEV-2 in
+    // tester-round-20260803-personas — `layout.merge_to_tabs` on
+    // a 10-tab result strip rendered 5 chips + zero discoverability).
+    let overflow_hidden = tabs.len().saturating_sub(painted_count);
+    let hidden_tab_count = hidden_tab_count.saturating_add(overflow_hidden);
 
     // one-tab-type 2026-07-18 — a `+` chip immediately after the
     // last tab in this leaf's strip. Click → focus this leaf +
