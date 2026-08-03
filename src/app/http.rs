@@ -329,19 +329,29 @@ fn ensure_mnml_env_gitignored(workspace: &std::path::Path) -> Option<String> {
     let gitignore = workspace.join(".gitignore");
     let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
     // First-pass: refuse to append if the user has explicitly
-    // WHITELISTED any `.mnml/env` path via a `!…` negation. Our
-    // append would land AFTER their negation and silently override
-    // it (gitignore is order-dependent — a later broad ignore wins
-    // over an earlier negation). Reviewer 2026-08-03. NOTE: single-
-    // process-per-workspace today so the read-modify-write is safe;
-    // add a lock file if we ever share workspaces across processes.
-    let has_env_negation = existing.lines().any(|line| {
+    // WHITELISTED any `.mnml/…` path via a `!…` negation — either
+    // targeting `env/` directly OR a broader `.mnml/**` / `.mnml/`
+    // that would include env. Our append would land AFTER their
+    // negation and silently override it (gitignore is order-
+    // dependent — a later broad ignore wins over an earlier
+    // negation). Path-anchored `/.mnml/…` counts too. Non-`.mnml`
+    // negations (`!node_modules/`, `!vendor/.mnml/env-old/`) don't
+    // match — they can't collide with our `.mnml/env/` append.
+    //
+    // Reviewer 2026-08-03. NOTE: single-process-per-workspace
+    // today so the read-modify-write is safe; add a lock file if
+    // we ever share workspaces across processes.
+    let has_mnml_negation = existing.lines().any(|line| {
         let trimmed = line.trim();
-        trimmed.starts_with('!') && trimmed[1..].trim_start().contains(".mnml/env")
+        if !trimmed.starts_with('!') {
+            return false;
+        }
+        let pat = trimmed[1..].trim_start();
+        pat.starts_with(".mnml") || pat.starts_with("/.mnml")
     });
-    if has_env_negation {
+    if has_mnml_negation {
         return Some(
-            ".gitignore has an explicit `!.mnml/env/…` negation; \
+            ".gitignore has an explicit `!.mnml/…` negation; \
              leaving it alone. Verify tokens aren't committable manually."
                 .to_string(),
         );
@@ -6803,12 +6813,10 @@ mod http_tests {
         let body = "target/\n.env\n!.mnml/env/dev.env\n";
         std::fs::write(&gi, body).unwrap();
         let out = ensure_mnml_env_gitignored(ws.path());
-        // Should skip the append (returns a warn toast) rather than
-        // silently overriding the user's explicit whitelist.
         assert!(out.is_some(), "should toast to explain the skip");
         let toast = out.unwrap();
         assert!(
-            toast.contains("negation") || toast.contains("!.mnml/env"),
+            toast.contains("negation") || toast.contains("!.mnml"),
             "toast should explain the negation was respected: {toast}"
         );
         assert_eq!(
@@ -6816,6 +6824,42 @@ mod http_tests {
             body,
             "gitignore body must be unchanged"
         );
+    }
+
+    /// Broader-scope negation `!.mnml/**` (or `!.mnml/`) also
+    /// covers env, so an append after would silently re-override
+    /// it. Same skip-and-warn semantics as the narrow variant.
+    #[test]
+    fn ensure_mnml_env_gitignored_respects_broader_negation() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        let gi = ws.path().join(".gitignore");
+        let body = "target/\n.mnml/\n!.mnml/**\n";
+        std::fs::write(&gi, body).unwrap();
+        let out = ensure_mnml_env_gitignored(ws.path());
+        assert!(out.is_some());
+        assert_eq!(
+            std::fs::read_to_string(&gi).unwrap(),
+            body,
+            "gitignore body must be unchanged"
+        );
+    }
+
+    /// Non-mnml negation `!vendor/.mnml/env-old/` shouldn't
+    /// trigger skip — it's a completely unrelated path that
+    /// happens to have `.mnml/env` as a substring. Our append
+    /// wouldn't collide with it either way.
+    #[test]
+    fn ensure_mnml_env_gitignored_ignores_non_mnml_prefixed_negation() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        let gi = ws.path().join(".gitignore");
+        let body = "target/\n!vendor/.mnml/env-old/\n";
+        std::fs::write(&gi, body).unwrap();
+        let out = ensure_mnml_env_gitignored(ws.path()).expect("should append");
+        assert!(out.contains(".mnml/env/"));
+        let after = std::fs::read_to_string(&gi).unwrap();
+        assert!(after.ends_with(".mnml/env/\n"));
     }
 
     /// Existing gitignore doesn't cover us and doesn't end in
