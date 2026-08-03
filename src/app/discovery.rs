@@ -347,16 +347,25 @@ impl App {
     /// audit where 10 orphaned Aug-1 manifests kept resurrecting
     /// themselves.
     pub fn remove_integration_by_id(&mut self, id: &str) {
-        // Step 1: delete the manifest file, if any.
-        let manifest_removed = std::env::var_os("HOME")
+        // Step 1: delete the manifest file + its sidecar override,
+        // if either is present.
+        let base_dir = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
-            .map(|h| {
-                h.join(".config")
-                    .join("mnml")
-                    .join("integrations")
-                    .join(format!("{id}.toml"))
-            })
+            .map(|h| h.join(".config").join("mnml").join("integrations"));
+        let manifest_removed = base_dir
+            .as_ref()
+            .map(|d| d.join(format!("{id}.toml")))
             .is_some_and(|p| p.exists() && std::fs::remove_file(&p).is_ok());
+        // Delete the override sidecar too — leaving it behind would
+        // resurrect (partial) user settings if the id is later
+        // re-installed with a fresh canonical manifest. Same
+        // "one uninstall gesture cleans everything" principle as
+        // the folder-based override design (task #851).
+        if let Some(override_path) = base_dir.map(|d| d.join(format!("{id}.override.toml")))
+            && override_path.exists()
+        {
+            let _ = std::fs::remove_file(&override_path);
+        }
         // Step 2: re-scan so the in-memory manifest list drops it.
         if manifest_removed {
             self.integration_manifests.retain(|m| m.id != id);
@@ -435,7 +444,22 @@ impl App {
             version: None,
             commands: Vec::new(),
         };
-        match panel.mode {
+        // 2026-08-03 (#851 phase 2) — write to the integrations
+        // folder, not `[[ui.integration_icon]]` in config.toml.
+        //
+        // - **Edit mode**: user is customizing chip visuals for an
+        //   existing integration. Persist as an
+        //   `<id>.override.toml` sidecar so the canonical manifest
+        //   (from marketplace install or upstream update) stays the
+        //   source of truth. Uninstall or a hand-delete of the
+        //   override reverts to base.
+        // - **AddCustom mode**: user is authoring a brand-new
+        //   integration with no upstream. Write a full `<id>.toml`
+        //   authorial manifest; there's nothing to override.
+        //
+        // In-memory rail entry gets updated either way so the chip
+        // rerenders immediately without waiting on the next scan.
+        let write_result = match panel.mode {
             IntegrationEditMode::Edit => {
                 if let Some(slot) = self
                     .config
@@ -444,11 +468,12 @@ impl App {
                     .iter_mut()
                     .find(|ic| ic.id == new_icon.id)
                 {
-                    *slot = new_icon;
+                    *slot = new_icon.clone();
                 } else {
                     self.toast(format!("integration: {} no longer in rail", new_icon.id));
                     return;
                 }
+                write_override_toml(&new_icon)
             }
             IntegrationEditMode::AddCustom => {
                 if self
@@ -461,10 +486,11 @@ impl App {
                     self.toast(format!("integration: id {} already in rail", new_icon.id));
                     return;
                 }
-                self.config.ui.integration_icons.push(new_icon);
+                self.config.ui.integration_icons.push(new_icon.clone());
+                write_authored_manifest_toml(&new_icon)
             }
-        }
-        match persist_integration_icons(&self.config.ui.integration_icons) {
+        };
+        match write_result {
             Ok(path) => self.toast(format!("integration saved · {}", path.display())),
             Err(e) => self.toast(format!("integration saved in-memory (persist failed: {e})")),
         }
@@ -730,6 +756,75 @@ pub fn persist_integration_icons(icons: &[IntegrationIcon]) -> Result<std::path:
     let appended = append_integration_icon_blocks(&stripped, icons);
     std::fs::write(&path, appended).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
+}
+
+/// Write an `<id>.override.toml` sidecar next to the canonical
+/// manifest at `~/.config/mnml/integrations/<id>.toml`. Called from
+/// the integration-edit overlay's Save action in Edit mode. Emits
+/// the full field set that the overlay exposes — the loader only
+/// applies fields that are present + non-null, and re-emitting a
+/// value equal to the base is a no-op at merge time.
+///
+/// Returns the written path on success.
+pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf, String> {
+    let dir = integrations_dir_or_err()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let path = dir.join(format!("{}.override.toml", icon.id));
+    let mut body = String::new();
+    body.push_str(&format!("id = {}\n", toml_str(&icon.id)));
+    if let Some(label) = &icon.label {
+        body.push_str(&format!("label = {}\n", toml_str(label)));
+    }
+    body.push_str("\n[chip]\n");
+    body.push_str(&format!("glyph = {}\n", toml_str(&icon.glyph)));
+    body.push_str(&format!("fallback = {}\n", toml_str(&icon.fallback)));
+    body.push_str(&format!("color = {}\n", toml_str(&icon.color)));
+    body.push_str(&format!("enabled = {}\n", icon.enabled));
+    body.push_str(&format!("in_palette_bar = {}\n", icon.in_palette_bar));
+    std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Write a full `<id>.toml` authorial manifest for a user-created
+/// integration (AddCustom mode). No sibling exists upstream, so the
+/// file is the canonical source, not an override. `binary` is left
+/// unset so the manifest is treated as a launcher; the `command`
+/// field is emitted as a single palette-command entry the chip
+/// dispatches to.
+pub fn write_authored_manifest_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf, String> {
+    let dir = integrations_dir_or_err()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
+    let path = dir.join(format!("{}.toml", icon.id));
+    let mut body = String::new();
+    body.push_str(&format!("id = {}\n", toml_str(&icon.id)));
+    let display_label = icon.label.clone().unwrap_or_else(|| icon.id.clone());
+    body.push_str(&format!("label = {}\n", toml_str(&display_label)));
+    body.push_str("\n[chip]\n");
+    body.push_str(&format!("glyph = {}\n", toml_str(&icon.glyph)));
+    body.push_str(&format!("fallback = {}\n", toml_str(&icon.fallback)));
+    body.push_str(&format!("color = {}\n", toml_str(&icon.color)));
+    body.push_str(&format!("enabled = {}\n", icon.enabled));
+    body.push_str(&format!("in_palette_bar = {}\n", icon.in_palette_bar));
+    body.push_str("\n[[commands]]\n");
+    body.push_str(&format!(
+        "id = {}\n",
+        toml_str(&format!("{}.open", icon.id))
+    ));
+    body.push_str(&format!(
+        "title = {}\n",
+        toml_str(&format!("{}: open", display_label))
+    ));
+    body.push_str(&format!("run = {}\n", toml_str(&icon.command)));
+    std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
+}
+
+fn integrations_dir_or_err() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var_os("HOME").ok_or("no $HOME set — can't locate integrations dir")?;
+    Ok(std::path::PathBuf::from(home)
+        .join(".config")
+        .join("mnml")
+        .join("integrations"))
 }
 
 /// Persist the launcher_icons array to the user's mnml config
@@ -1274,5 +1369,86 @@ enabled = true
         restore(prev_home);
         assert!(manifest_gone, "manifest file should be deleted");
         assert!(rail_gone, "rail chip should be removed");
+    }
+
+    /// #851 phase 2 — `remove_integration_by_id` must also delete
+    /// the sidecar override so a later re-install of the same id
+    /// doesn't inherit partial user chrome from a stale
+    /// `<id>.override.toml`.
+    #[test]
+    fn remove_integration_by_id_also_deletes_override_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = home_lock().lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let restore = |h: Option<std::ffi::OsString>| unsafe {
+            match h {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        };
+        let dir = tmp.path().join(".config").join("mnml").join("integrations");
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = dir.join("testxyz.toml");
+        let over = dir.join("testxyz.override.toml");
+        std::fs::write(&base, "id = \"testxyz\"\nlabel = \"X\"\n").unwrap();
+        std::fs::write(&over, "id = \"testxyz\"\n").unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(ws.path().to_path_buf(), crate::config::Config::default())
+                .unwrap();
+        app.remove_integration_by_id("testxyz");
+        let base_gone = !base.exists();
+        let over_gone = !over.exists();
+        restore(prev_home);
+        assert!(base_gone, "base .toml should be deleted");
+        assert!(over_gone, "sidecar .override.toml should be deleted");
+    }
+
+    /// #851 phase 2 — Edit-mode save writes to
+    /// `<id>.override.toml`, not to `[[ui.integration_icon]]` in
+    /// config.toml. Assert the file content contains the fields
+    /// the loader reads (id, chip.glyph, chip.color, etc.).
+    #[test]
+    fn write_override_toml_emits_loader_readable_shape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = home_lock().lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let restore = |h: Option<std::ffi::OsString>| unsafe {
+            match h {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        };
+        let icon = IntegrationIcon {
+            id: "myint".to_string(),
+            glyph: "M".to_string(),
+            fallback: "M".to_string(),
+            command: "myint.open".to_string(),
+            color: "purple".to_string(),
+            label: Some("My Integration".to_string()),
+            enabled: true,
+            in_palette_bar: true,
+            manifest_can_override: false,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
+        };
+        let path = write_override_toml(&icon).expect("write");
+        let body = std::fs::read_to_string(&path).unwrap();
+        restore(prev_home);
+        assert!(body.contains("id = \"myint\""));
+        assert!(body.contains("label = \"My Integration\""));
+        assert!(body.contains("[chip]"));
+        assert!(body.contains("glyph = \"M\""));
+        assert!(body.contains("color = \"purple\""));
+        assert!(body.contains("in_palette_bar = true"));
+        // File landed in the integrations dir under HOME.
+        assert!(path.ends_with("myint.override.toml"));
     }
 }
