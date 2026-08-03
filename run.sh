@@ -51,11 +51,11 @@
 # (no `set -u`: this juggles possibly-empty arrays on bash 3.2 / macOS)
 set -o pipefail
 
-# mnml-vt-sys's build.rs needs `zig` on PATH — ghostty a887df42+ requires
+# mnml-libghostty-vt-sys's build.rs needs `zig` on PATH — ghostty a887df42+ requires
 # zig 0.16.0. Homebrew installs it at /opt/homebrew/opt/zig/bin (unversioned
 # formula); we also try /opt/homebrew/opt/zig@0.15/bin as a leftover from
 # the previous zig 0.15.2 era. Without this prepend, `cargo build` would
-# silently fail the mnml-vt-sys crate and `./run.sh restart` would loop
+# silently fail the mnml-libghostty-vt-sys crate and `./run.sh restart` would loop
 # on the stale binary.
 for ZIG_DIR in /opt/homebrew/opt/zig/bin /opt/homebrew/opt/zig@0.15/bin; do
   if [ -x "$ZIG_DIR/zig" ] && [[ ":$PATH:" != *":$ZIG_DIR:"* ]]; then
@@ -179,7 +179,7 @@ case "${1:-start}" in
   start) [ "$#" -gt 0 ] && shift ;;   # the implicit default when run with no args
 esac
 
-# libghostty-vt is now built from source by mnml-vt-sys's build.rs
+# libghostty-vt is now built from source by mnml-libghostty-vt-sys's build.rs
 # (see `GHOSTTY_COMMIT` there). First `cargo build` clones ghostty +
 # runs `zig build` (needs zig 0.16.0 on PATH — this script prepends
 # it above). Subsequent builds hit the zig + cargo caches.

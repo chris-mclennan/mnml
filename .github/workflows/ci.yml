@@ -11,7 +11,7 @@ env:
 
 jobs:
   # macOS-arm64 + ubuntu-latest (x86_64) + windows-latest all run the
-  # full suite. mnml-vt-sys source-builds libghostty-vt via `zig build`
+  # full suite. mnml-libghostty-vt-sys source-builds libghostty-vt via `zig build`
   # on every target (see the "Install zig 0.16.0" step below).
   check:
     name: fmt · clippy · test (${{ matrix.os }})
@@ -35,7 +35,7 @@ jobs:
 
       # 2026-08-02 — pkg-config prebuilt path retired (stale against the
       # newer ghostty commit under `vendor/libghostty-vt/include/`). All
-      # three targets now go through mnml-vt-sys's `source-build`
+      # three targets now go through mnml-libghostty-vt-sys's `source-build`
       # fallback: git-clone ghostty at the pinned commit + `zig build`.
       # Adds ~2-5 min to first-time builds; Swatinem/rust-cache below
       # keeps subsequent runs warm.

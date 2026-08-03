@@ -1,4 +1,4 @@
-//! `mnml-vt` — safe wrapper around Ghostty's `libghostty-vt` C ABI.
+//! `mnml-libghostty-vt` — safe wrapper around Ghostty's `libghostty-vt` C ABI.
 //!
 //! This crate covers the API surface mnml consumes: the [`Terminal`] +
 //! its [`TerminalOptions`], the [`render`] state machine (with lending
