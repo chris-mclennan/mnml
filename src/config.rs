@@ -768,6 +768,21 @@ pub struct UiConfig {
     /// for shortcuts to Jira, Bitbucket, GitHub Actions, DB viewers,
     /// etc. See [`IntegrationIcon`].
     pub integration_icons: Vec<IntegrationIcon>,
+    /// #864 — persisted rail order for integration chips. Simple
+    /// list of ids the user has explicitly moved via right-click
+    /// menu → Move up/down/to top/to bottom. `finalize` sorts
+    /// `integration_icons` by this order (ids listed here first,
+    /// unlisted ids appended in their arrival order — so newly-
+    /// installed chips land at the end without needing an
+    /// order-list update).
+    ///
+    /// Lives HERE instead of the per-file override sidecar because
+    /// order is a rail-wide property spanning multiple integrations
+    /// — a single writer + a single reader beats N sidecars all
+    /// carrying a sort-order field. Kept ordering-only (no chip
+    /// visuals) so the 2026-08-01 config-flip drop rule doesn't
+    /// bite: this key is a Vec<String>, not `[[ui.integration_icon]]`.
+    pub integration_icon_order: Vec<String>,
     /// Per-project ticket-key prefixes — when set, pty session tabs
     /// (Claude Code / shell / Codex / etc.) WITHOUT a user-set name get
     /// their label auto-filled from the most-recently-mentioned ticket
@@ -1199,6 +1214,7 @@ impl Default for Config {
                     // (planned P3). mnml no longer pretends to know about a fixed
                     // set of integrations — the manifest folder is ground truth.
                 ],
+                integration_icon_order: Vec::new(),
                 ticket_prefixes: Vec::new(),
                 // qa-feature 2026-07-02 — default "mixr" instead of
                 // "auto". Auto polled macOS Music/Spotify via
@@ -1561,6 +1577,11 @@ struct RawUi {
     /// empty) when present.
     #[serde(default, rename = "integration_icon")]
     integration_icons: Option<Vec<RawIntegrationIcon>>,
+    /// User-persisted rail order. See
+    /// [`UiConfig::integration_icon_order`] + the sort pass in
+    /// `finalize`.
+    #[serde(default)]
+    integration_icon_order: Option<Vec<String>>,
     /// Ticket prefixes for pty-tab auto-naming. See
     /// [`UiConfig::ticket_prefixes`].
     #[serde(default)]
@@ -2016,6 +2037,26 @@ impl Config {
                 )
             });
             self.ui.integration_icons = merged;
+        }
+        // #864 — user-persisted rail order. Blanks stripped so a
+        // trailing comma in TOML doesn't produce an empty id.
+        if let Some(raws) = raw.ui.integration_icon_order {
+            self.ui.integration_icon_order = raws
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        // Apply the order to integration_icons — ids listed in
+        // `integration_icon_order` sort to the front in that order;
+        // unlisted ids retain their arrival order at the tail so a
+        // freshly-installed chip lands at the end without needing
+        // an order-list bump.
+        if !self.ui.integration_icon_order.is_empty() {
+            let order = self.ui.integration_icon_order.clone();
+            let rank =
+                |id: &str| -> usize { order.iter().position(|o| o == id).unwrap_or(usize::MAX) };
+            self.ui.integration_icons.sort_by_key(|a| rank(&a.id));
         }
         // `ticket_prefixes` — pty-tab auto-naming from scrollback.
         // Replaces the default (empty list) when set. Blank entries are
@@ -3377,6 +3418,65 @@ id = "browser"
     // 2026-08-01 (P2) — launcher_icons_config_replaces_defaults +
     // launcher_icons_empty_array_clears_defaults tests deleted with
     // the LauncherIcon retirement.
+
+    /// #864 — the `integration_icon_order` key sorts the effective
+    /// icons list. Ids listed there come first in that order; ids
+    /// NOT listed retain their arrival order at the tail so a
+    /// freshly-installed chip lands at the end without needing an
+    /// order-list bump. This covers the manifest-backed case which
+    /// the older `user_reorder_of_integration_icons_survives_reload`
+    /// couldn't exercise (that one only reorders first-party
+    /// builtins, which the flip doesn't drop from raw config).
+    #[test]
+    fn integration_icon_order_sorts_effective_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut f = std::fs::File::create(&cfg_path).unwrap();
+        writeln!(
+            f,
+            r#"
+[ui]
+integration_icon_order = ["codex", "browser"]
+"#
+        )
+        .unwrap();
+        let mut cfg = Config::default();
+        cfg.apply_file(&cfg_path);
+        let ids: Vec<&str> = cfg
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.as_str())
+            .collect();
+        // First two entries are the ordered ones, in order.
+        assert_eq!(&ids[..2], &["codex", "browser"]);
+        // `claude_code` (only remaining first-party default) unlisted
+        // → lands after the two ordered ids.
+        assert!(ids[2..].contains(&"claude_code"));
+    }
+
+    #[test]
+    fn empty_integration_icon_order_leaves_order_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        // Explicitly-empty order — no reorder should apply.
+        std::fs::write(&cfg_path, "[ui]\nintegration_icon_order = []\n").unwrap();
+        let default_order: Vec<String> = Config::default()
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.clone())
+            .collect();
+        let mut cfg = Config::default();
+        cfg.apply_file(&cfg_path);
+        let after_order: Vec<String> = cfg
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.clone())
+            .collect();
+        assert_eq!(default_order, after_order);
+    }
 
     #[test]
     fn marketplace_config_defaults() {

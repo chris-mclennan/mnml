@@ -67,6 +67,26 @@ impl App {
         self.reveal_pane(pid);
     }
 
+    /// #864 — snapshot the current in-memory rail order + persist
+    /// via `discovery::persist_integration_icon_order`. Also
+    /// updates the in-memory `integration_icon_order` field so
+    /// subsequent renders + persists see the current order without
+    /// waiting on a config reload. Called from every
+    /// MoveIntegration{Up,Down,ToTop,ToBottom} handler.
+    pub fn persist_integration_icon_order(&mut self) {
+        let ids: Vec<String> = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.clone())
+            .collect();
+        self.config.ui.integration_icon_order.clone_from(&ids);
+        if let Err(e) = crate::app::discovery::persist_integration_icon_order(&ids) {
+            self.toast(format!("integration order: persist failed ({e})"));
+        }
+    }
+
     /// Flip enabled/disabled for the integration with `id`, toast,
     /// persist via `write_override_toml`. Same implementation as
     /// the right-click `ToggleIntegrationEnabled` handler — extracted

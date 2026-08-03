@@ -1675,9 +1675,7 @@ impl App {
                 {
                     self.config.ui.integration_icons.swap(pos, pos - 1);
                     self.toast(format!("moved {id} up"));
-                    let _ = crate::app::discovery::persist_integration_icons(
-                        &self.config.ui.integration_icons,
-                    );
+                    self.persist_integration_icon_order();
                 }
             }
             MoveIntegrationDown(id) => {
@@ -1691,9 +1689,7 @@ impl App {
                 {
                     self.config.ui.integration_icons.swap(pos, pos + 1);
                     self.toast(format!("moved {id} down"));
-                    let _ = crate::app::discovery::persist_integration_icons(
-                        &self.config.ui.integration_icons,
-                    );
+                    self.persist_integration_icon_order();
                 }
             }
             MoveIntegrationToTop(id) => {
@@ -1708,9 +1704,7 @@ impl App {
                     let icon = self.config.ui.integration_icons.remove(pos);
                     self.config.ui.integration_icons.insert(0, icon);
                     self.toast(format!("moved {id} to top"));
-                    let _ = crate::app::discovery::persist_integration_icons(
-                        &self.config.ui.integration_icons,
-                    );
+                    self.persist_integration_icon_order();
                 }
             }
             MoveIntegrationToBottom(id) => {
@@ -1725,9 +1719,7 @@ impl App {
                     let icon = self.config.ui.integration_icons.remove(pos);
                     self.config.ui.integration_icons.push(icon);
                     self.toast(format!("moved {id} to bottom"));
-                    let _ = crate::app::discovery::persist_integration_icons(
-                        &self.config.ui.integration_icons,
-                    );
+                    self.persist_integration_icon_order();
                 }
             }
             AddIntegrationToActivityBar(id) => {
