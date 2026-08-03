@@ -17,10 +17,16 @@
 //!
 //! This module centralizes the resolution. Precedence:
 //!
-//! - **Portable marker present** — if `<binary_dir>/mnml-data/` is
-//!   a directory, use it. Discovered via `env::current_exe()` at
-//!   first call, cached. Portable wins over HOME so a marker file
-//!   shipped alongside a binary always takes effect.
+//! - **Portable, opted-in** — if `<binary_dir>/mnml-data/` exists
+//!   AND contains a `.opted-in` file, use it. The two-file gate
+//!   prevents an accidentally-named `mnml-data/` folder from
+//!   silently redirecting a user's data. Phase C's welcome UI
+//!   creates the marker on user consent; power-users can `touch`
+//!   it manually for headless setups.
+//! - **Portable, awaiting consent** — folder exists but no
+//!   `.opted-in`. Reported via [`portable_state`] so the welcome
+//!   UI can default its choice to Portable, but resolution stays
+//!   on Home until the user consents.
 //! - **Otherwise** — `$HOME/.config/mnml/`. Sandbox mode's HOME
 //!   redirect is invisible here — it just changes what `HOME`
 //!   resolves to, which is exactly the point.
@@ -96,12 +102,55 @@ pub fn portable_candidate() -> Option<PathBuf> {
     binary_dir().map(|d| d.join("mnml-data"))
 }
 
+/// Filename inside the portable folder that gates activation. The
+/// welcome UI (Phase C) creates this on user consent; power-users
+/// can `touch` it manually for headless setups. Empty file — its
+/// presence is the whole signal.
+pub const PORTABLE_OPT_IN_FILENAME: &str = ".opted-in";
+
+/// Reported to the welcome UI so it can shape the first-run
+/// choice: default to Portable when the folder is already there,
+/// default to Normal otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortableState {
+    /// No `mnml-data/` folder next to the binary. Welcome UI
+    /// defaults the choice to Normal.
+    Absent,
+    /// Folder is there but no `.opted-in` marker. Welcome UI
+    /// defaults the choice to Portable and creates the marker if
+    /// the user accepts. Until then, [`data_root`] stays on Home.
+    AwaitingConsent,
+    /// Folder + marker both present. [`data_root`] returns the
+    /// portable folder; no prompt needed.
+    Active,
+}
+
+/// Report the portable-mode state at the current binary
+/// location. Non-cached — cheap enough to call on demand, and the
+/// welcome UI needs the live answer (creating the marker mid-run
+/// should be immediately observable).
+pub fn portable_state() -> PortableState {
+    let Some(candidate) = portable_candidate() else {
+        return PortableState::Absent;
+    };
+    if !candidate.is_dir() {
+        return PortableState::Absent;
+    }
+    if candidate.join(PORTABLE_OPT_IN_FILENAME).exists() {
+        PortableState::Active
+    } else {
+        PortableState::AwaitingConsent
+    }
+}
+
 fn resolve() -> Resolved {
-    // Portable wins: shipping a mnml-data/ folder next to the
-    // binary is an explicit user intent (they set it up on the
-    // USB stick / release download / whatever).
-    if let Some(portable) = portable_candidate()
-        && portable.is_dir()
+    // Portable wins ONLY when both the folder AND the opt-in
+    // marker are present. Folder-alone is treated as "awaiting
+    // consent" and reported via portable_state() to the welcome
+    // UI — resolution stays on Home so an accidentally-named
+    // folder never silently redirects a user's data.
+    if let PortableState::Active = portable_state()
+        && let Some(portable) = portable_candidate()
     {
         return Resolved {
             path: portable,
