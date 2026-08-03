@@ -5,7 +5,7 @@ description: How to install mnml on macOS, Linux, and Windows.
 
 import { Icon, Code, Card } from '@astrojs/starlight/components';
 
-mnml ships native binaries for macOS, Linux, and Windows via [`cargo-dist`](https://opensource.dev/dist/).
+mnml ships native binaries for macOS, Linux, and Windows via [`cargo-dist`](https://opensource.dev/dist/). All three are first-class platforms — the full test suite (1196 unit + 222 e2e) runs green on every push across `ubuntu-latest`, `macos-latest`, and `windows-latest`. For the finer points (target choices, Git Bash on Windows, source-build prerequisites), see [Platform support](/manual/platform-support/).
 
 <div class="install-grid">
 
@@ -127,6 +127,8 @@ mnml ships native binaries for macOS, Linux, and Windows via [`cargo-dist`](http
 
 ## Build from source
 
+Prerequisites — a Rust toolchain (via [rustup](https://rustup.rs/)), **`zig` 0.16.0**, and **`git`** on `PATH`. The zig + git pair drive `mnml-libghostty-vt-sys`'s source-build fallback, which git-clones ghostty at a pinned commit and compiles `libghostty-vt` on first build. Older zig 0.15.x won't work.
+
 ```sh
 git clone https://github.com/chris-mclennan/mnml
 cd mnml
@@ -134,7 +136,14 @@ cargo build --release
 ./target/release/mnml
 ```
 
-Or via crates.io (slow — requires the Rust toolchain):
+On Windows, build explicitly for the `-pc-windows-gnu` target (see [Platform support](/manual/platform-support/) for the rationale — upstream `libghostty-vt` doesn't support MSVC):
+
+```sh
+rustup target add x86_64-pc-windows-gnu
+cargo build --release --target x86_64-pc-windows-gnu
+```
+
+Or via crates.io (slow — requires the Rust toolchain plus the same zig + git prerequisites):
 
 ```sh
 cargo install mnml-rs

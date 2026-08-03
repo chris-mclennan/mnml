@@ -148,7 +148,7 @@ The left sidebar has two persistent sections: **WORKSPACE** (the file tree) and 
 
 Worktrees come from `git worktree list --porcelain`. Clicking a worktree row opens a shell in that path (a `Pane::Pty`). Worktree management — create / remove — runs through the same typed-confirm safety net as branch delete.
 
-The open-PRs-for-this-branch sidecar that earlier mnml builds drew on the gutter is gone — the SCM live dashboards split out of the core in 2026-06 into the standalone [`mnml-forge-*` viewers](/manual/integrations/community/#forge-viewers). To see PRs / MRs / pipelines for the current repo, launch the matching forge viewer (`:term mnml-forge-bitbucket` / `mnml-forge-github` / `mnml-forge-gitlab` / `mnml-forge-azdevops`).
+The open-PRs-for-this-branch sidecar that earlier mnml builds drew on the gutter is gone — the SCM live dashboards split out of the core in 2026-06 into standalone `mnml-forge-*` sibling viewers. To see PRs / MRs / pipelines for the current repo, install the matching forge viewer via the [Marketplace tab](/manual/integrations/marketplace/) and launch it with `:term mnml-forge-bitbucket` / `mnml-forge-github` / `mnml-forge-gitlab` / `mnml-forge-azdevops`.
 
 The rail's right-click menu (on a branch row) covers:
 
@@ -261,5 +261,5 @@ While editing, `[c` and `]c` (in vim mode) jump to the previous / next changed h
 - [Editing](/manual/editing/) — the buffer that's diffed and committed
 - [Configuration](/reference/configuration/) — `[keys.global]` / `[keys.vim]` / `[keys.standard]` for remapping every git chord
 - [Keybindings](/reference/keybindings/) — every default key, including the full git palette
-- [Community integrations](/manual/integrations/community/) — the `mnml-forge-*` viewers (Bitbucket, GitHub, GitLab, Azure DevOps) that replaced the in-tree SCM dashboards
+- [Integrations overview](/manual/integrations/overview/) — the marketplace + manifest model that ships the `mnml-forge-*` viewers (Bitbucket, GitHub, GitLab, Azure DevOps) that replaced the in-tree SCM dashboards
 - [AI panes](/manual/ai/) — the Claude / Codex integration that drives `git.ai_commit` and `git.ai_recompose`

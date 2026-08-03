@@ -23,7 +23,7 @@ Missing files are fine — mnml silently treats them as empty. A malformed file 
 :source ~/.config/mnml/config.toml
 ```
 
-A few sections (`[[workspaces]]`, `[[ui.launcher_icon]]`, `[[ui.integration_icon]]`, …) have their own merge rules — workspaces *append* across files; launcher-icon and integration-icon arrays *replace*. Those quirks are called out below.
+A few sections (`[[workspaces]]`, `[[ui.integration_icon]]`, …) have their own merge rules — workspaces *append* across files; integration-icon arrays *override* the built-in defaults and installed manifests field-by-field (see [Installing integrations → precedence](/manual/integrations/installing/#precedence)). Those quirks are called out below. The old `[[ui.launcher_icon]]` array was retired in 2026-08; every launcher chip is now an `[[ui.integration_icon]]` entry.
 
 ## The Settings overlay
 
@@ -127,7 +127,7 @@ The overlay covers **discrete-choice rows** (booleans, input style `vim`/`standa
 
 Things the overlay does **not** edit:
 
-- Arrays of complex things — `[[workspaces]]`, `[[ui.launcher_icon]]`, `[[ui.integration_icon]]`, `[snippets.<scope>]`, `[tasks.<name>]`, `[formatters.<ext>]`, `[linters.<ext>]`. These stay in TOML.
+- Arrays of complex things — `[[workspaces]]`, `[[ui.integration_icon]]`, `[[marketplace.source]]`, `[snippets.<scope>]`, `[tasks.<name>]`, `[formatters.<ext>]`, `[linters.<ext>]`. These stay in TOML.
 - Free-form strings — theme name, ticket prefixes, formatter command templates.
 - `[keys.*]` tables — keybindings are TOML-only (see [Keybindings](#keybindings) below).
 
@@ -218,27 +218,52 @@ ticket_prefixes = ["TE-", "MIX-", "PROJ-"]  # see below
 
 When set (e.g. `["TE-", "MIX-"]`), pty session tabs that don't have a user-set name auto-fill their label from the most-recently-mentioned ticket token in the session's visible scrollback. Useful for Claude Code / Codex sessions discussing a specific ticket — the tab strip shows `TE-1234` instead of `claude code` without a manual `:rename`. Empty (default) disables the scan entirely.
 
-#### The launcher-icon strips
+#### The integration-icon array
 
-mnml has two icon strips driven from `[ui]` arrays:
+All integration chips — rail chips, palette-bar chips, everything with a glyph and a click action — come from **one array**: `[[ui.integration_icon]]`. The old `[[ui.launcher_icon]]` split was retired in 2026-08. Whether a chip renders in the rail's INTEGRATIONS section or in the palette bar depends on the entry's `in_palette_bar` field.
 
-- `[[ui.launcher_icon]]` — colored chips on the right edge of the bufferline. Defaults to empty.
-- `[[ui.integration_icon]]` — plain glyphs in the rail's INTEGRATIONS row (under GIT). Defaults to Claude Code, Codex, Bitbucket, Jira, HTTP, CodeBuild, GitHub, Azure DevOps, GitLab, S3, CloudWatch Logs, Amplify, DynamoDB, Lambda, EventBridge — one chip per first-party sibling that ships as a default. Each fires `:term <binary>` so installing the matching sibling is all it takes to make the chip work.
+The three built-in defaults (baked into mnml core in `src/config.rs`) are `browser`, `claude_code`, and `codex`. Everything else comes from manifests you install (either via the [Marketplace tab](/manual/integrations/marketplace/) or via `<sibling> --install`) — mnml doesn't carry a hardcoded list of ~35 first-party siblings anymore.
 
-Both share the same shape:
+`[[ui.integration_icon]]` blocks in your config are **thin overrides**, not new definitions. The entries are matched by `id` against built-ins and installed manifests, and user config is authoritative for these fields only:
+
+- **`enabled`** — whether the chip is on the Installed tab (default `false` for everything except `browser`)
+- **`in_palette_bar`** — whether the chip renders in the palette bar
+
+The rest — `glyph`, `fallback`, `color`, `command`, `label` — comes from the built-in or installed manifest with matching `id`. For richer per-chip customization use the sidecar `<id>.override.toml` file (usually written by the right-click **Edit…** overlay) — see [Installing → override sidecar semantics](/manual/integrations/installing/#override-sidecar-semantics). To add a fresh chip from scratch use the [`launcher.add_local`](/manual/integrations/installing/#path-2--launcheradd_local) palette command or drop a launcher manifest under `~/.config/mnml/integrations/`.
 
 ```toml
-[[ui.launcher_icon]]
-id       = "myapp"                       # stable identifier
-glyph    = "\u{F0668}"                   # nerd-font glyph
-fallback = "MA"                          # ASCII fallback for --ascii / ascii_icons = true
-command  = ":term myapp"          # leading `:` ⇒ ex-cmdline;
-                                          # no prefix ⇒ mnml command id
-color    = "teal"                        # orange / cyan / blue / green / yellow / purple / red / teal / bg2
-tooltip  = "My private Pty-pane app"     # optional hover text
+# Turn on the Claude Code chip and pin it to the palette bar.
+[[ui.integration_icon]]
+id             = "claude_code"
+enabled        = true
+in_palette_bar = true
+
+# Enable a manifest-installed integration.
+[[ui.integration_icon]]
+id      = "postgres"        # matches ~/.config/mnml/integrations/postgres.toml
+enabled = true
 ```
 
-Setting the array **replaces** the built-in defaults — copy the defaults from the source if you want to extend rather than replace.
+Entries with `id`s that match nothing (no built-in, no installed manifest) are dropped. See [Installing integrations → precedence](/manual/integrations/installing/#precedence) for the full merge rules.
+
+For the "manifest as authored" schema (used when you're writing a `~/.config/mnml/integrations/<id>.toml` file), see [Launcher manifests](/manual/integrations/launcher-manifests/).
+
+#### The marketplace source list
+
+```toml
+[marketplace]
+enabled = true             # master switch; default true
+cache_ttl_secs = 3600      # cache lifetime, default 1h
+use_defaults = true        # merge shipping sources with yours
+
+[[marketplace.source]]
+type = "github_launcher_folder"
+id = "acme"
+repo = "acme-corp/mnml-tools"
+path = "launchers"
+```
+
+Full reference: [Marketplace](/manual/integrations/marketplace/).
 
 #### Update check
 
@@ -381,13 +406,13 @@ root_markers = [".luarc.json", "stylua.toml"]
 
 See the [LSP manual](/manual/lsp/) for the field reference and the list of servers mnml ships defaults for.
 
-### Git-host integrations — moved to `mnml-forge-*` siblings
+### Git-host integrations — installable via the Marketplace
 
-The in-tree Bitbucket / GitHub / GitLab / Azure DevOps live panes were split out of mnml core in 2026-06 into four standalone sibling binaries — [`mnml-forge-bitbucket`](/manual/integrations/forge-bitbucket/), [`mnml-forge-github`](/manual/integrations/forge-github/), [`mnml-forge-gitlab`](/manual/integrations/forge-gitlab/), [`mnml-forge-azdevops`](/manual/integrations/forge-azdevops/) — each hosted in a regular mnml pane via `:term <binary>`. Each forge sibling reads its own config from `~/.config/mnml-forge-<host>.toml` and its own credentials from `~/.config/mnml-forge-<host>/token`. See the [integration class overview](/manual/integrations/community/) for the model.
+The in-tree Bitbucket / GitHub / GitLab / Azure DevOps live panes were split out of mnml core in 2026-06 into standalone sibling binaries — each hosted in a regular mnml pane via `:term <binary>`. The four sibling binaries themselves (`mnml-forge-bitbucket`, `mnml-forge-github`, `mnml-forge-gitlab`, `mnml-forge-azdevops`) are no longer maintained as first-party public repos; they're **community-published** now, and the way you find them is via the [Marketplace tab](/manual/integrations/marketplace/). Any `mnml-forge-<host>` crate published with the `mnml-integration` keyword appears there.
 
-Existing `[bitbucket]`, `[github]`, `[gitlab]`, `[azdevops]` sections in your mnml config are **silently ignored** — no error, no warning. You can either delete them or leave them in place; they're noise to mnml now. The new shape lives in each forge sibling's own per-binary config file.
+Existing `[bitbucket]`, `[github]`, `[gitlab]`, `[azdevops]` sections in your mnml config are **silently ignored** — no error, no warning. You can either delete them or leave them in place; they're noise to mnml now. The new shape lives in each forge sibling's own per-binary config file (`~/.config/mnml-forge-<host>.toml`) and each sibling's own credentials file (`~/.config/mnml-forge-<host>/token`).
 
-Mnml's default config still seeds four launcher chips in the rail's INTEGRATIONS row (`bitbucket`, `github`, `gitlab`, `azdevops`) that fire `:term mnml-forge-<host>` — install whichever siblings you use and click the chip to open the viewer.
+The `forge.open_*` palette commands that mnml used to register (one per forge / cloud / database sibling) were removed in 2026-08 alongside the ecosystem consolidation — each installed sibling now brings its own `<id>.open` command via `IntegrationManifest.commands`, so duplicating them in mnml core would just collide with the manifest-registered dynamic commands. Chord bindings that used to point at `forge.open_bitbucket` etc. come from the manifest now.
 
 #### Cross-host PR workflow
 
@@ -397,13 +422,8 @@ mnml ships palette commands and whichkey chords that fan out across whichever fo
 |---|---|---|
 | `pr.picker` | `<leader>P p` | Cross-host fuzzy picker — Enter opens URL, Tab cross-navs to the matching pipeline / build |
 | `pr.refresh` | `<leader>P r` | Background re-fetch of the cross-host PR cache (5-min TTL) |
-| `forge.open_bitbucket` | `<leader>i b` | `:term mnml-forge-bitbucket` |
-| `forge.open_github` | `<leader>i g` | `:term mnml-forge-github` |
-| `forge.open_gitlab` | `<leader>i l` | `:term mnml-forge-gitlab` |
-| `forge.open_azdevops` | `<leader>i z` | `:term mnml-forge-azdevops` |
-| `forge.open_codebuild` | `<leader>i c` | `:term mnml-aws-codebuild` |
 
-All commands are chord-bindable via `[keys.global]` / `[keys.vim]` / `[keys.standard]` if you want different bindings than the whichkey defaults.
+Individual per-forge launcher commands (opening the `mnml-forge-github` viewer, jumping to `mnml-aws-cloudwatch-logs`, and so on) come from the manifest of whichever sibling you've installed via the Marketplace. Chord binding is up to the manifest author; user-config `[keys.global]` / `[keys.vim]` / `[keys.standard]` blocks can override per binding. Each expects the matching sibling binary on `$PATH`; missing binaries render the chip dim with a `(binary not installed)` suffix.
 
 ### `[ai]` and `[http]`
 

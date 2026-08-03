@@ -146,7 +146,7 @@ User-facing changes landed on `main` since v0.2.0 and waiting for the next tag:
 - **Nightly app bundle** — `./scripts/build-app.sh --nightly` builds `target/mnml-nightly.app` with an inverted-color icon and a launcher that execs your latest `cargo build --release` directly. Coexists with the stable bundle in `/Applications/`. Local-only; not part of release CI. See the [Troubleshooting page](/troubleshooting/#nightly-bundle).
 - **macOS Tahoe fix** — `Info.plist` now sets `LSMinimumSystemVersion = 11.0`, which suppresses the spurious "Support Ending for Intel-based Apps" warning on macOS 26 (Tahoe) for arm64-native builds. If you see that warning, redownload the latest DMG. See [Troubleshooting](/troubleshooting/#intel-based-apps-warning-on-macos-tahoe-26).
 - **Full-bleed app icon + auto-version-stamped CFBundleVersion** — the icon now paints edge-to-edge so Tahoe's auto-glass-template wraps the art directly instead of leaving a gray bezel; `CFBundleVersion` is stamped with the build timestamp at package time so Finder picks up new artwork without a manual icon-cache flush.
-- **Docs:** new manual page for the [Startup picker](/manual/startup-picker/), new [Jira tickets viewer](/manual/integrations/tickets-jira/) integration page, new [Troubleshooting](/troubleshooting/) page, and an [Update check](/manual/settings/#update-check) subsection in Settings.
+- **Docs:** new manual page for the [Startup picker](/manual/startup-picker/), new [Troubleshooting](/troubleshooting/) page, and an [Update check](/manual/settings/#update-check) subsection in Settings.
 
 ### 0.1.2 — 2026-05-31
 

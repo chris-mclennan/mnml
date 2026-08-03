@@ -375,43 +375,27 @@ Press `y` (or accept the seeded answer) to spawn the install command in a Pty pa
 | PR fuzzy picker (GH + GL + BB + Az) | `<leader>Pp` | (palette) | `pr.picker` |
 | Refresh cross-host cache | `<leader>Pr` | (palette) | `pr.refresh` |
 
-## Integrations (sibling binaries)
+## Integrations
 
-Each chord launches the matching `mnml-*` sibling binary as a tab. The sibling must be installed and visible to mnml's [integration detector](/manual/integrations/installing/) — otherwise the rail chip is hidden.
+The per-forge / cloud / database launcher chords that used to live here (one per `mnml-*` sibling) were removed in 2026-08 alongside the ecosystem consolidation. mnml core no longer registers a fixed list of `forge.open_*` palette commands; each installed sibling brings its own `<id>.open` command via its manifest, and chord bindings come from the manifest too.
 
-| Sibling | vim | standard | Command id |
+The stable, in-core integration commands:
+
+| Action | vim | standard | Command id |
 |---|---|---|---|
-| Bitbucket forge viewer | `<leader>ib` | (palette) | `forge.open_bitbucket` |
-| GitHub forge viewer | `<leader>ig` | (palette) | `forge.open_github` |
-| GitLab forge viewer | `<leader>il` | (palette) | `forge.open_gitlab` |
-| Azure DevOps forge viewer | `<leader>iz` | (palette) | `forge.open_azdevops` |
-| Jira ticket viewer | `<leader>ij` | (palette) | `forge.open_jira` |
-| AWS CodeBuild | `<leader>ic` | (palette) | `forge.open_codebuild` |
-| AWS CloudWatch Logs | `<leader>iw` | (palette) | `forge.open_cloudwatch_logs` |
-| AWS Amplify | `<leader>ia` | (palette) | `forge.open_amplify` |
-| AWS Lambda | `<leader>iL` | (palette) | `forge.open_lambda` |
-| AWS EventBridge | `<leader>ie` | (palette) | `forge.open_eventbridge` |
-| AWS RDS | `<leader>iR` | (palette) | `forge.open_rds` |
-| AWS ECS | `<leader>iC` | (palette) | `forge.open_ecs` |
-| AWS ECR | `<leader>iE` | (palette) | `forge.open_ecr` |
-| AWS Cognito | `<leader>io` | (palette) | `forge.open_cognito` |
-| AWS SQS | `<leader>iq` | (palette) | `forge.open_sqs` |
-| AWS SNS | `<leader>iN` | (palette) | `forge.open_sns` |
-| Amazon S3 browser | `<leader>is` | (palette) | `forge.open_s3` |
-| Azure Blob Storage browser | `<leader>iA` | (palette) | `forge.open_azure_blob` |
-| DynamoDB browser | `<leader>id` | (palette) | `forge.open_dynamodb` |
-| Datadog | `<leader>iD` | (palette) | `forge.open_datadog` |
-| Buttondown newsletter | `<leader>iB` | (palette) | `forge.open_buttondown` |
-| Slack browse + post | `<leader>iS` | (palette) | `forge.open_slack` |
-| Microsoft Teams | `<leader>iT` | (palette) | `forge.open_teams` |
-| Mandrill email | `<leader>iM` | (palette) | `forge.open_mandrill` |
-| Docker containers | `<leader>iK` | (palette) | `forge.open_docker` |
-| Gmail browse + send | `<leader>iG` | (palette) | `forge.open_gmail` |
-| Cloudflare CDN | `<leader>iF` | (palette) | `forge.open_cloudflare` |
+| Integration details pane | `<leader>id` | (palette) | `integrations.show_details` |
+| Enable / disable a chip (picker) | `<leader>iE` | (palette) | `integrations.toggle_enabled` |
+| Icon picker (browse Nerd Font glyphs) | `<leader>ip` | (palette) | `integrations.icon_picker` |
+| Add-integration overlay | (rail `+` chip) | (rail `+` chip) | `integrations.add` |
+| Re-scan `~/.config/mnml/integrations/` | (palette) | (palette) | `integrations.refresh` |
+| Refresh detection cache | (palette) | (palette) | `integrations.refresh_binary_cache` |
+| Fetch marketplace sources | (palette) | (palette) | `marketplace.refresh` |
+| Add a local launcher (edit overlay) | (palette) | (palette) | `launcher.add_local` |
 | htop | `<leader>ih` | (palette) | `tools.htop` |
 | iftop | `<leader>iI` | (palette) | `tools.iftop` |
-| Add-integration overlay | (rail `+` chip) | (rail `+` chip) | `integrations.add` |
-| Refresh detection cache | (palette) | (palette) | `integrations.refresh` |
+| btop | `<leader>ir` | (palette) | `tools.btop` |
+
+For sibling-provided chords: see the manifest of whichever integration you've installed via the marketplace, or read [Installing integrations](/manual/integrations/installing/) for how manifest commands + keys plug into mnml at load time.
 
 ## UI toggles
 

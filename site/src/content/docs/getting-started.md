@@ -119,6 +119,10 @@ Renders to a virtual screen driven over a file-IPC channel at `<workspace>/.mnml
 
 Same `App` and draw path as the GUI. Used by the `.test` e2e format (`mnml test` and under `cargo test`) and any out-of-process tooling that wants to drive mnml programmatically.
 
+## Platform support
+
+macOS, Linux, and Windows all run the same binary from the same release train. Windows moved to first-class in August 2026 — the full unit + e2e suite runs green on `windows-latest` on every push. For the deeper "what runs where" story (target choices, Git Bash on Windows, source-build prerequisites), see [Platform support](/manual/platform-support/).
+
 ## Next
 
 - See [FEATURES.md](https://github.com/chris-mclennan/mnml/blob/main/FEATURES.md) for the complete feature inventory.

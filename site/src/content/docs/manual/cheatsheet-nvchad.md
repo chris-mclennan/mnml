@@ -288,39 +288,18 @@ mnml has cross-host PR discovery (GitHub / GitLab / Bitbucket / Azure DevOps uni
 
 ### `<leader>i` — integrations
 
-The sibling-binary launcher trie. NvChad has no analog — these are mnml-family viewers (each lives in a separate repo as `mnml-{forge,aws,db,…}-*`).
+Integration management + external-tool launchers. NvChad has no analog. The per-forge / cloud / database chords that lived under this trie until 2026-08 (`forge.open_*`) were removed alongside the ecosystem consolidation — each installed sibling now brings its own command + chord via its manifest, so a `<leader>iL` for AWS Lambda comes from `mnml-aws-lambda`'s manifest rather than mnml core.
 
 | Chord | Command id | Action |
 |---|---|---|
-| `<leader>ib` | `forge.open_bitbucket` | Bitbucket viewer |
-| `<leader>ig` | `forge.open_github` | GitHub viewer |
-| `<leader>il` | `forge.open_gitlab` | GitLab viewer |
-| `<leader>iz` | `forge.open_azdevops` | Azure DevOps viewer |
-| `<leader>ic` | `forge.open_codebuild` | AWS CodeBuild |
-| `<leader>is` | `forge.open_s3` | Amazon S3 |
-| `<leader>iA` | `forge.open_azure_blob` | Azure Blob Storage |
-| `<leader>iw` | `forge.open_cloudwatch_logs` | CloudWatch Logs |
-| `<leader>ia` | `forge.open_amplify` | AWS Amplify |
-| `<leader>id` | `forge.open_dynamodb` | DynamoDB |
-| `<leader>iL` | `forge.open_lambda` | Lambda functions |
-| `<leader>ie` | `forge.open_eventbridge` | EventBridge |
-| `<leader>iR` | `forge.open_rds` | RDS |
-| `<leader>iC` | `forge.open_ecs` | ECS |
-| `<leader>iE` | `forge.open_ecr` | ECR |
-| `<leader>io` | `forge.open_cognito` | Cognito |
-| `<leader>iq` | `forge.open_sqs` | SQS |
-| `<leader>iN` | `forge.open_sns` | SNS |
-| `<leader>iD` | `forge.open_datadog` | Datadog |
-| `<leader>iB` | `forge.open_buttondown` | Buttondown |
-| `<leader>iS` | `forge.open_slack` | Slack |
-| `<leader>iT` | `forge.open_teams` | Microsoft Teams |
-| `<leader>iM` | `forge.open_mandrill` | Mandrill |
-| `<leader>iK` | `forge.open_docker` | Docker |
-| `<leader>iG` | `forge.open_gmail` | Gmail |
-| `<leader>ij` | `forge.open_jira` | Jira |
-| `<leader>iF` | `forge.open_cloudflare` | Cloudflare |
+| `<leader>id` | `integrations.show_details` | Detail pane for the focused chip |
+| `<leader>iE` | `integrations.toggle_enabled` | Enable / disable a chip (picker) |
+| `<leader>ip` | `integrations.icon_picker` | Browse Nerd Font glyphs |
 | `<leader>ih` | `tools.htop` | htop |
 | `<leader>iI` | `tools.iftop` | iftop |
+| `<leader>ir` | `tools.btop` | btop |
+
+Any additional chords come from whatever launcher manifests you've installed via the [Marketplace](/manual/integrations/marketplace/) — each `[[commands]]` entry can carry a `keys = ["<leader>i…"]` binding that gets wired at load time.
 
 ### Top-level `<leader>` keys
 

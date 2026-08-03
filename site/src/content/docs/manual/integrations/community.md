@@ -1,129 +1,104 @@
 ---
 title: Community integrations
-description: The full mnml family — 37 first-party sibling integrations across forges, trackers, messaging, cloud infrastructure, databases, observability, testing, and more. Every sibling self-installs into mnml via `<sibling> --install` (mnml-bridge 0.3+).
+description: mnml integrations don't live in a central directory — they're discovered at runtime via the Marketplace tab. This page explains where to find what's out there, how to contribute a launcher, and how the Official / Community split works.
 ---
 
-mnml's integration model lets anyone publish a standalone CLI that doubles as a hosted mnml pane. This page is a directory of the family — 37 first-party integrations across forges, trackers, messaging, cloud infra, databases, observability, and testing.
+mnml doesn't maintain a hardcoded catalog of "official" integrations. The first-party surface is three GitHub repos — `chris-mclennan/mnml`, `chris-mclennan/mnml-integrations`, and `chris-mclennan/mnml-tattle-tests` — and everything else installable comes from the [Marketplace](/manual/integrations/marketplace/). That's a federated discovery model with two shipping sources (crates.io keyword search + one reference GitHub folder) and unlimited user-configurable sources. Any integration in any of those sources is one click away from installed.
 
-Every sibling **self-installs** — after `cargo install <sibling-repo>`, run `<sibling> --install` and the rail chip + palette command + chord appear in mnml on next restart (or after `integrations.refresh`). See [Building integrations](/manual/integrations/building/) for the SDK contract, or [Bridge / Mount protocol](/manual/bridge-mount/) for the full API surface.
+This page is the "where do I go to find integrations, and how do I add mine" page.
 
-To add your integration: send a PR editing this file. The bar is low — it should build, run, and not be malware. We won't audit your code, gate on quality, or take ownership of your repo.
+## Where to browse
 
-## First-party — the mnml family
+The primary answer is: inside mnml, open the activity-bar Integrations panel and click **Marketplace**. If the tab is empty, run `:marketplace.refresh` and give it a few seconds — a background fetch runs against every configured source.
 
-Maintained alongside mnml. These are the reference implementations for the architecture — clone any of them to bootstrap your own.
+The shipping default sources:
 
-### Forges (SCM + PRs + pipelines)
+- **crates.io** — every crate published with the `mnml-integration` keyword. Renders as `[app]` rows. `cargo install` on click.
+- **[`chris-mclennan/mnml-integrations`](https://github.com/chris-mclennan/mnml-integrations)** — the reference launcher catalog. Every `.toml` file under `launchers/` becomes an installable row. Renders as `[launcher]` rows. Download-and-write on click.
 
-Code-hosting forges — SCM, PRs / MRs, pipelines, reviews, issues under one roof.
+Both of these are the closest thing mnml has to a "community integrations" list — they're the low-friction way to publish something that everyone with a default install sees. Entries from either source are tagged `Provenance::Official`; user-added sources are `Provenance::Community` (see [Marketplace → provenance](/manual/integrations/marketplace/#provenance--official-vs-community)).
 
-| Integration | Backend |
-|---|---|
-| [`mnml-forge-bitbucket`](https://github.com/chris-mclennan/mnml-forge-bitbucket) | Bitbucket Cloud — PRs + Pipelines + Branches ([manual](/manual/integrations/forge-bitbucket/)) |
-| [`mnml-forge-github`](https://github.com/chris-mclennan/mnml-forge-github) | GitHub — Issues / PRs + Actions runs ([manual](/manual/integrations/forge-github/)) |
-| [`mnml-forge-gitlab`](https://github.com/chris-mclennan/mnml-forge-gitlab) | GitLab (gitlab.com or self-hosted) — MRs + Pipelines ([manual](/manual/integrations/forge-gitlab/)) |
-| [`mnml-forge-azdevops`](https://github.com/chris-mclennan/mnml-forge-azdevops) | Azure DevOps — Pull Requests + Builds ([manual](/manual/integrations/forge-azdevops/)) |
+## Contributing a launcher
 
-### Trackers
+Launchers are the recommended shape for anything that wraps an existing CLI — `htop`, `lazygit`, `k9s`, `pg_dump`, `docker compose`, `terraform`, whatever. No code to write, no crate to publish.
 
-Issue / work trackers — issues, sprints, roadmaps.
+1. Fork [`chris-mclennan/mnml-integrations`](https://github.com/chris-mclennan/mnml-integrations).
+2. Add `launchers/<your-id>.toml`. See [Launcher manifests](/manual/integrations/launcher-manifests/) for the schema.
+3. Open a PR.
 
-| Integration | Backend |
-|---|---|
-| [`mnml-tracker-jira`](https://github.com/chris-mclennan/mnml-tracker-jira) | Atlassian Jira — JQL or auto-resolved release `fixVersion`s ([manual](/manual/integrations/tracker-jira/)) |
-| [`mnml-tracker-linear`](https://github.com/chris-mclennan/mnml-tracker-linear) | Linear — GraphQL filter or saved view ids |
+The bar is deliberately low — the manifest should parse as a valid `IntegrationManifest`, and the `run` command should invoke a CLI most users can install with one line. No code review beyond "does this launcher make sense" — the catalog is discoverability, not an audit.
 
-### Messaging
+Once merged, your launcher appears in every mnml user's Marketplace tab on their next `marketplace.refresh`, tagged Official.
 
-Chat, email, calendar — read + post + react + compose from the keyboard.
+## Publishing a binary sibling
 
-| Integration | Backend |
-|---|---|
-| [`mnml-msg-slack`](https://github.com/chris-mclennan/mnml-msg-slack) | Slack — channels, DMs, search, post, react ([manual](/manual/integrations/msg-slack/)) |
-| [`mnml-msg-teams`](https://github.com/chris-mclennan/mnml-msg-teams) | Microsoft Teams — teams, chats, search, post ([manual](/manual/integrations/msg-teams/)) |
-| [`mnml-msg-gmail`](https://github.com/chris-mclennan/mnml-msg-gmail) | Gmail — inbox, sent, labels, search, compose ([manual](/manual/integrations/msg-gmail/)) |
-| [`mnml-msg-gcal`](https://github.com/chris-mclennan/mnml-msg-gcal) | Google Calendar — Today / Week / Upcoming panes ([manual](/manual/integrations/msg-gcal/)) |
-| [`mnml-msg-buttondown`](https://github.com/chris-mclennan/mnml-msg-buttondown) | Buttondown newsletter — drafts, sent, scheduled, subscribers ([manual](/manual/integrations/msg-buttondown/)) |
-| [`mnml-msg-mandrill`](https://github.com/chris-mclennan/mnml-msg-mandrill) | Mandrill transactional email — messages, templates, tags ([manual](/manual/integrations/msg-mandrill/)) |
+If you're publishing a Rust CLI as a mnml integration, tag its `Cargo.toml` with the `mnml-integration` keyword and publish to crates.io:
 
-### AWS
+```toml
+[package]
+name = "mnml-db-postgres"
+version = "0.2.0"
+keywords = ["mnml-integration", "postgres", "database"]
+description = "PostgreSQL browser for mnml — connection tabs, query playground"
+```
 
-AWS service viewers — every sibling shells out to the `aws` CLI (no SDK deps).
+That's the whole registration step. The default `[[marketplace.source]] type = "crates_keyword"` picks up every crate with that keyword regardless of author, and the entry tags Official (the source id `crates.io` matches a default). See [Building integrations → publishing a binary sibling to the marketplace](/manual/integrations/building/#publishing-a-binary-sibling-to-the-marketplace) for the full flow.
 
-| Integration | Backend |
-|---|---|
-| [`mnml-aws-codebuild`](https://github.com/chris-mclennan/mnml-aws-codebuild) | CodeBuild + CloudWatch Logs live tail ([manual](/manual/integrations/aws-codebuild/)) |
-| [`mnml-aws-cloudwatch-logs`](https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs) | CloudWatch Logs — tabbed groups, severity coloring ([manual](/manual/integrations/aws-cloudwatch-logs/)) |
-| [`mnml-aws-amplify`](https://github.com/chris-mclennan/mnml-aws-amplify) | Amplify — apps, branches, deploy jobs ([manual](/manual/integrations/aws-amplify/)) |
-| [`mnml-aws-lambda`](https://github.com/chris-mclennan/mnml-aws-lambda) | Lambda — functions + detail, `l` chord → CloudWatch Logs ([manual](/manual/integrations/aws-lambda/)) |
-| [`mnml-aws-eventbridge`](https://github.com/chris-mclennan/mnml-aws-eventbridge) | EventBridge — buses, rules, event patterns ([manual](/manual/integrations/aws-eventbridge/)) |
-| [`mnml-aws-rds`](https://github.com/chris-mclennan/mnml-aws-rds) | RDS — instances, snapshots ([manual](/manual/integrations/aws-rds/)) |
-| [`mnml-aws-ecs`](https://github.com/chris-mclennan/mnml-aws-ecs) | ECS — clusters, services, task definitions ([manual](/manml/integrations/aws-ecs/)) |
-| [`mnml-aws-ecr`](https://github.com/chris-mclennan/mnml-aws-ecr) | ECR — repositories, images, tags ([manual](/manual/integrations/aws-ecr/)) |
-| [`mnml-aws-cognito`](https://github.com/chris-mclennan/mnml-aws-cognito) | Cognito — User Pools, recent users ([manual](/manual/integrations/aws-cognito/)) |
-| [`mnml-aws-sqs`](https://github.com/chris-mclennan/mnml-aws-sqs) | SQS — queues, message peek ([manual](/manual/integrations/aws-sqs/)) |
-| [`mnml-aws-sns`](https://github.com/chris-mclennan/mnml-aws-sns) | SNS — topics, subscriptions ([manual](/manual/integrations/aws-sns/)) |
+Bundle a `--install` subcommand (via `mnml-bridge`) so users get a one-line follow-up after `cargo install <your-crate>`:
 
-### Databases
+```sh
+cargo install mnml-db-postgres
+mnml-db-postgres --install
+```
 
-SQL + NoSQL browsers — connection tabs, query playgrounds, result tables.
+The `--install` step writes your integration manifest to `~/.config/mnml/integrations/<id>.toml`. On next `integrations.refresh` (or restart), the chip and palette commands appear.
 
-| Integration | Backend |
-|---|---|
-| [`mnml-db-postgres`](https://github.com/chris-mclennan/mnml-db-postgres) | PostgreSQL |
-| [`mnml-db-mariadb`](https://github.com/chris-mclennan/mnml-db-mariadb) | MariaDB / MySQL |
-| [`mnml-db-redshift`](https://github.com/chris-mclennan/mnml-db-redshift) | Amazon Redshift |
-| [`mnml-db-clickhouse`](https://github.com/chris-mclennan/mnml-db-clickhouse) | ClickHouse (HTTP + `FORMAT JSON`) |
-| [`mnml-db-redis`](https://github.com/chris-mclennan/mnml-db-redis) | Redis — command playground, type-aware responses |
-| [`mnml-db-docdb`](https://github.com/chris-mclennan/mnml-db-docdb) | Amazon DocumentDB / MongoDB |
-| [`mnml-db-dynamodb`](https://github.com/chris-mclennan/mnml-db-dynamodb) | Amazon DynamoDB — `aws dynamodb scan` ([manual](/manual/integrations/db-dynamodb/)) |
+## Running your own catalog
 
-### Cloud filesystems
+Any GitHub repo with launcher TOMLs directly under a folder becomes an installable source. Add it in user config:
 
-Object-store browsers — buckets / prefixes / objects as a TUI tree.
+```toml
+[[marketplace.source]]
+type = "github_launcher_folder"
+id = "acme"
+repo = "acme-corp/mnml-tools"
+path = "launchers"
+```
 
-| Integration | Backend |
-|---|---|
-| [`mnml-fs-s3`](https://github.com/chris-mclennan/mnml-fs-s3) | Amazon S3 — bucket tabs, prefix nav, download, presigned URLs ([manual](/manual/integrations/fs-s3/)) |
-| [`mnml-fs-azure-blob`](https://github.com/chris-mclennan/mnml-fs-azure-blob) | Azure Blob Storage — accounts, containers, blobs, SAS ([manual](/manual/integrations/fs-azure-blob/)) |
+Entries fetched from a user-added source tag as `Provenance::Community` — not because they're lower quality, but because the gatekeeper (who has write access to the repo) is the user's own trust decision, not something mnml can vet.
 
-### Observability
+Handy for:
 
-Metrics, logs, monitors.
+- Organizations shipping internal launchers to their engineering team.
+- Individuals who want a curated catalog under their own control.
+- Communities around a specific stack (dev-ops launchers, embedded launchers, ML launchers) that want a focused list rather than the reference catalog's broad one.
 
-| Integration | Backend |
-|---|---|
-| [`mnml-obs-datadog`](https://github.com/chris-mclennan/mnml-obs-datadog) | Datadog — monitors, dashboards, live-tail logs, incidents ([manual](/manual/integrations/obs-datadog/)) |
+The catalog is public if the repo is public; private-repo catalogs need `gh auth token` on the reader's machine so the fetch has 5000 req/hr against the GitHub API — see [Marketplace → GitHub rate limits](/manual/integrations/marketplace/#github-rate-limits).
 
-### CDN / Edge
+## Existing integrations
 
-CDN + DNS + Workers / edge functions.
+The community around mnml is early. As launchers land in the reference catalog and binaries land on crates.io, they'll show up in the Marketplace tab automatically — this manual doesn't try to list them exhaustively (any such list would go stale the instant someone publishes a new crate).
 
-| Integration | Backend |
-|---|---|
-| [`mnml-cdn-cloudflare`](https://github.com/chris-mclennan/mnml-cdn-cloudflare) | Cloudflare — Zones, DNS, Workers, Pages, security events ([manual](/manual/integrations/cdn-cloudflare/)) |
+To see what's currently installable: `:marketplace.refresh` from inside mnml, then browse the Marketplace tab. Sort by downloads (for crates.io apps) or by label (default) to get a sense of the landscape.
 
-### Virtualization / containers
+## The retired 37-sibling ecosystem
 
-Container runtimes + orchestrators.
+Through mid-2026 mnml maintained ~37 first-party sibling repos — one per forge / cloud / database / messaging integration, each shipping its own `cargo install`-able binary. That model was consolidated in 2026-08. The remaining first-party repos are just three:
 
-| Integration | Backend |
-|---|---|
-| [`mnml-virt-docker`](https://github.com/chris-mclennan/mnml-virt-docker) | Docker — containers, images, volumes, networks, compose ([manual](/manual/integrations/virt-docker/)) |
+- **`chris-mclennan/mnml`** — the editor itself + the built-in `browser` / `claude_code` / `codex` chips.
+- **`chris-mclennan/mnml-integrations`** — the reference launcher catalog. Community PRs land here.
+- **`chris-mclennan/mnml-tattle-tests`** — internal test fixtures. Not user-facing.
 
-### Test infrastructure
+The dozens of `mnml-forge-*`, `mnml-aws-*`, `mnml-msg-*`, `mnml-tracker-*` repos are gone; the launcher-manifest model absorbed almost every one of them. The handful that needed genuine custom UI (a real database browser, say) are now expected to publish via crates.io under any author, marked with the `mnml-integration` keyword — no first-party gatekeeping.
 
-Test-result inspection.
+The palette commands that pointed at those siblings (`forge.open_bitbucket`, `forge.open_dynamodb`, and ~20 more) were removed alongside the repos. Anything a user still installs from the marketplace registers its own commands via the manifest's `[[commands]]` blocks, so a chord that used to fire `forge.open_lambda` now comes from whatever `mnml-aws-lambda`'s current manifest declares.
 
-| Integration | Backend |
-|---|---|
-| [`mnml-test-playwright`](https://github.com/chris-mclennan/mnml-test-playwright) | Playwright `trace.zip` viewer — per-action timeline, console, errors ([manual](/manual/integrations/test-playwright/)) |
-| [`mnml-test-cypress`](https://github.com/chris-mclennan/mnml-test-cypress) | Cypress mochawesome JSON viewer ([manual](/manual/integrations/test-cypress/)) |
+If you're porting a workflow from the older ecosystem: install the sibling from the marketplace (if it's been re-published there), and its manifest brings its own commands + chords back with it. The migration is uneventful; the palette entries just come from a different source.
 
-## Community
+## Next
 
-_Send a PR to add your integration here._
-
-| Integration | Backend | Author | Repo |
-|---|---|---|---|
-| _(none yet — be the first!)_ | | | |
+- [Marketplace](/manual/integrations/marketplace/) — federated discovery, source config, cache, provenance.
+- [Installing integrations](/manual/integrations/installing/) — the Installed / Marketplace tabs, sidecar overrides, hand-editing config.
+- [Launcher manifests](/manual/integrations/launcher-manifests/) — the schema every marketplace launcher follows.
+- [Building integrations](/manual/integrations/building/) — authoring a launcher or (rarely) a binary sibling.
+- [Integrations overview](/manual/integrations/overview/) — the model.

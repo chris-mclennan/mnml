@@ -247,7 +247,7 @@ See [Cross-host PR workflow](/manual/cross-host-prs/).
 
 ### `<leader>i` — integrations
 
-The integration siblings (forge / cloud / observability viewers) launch from here. Each chord opens a separate sibling binary as a [pane](/manual/integrations/installing/) — the sibling has to be installed for the chord to do anything visible.
+The integration siblings (forge / cloud / observability viewers) launch from here. Each chord opens a separate sibling binary as a [pane](/manual/integrations/installing/) — the sibling has to be installed for the chord to do anything visible. All of these siblings are installable via the [Marketplace tab](/manual/integrations/marketplace/); once installed, mnml core's pre-registered chords fire without extra config.
 
 | Chord | Command | Sibling |
 |---|---|---|
@@ -255,7 +255,7 @@ The integration siblings (forge / cloud / observability viewers) launch from her
 | `<leader>ig` | GitHub viewer | `mnml-forge-github` |
 | `<leader>il` | GitLab viewer | `mnml-forge-gitlab` |
 | `<leader>iz` | Azure DevOps viewer | `mnml-forge-azdevops` |
-| `<leader>ij` | Jira viewer | `mnml-tickets-jira` |
+| `<leader>ij` | Jira viewer | `mnml-tracker-jira` |
 | `<leader>ic` | AWS CodeBuild | `mnml-aws-codebuild` |
 | `<leader>iw` | CloudWatch Logs | `mnml-aws-cloudwatch-logs` |
 | `<leader>ia` | AWS Amplify | `mnml-aws-amplify` |

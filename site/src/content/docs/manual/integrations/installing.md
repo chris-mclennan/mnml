@@ -1,42 +1,210 @@
 ---
 title: Installing integrations
-description: How mnml detects which `mnml-*` siblings are installed, how the rail's INTEGRATIONS section relates to the bufferline launcher strip, and how to add or remove integrations on your machine.
+description: Three ways to install an mnml integration — Marketplace tab clicks, the `launcher.add_local` palette command for private launchers, and hand-editing a manifest. Precedence, on-disk paths, sidecar overrides, and how the Installed / Marketplace tabs decide which is which.
 ---
 
-mnml ships with chips for every first-party sibling (Bitbucket, GitHub, Jira, AWS CodeBuild, Lambda, CloudWatch Logs, S3, DynamoDB, …) the moment you install it — *before* you've installed any of the siblings themselves. The chip strip is the **menu**; whether each one resolves to a real binary on your machine is a separate question that mnml answers at render time.
+Installing an mnml integration means getting one file onto disk: a manifest at `~/.config/mnml/integrations/<id>.toml`. mnml scans that folder on startup, merges it with the three core built-ins and any `<id>.override.toml` sidecars, and paints the resulting rail. Three flows land files in the right place; picking the right one depends on where the integration comes from.
 
-This page is the "I see Jira in the sidebar — did I set it up?" page. It covers the two icon surfaces, how detection works, and how to add or remove a sibling without editing TOML by hand.
+This page covers the mechanics. For the "what is an integration in the first place" model see [Integrations overview](/manual/integrations/overview/); for the manifest schema see [Launcher manifests](/manual/integrations/launcher-manifests/).
 
-## Two surfaces, two truths
+## Where integrations live
 
-mnml has two places integration icons appear, and they are driven by two different config arrays:
+Four on-disk layers, in **increasing precedence**:
 
-| Surface | Config | What it means |
+| Layer | Path | Written by |
 |---|---|---|
-| Top-right **bufferline launcher chip strip** (colored chips) | `[[ui.launcher_icon]]` | Quick-launch chips you've explicitly pinned. Defaults to **empty**. |
-| Left rail **`> INTEGRATIONS` section** (plain glyphs) | `[[ui.integration_icon]]` | The integration menu — defaults to **every first-party sibling**; uninstalled siblings are filtered out of the collapsed strip until you install them. |
+| **Core built-in defaults** | mnml core (`src/config.rs::Config::default`) | mnml |
+| **Base manifest** | `~/.config/mnml/integrations/<id>.toml` — or `<workspace>/.mnml/integrations/<id>.toml` (workspace beats user on id collision) | Marketplace install, `<sibling> --install`, `launcher.add_local`, or you by hand |
+| **Override sidecar** | `~/.config/mnml/integrations/<id>.override.toml` | The right-click **Edit…** overlay, the detail-pane buttons, `integrations.toggle_enabled` |
+| **Rail order** | `[ui] integration_icon_order = [...]` in `~/.config/mnml/config.toml` | Right-click **Move up / down / to top / to bottom** |
 
-Both arrays share the same shape (`id` / `glyph` / `fallback` / `command` / `color` / `tooltip`); they just paint in different places. See [the launcher-icon strips](/manual/settings/#the-launcher-icon-strips) for the field reference.
+Two files can't coexist at the same layer for the same `id` — the second one drops (with a stderr log). Different layers with the same id merge field-by-field, with the higher layer winning per field.
 
-The mental model:
+Built-in defaults ship for exactly three integrations: `browser`, `claude_code`, `codex`. Every other chip — every AWS viewer, database browser, forge dashboard, messaging integration — comes from a manifest you install.
 
-- The **bufferline strip** is your dock — small, opinionated, only contains things you've explicitly put there.
-- The **INTEGRATIONS rail** is your start menu — narrow strip of installed siblings on the left, with a `+` chip that opens a discovery overlay listing everything else mnml knows about.
+## Path 1 — Marketplace install
 
-:::note
-The two arrays have different merge semantics with the built-in defaults:
+The primary flow. Open the activity-bar Integrations panel, click **Marketplace**, and left-click any row you want. mnml handles the download / install and drops the file in `~/.config/mnml/integrations/<id>.toml`.
 
-- `[[ui.launcher_icon]]` (the bufferline strip) **replaces** the built-in Claude Code + Codex defaults entirely. Setting any `[[ui.launcher_icon]]` in your config means the defaults disappear; if you want them alongside your custom chips, copy them from `src/config.rs` into your config.
-- `[[ui.integration_icon]]` (the rail) **merges by `id`** with the built-in catalog. User entries override built-ins of the same id; built-in ids you don't mention stay; user-only ids append at the end, in your config order.
+Two kinds of Marketplace row need two different install paths:
 
-The merge change landed 2026-06-19. Before then, setting any `[[ui.integration_icon]]` would drop every built-in chip — users with a single custom rail entry lost the whole catalog (including new built-ins like the green `+` `http_new` chip). The new merge semantics close that gap: you only have to spell out the chips you're overriding or adding.
-:::
+### `[launcher]` rows (cyan tag)
 
-## How mnml detects installation
+mnml fetches the TOML directly and writes it to `~/.config/mnml/integrations/<id>.toml`. Complete in ~200ms. Toast on success:
 
-When the rail's INTEGRATIONS section is collapsed (a horizontal strip of icons), mnml filters it to only show siblings whose binary actually resolves. Missing siblings disappear entirely from the strip — they don't appear dim. The `+` chip stays put so you can re-add them.
+```
+installed htop → /Users/you/.config/mnml/integrations/htop.toml
+```
 
-The probe is in-process (no `which` fork) and walks two location classes in order — `$PATH` first, then a per-OS list of well-known install dirs. Results are cached per session and cleared on a successful install or via the `integrations.refresh` palette command.
+`integrations.refresh` runs automatically, so the chip lands on the Installed tab immediately.
+
+### `[app]` rows (orange tag)
+
+mnml spawns a Pty pane running `cargo install <name>`. Watch the compile output there. When it finishes, run the sibling's own `--install` subcommand (if it has one) to register its manifest:
+
+```sh
+mnml-db-postgres --install
+```
+
+Then `:integrations.refresh` in mnml to see the chip.
+
+The two-step split is deliberate — cargo takes minutes, manifest registration takes milliseconds, and splitting them means the manifest write can't race the build. If a sibling doesn't ship an `--install` subcommand, fall back to hand-authoring a manifest — see [Launcher manifests](/manual/integrations/launcher-manifests/).
+
+See [Marketplace](/manual/integrations/marketplace/) for source configuration, cache TTL, provenance tagging, and adding your own launcher-manifest folder as a source.
+
+## Path 2 — `launcher.add_local`
+
+For private launchers you don't want to share via any marketplace. The palette command opens an edit overlay pre-seeded with `:term ` as the command; type in id / label / glyph / fallback / color / command, hit Save, and mnml writes a full `<id>.toml` manifest to `~/.config/mnml/integrations/`.
+
+```vim
+:launcher.add_local
+```
+
+No restart, no marketplace roundtrip. The chip appears immediately.
+
+Fast when what you want is *"a chip that runs this shell command"* — a wrapper around a workspace-specific script, a Claude launcher with custom flags, a `k9s --context=staging` shortcut. For anything more permanent — something you want to share, or reuse across workspaces via `{{workspace}}` — write a manifest by hand. See [Launcher manifests](/manual/integrations/launcher-manifests/#add-a-local-launcher-in-app) for the tradeoffs.
+
+## Path 3 — hand-authored manifest
+
+Open your editor, drop a TOML file at `~/.config/mnml/integrations/<id>.toml`, run `:integrations.refresh`:
+
+```toml
+id    = "notes"
+label = "Notes"
+
+[chip]
+glyph    = "\u{F02D6}"
+fallback = "N"
+color    = "yellow"
+
+[[commands]]
+id    = "notes.open"
+title = "Notes: open today's file"
+run   = ":e ~/notes/{{workspace_name}}.md"
+```
+
+`{{workspace_name}}` gets substituted at spawn time — see [Launcher manifests → template variables](/manual/integrations/launcher-manifests/#template-variables) for the full vocabulary.
+
+## Precedence
+
+Four layers stack per `id`. Higher layers override lower ones:
+
+1. **Core built-in defaults** in mnml (only for `browser` / `claude_code` / `codex`).
+2. **Base manifest** — `<workspace>/.mnml/integrations/<id>.toml` (higher) or `~/.config/mnml/integrations/<id>.toml` (lower).
+3. **Override sidecar** — `<id>.override.toml` in the same folder. Deep-merged per field.
+4. **User order** — `[ui] integration_icon_order` in `~/.config/mnml/config.toml`.
+
+### Override sidecar semantics
+
+An `<id>.override.toml` file is a **per-field diff** applied over the base manifest at scan time. Every field is optional; absent fields inherit from the base:
+
+```toml
+# ~/.config/mnml/integrations/htop.override.toml
+id = "htop"
+
+[chip]
+color = "green"
+in_palette_bar = true
+```
+
+Given a base `htop.toml` with `color = "cyan"` and `in_palette_bar = false`, the effective chip renders **green** and pins to the **palette bar**. Every other field (glyph, fallback, commands, all statusline / notifications / requires structure) still comes from the base.
+
+The override's `id` field must match the base's `id` (and the filename's stem). A stray rename can't accidentally retarget the sidecar at an unrelated integration — mismatched files are silently dropped.
+
+The scope of what an override can change is deliberately narrow:
+
+| Field | Overridable |
+|---|---|
+| Top-level `label`, `description` | Yes |
+| `[chip]` — `glyph`, `fallback`, `color`, `enabled`, `in_palette_bar` | Yes |
+| `[[commands]]` — command bodies, `run` strings, keys | No — canonical |
+| `[[context_menu]]`, `[[menu_bar]]`, `[statusline]`, `[notifications]`, `[requires]` | No — canonical |
+
+Command bodies stay canonical because an override that redefined a `run` string could silently break the sibling's contract with mnml. Overrides are for cosmetics + preference bits; structural integration stays with the sibling author.
+
+### Promotion when there's no base
+
+For the three built-in chips (`browser`, `claude_code`, `codex`), the "canonical" is Rust code in mnml core — not a file on disk. If you right-click one of them and hit **Edit…**, mnml has nowhere to write an override sidecar (an orphan override with no base gets dropped at the next scan). Instead, the save promotes to a full authored `<id>.toml`, which subsequent scans then treat as a normal base manifest:
+
+```
+~/.config/mnml/integrations/claude_code.toml   ← promoted from the built-in default
+```
+
+From this point forward the chip is a regular installed manifest, not a built-in default — and further edits will start writing `claude_code.override.toml` sidecars over that base.
+
+### User-config overrides
+
+Legacy `[[ui.integration_icon]]` blocks in `~/.config/mnml/config.toml` still parse for backwards compatibility, but they're now treated as thin overrides — user config is authoritative only for `enabled`, `in_palette_bar`, and rail order:
+
+```toml
+[[ui.integration_icon]]
+id             = "browser"
+enabled        = true
+in_palette_bar = true
+```
+
+The chip's glyph, color, fallback, and command all come from the built-in / manifest source. If your `id` matches nothing (no built-in, no installed manifest), the entry is silently dropped — user config isn't a valid place to author a fresh chip definition anymore.
+
+For everything except toggling enable + palette-bar pinning + rail order, use the sidecar file (usually via **Edit…** in the right-click menu) instead.
+
+## The Installed / Marketplace tabs
+
+The activity-bar Integrations panel splits every configured integration into two tabs based on the `enabled` field:
+
+| Tab | Contents | Sort |
+|---|---|---|
+| **Installed** | Every integration where `enabled = true` | `[ui] integration_icon_order`, then base order |
+| **Marketplace** | Every integration where `enabled = false`, **plus** everything mnml learned about from marketplace source fetches | Alphabetic by label |
+
+Chips default to `enabled = false` — a fresh install is intentionally quiet. Enable a chip by right-clicking → **Enable**, via `integrations.toggle_enabled` from the palette, or by adding an override with `[chip] enabled = true`.
+
+### Filter row
+
+Press `/` while the panel is focused, or click the search glyph at the top, to open the filter. Typing narrows both tabs across `label`, `id`, and `command`. `Esc` clears the filter and returns focus to the tree.
+
+## The right-click chip menu
+
+Right-click any integration chip (in the rail, the palette bar, or the panel) for a context menu. The full list of entries — some show conditionally based on the chip's state and command shape:
+
+| Action | Command id | Effect |
+|---|---|---|
+| Enable / Disable | `integrations.toggle_enabled` | Flip the `enabled` field — persist to `<id>.override.toml` (or promote to `<id>.toml` for built-ins) |
+| View details | `integrations.show_details` | Open `Pane::IntegrationDetail` in the right side panel |
+| Move to top / up / down / to bottom | — | Reorder within the effective rail, persist to `[ui] integration_icon_order` |
+| Edit… | `integrations.edit` | Open the edit overlay for this integration; save writes an override sidecar |
+| Set launcher script… | — | (Only for `claude_code` / `codex`) supply a workspace-scoped wrapper script |
+| Add / Remove activity bar | — | (Only for chips whose command is `:term <binary>`) dock the sibling as an activity-bar Mount pane |
+| Copy id | `integrations.copy_id` | Yank the chip's `id` to the clipboard |
+| Show manifest… | `integrations.show_manifest` | Open the on-disk manifest file (workspace, else user) |
+| Bake / tune glyph… | `integrations.glyph_builder` | Open the glyph builder pre-loaded at this chip's codepoint |
+| Remove | `integrations.remove` | Delete the manifest, override, glyph SVG + assignments entry, and the in-memory rail entry |
+
+Keyboard equivalents live under `<leader>i`. Available chords: `<leader>id` (details), `<leader>ie` (enable/disable), `<leader>ip` (icon picker), `<leader>ih` / `<leader>iI` / `<leader>ir` (external tool launchers htop / iftop / btop). Palette pickers cover every menu item (`integrations.edit`, `integrations.remove`, `integrations.copy_id`, `integrations.show_manifest`) so nothing is mouse-only.
+
+### The Remove confirm dialog
+
+Every path that removes an integration routes through a two-button confirmation:
+
+```
+Remove integration 'my-tool' from the rail?
+[ Remove ]  [ Cancel ]
+```
+
+`Cancel` is the default focus, so an accidental `Enter` doesn't remove the chip. Arrow keys / `Tab` move between buttons. `Remove` does a full uninstall — every trace of the integration leaves the disk:
+
+- `~/.config/mnml/integrations/<id>.toml` — base manifest.
+- `~/.config/mnml/integrations/<id>.override.toml` — user sidecar (if present).
+- `~/.config/mnml/glyphs/<id>.svg` — sibling-shipped SVG glyph (if present).
+- The `<id>` entry in `~/.config/mnml/glyphs/assignments.toml` (if present).
+- The in-memory rail entry, which is then flushed to config.toml if the chip had `[[ui.integration_icon]]` state.
+
+One button, one gesture, everything gone. There's no separate "hide the chip but keep the manifest" gesture — for that, use **Disable** instead (chip flips to Marketplace tab, files stay on disk).
+
+## Detection — is the binary actually there?
+
+For any command that starts with `:term <binary>`, mnml probes whether `<binary>` is on `$PATH` before treating the chip as ready. Missing binaries trigger `(binary not installed)` on picker rows and dim the chip in the discovery overlay.
+
+The probe walks `$PATH` first, then a per-OS list of well-known install dirs:
 
 | OS | Locations checked (in order) |
 |---|---|
@@ -44,255 +212,78 @@ The probe is in-process (no `which` fork) and walks two location classes in orde
 | Linux | `$PATH` → `~/.cargo/bin` → `/home/linuxbrew/.linuxbrew/bin` → `/usr/local/bin` |
 | Windows | `%PATH%` → `%USERPROFILE%\.cargo\bin` → `%LOCALAPPDATA%\Programs\` |
 
-Why the fallback matters: **macOS .app bundles don't inherit your shell's `PATH`**. If you launch mnml.app from Finder/Spotlight, its environment is the minimal system `PATH` the launcher gives it — your `~/.zshrc` never runs. Without the fallback, you'd `cargo install mnml-forge-bitbucket`, see it appear in any shell, then double-click mnml.app and watch the Bitbucket chip vanish despite the binary sitting one directory over. Checking the standard `cargo install` location (`~/.cargo/bin`) and the standard Homebrew prefix directly sidesteps the entire PATH-inheritance question.
+The fallback list exists because macOS `.app` bundles don't inherit your shell's `PATH` — Finder launches mnml.app with the minimal system PATH, and your `.zshrc` never runs. Without the fallback you'd `cargo install mnml-msg-slack`, see it in any shell, then launch mnml.app from Finder and watch the chip vanish despite the binary sitting in `~/.cargo/bin`. The direct probe covers the case.
 
-Internal palette commands (no prefix — e.g. `ai.claude_code`, `http.send`) are always assumed available because they don't shell out. They never get filtered out.
+Results cache per session. After a fresh `cargo install` outside of mnml, drop the cache:
 
-## Adding a sibling
-
-There are two ways to install a sibling and wire its chip into the rail. Pick the one that matches how you work.
-
-### The `+` button on the rail
-
-Click the `+` chip at the right edge of the `> INTEGRATIONS` header (or run `:integrations.add` from the palette) and an overlay drops in listing every first-party sibling mnml knows about, grouped by category, each tagged with its install status:
-
-```
-┌─ + Add integration ──────────────────────────────────────────┐
-│  ── AWS ────────────────────────────────────────────────────  │
-│ ▸ ✓  mnml-aws-codebuild           installed (in rail)        │
-│   ✗  mnml-aws-cloudwatch-logs     not installed              │
-│   ✓  mnml-aws-lambda              installed                  │
-│   ✗  mnml-aws-eventbridge         not installed              │
-│  ── Databases ──────────────────────────────────────────────  │
-│   ✗  mnml-db-dynamodb             not installed              │
-│  ── Forges (SCM) ───────────────────────────────────────────  │
-│   ✓  mnml-forge-bitbucket         installed                  │
-│   …                                                          │
-│ ↑↓ move · Enter add to rail · i install (cargo) · y yank …   │
-└──────────────────────────────────────────────────────────────┘
+```vim
+:integrations.refresh_binary_cache
 ```
 
-A row's status is one of three:
+Or restart mnml. The Marketplace-tab install path (`cargo install <name>` in a Pty pane) drops the cache automatically when the pane exits.
 
-| Glyph | State | What `Enter` does |
-|---|---|---|
-| `✓` green | `installed (in rail)` — binary detected AND already in `[[ui.integration_icon]]` | Toasts "already in rail" |
-| `✓` cyan | `installed` — binary detected, not yet a chip | Adds the chip + persists to TOML |
-| `✗` red | `not installed` — binary not on `$PATH` or in any well-known dir | Toasts a hint to press `i` or `y` |
-
-Keys:
-
-| Chord | Action |
-|---|---|
-| `↑↓` / `j k` | Move selection (wraps; section headers are skipped) |
-| `Enter` | Status-dependent (see table above) |
-| `i` | Install — spawn a Pty pane running `cargo install --git <url> --tag <pinned> <binary>` |
-| `y` | Yank the same `cargo install …` command to the OS clipboard |
-| `Esc` / `q` | Close the overlay |
-| mouse wheel | Same as `↑↓` |
-
-#### `Enter` — add to rail (and persist)
-
-On an `installed` (cyan) row, `Enter` appends an `[[ui.integration_icon]]` entry to the in-memory config and immediately rewrites `~/.config/mnml/config.toml` so the chip survives a restart. The success toast reports the exact path written:
-
-```
-added mnml-aws-lambda to rail · persisted to /Users/you/.config/mnml/config.toml
-```
-
-The rewrite is line-based and surgical. mnml strips any existing `[[ui.integration_icon]]` blocks (and the managed-section banner, if previously written) and appends a fresh banner + the full current icon list. Everything outside those blocks — other tables, your comments, blank-line spacing — is preserved verbatim. The rewrite is idempotent: a strip-and-append twice produces the same file as once.
-
-The banner mnml writes looks like this; you can recognise it on next inspection:
-
-```toml
-# ── mnml-managed integration icons ──────────────────────────────────
-# Written by the `+ Add integration` overlay. Edit by hand or via the
-# overlay — re-saves replace this section in place.
-
-[[ui.integration_icon]]
-id = "lambda"
-glyph = ""
-fallback = "L"
-command = ":term mnml-aws-lambda"
-color = "orange"
-tooltip = "AWS Lambda"
-```
-
-You can still hand-edit the file. The strip pass only matches the `[[ui.integration_icon]]` header line and the banner comment; a custom integration_icon block you wrote yourself will be picked up by the in-memory config on next launch — and the next overlay-driven add will rewrite it back out alongside the new entry.
-
-If the filesystem write fails (no `$HOME`, no write permission, locked file), `Enter` still succeeds in-memory and the toast tells you the chip is runtime-only:
-
-```
-added mnml-aws-lambda to rail (runtime only — persist failed: write /...: Permission denied)
-```
-
-#### `i` — install in a Pty pane
-
-On a `not installed` (red) row, `i` closes the overlay, opens a fresh Pty pane in the current layout, and runs the resolved `cargo install --git <repo> --tag <pinned> <binary>` for that catalog entry. You watch the build live; once `cargo` exits cleanly the binary lands in `~/.cargo/bin` (which the detector already probes), so the next time you open the overlay the row flips from red `✗ not installed` to cyan `✓ installed`. Press `Enter` then to add the chip + persist.
-
-The overlay closes during install because you want the Pty's output, not the picker. Re-open the overlay (`+` chip, or `:integrations.add`) when the build finishes.
-
-If the Pty pane immediately exits with `cargo: command not found`, you don't have Rust on your `$PATH` from inside mnml — either install Rust via [rustup.rs](https://rustup.rs) and relaunch mnml from a fresh shell, or use `y` and run the install from a terminal that does have `cargo`.
-
-`y` is the same command, copied to the clipboard for use outside mnml — handy if you'd rather review it before running, or pin a different tag than the catalog default.
-
-## Auto-discovery
-
-The `+` overlay isn't limited to the first-party catalog. Any binary named `mnml-<class>-<name>` that lives on `PATH` (or in one of the well-known install dirs from the [detection table](#how-mnml-detects-installation)) is surfaced automatically — community siblings, forks, and your own `mnml-*-*` scratch tools all appear without a PR to mnml or a config edit.
-
-The sweep runs once per overlay-open session and is cached for that session. Opening the `+` overlay calls `integration_detect::clear_all_caches()` first, so a sibling you `cargo install`-ed in another shell shows up the moment you re-open the overlay — no `:integrations.refresh` needed. The reserved names `mnml` (the editor itself) and `mnml-info` are filtered out.
-
-Discovered rows render in the same category sections as catalog rows, with a `· auto-discovered` chip appended to the status text so you can tell where the entry came from:
-
-```
-── Trackers ──────────────────────────────────────────────
-  ✓  mnml-tracker-jira            installed (in rail)
-  ✓  mnml-tracker-linear          installed · auto-discovered
-```
-
-Category and chip color are derived from the class prefix. New sibling authors targeting one of these classes get a sensible default icon for free; anything outside the table falls through to `Other`:
-
-| `class` prefix | Category | Default chip color |
-|---|---|---|
-| `aws` | AWS | yellow |
-| `db` | Databases | teal |
-| `forge` | Forges (SCM) | blue |
-| `tracker` | Trackers | purple |
-| `fs` | Filesystems | orange |
-| `test` | Test runners | green |
-| anything else | Other | cyan |
-
-The glyph is always a generic nerd-font cog (`nf-fa-cog`, ``). The fallback is the first two characters of `<name>`, uppercased. If you want a richer per-tool glyph or a distinct color, that's exactly what the hardcoded catalog gives you — open a PR adding your sibling to `src/family_catalog.rs`.
-
-Catalog rows and auto-discovered rows differ on two of the overlay keys, because auto-discovered entries are installed by definition and mnml doesn't know their source repo:
-
-| Key | Catalog row | Auto-discovered row |
-|---|---|---|
-| `Enter` | Adds chip + persists to `config.toml` | Same — adds chip + persists |
-| `i` | Spawns a Pty running `cargo install …` | No-op (toasts "already installed — nothing to install") |
-| `y` | Copies the `cargo install …` command | No-op (toasts "install source unknown, no command to yank") |
-
-:::tip[For sibling authors]
-Ship a binary named `mnml-<class>-<name>` and put it on `PATH` (or in `~/.cargo/bin`, which `cargo install` writes to). It appears in every mnml user's `+` overlay the next time they open it — no registry, no manifest, no PR. A catalog entry in mnml itself is still worth it for users who want one-keystroke install via `i`/`y` and a richer per-tool icon, but discoverability is free.
-:::
-
-### Manual install commands
-
-If you'd rather skip the overlay (or you're on an older mnml), every sibling installs with the same shape:
-
-```sh
-cargo install --git https://github.com/chris-mclennan/mnml-forge-bitbucket
-cargo install --git https://github.com/chris-mclennan/mnml-forge-github
-cargo install --git https://github.com/chris-mclennan/mnml-forge-gitlab
-cargo install --git https://github.com/chris-mclennan/mnml-forge-azdevops
-cargo install --git https://github.com/chris-mclennan/mnml-tracker-jira
-cargo install --git https://github.com/chris-mclennan/mnml-aws-codebuild
-cargo install --git https://github.com/chris-mclennan/mnml-aws-cloudwatch-logs
-cargo install --git https://github.com/chris-mclennan/mnml-aws-amplify
-cargo install --git https://github.com/chris-mclennan/mnml-aws-lambda
-cargo install --git https://github.com/chris-mclennan/mnml-aws-eventbridge
-cargo install --git https://github.com/chris-mclennan/mnml-fs-s3
-cargo install --git https://github.com/chris-mclennan/mnml-db-dynamodb
-cargo install --git https://github.com/chris-mclennan/mnml-test-playwright
-cargo install --git https://github.com/chris-mclennan/mnml-test-cypress
-```
-
-Pin a specific tag when reproducibility matters:
-
-```sh
-cargo install --git https://github.com/chris-mclennan/mnml-aws-lambda --tag v0.1.0
-```
-
-The default `[[ui.integration_icon]]` set already references every first-party sibling — so once the binary is on your `PATH` (or in `~/.cargo/bin`, which `cargo install` writes to by default), the chip just works. No additional config required.
-
-## Removing a sibling
-
-Two things can happen depending on what you want:
-
-1. **Stop displaying its chip** — remove or comment out its `[[ui.integration_icon]]` entry in `~/.config/mnml/config.toml`. The next `Enter`-driven add via the `+` overlay will rewrite the section without it. If you'd rather edit by hand, the block is plain TOML inside the `# ── mnml-managed integration icons ──` banner.
-
-2. **Uninstall the binary** — `cargo uninstall mnml-<class>-<name>`. The chip disappears from the collapsed rail on the next render (detection is in-process, cached per session — run `:integrations.refresh` if you want to clear it sooner). The `[[ui.integration_icon]]` entry stays in your config; if you reinstall the binary, the chip comes back.
-
-### The Remove confirm dialog
-
-Both in-app entry points to the destructive remove path — the right-click chip menu's **Remove from rail** entry and the `:integrations.remove` palette picker — route through a two-button confirmation dialog:
-
-```
-Remove integration 'bitbucket' from the rail?
-[ Remove ]  [ Cancel ]
-```
-
-`Cancel` is the default focus so an accidental `Enter` doesn't remove the chip. Arrow keys / `Tab` move between buttons; the primary `[ Remove ]` button runs the actual remove (drops the `[[ui.integration_icon]]` entry from the in-memory list and rewrites `~/.config/mnml/config.toml`). Palette command: `integrations.remove`. Right-click chip → **Remove from rail** is the mouse-driven variant.
-
-The pattern matches the destructive-confirm idiom used elsewhere in mnml (file deletion, workspace close). No dialog fires when the id isn't in the rail — the remove path silently no-ops with an explanatory toast.
+Internal palette commands with no prefix (e.g. `ai.claude_code`, `http.send`, `browser.open`) never route through the probe — they don't shell out, so they're always assumed available.
 
 ## Troubleshooting
 
 ### "I installed via `cargo install` but mnml.app from Finder doesn't see the chip"
 
-This is the macOS `PATH`-inheritance problem. Your shell sees `~/.cargo/bin/mnml-tracker-jira` because your `.zshrc` adds `~/.cargo/bin` to `PATH`; the .app bundle launched from Finder doesn't run your `.zshrc`, so it doesn't see that addition.
+The macOS `PATH`-inheritance problem. Your shell sees `~/.cargo/bin/mnml-xxx` because your `.zshrc` adds `~/.cargo/bin` to `PATH`; the .app bundle launched from Finder doesn't run your `.zshrc`, so it doesn't see the addition.
 
-mnml's well-known-locations fallback covers `~/.cargo/bin` directly, so the chip *should* resolve. If it doesn't, the binary likely landed somewhere unusual — check `cargo install --list` to see where it went. The fallback list (see table above) doesn't probe arbitrary directories; if your install prefix is non-standard, either:
+mnml's well-known-locations fallback covers `~/.cargo/bin` directly. If the chip still doesn't resolve, the binary likely landed somewhere unusual — check `cargo install --list` to see where. If your install prefix is non-standard:
 
-- Add the target dir to the launcher's curated PATH by editing `/Applications/mnml.app/Contents/MacOS/launcher.sh`, or
 - Move the binary into `~/.cargo/bin` (a symlink works), or
-- Launch mnml from a shell (`mnml` from your terminal) instead of from Finder/Spotlight.
+- Launch mnml from a shell (`mnml` in your terminal) rather than from Finder, or
+- Add the target directory to the launcher script at `/Applications/mnml.app/Contents/MacOS/launcher.sh`.
 
-### "I want `which mnml-aws-X` to work in my shell too"
+### "The chip is dim / greyed out"
 
-`cargo install` writes binaries to `~/.cargo/bin`. If your shell doesn't have that on `PATH`, add this line to your shell init:
+Two things trigger visual dimming:
 
-```sh
-# zsh — ~/.zshrc
-export PATH="$HOME/.cargo/bin:$PATH"
+- **`enabled = false`** — the chip is a Marketplace entry, not an Installed one. Right-click → **Enable** to activate it.
+- **`[requires]` predicate failed** — the manifest declared an env var or binary requirement that isn't satisfied on the current machine. Set the env var or install the binary; the chip un-dims on next render.
+
+Which of the two applies is visible in the panel: `enabled = false` chips live on the Marketplace tab; `requires` failures live on the Installed tab with a subtle red suffix.
+
+### "I edited the chip in the Edit overlay but the change reverted"
+
+You almost certainly hit the promotion-vs-override path. If the id is one of the built-in defaults (`browser` / `claude_code` / `codex`) and there was no base manifest yet, the first save writes a full `<id>.toml`. Look for that file in `~/.config/mnml/integrations/`; if it's there, subsequent edits write `<id>.override.toml` sidecars on top. If it's missing, the write failed — check `~/.config/mnml/integrations/` permissions and mnml's stderr for a write error.
+
+### "The marketplace tab is empty"
+
+Three checks:
+
+1. Confirm `[marketplace] enabled = true` (or unset — defaults to true).
+2. Run `:marketplace.refresh`. First-time launches don't auto-fetch — you drive the refresh explicitly.
+3. Check `~/.cache/mnml/marketplace.json` — a corrupt or empty cache falls back to "nothing to render". Delete it and refresh again.
+
+If GitHub is returning 403s, install `gh` and run `gh auth login` — see [Marketplace → GitHub rate limits](/manual/integrations/marketplace/#github-rate-limits).
+
+### "I want a chip that doesn't run a binary"
+
+Use a pure launcher. Drop a TOML with no `binary` field in `~/.config/mnml/integrations/<id>.toml`:
+
+```toml
+id    = "notes"
+label = "Notes"
+
+[chip]
+glyph    = "\u{F02D6}"
+fallback = "N"
+color    = "yellow"
+
+[[commands]]
+id    = "notes.open"
+title = "Notes: open today's file"
+run   = ":e ~/notes/{{workspace_name}}.md"
 ```
 
-```sh
-# bash — ~/.bashrc or ~/.bash_profile
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-```fish
-# fish — ~/.config/fish/config.fish
-fish_add_path $HOME/.cargo/bin
-```
-
-```powershell
-# PowerShell — $PROFILE
-$env:PATH = "$HOME\.cargo\bin;$env:PATH"
-```
-
-After a shell restart, `which mnml-aws-codebuild` resolves and any tooling that walks `PATH` (other editors, `make` targets, scripts) finds it.
-
-### "Windows can't find `cargo`"
-
-Install Rust via [rustup.rs](https://rustup.rs). The installer adds `%USERPROFILE%\.cargo\bin` to your `PATH` automatically — open a new PowerShell after installing and `cargo --version` should resolve.
-
-### "I installed the sibling but the chip's not showing"
-
-Three things to check, in order:
-
-1. Run `:integrations.refresh` to clear the per-session detection cache. The collapsed-rail strip filters to detected binaries only — a stale cache from before your install is the most common cause.
-2. Run `which mnml-<class>-<name>` in the same shell you launched mnml from. If that resolves but the chip's still missing, you're hitting the macOS .app `PATH` case — launch mnml from your shell to confirm, then fix the launcher's PATH (see the first troubleshooting entry).
-3. If `which` doesn't resolve and `cargo install --list` shows it lives somewhere outside `~/.cargo/bin`, see the previous entry — the well-known fallback list is fixed.
-
-The `--check` flag on each sibling is the orthogonal verification — `mnml-tracker-jira --check` prints the resolved config + whether auth works. That's separate from "can mnml see the binary?"; it's "can the binary see *its* backend?".
-
-## For sibling authors
-
-Any binary named `mnml-*-*` placed in any of the well-known locations is detected by mnml's rail probe — there's no manifest, no registration, no manifest. As long as your binary:
-
-1. Is named `mnml-<class>-<name>` (the prefix is the only naming rule).
-2. Lives on `PATH` or in `~/.cargo/bin` (which `cargo install` writes to by default).
-3. Runs standalone as a TUI (mnml launches it as a Pty pane via `:term <binary>`).
-
-…it'll resolve. Users can wire its chip with the same `[[ui.integration_icon]]` block any other sibling uses.
-
-The full anatomy of an integration — directory layout, the `--check` convention — lives in [Building integrations](/manual/integrations/building/).
+`{{workspace_name}}` gets substituted at spawn time — see [Launcher manifests → template variables](/manual/integrations/launcher-manifests/#template-variables) for the full vocabulary.
 
 ## Next
 
-- [Building integrations](/manual/integrations/building/) — anatomy of a sibling: standalone TUI launched as a Pty pane.
-- [Activity bar](/manual/activity-bar/) — the **Integrations** section is one of five activity-bar sections; click the puzzle-piece icon to switch to it.
-- [Settings & configuration](/manual/settings/) — full reference for `[[ui.integration_icon]]` and `[[ui.launcher_icon]]`.
-- [Community integrations](/manual/integrations/community/) — directory of community-built siblings.
-- [Bitbucket forge viewer](/manual/integrations/forge-bitbucket/) — a concrete example: the install, config, and chip wiring end-to-end.
+- [Integrations overview](/manual/integrations/overview/) — the model.
+- [Marketplace](/manual/integrations/marketplace/) — federated discovery, source config, cache, provenance.
+- [Launcher manifests](/manual/integrations/launcher-manifests/) — every field a manifest can declare.
+- [Building integrations](/manual/integrations/building/) — authoring a launcher (or, rarely, a binary sibling).
+- [Community integrations](/manual/integrations/community/) — where to find and share what others have published.

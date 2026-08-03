@@ -1,18 +1,15 @@
 ---
 title: Bridge & Mount
-description: How sibling tools (mnml-aws-*, mnml-db-*, mnml-forge-*, …) integrate with mnml — from env-var-only handoffs all the way up to a hosted UI pane that renders inside the editor.
+description: How binary siblings integrate with mnml — from env-var-only handoffs all the way up to a hosted UI pane that renders inside the editor. The runtime protocol behind the `mnml-bridge` SDK.
 ---
 
-mnml's **family** is a constellation of small sibling binaries
-(`mnml-aws-cloudwatch-logs`, `mnml-db-postgres`, `mnml-forge-github`,
-`mnml-fs-s3`, …) — each one a focused TUI for a specific service.
-The **Bridge** is the protocol that lets those siblings *talk to*
-mnml; **Mount** is the highest tier where a sibling takes over a
-pane and renders directly into mnml's editor body. Both ship as
-`mnml-bridge` — one crate, two integration depths.
+**Bridge** is the runtime protocol a compiled binary sibling uses to talk to mnml — post toasts, drive activity-bar badges, own a statusline segment, drop context-menu entries. **Mount** is the highest tier, where a sibling takes over a pane and renders directly into mnml's editor body rather than running as a Pty. Both ship as the [`mnml-bridge`](https://crates.io/crates/mnml-bridge) crate — one dep, four integration depths.
 
 This page is the field guide for using and building bridged
-siblings.
+siblings. For pure launchers (no code, no binary — just a TOML manifest that
+shells out to an existing CLI) see [Launcher manifests](/manual/integrations/launcher-manifests/) instead. The Bridge protocol only applies to compiled Rust siblings; launchers don't need it.
+
+The archetypal example is a database browser or service dashboard published by a community author — e.g. a hypothetical `mnml-db-postgres` on crates.io. mnml core no longer ships specific sibling binaries — everything installable comes from the [Marketplace](/manual/integrations/marketplace/).
 
 ## The four tiers
 
@@ -367,6 +364,8 @@ dashboard that owns its own layout is the canonical example).
 
 ## See also
 
-- [`/manual/activity-bar/`](/manual/activity-bar/) — where mount icons appear.
-- [`/manual/family/`](/manual/family/) — the catalog of sibling tools.
-- [`mnml-bridge` source](https://github.com/chris-mclennan/mnml/tree/main/crates/mnml-bridge) — the crate.
+- [Activity bar](/manual/activity-bar/) — where mount icons appear.
+- [Integrations overview](/manual/integrations/overview/) — the two flavors (launcher / binary) and where a manifest lives.
+- [Marketplace](/manual/integrations/marketplace/) — how binary siblings get discovered.
+- [Building integrations](/manual/integrations/building/) — authoring a binary sibling with `mnml-bridge`.
+- [`mnml-bridge` on crates.io](https://crates.io/crates/mnml-bridge) — the crate.

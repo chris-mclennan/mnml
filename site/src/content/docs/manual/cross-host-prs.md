@@ -1,11 +1,11 @@
 ---
 title: Cross-host PR workflow
-description: Fly across Bitbucket / GitHub / GitLab / Azure DevOps PRs without leaving mnml. The `pr.picker` palette command fans out to every installed `mnml-forge-*` sibling and shows the merged result in one fuzzy picker. The rail's Open-PRs subsection lights up automatically when you're on a branch that has an open PR.
+description: Fly across Bitbucket / GitHub / GitLab / Azure DevOps PRs without leaving mnml. The `pr.picker` palette command fans out to every installed `mnml-forge-*` sibling (installable via the Marketplace) and shows the merged result in one fuzzy picker. The rail's Open-PRs subsection lights up automatically when you're on a branch that has an open PR.
 ---
 
-mnml runs across whichever code-hosting forges you're using day-to-day. When the [SCM viewers were split out of core](/manual/integrations/community/) into standalone `mnml-forge-*` siblings in 2026-06, two pieces of the cross-host workflow were rewired through a small JSON contract those siblings expose: the `pr.picker` fuzzy picker and the rail's "Open PRs" subsection.
+mnml runs across whichever code-hosting forges you're using day-to-day. When the SCM viewers were split out of core into standalone `mnml-forge-*` siblings in 2026-06, two pieces of the cross-host workflow were rewired through a small JSON contract those siblings expose: the `pr.picker` fuzzy picker and the rail's "Open PRs" subsection.
 
-This page covers the workflow. For the per-forge viewers' UX, see [Bitbucket](/manual/integrations/forge-bitbucket/) / [GitHub](/manual/integrations/forge-github/) / [GitLab](/manual/integrations/forge-gitlab/) / [Azure DevOps](/manual/integrations/forge-azdevops/).
+This page covers the workflow. The per-forge viewers themselves are community-authored — install whichever you use via the [Marketplace tab](/manual/integrations/marketplace/), and each sibling's own manifest brings the palette command + chord binding to open its viewer.
 
 ## `pr.picker` — one fuzzy list, every host
 
@@ -55,7 +55,7 @@ The rail PR data is the **same cache** the picker uses. So:
 - The rail's Open-PRs subsection refreshes on every git operation (branch switch, commit, etc.)
 - Stale cache (>5 min) automatically re-fetches in the background on the next git operation that needs it
 
-Empty cache → empty rail subsection — install `mnml-forge-bitbucket` / `mnml-forge-github` / etc. and configure them once.
+Empty cache → empty rail subsection — install a `mnml-forge-*` sibling via the [Marketplace tab](/manual/integrations/marketplace/) and configure it once.
 
 ## How it works — the JSON contract
 
@@ -121,26 +121,23 @@ Each sibling implements this against its own host's pipelines / Actions / builds
 
 ## Keyboard story (full)
 
-After all this, the cross-host PR workflow is one of three keychords:
+After all this, the cross-host PR workflow is two mnml-core keychords plus whatever bindings the installed forge siblings' manifests carry:
 
 ```
-<leader>P p   pr.picker     fuzzy pick across all forge hosts
-<leader>P r   pr.refresh    background re-fetch
-<leader>i b   forge.open_bitbucket   open BB viewer
-<leader>i g   forge.open_github      open GH viewer
-<leader>i l   forge.open_gitlab      open GL viewer
-<leader>i z   forge.open_azdevops    open AZ viewer
-<leader>i c   forge.open_codebuild   open AWS CodeBuild viewer
+<leader>P p   pr.picker     fuzzy pick across all forge hosts (mnml core)
+<leader>P r   pr.refresh    background re-fetch                (mnml core)
 ```
+
+Individual per-forge viewer chords (`<leader>i b`, `<leader>i g`, `<leader>i l`, `<leader>i z`, `<leader>i c`, etc.) come from whichever `mnml-forge-*` / `mnml-aws-*` sibling you have installed via the Marketplace — the manifest's `[[commands]]` block declares both the palette command and the chord binding. See [Installing integrations → the right-click chip menu](/manual/integrations/installing/#the-right-click-chip-menu) for how installed manifests plug into mnml at load time.
 
 Inside any sibling viewer, the family-idiom keys work everywhere: `j`/`k`/`↑`/`↓` move, `1`-`9` switch tabs, `Tab` / `Shift+Tab` cycle, `Enter` / `o` open in browser, **`y` yank URL**, `r` refresh, `q` / `Esc` quit. The Bitbucket viewer adds `d` for details and `a` for approve/unapprove.
 
 ## When this came together
 
-The cross-host workflow was added in 2026-06-06 after the SCM split-out audit found the `pr.picker` cross-host fuzzy + the rail's Open-PRs subsection were the two real losses from removing the in-tree SCM panes. Both are restored via the JSON contract above — see the [SCM hosts split](/manual/integrations/community/) memo for the full audit.
+The cross-host workflow was added in 2026-06-06 after the SCM split-out audit found the `pr.picker` cross-host fuzzy + the rail's Open-PRs subsection were the two real losses from removing the in-tree SCM panes. Both are restored via the JSON contract above.
 
 ## Next
 
 - [Building integrations](/manual/integrations/building/) — write your own forge sibling against this same JSON contract
-- [Settings](/manual/settings/#keybindings) — rebind the `<leader>P p` / `<leader>i b` chords if `<leader>i` collides with something in your `[keys.global]`
-- [Community integrations](/manual/integrations/community/) — the directory of installed forge siblings
+- [Settings](/manual/settings/#keybindings) — rebind the `<leader>P p` chord if `<leader>P` collides with something in your `[keys.global]`
+- [Marketplace](/manual/integrations/marketplace/) — where to find installable `mnml-forge-*` siblings
