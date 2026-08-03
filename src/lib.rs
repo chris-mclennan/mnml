@@ -635,3 +635,19 @@ pub enum DiffHunkAction {
     /// destructive, prompts for confirmation in the dispatcher.
     Discard,
 }
+
+/// Crate-wide test lock protecting mutations of process env vars
+/// that multiple test modules touch (`HOME`, `XDG_CONFIG_HOME`,
+/// etc.). Cargo runs tests in parallel across modules; each module
+/// previously had its own local `home_lock()` static, so a discovery
+/// test could clobber a cdp test's `HOME` mid-run. Route every
+/// `set_var("HOME", …)` in tests through `crate::test_env_lock()`
+/// so they serialize across the whole test binary.
+///
+/// Ubuntu-latest CI (higher default `--test-threads`) exposed the
+/// race on 2026-08-03; macOS locally never lost.
+#[cfg(test)]
+pub fn test_env_lock() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+}

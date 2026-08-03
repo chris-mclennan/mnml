@@ -14704,8 +14704,11 @@ mod tests {
         // ready-to-copy template instead of "find a place yourself."
         let d = tempfile::tempdir().unwrap();
         // Force config to land in the temp dir via XDG_CONFIG_HOME.
-        // SAFETY: tests run sequentially, so the env var doesn't
-        // leak into other tests' resolution paths.
+        // Grab the shared test env lock so this doesn't race with
+        // other modules' HOME / XDG mutations under Ubuntu CI's
+        // higher --test-threads default.
+        let _lk = crate::test_env_lock().lock().unwrap();
+        // SAFETY: env var write, serialized by _lk above.
         unsafe { std::env::set_var("XDG_CONFIG_HOME", d.path()) };
         let cfg_path = d.path().join("mnml").join("config.toml");
         // Pre-create with no [keys.standard] section.

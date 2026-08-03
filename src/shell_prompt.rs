@@ -121,7 +121,10 @@ mod tests {
         // Sandbox `$HOME` so install_prompt_script() doesn't write to
         // the real `~/.config/mnml/prompt.sh` on a developer machine.
         let d = tempfile::tempdir().unwrap();
-        // SAFETY: tests serialize env via this one writer.
+        // Serialize env mutation across all test modules — same
+        // lock discovery / cdp / sibling_glyphs use.
+        let _lk = crate::test_env_lock().lock().unwrap();
+        // SAFETY: env writes, serialized by _lk above.
         unsafe {
             std::env::set_var("HOME", d.path());
             std::env::remove_var("XDG_CONFIG_HOME");

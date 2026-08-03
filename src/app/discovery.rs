@@ -1307,11 +1307,6 @@ color = \"blue\"
     // 2026-08-01 (P2) — append_launcher_icon_blocks_serializes_enabled_field
     // deleted with the LauncherIcon retirement.
 
-    fn home_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-    }
-
     /// Regression for the 2026-08-03 install/uninstall audit — the
     /// prior `remove_integration_by_id` only trimmed the rail chip,
     /// leaving `~/.config/mnml/integrations/<id>.toml` on disk so the
@@ -1319,7 +1314,7 @@ color = \"blue\"
     #[test]
     fn remove_integration_by_id_deletes_installed_manifest() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = home_lock().lock().unwrap();
+        let _lk = crate::test_env_lock().lock().unwrap();
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {
@@ -1396,7 +1391,7 @@ enabled = true
     #[test]
     fn remove_integration_by_id_also_deletes_override_sidecar() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = home_lock().lock().unwrap();
+        let _lk = crate::test_env_lock().lock().unwrap();
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {
@@ -1433,7 +1428,7 @@ enabled = true
     #[test]
     fn write_override_toml_emits_loader_readable_shape() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = home_lock().lock().unwrap();
+        let _lk = crate::test_env_lock().lock().unwrap();
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {
@@ -1492,7 +1487,7 @@ enabled = true
     #[test]
     fn write_override_toml_promotes_to_authored_when_no_base() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = home_lock().lock().unwrap();
+        let _lk = crate::test_env_lock().lock().unwrap();
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {

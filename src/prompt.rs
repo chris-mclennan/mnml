@@ -777,13 +777,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn split_path_tilde_expansion() {
-        // SAFETY: setting HOME for the duration of one synchronous test
-        // is fine — Rust runs `cargo test` single-threaded by default
-        // within a process, and even with `--test-threads N` each test
-        // touches its own keys. Set HOME explicitly so the assertion
-        // doesn't depend on the CI machine's actual home.
-        // SAFETY: see comment above — single test, restored before
-        // returning, no cross-thread observation.
+        // Serialize env mutation across test modules. Ubuntu CI's
+        // higher --test-threads default exposed a race on 2026-08-03
+        // between HOME writers in different modules.
+        let _lk = crate::test_env_lock().lock().unwrap();
+        // SAFETY: env var write, serialized by _lk above.
         let prev = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", "/Users/x") };
         let (parent, filter) = split_path_for_browse("~/Proj");
@@ -800,6 +798,8 @@ mod tests {
     #[test]
     fn split_path_tilde_expansion_windows() {
         // Windows: function falls back to USERPROFILE when HOME isn't set.
+        // Serialize env mutation via the shared crate-wide lock.
+        let _lk = crate::test_env_lock().lock().unwrap();
         let prev = std::env::var_os("USERPROFILE");
         unsafe { std::env::set_var("USERPROFILE", r"C:\Users\x") };
         let prev_home = std::env::var_os("HOME");

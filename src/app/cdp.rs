@@ -1831,7 +1831,10 @@ mod tests {
         assert_ne!(p1, p2, "ephemeral should hand back a fresh dir each call");
         // shared ⇒ under $HOME (when set)
         cfg.browser.profile_mode = "shared".to_string();
-        // SAFETY: setting + restoring an env var in a serial test.
+        // SAFETY: setting + restoring an env var while holding the
+        // shared crate-wide test env lock — serializes against
+        // discovery / sibling_glyphs tests that also mutate HOME.
+        let _lk = crate::test_env_lock().lock().unwrap();
         let prior = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", "/tmp/mnml-test-home") };
         let app = App::new(d.path().to_path_buf(), cfg).unwrap();

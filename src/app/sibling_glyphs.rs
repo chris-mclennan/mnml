@@ -328,7 +328,7 @@ mod tests {
         write_svg(tmp.path(), "charlie.svg");
         // Overwrite HOME so assignments.toml lands in the tempdir
         // via the sibling_glyphs_dir() helper.
-        let _lk = home_lock().lock().unwrap();
+        let _lk = crate::test_env_lock().lock().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         // Move svgs into the canonical dir under HOME.
         let canonical = tmp.path().join(".config/mnml/glyphs");
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn manifest_override_pins_codepoint_outside_range() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = home_lock().lock().unwrap();
+        let _lk = crate::test_env_lock().lock().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let dir = tmp.path().join(".config/mnml/glyphs");
         fs::create_dir_all(&dir).unwrap();
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn preserves_prior_assignment_across_calls() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = home_lock().lock().unwrap();
+        let _lk = crate::test_env_lock().lock().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let dir = tmp.path().join(".config/mnml/glyphs");
         fs::create_dir_all(&dir).unwrap();
@@ -379,10 +379,5 @@ mod tests {
         let (_svgs, second) = discover(&dir, &HashMap::new());
         assert_eq!(second["one"], one_cp, "prior assignment persisted");
         assert_ne!(second["aaa"], one_cp);
-    }
-
-    fn home_lock() -> &'static std::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 }
