@@ -1657,23 +1657,12 @@ impl App {
                 }
             }
             ToggleIntegrationEnabled(id) => {
-                if let Some(slot) = self
-                    .config
-                    .ui
-                    .integration_icons
-                    .iter_mut()
-                    .find(|i| i.id == id)
-                {
-                    slot.enabled = !slot.enabled;
-                    let now = slot.enabled;
-                    self.toast(format!(
-                        "integration {id} {}",
-                        if now { "enabled" } else { "disabled" }
-                    ));
-                    let _ = crate::app::discovery::persist_integration_icons(
-                        &self.config.ui.integration_icons,
-                    );
-                }
+                // #852 — route through the shared toggle helper so
+                // both the detail-pane button + right-click-menu
+                // paths share the write_override_toml persistence
+                // (avoids the config.toml-drop bug from the
+                // 2026-08-01 flip; see integration_detail.rs).
+                self.toggle_integration_enabled_by_id(&id);
             }
             MoveIntegrationUp(id) => {
                 if let Some(pos) = self

@@ -705,24 +705,13 @@ impl App {
                 // toggle / edit / remove handlers. Anything else is
                 // a plain command id (Cmd+Shift+P palette default).
                 if let Some(id) = item.id.strip_prefix("toggle:") {
-                    // Inline the toggle (run_menu_action is private)
-                    if let Some(slot) = self
-                        .config
-                        .ui
-                        .integration_icons
-                        .iter_mut()
-                        .find(|i| i.id == id)
-                    {
-                        slot.enabled = !slot.enabled;
-                        let now = slot.enabled;
-                        self.toast(format!(
-                            "integration {id} {}",
-                            if now { "enabled" } else { "disabled" }
-                        ));
-                        let _ = crate::app::discovery::persist_integration_icons(
-                            &self.config.ui.integration_icons,
-                        );
-                    }
+                    // #852 — route through the shared helper so
+                    // this picker path uses write_override_toml
+                    // like the right-click menu + detail-pane
+                    // button. Previously wrote to config.toml
+                    // where the 2026-08-01 flip drops it for any
+                    // non-builtin id.
+                    self.toggle_integration_enabled_by_id(id);
                 } else if let Some(id) = item.id.strip_prefix("edit:") {
                     self.open_integration_edit_by_id(id);
                 } else if let Some(id) = item.id.strip_prefix("remove:") {

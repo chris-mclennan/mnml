@@ -68,26 +68,42 @@ impl App {
     }
 
     /// Flip enabled/disabled for the integration with `id`, toast,
-    /// persist. Same implementation as the right-click
-    /// `ToggleIntegrationEnabled` handler — extracted so both
-    /// call sites share behavior (persist + toast + no-op-if-
-    /// missing).
+    /// persist via `write_override_toml`. Same implementation as
+    /// the right-click `ToggleIntegrationEnabled` handler — extracted
+    /// so both call sites share behavior.
+    ///
+    /// #852 fix (2026-08-03) — used to route through
+    /// `persist_integration_icons`, which writes
+    /// `[[ui.integration_icon]]` blocks to config.toml. But since
+    /// the 2026-08-01 config flip, `config::finalize` drops any
+    /// raw entry whose id isn't in the pre-manifest builtin set
+    /// (browser/claude_code/codex/http), so toggling any real
+    /// marketplace-installed chip's enabled state silently
+    /// evaporated on next launch. `write_override_toml` handles
+    /// the manifest-backed case (writes `<id>.override.toml`) AND
+    /// the no-base builtin case (promotes to an authored
+    /// `<id>.toml`) — see da1ce2e3.
     pub fn toggle_integration_enabled_by_id(&mut self, id: &str) {
-        if let Some(slot) = self
+        let Some(slot_snapshot) = self
             .config
             .ui
             .integration_icons
             .iter_mut()
             .find(|i| i.id == id)
-        {
-            slot.enabled = !slot.enabled;
-            let now = slot.enabled;
-            self.toast(format!(
-                "integration {id} {}",
-                if now { "enabled" } else { "disabled" }
-            ));
-            let _ =
-                crate::app::discovery::persist_integration_icons(&self.config.ui.integration_icons);
+            .map(|slot| {
+                slot.enabled = !slot.enabled;
+                slot.clone()
+            })
+        else {
+            return;
+        };
+        let now = slot_snapshot.enabled;
+        self.toast(format!(
+            "integration {id} {}",
+            if now { "enabled" } else { "disabled" }
+        ));
+        if let Err(e) = crate::app::discovery::write_override_toml(&slot_snapshot) {
+            self.toast(format!("integration: persist failed ({e})"));
         }
     }
 
