@@ -370,6 +370,30 @@ fn unescape(s: &str) -> String {
     out
 }
 
+/// Locate a real Git-for-Windows bash on Windows. Plain `bash` on
+/// windows-latest resolves to `C:\Windows\System32\bash.exe` — the
+/// WSL launcher, not a POSIX shell — and every `.test` `shell:` step
+/// dies with "WSL has no installed distributions". Prefer the
+/// Git Bash install path (Git for Windows is preinstalled on GH
+/// runners + a very common dev install). Env override wins for
+/// MSYS2 / Cygwin users. Falls back to bare `bash` as last resort.
+#[cfg(windows)]
+fn git_bash_path() -> String {
+    if let Ok(explicit) = std::env::var("MNML_BASH") {
+        return explicit;
+    }
+    for candidate in [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+    ] {
+        if std::path::Path::new(candidate).exists() {
+            return candidate.to_string();
+        }
+    }
+    "bash".to_string()
+}
+
 /// Run one `.test` file. Never panics — a parse error / IO error / failed
 /// expectation all come back as `TestOutcome { passed: false, .. }`.
 pub fn run_test(path: &Path) -> TestOutcome {
@@ -610,13 +634,15 @@ fn run_step(app: &mut App, workspace: &Path, step: &Step) -> Result<(), String> 
             // (see below). Workspace is cwd so paths in `<cmd>` resolve
             // naturally.
             //
-            // Windows uses `bash` (Git Bash), not `cmd /C` — .test scripts
-            // are written in Unix shell syntax (`mkdir -p`, pipes, `sort`)
-            // which `cmd` can't parse. Git Bash is preinstalled on
-            // `windows-latest` GH runners at `C:\Program Files\Git\bin\bash.exe`
-            // (on PATH) and ships MSYS2 utils, so scripts run unchanged.
+            // Windows uses Git Bash, not `cmd /C` — .test scripts are
+            // written in Unix shell syntax (`mkdir -p`, pipes, `sort`)
+            // which `cmd` can't parse. Plain `bash` on Windows resolves
+            // to `C:\Windows\System32\bash.exe`, which is the WSL
+            // launcher — WSL isn't installed on `windows-latest` runners
+            // so every shell step dies with "WSL has no installed
+            // distributions". Point at the Git-for-Windows bash directly.
             #[cfg(windows)]
-            let mut shell = std::process::Command::new("bash");
+            let mut shell = std::process::Command::new(git_bash_path());
             #[cfg(windows)]
             shell.args(["-c", cmd]);
             #[cfg(not(windows))]
