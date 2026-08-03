@@ -10,6 +10,23 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-03
+
+The v0.2.0 line covers a very large stretch of work — the
+Integration SDK (2026-07-03), the federated Marketplace + Provenance
+tagging (2026-08), portable-mode infrastructure (`mnml-data/` folder
+next to the binary as an alternative to `~/.config/mnml/`; task
+#858), layout ops (merge splits→tabs / spread tabs→splits), auto
+`.gitignore` of `.mnml/env/*.env`, factory reset with backup, sandbox
+mode (`--sandbox`), site-build smoke tests, `libghostty-vt` first-
+party bindings, one-tap glyph re-bake, and a lot of persona-tester
+polish across the palette, tree, HTTP panel, and rail. See CLAUDE.md's
+Status block for the day-by-day trail.
+
+Highlights below are from the initial 2026-07-03 Integration SDK
+drop (kept verbatim); the additional 2026-07-04 → 2026-08-03 work
+is documented in commit history.
+
 ### Added (2026-07-03) — Integration SDK
 
 - **File-based integration manifests** — siblings register their rail
