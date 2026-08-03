@@ -161,6 +161,58 @@ case "${1:-start}" in
   restart) send_cmd '{"cmd":"restart"}'; exit $? ;;
   stop)    send_cmd '{"cmd":"quit"}'; exit $? ;;
   shot)    shift; exec bash "$REPO/scripts/shot.sh" "$@" ;;
+  # ── Preview mode ────────────────────────────────────────────────
+  # See mnml as a brand-new user would. Redirects $HOME + $XDG_CONFIG_HOME
+  # at a tempdir + drops you into a fresh scratch workspace, so:
+  #   - the welcome overlay fires (no .mnml/.welcomed marker in this ws)
+  #   - the integrations panel shows only the 4 first-party defaults
+  #     (browser / claude_code / codex / http) — no installed manifests
+  #   - no session to restore, no saved theme override, no prompt.sh
+  # Your real ~/.config/mnml/ is untouched — the tempdir dies with the
+  # process. Per-workspace `.mnml/env/*.env` API tokens (Bitbucket, Jira,
+  # Slack, …) live in each workspace and aren't touched either.
+  #
+  # Optional `--show <panel>` opens an activity-bar section on startup:
+  #   integrations / sessions / agents / http / explorer / …
+  #
+  # Usage: ./run.sh preview [--show integrations]
+  preview)
+    shift
+    preview_show=""
+    if [ "${1:-}" = "--show" ] && [ -n "${2:-}" ]; then
+      preview_show="$2"; shift 2
+    fi
+    preview_root="$(mktemp -d -t mnml-preview-XXXXXXXX)"
+    preview_ws="$preview_root/workspace"
+    mkdir -p "$preview_ws" "$preview_root/xdg"
+    # Seed a tiny README so the tree isn't literally empty on landing.
+    cat > "$preview_ws/README.md" <<'EOF'
+# mnml preview workspace
+
+This is a throwaway tempdir. Everything you do here vanishes when
+you exit. Your real config at `~/.config/mnml/` is untouched.
+
+Try:
+
+- `F1` — help overlay
+- `Ctrl+P` — fuzzy file picker
+- `Ctrl+Shift+P` — command palette
+- Click the puzzle-piece icon in the activity bar → Integrations panel
+- `Marketplace` tab → what a fresh user sees for browsable integrations
+EOF
+    trap 'rm -rf "$preview_root"' EXIT
+    echo "[run.sh preview] tempdir: $preview_root"
+    echo "[run.sh preview] workspace: $preview_ws"
+    if ! (cd "$REPO" && cargo build --quiet); then
+      echo "[run.sh preview] build failed; exiting" >&2
+      exit 1
+    fi
+    bin="$REPO/target/debug/mnml"
+    extra=()
+    [ -n "$preview_show" ] && extra=(--show "$preview_show")
+    HOME="$preview_root" XDG_CONFIG_HOME="$preview_root/xdg" \
+      "$bin" --preview "${extra[@]}" "$preview_ws"
+    exit $? ;;
   status)
     if [ -f "$MARKER" ]; then
       ws=$(cat "$MARKER")

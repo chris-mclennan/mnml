@@ -115,6 +115,17 @@ struct TuiArgs {
     ascii: bool,
     config_path: Option<PathBuf>,
     startup_picker: bool,
+    /// Preview mode: launched via `./run.sh preview` in a tempdir
+    /// with `$HOME` + `$XDG_CONFIG_HOME` redirected. mnml treats
+    /// this as first-launch (welcome overlay fires, empty
+    /// integrations dir, no session to restore). Adds a persistent
+    /// banner reminding the user their real config is safe.
+    preview: bool,
+    /// After startup, dispatch `view.activity_<name>` to open a
+    /// specific activity-bar section — e.g. `--show integrations`
+    /// lands the user on the Integrations panel. Skipped if the
+    /// command id doesn't resolve.
+    show_panel: Option<String>,
 }
 
 fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
@@ -125,6 +136,8 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     let mut config_path = None;
     let mut startup_picker = false;
     let mut no_workspace = false;
+    let mut preview = false;
+    let mut show_panel: Option<String> = None;
 
     let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
@@ -144,15 +157,24 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
             }
             "--startup-picker" => startup_picker = true,
             "--no-workspace" => no_workspace = true,
+            "--preview" => preview = true,
+            "--show" => {
+                show_panel = Some(
+                    it.next()
+                        .ok_or("--show needs a panel name (e.g. integrations)".to_string())?,
+                );
+            }
             "-h" | "--help" => {
                 println!(
                     "mnml — NvChad-style terminal IDE\n\n\
                      usage:\n  \
-                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace]\n  \
+                       mnml [WORKSPACE] [--input vim|standard] [--ascii] [--config PATH] [--headless] [--startup-picker] [--no-workspace] [--preview] [--show PANEL]\n  \
                        mnml run FILE [--env NAME] [--workspace DIR]\n\n\
                      flags:\n  \
                        --startup-picker      show a JetBrains-style chooser overlay on launch\n                                         (also enabled by MNML_STARTUP_PICKER=1)\n  \
-                       --no-workspace        land in the empty-state ($HOME) instead of resolving\n                                         [startup] default_workspace; used by the .app icon\n                                         launcher so clicking the icon doesn't auto-open a folder\n"
+                       --no-workspace        land in the empty-state ($HOME) instead of resolving\n                                         [startup] default_workspace; used by the .app icon\n                                         launcher so clicking the icon doesn't auto-open a folder\n  \
+                       --preview             show a persistent \"preview mode\" banner. Meant to be\n                                         paired with `./run.sh preview`, which redirects HOME +\n                                         XDG_CONFIG_HOME to a tempdir so your real config stays\n                                         untouched. Use to see what a brand-new user would see.\n  \
+                       --show PANEL          after startup, focus the given activity-bar section\n                                         (e.g. `--show integrations`). PANEL is any suffix of\n                                         `view.activity_<panel>` — integrations, sessions, agents,\n                                         http, explorer, search, debug, notes.\n"
                 );
                 std::process::exit(0);
             }
@@ -207,6 +229,8 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
         ascii,
         config_path,
         startup_picker,
+        preview,
+        show_panel,
     })
 }
 
@@ -253,6 +277,26 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // Startup workspace picker (--startup-picker / MNML_STARTUP_PICKER=1).
     if mnml::app::App::want_startup_picker(args.startup_picker) {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());
+    }
+    // Preview mode banner + optional panel focus. The `./run.sh preview`
+    // wrapper redirects $HOME + $XDG_CONFIG_HOME to a tempdir before
+    // launching mnml — this flag just signals "make it look like preview
+    // mode from the user's POV." Toast is persistent so it stays visible
+    // for the whole session.
+    if args.preview {
+        app.toast_persistent(
+            "preview-mode",
+            "PREVIEW MODE — sandboxed tempdir, no persistence. Your real \
+             config at ~/.config/mnml/ is untouched. Exit to discard.",
+            mnml::app::ToastLevel::Info,
+        );
+    }
+    if let Some(panel) = &args.show_panel {
+        let cmd_id = format!("view.activity_{panel}");
+        // Fire via the shared command registry so unknown names get a
+        // toast rather than silently no-oping. Doesn't kick until after
+        // the tick loop starts; harmless if the id doesn't resolve.
+        mnml::command::run(&cmd_id, &mut app);
     }
     // Background GitHub-releases probe. Skipped in headless (no
     // toast surface). Notification-only — no in-app installer.
