@@ -346,13 +346,133 @@ pub fn user_dir() -> Option<PathBuf> {
     )
 }
 
+/// User-supplied per-field overrides for an integration's rendered
+/// chrome. Persisted alongside the canonical manifest as
+/// `<id>.override.toml` — same folder, same discovery pass. Every
+/// field is `Option<T>`: present = "user cares", absent = "inherit
+/// from the base manifest".
+///
+/// **Scope.** Overrides cover the chip visuals + user-preference
+/// fields (`enabled`, `in_palette_bar`) + top-level `label` /
+/// `description`. Command bodies, statusline segments, context-menu
+/// entries, and other structural surfaces stay canonical — an
+/// override that redefined a command's `run` string could silently
+/// break the sibling's contract with mnml.
+///
+/// **Why a separate file, not a config.toml block.** Pre-2026-08-03
+/// user overrides lived in `[[ui.integration_icon]]` blocks inside
+/// mnml's config.toml. Two shapes (manifest vs config raw), two
+/// discovery passes, and reinstall couldn't reason about "did the
+/// user customize this?" without cross-referencing. One folder =
+/// one backup unit + one uninstall gesture.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct IntegrationManifestOverride {
+    /// Must match the base manifest's `id`. Present-check-required
+    /// so a stray file can't accidentally override an unrelated
+    /// integration.
+    pub id: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub chip: Option<ChipOverride>,
+}
+
+/// Chip-level overrides. Every field optional; only set ones win.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ChipOverride {
+    #[serde(default)]
+    pub glyph: Option<String>,
+    #[serde(default)]
+    pub fallback: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+    /// Show/hide the chip. Was the primary field users overrode
+    /// via the old `[[ui.integration_icon]]` schema.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Route to the palette-bar cluster rather than the rail. Also
+    /// carried over from the old schema.
+    #[serde(default)]
+    pub in_palette_bar: Option<bool>,
+}
+
+impl IntegrationManifestOverride {
+    /// Merge `self` into `base`, mutating `base` in place with
+    /// whatever fields the override supplied. Fields the override
+    /// left `None` keep base's value.
+    pub fn apply_to(self, base: &mut IntegrationManifest) {
+        if let Some(v) = self.label {
+            base.label = v;
+        }
+        if let Some(v) = self.description {
+            base.description = Some(v);
+        }
+        if let Some(o) = self.chip
+            && let Some(chip) = base.chip.as_mut()
+        {
+            if let Some(v) = o.glyph {
+                chip.glyph = v;
+            }
+            if let Some(v) = o.fallback {
+                chip.fallback = v;
+            }
+            if let Some(v) = o.color
+                && ALLOWED_COLORS.contains(&v.as_str())
+            {
+                chip.color = v;
+            }
+            if let Some(v) = o.enabled {
+                chip.enabled = v;
+            }
+            if let Some(v) = o.in_palette_bar {
+                chip.in_palette_bar = v;
+            }
+        }
+    }
+}
+
 fn scan_dir(dir: &Path, out: &mut Vec<IntegrationManifest>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
+    // First pass: parse every `.toml` in the dir, keeping
+    // `<id>.override.toml` files aside for a second pass. Doing it
+    // in one directory read means we don't care about order (an
+    // override file listed before its base still works).
+    let mut manifests_added: Vec<usize> = Vec::new();
+    let mut overrides: Vec<(String, IntegrationManifestOverride)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
+        let Some(fname) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        // `.override.toml` — user-supplied per-field diffs, applied
+        // after the base manifest for the same id lands. Extracted
+        // id = filename with `.override.toml` stripped.
+        if let Some(stem) = fname.strip_suffix(".override.toml") {
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            match toml::from_str::<IntegrationManifestOverride>(&text) {
+                Ok(ov) => {
+                    // Defense-in-depth: the id inside the file MUST
+                    // match the id in the filename. Guards against a
+                    // stray rename silently retargeting overrides at
+                    // an unrelated integration.
+                    if ov.id != stem {
+                        continue;
+                    }
+                    overrides.push((stem.to_string(), ov));
+                }
+                Err(_) => continue,
+            }
+            continue;
+        }
+        // Regular base manifest.
         if path.extension().and_then(|s| s.to_str()) != Some("toml") {
             continue;
         }
@@ -378,9 +498,20 @@ fn scan_dir(dir: &Path, out: &mut Vec<IntegrationManifest>) {
                     chip.color = "cyan".to_string();
                 }
                 m.source_path = path;
+                manifests_added.push(out.len());
                 out.push(m);
             }
             Err(_) => continue,
+        }
+    }
+    // Second pass: apply overrides in-place. An override with no
+    // matching base is silently dropped — dead data, not an error.
+    for (id, ov) in overrides {
+        for &i in &manifests_added {
+            if out[i].id == id {
+                ov.apply_to(&mut out[i]);
+                break;
+            }
         }
     }
 }
@@ -594,5 +725,122 @@ color = "nonsense-neon"
             ..m
         };
         assert!(!m.is_ready());
+    }
+
+    #[test]
+    fn override_toml_layers_on_base_manifest_by_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("htop.toml"),
+            r#"id = "htop"
+label = "htop"
+description = "Interactive process viewer"
+[chip]
+glyph = "H"
+fallback = "H"
+color = "cyan"
+enabled = true
+in_palette_bar = false
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("htop.override.toml"),
+            r#"id = "htop"
+label = "Top"
+[chip]
+color = "green"
+in_palette_bar = true
+"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        scan_dir(dir.path(), &mut out);
+        assert_eq!(
+            out.len(),
+            1,
+            "override file should not become its own manifest"
+        );
+        let m = &out[0];
+        // Overrides won on the fields they set.
+        assert_eq!(m.label, "Top");
+        assert_eq!(m.chip.as_ref().unwrap().color, "green");
+        assert!(m.chip.as_ref().unwrap().in_palette_bar);
+        // Base kept the fields the override left None.
+        assert_eq!(m.description.as_deref(), Some("Interactive process viewer"));
+        assert_eq!(m.chip.as_ref().unwrap().glyph, "H");
+        assert!(m.chip.as_ref().unwrap().enabled);
+    }
+
+    #[test]
+    fn override_with_mismatched_id_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("htop.toml"),
+            r#"id = "htop"
+label = "htop"
+[chip]
+glyph = "H"
+fallback = "H"
+color = "cyan"
+"#,
+        )
+        .unwrap();
+        // Filename says htop, body says btop — must be rejected.
+        std::fs::write(
+            dir.path().join("htop.override.toml"),
+            r#"id = "btop"
+label = "wrong"
+"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        scan_dir(dir.path(), &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].label, "htop"); // override rejected → base intact
+    }
+
+    #[test]
+    fn override_with_no_matching_base_is_silently_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("ghost.override.toml"),
+            r#"id = "ghost"
+label = "orphan"
+"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        scan_dir(dir.path(), &mut out);
+        assert!(out.is_empty(), "orphan override must not create a manifest");
+    }
+
+    #[test]
+    fn override_ignores_unknown_color() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("x.toml"),
+            r#"id = "x"
+label = "X"
+[chip]
+glyph = "x"
+fallback = "x"
+color = "cyan"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("x.override.toml"),
+            r#"id = "x"
+[chip]
+color = "chartreuse-fluorescent"
+"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        scan_dir(dir.path(), &mut out);
+        assert_eq!(out.len(), 1);
+        // Base color kept — the override's unknown color was rejected.
+        assert_eq!(out[0].chip.as_ref().unwrap().color, "cyan");
     }
 }
