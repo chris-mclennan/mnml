@@ -1780,8 +1780,11 @@ impl App {
             // `:version` — toast the build sha (formerly the bottom-right
             // statusline chip).
             "version" | "ver" => {
-                let ver = env!("MNML_GIT_SHA");
-                self.toast(format!("mnml {ver}"));
+                self.toast(format!(
+                    "mnml {} · {}",
+                    env!("CARGO_PKG_VERSION"),
+                    env!("MNML_GIT_SHA")
+                ));
             }
             // `:welcome` — re-open the first-launch overlay. Useful as a
             // discoverability gesture after the marker has been written.

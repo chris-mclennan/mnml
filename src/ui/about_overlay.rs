@@ -28,7 +28,10 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         .map(|s| s.to_string())
         .unwrap_or_else(|| app.workspace.display().to_string());
     let rows: Vec<Row> = vec![
-        ("version", env!("MNML_GIT_SHA").to_string()),
+        (
+            "version",
+            format!("{} · {}", env!("CARGO_PKG_VERSION"), env!("MNML_GIT_SHA")),
+        ),
         ("theme", t.name.to_string()),
         ("workspace", workspace_label),
         ("repos", format!("{}", app.repos.len())),

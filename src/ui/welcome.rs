@@ -199,7 +199,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     ]));
     body.push(Line::from(""));
     body.push(Line::from(Span::styled(
-        format!("mnml · {}", env!("MNML_GIT_SHA")),
+        format!(
+            "mnml {} · {}",
+            env!("CARGO_PKG_VERSION"),
+            env!("MNML_GIT_SHA")
+        ),
         dim,
     )));
 

@@ -330,19 +330,52 @@ impl App {
         self.prompt = Some(p);
     }
 
-    /// Drop the integration with the given id from the rail and
-    /// persist to TOML. Surfaced from the chip right-click menu's
-    /// "Remove from rail" entry.
+    /// Uninstall the integration with the given id — full round-trip
+    /// with `install_launcher_from_url` / `<sibling> --install`:
+    ///
+    /// 1. Delete the installed manifest at
+    ///    `~/.config/mnml/integrations/<id>.toml` (if present).
+    /// 2. Re-scan the manifest dir so `self.integration_manifests` no
+    ///    longer contains it.
+    /// 3. Drop the entry from `config.ui.integration_icons` (the rail
+    ///    list) + persist mnml's config.toml.
+    ///
+    /// Pre-2026-08-03 this only did step 3 — so a "removed" integration
+    /// re-appeared on the next manifest merge (startup or
+    /// `integrations.refresh`) because the manifest file was still on
+    /// disk. Bug surfaced during the post-consolidation clean-slate
+    /// audit where 10 orphaned Aug-1 manifests kept resurrecting
+    /// themselves.
     pub fn remove_integration_by_id(&mut self, id: &str) {
+        // Step 1: delete the manifest file, if any.
+        let manifest_removed = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .map(|h| {
+                h.join(".config")
+                    .join("mnml")
+                    .join("integrations")
+                    .join(format!("{id}.toml"))
+            })
+            .is_some_and(|p| p.exists() && std::fs::remove_file(&p).is_ok());
+        // Step 2: re-scan so the in-memory manifest list drops it.
+        if manifest_removed {
+            self.integration_manifests.retain(|m| m.id != id);
+        }
+        // Step 3: rail / config.toml pruning.
         let before = self.config.ui.integration_icons.len();
         self.config.ui.integration_icons.retain(|ic| ic.id != id);
-        if self.config.ui.integration_icons.len() == before {
-            self.toast(format!("integration: {id} not in rail"));
-            return;
+        let rail_removed = self.config.ui.integration_icons.len() != before;
+        match (manifest_removed, rail_removed) {
+            (false, false) => {
+                self.toast(format!("integration: {id} not installed"));
+                return;
+            }
+            (true, _) => self.toast(format!("uninstalled {id}")),
+            (false, true) => self.toast(format!("removed {id} from rail")),
         }
-        match persist_integration_icons(&self.config.ui.integration_icons) {
-            Ok(_) => self.toast(format!("removed {id} from rail")),
-            Err(e) => self.toast(format!("removed in-memory (persist failed: {e})")),
+        if rail_removed && let Err(e) = persist_integration_icons(&self.config.ui.integration_icons)
+        {
+            self.toast(format!("(persist failed: {e})"));
         }
     }
 
@@ -1160,4 +1193,86 @@ color = \"blue\"
 
     // 2026-08-01 (P2) — append_launcher_icon_blocks_serializes_enabled_field
     // deleted with the LauncherIcon retirement.
+
+    fn home_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    /// Regression for the 2026-08-03 install/uninstall audit — the
+    /// prior `remove_integration_by_id` only trimmed the rail chip,
+    /// leaving `~/.config/mnml/integrations/<id>.toml` on disk so the
+    /// integration resurrected itself on the next manifest scan.
+    #[test]
+    fn remove_integration_by_id_deletes_installed_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = home_lock().lock().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        let restore = |h: Option<std::ffi::OsString>| unsafe {
+            match h {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        };
+        // Seed an installed manifest at HOME/.config/mnml/integrations/testxyz.toml
+        // — the shape write_launcher_from_url would produce.
+        let dir = tmp.path().join(".config").join("mnml").join("integrations");
+        std::fs::create_dir_all(&dir).unwrap();
+        let manifest_path = dir.join("testxyz.toml");
+        std::fs::write(
+            &manifest_path,
+            r#"id = "testxyz"
+label = "Test XYZ"
+[chip]
+glyph = "T"
+fallback = "T"
+color = "cyan"
+enabled = true
+"#,
+        )
+        .unwrap();
+        assert!(manifest_path.exists());
+        // Build an App and hand-populate the in-memory rail entry the way
+        // the real merge would (avoids depending on the full scan path).
+        let ws = tempfile::tempdir().unwrap();
+        let mut app =
+            crate::app::App::new(ws.path().to_path_buf(), crate::config::Config::default())
+                .unwrap();
+        app.config
+            .ui
+            .integration_icons
+            .push(crate::config::IntegrationIcon {
+                id: "testxyz".to_string(),
+                glyph: "T".to_string(),
+                fallback: "T".to_string(),
+                command: "testxyz.open".to_string(),
+                color: "cyan".to_string(),
+                label: Some("Test XYZ".to_string()),
+                enabled: true,
+                in_palette_bar: false,
+                description: None,
+                homepage: None,
+                docs: None,
+                repository: None,
+                author: None,
+                version: None,
+                commands: Vec::new(),
+                manifest_can_override: true,
+            });
+        // Uninstall via the shared path.
+        app.remove_integration_by_id("testxyz");
+        // The manifest file MUST be gone (the round-trip fix).
+        let manifest_gone = !manifest_path.exists();
+        // And the rail chip too.
+        let rail_gone = !app
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .any(|i| i.id == "testxyz");
+        restore(prev_home);
+        assert!(manifest_gone, "manifest file should be deleted");
+        assert!(rail_gone, "rail chip should be removed");
+    }
 }
