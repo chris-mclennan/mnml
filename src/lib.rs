@@ -50,6 +50,7 @@ pub(crate) mod completion;
 pub mod config;
 pub(crate) mod context_menu;
 pub(crate) mod dap;
+pub mod data_root;
 pub mod e2e;
 pub(crate) mod ecs_runner;
 pub(crate) mod ecs_runner_trigger;

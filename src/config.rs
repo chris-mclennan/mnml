@@ -3061,6 +3061,14 @@ fn strip_workspaces_blocks(src: &str) -> String {
 }
 
 fn home_config_path() -> Option<PathBuf> {
+    // Portable-mode override wins over everything — the marker
+    // folder next to the binary is explicit user intent (task
+    // #858). When absent, `crate::data_root::data_root_kind()`
+    // reports `Home` and this falls through to the historical
+    // XDG / HOME layout unchanged.
+    if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
+        return Some(crate::data_root::data_root().join("config.toml"));
+    }
     // Respect $XDG_CONFIG_HOME, else ~/.config.
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
         && !xdg.is_empty()
