@@ -285,25 +285,17 @@ mod tests {
 
     #[test]
     fn session_path_dashes_the_cwd() {
-        // Serialize env mutation across test modules — same crate-wide
-        // lock discovery / cdp / sibling_glyphs / prompt / shell_prompt
-        // use. Ubuntu CI's higher --test-threads default exposed this
-        // race class on 2026-08-03.
+        // Serialize env mutation across test modules; EnvGuard
+        // restores HOME on scope exit (panic-safe).
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // SAFETY: env var write, serialized by _lk above.
-        let prev = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", "/home/x") };
+        let _home = crate::EnvGuard::set("HOME", "/home/x");
         let p = session_path(Path::new("/Users/me/Projects/mnml"), "abc-123").unwrap();
         assert_eq!(
             p,
             Path::new("/home/x/.claude/projects/-Users-me-Projects-mnml/abc-123.jsonl")
         );
-        match prev {
-            Some(v) => unsafe { std::env::set_var("HOME", v) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
     }
 
     #[test]

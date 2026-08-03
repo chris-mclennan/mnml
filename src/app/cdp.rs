@@ -1831,20 +1831,14 @@ mod tests {
         assert_ne!(p1, p2, "ephemeral should hand back a fresh dir each call");
         // shared ⇒ under $HOME (when set)
         cfg.browser.profile_mode = "shared".to_string();
-        // SAFETY: setting + restoring an env var while holding the
-        // shared crate-wide test env lock — serializes against
-        // discovery / sibling_glyphs tests that also mutate HOME.
+        // Serialize env mutation across test modules; EnvGuard restores
+        // HOME on scope exit (including panic unwind).
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let prior = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", "/tmp/mnml-test-home") };
+        let _home = crate::EnvGuard::set("HOME", "/tmp/mnml-test-home");
         let app = App::new(d.path().to_path_buf(), cfg).unwrap();
         let p = app.chrome_profile_dir();
         assert!(p.starts_with("/tmp/mnml-test-home"));
-        match prior {
-            Some(h) => unsafe { std::env::set_var("HOME", h) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
     }
 }

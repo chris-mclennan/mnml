@@ -651,3 +651,67 @@ pub fn test_env_lock() -> &'static std::sync::Mutex<()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
     LOCK.get_or_init(|| std::sync::Mutex::new(()))
 }
+
+/// RAII guard for a single env var. Grabs the previous value on
+/// `set()`, restores it on drop — including drop-during-unwind, so
+/// a failing `assert!` mid-test still runs the restore. Pair with
+/// [`test_env_lock()`] so cross-module writes stay serialized:
+///
+/// ```ignore
+/// let _lk = crate::test_env_lock().lock().unwrap_or_else(|e| e.into_inner());
+/// let _home = crate::EnvGuard::set("HOME", tmp.path());
+/// // …test body — panic-safe. HOME restores when _home drops.
+/// ```
+///
+/// Motivation: pre-2026-08-03 test bodies restored env vars with a
+/// manual `if let Some(prev) = …` at the bottom of the fn. An
+/// assertion failure earlier in the body skipped the restore, so
+/// the tempdir HOME leaked into every subsequent test on that
+/// binary run — exactly the flake pattern the shared lock was
+/// meant to close. Drop-based restore is the only shape that
+/// survives panics.
+#[cfg(test)]
+pub struct EnvGuard {
+    key: &'static str,
+    prev: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl EnvGuard {
+    /// Set `key` to `value`, remembering the previous value so it
+    /// can be restored on drop. `key` is `&'static str` so a stray
+    /// String doesn't accidentally end up as the env var name.
+    pub fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let prev = std::env::var_os(key);
+        // SAFETY: env var write. Callers must hold `test_env_lock()`
+        // for cross-module ordering. `EnvGuard::set` itself is not
+        // safe against concurrent writers to the same key — the lock
+        // provides that.
+        unsafe { std::env::set_var(key, value.as_ref()) };
+        Self { key, prev }
+    }
+
+    /// Remove `key` for the duration of this guard. Prior value
+    /// is restored on drop (or `None` → var stays removed).
+    pub fn remove(key: &'static str) -> Self {
+        let prev = std::env::var_os(key);
+        // SAFETY: same as `set`.
+        unsafe { std::env::remove_var(key) };
+        Self { key, prev }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: env var write during Drop. Runs during normal
+        // return AND during panic unwinding, so a failed assertion
+        // still restores.
+        unsafe {
+            match self.prev.take() {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}

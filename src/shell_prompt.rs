@@ -126,16 +126,10 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // Snapshot for restore below so a later test doesn't see the
-        // tempdir HOME (the tempdir dies with `d`; leaked HOME points
-        // at a nonexistent path).
-        let prev_home = std::env::var_os("HOME");
-        let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
-        // SAFETY: env writes, serialized by _lk above.
-        unsafe {
-            std::env::set_var("HOME", d.path());
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
+        // EnvGuard restores both env vars on scope exit — including
+        // during panic unwind, so a failing assert! still restores.
+        let _home = crate::EnvGuard::set("HOME", d.path());
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let v = theme_env_vars("mnml");
         let keys: Vec<&str> = v.iter().map(|(k, _)| k.as_str()).collect();
         for needed in &[
@@ -161,16 +155,6 @@ mod tests {
                 .starts_with(d.path().display().to_string().as_str())
         );
         assert!(std::path::Path::new(&script.1).exists());
-        // Restore env for tests that run after this one.
-        unsafe {
-            match prev_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match prev_xdg {
-                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
-                None => std::env::remove_var("XDG_CONFIG_HOME"),
-            }
-        }
+        // _home and _xdg drop here → restore.
     }
 }

@@ -777,48 +777,30 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn split_path_tilde_expansion() {
-        // Serialize env mutation across test modules. Ubuntu CI's
-        // higher --test-threads default exposed a race on 2026-08-03
-        // between HOME writers in different modules.
+        // Serialize env mutation across test modules; EnvGuard
+        // restores HOME on scope exit (panic-safe).
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        // SAFETY: env var write, serialized by _lk above.
-        let prev = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", "/Users/x") };
+        let _home = crate::EnvGuard::set("HOME", "/Users/x");
         let (parent, filter) = split_path_for_browse("~/Proj");
         assert_eq!(parent, std::path::PathBuf::from("/Users/x"));
         assert_eq!(filter, "Proj");
-        if let Some(p) = prev {
-            unsafe { std::env::set_var("HOME", p) };
-        } else {
-            unsafe { std::env::remove_var("HOME") };
-        }
     }
 
     #[cfg(windows)]
     #[test]
     fn split_path_tilde_expansion_windows() {
         // Windows: function falls back to USERPROFILE when HOME isn't set.
-        // Serialize env mutation via the shared crate-wide lock.
+        // EnvGuard restores both env vars on scope exit, panic-safe.
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var_os("USERPROFILE");
-        unsafe { std::env::set_var("USERPROFILE", r"C:\Users\x") };
-        let prev_home = std::env::var_os("HOME");
-        unsafe { std::env::remove_var("HOME") };
+        let _up = crate::EnvGuard::set("USERPROFILE", r"C:\Users\x");
+        let _home = crate::EnvGuard::remove("HOME");
         let (parent, filter) = split_path_for_browse("~/Proj");
         assert_eq!(parent, std::path::PathBuf::from(r"C:\Users\x"));
         assert_eq!(filter, "Proj");
-        if let Some(p) = prev {
-            unsafe { std::env::set_var("USERPROFILE", p) };
-        } else {
-            unsafe { std::env::remove_var("USERPROFILE") };
-        }
-        if let Some(p) = prev_home {
-            unsafe { std::env::set_var("HOME", p) };
-        }
     }
 
     // Helper for `is_empty().not()` in the test above.

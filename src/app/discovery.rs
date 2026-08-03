@@ -1317,14 +1317,7 @@ color = \"blue\"
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let prev_home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        let restore = |h: Option<std::ffi::OsString>| unsafe {
-            match h {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-        };
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
         // Seed an installed manifest at HOME/.config/mnml/integrations/testxyz.toml
         // — the shape write_launcher_from_url would produce.
         let dir = tmp.path().join(".config").join("mnml").join("integrations");
@@ -1372,18 +1365,17 @@ enabled = true
             });
         // Uninstall via the shared path.
         app.remove_integration_by_id("testxyz");
-        // The manifest file MUST be gone (the round-trip fix).
-        let manifest_gone = !manifest_path.exists();
-        // And the rail chip too.
-        let rail_gone = !app
-            .config
-            .ui
-            .integration_icons
-            .iter()
-            .any(|i| i.id == "testxyz");
-        restore(prev_home);
-        assert!(manifest_gone, "manifest file should be deleted");
-        assert!(rail_gone, "rail chip should be removed");
+        // EnvGuard restores HOME on scope exit (even on panic), so
+        // asserts can run inline without ordering around the restore.
+        assert!(!manifest_path.exists(), "manifest file should be deleted");
+        assert!(
+            !app.config
+                .ui
+                .integration_icons
+                .iter()
+                .any(|i| i.id == "testxyz"),
+            "rail chip should be removed"
+        );
     }
 
     /// #851 phase 2 — `remove_integration_by_id` must also delete
@@ -1396,14 +1388,7 @@ enabled = true
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let prev_home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        let restore = |h: Option<std::ffi::OsString>| unsafe {
-            match h {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-        };
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
         let dir = tmp.path().join(".config").join("mnml").join("integrations");
         std::fs::create_dir_all(&dir).unwrap();
         let base = dir.join("testxyz.toml");
@@ -1415,11 +1400,8 @@ enabled = true
             crate::app::App::new(ws.path().to_path_buf(), crate::config::Config::default())
                 .unwrap();
         app.remove_integration_by_id("testxyz");
-        let base_gone = !base.exists();
-        let over_gone = !over.exists();
-        restore(prev_home);
-        assert!(base_gone, "base .toml should be deleted");
-        assert!(over_gone, "sidecar .override.toml should be deleted");
+        assert!(!base.exists(), "base .toml should be deleted");
+        assert!(!over.exists(), "sidecar .override.toml should be deleted");
     }
 
     /// #851 phase 2 — Edit-mode save writes to
@@ -1435,14 +1417,7 @@ enabled = true
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let prev_home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        let restore = |h: Option<std::ffi::OsString>| unsafe {
-            match h {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-        };
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
         // Seed a canonical `myint.toml` so write_override_toml
         // stays on the override path (vs the no-base promotion).
         let dir = tmp.path().join(".config").join("mnml").join("integrations");
@@ -1472,7 +1447,6 @@ enabled = true
         };
         let path = write_override_toml(&icon).expect("write");
         let body = std::fs::read_to_string(&path).unwrap();
-        restore(prev_home);
         assert!(body.contains("id = \"myint\""));
         assert!(body.contains("label = \"My Integration\""));
         assert!(body.contains("[chip]"));
@@ -1496,14 +1470,7 @@ enabled = true
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let prev_home = std::env::var_os("HOME");
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        let restore = |h: Option<std::ffi::OsString>| unsafe {
-            match h {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-        };
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
         let icon = IntegrationIcon {
             id: "claude_code".to_string(),
             glyph: "C".to_string(),
@@ -1527,7 +1494,6 @@ enabled = true
         let dir = tmp.path().join(".config").join("mnml").join("integrations");
         let base = dir.join("claude_code.toml");
         let over = dir.join("claude_code.override.toml");
-        restore(prev_home);
         assert!(
             path.ends_with("claude_code.toml"),
             "expected authored .toml, got {path:?}"
