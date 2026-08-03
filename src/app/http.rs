@@ -328,6 +328,24 @@ fn ensure_mnml_env_gitignored(workspace: &std::path::Path) -> Option<String> {
     }
     let gitignore = workspace.join(".gitignore");
     let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    // First-pass: refuse to append if the user has explicitly
+    // WHITELISTED any `.mnml/env` path via a `!…` negation. Our
+    // append would land AFTER their negation and silently override
+    // it (gitignore is order-dependent — a later broad ignore wins
+    // over an earlier negation). Reviewer 2026-08-03. NOTE: single-
+    // process-per-workspace today so the read-modify-write is safe;
+    // add a lock file if we ever share workspaces across processes.
+    let has_env_negation = existing.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed.starts_with('!') && trimmed[1..].trim_start().contains(".mnml/env")
+    });
+    if has_env_negation {
+        return Some(
+            ".gitignore has an explicit `!.mnml/env/…` negation; \
+             leaving it alone. Verify tokens aren't committable manually."
+                .to_string(),
+        );
+    }
     // Coarse but effective — any line that mentions `.mnml/env`
     // (with or without trailing slash / glob) is treated as
     // already covering us. Comments starting with `#` skipped.
@@ -6772,6 +6790,32 @@ mod http_tests {
         std::fs::write(&gi, "target/\n.mnml/\n").unwrap();
         let out = ensure_mnml_env_gitignored(ws.path());
         assert!(out.is_none());
+    }
+
+    /// User has explicitly whitelisted a specific env file via
+    /// `!.mnml/env/dev.env`. Our append would silently override it
+    /// (gitignore order-dependent). Skip + toast a warning instead.
+    #[test]
+    fn ensure_mnml_env_gitignored_respects_negation() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        let gi = ws.path().join(".gitignore");
+        let body = "target/\n.env\n!.mnml/env/dev.env\n";
+        std::fs::write(&gi, body).unwrap();
+        let out = ensure_mnml_env_gitignored(ws.path());
+        // Should skip the append (returns a warn toast) rather than
+        // silently overriding the user's explicit whitelist.
+        assert!(out.is_some(), "should toast to explain the skip");
+        let toast = out.unwrap();
+        assert!(
+            toast.contains("negation") || toast.contains("!.mnml/env"),
+            "toast should explain the negation was respected: {toast}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&gi).unwrap(),
+            body,
+            "gitignore body must be unchanged"
+        );
     }
 
     /// Existing gitignore doesn't cover us and doesn't end in
