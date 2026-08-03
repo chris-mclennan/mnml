@@ -28,7 +28,7 @@ pub mod ai;
 mod cdp;
 mod context_menus;
 mod dap;
-pub(crate) mod discovery;
+pub mod discovery;
 pub(crate) mod dispatch;
 mod ex_commands;
 mod find;

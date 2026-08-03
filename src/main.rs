@@ -271,6 +271,25 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     };
     // Re-open last session's buffers (no-op when [session] restore = false).
     app.try_restore_session();
+    // #851 phase 3 — one-shot aggressive migration of any legacy
+    // `[[ui.integration_icon]]` blocks in ~/.config/mnml/config.toml
+    // into `<id>.override.toml` sidecars. Idempotent — no-op on
+    // installs that have never had legacy blocks (which is most of
+    // them after the 2026-08-01 flip). Toasts on non-zero migrate
+    // count so users see the change.
+    match mnml::app::discovery::migrate_legacy_integration_icon_blocks() {
+        Ok((0, _)) => {}
+        Ok((n, warns)) => {
+            app.toast(format!(
+                "migrated {n} legacy [[ui.integration_icon]] block(s) → override sidecars \
+                 (backup in ~/.config/mnml/backups/)"
+            ));
+            for w in warns {
+                app.toast(format!("migrate warn: {w}"));
+            }
+        }
+        Err(e) => app.toast(format!("migrate: {e}")),
+    }
     // #867 — per-user first-run: portable-vs-normal data layout choice.
     // Fires exactly once per user (guarded by `.user-welcomed` in
     // data_root). If the user picks Portable, this immediately requests

@@ -1114,6 +1114,118 @@ fn toml_str(s: &str) -> String {
     out
 }
 
+/// #851 phase 3 — one-shot AGGRESSIVE migration of legacy
+/// `[[ui.integration_icon]]` blocks in `config.toml` into folder-
+/// based overrides (`~/.config/mnml/integrations/<id>.override.toml`).
+///
+/// Runs at startup. Idempotent — when no legacy blocks are present
+/// (post-migration or fresh install) it's a no-op and does not
+/// rewrite config.toml (so no needless config-backup churn).
+///
+/// Behavior:
+/// - Parse config.toml as a plain TOML value tree.
+/// - For every `[[ui.integration_icon]]` block, read `id`,
+///   `enabled`, `in_palette_bar`. Any other field on the legacy
+///   block was already dead per the 2026-08-01 precedence flip.
+/// - When the block carries a non-default state (`enabled = false`
+///   or `in_palette_bar = true`), materialize an
+///   `<id>.override.toml` sidecar preserving that state. Manifest
+///   defaults for glyph/color/label/etc are inherited on next
+///   startup — the override only records user-touched fields.
+/// - Regardless of whether a sidecar was written, drop the legacy
+///   block from config.toml. Stripping is done via the existing
+///   `strip_integration_icon_blocks` line-oriented pass so
+///   comments + non-integration keys survive.
+/// - Write config.toml back via `config::write_user_config` so the
+///   pre-migration copy lands in `~/.config/mnml/backups/`
+///   (recoverable if anything looks wrong).
+///
+/// Callers: `App::new` at startup. Returns the count of migrated
+/// blocks (0 when idempotent no-op) plus a Vec of anything that
+/// could not be migrated (unrecognized id shape, override write
+/// error). Both surface via startup toast when non-empty.
+pub fn migrate_legacy_integration_icon_blocks() -> Result<(usize, Vec<String>), String> {
+    let cfg_path = crate::config::user_config_path()
+        .ok_or_else(|| "no user config path resolvable".to_string())?;
+    let Ok(existing) = std::fs::read_to_string(&cfg_path) else {
+        return Ok((0, Vec::new()));
+    };
+    // Fast path: if the file has no legacy blocks at all, we're done.
+    if !existing.contains("[[ui.integration_icon]]") {
+        return Ok((0, Vec::new()));
+    }
+    // Parse via the toml crate for structured id/enabled/in_palette_bar
+    // extraction. Malformed config → return the error; startup handles
+    // toasting.
+    let doc: toml::Value =
+        toml::from_str(&existing).map_err(|e| format!("parse {}: {e}", cfg_path.display()))?;
+    let mut migrated = 0usize;
+    let mut warns: Vec<String> = Vec::new();
+    let legacy_blocks = doc
+        .get("ui")
+        .and_then(|u| u.get("integration_icon"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for block in &legacy_blocks {
+        let Some(id) = block.get("id").and_then(|v| v.as_str()) else {
+            warns.push("legacy block without id — skipped".to_string());
+            continue;
+        };
+        let enabled = block.get("enabled").and_then(|v| v.as_bool());
+        let in_palette_bar = block.get("in_palette_bar").and_then(|v| v.as_bool());
+        // Manifest defaults are `enabled = true`, `in_palette_bar = false`.
+        // Only when the legacy block deviates do we need to preserve
+        // user intent via an override sidecar.
+        let has_delta = matches!(enabled, Some(false)) || matches!(in_palette_bar, Some(true));
+        if !has_delta {
+            // Legacy block carries only defaults — safe to drop with
+            // no override needed. Counts toward migrated to reflect
+            // the change we're making to config.toml.
+            migrated += 1;
+            continue;
+        }
+        let icon = IntegrationIcon {
+            id: id.to_string(),
+            enabled: enabled.unwrap_or(true),
+            in_palette_bar: in_palette_bar.unwrap_or(false),
+            // These fields carry the manifest / built-in default at
+            // load time — `write_override_toml` uses them to emit
+            // the [chip] section. Empty strings here are fine
+            // because we ONLY write override files when the base
+            // manifest exists (the write_override_toml logic itself
+            // promotes to authored when no base is present, which
+            // is the right behavior for a builtin id whose block
+            // predates the manifest era).
+            glyph: String::new(),
+            fallback: String::new(),
+            command: String::new(),
+            color: String::new(),
+            label: None,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
+        };
+        match write_override_toml(&icon) {
+            Ok(_) => migrated += 1,
+            Err(e) => warns.push(format!("override write for {id}: {e}")),
+        }
+    }
+    // Now strip legacy blocks from the source. Use the existing
+    // line-oriented strip so comments + non-integration content
+    // survive intact.
+    let stripped = strip_integration_icon_blocks(&existing);
+    if stripped != existing {
+        crate::config::write_user_config(&cfg_path, &stripped)
+            .map_err(|e| format!("write {}: {e}", cfg_path.display()))?;
+    }
+    Ok((migrated, warns))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1527,5 +1639,98 @@ enabled = true
         );
         assert!(base.exists(), "base file must exist after promotion");
         assert!(!over.exists(), "no override sidecar for a promoted write");
+    }
+
+    /// #851 phase 3 — legacy block with `enabled = false` migrates to
+    /// an `<id>.override.toml` and the block is stripped from
+    /// config.toml. Idempotent — a second call with no legacy
+    /// blocks is a no-op.
+    #[test]
+    fn migrate_legacy_integration_icon_blocks_writes_override_and_strips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        // Seed a canonical manifest so the migration writes an
+        // override (vs promoting to authored).
+        let idir = tmp.path().join(".config").join("mnml").join("integrations");
+        std::fs::create_dir_all(&idir).unwrap();
+        std::fs::write(
+            idir.join("mystery.toml"),
+            "id = \"mystery\"\nlabel = \"Mystery\"\n",
+        )
+        .unwrap();
+        // Seed config.toml with a legacy block that has a delta.
+        let cfg_dir = tmp.path().join(".config").join("mnml");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        let cfg_path = cfg_dir.join("config.toml");
+        std::fs::write(
+            &cfg_path,
+            "[ui]\ntheme = \"onedark\"\n\n\
+             [[ui.integration_icon]]\nid = \"mystery\"\nenabled = false\n",
+        )
+        .unwrap();
+
+        let (n, warns) = migrate_legacy_integration_icon_blocks().unwrap();
+        assert_eq!(n, 1, "one block migrated");
+        assert!(warns.is_empty(), "no warnings: {warns:?}");
+        // Override sidecar exists with enabled=false.
+        let override_path = idir.join("mystery.override.toml");
+        assert!(override_path.exists(), "override sidecar written");
+        let body = std::fs::read_to_string(&override_path).unwrap();
+        assert!(
+            body.contains("enabled = false"),
+            "override preserves enabled=false: {body}"
+        );
+        // config.toml has the legacy block stripped, [ui]/theme preserved.
+        let after = std::fs::read_to_string(&cfg_path).unwrap();
+        assert!(
+            after.contains("theme = \"onedark\""),
+            "non-integration keys survive: {after}"
+        );
+        assert!(
+            !after.contains("[[ui.integration_icon]]"),
+            "legacy block removed: {after}"
+        );
+        // Idempotent — second call is a no-op returning (0, empty).
+        let (n2, warns2) = migrate_legacy_integration_icon_blocks().unwrap();
+        assert_eq!(n2, 0, "second call migrates nothing");
+        assert!(warns2.is_empty());
+    }
+
+    /// #851 phase 3 — legacy block that carries only manifest
+    /// defaults gets stripped without writing an override (no delta
+    /// to preserve).
+    #[test]
+    fn migrate_legacy_default_only_block_strips_without_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let idir = tmp.path().join(".config").join("mnml").join("integrations");
+        std::fs::create_dir_all(&idir).unwrap();
+        std::fs::write(idir.join("thing.toml"), "id = \"thing\"\nlabel = \"T\"\n").unwrap();
+        let cfg_dir = tmp.path().join(".config").join("mnml");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        let cfg_path = cfg_dir.join("config.toml");
+        std::fs::write(
+            &cfg_path,
+            "[[ui.integration_icon]]\nid = \"thing\"\nenabled = true\n",
+        )
+        .unwrap();
+        let (n, _) = migrate_legacy_integration_icon_blocks().unwrap();
+        assert_eq!(n, 1, "block counted as migrated");
+        assert!(
+            !idir.join("thing.override.toml").exists(),
+            "no override for default-only block"
+        );
+        assert!(
+            !std::fs::read_to_string(&cfg_path)
+                .unwrap()
+                .contains("[[ui.integration_icon]]"),
+            "block still stripped"
+        );
     }
 }
