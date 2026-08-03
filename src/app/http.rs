@@ -297,6 +297,68 @@ fn extract_summary(text: &str) -> Option<String> {
 /// Does the `.env` file at `path` contain a (non-comment) line
 /// for `key`? Used by `write_env_var` to decide which file gets
 /// the write when both `.mnml/env/` and `.rqst/env/` exist.
+/// #861 — on the first `.mnml/env/*.env` write in a git-tracked
+/// workspace, make sure `.gitignore` at the workspace root contains
+/// a `.mnml/env/` line so freshly-written API tokens can't
+/// accidentally end up in a commit.
+///
+/// Guardrails:
+/// - **Git repo only.** Non-git workspaces have no commit risk to
+///   guard against, and creating a `.gitignore` in a tempdir
+///   scratch or non-git folder is presumptuous. Detects via
+///   `<workspace>/.git` existing (dir OR file — worktrees stamp a
+///   `.git` FILE that points at the real one, still counts).
+/// - **Idempotent.** If any existing gitignore line already covers
+///   `.mnml/env/` (with or without trailing slash, or the broader
+///   `.mnml/**` pattern), no-op. Only appends when a genuinely
+///   new pattern is missing.
+/// - **Append-only.** Never rewrites existing gitignore lines or
+///   reorders — just adds one line if needed.
+///
+/// Returns `Some(toast)` when a modification was made so the caller
+/// can surface it (rare enough that users benefit from seeing what
+/// happened). `None` for skip / no-op cases.
+fn ensure_mnml_env_gitignored(workspace: &std::path::Path) -> Option<String> {
+    // .git can be a dir (normal repo) or a file (git worktree
+    // stub pointing at the real dir). Both count as "this is
+    // tracked by git" for our purposes.
+    let git_marker = workspace.join(".git");
+    if !git_marker.exists() {
+        return None;
+    }
+    let gitignore = workspace.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    // Coarse but effective — any line that mentions `.mnml/env`
+    // (with or without trailing slash / glob) is treated as
+    // already covering us. Comments starting with `#` skipped.
+    let already_covered = existing.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            return false;
+        }
+        trimmed == ".mnml/env"
+            || trimmed == ".mnml/env/"
+            || trimmed == ".mnml/env/*"
+            || trimmed == ".mnml/env/**"
+            || trimmed == ".mnml/"
+            || trimmed == ".mnml"
+            || trimmed == ".mnml/**"
+    });
+    if already_covered {
+        return None;
+    }
+    // Preserve trailing newline hygiene: if the file exists and
+    // doesn't end in `\n`, add one before our append so we don't
+    // glue our line onto the last existing line.
+    let mut new_body = existing.clone();
+    if !new_body.is_empty() && !new_body.ends_with('\n') {
+        new_body.push('\n');
+    }
+    new_body.push_str(".mnml/env/\n");
+    std::fs::write(&gitignore, new_body).ok()?;
+    Some(".gitignore: appended .mnml/env/ (keeps API tokens out of commits)".to_string())
+}
+
 fn file_contains_env_key(path: &std::path::Path, key: &str) -> bool {
     let Ok(text) = std::fs::read_to_string(path) else {
         return false;
@@ -2547,7 +2609,22 @@ impl App {
             return;
         }
         match std::fs::write(&env_path, updated) {
-            Ok(()) => self.toast(format!("wrote {key}={value} → {}", env_path.display())),
+            Ok(()) => {
+                self.toast(format!("wrote {key}={value} → {}", env_path.display()));
+                // #861 — first .env write in this workspace? Make sure
+                // `.mnml/env/` is in `.gitignore` so the API tokens we
+                // just wrote don't accidentally end up in a commit.
+                // Only touches gitignore when this workspace is
+                // actually a git repo (a `.git/` dir sits at the
+                // root) — non-git tempdir workspaces have no commit
+                // risk to guard against. Called ONLY on .mnml/ writes
+                // (skipped for .rqst/ ones — that's a legacy path).
+                if env_path.starts_with(self.workspace.join(".mnml"))
+                    && let Some(msg) = ensure_mnml_env_gitignored(&self.workspace)
+                {
+                    self.toast(msg);
+                }
+            }
             Err(e) => self.toast(format!("env: write {}: {e}", env_path.display())),
         }
     }
@@ -6643,6 +6720,72 @@ impl App {
 #[cfg(test)]
 mod http_tests {
     use super::*;
+
+    // ── #861 auto-gitignore ─────────────────────────────────────
+
+    /// Non-git workspace → no modification, no toast, no
+    /// `.gitignore` created out of thin air.
+    #[test]
+    fn ensure_mnml_env_gitignored_noop_when_not_a_git_repo() {
+        let ws = tempfile::tempdir().unwrap();
+        let out = ensure_mnml_env_gitignored(ws.path());
+        assert!(out.is_none(), "non-git workspace should be a no-op");
+        assert!(
+            !ws.path().join(".gitignore").exists(),
+            "must not create a .gitignore in a non-git workspace"
+        );
+    }
+
+    /// Git repo with no `.gitignore` yet → creates one containing
+    /// exactly `.mnml/env/`, toasts.
+    #[test]
+    fn ensure_mnml_env_gitignored_creates_when_git_repo_has_no_gitignore() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        let toast = ensure_mnml_env_gitignored(ws.path()).expect("should have toasted");
+        assert!(toast.contains(".mnml/env/"));
+        let body = std::fs::read_to_string(ws.path().join(".gitignore")).unwrap();
+        assert!(body.contains(".mnml/env/"));
+    }
+
+    /// Existing `.gitignore` that already covers `.mnml/env/` → no
+    /// modification (idempotent).
+    #[test]
+    fn ensure_mnml_env_gitignored_idempotent_when_pattern_present() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        let gi = ws.path().join(".gitignore");
+        std::fs::write(&gi, "target/\n.mnml/env/\nnode_modules/\n").unwrap();
+        let before = std::fs::read_to_string(&gi).unwrap();
+        let out = ensure_mnml_env_gitignored(ws.path());
+        assert!(out.is_none());
+        assert_eq!(std::fs::read_to_string(&gi).unwrap(), before);
+    }
+
+    /// Existing gitignore covers `.mnml/env/` via a broader `.mnml`
+    /// pattern → also treated as covered, no duplicate append.
+    #[test]
+    fn ensure_mnml_env_gitignored_respects_broader_mnml_pattern() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        let gi = ws.path().join(".gitignore");
+        std::fs::write(&gi, "target/\n.mnml/\n").unwrap();
+        let out = ensure_mnml_env_gitignored(ws.path());
+        assert!(out.is_none());
+    }
+
+    /// Existing gitignore doesn't cover us and doesn't end in
+    /// `\n` → append adds a newline first so lines don't glue.
+    #[test]
+    fn ensure_mnml_env_gitignored_prepends_newline_when_needed() {
+        let ws = tempfile::tempdir().unwrap();
+        std::fs::create_dir(ws.path().join(".git")).unwrap();
+        let gi = ws.path().join(".gitignore");
+        std::fs::write(&gi, "target/").unwrap(); // no trailing newline
+        let _ = ensure_mnml_env_gitignored(ws.path()).unwrap();
+        let body = std::fs::read_to_string(&gi).unwrap();
+        assert_eq!(body, "target/\n.mnml/env/\n");
+    }
 
     // ── extract_summary — drives the bufferline tab label ──
 
