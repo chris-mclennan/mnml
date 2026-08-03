@@ -2205,6 +2205,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnml-libghostty-vt"
+version = "0.2.1"
+dependencies = [
+ "mnml-libghostty-vt-sys",
+]
+
+[[package]]
+name = "mnml-libghostty-vt-sys"
+version = "0.2.1"
+dependencies = [
+ "bindgen",
+ "pkg-config",
+]
+
+[[package]]
 name = "mnml-rs"
 version = "0.2.0"
 dependencies = [
@@ -2215,8 +2230,8 @@ dependencies = [
  "image",
  "jsonschema",
  "mnml-bridge",
- "mnml-vt",
- "mnml-vt-sys",
+ "mnml-libghostty-vt",
+ "mnml-libghostty-vt-sys",
  "portable-pty",
  "ratatui",
  "regex",
@@ -2270,21 +2285,6 @@ dependencies = [
  "uds_windows",
  "unicode-width",
  "zip 8.6.0",
-]
-
-[[package]]
-name = "mnml-vt"
-version = "0.2.1"
-dependencies = [
- "mnml-vt-sys",
-]
-
-[[package]]
-name = "mnml-vt-sys"
-version = "0.2.1"
-dependencies = [
- "bindgen",
- "pkg-config",
 ]
 
 [[package]]

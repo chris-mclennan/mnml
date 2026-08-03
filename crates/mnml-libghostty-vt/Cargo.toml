@@ -1,10 +1,10 @@
 [package]
-name = "mnml-vt"
+name = "mnml-libghostty-vt"
 version = "0.2.1"
 edition = "2024"
 authors = ["Chris McLennan"]
 license = "MIT OR Apache-2.0"
-description = "Ergonomic Rust wrapper around Ghostty's libghostty-vt (see mnml-vt-sys)."
+description = "Ergonomic Rust wrapper around Ghostty's libghostty-vt (see mnml-libghostty-vt-sys)."
 repository = "https://github.com/chris-mclennan/mnml"
 readme = "README.md"
 
@@ -13,7 +13,7 @@ name = "libghostty_vt"
 path = "src/lib.rs"
 
 [dependencies]
-mnml-vt-sys = { path = "../mnml-vt-sys", version = "0.2.1" }
+mnml-libghostty-vt-sys = { path = "../mnml-libghostty-vt-sys", version = "0.2.1" }
 
 [features]
 default = []

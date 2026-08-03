@@ -9,7 +9,7 @@ linking fixes (ghostty PRs #13452, #13473) — those require zig 0.16.0.
 
 ## How the library gets built now
 
-`crates/mnml-vt-sys/build.rs` clones ghostty at `GHOSTTY_COMMIT` (currently
+`crates/mnml-libghostty-vt-sys/build.rs` clones ghostty at `GHOSTTY_COMMIT` (currently
 `6837d7027…`, kept in lock-step with the headers here) and runs `zig build
 -Demit-lib-vt` on every target. Needs zig 0.16.0 + git on PATH.
 
@@ -21,7 +21,7 @@ cross-built prebuilts here.
 
 ## Regenerating headers
 
-Whenever `GHOSTTY_COMMIT` bumps in `crates/mnml-vt-sys/build.rs`, re-sync
+Whenever `GHOSTTY_COMMIT` bumps in `crates/mnml-libghostty-vt-sys/build.rs`, re-sync
 the headers so bindgen sees the same shape as the compiled `.a`:
 
     git clone --filter=blob:none --no-checkout https://github.com/ghostty-org/ghostty.git /tmp/g

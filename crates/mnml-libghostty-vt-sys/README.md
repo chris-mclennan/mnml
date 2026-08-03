@@ -1,4 +1,4 @@
-# mnml-vt-sys
+# mnml-libghostty-vt-sys
 
 Raw FFI bindings to Ghostty's [libghostty-vt] C ABI, generated at build time
 by `bindgen` against vendored headers under `vendor/libghostty-vt/include/`
@@ -22,17 +22,17 @@ no such `.pc` is checked in, so every host source-builds by default.
 
 ## Ergonomic wrapper
 
-Application code should depend on [`mnml-vt`] (the safe wrapper), not this
+Application code should depend on [`mnml-libghostty-vt`] (the safe wrapper), not this
 sys crate directly.
 
 ## `[lib].name` is `libghostty_vt_sys`
 
-The Cargo package is `mnml-vt-sys` but the Rust `[lib].name` is set to
+The Cargo package is `mnml-libghostty-vt-sys` but the Rust `[lib].name` is set to
 `libghostty_vt_sys`, so `use libghostty_vt_sys::…` is the import path — not
 `use mnml_vt_sys::…`. mnml itself masks this via `libghostty-vt-sys = {
-package = "mnml-vt-sys", ... }` in its `Cargo.toml`; consumers reaching for
+package = "mnml-libghostty-vt-sys", ... }` in its `Cargo.toml`; consumers reaching for
 this crate directly (without the package rename) still need
 `use libghostty_vt_sys::…`.
 
 [libghostty-vt]: https://github.com/ghostty-org/ghostty/tree/main/include/ghostty
-[`mnml-vt`]: ../mnml-vt
+[`mnml-libghostty-vt`]: ../mnml-vt

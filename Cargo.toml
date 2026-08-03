@@ -1,5 +1,10 @@
 [workspace]
-members = [".", "crates/mnml-bridge", "crates/mnml-vt-sys", "crates/mnml-vt"]
+members = [
+    ".",
+    "crates/mnml-bridge",
+    "crates/mnml-libghostty-vt-sys",
+    "crates/mnml-libghostty-vt",
+]
 resolver = "2"
 
 [package]
@@ -116,17 +121,22 @@ portable-pty = "0.8"
 # Ghostty terminal-emulation core (replacing vt100 for Pane::Pty).
 #
 # 2026-08-01: swapped off crates.io `libghostty-vt` / `-sys` (uzaaft's third-
-# party crates) onto first-party bindings we own — `mnml-vt` (safe wrapper) +
-# `mnml-vt-sys` (bindgen against Ghostty's vendored vt.h). Package aliases
-# preserve `libghostty_vt::…` imports across the codebase.
+# party crates) onto first-party bindings we own — `mnml-libghostty-vt` (safe
+# wrapper) + `mnml-libghostty-vt-sys` (bindgen against Ghostty's vendored
+# vt.h). Package aliases preserve `libghostty_vt::…` imports across the
+# codebase.
 #
 # 2026-08-02: pinned ghostty commit bumped to origin/main HEAD (post the
 # July 25-26 Windows static-lib linking fixes) and zig requirement bumped
-# to 0.16.0. `mnml-vt-sys` now source-builds libghostty-vt via `zig build`
-# on every target (default `source-build` feature). Needs zig 0.16.0 + git
-# on PATH. `.a` cached in `target/` after first build.
-libghostty-vt = { package = "mnml-vt", path = "crates/mnml-vt", version = "0.2.1" }
-libghostty-vt-sys = { package = "mnml-vt-sys", path = "crates/mnml-vt-sys", version = "0.2.1" }
+# to 0.16.0. `mnml-libghostty-vt-sys` now source-builds libghostty-vt via
+# `zig build` on every target (default `source-build` feature). Needs zig
+# 0.16.0 + git on PATH. `.a` cached in `target/` after first build.
+#
+# 2026-08-03: renamed from `mnml-vt` / `mnml-vt-sys` to
+# `mnml-libghostty-vt` / `mnml-libghostty-vt-sys` so the crate name
+# advertises what it wraps (mirrors `openssl-sys`, `libz-sys`, etc.).
+libghostty-vt = { package = "mnml-libghostty-vt", path = "crates/mnml-libghostty-vt", version = "0.2.1" }
+libghostty-vt-sys = { package = "mnml-libghostty-vt-sys", path = "crates/mnml-libghostty-vt-sys", version = "0.2.1" }
 tree-sitter-c = "0.24.2"
 tree-sitter-cpp = "0.23.4"
 tree-sitter-ruby = "0.23.1"

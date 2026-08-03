@@ -1,4 +1,4 @@
-//! Build script for `mnml-vt-sys`.
+//! Build script for `mnml-libghostty-vt-sys`.
 //!
 //! Two responsibilities:
 //! 1. Locate a `libghostty-vt.a` and tell cargo how to link it.
@@ -66,7 +66,7 @@ const GHOSTTY_COMMIT: &str = "6837d7027f226355db661e8215a3ad24ffaf4eb5";
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    // Workspace root is two levels up: crates/mnml-vt-sys/ → workspace root.
+    // Workspace root is two levels up: crates/mnml-libghostty-vt-sys/ → workspace root.
     let workspace_root = manifest_dir
         .parent()
         .and_then(|p| p.parent())
@@ -414,7 +414,7 @@ fn fetch_ghostty(out_dir: &Path) -> PathBuf {
             .unwrap_or_else(|e| panic!("failed to remove {}: {e}", src_dir.display()));
     }
 
-    eprintln!("mnml-vt-sys: cloning ghostty @ {GHOSTTY_COMMIT}");
+    eprintln!("mnml-libghostty-vt-sys: cloning ghostty @ {GHOSTTY_COMMIT}");
 
     let mut clone = Command::new("git");
     clone
@@ -465,7 +465,7 @@ fn zig_target(target: &str) -> String {
         "aarch64-pc-windows-gnullvm" => "aarch64-windows-gnu",
         "x86_64-pc-windows-msvc" => "x86_64-windows-msvc",
         "aarch64-pc-windows-msvc" => "aarch64-windows-msvc",
-        other => panic!("mnml-vt-sys: unsupported target for source-build: {other}"),
+        other => panic!("mnml-libghostty-vt-sys: unsupported target for source-build: {other}"),
     };
     v.to_owned()
 }

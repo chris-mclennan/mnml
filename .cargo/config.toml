@@ -1,6 +1,6 @@
 # 2026-08-02 — the per-target `PKG_CONFIG_PATH` bindings that lived here
 # (pointing at `vendor/libghostty-vt/pkgconfig-*`) were retired when we
-# bumped the vendored ghostty commit past the 0.2.0 prebuilts. mnml-vt-sys
+# bumped the vendored ghostty commit past the 0.2.0 prebuilts. mnml-libghostty-vt-sys
 # now source-builds libghostty-vt via zig on every target — no pkg-config
 # path needed. If we bring the prebuilts back, this file gets the target
 # blocks back too (see git log for the original shape).
