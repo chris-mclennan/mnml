@@ -5762,20 +5762,37 @@ impl App {
         // Register each manifest command as a dynamic command
         // with its ex_run baked in. Idempotent via
         // register_dynamic_command's id-match update path.
+        //
+        // #855 dedup: skip manifest commands whose id already exists
+        // as a static builtin. Prevents the palette from showing two
+        // entries for the same action after Edit-mode Save on a
+        // first-party builtin promotes it to an authored manifest
+        // (which the `write_authored_manifest_toml` writer stamps
+        // with a synthetic `<id>.open` command block). The static
+        // wins in dispatch anyway, so the dynamic dupe is purely
+        // cosmetic UI noise.
+        let static_ids: std::collections::HashSet<&'static str> = crate::command::registry()
+            .all()
+            .iter()
+            .map(|c| c.id)
+            .collect();
         let cmds: Vec<crate::command::DynCommand> = self
             .integration_manifests
             .iter()
             .flat_map(|m| {
-                m.commands.iter().map(|c| crate::command::DynCommand {
-                    id: c.id.clone(),
-                    title: c.title.clone(),
-                    group: c
-                        .group
-                        .clone()
-                        .unwrap_or_else(|| "integrations".to_string()),
-                    keys: c.keys.clone(),
-                    ex_run: Some(c.run.clone()),
-                })
+                m.commands
+                    .iter()
+                    .filter(|c| !static_ids.contains(c.id.as_str()))
+                    .map(|c| crate::command::DynCommand {
+                        id: c.id.clone(),
+                        title: c.title.clone(),
+                        group: c
+                            .group
+                            .clone()
+                            .unwrap_or_else(|| "integrations".to_string()),
+                        keys: c.keys.clone(),
+                        ex_run: Some(c.run.clone()),
+                    })
             })
             .collect();
         for c in cmds {

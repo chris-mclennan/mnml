@@ -85,6 +85,36 @@ fn save_assignments(file: &AssignmentFile) {
     }
 }
 
+/// #853 — uninstall cleanup for the sibling-icons SDK's on-disk
+/// state. Deletes `~/.config/mnml/glyphs/<id>.svg` (if present)
+/// AND drops the matching entry from `assignments.toml` (if any).
+/// Leaves everything else in the assignments file untouched.
+///
+/// Returns `(svg_deleted, assignment_dropped)` so the caller can
+/// toast a specific breakdown. Both false = no-op; user sees no
+/// toast (that's the common case — most integrations don't ship
+/// SVG glyphs).
+///
+/// Rationale from the reviewer of `2491708f`: a reinstalled
+/// integration with a NEW svg could collide with the stale
+/// codepoint assignment, and the orphan `<id>.svg` inflates the
+/// glyphs dir over time. Called from `remove_integration_by_id`
+/// alongside the base + override manifest deletes so a single
+/// uninstall gesture cleans everything.
+pub(crate) fn purge_sibling_glyph_state(id: &str) -> (bool, bool) {
+    let svg_deleted = sibling_glyphs_dir()
+        .map(|d| d.join(format!("{id}.svg")))
+        .is_some_and(|p| p.exists() && std::fs::remove_file(&p).is_ok());
+    let mut file = load_assignments();
+    let before = file.entries.len();
+    file.entries.retain(|e| e.id != id);
+    let assignment_dropped = file.entries.len() != before;
+    if assignment_dropped {
+        save_assignments(&file);
+    }
+    (svg_deleted, assignment_dropped)
+}
+
 /// Walk `dir` for `*.svg` files. Returns a stably-sorted vector of
 /// `(id, absolute_svg_path)` where `id` is the file stem.
 /// Assignments-file entries with matching ids get their codepoints
@@ -386,5 +416,54 @@ mod tests {
         let (_svgs, second) = discover(&dir, &HashMap::new());
         assert_eq!(second["one"], one_cp, "prior assignment persisted");
         assert_ne!(second["aaa"], one_cp);
+    }
+
+    /// #853 — `purge_sibling_glyph_state` deletes the SVG AND drops
+    /// the assignments-file entry. Verifies both side-effects and
+    /// that unrelated entries survive.
+    #[test]
+    fn purge_sibling_glyph_state_drops_svg_and_assignment_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let dir = tmp.path().join(".config/mnml/glyphs");
+        fs::create_dir_all(&dir).unwrap();
+        // Seed two sibling glyphs; discover assigns codepoints.
+        write_svg(&dir, "victim.svg");
+        write_svg(&dir, "keeper.svg");
+        let (_svgs, _) = discover(&dir, &HashMap::new());
+        // Sanity — both SVGs on disk, both entries in assignments.
+        assert!(dir.join("victim.svg").exists());
+        assert!(dir.join("keeper.svg").exists());
+        let assign_pre = load_assignments();
+        assert!(assign_pre.entries.iter().any(|e| e.id == "victim"));
+        assert!(assign_pre.entries.iter().any(|e| e.id == "keeper"));
+        // Purge just "victim".
+        let (svg_gone, assignment_gone) = purge_sibling_glyph_state("victim");
+        assert!(svg_gone);
+        assert!(assignment_gone);
+        assert!(!dir.join("victim.svg").exists(), "svg deleted");
+        assert!(dir.join("keeper.svg").exists(), "keeper's svg untouched");
+        let assign_post = load_assignments();
+        assert!(!assign_post.entries.iter().any(|e| e.id == "victim"));
+        assert!(
+            assign_post.entries.iter().any(|e| e.id == "keeper"),
+            "keeper's assignment entry preserved"
+        );
+    }
+
+    /// Nothing to purge → both flags false, no toast fired.
+    #[test]
+    fn purge_sibling_glyph_state_noop_when_id_never_registered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let (svg_gone, assignment_gone) = purge_sibling_glyph_state("nonexistent");
+        assert!(!svg_gone);
+        assert!(!assignment_gone);
     }
 }
