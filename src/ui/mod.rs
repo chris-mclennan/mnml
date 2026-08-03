@@ -3387,12 +3387,24 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 width: area.width,
                 height: 1,
             };
+            // #849 UI phase — Official / Community provenance chip
+            // between the label and the source-id tag. Green ✓ =
+            // an entry from a mnml-shipped default source; grey ~ =
+            // any user-added or third-party source.
+            let (prov_glyph, prov_label, prov_fg) = match entry.provenance {
+                crate::marketplace::Provenance::Official => ("✓", "Official", t.green),
+                crate::marketplace::Provenance::Community => ("~", "Community", t.comment),
+            };
             let name_spans: Vec<Span<'static>> = vec![
                 Span::styled(
                     format!("  {kind_tag} "),
                     Style::default().fg(kind_fg).bg(bg),
                 ),
                 Span::styled(entry.label.clone(), Style::default().fg(t.fg).bg(bg)),
+                Span::styled(
+                    format!("  {prov_glyph} {prov_label}"),
+                    Style::default().fg(prov_fg).bg(bg),
+                ),
                 Span::styled(
                     format!("  ({})", entry.source_id),
                     Style::default()

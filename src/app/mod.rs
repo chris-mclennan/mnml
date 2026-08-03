@@ -7100,6 +7100,14 @@ impl App {
         };
         self.marketplace_entries = cache.entries;
         self.marketplace_last_fetched = cache.fetched_at;
+        // #849 UI phase — sort even at cache-load so the pre-fetch
+        // render already groups Official-first.
+        self.marketplace_entries.sort_by(|a, b| {
+            let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
+            let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
+            bp.cmp(&ap)
+                .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+        });
     }
 
     /// Spawn a fetch thread for every configured marketplace source.
@@ -7154,6 +7162,16 @@ impl App {
             self.marketplace_entries
                 .retain(|e| e.source_id != source_id);
             self.marketplace_entries.extend(entries);
+        }
+        if any {
+            // #849 UI phase — Official first, Community after,
+            // alphabetical by label within each group.
+            self.marketplace_entries.sort_by(|a, b| {
+                let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
+                let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
+                bp.cmp(&ap)
+                    .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+            });
         }
         for (source_id, e) in errored {
             eprintln!("marketplace: {source_id}: {e}");
