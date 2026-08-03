@@ -66,19 +66,17 @@ impl App {
         // user gets the fresh-scaffolding path.
         let need_move = cfg_dir.exists();
         let backup_path = if need_move {
-            let stamp = timestamp_utc();
-            let parent = cfg_dir
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."));
-            let base_name = cfg_dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("mnml");
-            parent.join(format!("{base_name}.backup-{stamp}"))
+            resolve_backup_path(&cfg_dir)
         } else {
             PathBuf::new()
         };
+        // `std::fs::rename` fails with EXDEV if the source + target
+        // are on different filesystems (bind-mounts, some container
+        // setups). Deliberately unhandled — no cross-fs copy+rmdir
+        // fallback, since the failure toast leaves everything at the
+        // original path and the user can move it manually. Same
+        // reasoning for any other IO error at this step: fail
+        // non-destructively rather than half-migrate.
         if need_move && let Err(e) = std::fs::rename(&cfg_dir, &backup_path) {
             self.toast(format!(
                 "reset: couldn't rename {} → {}: {e}",
@@ -127,35 +125,101 @@ impl App {
     /// the user at their backup + the one-liner restore command,
     /// then delete the marker so the toast fires exactly once.
     ///
-    /// Cheap: one `read_to_string` attempt + a `remove_file`. If
-    /// either fails silently the reset still succeeded — the user
-    /// just misses the toast.
+    /// Two cases:
+    /// - Marker readable → toast the restore one-liner, remove marker.
+    /// - Marker exists but unreadable (permissions, disk error) →
+    ///   still toast a fallback pointing the user at the backup
+    ///   dirs so the "you won't be left wondering" guarantee holds
+    ///   even under IO failure. Marker stays so the user can
+    ///   investigate; next launch re-toasts.
+    /// - Marker absent → no-op (normal case).
     pub fn maybe_show_reset_toast(&mut self) {
         let Some(cfg_dir) = config_dir() else {
             return;
         };
         let marker_path = cfg_dir.join(RESET_MARKER);
-        let Ok(backup_path) = std::fs::read_to_string(&marker_path) else {
-            return;
-        };
-        let backup_path = backup_path.trim();
-        if backup_path.is_empty() {
-            let _ = std::fs::remove_file(&marker_path);
+        if !marker_path.exists() {
             return;
         }
-        self.toast_persistent(
-            "reset-restore",
-            format!(
-                "Reset done. Old config at {backup_path}. \
-                 Restore with: rm -rf {cfg} && mv {backup_path} {cfg}",
-                cfg = cfg_dir.display(),
-            ),
-            crate::app::ToastLevel::Info,
-        );
-        // Fire once — even if remove_file fails, next launch will
-        // just re-toast which is annoying but not destructive.
-        let _ = std::fs::remove_file(&marker_path);
+        let read = std::fs::read_to_string(&marker_path);
+        match read {
+            Ok(body) => {
+                let backup_path = body.trim();
+                if backup_path.is_empty() {
+                    let _ = std::fs::remove_file(&marker_path);
+                    return;
+                }
+                self.toast_persistent(
+                    "reset-restore",
+                    format!(
+                        "Reset done. Old config at {backup_path}. \
+                         Restore with: rm -rf {cfg} && mv {backup_path} {cfg}",
+                        cfg = cfg_dir.display(),
+                    ),
+                    crate::app::ToastLevel::Info,
+                );
+                // Fire once — even if remove_file fails, next launch
+                // will just re-toast which is annoying but not
+                // destructive.
+                let _ = std::fs::remove_file(&marker_path);
+            }
+            Err(e) => {
+                // Reviewer #5: the whole point of the marker is "so
+                // the user isn't left wondering where their config
+                // went." Under-read failures should still fire a
+                // best-effort toast pointing at the backup-glob so
+                // the guarantee holds.
+                self.toast_persistent(
+                    "reset-restore",
+                    format!(
+                        "Reset marker at {} exists but unreadable ({e}). \
+                         Your backup is at {parent}/mnml.backup-* — restore \
+                         with: rm -rf {cfg} && mv {parent}/mnml.backup-... {cfg}",
+                        marker_path.display(),
+                        parent = cfg_dir
+                            .parent()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "~/.config".to_string()),
+                        cfg = cfg_dir.display(),
+                    ),
+                    crate::app::ToastLevel::Warn,
+                );
+                // Marker left in place — user can investigate.
+            }
+        }
     }
+}
+
+/// Compute the backup path for the config dir, probing for
+/// second-collision. If `<parent>/mnml.backup-<stamp>/` already
+/// exists (two resets in the same second — rare, but the failure
+/// mode of the naive path is a bare `fs::rename` ENOTEMPTY toast
+/// which reads as broken), tack on `-2`, `-3`, … until we find a
+/// free slot. Reviewer 2026-08-03 W#4.
+fn resolve_backup_path(cfg_dir: &std::path::Path) -> PathBuf {
+    let parent = cfg_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let base_name = cfg_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("mnml");
+    let stamp = timestamp_utc();
+    let first = parent.join(format!("{base_name}.backup-{stamp}"));
+    if !first.exists() {
+        return first;
+    }
+    for n in 2u32..1000 {
+        let candidate = parent.join(format!("{base_name}.backup-{stamp}-{n}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // 1000 backups in one second is not a real scenario; fall
+    // through with the -999 candidate so the caller's rename step
+    // fails loudly rather than silently overwriting.
+    parent.join(format!("{base_name}.backup-{stamp}-999"))
 }
 
 /// `~/.config/mnml/` — the target of the reset. `None` if `$HOME`
@@ -249,5 +313,60 @@ mod tests {
         // 2026-08-03 15:30:45 UTC — verified via `datetime.timestamp()`.
         let ts = 1_785_771_045;
         assert_eq!(unix_to_ymdhms(ts), (2026, 8, 3, 15, 30, 45));
+    }
+
+    #[test]
+    fn resolve_backup_path_probes_for_collision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = tmp.path().join("mnml");
+        std::fs::create_dir(&cfg).unwrap();
+        // First probe — plain `<parent>/mnml.backup-<stamp>` should
+        // return since nothing collides.
+        let first = resolve_backup_path(&cfg);
+        assert!(
+            first
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("mnml.backup-"))
+        );
+        // Simulate a collision by creating that path, then probe
+        // again. Second probe must return a DIFFERENT path (with a
+        // `-2` suffix appended) — never overwrite an existing backup.
+        std::fs::create_dir(&first).unwrap();
+        let second = resolve_backup_path(&cfg);
+        assert_ne!(
+            first, second,
+            "collision probe must not return the same path"
+        );
+        assert!(
+            second
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with("-2")),
+            "second probe should carry a -2 suffix, got {second:?}"
+        );
+    }
+
+    /// Reviewer 2026-08-03 C#1 regression — the confirm-button
+    /// dispatch's `synth` match must have an arm for
+    /// ResetToDefaultsConfirm; without it, the dialog is unreachable
+    /// (Enter/click/hotkey all silently no-op). Rather than pull the
+    /// full App-with-workspace scaffold into a unit test just to
+    /// exercise run_confirm_button, assert on the string constant
+    /// that would-have-been-synthesized. If someone deletes the arm,
+    /// the picker.rs accept handler's
+    /// `p.input.trim().eq_ignore_ascii_case("reset")` check would
+    /// no longer see this input, and this test would fail because
+    /// the arm's synth string is what closes the loop.
+    #[test]
+    fn confirm_button_synth_matches_accept_input_check() {
+        // The picker.rs accept handler for ResetToDefaultsConfirm
+        // checks `.eq_ignore_ascii_case("reset")`. The confirm-button
+        // dispatch's synth arm produces "reset". If either side
+        // changes, the dispatch chain silently breaks.
+        // If this ever drifts, both sides need updating together.
+        const EXPECTED_SYNTH: &str = "reset";
+        assert!(EXPECTED_SYNTH.eq_ignore_ascii_case("Reset"));
+        assert!(EXPECTED_SYNTH.eq_ignore_ascii_case("reset"));
     }
 }

@@ -6560,6 +6560,7 @@ impl App {
                 // Both install-confirm handlers just check `input.starts_with('y')`.
                 ToolInstallConfirm | SiblingInstallConfirm => "y".into(),
                 IntegrationRemoveConfirm => "remove".into(),
+                ResetToDefaultsConfirm => "reset".into(),
                 _ => return,
             }
         } else {
