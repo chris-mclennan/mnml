@@ -282,20 +282,22 @@ mod tests {
     }
 
     // Serialize the two tests that mutate the process-wide
-    // MNML_HISTORY_GLOBAL_PATH env var. Without this, cargo's
-    // parallel test runner races them.
-    static GLOBAL_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // MNML_HISTORY_GLOBAL_PATH env var. Serialized against every
+    // other process-env mutator across the crate via
+    // crate::test_env_lock(), so a discovery/cdp/prompt HOME test
+    // can't race the global-history-path override.
 
     #[test]
     fn append_with_global_mirror_writes_workspace_and_global() {
-        let _guard = GLOBAL_ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = temp("mirror");
         let global = dir.join("global.jsonl");
-        // SAFETY: env var override is per-process; serialized via
-        // GLOBAL_ENV_LOCK so no other test reads while we mutate.
-        unsafe {
-            std::env::set_var("MNML_HISTORY_GLOBAL_PATH", &global);
-        }
+        // EnvGuard restores MNML_HISTORY_GLOBAL_PATH on scope exit,
+        // panic-safe. Prior manual save/restore skipped restoration
+        // whenever a mid-test assertion failed.
+        let _env = crate::EnvGuard::set("MNML_HISTORY_GLOBAL_PATH", &global);
         append_with_global_mirror(
             &dir,
             &Entry {
@@ -309,9 +311,6 @@ mod tests {
                 request_body: None,
             },
         );
-        unsafe {
-            std::env::remove_var("MNML_HISTORY_GLOBAL_PATH");
-        }
         assert!(dir.join(".rqst/history.jsonl").exists());
         assert!(global.exists());
         let text = fs::read_to_string(&global).unwrap();
@@ -323,12 +322,12 @@ mod tests {
 
     #[test]
     fn tail_global_returns_n_recent_from_env_path() {
-        let _guard = GLOBAL_ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = temp("tail-global");
         let global = dir.join("global.jsonl");
-        unsafe {
-            std::env::set_var("MNML_HISTORY_GLOBAL_PATH", &global);
-        }
+        let _env = crate::EnvGuard::set("MNML_HISTORY_GLOBAL_PATH", &global);
         for i in 0..4 {
             append_with_global_mirror(
                 &dir,
@@ -345,9 +344,6 @@ mod tests {
             );
         }
         let recent = tail_global(2);
-        unsafe {
-            std::env::remove_var("MNML_HISTORY_GLOBAL_PATH");
-        }
         assert_eq!(recent.len(), 2);
         assert_eq!(recent[0]["url"], "https://x/g/2");
         assert_eq!(recent[1]["url"], "https://x/g/3");

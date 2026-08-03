@@ -14746,8 +14746,8 @@ mod tests {
             before, after,
             "second open_keys_config didn't duplicate stub"
         );
-
-        unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+        // _xdg drops here → XDG_CONFIG_HOME restored to whatever it was
+        // before this test ran.
     }
 
     #[test]

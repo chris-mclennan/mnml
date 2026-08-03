@@ -592,11 +592,15 @@ mod tests {
     /// precedence chain (explicit → $MNML_ENV → config_default →
     /// .rqst/config) was untested. Serialised against other tests
     /// that mutate $MNML_ENV.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     #[test]
     fn select_with_config_default_precedence() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        // Share the crate-wide test env lock so this doesn't race
+        // with other modules mutating process env. Ubuntu CI's
+        // higher --test-threads default exposed this class of race
+        // on 2026-08-03.
+        let _guard = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let d = tempfile::tempdir().unwrap();
         let cfg_dir = d.path().join(".rqst");
         std::fs::create_dir_all(&cfg_dir).unwrap();
@@ -612,18 +616,18 @@ mod tests {
             )
             .unwrap();
         }
-        // SAFETY: ENV_LOCK above serialises across tests. Reset
-        // before assertions so prior `MNML_ENV` doesn't leak in.
-        unsafe {
-            std::env::remove_var("MNML_ENV");
-        }
+        // EnvGuard resets MNML_ENV on scope exit — including
+        // during panic unwind — so a mid-test assertion failure
+        // can't leak MNML_ENV into subsequent tests.
+        let _env_guard = crate::EnvGuard::remove("MNML_ENV");
         let env = EnvSet::select_with_config_default(d.path(), None, None);
         assert_eq!(env.name(), Some("rqst-default"));
         let env = EnvSet::select_with_config_default(d.path(), None, Some("config-default"));
         assert_eq!(env.name(), Some("config-default"));
-        unsafe {
-            std::env::set_var("MNML_ENV", "mnml-env");
-        }
+        // Second guard for the same key stacks LIFO — drops before
+        // the outer guard, so the outer guard's snapshot is what
+        // ultimately gets restored (which is what we want here).
+        let _mnml_env = crate::EnvGuard::set("MNML_ENV", "mnml-env");
         let env = EnvSet::select_with_config_default(d.path(), None, Some("config-default"));
         assert_eq!(env.name(), Some("mnml-env"));
         let env = EnvSet::select_with_config_default(
@@ -632,8 +636,5 @@ mod tests {
             Some("config-default"),
         );
         assert_eq!(env.name(), Some("explicit-env"));
-        unsafe {
-            std::env::remove_var("MNML_ENV");
-        }
     }
 }
