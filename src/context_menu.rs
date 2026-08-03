@@ -88,6 +88,13 @@ pub enum MenuAction {
     /// the tab-bar AI chip right-click for baseline-drift fixes.
     /// 2026-07-13.
     OpenGlyphBuilderForCp(u32),
+    /// #814 — one-tap rebake for a codepoint. Skips the visual
+    /// builder: shells out to fontforge with the stored meta
+    /// (or the builtin catalog fallback) as-is. Surfaced from the
+    /// integration chip right-click menu next to "Bake / tune glyph…"
+    /// for when a builtin SVG has been edited on disk and just
+    /// needs the font regenerated.
+    RebakeGlyphForCp(u32),
     CloseTab(PaneId),
     CloseOtherTabs(PaneId),
     CloseAllTabs,

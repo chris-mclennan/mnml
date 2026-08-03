@@ -569,6 +569,13 @@ impl App {
                 "Bake / tune glyph…",
                 MenuAction::OpenGlyphBuilderForCp(cp),
             ));
+            // #814 — one-tap rebake. Uses the last-baked meta (or
+            // the builtin catalog fallback) verbatim; no visual
+            // builder. Handy after editing a builtin SVG on disk.
+            items.push(MenuItem::new(
+                "Rebake glyph now",
+                MenuAction::RebakeGlyphForCp(cp),
+            ));
         }
         items.push(MenuItem::new("Remove", MenuAction::RemoveIntegration(id)));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
@@ -1840,6 +1847,9 @@ impl App {
                 if !self.open_glyph_builder_for_edit_cp(cp) {
                     self.toast(format!("no glyph found for U+{cp:04X}"));
                 }
+            }
+            RebakeGlyphForCp(cp) => {
+                self.rebake_glyph_for_cp(cp);
             }
             CloseTab(id) => self.close_pane(id),
             CloseOtherTabs(id) => self.close_panes_except(Some(id)),

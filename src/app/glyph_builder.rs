@@ -429,6 +429,103 @@ impl App {
         self.bake_builtin_glyphs_matching(|cp| cp == 0xF1E00 || cp == 0xF1E01);
     }
 
+    /// #814 — one-tap rebake for a single codepoint. Skips the visual
+    /// builder: reads the last-baked meta (or falls back to the built-
+    /// in catalog entry) and shells out to fontforge with the same
+    /// SVG + width/height/center numbers that produced the stored
+    /// glyph. Used by the integration-chip right-click "Rebake glyph
+    /// now" menu item.
+    ///
+    /// Toasts + returns false when the codepoint has neither a stored
+    /// meta entry NOR a builtin catalog entry (nothing to rebake).
+    pub fn rebake_glyph_for_cp(&mut self, cp: u32) -> bool {
+        use crate::glyph_builder::{builtin_for_codepoint, load_meta, resolve_builtin_svg};
+        let cp_hex = format!("{cp:04X}");
+        let meta = load_meta();
+        let entry = meta.glyphs.iter().find(|g| g.codepoint == cp_hex);
+        let (svg, name, w, h, c, cx) = if let Some(m) = entry {
+            (
+                m.svg.clone(),
+                m.name.clone(),
+                m.width_frac,
+                m.height_frac,
+                m.center_frac,
+                m.center_x_frac,
+            )
+        } else if let Some(bi) = builtin_for_codepoint(cp) {
+            let Some(path) = resolve_builtin_svg(bi.svg_relpath) else {
+                self.toast(format!(
+                    "rebake U+{cp:04X}: builtin SVG missing ({})",
+                    bi.svg_relpath
+                ));
+                return false;
+            };
+            (
+                path.to_string_lossy().into_owned(),
+                bi.name.to_string(),
+                bi.width_frac,
+                bi.height_frac,
+                bi.center_frac,
+                bi.center_x_frac,
+            )
+        } else {
+            self.toast(format!("rebake U+{cp:04X}: no stored meta or builtin"));
+            return false;
+        };
+        let Some(home) = std::env::var_os("HOME") else {
+            self.toast("rebake glyph: $HOME unset");
+            return false;
+        };
+        let home = std::path::PathBuf::from(home);
+        let font_out = home.join("Library/Fonts/MnmlSymbols.ttf");
+        let script = match std::env::current_exe()
+            .ok()
+            .and_then(|p| {
+                let mut cur = p;
+                while cur.pop() {
+                    let cand = cur.join("scripts/build_mnml_symbols.py");
+                    if cand.exists() {
+                        return Some(cand);
+                    }
+                }
+                None
+            })
+            .or_else(|| {
+                let cand = home.join("Projects/mnml/scripts/build_mnml_symbols.py");
+                if cand.exists() { Some(cand) } else { None }
+            }) {
+            Some(p) => p,
+            None => {
+                self.toast("rebake glyph: build_mnml_symbols.py not found");
+                return false;
+            }
+        };
+        let glyph_spec = format!(
+            "{svg}:{cp:04X}:{name}:width={w:.2}:height={h:.2}:center={c:.2}:x_center={cx:.2}"
+        );
+        let profile = crate::pty_pane::BinaryProfile {
+            label: format!("rebake U+{cp:04X}"),
+            exe: "fontforge".to_string(),
+            args: vec![
+                "-script".to_string(),
+                script.to_string_lossy().into_owned(),
+                "--output".to_string(),
+                font_out.to_string_lossy().into_owned(),
+                "--glyph".to_string(),
+                glyph_spec,
+            ],
+            cwd: None,
+            env: vec![],
+            session_id: None,
+            integration_id: None,
+        };
+        self.open_pty(profile);
+        self.toast(format!(
+            "rebaking U+{cp:04X} ({name}) · restart terminal after fontforge exits"
+        ));
+        true
+    }
+
     /// Bake every mnml `BuiltinGlyph` into MnmlSymbols in one pass
     /// — AI + AWS + Dev tools. Same shell-out shape, just a wider
     /// filter. Used by `integrations.bake_all_glyphs`.

@@ -106,11 +106,24 @@ pub(crate) fn purge_sibling_glyph_state(id: &str) -> (bool, bool) {
         .map(|d| d.join(format!("{id}.svg")))
         .is_some_and(|p| p.exists() && std::fs::remove_file(&p).is_ok());
     let mut file = load_assignments();
+    // #863 — also drop the glyph_meta.toml entry for the assigned
+    // codepoint before removing the assignment (afterwards the
+    // codepoint lookup would fail). Best-effort: uninstall is not
+    // gated by whether this succeeds — the entry just leaks if the
+    // meta file is unwritable, same as a partial glyph delete.
+    let cp_hex = file
+        .entries
+        .iter()
+        .find(|e| e.id == id)
+        .map(|e| e.codepoint.clone());
     let before = file.entries.len();
     file.entries.retain(|e| e.id != id);
     let assignment_dropped = file.entries.len() != before;
     if assignment_dropped {
         save_assignments(&file);
+    }
+    if let Some(hex) = cp_hex {
+        let _ = crate::glyph_builder::remove_meta_by_cp_hex(&hex);
     }
     (svg_deleted, assignment_dropped)
 }
@@ -451,6 +464,57 @@ mod tests {
         assert!(
             assign_post.entries.iter().any(|e| e.id == "keeper"),
             "keeper's assignment entry preserved"
+        );
+    }
+
+    /// #863 — a matching `glyph_meta.toml` entry for the assigned
+    /// codepoint is dropped when the sibling is purged. Guards against
+    /// zombie meta entries piling up over install/uninstall cycles.
+    #[test]
+    fn purge_sibling_glyph_state_drops_matching_glyph_meta_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let dir = tmp.path().join(".config/mnml/glyphs");
+        fs::create_dir_all(&dir).unwrap();
+        write_svg(&dir, "victim.svg");
+        write_svg(&dir, "keeper.svg");
+        let (_svgs, assigned) = discover(&dir, &HashMap::new());
+        let victim_cp = assigned["victim"];
+        let keeper_cp = assigned["keeper"];
+        // Seed both meta entries as if the user had baked them.
+        crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
+            codepoint: format!("{victim_cp:04X}"),
+            name: "victim".into(),
+            svg: "/tmp/victim.svg".into(),
+            width_frac: 1.0,
+            height_frac: 1.0,
+            center_frac: 0.5,
+            center_x_frac: 0.5,
+        });
+        crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
+            codepoint: format!("{keeper_cp:04X}"),
+            name: "keeper".into(),
+            svg: "/tmp/keeper.svg".into(),
+            width_frac: 1.0,
+            height_frac: 1.0,
+            center_frac: 0.5,
+            center_x_frac: 0.5,
+        });
+        let meta_pre = crate::glyph_builder::load_meta();
+        assert_eq!(meta_pre.glyphs.len(), 2);
+        // Purge one.
+        purge_sibling_glyph_state("victim");
+        let meta_post = crate::glyph_builder::load_meta();
+        assert_eq!(meta_post.glyphs.len(), 1, "victim's meta entry dropped");
+        assert!(
+            meta_post
+                .glyphs
+                .iter()
+                .any(|g| g.codepoint == format!("{keeper_cp:04X}")),
+            "keeper's meta entry preserved"
         );
     }
 

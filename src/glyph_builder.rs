@@ -846,6 +846,30 @@ pub fn load_meta() -> GlyphMetaFile {
     toml::from_str(&txt).unwrap_or_default()
 }
 
+/// #863 — drop a glyph's meta entry by codepoint hex. Called from
+/// sibling / integration uninstall so the `glyph_meta.toml` doesn't
+/// accumulate zombie entries for baked-then-uninstalled glyphs.
+/// Returns true when a matching entry was removed. Silent no-op when
+/// the file / entry doesn't exist.
+pub fn remove_meta_by_cp_hex(cp_hex: &str) -> bool {
+    let Some(p) = meta_path() else {
+        return false;
+    };
+    if !p.exists() {
+        return false;
+    }
+    let mut file = load_meta();
+    let before = file.glyphs.len();
+    file.glyphs.retain(|g| g.codepoint != cp_hex);
+    if file.glyphs.len() == before {
+        return false;
+    }
+    let Ok(txt) = toml::to_string_pretty(&file) else {
+        return false;
+    };
+    std::fs::write(&p, txt).is_ok()
+}
+
 /// Insert-or-replace a glyph's metadata, then rewrite the file.
 pub fn upsert_meta(entry: GlyphMeta) {
     let Some(p) = meta_path() else {
