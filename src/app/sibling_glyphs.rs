@@ -320,6 +320,27 @@ mod tests {
         p
     }
 
+    /// Set HOME to `tmp`, run `body`, then restore HOME. Uses the
+    /// shared crate-wide test env lock so this doesn't race with
+    /// other modules mutating HOME. Poison-tolerant.
+    fn with_home<R>(tmp: &Path, body: impl FnOnce() -> R) -> R {
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("HOME");
+        // SAFETY: env var write, serialized by _lk above.
+        unsafe { std::env::set_var("HOME", tmp) };
+        let out = body();
+        // Restore so later tests don't inherit the (soon-deleted) tempdir.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+        out
+    }
+
     #[test]
     fn assigns_deterministic_codepoints_by_sorted_id() {
         let tmp = tempfile::tempdir().unwrap();
@@ -328,56 +349,56 @@ mod tests {
         write_svg(tmp.path(), "charlie.svg");
         // Overwrite HOME so assignments.toml lands in the tempdir
         // via the sibling_glyphs_dir() helper.
-        let _lk = crate::test_env_lock().lock().unwrap();
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        // Move svgs into the canonical dir under HOME.
-        let canonical = tmp.path().join(".config/mnml/glyphs");
-        fs::create_dir_all(&canonical).unwrap();
-        for n in ["alpha.svg", "beta.svg", "charlie.svg"] {
-            fs::copy(tmp.path().join(n), canonical.join(n)).unwrap();
-        }
-        let (svgs, assignments) = discover(&canonical, &HashMap::new());
-        assert_eq!(svgs.len(), 3);
-        assert_eq!(svgs[0].0, "alpha");
-        assert_eq!(svgs[1].0, "beta");
-        assert_eq!(svgs[2].0, "charlie");
-        assert_eq!(assignments["alpha"], SIBLING_RANGE_START);
-        assert_eq!(assignments["beta"], SIBLING_RANGE_START + 1);
-        assert_eq!(assignments["charlie"], SIBLING_RANGE_START + 2);
+        with_home(tmp.path(), || {
+            // Move svgs into the canonical dir under HOME.
+            let canonical = tmp.path().join(".config/mnml/glyphs");
+            fs::create_dir_all(&canonical).unwrap();
+            for n in ["alpha.svg", "beta.svg", "charlie.svg"] {
+                fs::copy(tmp.path().join(n), canonical.join(n)).unwrap();
+            }
+            let (svgs, assignments) = discover(&canonical, &HashMap::new());
+            assert_eq!(svgs.len(), 3);
+            assert_eq!(svgs[0].0, "alpha");
+            assert_eq!(svgs[1].0, "beta");
+            assert_eq!(svgs[2].0, "charlie");
+            assert_eq!(assignments["alpha"], SIBLING_RANGE_START);
+            assert_eq!(assignments["beta"], SIBLING_RANGE_START + 1);
+            assert_eq!(assignments["charlie"], SIBLING_RANGE_START + 2);
+        });
     }
 
     #[test]
     fn manifest_override_pins_codepoint_outside_range() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = crate::test_env_lock().lock().unwrap();
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        let dir = tmp.path().join(".config/mnml/glyphs");
-        fs::create_dir_all(&dir).unwrap();
-        write_svg(&dir, "amplify.svg");
-        let mut overrides = HashMap::new();
-        overrides.insert("amplify".to_string(), 0xF1B00);
-        let (svgs, assignments) = discover(&dir, &overrides);
-        assert_eq!(svgs.len(), 1);
-        assert_eq!(assignments["amplify"], 0xF1B00);
+        with_home(tmp.path(), || {
+            let dir = tmp.path().join(".config/mnml/glyphs");
+            fs::create_dir_all(&dir).unwrap();
+            write_svg(&dir, "amplify.svg");
+            let mut overrides = HashMap::new();
+            overrides.insert("amplify".to_string(), 0xF1B00);
+            let (svgs, assignments) = discover(&dir, &overrides);
+            assert_eq!(svgs.len(), 1);
+            assert_eq!(assignments["amplify"], 0xF1B00);
+        });
     }
 
     #[test]
     fn preserves_prior_assignment_across_calls() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = crate::test_env_lock().lock().unwrap();
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        let dir = tmp.path().join(".config/mnml/glyphs");
-        fs::create_dir_all(&dir).unwrap();
-        write_svg(&dir, "one.svg");
-        let (_svgs, first) = discover(&dir, &HashMap::new());
-        let one_cp = first["one"];
-        // Add a second SVG whose id sorts BEFORE the first. The
-        // deterministic-order rule would want to assign
-        // range_start to "aaa", but the prior assignment for "one"
-        // must not budge.
-        write_svg(&dir, "aaa.svg");
-        let (_svgs, second) = discover(&dir, &HashMap::new());
-        assert_eq!(second["one"], one_cp, "prior assignment persisted");
-        assert_ne!(second["aaa"], one_cp);
+        with_home(tmp.path(), || {
+            let dir = tmp.path().join(".config/mnml/glyphs");
+            fs::create_dir_all(&dir).unwrap();
+            write_svg(&dir, "one.svg");
+            let (_svgs, first) = discover(&dir, &HashMap::new());
+            let one_cp = first["one"];
+            // Add a second SVG whose id sorts BEFORE the first. The
+            // deterministic-order rule would want to assign
+            // range_start to "aaa", but the prior assignment for "one"
+            // must not budge.
+            write_svg(&dir, "aaa.svg");
+            let (_svgs, second) = discover(&dir, &HashMap::new());
+            assert_eq!(second["one"], one_cp, "prior assignment persisted");
+            assert_ne!(second["aaa"], one_cp);
+        });
     }
 }

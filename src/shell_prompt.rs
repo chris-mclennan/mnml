@@ -121,9 +121,16 @@ mod tests {
         // Sandbox `$HOME` so install_prompt_script() doesn't write to
         // the real `~/.config/mnml/prompt.sh` on a developer machine.
         let d = tempfile::tempdir().unwrap();
-        // Serialize env mutation across all test modules — same
-        // lock discovery / cdp / sibling_glyphs use.
-        let _lk = crate::test_env_lock().lock().unwrap();
+        // Serialize env mutation across all test modules. Ubuntu CI's
+        // higher --test-threads default exposed a race on 2026-08-03.
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // Snapshot for restore below so a later test doesn't see the
+        // tempdir HOME (the tempdir dies with `d`; leaked HOME points
+        // at a nonexistent path).
+        let prev_home = std::env::var_os("HOME");
+        let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
         // SAFETY: env writes, serialized by _lk above.
         unsafe {
             std::env::set_var("HOME", d.path());
@@ -154,5 +161,16 @@ mod tests {
                 .starts_with(d.path().display().to_string().as_str())
         );
         assert!(std::path::Path::new(&script.1).exists());
+        // Restore env for tests that run after this one.
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_xdg {
+                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
     }
 }

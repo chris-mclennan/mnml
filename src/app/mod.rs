@@ -14707,7 +14707,9 @@ mod tests {
         // Grab the shared test env lock so this doesn't race with
         // other modules' HOME / XDG mutations under Ubuntu CI's
         // higher --test-threads default.
-        let _lk = crate::test_env_lock().lock().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // SAFETY: env var write, serialized by _lk above.
         unsafe { std::env::set_var("XDG_CONFIG_HOME", d.path()) };
         let cfg_path = d.path().join("mnml").join("config.toml");

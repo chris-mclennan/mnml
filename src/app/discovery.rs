@@ -1314,7 +1314,9 @@ color = \"blue\"
     #[test]
     fn remove_integration_by_id_deletes_installed_manifest() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = crate::test_env_lock().lock().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {
@@ -1391,7 +1393,9 @@ enabled = true
     #[test]
     fn remove_integration_by_id_also_deletes_override_sidecar() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = crate::test_env_lock().lock().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {
@@ -1428,7 +1432,9 @@ enabled = true
     #[test]
     fn write_override_toml_emits_loader_readable_shape() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = crate::test_env_lock().lock().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {
@@ -1487,7 +1493,9 @@ enabled = true
     #[test]
     fn write_override_toml_promotes_to_authored_when_no_base() {
         let tmp = tempfile::tempdir().unwrap();
-        let _lk = crate::test_env_lock().lock().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", tmp.path()) };
         let restore = |h: Option<std::ffi::OsString>| unsafe {

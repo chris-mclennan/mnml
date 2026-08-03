@@ -780,7 +780,9 @@ mod tests {
         // Serialize env mutation across test modules. Ubuntu CI's
         // higher --test-threads default exposed a race on 2026-08-03
         // between HOME writers in different modules.
-        let _lk = crate::test_env_lock().lock().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // SAFETY: env var write, serialized by _lk above.
         let prev = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", "/Users/x") };
@@ -799,7 +801,9 @@ mod tests {
     fn split_path_tilde_expansion_windows() {
         // Windows: function falls back to USERPROFILE when HOME isn't set.
         // Serialize env mutation via the shared crate-wide lock.
-        let _lk = crate::test_env_lock().lock().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var_os("USERPROFILE");
         unsafe { std::env::set_var("USERPROFILE", r"C:\Users\x") };
         let prev_home = std::env::var_os("HOME");

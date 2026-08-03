@@ -285,8 +285,14 @@ mod tests {
 
     #[test]
     fn session_path_dashes_the_cwd() {
-        // SAFETY: test-local env mutation; this test doesn't run concurrently with
-        // others that read HOME (and it restores it).
+        // Serialize env mutation across test modules — same crate-wide
+        // lock discovery / cdp / sibling_glyphs / prompt / shell_prompt
+        // use. Ubuntu CI's higher --test-threads default exposed this
+        // race class on 2026-08-03.
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        // SAFETY: env var write, serialized by _lk above.
         let prev = std::env::var_os("HOME");
         unsafe { std::env::set_var("HOME", "/home/x") };
         let p = session_path(Path::new("/Users/me/Projects/mnml"), "abc-123").unwrap();
