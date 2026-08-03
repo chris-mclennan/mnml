@@ -334,6 +334,25 @@ pub enum PromptKind {
     /// wrong context-menu entry on 2026-07-09 and losing an
     /// integration.
     IntegrationRemoveConfirm,
+    /// Accept ⇒ `App::perform_reset_to_defaults(scope)` based on
+    /// which of the three buttons the user picked. Scope is stashed
+    /// on `App::pending_reset_scope` when the button fires.
+    ///
+    /// Three buttons: `Config only`, `Config + workspace`, `Cancel`.
+    /// - Config only → rename ~/.config/mnml/ to a timestamped
+    ///   backup dir; per-workspace `.mnml/` state stays. Safe
+    ///   default — no risk to per-workspace API tokens.
+    /// - Config + workspace → same, plus wipe the current
+    ///   workspace's `.mnml/*` files EXCEPT `env/`, `chains/`,
+    ///   and `collections/` (user-authored content stays; markers
+    ///   + session state die).
+    /// - Cancel → close prompt, no side effects.
+    /// After a config wipe mnml exits with code 75; `run.sh` loops
+    /// and mnml comes back fresh. A `.last-reset-from` marker in
+    /// the new (empty) config dir carries the backup path so the
+    /// launch-time toast can point the user at their restore
+    /// command.
+    ResetToDefaultsConfirm,
 }
 
 #[derive(Debug)]

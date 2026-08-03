@@ -353,6 +353,7 @@ pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str,
         AiToolConfirm => ("  Allow  ", " Deny "),
         ToolInstallConfirm | SiblingInstallConfirm => ("  Install  ", " Cancel "),
         IntegrationRemoveConfirm => ("  Remove  ", " Cancel "),
+        ResetToDefaultsConfirm => ("  Reset  ", " Cancel "),
         _ => return None,
     })
 }

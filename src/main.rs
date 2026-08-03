@@ -274,6 +274,11 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // First-launch onboarding overlay. If the user has never dismissed it
     // in this workspace (no `.mnml/.welcomed` marker), open it.
     app.maybe_show_welcome_on_launch();
+    // If we just came back from `app.reset_to_defaults`, the fresh
+    // ~/.config/mnml/ has a `.last-reset-from` marker pointing at
+    // the backup — surface it as a persistent toast with the restore
+    // one-liner so the user isn't left wondering where their config went.
+    app.maybe_show_reset_toast();
     // Startup workspace picker (--startup-picker / MNML_STARTUP_PICKER=1).
     if mnml::app::App::want_startup_picker(args.startup_picker) {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());

@@ -2031,6 +2031,17 @@ impl App {
                     self.toast("integration remove cancelled");
                 }
             }
+            crate::prompt::PromptKind::ResetToDefaultsConfirm => {
+                // 2-button dialog uses `confirm_labels` +
+                // generic_confirm; the accept text is the primary
+                // button label ("  Reset  "). Cancel path is a
+                // dropped prompt with no dispatch.
+                if p.input.trim().eq_ignore_ascii_case("reset") {
+                    self.perform_reset_to_defaults();
+                } else {
+                    self.toast("reset cancelled");
+                }
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

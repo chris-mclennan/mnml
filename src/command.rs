@@ -249,6 +249,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.request_restart(),
         },
         Command {
+            id: "app.reset_to_defaults",
+            title: "Reset mnml to factory defaults (backup + relaunch)",
+            group: "app",
+            keys: &[],
+            run: |app| app.open_reset_to_defaults_prompt(),
+        },
+        Command {
             id: "view.toggle_tree",
             title: "Toggle file tree (rail on/off)",
             group: "view",

@@ -44,6 +44,7 @@ mod lsp;
 mod macros_marks;
 mod now_playing;
 mod picker;
+mod reset;
 // pipeline_log removed after 2026-06 SCM split.
 pub(crate) mod cloud_agents_methods;
 pub(crate) mod cmdline_methods;
