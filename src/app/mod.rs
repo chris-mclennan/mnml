@@ -44,6 +44,7 @@ mod lsp;
 mod macros_marks;
 mod now_playing;
 mod picker;
+mod portable;
 mod reset;
 // pipeline_log removed after 2026-06 SCM split.
 pub(crate) mod cloud_agents_methods;
@@ -6576,6 +6577,15 @@ impl App {
                 ToolInstallConfirm | SiblingInstallConfirm => "y".into(),
                 IntegrationRemoveConfirm => "remove".into(),
                 ResetToDefaultsConfirm => "reset".into(),
+                // Both options are valid — primary=portable, cancel=normal.
+                // The accept handler discriminates on the input string.
+                PortableChoicePrompt => {
+                    if primary {
+                        "portable".into()
+                    } else {
+                        "normal".into()
+                    }
+                }
                 _ => return,
             }
         } else {

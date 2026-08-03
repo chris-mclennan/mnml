@@ -2031,6 +2031,13 @@ impl App {
                     self.toast("reset cancelled");
                 }
             }
+            crate::prompt::PromptKind::PortableChoicePrompt => {
+                // #867 — both options are valid choices, not
+                // primary/cancel. The synth in run_confirm_button
+                // maps primary → "portable", cancel → "normal".
+                let choice = p.input.trim().to_ascii_lowercase();
+                self.dispatch_portable_choice(&choice);
+            }
             crate::prompt::PromptKind::NewFile => {
                 let name = p.input.clone();
                 if let Some(FsAction::NewFile { parent }) = self.pending_fs_action.take() {

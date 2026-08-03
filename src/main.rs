@@ -271,6 +271,13 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     };
     // Re-open last session's buffers (no-op when [session] restore = false).
     app.try_restore_session();
+    // #867 — per-user first-run: portable-vs-normal data layout choice.
+    // Fires exactly once per user (guarded by `.user-welcomed` in
+    // data_root). If the user picks Portable, this immediately requests
+    // a restart so `data_root()`'s cached probe re-resolves against the
+    // freshly-created `mnml-data/`. Ordering matters: this runs BEFORE
+    // the workspace welcome overlay so we don't stack two prompts.
+    app.maybe_show_portable_choice_on_launch();
     // First-launch onboarding overlay. If the user has never dismissed it
     // in this workspace (no `.mnml/.welcomed` marker), open it.
     app.maybe_show_welcome_on_launch();

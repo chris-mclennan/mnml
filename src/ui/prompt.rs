@@ -354,6 +354,7 @@ pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str,
         ToolInstallConfirm | SiblingInstallConfirm => ("  Install  ", " Cancel "),
         IntegrationRemoveConfirm => ("  Remove  ", " Cancel "),
         ResetToDefaultsConfirm => ("  Reset  ", " Cancel "),
+        PortableChoicePrompt => ("  Portable  ", "  Normal  "),
         _ => return None,
     })
 }

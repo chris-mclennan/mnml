@@ -345,6 +345,13 @@ pub enum PromptKind {
     /// the backup path so the launch-time toast can point the user
     /// at their restore command.
     ResetToDefaultsConfirm,
+    /// #867 — first-ever launch prompt: portable-mode-vs-normal
+    /// data-layout choice. Rendered as a button dialog `[ Portable ]
+    /// [ Normal ]`. Primary defaults to Portable when
+    /// `data_root::portable_state()` reports `AwaitingConsent`
+    /// (folder was found next to the binary — user probably wants
+    /// portable), Normal otherwise.
+    PortableChoicePrompt,
 }
 
 #[derive(Debug)]

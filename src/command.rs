@@ -256,6 +256,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_reset_to_defaults_prompt(),
         },
         Command {
+            id: "app.choose_data_layout",
+            title: "Choose data layout — Portable (mnml-data/) or Normal (~/.config/mnml/)",
+            group: "app",
+            keys: &[],
+            run: |app| app.open_portable_choice_prompt(),
+        },
+        Command {
             id: "view.toggle_tree",
             title: "Toggle file tree (rail on/off)",
             group: "view",

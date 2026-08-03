@@ -140,6 +140,60 @@ pub enum PortableState {
     Active,
 }
 
+/// Per-user "the user has picked a data layout" marker. Distinct
+/// from the per-workspace `.mnml/.welcomed` — that one gates the
+/// tips overlay in each new workspace; this one gates the
+/// Portable-vs-Normal choice at first-ever launch.
+///
+/// Lives inside [`data_root`], so:
+/// - Portable install: `<binary_dir>/mnml-data/.user-welcomed`
+/// - Normal install: `~/.config/mnml/.user-welcomed`
+pub const USER_CHOICE_MARKER_FILENAME: &str = ".user-welcomed";
+
+/// Absolute path to the per-user first-run marker for the current
+/// data root. Cheap wrapper — path only, does not check existence.
+pub fn user_choice_marker_path() -> PathBuf {
+    data_root().join(USER_CHOICE_MARKER_FILENAME)
+}
+
+/// True when the per-user first-run marker exists (either mode).
+/// The overlay uses this to decide whether to prompt at startup.
+pub fn user_has_chosen() -> bool {
+    user_choice_marker_path().exists()
+}
+
+/// Drop the per-user marker in the currently-resolved data root.
+/// Used by the "Normal install" branch of the choice overlay.
+/// Best-effort — a filesystem failure isn't fatal to the app, just
+/// means the overlay may reappear next launch.
+pub fn mark_user_choice() -> std::io::Result<()> {
+    let path = user_choice_marker_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, b"")?;
+    Ok(())
+}
+
+/// Materialize a portable install: create `<binary_dir>/mnml-data/`
+/// if missing, drop the `.opted-in` gate, and drop the per-user
+/// marker so the choice sticks. Returns the mnml-data path on
+/// success. Caller should then request a restart — the process
+/// has cached `PORTABLE_CACHE` and won't see the new layout until
+/// re-exec.
+pub fn activate_portable() -> std::io::Result<PathBuf> {
+    let Some(candidate) = portable_candidate() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "can't resolve binary directory to place mnml-data/",
+        ));
+    };
+    std::fs::create_dir_all(&candidate)?;
+    std::fs::write(candidate.join(PORTABLE_OPT_IN_FILENAME), b"")?;
+    std::fs::write(candidate.join(USER_CHOICE_MARKER_FILENAME), b"")?;
+    Ok(candidate)
+}
+
 /// Report the portable-mode state at the current binary
 /// location. Non-cached — cheap enough to call on demand, and the
 /// welcome UI needs the live answer (creating the marker mid-run
