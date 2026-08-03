@@ -349,9 +349,7 @@ impl App {
     pub fn remove_integration_by_id(&mut self, id: &str) {
         // Step 1: delete the manifest file + its sidecar override,
         // if either is present.
-        let base_dir = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .map(|h| h.join(".config").join("mnml").join("integrations"));
+        let base_dir = Some(crate::data_root::data_root().join("integrations"));
         let manifest_removed = base_dir
             .as_ref()
             .map(|d| d.join(format!("{id}.toml")))

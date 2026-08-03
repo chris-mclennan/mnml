@@ -314,6 +314,9 @@ pub fn set(name: &str) -> Option<Theme> {
 /// [`write_current`] keeps it in sync with mnml's active theme, and every sibling
 /// (mixr, the `mnml-*` integrations) reads it to follow mnml's colours.
 pub fn current_theme_path() -> Option<std::path::PathBuf> {
+    if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
+        return Some(crate::data_root::data_root().join("current-theme.toml"));
+    }
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
         && !xdg.is_empty()
     {

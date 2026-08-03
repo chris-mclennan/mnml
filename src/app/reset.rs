@@ -58,7 +58,7 @@ impl App {
         let cfg_dir = match config_dir() {
             Some(d) => d,
             None => {
-                self.toast("reset: no $HOME set — can't locate ~/.config/mnml/");
+                self.toast("reset: can't locate mnml data root");
                 return;
             }
         };
@@ -222,11 +222,12 @@ fn resolve_backup_path(cfg_dir: &std::path::Path) -> PathBuf {
     parent.join(format!("{base_name}.backup-{stamp}-999"))
 }
 
-/// `~/.config/mnml/` — the target of the reset. `None` if `$HOME`
-/// isn't set (unusual but possible in some sandbox / CI scenarios).
+/// The target of the reset. Routes through
+/// [`data_root`](crate::data_root::data_root) so a portable-mode
+/// install resets the portable folder in-place (backup lands as a
+/// sibling: `<binary_dir>/mnml-data.backup-<stamp>/`).
 fn config_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".config").join("mnml"))
+    Some(crate::data_root::data_root())
 }
 
 /// UTC timestamp `YYYYMMDD-HHMMSS` for the backup dir name.

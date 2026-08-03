@@ -115,17 +115,11 @@ pub fn load_all(workspace: &Path) -> Vec<MountManifest> {
         .collect()
 }
 
-/// User-config dir for manifests. `~/.config/mnml/mounts/` on
-/// XDG-compliant systems; falls back to `~/.config/mnml/mounts/`
-/// on macOS too (mnml's existing config root).
+/// User-config dir for manifests. `<data_root>/mounts/` — routes
+/// through [`data_root`](crate::data_root::data_root) so portable
+/// installs read/write here-not-HOME (task #858).
 fn user_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("mnml")
-            .join("mounts"),
-    )
+    Some(crate::data_root::data_root().join("mounts"))
 }
 
 fn scan_dir(dir: &Path, out: &mut Vec<MountManifest>) {

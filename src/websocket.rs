@@ -416,14 +416,13 @@ fn run_connection(
     }
 }
 
-/// 2026-06-21 — best-effort persist a single message to
-/// `~/.mnml/ws-history/<host-slug>/history.jsonl`. Appends one
-/// JSON line. Silently no-ops when HOME isn't set or the dir
-/// can't be created — the file is informational, not load-bearing.
+/// 2026-06-21 — best-effort persist a single message to the
+/// per-host history file. Location: `<mnml-data>/ws-history/…` in
+/// portable mode; `~/.mnml/ws-history/…` in HOME mode (kept for
+/// backwards-compat — this scheme predates data_root and the tree
+/// exists on many users' machines). Silently no-ops on failure —
+/// informational, not load-bearing.
 fn persist_history(url: &str, outgoing: bool, text: &str) {
-    let Some(home) = std::env::var_os("HOME") else {
-        return;
-    };
     let host = host_of_url(url);
     let slug = host.replace(['/', ':'], "_").replace(
         |c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.' && c != '-',
@@ -432,9 +431,15 @@ fn persist_history(url: &str, outgoing: bool, text: &str) {
     if slug.is_empty() {
         return;
     }
-    let dir = std::path::PathBuf::from(home)
-        .join(".mnml/ws-history")
-        .join(&slug);
+    let base = if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
+        crate::data_root::data_root().join("ws-history")
+    } else {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        std::path::PathBuf::from(home).join(".mnml/ws-history")
+    };
+    let dir = base.join(&slug);
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("history.jsonl");
     let ts_ms = std::time::SystemTime::now()
@@ -469,10 +474,14 @@ fn persist_history(url: &str, outgoing: bool, text: &str) {
 pub fn read_ws_history() -> Vec<(String, u128, usize)> {
     let mut out: std::collections::BTreeMap<String, (u128, usize)> =
         std::collections::BTreeMap::new();
-    let Some(home) = std::env::var_os("HOME") else {
-        return Vec::new();
+    let root = if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
+        crate::data_root::data_root().join("ws-history")
+    } else {
+        let Some(home) = std::env::var_os("HOME") else {
+            return Vec::new();
+        };
+        std::path::PathBuf::from(home).join(".mnml/ws-history")
     };
-    let root = std::path::PathBuf::from(home).join(".mnml/ws-history");
     let Ok(rd) = std::fs::read_dir(&root) else {
         return Vec::new();
     };

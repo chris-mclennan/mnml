@@ -335,15 +335,11 @@ pub fn load_all_with_user_base(
         .collect()
 }
 
-/// User-config dir for integration manifests.
+/// User-config dir for integration manifests. Routes through
+/// [`data_root`](crate::data_root::data_root) so portable-mode
+/// installs read/write here-not-HOME (task #858).
 pub fn user_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("mnml")
-            .join("integrations"),
-    )
+    Some(crate::data_root::data_root().join("integrations"))
 }
 
 /// User-supplied per-field overrides for an integration's rendered

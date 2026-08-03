@@ -129,8 +129,7 @@ pub fn global_history_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("MNML_HISTORY_GLOBAL_PATH") {
         return Some(PathBuf::from(p));
     }
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".config/mnml/history-global.jsonl"))
+    Some(crate::data_root::data_root().join("history-global.jsonl"))
 }
 
 /// Read the last `n` entries from the global history log (most

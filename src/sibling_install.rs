@@ -129,10 +129,7 @@ pub fn write_mount_manifest(
     stub: &MountStub,
     binary: &str,
 ) -> std::io::Result<std::path::PathBuf> {
-    let home = std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "$HOME not set"))?;
-    let dir = home.join(".config").join("mnml").join("mounts");
+    let dir = crate::data_root::data_root().join("mounts");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{family_id}.toml"));
     let body = format!(

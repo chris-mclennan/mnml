@@ -331,9 +331,19 @@ pub struct MarketplaceCache {
 }
 
 impl MarketplaceCache {
-    /// Standard file location. Best-effort — returns None if
-    /// `$HOME` isn't set.
+    /// Standard file location. In HOME mode this is the XDG cache
+    /// dir (`~/.cache/mnml/marketplace.json`, kept separate from
+    /// `~/.config/mnml/` to follow XDG conventions). In portable
+    /// mode the cache lives under `<mnml-data>/cache/` so a
+    /// portable install stays self-contained.
     pub fn path() -> Option<PathBuf> {
+        if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
+            return Some(
+                crate::data_root::data_root()
+                    .join("cache")
+                    .join("marketplace.json"),
+            );
+        }
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
         Some(home.join(".cache").join("mnml").join("marketplace.json"))
     }

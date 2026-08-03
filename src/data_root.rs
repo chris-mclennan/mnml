@@ -51,28 +51,43 @@ pub enum DataRootKind {
     Home,
 }
 
-/// Cached result of the current process's data-root resolution.
-/// Contains both the resolved directory AND the kind so callers
-/// don't have to re-detect. Populated on first `data_root()` call.
-struct Resolved {
-    path: PathBuf,
-    kind: DataRootKind,
-}
+/// Cache the fact that we are (or aren't) in portable mode. The
+/// binary can't move mid-process, so this is a fine one-shot
+/// probe. We deliberately do NOT cache the resolved path — HOME
+/// can change mid-process (test env swaps + `--sandbox` mode
+/// after startup), and re-reading `env::var_os("HOME")` per call
+/// is a cheap HashMap lookup.
+static PORTABLE_CACHE: OnceLock<bool> = OnceLock::new();
 
-static RESOLVED: OnceLock<Resolved> = OnceLock::new();
+fn is_portable() -> bool {
+    *PORTABLE_CACHE.get_or_init(|| matches!(portable_state(), PortableState::Active))
+}
 
 /// Return the absolute path to the user-scoped mnml data root for
-/// this process. Never panics — falls back to `.` if HOME is unset
-/// AND no portable marker exists (a broken environment; safer to
-/// use CWD than to bail).
+/// this process. Never panics — falls back to `./mnml` if HOME is
+/// unset AND no portable marker exists (a broken environment;
+/// safer to use CWD than to bail).
 pub fn data_root() -> PathBuf {
-    RESOLVED.get_or_init(resolve).path.clone()
+    if is_portable()
+        && let Some(p) = portable_candidate()
+    {
+        return p;
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".config").join("mnml");
+    }
+    PathBuf::from(".").join("mnml")
 }
 
-/// Which of the two layouts we resolved to. Cached alongside the
-/// path — same lifetime.
+/// Which of the two layouts we resolved to. Cheap wrapper around
+/// [`is_portable`] — the reported kind can't change once the
+/// portable-cache has been probed.
 pub fn data_root_kind() -> DataRootKind {
-    RESOLVED.get_or_init(resolve).kind
+    if is_portable() {
+        DataRootKind::Portable
+    } else {
+        DataRootKind::Home
+    }
 }
 
 /// Short human-readable label for the current layout. Used by
@@ -140,37 +155,6 @@ pub fn portable_state() -> PortableState {
         PortableState::Active
     } else {
         PortableState::AwaitingConsent
-    }
-}
-
-fn resolve() -> Resolved {
-    // Portable wins ONLY when both the folder AND the opt-in
-    // marker are present. Folder-alone is treated as "awaiting
-    // consent" and reported via portable_state() to the welcome
-    // UI — resolution stays on Home so an accidentally-named
-    // folder never silently redirects a user's data.
-    if let PortableState::Active = portable_state()
-        && let Some(portable) = portable_candidate()
-    {
-        return Resolved {
-            path: portable,
-            kind: DataRootKind::Portable,
-        };
-    }
-    // Otherwise the HOME-scoped layout that every prior mnml used.
-    // Sandbox mode's HOME redirect flows through here naturally.
-    if let Some(home) = std::env::var_os("HOME") {
-        return Resolved {
-            path: PathBuf::from(home).join(".config").join("mnml"),
-            kind: DataRootKind::Home,
-        };
-    }
-    // No HOME, no portable marker — degenerate environment. Fall
-    // back to CWD/mnml so at least reads/writes land somewhere
-    // predictable instead of crashing.
-    Resolved {
-        path: PathBuf::from(".").join("mnml"),
-        kind: DataRootKind::Home,
     }
 }
 

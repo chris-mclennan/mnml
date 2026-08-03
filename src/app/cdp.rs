@@ -207,13 +207,24 @@ impl App {
             format!("-{pane_index}")
         };
         match self.config.browser.profile_mode.as_str() {
-            "shared" => match std::env::var_os("HOME").map(PathBuf::from) {
-                Some(h) => h.join(".mnml").join(format!("chrome-profile{suffix}")),
-                None => self
-                    .workspace
-                    .join(".mnml")
-                    .join(format!("chrome-profile{suffix}")),
-            },
+            "shared" => {
+                // Portable mode: keep the profile under mnml-data
+                // so a portable install stays fully self-contained.
+                // HOME mode: `~/.mnml/chrome-profile*` (legacy
+                // scheme, predates data_root — kept for backwards
+                // compat with existing installs).
+                if crate::data_root::data_root_kind() == crate::data_root::DataRootKind::Portable {
+                    crate::data_root::data_root().join(format!("chrome-profile{suffix}"))
+                } else {
+                    match std::env::var_os("HOME").map(PathBuf::from) {
+                        Some(h) => h.join(".mnml").join(format!("chrome-profile{suffix}")),
+                        None => self
+                            .workspace
+                            .join(".mnml")
+                            .join(format!("chrome-profile{suffix}")),
+                    }
+                }
+            }
             "ephemeral" => match tempfile::tempdir() {
                 Ok(td) => {
                     // The TempDir RAII guard would delete the dir as
