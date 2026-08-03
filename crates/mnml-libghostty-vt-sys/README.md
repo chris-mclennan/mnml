@@ -27,12 +27,12 @@ sys crate directly.
 
 ## `[lib].name` is `libghostty_vt_sys`
 
-The Cargo package is `mnml-libghostty-vt-sys` but the Rust `[lib].name` is set to
-`libghostty_vt_sys`, so `use libghostty_vt_sys::…` is the import path — not
-`use mnml_vt_sys::…`. mnml itself masks this via `libghostty-vt-sys = {
-package = "mnml-libghostty-vt-sys", ... }` in its `Cargo.toml`; consumers reaching for
-this crate directly (without the package rename) still need
-`use libghostty_vt_sys::…`.
+The Cargo package is `mnml-libghostty-vt-sys` but the Rust `[lib].name` is
+set to `libghostty_vt_sys`, so `use libghostty_vt_sys::…` is the import
+path. mnml itself masks the mnml-prefixed package name via a workspace
+alias `libghostty-vt-sys = { package = "mnml-libghostty-vt-sys", ... }`
+in its `Cargo.toml`; consumers reaching for this crate directly still
+write `use libghostty_vt_sys::…`.
 
 [libghostty-vt]: https://github.com/ghostty-org/ghostty/tree/main/include/ghostty
-[`mnml-libghostty-vt`]: ../mnml-vt
+[`mnml-libghostty-vt`]: ../mnml-libghostty-vt
