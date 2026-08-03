@@ -297,6 +297,15 @@ fn extract_summary(text: &str) -> Option<String> {
 /// Does the `.env` file at `path` contain a (non-comment) line
 /// for `key`? Used by `write_env_var` to decide which file gets
 /// the write when both `.mnml/env/` and `.rqst/env/` exist.
+/// True when `pat` is `.mnml` OR starts with `.mnml/` — i.e. the
+/// path-first-segment is the mnml config dir, not something merely
+/// prefixed with those five characters like `.mnml-backup/` or
+/// `.mnmlrc`. Used by the auto-gitignore negation check so that
+/// unrelated dotfiles/dirs don't false-trigger skip-and-warn.
+fn starts_with_mnml_segment(pat: &str) -> bool {
+    pat == ".mnml" || pat.starts_with(".mnml/")
+}
+
 /// #861 — on the first `.mnml/env/*.env` write in a git-tracked
 /// workspace, make sure `.gitignore` at the workspace root contains
 /// a `.mnml/env/` line so freshly-written API tokens can't
@@ -347,7 +356,12 @@ fn ensure_mnml_env_gitignored(workspace: &std::path::Path) -> Option<String> {
             return false;
         }
         let pat = trimmed[1..].trim_start();
-        pat.starts_with(".mnml") || pat.starts_with("/.mnml")
+        // Path-segment boundary — not a raw prefix. `.mnml-backup/`
+        // and `.mnmlrc` shouldn't false-positive; only patterns
+        // that ARE `.mnml` or start with `.mnml/` count. Ditto for
+        // the leading-slash variant. Reviewer 2026-08-03.
+        starts_with_mnml_segment(pat)
+            || starts_with_mnml_segment(pat.strip_prefix('/').unwrap_or(""))
     });
     if has_mnml_negation {
         return Some(
@@ -6843,6 +6857,36 @@ mod http_tests {
             body,
             "gitignore body must be unchanged"
         );
+    }
+
+    /// Path-segment-boundary check — `!.mnml-backup/`, `!.mnmlrc`
+    /// merely share the raw prefix `.mnml`, but they're not the
+    /// mnml config dir. Must NOT false-trigger skip-and-warn.
+    /// Reviewer 2026-08-03 finding on c1424996.
+    #[test]
+    fn ensure_mnml_env_gitignored_dot_mnml_prefix_is_segment_bounded() {
+        for negation in &[
+            "!.mnml-backup/",
+            "!.mnmlrc",
+            "!.mnml-old",
+            "!/.mnml-backup/",
+        ] {
+            let ws = tempfile::tempdir().unwrap();
+            std::fs::create_dir(ws.path().join(".git")).unwrap();
+            let gi = ws.path().join(".gitignore");
+            std::fs::write(&gi, format!("target/\n{negation}\n")).unwrap();
+            let out = ensure_mnml_env_gitignored(ws.path())
+                .unwrap_or_else(|| panic!("should have appended for {negation}"));
+            assert!(
+                out.contains(".mnml/env/"),
+                "toast should confirm append for {negation}: {out}"
+            );
+            let body = std::fs::read_to_string(&gi).unwrap();
+            assert!(
+                body.ends_with(".mnml/env/\n"),
+                "append should have landed for {negation}"
+            );
+        }
     }
 
     /// Non-mnml negation `!vendor/.mnml/env-old/` shouldn't
