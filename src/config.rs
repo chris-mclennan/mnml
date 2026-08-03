@@ -1015,12 +1015,10 @@ pub struct IntegrationIcon {
     /// Browser is the only default-on integration (its `browser.open`
     /// is a common enough action to warrant top-bar real estate).
     pub in_palette_bar: bool,
-    /// True for built-in defaults that a sibling's manifest is
-    /// allowed to override. Set to false as soon as the user
-    /// authors a matching `[[ui.integration_icon]]` entry — user
-    /// intent always beats sibling-authored manifests.
-    #[doc(hidden)]
-    pub manifest_can_override: bool,
+    // 2026-08-03 — `manifest_can_override: bool` deleted. Was written
+    // (defaults, user overrides, merge callers) but never READ after
+    // the 2026-08-01 config-flip made every match slot overwritable
+    // regardless. Reviewer confirmed zero read sites; safe removal.
     /// 2026-07-31 — detail-pane metadata. All optional; a chip
     /// with none of these renders a bare-bones detail pane (just
     /// title + Install/Enable/etc. buttons). Populated either
@@ -1147,7 +1145,6 @@ impl Default for Config {
                         author: None,
                         version: None,
                         commands: Vec::new(),
-                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "claude_code".to_string(),
@@ -1173,7 +1170,6 @@ impl Default for Config {
                         author: None,
                         version: None,
                         commands: Vec::new(),
-                        manifest_can_override: true,
                     },
                     IntegrationIcon {
                         id: "codex".to_string(),
@@ -1194,7 +1190,6 @@ impl Default for Config {
                         author: None,
                         version: None,
                         commands: Vec::new(),
-                        manifest_can_override: true,
                     },
                     // 2026-08-01 — stripped ~35 hardcoded IntegrationIcon
                     // defaults from mnml core. Everything except the four
@@ -1936,7 +1931,6 @@ impl Config {
                     // Sibling manifests may still override — they
                     // supersede built-in defaults for anything with
                     // an installed `~/.config/mnml/integrations/<id>.toml`.
-                    manifest_can_override: true,
                 };
                 consumed.insert(id);
                 merged.push(icon);

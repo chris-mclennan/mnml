@@ -284,30 +284,26 @@ pub fn root() -> &'static Leader {
                                     "detail pane (description / buttons / links)",
                                 ),
                             ),
-                            ('b', cmd("forge.open_bitbucket", "Bitbucket viewer")),
-                            ('g', cmd("forge.open_github", "GitHub viewer")),
-                            ('l', cmd("forge.open_gitlab", "GitLab viewer")),
-                            ('z', cmd("forge.open_azdevops", "Azure DevOps viewer")),
-                            ('c', cmd("forge.open_codebuild", "AWS CodeBuild viewer")),
-                            ('s', cmd("forge.open_s3", "Amazon S3 browser")),
-                            (
-                                'A',
-                                cmd("forge.open_azure_blob", "Azure Blob Storage browser"),
-                            ),
-                            (
-                                'w',
-                                cmd("forge.open_cloudwatch_logs", "CloudWatch Logs viewer"),
-                            ),
-                            ('a', cmd("forge.open_amplify", "AWS Amplify viewer")),
-                            ('d', cmd("forge.open_dynamodb", "DynamoDB browser")),
-                            ('L', cmd("forge.open_lambda", "Lambda functions")),
-                            ('e', cmd("forge.open_eventbridge", "EventBridge Schedules")),
-                            ('R', cmd("forge.open_rds", "RDS databases")),
-                            ('C', cmd("forge.open_ecs", "ECS clusters + services")),
-                            ('E', cmd("forge.open_ecr", "ECR container registry")),
-                            ('o', cmd("forge.open_cognito", "Cognito User Pools + users")),
-                            ('q', cmd("forge.open_sqs", "SQS queues")),
-                            ('N', cmd("forge.open_sns", "SNS topics + subscriptions")),
+                            // 2026-08-03 — the ~20 forge.open_* chord bindings
+                            // that lived here (bitbucket / github / gitlab /
+                            // azdevops / codebuild / s3 / azure_blob /
+                            // cloudwatch_logs / amplify / dynamodb / lambda /
+                            // eventbridge / rds / ecs / ecr / cognito / sqs /
+                            // sns) were dropped alongside the corresponding
+                            // hardcoded palette commands in command.rs — the
+                            // sibling binaries they pointed at are all retired
+                            // (ecosystem consolidated to mnml + mnml-integrations
+                            // + mnml-tattle-tests). Anything a user installs
+                            // through the marketplace now registers its OWN
+                            // command via IntegrationManifest.commands + can
+                            // bind its own chords via [keys.global] in user
+                            // config or [[commands]].keys in the manifest.
+                            //
+                            // Also unwedges the previous 'd'/'C'/'E' collisions
+                            // (integrations.show_details vs forge.open_dynamodb;
+                            // tools.btop vs forge.open_ecs; integrations.toggle_enabled
+                            // vs forge.open_ecr — each pair silently shadowed one
+                            // side).
                             ('h', cmd("tools.htop", "htop — interactive process viewer")),
                             (
                                 'I',
@@ -322,16 +318,12 @@ pub fn root() -> &'static Leader {
                                 'E',
                                 cmd("integrations.toggle_enabled", "enable/disable a chip"),
                             ),
-                            ('D', cmd("forge.open_datadog", "Datadog observability")),
-                            ('B', cmd("forge.open_buttondown", "Buttondown newsletter")),
-                            ('S', cmd("forge.open_slack", "Slack browse + post")),
-                            ('T', cmd("forge.open_teams", "Microsoft Teams")),
-                            ('M', cmd("forge.open_mandrill", "Mandrill email")),
-                            ('K', cmd("forge.open_docker", "Docker containers")),
-                            ('G', cmd("forge.open_gmail", "Gmail browse + send")),
-                            ('C', cmd("forge.open_gcal", "Google Calendar")),
-                            ('j', cmd("forge.open_jira", "Jira ticket viewer")),
-                            ('F', cmd("forge.open_cloudflare", "Cloudflare CDN")),
+                            // 2026-08-03 — same removal as the block above.
+                            // The datadog/buttondown/slack/teams/mandrill/
+                            // docker/gmail/gcal/jira/cloudflare bindings all
+                            // pointed at now-retired forge.open_* palette
+                            // commands. Users install these via marketplace
+                            // now (chord binding comes from manifest).
                         ],
                     ),
                 ),
@@ -508,31 +500,15 @@ mod tests {
             Some(Leader::Group { label, .. }) => assert_eq!(*label, "+integrations"),
             other => panic!("expected +integrations group at 'i', got {other:?}"),
         }
-        assert!(matches!(
-            lookup("ib"),
-            Some(Leader::Cmd {
-                id: "forge.open_bitbucket",
-                ..
-            })
-        ));
-        assert!(matches!(
-            lookup("iw"),
-            Some(Leader::Cmd {
-                id: "forge.open_cloudwatch_logs",
-                ..
-            })
-        ));
-        // vscode-user-keyboard 2026-06-28 SEV-1 — 'e' was double-
-        // registered (forge.open_eventbridge + integrations.toggle_enabled);
-        // BTreeMap last-wins silently broke eventbridge. Now 'e' is
-        // eventbridge; 'E' (capital) is the toggle-enabled picker.
-        assert!(matches!(
-            lookup("ie"),
-            Some(Leader::Cmd {
-                id: "forge.open_eventbridge",
-                ..
-            })
-        ));
+        // 2026-08-03 — The `ib`/`iw`/`ie` bindings that used to test
+        // `forge.open_bitbucket`/`forge.open_cloudwatch_logs`/
+        // `forge.open_eventbridge` are gone; the palette + chord chain
+        // stopped hosting hardcoded sibling launchers now that the
+        // ecosystem consolidated into the marketplace catalog. Just
+        // assert the surviving invariants — `E` still reaches the
+        // toggle-enabled picker (the 2026-06-28 SEV-1 fix for the
+        // BTreeMap last-wins collision on 'e' isn't reintroduced by
+        // this cleanup — 'e' is now free but nothing binds it here).
         assert!(matches!(
             lookup("iE"),
             Some(Leader::Cmd {

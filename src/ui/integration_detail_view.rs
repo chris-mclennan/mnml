@@ -801,7 +801,6 @@ mod tests {
             label: Some("Slack".to_string()),
             enabled: true,
             in_palette_bar: false,
-            manifest_can_override: true,
             description: Some("Slack browse + post".to_string()),
             homepage: Some("https://example.com".to_string()),
             docs: None,

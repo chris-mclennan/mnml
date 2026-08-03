@@ -5649,16 +5649,14 @@ impl App {
     /// commands as dynamic commands. Called from `App::new` and
     /// again by the `integrations.refresh` palette command.
     ///
-    /// Precedence:
-    ///   user config > manifest > built-in default
+    /// Precedence (post 2026-08-01 config flip):
+    ///   sibling manifest > built-in default > user's order/enabled prefs
     ///
-    /// - **User-authored entries** (`manifest_can_override = false`)
-    ///   are never touched — user intent always wins.
-    /// - **Built-in defaults + prior-manifest entries**
-    ///   (`manifest_can_override = true`) get replaced in place
-    ///   when a manifest with the same id arrives. So installing
-    ///   `<sibling> --install` overrides the built-in with the
-    ///   sibling's own glyph / command / chord.
+    /// Every existing `IntegrationIcon` slot with a matching manifest
+    /// id gets overwritten wholesale EXCEPT the two user-preference
+    /// fields (`enabled`, `in_palette_bar`). Manifests can't touch
+    /// order. The old `manifest_can_override: bool` gate was retired
+    /// 2026-08-03 — it had no read sites after the flip.
     pub fn merge_integration_manifests(&mut self) {
         for m in &self.integration_manifests {
             let Some(chip) = &m.chip else { continue };
@@ -5718,7 +5716,6 @@ impl App {
                 enabled: chip.enabled,
                 in_palette_bar: chip.in_palette_bar,
                 // A later manifest re-scan can re-apply/override.
-                manifest_can_override: true,
                 // 2026-07-31 — detail-pane metadata piped through
                 // from the sibling manifest so `Pane::IntegrationDetail`
                 // can render description / links / command list without
@@ -5741,8 +5738,9 @@ impl App {
             // 2026-08-01 — always merge sibling-owned fields.
             // Preserve `enabled` + `in_palette_bar` from the
             // existing slot (those are user prefs, everything else
-            // is sibling-authored default). `manifest_can_override`
-            // no longer gates the overwrite — user config is
+            // is sibling-authored default). The former
+            // `manifest_can_override` gate was retired 2026-08-03
+            // alongside its dead-field deletion — user config is
             // slim-only after the precedence flip in
             // `config::finalize`.
             match self
@@ -15356,7 +15354,6 @@ mod tests {
                 author: None,
                 version: None,
                 commands: Vec::new(),
-                manifest_can_override: false,
             });
         let before = app.config.ui.integration_icons.len();
         app.open_integration_remove_confirm("test_int".to_string());

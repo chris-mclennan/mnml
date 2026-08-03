@@ -1634,208 +1634,22 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.refresh_scm_prs(),
         },
-        // Per-sibling launch shortcuts — equivalent to typing
-        // `:term <binary>` from the cmdline, but discoverable
-        // via the palette and chord-bindable via `[keys.global]`.
-        // Replaces the pre-split `<host>.pull_requests` palette
-        // commands users had bound to keychords. Whichkey wires
-        // these under `<leader>i` (the integrations group).
-        Command {
-            id: "forge.open_bitbucket",
-            title: "Forge: open Bitbucket viewer (mnml-forge-bitbucket)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-forge-bitbucket"),
-        },
-        Command {
-            id: "forge.open_github",
-            title: "Forge: open GitHub viewer (mnml-forge-github)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-forge-github"),
-        },
-        Command {
-            id: "forge.open_gitlab",
-            title: "Forge: open GitLab viewer (mnml-forge-gitlab)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-forge-gitlab"),
-        },
-        Command {
-            id: "forge.open_azdevops",
-            title: "Forge: open Azure DevOps viewer (mnml-forge-azdevops)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-forge-azdevops"),
-        },
-        Command {
-            id: "forge.open_codebuild",
-            title: "Forge: open AWS CodeBuild viewer (mnml-aws-codebuild)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-codebuild"),
-        },
-        Command {
-            id: "forge.open_s3",
-            title: "Forge: open Amazon S3 browser (mnml-fs-s3)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-fs-s3"),
-        },
-        Command {
-            id: "forge.open_azure_blob",
-            title: "Forge: open Azure Blob Storage browser (mnml-fs-azure-blob)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-fs-azure-blob"),
-        },
-        Command {
-            id: "forge.open_datadog",
-            title: "Forge: open Datadog observability browser (mnml-obs-datadog)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-obs-datadog"),
-        },
-        Command {
-            id: "forge.open_buttondown",
-            title: "Forge: open Buttondown newsletter browser (mnml-msg-buttondown)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-msg-buttondown"),
-        },
-        Command {
-            id: "forge.open_slack",
-            title: "Forge: open Slack browse + post (mnml-msg-slack)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-msg-slack"),
-        },
-        Command {
-            id: "forge.open_teams",
-            title: "Forge: open Microsoft Teams browse + post (mnml-msg-teams)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-msg-teams"),
-        },
-        Command {
-            id: "forge.open_mandrill",
-            title: "Forge: open Mandrill email browser (mnml-msg-mandrill)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-msg-mandrill"),
-        },
-        Command {
-            id: "forge.open_docker",
-            title: "Forge: open Docker container browser (mnml-virt-docker)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-virt-docker"),
-        },
-        Command {
-            id: "forge.open_gmail",
-            title: "Forge: open Gmail browse + send (mnml-msg-gmail)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-msg-gmail"),
-        },
-        Command {
-            id: "forge.open_gcal",
-            title: "Forge: open Google Calendar (mnml-msg-gcal)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-msg-gcal"),
-        },
-        Command {
-            id: "forge.open_jira",
-            title: "Forge: open Jira ticket viewer (mnml-tracker-jira)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-tracker-jira"),
-        },
-        Command {
-            id: "forge.open_cloudflare",
-            title: "Forge: open Cloudflare CDN browser (mnml-cdn-cloudflare)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-cdn-cloudflare"),
-        },
-        Command {
-            id: "forge.open_cloudwatch_logs",
-            title: "Forge: open CloudWatch Logs viewer (mnml-aws-cloudwatch-logs)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-cloudwatch-logs"),
-        },
-        Command {
-            id: "forge.open_amplify",
-            title: "Forge: open AWS Amplify viewer (mnml-aws-amplify)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-amplify"),
-        },
-        Command {
-            id: "forge.open_dynamodb",
-            title: "Forge: open DynamoDB browser (mnml-db-dynamodb)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-db-dynamodb"),
-        },
-        Command {
-            id: "forge.open_lambda",
-            title: "Forge: open Lambda function browser (mnml-aws-lambda)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-lambda"),
-        },
-        Command {
-            id: "forge.open_eventbridge",
-            title: "Forge: open EventBridge Schedules (mnml-aws-eventbridge)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-eventbridge"),
-        },
-        Command {
-            id: "forge.open_rds",
-            title: "Forge: open RDS database browser (mnml-aws-rds)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-rds"),
-        },
-        Command {
-            id: "forge.open_ecs",
-            title: "Forge: open ECS clusters + services browser (mnml-aws-ecs)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-ecs"),
-        },
-        Command {
-            id: "forge.open_ecr",
-            title: "Forge: open ECR container registry browser (mnml-aws-ecr)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-ecr"),
-        },
-        Command {
-            id: "forge.open_cognito",
-            title: "Forge: open Cognito User Pool browser (mnml-aws-cognito)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-cognito"),
-        },
-        Command {
-            id: "forge.open_sqs",
-            title: "Forge: open SQS queue browser (mnml-aws-sqs)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-sqs"),
-        },
-        Command {
-            id: "forge.open_sns",
-            title: "Forge: open SNS topic + subscription browser (mnml-aws-sns)",
-            group: "forge",
-            keys: &[],
-            run: |app| app.run_ex_command("term mnml-aws-sns"),
-        },
+        // 2026-08-03 — the 27 `forge.open_*` hardcoded launcher
+        // commands that lived here (mnml-forge-bitbucket / -github /
+        // -gitlab / -azdevops, mnml-aws-*, mnml-msg-*, mnml-tracker-*,
+        // mnml-fs-*, mnml-cdn-*, mnml-obs-*, mnml-virt-*, ...) are
+        // retired. The corresponding sibling binaries were all
+        // consolidated out of the ecosystem — GH grep confirms only
+        // `mnml`, `mnml-integrations`, and `mnml-tattle-tests` remain
+        // as first-party repos. Anything a user still installs from
+        // crates.io or a third-party source now ships its own
+        // `<id>.open` palette command via `IntegrationManifest.commands`
+        // (loaded from `~/.config/mnml/integrations/*.toml`), so
+        // duplicating them here would just create palette-name
+        // collisions with the manifest-registered dynamic commands.
+        //
+        // If you're re-adding one, do it through a launcher manifest
+        // in the mnml-integrations catalog repo, not here.
         Command {
             id: "integrations.refresh_binary_cache",
             title: "Integrations: refresh installed-binary detection",

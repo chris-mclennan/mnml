@@ -435,7 +435,6 @@ impl App {
             },
             enabled: true,
             in_palette_bar: false,
-            manifest_can_override: false,
             description: None,
             homepage: None,
             docs: None,
@@ -1172,7 +1171,6 @@ color = \"blue\"
                 author: None,
                 version: None,
                 commands: Vec::new(),
-                manifest_can_override: false,
             },
             IntegrationIcon {
                 id: "s3".to_string(),
@@ -1190,7 +1188,6 @@ color = \"blue\"
                 author: None,
                 version: None,
                 commands: Vec::new(),
-                manifest_can_override: false,
             },
         ];
         let out = append_integration_icon_blocks("", &icons);
@@ -1221,7 +1218,6 @@ color = \"blue\"
             author: None,
             version: None,
             commands: Vec::new(),
-            manifest_can_override: false,
         }];
         let first = append_integration_icon_blocks("", &icons);
         let stripped = strip_integration_icon_blocks(&first);
@@ -1258,7 +1254,6 @@ color = \"blue\"
             author: None,
             version: None,
             commands: Vec::new(),
-            manifest_can_override: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);
         assert!(
@@ -1295,7 +1290,6 @@ color = \"blue\"
             author: None,
             version: None,
             commands: Vec::new(),
-            manifest_can_override: false,
         }];
         let toml_out = append_integration_icon_blocks("", &icons);
         assert!(
@@ -1361,7 +1355,6 @@ enabled = true
                 author: None,
                 version: None,
                 commands: Vec::new(),
-                manifest_can_override: true,
             });
         // Uninstall via the shared path.
         app.remove_integration_by_id("testxyz");
@@ -1436,7 +1429,6 @@ enabled = true
             label: Some("My Integration".to_string()),
             enabled: true,
             in_palette_bar: true,
-            manifest_can_override: false,
             description: None,
             homepage: None,
             docs: None,
@@ -1480,7 +1472,6 @@ enabled = true
             label: Some("Claude".to_string()),
             enabled: true,
             in_palette_bar: false,
-            manifest_can_override: false,
             description: None,
             homepage: None,
             docs: None,
