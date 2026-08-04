@@ -383,17 +383,19 @@ impl App {
         self.config.ui.integration_icons.retain(|ic| ic.id != id);
         let rail_removed = self.config.ui.integration_icons.len() != before;
         match (manifest_removed, rail_removed) {
-            (false, false) => {
-                self.toast(format!("integration: {id} not installed"));
-                return;
-            }
+            (false, false) => self.toast(format!("integration: {id} not installed")),
             (true, _) => self.toast(format!("uninstalled {id}")),
             (false, true) => self.toast(format!("removed {id} from rail")),
         }
-        if rail_removed && let Err(e) = persist_integration_icons(&self.config.ui.integration_icons)
-        {
-            self.toast(format!("(persist failed: {e})"));
-        }
+        // 2026-08-04 — was: `persist_integration_icons(&integration_icons)`
+        // to rewrite `[[ui.integration_icon]]` blocks in config.toml.
+        // That fought the #851-phase-3 migration: the migration
+        // strips those blocks at startup, then this write reintroduced
+        // them from in-memory state, so a legacy chip like Slack
+        // "came back" every session. Trust the manifest+override
+        // mechanism instead — uninstall deletes the manifest (step 1
+        // above), and mnml core's config.rs filter drops surviving
+        // `[[ui.integration_icon]]` blocks for retired ids at load.
     }
 
     /// Close the edit panel without saving. Esc binding inside the panel.
@@ -1167,11 +1169,24 @@ pub fn migrate_legacy_integration_icon_blocks() -> Result<(usize, Vec<String>), 
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+    // Retired-in-2026-07-19 ids — mnml core removed the built-ins
+    // for these but old configs still carry `[[ui.integration_icon]]`
+    // blocks with `enabled = false` (user's "keep it hidden" intent).
+    // Promoting those to authored manifests re-creates a dead chip
+    // that dispatches to a `<id>.open` command with no handler.
+    // Drop them instead. Matches the retain filter in
+    // config.rs:2033-2038. User report 2026-08-04 — Slack kept
+    // "coming back" because the migration promoted to `slack.toml`.
+    let retired_ids = ["bitbucket", "linear", "gitlab", "cypress", "slack"];
     for block in &legacy_blocks {
         let Some(id) = block.get("id").and_then(|v| v.as_str()) else {
             warns.push("legacy block without id — skipped".to_string());
             continue;
         };
+        if retired_ids.contains(&id) {
+            migrated += 1;
+            continue;
+        }
         let enabled = block.get("enabled").and_then(|v| v.as_bool());
         let in_palette_bar = block.get("in_palette_bar").and_then(|v| v.as_bool());
         // Manifest defaults are `enabled = true`, `in_palette_bar = false`.
