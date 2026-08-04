@@ -1652,6 +1652,12 @@ enabled = true
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _home = crate::EnvGuard::set("HOME", tmp.path());
+        // Ubuntu CI has XDG_CONFIG_HOME set to /home/runner/.config,
+        // which `config::user_config_path()` prefers over $HOME. That
+        // sent the migrate at the real user's config, not our tmpdir
+        // seed, so both migration tests failed on ubuntu-latest
+        // (2026-08-04). Unset for the duration of this test.
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         // Seed a canonical manifest so the migration writes an
         // override (vs promoting to authored).
         let idir = tmp.path().join(".config").join("mnml").join("integrations");
@@ -1709,6 +1715,9 @@ enabled = true
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _home = crate::EnvGuard::set("HOME", tmp.path());
+        // See sibling test for why — Ubuntu CI has XDG_CONFIG_HOME
+        // set, which shadows $HOME in config::user_config_path().
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let idir = tmp.path().join(".config").join("mnml").join("integrations");
         std::fs::create_dir_all(&idir).unwrap();
         std::fs::write(idir.join("thing.toml"), "id = \"thing\"\nlabel = \"T\"\n").unwrap();
