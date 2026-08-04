@@ -8,7 +8,7 @@
 //! cell colors with `spans.iter().rev().find(...)` so the innermost span wins.
 //!
 //! Injection support: each `LangConfig` may carry an `injections_query` whose
-//! `@injection.content` captures (with `@injection.language` siblings or
+//! `@injection.content` captures (with `@injection.language` integrations or
 //! `#set! injection.language "..."` directives) are recursively highlighted by
 //! the inner grammar with `Parser::set_included_ranges` so byte offsets stay in
 //! the outer text's coordinate space. Depth-capped at `MAX_INJECTION_DEPTH` to

@@ -1181,7 +1181,7 @@ fn execute_tool(
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or("install_mnml_sibling: missing `id`")?;
-            tool_install_sibling(workspace, id)
+            tool_install_integration(workspace, id)
         }
         other => Err(format!("unknown tool: {other}")),
     }
@@ -1190,11 +1190,11 @@ fn execute_tool(
 /// Hand the install off to mnml's main loop via the file-IPC
 /// channel. We're already in mnml's own process, but routing through
 /// IPC keeps the install side-effects on the main thread (where
-/// `install_sibling` belongs) and avoids cross-thread `&mut App`.
+/// `install_integration` belongs) and avoids cross-thread `&mut App`.
 /// Returns immediately with a confirmation; the actual `cargo
 /// install` runs in a fresh Pty pane the user can watch.
-fn tool_install_sibling(workspace: &Path, id: &str) -> Result<String, String> {
-    let sib = crate::sibling_install::lookup(id).ok_or_else(|| {
+fn tool_install_integration(workspace: &Path, id: &str) -> Result<String, String> {
+    let sib = crate::integration_install::lookup(id).ok_or_else(|| {
         format!(
             "install_mnml_sibling: unknown id `{id}` — valid ids include cloudwatch_logs, s3, bitbucket, github, jira, plus any other entry in family_catalog::CATALOG"
         )
@@ -1219,12 +1219,12 @@ fn tool_install_sibling(workspace: &Path, id: &str) -> Result<String, String> {
         .map_err(|e| format!("install_mnml_sibling: open IPC command file: {e}"))?;
     use std::io::Write;
     writeln!(f, "{line}").map_err(|e| format!("install_mnml_sibling: write IPC: {e}"))?;
-    let kind = crate::sibling_install::install_kind(id);
+    let kind = crate::integration_install::install_kind(id);
     let mount_note = match kind {
-        crate::sibling_install::InstallKind::Mount => {
+        crate::integration_install::InstallKind::Mount => {
             " · Mount manifest will be written to ~/.config/mnml/mounts/"
         }
-        crate::sibling_install::InstallKind::Pty => "",
+        crate::integration_install::InstallKind::Pty => "",
     };
     Ok(format!(
         "Triggered install of {} via mnml. Watch the Pty pane that just opened — `cargo install --git {} {}` is running there{mount_note}.",

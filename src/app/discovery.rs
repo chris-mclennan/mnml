@@ -368,11 +368,12 @@ impl App {
         // `~/.config/mnml/glyphs/<id>.svg` and its assignments.toml
         // entry. Non-fatal if either is missing (most integrations
         // don't ship SVG glyphs). Reviewer 2026-08-03 W#3.
-        let (svg_gone, assignment_gone) = crate::app::sibling_glyphs::purge_sibling_glyph_state(id);
+        let (svg_gone, assignment_gone) =
+            crate::app::integration_glyphs::purge_integration_glyph_state(id);
         if svg_gone || assignment_gone {
             // In-memory codepoint map also drops the entry so the
             // next render doesn't briefly reach for the stale glyph.
-            self.sibling_glyph_codepoints.remove(id);
+            self.integration_glyph_codepoints.remove(id);
         }
         // Step 2: re-scan so the in-memory manifest list drops it.
         if manifest_removed {

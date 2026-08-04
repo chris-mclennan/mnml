@@ -245,9 +245,9 @@ pub enum PickerKind {
     /// last N messages via a `[ws-history-<host>]` scratch.
     WsHistory,
     /// `id` = a `family_catalog::IntegrationApp::id`. Accept ⇒
-    /// `App::install_sibling(id)`. Used by the `mounts.install` /
-    /// `sibling.install` palette commands.
-    SiblingInstall,
+    /// `App::install_integration(id)`. Used by the `mounts.install` /
+    /// `integration.install` palette commands.
+    IntegrationInstall,
     /// `id` = the codepoint hex string (e.g. `"F0E2D"`) of a
     /// browsable Nerd Font glyph. Accept ⇒ copy the literal char +
     /// the `\u{XXXX}` escape to clipboard and toast the result.

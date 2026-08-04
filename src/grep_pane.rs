@@ -29,7 +29,7 @@ pub struct GrepPane {
     pub scroll: usize,
     /// Hit indices the user has toggled off — they're skipped when
     /// `R` (replace) fires. Empty set ⇒ replace applies to every hit
-    /// (back-compat with the original behavior). Sibling to Space-to-
+    /// (back-compat with the original behavior). Integration to Space-to-
     /// toggle in the pane key handler.
     pub disabled: std::collections::HashSet<usize>,
 }

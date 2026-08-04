@@ -52,11 +52,11 @@ pub enum BuilderField {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuilderCategory {
     Aws,
-    /// U+F1C00-F1CFF — sibling-shipped icons (auto-assigned when a
-    /// sibling drops an SVG via `mnml-bridge::install_integration`
+    /// U+F1C00-F1CFF — integration-shipped icons (auto-assigned when a
+    /// integration drops an SVG via `mnml-bridge::install_integration`
     /// with `ChipSpec::glyph_svg`). Manual builder use is fine too;
     /// the codepoint pool is shared.
-    SiblingSvg,
+    IntegrationSvg,
     Azure,
     Ai,
     Saas,
@@ -66,7 +66,7 @@ pub enum BuilderCategory {
 impl BuilderCategory {
     pub const ALL: &'static [BuilderCategory] = &[
         BuilderCategory::Aws,
-        BuilderCategory::SiblingSvg,
+        BuilderCategory::IntegrationSvg,
         BuilderCategory::Azure,
         BuilderCategory::Ai,
         BuilderCategory::Saas,
@@ -76,7 +76,7 @@ impl BuilderCategory {
     pub fn label(self) -> &'static str {
         match self {
             BuilderCategory::Aws => "aws",
-            BuilderCategory::SiblingSvg => "sibling",
+            BuilderCategory::IntegrationSvg => "integration",
             BuilderCategory::Azure => "azure",
             BuilderCategory::Ai => "ai",
             BuilderCategory::Saas => "saas",
@@ -87,7 +87,7 @@ impl BuilderCategory {
     pub fn range_start(self) -> u32 {
         match self {
             BuilderCategory::Aws => 0xF1B00,
-            BuilderCategory::SiblingSvg => 0xF1C00,
+            BuilderCategory::IntegrationSvg => 0xF1C00,
             BuilderCategory::Azure => 0xF1D00,
             BuilderCategory::Ai => 0xF1E00,
             BuilderCategory::Saas => 0xF1F00,
@@ -613,10 +613,10 @@ pub struct BuiltinGlyph {
 /// mnml-shipped glyphs. Codepoints match `src/icon_catalog.rs`.
 /// Defaults match the tuned `scripts/build_mnml_symbols.sh`.
 ///
-/// 2026-08-01 — Stage 2 of the sibling-owned icon SDK removed the
+/// 2026-08-01 — Stage 2 of the integration-owned icon SDK removed the
 /// per-service AWS SVGs that used to live here (cloudwatch / codebuild
 /// / cognito / ecr / ecs / eventbridge / lambda / rds / sns / sqs
-/// + amplify). Each is now shipped by its own `mnml-aws-*` sibling
+/// + amplify). Each is now shipped by its own `mnml-aws-*` integration
 /// via `ChipSpec::glyph_svg + glyph_codepoint`. Only `dynamodb`
 /// (deferred, will migrate to `mnml-db`) still lives in mnml core.
 pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
@@ -789,7 +789,7 @@ pub fn load_meta() -> GlyphMetaFile {
 }
 
 /// #863 — drop a glyph's meta entry by codepoint hex. Called from
-/// sibling / integration uninstall so the `glyph_meta.toml` doesn't
+/// integration / integration uninstall so the `glyph_meta.toml` doesn't
 /// accumulate zombie entries for baked-then-uninstalled glyphs.
 /// Returns true when a matching entry was removed. Silent no-op when
 /// the file / entry doesn't exist.

@@ -71,7 +71,7 @@ impl FindState {
     }
 }
 
-/// `find_all_ci_ascii`'s sibling — literal, case-*sensitive*, non-overlapping.
+/// `find_all_ci_ascii`'s integration — literal, case-*sensitive*, non-overlapping.
 /// Same `(byte_start, byte_end)` shape. Used by smart-case search.
 pub fn find_all_case_sensitive(text: &str, query: &str) -> Vec<(usize, usize)> {
     if query.is_empty() || text.len() < query.len() {

@@ -2121,7 +2121,7 @@ fn paint_integration_chips_in_gap(
             if !i.enabled || !i.in_palette_bar {
                 return false;
             }
-            match crate::integration_detect::sibling_binary_for_command(&i.command) {
+            match crate::integration_detect::integration_binary_for_command(&i.command) {
                 None => true,
                 Some(bin) => crate::integration_detect::is_binary_installed(bin),
             }
@@ -3004,7 +3004,7 @@ enum IntegrationAvailability {
 /// install dirs (`~/.cargo/bin`, Homebrew, etc.), with results cached
 /// per-session so this is cheap to call per-frame.
 fn integration_availability(command: &str) -> IntegrationAvailability {
-    let Some(bin) = crate::integration_detect::sibling_binary_for_command(command) else {
+    let Some(bin) = crate::integration_detect::integration_binary_for_command(command) else {
         return IntegrationAvailability::Available;
     };
     if crate::integration_detect::is_binary_installed(bin) {

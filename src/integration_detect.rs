@@ -1,4 +1,4 @@
-//! Cross-platform "is this `mnml-*` sibling binary installed?" detector.
+//! Cross-platform "is this `mnml-*` integration binary installed?" detector.
 //!
 //! Used to decide whether an `[[ui.integration_icon]]` row should show
 //! a `(not installed)` badge. The previous implementation spawned
@@ -30,7 +30,7 @@ pub fn clear_cache() {
 }
 
 /// Is `name` an executable somewhere we'd expect to find a `mnml-*`
-/// sibling? Returns `true` if found in `$PATH` or any well-known
+/// integration? Returns `true` if found in `$PATH` or any well-known
 /// per-OS install directory.
 ///
 /// `name` is the leaf (e.g. `"mnml-aws-lambda"`) — no path components.
@@ -127,7 +127,7 @@ fn well_known_dirs() -> Vec<PathBuf> {
     {
         // Scoop's user-local app dir is the most common `mnml-*` target
         // outside Cargo's own bin. Just probe the LocalAppData root —
-        // sibling install dirs hang off there.
+        // integration install dirs hang off there.
         if let Some(local) = std::env::var_os("LOCALAPPDATA") {
             dirs.push(PathBuf::from(local).join("Programs"));
         }
@@ -141,7 +141,7 @@ fn well_known_dirs() -> Vec<PathBuf> {
 /// `name` are at least one ASCII alphanumeric char each; `name` may
 /// contain `-`). De-duped, sorted, lowercase. Used by
 /// `family_catalog::discover_uncataloged` to surface installed
-/// community siblings the hardcoded catalog doesn't know about.
+/// community integrations the hardcoded catalog doesn't know about.
 ///
 /// Cached per-session via [`clear_cache`] (the same `clear_cache`
 /// also drops the per-name install cache). Cheap to call from the `+`
@@ -173,7 +173,7 @@ pub fn discover_mnml_binaries() -> Vec<String> {
             let name = name.to_string_lossy();
             // Strip Windows .exe suffix for the convention check.
             let stem = name.trim_end_matches(".exe").trim_end_matches(".EXE");
-            if !looks_like_mnml_sibling(stem) {
+            if !looks_like_mnml_integration(stem) {
                 continue;
             }
             if let Ok(ft) = entry.file_type()
@@ -200,7 +200,7 @@ fn mnml_discovery_cache() -> &'static Mutex<Option<Vec<String>>> {
 /// (after the first two `-`). The reserved root binary `mnml` and
 /// the family-info binary `mnml-info` return `false` — they're not
 /// integrations.
-fn looks_like_mnml_sibling(name: &str) -> bool {
+fn looks_like_mnml_integration(name: &str) -> bool {
     let Some(rest) = name.strip_prefix("mnml-") else {
         return false;
     };
@@ -219,12 +219,12 @@ fn looks_like_mnml_sibling(name: &str) -> bool {
 }
 
 /// Parse an integration `command` string and return the underlying
-/// sibling binary name, if it has one.
+/// integration binary name, if it has one.
 ///
-/// - `":term X"` → `Some("X")` — Pty pane launching a sibling tool
+/// - `":term X"` → `Some("X")` — Pty pane launching a integration tool
 /// - Any other `":foo.bar"` (built-in palette commands) → `None`,
 ///   meaning "always available".
-pub fn sibling_binary_for_command(command: &str) -> Option<&str> {
+pub fn integration_binary_for_command(command: &str) -> Option<&str> {
     let rest = command.strip_prefix(":term ")?;
     let bin = rest.split_whitespace().next()?;
     if bin.is_empty() { None } else { Some(bin) }
@@ -235,28 +235,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sibling_binary_extracted_from_term() {
+    fn integration_binary_extracted_from_term() {
         assert_eq!(
-            sibling_binary_for_command(":term mnml-aws-lambda"),
+            integration_binary_for_command(":term mnml-aws-lambda"),
             Some("mnml-aws-lambda")
         );
         assert_eq!(
-            sibling_binary_for_command(":term mnml-aws-lambda --foo bar"),
+            integration_binary_for_command(":term mnml-aws-lambda --foo bar"),
             Some("mnml-aws-lambda")
         );
     }
 
     #[test]
-    fn sibling_binary_none_for_built_ins() {
-        assert_eq!(sibling_binary_for_command(":ai.claude_code"), None);
-        assert_eq!(sibling_binary_for_command(":palette"), None);
-        assert_eq!(sibling_binary_for_command(""), None);
+    fn integration_binary_none_for_built_ins() {
+        assert_eq!(integration_binary_for_command(":ai.claude_code"), None);
+        assert_eq!(integration_binary_for_command(":palette"), None);
+        assert_eq!(integration_binary_for_command(""), None);
     }
 
     #[test]
-    fn sibling_binary_none_for_term_with_no_binary() {
-        assert_eq!(sibling_binary_for_command(":term "), None);
-        assert_eq!(sibling_binary_for_command(":term"), None);
+    fn integration_binary_none_for_term_with_no_binary() {
+        assert_eq!(integration_binary_for_command(":term "), None);
+        assert_eq!(integration_binary_for_command(":term"), None);
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn clear_cache_forgets_results() {
         // Probe a name that almost certainly doesn't exist on PATH.
-        let nonsense = "mnml-not-a-real-sibling-xyz-12345";
+        let nonsense = "mnml-not-a-real-integration-xyz-12345";
         assert!(!is_binary_installed(nonsense));
         // Should be cached at this point.
         assert!(cache().lock().unwrap().contains_key(nonsense));
@@ -276,26 +276,26 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_mnml_sibling_accepts_canonical_names() {
-        assert!(looks_like_mnml_sibling("mnml-aws-lambda"));
-        assert!(looks_like_mnml_sibling("mnml-db-dynamodb"));
-        assert!(looks_like_mnml_sibling("mnml-tracker-jira"));
-        assert!(looks_like_mnml_sibling("mnml-forge-azdevops"));
-        assert!(looks_like_mnml_sibling("mnml-fs-s3"));
+    fn looks_like_mnml_integration_accepts_canonical_names() {
+        assert!(looks_like_mnml_integration("mnml-aws-lambda"));
+        assert!(looks_like_mnml_integration("mnml-db-dynamodb"));
+        assert!(looks_like_mnml_integration("mnml-tracker-jira"));
+        assert!(looks_like_mnml_integration("mnml-forge-azdevops"));
+        assert!(looks_like_mnml_integration("mnml-fs-s3"));
         // Names with hyphenated suffix still ok.
-        assert!(looks_like_mnml_sibling("mnml-aws-cloudwatch-logs"));
+        assert!(looks_like_mnml_integration("mnml-aws-cloudwatch-logs"));
     }
 
     #[test]
-    fn looks_like_mnml_sibling_rejects_non_siblings() {
-        assert!(!looks_like_mnml_sibling("mnml"));
-        assert!(!looks_like_mnml_sibling("mnml-info"));
-        assert!(!looks_like_mnml_sibling("mnml-"));
-        assert!(!looks_like_mnml_sibling("mnml--x"));
-        assert!(!looks_like_mnml_sibling("mxnml-aws-lambda"));
-        assert!(!looks_like_mnml_sibling("aws-lambda"));
+    fn looks_like_mnml_integration_rejects_non_integrations() {
+        assert!(!looks_like_mnml_integration("mnml"));
+        assert!(!looks_like_mnml_integration("mnml-info"));
+        assert!(!looks_like_mnml_integration("mnml-"));
+        assert!(!looks_like_mnml_integration("mnml--x"));
+        assert!(!looks_like_mnml_integration("mxnml-aws-lambda"));
+        assert!(!looks_like_mnml_integration("aws-lambda"));
         // Special chars rejected (no shell-injection vector etc.).
-        assert!(!looks_like_mnml_sibling("mnml-aws-fn$weird"));
+        assert!(!looks_like_mnml_integration("mnml-aws-fn$weird"));
         // Uppercase letters are tolerated by the predicate — the
         // sweep lowercases names before storing, and most filesystems
         // (macOS, Windows) match case-insensitively for the eventual

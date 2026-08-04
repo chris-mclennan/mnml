@@ -49,12 +49,12 @@ mod reset;
 // pipeline_log removed after 2026-06 SCM split.
 pub(crate) mod cloud_agents_methods;
 pub(crate) mod cmdline_methods;
+pub(crate) mod integration_glyphs;
+pub(crate) mod integration_install_methods;
 mod playwright;
 mod scm;
 mod session;
 pub(crate) mod settings;
-pub(crate) mod sibling_glyphs;
-pub(crate) mod sibling_install_methods;
 mod snippets;
 mod startup_picker;
 pub(crate) mod tab_drop;
@@ -236,12 +236,12 @@ impl CloudAgentsView {
 
 /// Stashed alongside a running install Pty. `drain_install_post_actions`
 /// fires `action` once the Pty exits if `binary` is on PATH, or toasts
-/// the failure otherwise. See `App::install_sibling_with_action`.
+/// the failure otherwise. See `App::install_integration_with_action`.
 #[derive(Debug, Clone)]
 pub struct InstallTracker {
     pub family_id: String,
     pub binary: String,
-    pub action: crate::sibling_install::PostInstallAction,
+    pub action: crate::integration_install::PostInstallAction,
 }
 
 /// Direction for `Ctrl+W`-style focus navigation between splits.
@@ -3516,15 +3516,15 @@ pub struct App {
     /// 2026-07-31 — sibling-icons SDK. Discovered SVGs under
     /// `~/.config/mnml/glyphs/` populated at startup + on
     /// `integrations.refresh`. `Vec<(id, absolute_path)>`, sorted
-    /// stably by id. The parallel [`Self::sibling_glyph_codepoints`]
+    /// stably by id. The parallel [`Self::integration_glyph_codepoints`]
     /// map holds each id's assigned codepoint. See
-    /// `src/app/sibling_glyphs.rs`.
-    pub sibling_glyph_svgs: Vec<(String, std::path::PathBuf)>,
+    /// `src/app/integration_glyphs.rs`.
+    pub integration_glyph_svgs: Vec<(String, std::path::PathBuf)>,
     /// Sibling-id → codepoint map. Refreshed alongside
-    /// `sibling_glyph_svgs`. `merge_integration_manifests` uses it
+    /// `integration_glyph_svgs`. `merge_integration_manifests` uses it
     /// to fill `IntegrationIcon.glyph` when the manifest set
     /// `chip.glyph_svg` but left `chip.glyph` empty.
-    pub sibling_glyph_codepoints: std::collections::HashMap<String, u32>,
+    pub integration_glyph_codepoints: std::collections::HashMap<String, u32>,
     /// Notification badges on activity-bar sections — keyed by
     /// the section's serialized id (e.g. `"agents"`, `"cloud_agents"`,
     /// manifest mount id). Set by siblings via the
@@ -3536,7 +3536,7 @@ pub struct App {
     /// a toast.
     pub cloud_run_pending:
         Option<std::sync::mpsc::Receiver<crate::ecs_runner_trigger::TriggerResult>>,
-    /// Family id captured when a `prompt_install_sibling` opens the
+    /// Family id captured when a `prompt_install_integration` opens the
     /// "X not installed — install? y/n" prompt. Resolved by the
     /// prompt accept handler to fire the install.
     /// Pending external-tool install — the package name to install
@@ -3563,7 +3563,7 @@ pub struct App {
     /// thing the user was originally trying to do when they hit
     /// the "not installed" gate. Replayed automatically once the
     /// install Pty exits and the binary is on PATH.
-    pub pending_install_after_action: Option<crate::sibling_install::PostInstallAction>,
+    pub pending_install_after_action: Option<crate::integration_install::PostInstallAction>,
     /// While a sibling install is running in a Pty pane, the
     /// (PaneId, action) for it lives here. On each tick, mnml
     /// checks whether the install Pty has exited; on success
@@ -5240,8 +5240,8 @@ impl App {
             active_section: ActivitySection::Explorer,
             mount_manifests,
             integration_manifests,
-            sibling_glyph_svgs: Vec::new(),
-            sibling_glyph_codepoints: std::collections::HashMap::new(),
+            integration_glyph_svgs: Vec::new(),
+            integration_glyph_codepoints: std::collections::HashMap::new(),
             activity_badges: std::collections::HashMap::new(),
             cloud_run_pending: None,
             pending_tool_install: None,
@@ -5675,7 +5675,7 @@ impl App {
             // glyph is allowed to override its own SVG assignment.
             let glyph = if chip.glyph.is_empty()
                 && chip.glyph_svg.is_some()
-                && let Some(cp) = self.sibling_glyph_codepoints.get(&m.id).copied()
+                && let Some(cp) = self.integration_glyph_codepoints.get(&m.id).copied()
                 && let Some(ch) = char::from_u32(cp)
             {
                 ch.to_string()
@@ -5815,7 +5815,7 @@ impl App {
     /// into the sibling-icons SDK (`chip.glyph_svg` set, `chip.glyph`
     /// empty).
     fn with_integration_manifests_merged(mut self) -> Self {
-        self.discover_sibling_glyphs();
+        self.discover_integration_glyphs();
         self.merge_integration_manifests();
         // 2026-08-01 (P4b) — populate marketplace entries from the
         // on-disk cache so the Marketplace tab has something to
@@ -6580,7 +6580,7 @@ impl App {
                 GitMergeConfirm => "merge".into(),
                 GitRebaseConfirm => "rebase".into(),
                 // Both install-confirm handlers just check `input.starts_with('y')`.
-                ToolInstallConfirm | SiblingInstallConfirm => "y".into(),
+                ToolInstallConfirm | IntegrationInstallConfirm => "y".into(),
                 IntegrationRemoveConfirm => "remove".into(),
                 ResetToDefaultsConfirm => "reset".into(),
                 // Both options are valid — primary=portable, cancel=normal.
@@ -8696,7 +8696,7 @@ impl App {
                 self.toast("cloud run trigger died without reporting");
             }
         }
-        // A-2 sibling_install methods moved to src/app/sibling_install_methods.rs
+        // A-2 integration_install methods moved to src/app/integration_install_methods.rs
         // (impl App { ... } block in that sibling).
     }
 
@@ -9029,12 +9029,12 @@ impl App {
             // Capture this exact invocation so the auto-retry path
             // fires the user's "Tail logs" intent verbatim after
             // the install Pty exits successfully — no second click.
-            let action = crate::sibling_install::PostInstallAction::CloudWatchLogs {
+            let action = crate::integration_install::PostInstallAction::CloudWatchLogs {
                 log_group: log_group.to_string(),
                 filter: filter.to_string(),
                 label: label.to_string(),
             };
-            self.prompt_install_sibling_with_action("cloudwatch_logs", Some(action));
+            self.prompt_install_integration_with_action("cloudwatch_logs", Some(action));
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {
@@ -9062,12 +9062,12 @@ impl App {
     /// when the binary isn't on PATH.
     pub fn open_s3_pane(&mut self, bucket: &str, prefix: &str, label: &str) {
         if !binary_on_path("mnml-fs-s3") {
-            let action = crate::sibling_install::PostInstallAction::S3Browse {
+            let action = crate::integration_install::PostInstallAction::S3Browse {
                 bucket: bucket.to_string(),
                 prefix: prefix.to_string(),
                 label: label.to_string(),
             };
-            self.prompt_install_sibling_with_action("s3", Some(action));
+            self.prompt_install_integration_with_action("s3", Some(action));
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {

@@ -19,18 +19,18 @@ impl App {
     /// will toast the install hint via `binary_on_path`).
     ///
     /// When called with a `post_action` (typically by
-    /// `install_sibling_confirm_resolve` after the user accepted
+    /// `install_integration_confirm_resolve` after the user accepted
     /// the "X not installed — install? y/n" prompt), the action is
     /// stashed in `install_post_actions` keyed by the install Pty's
     /// PaneId. `drain_install_post_actions` on each tick checks
     /// whether the install Pty exited; on success it fires the
     /// action so the user doesn't have to re-click.
-    pub fn install_sibling_with_action(
+    pub fn install_integration_with_action(
         &mut self,
         family_id: &str,
-        post_action: Option<crate::sibling_install::PostInstallAction>,
+        post_action: Option<crate::integration_install::PostInstallAction>,
     ) {
-        let Some(sibling) = crate::sibling_install::lookup(family_id) else {
+        let Some(sibling) = crate::integration_install::lookup(family_id) else {
             self.toast(format!("install: unknown sibling `{family_id}`"));
             return;
         };
@@ -70,8 +70,11 @@ impl App {
         // sees both progress + icon.
         let mount_msg = match crate::family_catalog::mount_stub_for(family_id) {
             Some(stub) => {
-                match crate::sibling_install::write_mount_manifest(family_id, &stub, sibling.binary)
-                {
+                match crate::integration_install::write_mount_manifest(
+                    family_id,
+                    &stub,
+                    sibling.binary,
+                ) {
                     Ok(path) => {
                         self.refresh_mount_manifests();
                         Some(format!("manifest → {}", path.display()))
@@ -86,7 +89,7 @@ impl App {
         // (~1-2s) over the slow cargo-compile fallback (~30-60s)
         // when a prebuilt asset exists at the sibling's
         // `latest-build` GitHub release for our target triple.
-        let argv = crate::sibling_install::install_pipeline_argv(sibling);
+        let argv = crate::integration_install::install_pipeline_argv(sibling);
         let label = format!("install: {}", sibling.binary);
         let profile = crate::pty_pane::BinaryProfile {
             label,
@@ -122,9 +125,9 @@ impl App {
 
     /// Thin wrapper — old call sites that don't have a post-action
     /// to chain (the palette/discovery/AI paths). Equivalent to
-    /// `install_sibling_with_action(id, None)`.
-    pub fn install_sibling(&mut self, family_id: &str) {
-        self.install_sibling_with_action(family_id, None);
+    /// `install_integration_with_action(id, None)`.
+    pub fn install_integration(&mut self, family_id: &str) {
+        self.install_integration_with_action(family_id, None);
     }
 
     /// Walk `install_post_actions`. For each entry whose install
@@ -166,8 +169,8 @@ impl App {
         }
     }
 
-    fn fire_post_install_action(&mut self, action: crate::sibling_install::PostInstallAction) {
-        use crate::sibling_install::PostInstallAction::*;
+    fn fire_post_install_action(&mut self, action: crate::integration_install::PostInstallAction) {
+        use crate::integration_install::PostInstallAction::*;
         match action {
             CloudWatchLogs {
                 log_group,
@@ -183,53 +186,53 @@ impl App {
     }
 
     /// Show a yes/no confirm prompt to install the named family
-    /// sibling. Accept fires `install_sibling`. Used by the
+    /// sibling. Accept fires `install_integration`. Used by the
     /// "X not installed" toasts that previously just gave the
     /// install command and bailed.
-    pub fn prompt_install_sibling(&mut self, family_id: &str) {
-        self.prompt_install_sibling_with_action(family_id, None);
+    pub fn prompt_install_integration(&mut self, family_id: &str) {
+        self.prompt_install_integration_with_action(family_id, None);
     }
 
-    /// Like `prompt_install_sibling` but captures a follow-on action
+    /// Like `prompt_install_integration` but captures a follow-on action
     /// (CloudWatchLogs / S3Browse / etc) that gets fired
     /// automatically after the install succeeds. Used by
     /// `open_cloudwatch_pane` + `open_s3_pane` when the binary
     /// isn't on PATH — the user accepts the prompt and the original
     /// action just happens, no second click needed.
-    pub fn prompt_install_sibling_with_action(
+    pub fn prompt_install_integration_with_action(
         &mut self,
         family_id: &str,
-        post_action: Option<crate::sibling_install::PostInstallAction>,
+        post_action: Option<crate::integration_install::PostInstallAction>,
     ) {
-        let Some(sibling) = crate::sibling_install::lookup(family_id) else {
+        let Some(sibling) = crate::integration_install::lookup(family_id) else {
             return;
         };
         let title = format!("Install `{}` via cargo?", sibling.binary);
         self.pending_install_family_id = Some(family_id.to_string());
         self.pending_install_after_action = post_action;
         let mut p =
-            crate::prompt::Prompt::new(crate::prompt::PromptKind::SiblingInstallConfirm, title);
+            crate::prompt::Prompt::new(crate::prompt::PromptKind::IntegrationInstallConfirm, title);
         // User was reaching for the sibling — focus Install.
         p.cursor = 0;
         self.prompt = Some(p);
     }
 
-    /// Accept handler for the SiblingInstallConfirm prompt. The
+    /// Accept handler for the IntegrationInstallConfirm prompt. The
     /// dispatcher matches on the prompt's first character so this
     /// just fires the install when the input starts with `y`.
-    pub fn install_sibling_confirm_resolve(&mut self, input: &str) {
+    pub fn install_integration_confirm_resolve(&mut self, input: &str) {
         let id = self.pending_install_family_id.take();
         let action = self.pending_install_after_action.take();
         if input.trim().to_ascii_lowercase().starts_with('y')
             && let Some(family_id) = id
         {
-            self.install_sibling_with_action(&family_id, action);
+            self.install_integration_with_action(&family_id, action);
         }
     }
 
     /// Open a picker over Mount-capable family siblings — i.e.
     /// catalog entries that have a `MountStub` registered. Accept
-    /// fires `install_sibling`, which writes the manifest +
+    /// fires `install_integration`, which writes the manifest +
     /// spawns `cargo install` in a Pty pane. Used by the
     /// `mounts.install` palette command.
     pub fn open_mount_install_picker(&mut self) {
@@ -253,7 +256,7 @@ impl App {
             return;
         }
         self.open_picker(Picker::new(
-            PickerKind::SiblingInstall,
+            PickerKind::IntegrationInstall,
             "Install Mount sibling",
             items,
         ));
@@ -262,7 +265,7 @@ impl App {
     /// Like `open_mount_install_picker` but spans the entire catalog
     /// (Pty + Mount siblings). Used by the `sibling.install` palette
     /// command and the AI tool.
-    pub fn open_sibling_install_picker(&mut self) {
+    pub fn open_integration_install_picker(&mut self) {
         use crate::picker::{Picker, PickerItem, PickerKind};
         let items: Vec<PickerItem> = crate::family_catalog::CATALOG
             .iter()
@@ -288,7 +291,7 @@ impl App {
             return;
         }
         self.open_picker(Picker::new(
-            PickerKind::SiblingInstall,
+            PickerKind::IntegrationInstall,
             "Install family sibling",
             items,
         ));
@@ -316,12 +319,12 @@ impl App {
         // 2026-07-31 — re-run sibling-glyph discovery FIRST so any
         // newly-installed SVG in ~/.config/mnml/glyphs/ shows up
         // before the merge pass fills IntegrationIcon.glyph.
-        self.discover_sibling_glyphs();
+        self.discover_integration_glyphs();
         self.merge_integration_manifests();
         self.toast(format!(
             "integrations: {} manifest(s) loaded ({} sibling glyph(s))",
             self.integration_manifests.len(),
-            self.sibling_glyph_svgs.len(),
+            self.integration_glyph_svgs.len(),
         ));
     }
 

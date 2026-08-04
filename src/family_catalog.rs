@@ -134,7 +134,7 @@ impl IntegrationApp {
     /// When `pinned_version == "main"` we drop the `--tag` flag so
     /// the command tracks HEAD (used for in-development siblings
     /// that haven't tagged a release yet). Mirrors the same guard in
-    /// `sibling_install::cargo_install_argv` — both the display
+    /// `integration_install::cargo_install_argv` — both the display
     /// string and the actual cargo invocation match.
     pub fn install_command(&self) -> String {
         if self.is_builtin() {
@@ -341,7 +341,7 @@ pub fn discover_uncataloged() -> Vec<DiscoveredApp> {
 }
 
 /// `mnml-<class>-<name>` → (`class`, `name`). Assumes the binary
-/// already passed [`integration_detect::looks_like_mnml_sibling`].
+/// already passed [`integration_detect::looks_like_mnml_integration`].
 fn split_sibling_name(binary: &str) -> (&str, &str) {
     let rest = binary.strip_prefix("mnml-").unwrap_or(binary);
     rest.split_once('-').unwrap_or((rest, ""))

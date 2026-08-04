@@ -69,7 +69,7 @@ pub enum MenuAction {
     RemoveIntegration(String),
     /// 2026-07-09 — copy the integration id to the system
     /// clipboard. Useful for pasting into a chord binding, a
-    /// palette command, or a sibling install script.
+    /// palette command, or a integration install script.
     CopyIntegrationId(String),
     /// 2026-07-09 — open the on-disk TOML manifest for the
     /// integration in an editor pane so users can hand-edit
@@ -291,7 +291,7 @@ pub enum MenuAction {
     /// Right-click "Add to activity bar" on an integration chip
     /// row — writes a mount manifest for this integration so its
     /// icon appears in the activity bar and clicking it opens the
-    /// sibling as a docked Mount pane. 2026-07-20.
+    /// integration as a docked Mount pane. 2026-07-20.
     AddIntegrationToActivityBar(String),
     /// Right-click "Remove from activity bar" on an integration
     /// chip row whose manifest already exists — deletes the
@@ -314,7 +314,7 @@ pub enum MenuAction {
     /// Set `[ui] top_bar_cluster_mode` to one of
     /// `"auto"` / `"expanded"` / `"compact"` and persist to user config.
     SetTopBarClusterMode(&'static str),
-    /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
+    /// Spawn the `mnml-aws-cloudwatch-logs` integration tool in a Pty
     /// pane, pre-filtered to the given log group + filter pattern.
     /// Used by the Cloud Agents row context menu's "Tail logs in
     /// mnml" entry — handoffs the runId as a filter so the pane
@@ -324,7 +324,7 @@ pub enum MenuAction {
         filter: String,
         label: String,
     },
-    /// Spawn the `mnml-fs-s3` sibling in a Pty pane, pre-filtered
+    /// Spawn the `mnml-fs-s3` integration in a Pty pane, pre-filtered
     /// to a specific bucket + prefix. Used by the Cloud Agents
     /// row context menu's "Open S3 artifacts in mnml" entry —
     /// drops the user straight into the qwe-run's artifact tree.

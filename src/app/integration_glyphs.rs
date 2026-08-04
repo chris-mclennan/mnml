@@ -1,25 +1,25 @@
-//! Sibling-icons SDK — mnml-side discovery + codepoint assignment
-//! + bake dispatch.
+//! Integration-icons SDK — mnml-side discovery + codepoint assignment
+//! + bake dispatch. (Renamed from "sibling" 2026-08-04 — task #868.)
 //!
-//! The sibling side lives in `mnml-bridge::install_integration` /
-//! `mnml-bridge::sibling_glyphs_dir`. When a sibling declares
+//! The integration side lives in `mnml-bridge::install_integration` /
+//! `mnml-bridge::integration_glyphs_dir`. When an integration declares
 //! `ChipSpec::glyph_svg`, `--install` copies the SVG to
 //! `~/.config/mnml/glyphs/<id>.svg`. This module handles what
 //! happens on the mnml side:
 //!
-//! 1. **Discovery.** [`App::discover_sibling_glyphs`] scans that
+//! 1. **Discovery.** [`App::discover_integration_glyphs`] scans that
 //!    directory for `*.svg` at startup + on `integrations.refresh`.
 //! 2. **Assignment.** Each discovered id gets a stable codepoint in
 //!    `U+F1C00–U+F1CFF` (or the explicit override from the
 //!    matching `IntegrationManifest.chip.glyph_codepoint`).
-//!    Assignments persist in `~/.config/mnml/glyphs/assignments.toml`
+//!    Assignments persist in `~/.config/mnml/integration-glyphs.toml`
 //!    so a codepoint doesn't jump between restarts.
 //! 3. **Merge.** [`App::merge_integration_manifests`] reads the
-//!    resulting `sibling_glyph_codepoints` map to fill
+//!    resulting `integration_glyph_codepoints` map to fill
 //!    `IntegrationIcon.glyph` when the manifest declared
 //!    `glyph_svg` but no explicit `glyph`.
-//! 4. **Bake.** [`App::bake_sibling_glyphs`] (bound to the palette
-//!    command `integrations.bake_sibling_glyphs`) shells out
+//! 4. **Bake.** [`App::bake_integration_glyphs`] (bound to the palette
+//!    command `integrations.bake_integration_glyphs`) shells out
 //!    fontforge to bake every discovered SVG into
 //!    `~/Library/Fonts/MnmlSymbols.ttf` in one pass. This is an
 //!    explicit action, not a startup side-effect — fontforge is
@@ -29,14 +29,14 @@ use crate::app::App;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// The PUA block reserved for sibling-shipped icons.
-const SIBLING_RANGE_START: u32 = 0xF1C00;
-const SIBLING_RANGE_END: u32 = 0xF1CFF;
+/// The PUA block reserved for integration-shipped icons.
+const INTEGRATION_RANGE_START: u32 = 0xF1C00;
+const INTEGRATION_RANGE_END: u32 = 0xF1CFF;
 
-/// One entry in `~/.config/mnml/glyphs/assignments.toml`.
+/// One entry in `~/.config/mnml/integration-glyphs.toml`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Assignment {
-    /// Sibling id (basename of the SVG file).
+    /// Integration id (basename of the SVG file).
     id: String,
     /// Uppercase hex codepoint, no `U+` prefix.
     codepoint: String,
@@ -52,45 +52,57 @@ struct AssignmentFile {
 /// for the current-generation `install_integration` copy-based flow;
 /// slated for removal in the bake-on-install redesign (mnml-bridge
 /// 0.5) which drops the disk SVGs entirely.
-fn sibling_glyphs_dir() -> Option<PathBuf> {
+fn integration_glyphs_dir() -> Option<PathBuf> {
     Some(crate::data_root::data_root().join("glyphs"))
 }
 
-/// Path to `~/.config/mnml/sibling-glyphs.toml` (flat, top-level).
+/// Path to `~/.config/mnml/integration-glyphs.toml` (flat, top-level).
 /// 2026-08-04 — moved up out of `glyphs/` since the plan is to
 /// delete the whole `glyphs/` dir once the bake-on-install
 /// redesign lands. Keeping the id→codepoint map at the parent
 /// avoids an orphan directory holding a single TOML file.
 fn assignments_path() -> Option<PathBuf> {
-    Some(crate::data_root::data_root().join("sibling-glyphs.toml"))
+    Some(crate::data_root::data_root().join("integration-glyphs.toml"))
 }
 
-/// Old location (pre-2026-08-04). If the file exists here but not
-/// at the new top-level path, we migrate on first load. Only
-/// consulted by `load_assignments()`.
-fn legacy_assignments_path() -> Option<PathBuf> {
-    Some(sibling_glyphs_dir()?.join("assignments.toml"))
+/// Legacy locations that get migrated to the current `integration-glyphs.toml`
+/// on first load. In order from newest-legacy to oldest:
+/// - `sibling-glyphs.toml` (mid-day 2026-08-04 — the "sibling" rename
+///   moved this once already; renaming to "integration" is a second
+///   move within the same day)
+/// - `glyphs/assignments.toml` (pre-2026-08-04)
+fn legacy_assignments_paths() -> Vec<PathBuf> {
+    let root = crate::data_root::data_root();
+    vec![
+        root.join("sibling-glyphs.toml"),
+        root.join("glyphs").join("assignments.toml"),
+    ]
 }
 
 fn load_assignments() -> AssignmentFile {
     let Some(p) = assignments_path() else {
         return AssignmentFile::default();
     };
-    // Migration: silently promote the pre-2026-08-04 location.
-    if !p.exists()
-        && let Some(legacy) = legacy_assignments_path()
-        && legacy.exists()
-    {
-        if let Some(parent) = p.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        // Prefer a rename (atomic on same fs); fall back to
-        // copy+remove if rename fails for any reason.
-        if std::fs::rename(&legacy, &p).is_err()
-            && let Ok(text) = std::fs::read_to_string(&legacy)
-        {
-            let _ = std::fs::write(&p, &text);
-            let _ = std::fs::remove_file(&legacy);
+    // Migration: silently promote the first legacy path that has a
+    // file. Later-in-list = older; we prefer newer-legacy since it's
+    // more likely to be in the current TOML shape.
+    if !p.exists() {
+        for legacy in legacy_assignments_paths() {
+            if !legacy.exists() {
+                continue;
+            }
+            if let Some(parent) = p.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            // Prefer a rename (atomic on same fs); fall back to
+            // copy+remove if rename fails for any reason.
+            if std::fs::rename(&legacy, &p).is_err()
+                && let Ok(text) = std::fs::read_to_string(&legacy)
+            {
+                let _ = std::fs::write(&p, &text);
+                let _ = std::fs::remove_file(&legacy);
+            }
+            break;
         }
     }
     let Ok(text) = std::fs::read_to_string(&p) else {
@@ -127,8 +139,8 @@ fn save_assignments(file: &AssignmentFile) {
 /// glyphs dir over time. Called from `remove_integration_by_id`
 /// alongside the base + override manifest deletes so a single
 /// uninstall gesture cleans everything.
-pub(crate) fn purge_sibling_glyph_state(id: &str) -> (bool, bool) {
-    let svg_deleted = sibling_glyphs_dir()
+pub(crate) fn purge_integration_glyph_state(id: &str) -> (bool, bool) {
+    let svg_deleted = integration_glyphs_dir()
         .map(|d| d.join(format!("{id}.svg")))
         .is_some_and(|p| p.exists() && std::fs::remove_file(&p).is_ok());
     let mut file = load_assignments();
@@ -216,7 +228,7 @@ pub(crate) fn discover(
         // Assign a fresh slot from the sibling PUA range. Linear
         // scan — the range is 256 slots, cheap.
         let mut assigned: Option<u32> = None;
-        for cp in SIBLING_RANGE_START..=SIBLING_RANGE_END {
+        for cp in INTEGRATION_RANGE_START..=INTEGRATION_RANGE_END {
             if !used.contains(&cp) {
                 used.insert(cp);
                 assigned = Some(cp);
@@ -227,7 +239,7 @@ pub(crate) fn discover(
             eprintln!(
                 "mnml: sibling glyph range U+{:04X}-U+{:04X} exhausted; \
                  dropping {id}",
-                SIBLING_RANGE_START, SIBLING_RANGE_END
+                INTEGRATION_RANGE_START, INTEGRATION_RANGE_END
             );
             continue;
         };
@@ -246,11 +258,11 @@ pub(crate) fn discover(
 impl App {
     /// Scan `~/.config/mnml/glyphs/*.svg`, assign codepoints
     /// (respecting `IntegrationManifest.chip.glyph_codepoint`
-    /// overrides), and populate `App::sibling_glyph_codepoints`.
+    /// overrides), and populate `App::integration_glyph_codepoints`.
     /// Idempotent — safe to call from `App::new` AND from
     /// `integrations.refresh`.
-    pub fn discover_sibling_glyphs(&mut self) {
-        let Some(dir) = sibling_glyphs_dir() else {
+    pub fn discover_integration_glyphs(&mut self) {
+        let Some(dir) = integration_glyphs_dir() else {
             return;
         };
         // Build the manifest-driven override map: id → explicit
@@ -269,8 +281,8 @@ impl App {
         let (svgs, assignments) = discover(&dir, &overrides);
         // Remember the discovered set on the app so
         // merge_integration_manifests + bake can find each SVG.
-        self.sibling_glyph_svgs = svgs;
-        self.sibling_glyph_codepoints = assignments;
+        self.integration_glyph_svgs = svgs;
+        self.integration_glyph_codepoints = assignments;
     }
 
     /// Bake every discovered sibling SVG into MnmlSymbols.ttf in
@@ -279,11 +291,11 @@ impl App {
     /// `--glyph SVG:CP:NAME:width=…:…`). No-op with a toast when
     /// no sibling SVGs have been discovered.
     ///
-    /// Wired to the `integrations.bake_sibling_glyphs` palette
+    /// Wired to the `integrations.bake_integration_glyphs` palette
     /// command. Not auto-invoked at startup — fontforge is a heavy
     /// dependency and firing it every launch would be user-hostile.
-    pub fn bake_sibling_glyphs(&mut self) {
-        if self.sibling_glyph_svgs.is_empty() {
+    pub fn bake_integration_glyphs(&mut self) {
+        if self.integration_glyph_svgs.is_empty() {
             self.toast("bake sibling glyphs: no SVGs in ~/.config/mnml/glyphs/");
             return;
         }
@@ -328,8 +340,8 @@ impl App {
             font_out.to_string_lossy().into_owned(),
         ];
         let mut baked = 0usize;
-        for (id, svg_path) in &self.sibling_glyph_svgs {
-            let Some(cp) = self.sibling_glyph_codepoints.get(id).copied() else {
+        for (id, svg_path) in &self.integration_glyph_svgs {
+            let Some(cp) = self.integration_glyph_codepoints.get(id).copied() else {
                 eprintln!("mnml: sibling glyph {id} has no codepoint; skipping");
                 continue;
             };
@@ -396,7 +408,7 @@ mod tests {
         write_svg(tmp.path(), "alpha.svg");
         write_svg(tmp.path(), "charlie.svg");
         // Overwrite HOME so assignments.toml lands in the tempdir
-        // via the sibling_glyphs_dir() helper. EnvGuard restores
+        // via the integration_glyphs_dir() helper. EnvGuard restores
         // HOME on scope exit — including during panic unwind.
         let _lk = crate::test_env_lock()
             .lock()
@@ -413,9 +425,9 @@ mod tests {
         assert_eq!(svgs[0].0, "alpha");
         assert_eq!(svgs[1].0, "beta");
         assert_eq!(svgs[2].0, "charlie");
-        assert_eq!(assignments["alpha"], SIBLING_RANGE_START);
-        assert_eq!(assignments["beta"], SIBLING_RANGE_START + 1);
-        assert_eq!(assignments["charlie"], SIBLING_RANGE_START + 2);
+        assert_eq!(assignments["alpha"], INTEGRATION_RANGE_START);
+        assert_eq!(assignments["beta"], INTEGRATION_RANGE_START + 1);
+        assert_eq!(assignments["charlie"], INTEGRATION_RANGE_START + 2);
     }
 
     #[test]
@@ -457,11 +469,11 @@ mod tests {
         assert_ne!(second["aaa"], one_cp);
     }
 
-    /// #853 — `purge_sibling_glyph_state` deletes the SVG AND drops
+    /// #853 — `purge_integration_glyph_state` deletes the SVG AND drops
     /// the assignments-file entry. Verifies both side-effects and
     /// that unrelated entries survive.
     #[test]
-    fn purge_sibling_glyph_state_drops_svg_and_assignment_entry() {
+    fn purge_integration_glyph_state_drops_svg_and_assignment_entry() {
         let tmp = tempfile::tempdir().unwrap();
         let _lk = crate::test_env_lock()
             .lock()
@@ -480,7 +492,7 @@ mod tests {
         assert!(assign_pre.entries.iter().any(|e| e.id == "victim"));
         assert!(assign_pre.entries.iter().any(|e| e.id == "keeper"));
         // Purge just "victim".
-        let (svg_gone, assignment_gone) = purge_sibling_glyph_state("victim");
+        let (svg_gone, assignment_gone) = purge_integration_glyph_state("victim");
         assert!(svg_gone);
         assert!(assignment_gone);
         assert!(!dir.join("victim.svg").exists(), "svg deleted");
@@ -497,7 +509,7 @@ mod tests {
     /// codepoint is dropped when the sibling is purged. Guards against
     /// zombie meta entries piling up over install/uninstall cycles.
     #[test]
-    fn purge_sibling_glyph_state_drops_matching_glyph_meta_entry() {
+    fn purge_integration_glyph_state_drops_matching_glyph_meta_entry() {
         let tmp = tempfile::tempdir().unwrap();
         let _lk = crate::test_env_lock()
             .lock()
@@ -532,7 +544,7 @@ mod tests {
         let meta_pre = crate::glyph_builder::load_meta();
         assert_eq!(meta_pre.glyphs.len(), 2);
         // Purge one.
-        purge_sibling_glyph_state("victim");
+        purge_integration_glyph_state("victim");
         let meta_post = crate::glyph_builder::load_meta();
         assert_eq!(meta_post.glyphs.len(), 1, "victim's meta entry dropped");
         assert!(
@@ -546,13 +558,13 @@ mod tests {
 
     /// Nothing to purge → both flags false, no toast fired.
     #[test]
-    fn purge_sibling_glyph_state_noop_when_id_never_registered() {
+    fn purge_integration_glyph_state_noop_when_id_never_registered() {
         let tmp = tempfile::tempdir().unwrap();
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _home = crate::EnvGuard::set("HOME", tmp.path());
-        let (svg_gone, assignment_gone) = purge_sibling_glyph_state("nonexistent");
+        let (svg_gone, assignment_gone) = purge_integration_glyph_state("nonexistent");
         assert!(!svg_gone);
         assert!(!assignment_gone);
     }

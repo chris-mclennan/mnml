@@ -1136,7 +1136,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(rect) = app.rects.integrations_add_chip
         && crate::app::dispatch::contains(rect, x, y)
     {
-        app.open_sibling_install_picker();
+        app.open_integration_install_picker();
         return;
     }
     // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.

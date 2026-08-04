@@ -1,6 +1,6 @@
-//! Manifest loader for activity-bar-registered Mount siblings.
+//! Manifest loader for activity-bar-registered Mount integrations.
 //!
-//! A sibling that wants to live in mnml's activity bar (instead of
+//! A integration that wants to live in mnml's activity bar (instead of
 //! being opened ad-hoc via `:mount.open`) drops a `mnml.toml`
 //! manifest in one of two places:
 //!
@@ -8,7 +8,7 @@
 //!      Lets a team check in a per-project tool (e.g. a
 //!      "TestExecutions browser" only relevant in this repo).
 //!   2. `~/.config/mnml/mounts/<id>.toml` — user-global. The
-//!      sibling is installed once and visible across every
+//!      integration is installed once and visible across every
 //!      workspace.
 //!
 //! mnml scans both dirs on startup + on the `mounts.refresh`
@@ -51,7 +51,7 @@ pub struct MountManifest {
     /// Optional hover tooltip; falls back to `name`.
     #[serde(default)]
     pub tooltip: Option<String>,
-    /// Args passed to `binary` at spawn. Enables docking siblings
+    /// Args passed to `binary` at spawn. Enables docking integrations
     /// that need CLI flags (e.g. `mnml-forge-bitbucket --only
     /// prs`). Defaults to empty for backwards compat with older
     /// manifests. 2026-07-20 — "add integration to activity bar"

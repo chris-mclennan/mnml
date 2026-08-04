@@ -1,21 +1,21 @@
 //! Cross-host SCM aggregation — fans out to the `mnml-forge-*`
-//! sibling binaries via their `--list-prs --json` and
+//! integration binaries via their `--list-prs --json` and
 //! `--find-pipeline-for-pr --json` headless modes, merges results,
 //! and exposes them to the `pr.picker` command + the rail's
 //! "Open PRs" subsection.
 //!
-//! Sibling contract (matches every `mnml-forge-*` v0.1+):
+//! Integration contract (matches every `mnml-forge-*` v0.1+):
 //!
 //! ```text
 //! mnml-forge-<host> --list-prs --json
-//!   → stdout: { host: "...", prs: [SiblingPr, ...] }
+//!   → stdout: { host: "...", prs: [IntegrationPr, ...] }
 //!
 //! mnml-forge-<host> --find-pipeline-for-pr --owner <o> --repo <r>
 //!     --branch <b> --json
 //!   → stdout: { url: "..." | null }
 //! ```
 //!
-//! Per-sibling errors land on stderr and don't tank the merge — we
+//! Per-integration errors land on stderr and don't tank the merge — we
 //! just skip that host and surface what the others returned.
 
 use serde::Deserialize;
@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 /// One PR row in the cross-host JSON schema. Field set must stay in
 /// sync with each `mnml-forge-*/src/headless.rs`.
 #[derive(Debug, Clone, Deserialize)]
-pub struct SiblingPr {
+pub struct IntegrationPr {
     pub id: String,
     pub url: String,
     pub owner: String,
@@ -52,7 +52,7 @@ pub struct SiblingPr {
 #[derive(Debug, Deserialize)]
 struct ListPrsResponse {
     host: String,
-    prs: Vec<SiblingPr>,
+    prs: Vec<IntegrationPr>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,8 +60,8 @@ struct PipelineResponse {
     url: Option<String>,
 }
 
-/// All known forge-sibling binaries — the order is the merge order
-/// for the picker. New siblings just get added here; missing
+/// All known forge-integration binaries — the order is the merge order
+/// for the picker. New integrations just get added here; missing
 /// binaries (not on `$PATH`) are silently skipped, so users only
 /// see what they have installed.
 pub const KNOWN_FORGE_SIBLINGS: &[&str] = &[
@@ -76,9 +76,9 @@ pub const KNOWN_FORGE_SIBLINGS: &[&str] = &[
 /// rebuilt on demand from the rail's open-PRs path.
 #[derive(Debug, Clone)]
 pub struct ScmPrCache {
-    pub prs: Vec<SiblingPr>,
+    pub prs: Vec<IntegrationPr>,
     pub fetched_at: Instant,
-    /// Stderr blobs per sibling — surfaces in a "PRs (with errors)"
+    /// Stderr blobs per integration — surfaces in a "PRs (with errors)"
     /// toast when something failed.
     pub errors: Vec<(String, String)>,
 }
@@ -92,15 +92,15 @@ impl ScmPrCache {
 }
 
 /// Synchronous fan-out: run `--list-prs --json` against every
-/// installed forge sibling, collect results. Per-sibling failures
+/// installed forge integration, collect results. Per-integration failures
 /// are captured in the returned errors vec; we never propagate a
-/// single sibling's error up.
+/// single integration's error up.
 ///
-/// Called from a worker thread (each call spawns the sibling
+/// Called from a worker thread (each call spawns the integration
 /// binaries and blocks on their HTTP calls — total wall-clock is
 /// max of the four, ~1-3 seconds typically).
 pub fn aggregate_all() -> ScmPrCache {
-    let mut prs: Vec<SiblingPr> = Vec::new();
+    let mut prs: Vec<IntegrationPr> = Vec::new();
     let mut errors: Vec<(String, String)> = Vec::new();
     for bin in KNOWN_FORGE_SIBLINGS {
         match run_list_prs(bin) {
@@ -150,8 +150,8 @@ fn is_missing_binary(err: &str) -> bool {
 }
 
 /// Synchronous lookup for a PR's pipeline URL — dispatches to the
-/// matching forge sibling based on `host`. Returns `Some(url)` on
-/// success, `None` when the sibling reports no matching pipeline or
+/// matching forge integration based on `host`. Returns `Some(url)` on
+/// success, `None` when the integration reports no matching pipeline or
 /// errors. Called from a worker thread; takes ~1 second typically.
 pub fn find_pipeline_url(host: &str, owner: &str, repo: &str, branch: &str) -> Option<String> {
     let bin = match host {
@@ -180,10 +180,10 @@ pub fn find_pipeline_url(host: &str, owner: &str, repo: &str, branch: &str) -> O
 }
 
 /// Match a PR against a `remote.origin.url` from `git config`. Each
-/// sibling emits both `https://…` and `git@…` forms so we just
+/// integration emits both `https://…` and `git@…` forms so we just
 /// substring-match. Returns true when the URL matches either form
 /// (with or without a trailing `.git`).
-pub fn pr_matches_remote(pr: &SiblingPr, remote: &str) -> bool {
+pub fn pr_matches_remote(pr: &IntegrationPr, remote: &str) -> bool {
     let r = remote.trim_end_matches(".git");
     let https = pr.remote_url_https.trim_end_matches(".git");
     let ssh = pr.remote_url_ssh.trim_end_matches(".git");
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn pr_matches_https_remote() {
-        let pr = SiblingPr {
+        let pr = IntegrationPr {
             id: "1".into(),
             url: "u".into(),
             owner: "foo".into(),

@@ -1,7 +1,7 @@
 //! Browseable cheatsheet pane (NvCheatsheet analogue). Walks the live
 //! `Keymap` + command registry and renders one row per `chord → command`
 //! grouped by `Command::group`. `/` filters; ↑/↓ navigate; the pane is
-//! read-only. Sibling to `:Maps`/`:Keys` (which toasts).
+//! read-only. Integration to `:Maps`/`:Keys` (which toasts).
 
 use std::collections::BTreeMap;
 

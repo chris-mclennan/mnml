@@ -285,7 +285,7 @@ impl BinaryProfile {
         }
     }
 
-    /// `mixr` — the sibling TUI DJ app (`~/Projects/mixr`). Launches with
+    /// `mixr` — the integration TUI DJ app (`~/Projects/mixr`). Launches with
     /// `--dashboard` so it lands directly on the controller view (skipping the
     /// browser); the user can press `v` in mixr to cycle through its Panel
     /// layouts to fit mnml's split.
@@ -460,7 +460,7 @@ impl PtySession {
             cmd.env("TERMINFO_DIRS", dirs);
         }
         // 2026-07-20 — stamp `MNML_PANE=1` on every Pty child so
-        // siblings can detect they're running inside mnml and
+        // integrations can detect they're running inside mnml and
         // adjust their chrome (drop border block, since mnml
         // already draws pane borders). User asked for this on
         // amplify + bitbucket panes so the in-mnml view is flush.

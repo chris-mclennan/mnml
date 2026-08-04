@@ -4,7 +4,7 @@
 
 use crate::app::App;
 use crate::picker::{Picker, PickerItem, PickerKind};
-use crate::scm::{self, SiblingPr};
+use crate::scm::{self, IntegrationPr};
 use std::sync::mpsc;
 use std::thread;
 
@@ -144,7 +144,7 @@ impl App {
     }
 }
 
-fn pr_to_item(pr: &SiblingPr) -> PickerItem {
+fn pr_to_item(pr: &IntegrationPr) -> PickerItem {
     let id = format!(
         "{}{US}{}{US}{}{US}{}{US}{}",
         pr.url,
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn pr_item_id_packs_payload() {
-        let pr = SiblingPr {
+        let pr = IntegrationPr {
             id: "1".into(),
             url: "https://example.com/pr/1".into(),
             owner: "foo".into(),

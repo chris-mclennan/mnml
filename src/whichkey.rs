@@ -291,7 +291,7 @@ pub fn root() -> &'static Leader {
                             // eventbridge / rds / ecs / ecr / cognito / sqs /
                             // sns) were dropped alongside the corresponding
                             // hardcoded palette commands in command.rs — the
-                            // sibling binaries they pointed at are all retired
+                            // integration binaries they pointed at are all retired
                             // (ecosystem consolidated to mnml + mnml-integrations
                             // + mnml-tattle-tests). Anything a user installs
                             // through the marketplace now registers its OWN
@@ -399,7 +399,7 @@ pub fn root() -> &'static Leader {
                 ),
                 // `+C` (CI) and `+P` (PR) chord groups removed after
                 // the 2026-06 SCM split — all four hosts ship as
-                // mnml-forge-* siblings, launched via the integration
+                // mnml-forge-* integrations, launched via the integration
                 // icons in the rail.
                 (
                     'H',
@@ -503,7 +503,7 @@ mod tests {
         // 2026-08-03 — The `ib`/`iw`/`ie` bindings that used to test
         // `forge.open_bitbucket`/`forge.open_cloudwatch_logs`/
         // `forge.open_eventbridge` are gone; the palette + chord chain
-        // stopped hosting hardcoded sibling launchers now that the
+        // stopped hosting hardcoded integration launchers now that the
         // ecosystem consolidated into the marketplace catalog. Just
         // assert the surviving invariants — `E` still reaches the
         // toggle-enabled picker (the 2026-06-28 SEV-1 fix for the

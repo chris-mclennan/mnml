@@ -528,7 +528,7 @@ pub struct ResponseView {
     pub timing: crate::http::Timing,
     pub assertions: Vec<AssertionResult>,
     pub captures: Vec<(String, String)>,
-    /// Result of validating the response body against a sibling
+    /// Result of validating the response body against a integration
     /// `*.schema.json` file (if one exists). `None` if validation
     /// wasn't attempted (e.g. response from the browser pane with
     /// no source file). The Response view renders a one-line

@@ -99,7 +99,7 @@ pub struct Config {
     pub ci: CiConfig,
     // [gitlab] config moved to mnml-forge-gitlab.
     // [azdevops] config moved to mnml-forge-azdevops.
-    /// `[[workspaces]]` — additional workspaces shown as sibling sections in
+    /// `[[workspaces]]` — additional workspaces shown as integration sections in
     /// the file-tree rail (alongside the launched workspace at the top).
     /// Each entry is a `(name, path)` pair; `~` is expanded.
     pub workspaces: Vec<WorkspaceConfig>,
@@ -802,7 +802,7 @@ pub struct UiConfig {
     pub ticket_prefixes: Vec<String>,
 
     /// Which source the statusline `♪` miniplayer reads from.
-    /// `"mixr"` (default) — the sibling mixr DJ app
+    /// `"mixr"` (default) — the integration mixr DJ app
     /// (`~/.mixr/quick.txt`). No permission prompts, cheap.
     /// `"macos"` — macOS Music / Spotify via AppleScript. First-run
     /// triggers macOS's "allow mnml to control Music" permission
@@ -1038,7 +1038,7 @@ pub struct IntegrationIcon {
     /// with none of these renders a bare-bones detail pane (just
     /// title + Install/Enable/etc. buttons). Populated either
     /// from a `[[ui.integration_icon]]` block or merged from an
-    /// installed sibling's `IntegrationManifest`. See
+    /// installed integration's `IntegrationManifest`. See
     /// `Pane::IntegrationDetail`.
     pub description: Option<String>,
     pub homepage: Option<String>,
@@ -1209,8 +1209,8 @@ impl Default for Config {
                     // 2026-08-01 — stripped ~35 hardcoded IntegrationIcon
                     // defaults from mnml core. Everything except the four
                     // first-party surfaces (browser, claude_code, codex, http)
-                    // now lives in sibling manifests at ~/.config/mnml/integrations/
-                    // (installed via <sibling> --install) or in launcher entries
+                    // now lives in integration manifests at ~/.config/mnml/integrations/
+                    // (installed via <integration> --install) or in launcher entries
                     // (planned P3). mnml no longer pretends to know about a fixed
                     // set of integrations — the manifest folder is ground truth.
                 ],
@@ -1642,7 +1642,7 @@ struct RawIntegrationIcon {
     id: Option<String>,
     // 2026-08-01 — glyph/fallback/color/tooltip fields dropped.
     // User config is slim (id + enabled + in_palette_bar); every
-    // other field reads from the built-in default or the sibling
+    // other field reads from the built-in default or the integration
     // manifest.
     command: Option<String>,
     /// Visibility opt-in. None in raw → false in resolved config.
@@ -1908,14 +1908,14 @@ impl Config {
             // authoritative for order + `enabled` + `in_palette_bar`
             // ONLY. All other fields (glyph, tooltip, color, command,
             // fallback, description, links) come from the built-in
-            // default (or, later, the sibling manifest via
+            // default (or, later, the integration manifest via
             // `merge_integration_manifests`). Fixes the "you changed
             // the default in Rust source but my chip still shows the
             // old snapshotted value" bug.
             //
             // Entries in user config for an unknown id (no matching
             // built-in) are dropped — an integration is either a
-            // sibling (which installs a manifest) or a built-in.
+            // integration (which installs a manifest) or a built-in.
             // User config is not a valid source for a fresh chip
             // definition anymore; add `[[ui.integration_icon]]` there
             // was always meant for overrides, not authoring.
@@ -1925,7 +1925,7 @@ impl Config {
                     continue;
                 }
                 let Some(builtin) = builtins_by_id.get(&id) else {
-                    // No built-in match — drop the entry. A sibling
+                    // No built-in match — drop the entry. A integration
                     // manifest with this id (if any) will re-add it
                     // later via merge_integration_manifests, with
                     // its own enabled/in_palette_bar defaults.
@@ -1949,7 +1949,7 @@ impl Config {
                     author: builtin.author.clone(),
                     version: builtin.version.clone(),
                     commands: builtin.commands.clone(),
-                    // Sibling manifests may still override — they
+                    // Integration manifests may still override — they
                     // supersede built-in defaults for anything with
                     // an installed `~/.config/mnml/integrations/<id>.toml`.
                 };
@@ -2019,7 +2019,7 @@ impl Config {
             }
             // 2026-07-19 — the single "bitbucket" chip was split into
             // `bitbucket_pull_requests` + `bitbucket_pipelines` (each
-            // launching the sibling with a `--only` flag). Drop any
+            // launching the integration with a `--only` flag). Drop any
             // legacy `id = "bitbucket"` entries that survived the
             // merge so the old "Bitbucket pipelines + PRs" chip stops
             // showing up alongside the two new ones. Users who want
@@ -2028,7 +2028,7 @@ impl Config {
             // 2026-07-19 — kill the "bitbucket" catch-all + three
             // legacy chips the user asked to remove ("linear",
             // "gitlab", "cypress"). Both the built-in defaults and
-            // any installed sibling manifests can re-inject these,
+            // any installed integration manifests can re-inject these,
             // so the retain runs after both merge paths.
             merged.retain(|i| {
                 !matches!(
@@ -2272,7 +2272,7 @@ impl Config {
         // moved to mnml-forge-gitlab in 2026-06.
         // `[azdevops]` section is silently ignored — Azure DevOps
         // panes moved to mnml-forge-azdevops in 2026-06.
-        // `[[workspaces]]` — additional sibling workspaces. Append (rather
+        // `[[workspaces]]` — additional integration workspaces. Append (rather
         // than replace) so a workspace-local file can extend the homedir
         // set. Tilde-expanded so users can write `~/Projects/foo`. Missing
         // dirs are tolerated at config-load time (App::new logs + skips
@@ -2972,7 +2972,7 @@ pub fn scaffold_workspace(path: &Path) -> std::io::Result<()> {
                     `[startup] default_workspace` in `~/.config/mnml/config.toml`.\n\
                     \n\
                     Use it as scratch space, a test sandbox, or a quick place to\n\
-                    drop notes / `.http` files / snippets. Open siblings (S3,\n\
+                    drop notes / `.http` files / snippets. Open integrations (S3,\n\
                     Datadog, etc.) here to verify integration behavior in a\n\
                     known-clean state.\n";
         // Best-effort — if the README already vanished between exists()
@@ -3349,7 +3349,7 @@ repo  = "example-knowledge"
         // 2026-08-01 — mnml core stopped hardcoding integration
         // knowledge. Only the four first-party surfaces stay as
         // built-in defaults (browser, claude_code, codex, http).
-        // Everything else comes from installed sibling manifests
+        // Everything else comes from installed integration manifests
         // at ~/.config/mnml/integrations/ or (P3+) launcher entries.
         let cfg = Config::default();
         let ids: Vec<&str> = cfg

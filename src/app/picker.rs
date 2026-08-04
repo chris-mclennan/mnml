@@ -1101,9 +1101,9 @@ impl App {
                     self.toast(format!("cookies: copied {pair}"));
                 }
             }
-            PickerKind::SiblingInstall => {
+            PickerKind::IntegrationInstall => {
                 let id = item.id.clone();
-                self.install_sibling(&id);
+                self.install_integration(&id);
             }
             PickerKind::IconGlyphs => {
                 // Special "+ Create custom glyph…" row — opens the
@@ -2138,9 +2138,9 @@ impl App {
                 let typed = p.input.clone();
                 self.fire_cloud_run(&typed);
             }
-            crate::prompt::PromptKind::SiblingInstallConfirm => {
+            crate::prompt::PromptKind::IntegrationInstallConfirm => {
                 let typed = p.input.clone();
-                self.install_sibling_confirm_resolve(&typed);
+                self.install_integration_confirm_resolve(&typed);
             }
             crate::prompt::PromptKind::FileMoveTo => {
                 let from_selected = p.take_selected_input();

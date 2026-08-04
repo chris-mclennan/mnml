@@ -1,16 +1,16 @@
-//! One-stop install helper for mnml family siblings. Used by:
+//! One-stop install helper for mnml family integrations. Used by:
 //!   - the `mounts.install` palette command (#1)
 //!   - the Integrations rail "Install" affordance (#2)
-//!   - the `install_mnml_sibling` AI tool (#3)
+//!   - the `install_mnml_integration` AI tool (#3)
 //!   - the "X not installed — install? y/n" prompt that fires when
-//!     a sibling-handoff (CloudWatch / S3) hits a missing binary
+//!     a integration-handoff (CloudWatch / S3) hits a missing binary
 //!
-//! All four code paths funnel through `install_sibling` so the
+//! All four code paths funnel through `install_integration` so the
 //! spawn shape, env var setup, and progress UX stay identical.
 
 use crate::family_catalog::{IntegrationApp, MountStub, mount_stub_for};
 
-/// What to do once a sibling install finishes successfully.
+/// What to do once a integration install finishes successfully.
 /// Captured at prompt time so users don't have to re-trigger their
 /// original action after waiting for `cargo install` to complete.
 /// Replayed by `App::drain_install_post_actions` on each tick.
@@ -19,7 +19,7 @@ pub enum PostInstallAction {
     /// Open a CloudWatch Logs Pty for `log_group` (optionally
     /// filtered by `filter`). Triggered when the user invoked
     /// "Tail logs" on a cloud-agent row but the cloudwatch-logs
-    /// sibling wasn't installed.
+    /// integration wasn't installed.
     CloudWatchLogs {
         log_group: String,
         filter: String,
@@ -27,7 +27,7 @@ pub enum PostInstallAction {
     },
     /// Open the S3 browser Pty pointed at `bucket`+`prefix`.
     /// Triggered when the user invoked "Browse S3 artifacts" or
-    /// `:s3.open` but the s3 sibling wasn't installed.
+    /// `:s3.open` but the s3 integration wasn't installed.
     S3Browse {
         bucket: String,
         prefix: String,
@@ -39,9 +39,9 @@ pub enum PostInstallAction {
 /// can chain "click again to use" affordances correctly.
 #[derive(Debug, Clone, Copy)]
 pub enum InstallKind {
-    /// Pty-only sibling — just runs.
+    /// Pty-only integration — just runs.
     Pty,
-    /// Mount sibling — also wrote an activity-bar manifest.
+    /// Mount integration — also wrote an activity-bar manifest.
     Mount,
 }
 
@@ -54,32 +54,32 @@ pub fn lookup(id: &str) -> Option<&'static IntegrationApp> {
 /// Build the argv for `cargo install` based on the catalog entry's
 /// `repo_url` + `pinned_version`. When the pin is `"main"` we drop
 /// the `--tag` flag so cargo follows HEAD (used for in-development
-/// siblings that haven't tagged a release yet).
-pub fn cargo_install_argv(sibling: &IntegrationApp) -> Vec<String> {
+/// integrations that haven't tagged a release yet).
+pub fn cargo_install_argv(integration: &IntegrationApp) -> Vec<String> {
     let mut argv = vec![
         "cargo".to_string(),
         "install".to_string(),
         "--git".to_string(),
-        sibling.repo_url.to_string(),
+        integration.repo_url.to_string(),
     ];
-    if sibling.pinned_version != "main" && sibling.pinned_version != "built-in" {
+    if integration.pinned_version != "main" && integration.pinned_version != "built-in" {
         argv.push("--tag".to_string());
-        argv.push(sibling.pinned_version.to_string());
+        argv.push(integration.pinned_version.to_string());
     }
-    argv.push(sibling.binary.to_string());
+    argv.push(integration.binary.to_string());
     argv
 }
 
 /// mnml's compile-time target triple (e.g. `aarch64-apple-darwin`).
 /// Set in build.rs from cargo's `TARGET` env var. Used to pick the
-/// matching prebuilt asset from each sibling repo's `latest-build`
+/// matching prebuilt asset from each integration repo's `latest-build`
 /// release.
 pub const TARGET: &str = env!("MNML_TARGET");
 
 /// Build a `sh -c` argv that tries to download + extract the
-/// sibling's prebuilt binary from its repo's rolling `latest-build`
+/// integration's prebuilt binary from its repo's rolling `latest-build`
 /// GitHub Release. If the asset is missing for the current target
-/// (Windows currently, or a sibling that hasn't been set up yet),
+/// (Windows currently, or a integration that hasn't been set up yet),
 /// falls back to `cargo install --git`. The Pty pane the user sees
 /// is either a fast `curl | tar` (~1-2s) or the familiar cargo
 /// compile (~30-60s) — same UX shape.
@@ -87,14 +87,14 @@ pub const TARGET: &str = env!("MNML_TARGET");
 /// On Windows mnml falls through to cargo install today; the
 /// prebuilt zip extraction story for PowerShell isn't worth the
 /// shell-quoting pain when the macOS/Linux paths are the priority.
-pub fn install_pipeline_argv(sibling: &IntegrationApp) -> Vec<String> {
+pub fn install_pipeline_argv(integration: &IntegrationApp) -> Vec<String> {
     if TARGET.contains("windows") {
-        return cargo_install_argv(sibling);
+        return cargo_install_argv(integration);
     }
-    let cargo_install = cargo_install_argv(sibling).join(" ");
+    let cargo_install = cargo_install_argv(integration).join(" ");
     let url = format!(
         "{}/releases/download/latest-build/{}-{}.tar.gz",
-        sibling.repo_url, sibling.binary, TARGET
+        integration.repo_url, integration.binary, TARGET
     );
     let script = format!(
         r#"set -e
@@ -114,7 +114,7 @@ else
 fi
 "#,
         url = url,
-        binary = sibling.binary,
+        binary = integration.binary,
         target = TARGET,
         cargo_install = cargo_install,
     );
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn install_kind_pty_for_unknown_id() {
         // No MOUNT_STUBS ship in-tree after 2026-07-03 — every
-        // catalog entry currently installs as a Pty. Mount siblings
+        // catalog entry currently installs as a Pty. Mount integrations
         // now self-register via the Integration SDK.
         assert!(matches!(install_kind("bogus_id"), InstallKind::Pty));
     }

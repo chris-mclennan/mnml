@@ -1,11 +1,11 @@
-//! Manifest loader for third-party integration siblings.
+//! Manifest loader for third-party integration integrations.
 //!
 //! Mirrors [`mount_manifest`] but for the Pty-launcher-style
 //! integration icons (things that live in the rail's INTEGRATIONS
 //! section — Bitbucket, GitHub, Slack, Datadog, …). Instead of
 //! forcing every user to hand-write `[[ui.integration_icon]]`
-//! entries in `config.toml`, a sibling ships a manifest and
-//! auto-installs it on `<sibling> --install`.
+//! entries in `config.toml`, a integration ships a manifest and
+//! auto-installs it on `<integration> --install`.
 //!
 //! ## Where manifests live
 //!
@@ -14,7 +14,7 @@
 //!
 //! Workspace manifests override user-global on id collision.
 //! Explicit `[[ui.integration_icon]]` entries in user config
-//! override BOTH (users always win over sibling-authored defaults).
+//! override BOTH (users always win over integration-authored defaults).
 //!
 //! ## Full schema
 //!
@@ -94,11 +94,11 @@ pub enum OsNotifyPolicy {
     /// OS notifications disabled for this integration.
     #[default]
     Never,
-    /// Fire OS notification only when the sibling calls `notify`
+    /// Fire OS notification only when the integration calls `notify`
     /// with `Level::Error`, or via the auto-escalation rule
     /// (persistent-error → auto-notify).
     ErrorOnly,
-    /// Fire OS notification for every `notify` call the sibling
+    /// Fire OS notification for every `notify` call the integration
     /// makes, regardless of level. Rate-limited by
     /// `os_rate_limit_sec`.
     Always,
@@ -121,7 +121,7 @@ pub struct IntegrationManifest {
     pub description: Option<String>,
     #[serde(default)]
     pub version: Option<String>,
-    /// The compiled sibling's binary name (`mnml-aws-amplify`, etc.).
+    /// The compiled integration's binary name (`mnml-aws-amplify`, etc.).
     /// `None` = this manifest is a launcher — no binary of its own,
     /// its actions launch external CLIs via templated `run` strings.
     /// See `crate::launcher_template` for the substitution engine.
@@ -178,19 +178,19 @@ pub struct ChipSpec {
     pub in_palette_bar: bool,
     #[serde(default)]
     pub badge_key: Option<String>,
-    /// 2026-07-31 — sibling-icons SDK. When set, mnml-bridge's
-    /// `install_integration` copied a SVG (owned by the sibling)
+    /// 2026-07-31 — integration-icons SDK. When set, mnml-bridge's
+    /// `install_integration` copied a SVG (owned by the integration)
     /// to `~/.config/mnml/glyphs/<id>.svg`. mnml discovers it at
     /// startup + on `integrations.refresh`, assigns a codepoint in
-    /// the sibling PUA range (`U+F1C00-F1CFF`), and bakes it into
-    /// MnmlSymbols.ttf on `integrations.bake_sibling_glyphs`. The
+    /// the integration PUA range (`U+F1C00-F1CFF`), and bakes it into
+    /// MnmlSymbols.ttf on `integrations.bake_integration_glyphs`. The
     /// manifest's own `glyph` string takes precedence if set —
     /// this only kicks in when `glyph` is empty AND an SVG exists.
     #[serde(default)]
     pub glyph_svg: Option<String>,
     /// 2026-07-31 — explicit codepoint override for the SVG bake.
     /// Uppercase hex, no `U+` prefix (e.g. `"F1B00"`). Trusted;
-    /// no range check. Used by siblings that used to depend on
+    /// no range check. Used by integrations that used to depend on
     /// mnml core having baked their glyph at a fixed codepoint,
     /// so an upgrade to the SDK doesn't move their icon.
     #[serde(default)]
@@ -353,7 +353,7 @@ pub fn user_dir() -> Option<PathBuf> {
 /// `description`. Command bodies, statusline segments, context-menu
 /// entries, and other structural surfaces stay canonical — an
 /// override that redefined a command's `run` string could silently
-/// break the sibling's contract with mnml.
+/// break the integration's contract with mnml.
 ///
 /// **Why a separate file, not a config.toml block.** Pre-2026-08-03
 /// user overrides lived in `[[ui.integration_icon]]` blocks inside
@@ -479,7 +479,7 @@ fn scan_dir(dir: &Path, out: &mut Vec<IntegrationManifest>) {
         match toml::from_str::<IntegrationManifest>(&text) {
             Ok(mut m) => {
                 // 2026-08-01 (P3) — `binary` is now Option: launchers
-                // (data-only manifests, no compiled sibling) leave it
+                // (data-only manifests, no compiled integration) leave it
                 // unset. Validate id + label; binary check happens at
                 // spawn time in run_ex_command when the manifest
                 // actually runs.
@@ -515,7 +515,7 @@ fn scan_dir(dir: &Path, out: &mut Vec<IntegrationManifest>) {
 impl IntegrationManifest {
     /// True if this integration's `[requires]` predicates are all
     /// satisfied on the current machine. Used by the discovery
-    /// overlay to dim chips whose backing sibling isn't ready
+    /// overlay to dim chips whose backing integration isn't ready
     /// (missing env var, binary not on PATH).
     pub fn is_ready(&self) -> bool {
         let Some(req) = &self.requires else {

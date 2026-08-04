@@ -1,7 +1,7 @@
 //! Mount runtime — the host side of the Bridge tier-4 protocol.
 //!
-//! A `MountSession` owns a spawned sibling subprocess + a Unix
-//! socket connection to it. The sibling streams `Frame` messages
+//! A `MountSession` owns a spawned integration subprocess + a Unix
+//! socket connection to it. The integration streams `Frame` messages
 //! (cells + style) over the socket; mnml stamps them into its own
 //! `ratatui::Frame` so the host terminal does the actual glyph
 //! rendering.
@@ -9,7 +9,7 @@
 //! Lifecycle:
 //!   1. `MountSession::spawn(profile)` binds a UDS in a temp path,
 //!      sets `MNML_MOUNT_SOCKET` on the profile, and forks the
-//!      sibling.
+//!      integration.
 //!   2. A worker thread accepts the connect, sends a `Hello` with
 //!      the initial geometry, then loops on `read_message` —
 //!      decoded frames are pushed into `MountSession::frame_rx`.
@@ -44,29 +44,29 @@ use mnml_bridge::{Cell, Geometry, HostMessage, InputEvent, SiblingMessage};
 
 static NEXT_MOUNT_ID: AtomicUsize = AtomicUsize::new(0);
 
-/// A single hosted-sibling mount.
+/// A single hosted-integration mount.
 pub struct MountSession {
-    /// The sibling subprocess (`Child::wait` is used to detect
-    /// crashes; we don't stream stdout/stderr — siblings using
+    /// The integration subprocess (`Child::wait` is used to detect
+    /// crashes; we don't stream stdout/stderr — integrations using
     /// Mount don't print to a terminal).
     pub child: std::process::Child,
     /// The socket path mnml is listening on. Deleted when the
     /// mount drops.
     pub socket_path: PathBuf,
     /// The connected write half — used to push `HostMessage`s to
-    /// the sibling. `None` until the sibling has connected.
+    /// the integration. `None` until the integration has connected.
     pub writer: Arc<Mutex<Option<UnixStream>>>,
     /// Channel the reader thread feeds with decoded `Frame`s.
     pub frame_rx: Receiver<SiblingMessage>,
     /// The latest accepted frame — rendered each tick. None until
-    /// the sibling sends its first Frame.
+    /// the integration sends its first Frame.
     pub latest_frame: Option<Vec<Vec<Cell>>>,
-    /// Current geometry the sibling has been told about (so we
+    /// Current geometry the integration has been told about (so we
     /// can detect resize and emit `HostMessage::Resize`).
     pub geometry: Geometry,
     /// Label for the pane chrome ("custom-tests", "runs", …).
     pub label: String,
-    /// True once the sibling closed its socket (clean exit or crash).
+    /// True once the integration closed its socket (clean exit or crash).
     pub disconnected: bool,
 }
 
@@ -94,7 +94,7 @@ pub fn mounts_dir(workspace: &std::path::Path) -> PathBuf {
 }
 
 impl MountSession {
-    /// Spawn a sibling and bind the UDS. The sibling reads
+    /// Spawn a integration and bind the UDS. The integration reads
     /// `MNML_MOUNT_SOCKET` from env and connects to it. The
     /// accept happens on a worker thread so spawn returns
     /// immediately; the first frame may not arrive for a few
@@ -128,7 +128,7 @@ impl MountSession {
             accept_and_read(listener, writer_clone, frame_tx, geometry);
         });
 
-        // Spawn the sibling. `MNML_MOUNT_SOCKET` is the contract.
+        // Spawn the integration. `MNML_MOUNT_SOCKET` is the contract.
         let mut cmd = std::process::Command::new(exe);
         cmd.args(args);
         for (k, v) in env {
@@ -138,8 +138,8 @@ impl MountSession {
         if let Some(c) = cwd {
             cmd.current_dir(c);
         }
-        // Capture stderr so a crashing sibling's panic trace is
-        // visible; stdout is unused for Mount siblings.
+        // Capture stderr so a crashing integration's panic trace is
+        // visible; stdout is unused for Mount integrations.
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::null());
         cmd.stderr(std::process::Stdio::piped());
@@ -157,7 +157,7 @@ impl MountSession {
         })
     }
 
-    /// Drain pending frames + check for sibling exit. Call once
+    /// Drain pending frames + check for integration exit. Call once
     /// per tick. Updates `latest_frame` + `disconnected`.
     pub fn pump(&mut self) {
         loop {
@@ -183,7 +183,7 @@ impl MountSession {
         }
     }
 
-    /// Forward a key/mouse event to the sibling. Best-effort —
+    /// Forward a key/mouse event to the integration. Best-effort —
     /// IO errors mark the session disconnected.
     pub fn send_input(&mut self, event: InputEvent) {
         let msg = HostMessage::Input { event };
@@ -192,7 +192,7 @@ impl MountSession {
         }
     }
 
-    /// Tell the sibling the area resized.
+    /// Tell the integration the area resized.
     pub fn resize(&mut self, geometry: Geometry) {
         if self.geometry.cols == geometry.cols && self.geometry.rows == geometry.rows {
             return;
@@ -212,7 +212,7 @@ impl MountSession {
         let Some(stream) = guard.as_ref() else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
-                "mount: sibling has not connected yet",
+                "mount: integration has not connected yet",
             ));
         };
         let mut s = stream.try_clone()?;
@@ -224,7 +224,7 @@ impl MountSession {
 
 impl Drop for MountSession {
     fn drop(&mut self) {
-        // Send Goodbye if still connected — siblings can clean up
+        // Send Goodbye if still connected — integrations can clean up
         // gracefully (close DB connections etc.) before the socket
         // dies.
         let _ = self.write_message(&HostMessage::Goodbye);
@@ -242,7 +242,7 @@ fn accept_and_read(
     frame_tx: Sender<SiblingMessage>,
     geometry: Geometry,
 ) {
-    // Poll-accept with a short backoff — the sibling typically
+    // Poll-accept with a short backoff — the integration typically
     // connects within 100-300ms, but we don't want to busy-loop.
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     let stream = loop {
@@ -250,8 +250,8 @@ fn accept_and_read(
             Ok((s, _addr)) => break s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 if std::time::Instant::now() > deadline {
-                    // Sibling never connected — give up. The pane
-                    // will show "sibling exited" once the parent
+                    // Integration never connected — give up. The pane
+                    // will show "integration exited" once the parent
                     // notices.
                     return;
                 }

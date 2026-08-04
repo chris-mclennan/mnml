@@ -46,7 +46,7 @@ impl Command {
 ///   the plugin reads. Requires the plugin to be running.
 /// - **`ex_run = Some(cmdline)`** — Manifest-registered. Invoking runs
 ///   `cmdline` as an ex-command (e.g. `":term mnml-msg-slack"`). Works
-///   whether the sibling is running or not.
+///   whether the integration is running or not.
 #[derive(Debug, Clone)]
 pub struct DynCommand {
     pub id: String,
@@ -117,7 +117,7 @@ pub fn run(id: &str, app: &mut App) -> bool {
     // Reset the per-call failure flag — handlers that fail in a way
     // the user already saw via a toast (term missing binary,
     // etc.) set it before returning, and we honor that below.
-    // 2026-06-07 bug-hunt SEV-3: forge.open_* + sibling launchers
+    // 2026-06-07 bug-hunt SEV-3: forge.open_* + integration launchers
     // used to report ok=true even when the binary wasn't on PATH.
     app.last_command_failed = false;
     let ok = if let Some(cmd) = registry().get(id) {
@@ -1363,7 +1363,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.rotate_splits",
-            title: "Rotate the active split with its sibling (vim `Ctrl+W r`)",
+            title: "Rotate the active split with its integration (vim `Ctrl+W r`)",
             group: "view",
             keys: &[],
             run: |app| app.rotate_splits(),
@@ -1622,7 +1622,7 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.git_jump_to_change(true),
         },
         // Cross-host PR picker — fans out to every installed
-        // `mnml-forge-*` sibling via its `--list-prs --json`
+        // `mnml-forge-*` integration via its `--list-prs --json`
         // headless mode and shows the merged result in a single
         // fuzzy picker. Enter = open URL; Tab = jump to pipeline.
         // First call (or stale cache) blocks ~1-3s; subsequent
@@ -1645,7 +1645,7 @@ fn builtin_commands() -> Vec<Command> {
         // commands that lived here (mnml-forge-bitbucket / -github /
         // -gitlab / -azdevops, mnml-aws-*, mnml-msg-*, mnml-tracker-*,
         // mnml-fs-*, mnml-cdn-*, mnml-obs-*, mnml-virt-*, ...) are
-        // retired. The corresponding sibling binaries were all
+        // retired. The corresponding integration binaries were all
         // consolidated out of the ecosystem — GH grep confirms only
         // `mnml`, `mnml-integrations`, and `mnml-tattle-tests` remain
         // as first-party repos. Anything a user still installs from
@@ -2017,11 +2017,11 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.bake_all_builtin_glyphs(),
         },
         Command {
-            id: "integrations.bake_sibling_glyphs",
-            title: "Integrations: bake sibling-shipped SVGs from ~/.config/mnml/glyphs/ into MnmlSymbols",
+            id: "integrations.bake_integration_glyphs",
+            title: "Integrations: bake integration-shipped SVGs from ~/.config/mnml/glyphs/ into MnmlSymbols",
             group: "integrations",
             keys: &[],
-            run: |app| app.bake_sibling_glyphs(),
+            run: |app| app.bake_integration_glyphs(),
         },
         Command {
             id: "debug.toggle_click_inspector",
@@ -4257,7 +4257,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "snippet.pick_all",
             title: "Snippets: list ALL (every scope)…",
             // design-critic round-3 finding #1 2026-07-11: was
-            // group: "editor" — the outlier vs 4 sibling
+            // group: "editor" — the outlier vs 4 integration
             // `snippet.*` commands all filed under "edit".
             group: "edit",
             keys: &[],
@@ -4413,7 +4413,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "browser.autocapture_toggle",
             title: "Browser: toggle auto-append network entries to captured log",
             // design-critic round-3 finding #1 2026-07-11: was
-            // group: "http" — the outlier vs 26 sibling
+            // group: "http" — the outlier vs 26 integration
             // `browser.*` commands all filed under "browser".
             group: "browser",
             // Runtime override for `[browser] autocapture_to_log` —
@@ -4509,7 +4509,7 @@ fn builtin_commands() -> Vec<Command> {
             id: "http.view_source",
             title: "HTTP: open the active request's source file as text",
             group: "http",
-            // Sibling of "Open as text" in the HTTP-row right-click
+            // Integration of "Open as text" in the HTTP-row right-click
             // menu. Falls back to a toast when the pane has no
             // source (a fresh + New request that's never been saved).
             keys: &[],
@@ -4625,14 +4625,14 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "http.save_mock",
-            title: "HTTP: save current response as a sibling .mock.json",
+            title: "HTTP: save current response as a integration .mock.json",
             group: "http",
             keys: &[],
             run: |app| app.http_save_active_response_as_mock(),
         },
         Command {
             id: "http.replay_mock",
-            title: "HTTP: replay sibling .mock.json into the active request pane",
+            title: "HTTP: replay integration .mock.json into the active request pane",
             group: "http",
             keys: &[],
             run: |app| app.http_replay_active_request_from_mock(),
@@ -4967,7 +4967,7 @@ fn builtin_commands() -> Vec<Command> {
             // with empty fields, no source file. User edits Method
             // / URL / Headers / Body and hits `r` to fire. `Ctrl+S`
             // toasts "no source file" — use `:w path.curl` from a
-            // sibling editor to persist the curl (v2 follow-up: a
+            // integration editor to persist the curl (v2 follow-up: a
             // proper save-as prompt).
             keys: &[],
             run: |app| app.open_new_request_pane(),
@@ -5256,7 +5256,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "mount.open",
-            title: "Mount: open a hosted sibling pane (prompts for binary)",
+            title: "Mount: open a hosted integration pane (prompts for binary)",
             group: "mount",
             keys: &[],
             run: |app| app.prompt_mount_open(),
@@ -5291,17 +5291,17 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "mounts.install",
-            title: "Mounts: install a Mount-capable family sibling (auto-registers manifest)",
+            title: "Mounts: install a Mount-capable family integration (auto-registers manifest)",
             group: "mount",
             keys: &[],
             run: |app| app.open_mount_install_picker(),
         },
         Command {
-            id: "sibling.install",
-            title: "Sibling: install any family sibling by id (Pty or Mount)",
+            id: "integration.install",
+            title: "Integration: install any family integration by id (Pty or Mount)",
             group: "mount",
             keys: &[],
-            run: |app| app.open_sibling_install_picker(),
+            run: |app| app.open_integration_install_picker(),
         },
         Command {
             id: "term.rename",
@@ -6088,7 +6088,7 @@ fn builtin_commands() -> Vec<Command> {
             title: "Split editor down (stacked)",
             group: "view",
             // vscode-user-keyboard SEV-2 2026-07-11: VS Code binds
-            // Ctrl+Shift+\ to split-down (stacked). Sibling of
+            // Ctrl+Shift+\ to split-down (stacked). Integration of
             // Ctrl+\ (split right).
             keys: &["ctrl+shift+\\"],
             run: |app| app.split_active(crate::layout::SplitDir::Vertical),
@@ -6230,7 +6230,7 @@ fn builtin_commands() -> Vec<Command> {
     // GitHub commands moved to the standalone mnml-forge-github
     // binary in 2026-06.
     // GitLab + Azure DevOps commands moved to their mnml-forge-*
-    // siblings in 2026-06. The cross-host `pr.picker` was removed
+    // integrations in 2026-06. The cross-host `pr.picker` was removed
     // too — no in-core caches to aggregate.
     // `aws.*` commands moved to mnml-aws-codebuild in 2026-06.
     cmds

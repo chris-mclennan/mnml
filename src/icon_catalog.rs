@@ -2,7 +2,7 @@
 //! the `integrations.icon_picker` overlay (#607).
 //!
 //! Not exhaustive (Nerd Fonts ships ~10k glyphs); this is just the
-//! common-case bench so users can find an icon for their sibling
+//! common-case bench so users can find an icon for their integration
 //! integration without leaving mnml. Each entry: `(codepoint_hex,
 //! name, category)`. The picker shows them all, filterable by name
 //! / category — accept copies the literal char + `\u{XXXX}`
@@ -19,14 +19,14 @@
 //! Nerd Font leaves untouched. Reserved blocks:
 //!
 //! - `U+F1B00 – U+F1BFF` — AWS Architecture (256 slots)
-//! - `U+F1C00 – U+F1CFF` — Sibling-shipped icons (SDK feature 2026-07-31)
-//!   Auto-assigned by mnml at startup for any SVG a sibling drops into
+//! - `U+F1C00 – U+F1CFF` — Integration-shipped icons (SDK feature 2026-07-31)
+//!   Auto-assigned by mnml at startup for any SVG a integration drops into
 //!   `~/.config/mnml/glyphs/<id>.svg` via `mnml-bridge`'s
-//!   `install_integration` when `ChipSpec::glyph_svg` is set. Siblings
+//!   `install_integration` when `ChipSpec::glyph_svg` is set. Integrations
 //!   don't hardcode codepoints from this block unless they explicitly
 //!   set `ChipSpec::glyph_codepoint` (usually just for backwards-compat
 //!   with a codepoint mnml core used to bake). See
-//!   `src/app/sibling_glyphs.rs`.
+//!   `src/app/integration_glyphs.rs`.
 //! - `U+F1D00 – U+F1DFF` — Azure (reserved, unused)
 //! - `U+F1E00 – U+F1EFF` — AI tools: Claude Code, Codex, Copilot, Cursor, Aider, etc.
 //! - `U+F1F00 – U+F1FFF` — SaaS integrations: Datadog, PagerDuty, Notion, Linear, …
@@ -124,16 +124,16 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     // truly free (past the end of Material Design Icons at U+F1AF0)
     // so no Nerd Font ever claims these codepoints.
     //
-    // 2026-08-01 — Stage 2 of the sibling-owned icon SDK moved
-    // per-service AWS SVGs into their own `mnml-aws-*` sibling repos
-    // (each sibling pins its old codepoint via `ChipSpec::glyph_codepoint`
+    // 2026-08-01 — Stage 2 of the integration-owned icon SDK moved
+    // per-service AWS SVGs into their own `mnml-aws-*` integration repos
+    // (each integration pins its old codepoint via `ChipSpec::glyph_codepoint`
     // so upgrading users' configs keep rendering). Only amplify + dynamodb
     // entries remain in this picker: only dynamodb (deferred until
     // transition (see `config.rs`), dynamodb is deferred until it moves
     // to `mnml-db`. Migrated codepoints (F1B01-F1B06, F1B08-F1B0B, and
     // their F1B1X color variants) are still valid — mnml discovers each
-    // sibling's SVG on `integrations.refresh` and bakes it at the pinned
-    // codepoint on `integrations.bake_sibling_glyphs`.
+    // integration's SVG on `integrations.refresh` and bakes it at the pinned
+    // codepoint on `integrations.bake_integration_glyphs`.
     IconEntry { codepoint: "F1B07", name: "aws-dynamodb (inverted)", category: "aws" },
     IconEntry { codepoint: "F1B17", name: "aws-dynamodb (color)", category: "aws" },
     IconEntry { codepoint: "F085B", name: "brain", category: "ai" },

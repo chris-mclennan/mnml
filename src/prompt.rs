@@ -1,4 +1,4 @@
-//! The single-line text-input overlay — "type a string, press Enter". A sibling
+//! The single-line text-input overlay — "type a string, press Enter". A integration
 //! of the fuzzy [`Picker`](crate::picker) for the cases where there's no list to
 //! filter, just free text (the commit message, …). `App` owns an `Option<Prompt>`
 //! and maps the accepted text back to an action by [`PromptKind`].
@@ -315,7 +315,7 @@ pub enum PromptKind {
     AiToolConfirm,
     /// Accept ⇒ spawn `<input>` as a Mount pane. Used by the
     /// `mount.open` palette command for developer / testing flows
-    /// while siblings get ported to the Bridge tier-4 protocol.
+    /// while integrations get ported to the Bridge tier-4 protocol.
     MountBinary,
     /// Accept ⇒ fire an ECS cloud run for the typed ticket
     /// (validated against `[jira] ticket_prefix`). Default flow
@@ -324,10 +324,10 @@ pub enum PromptKind {
     /// configured.
     CloudRunTicket,
     /// Accept ⇒ if the input starts with `y`, call
-    /// `App::install_sibling` for the family id captured in
+    /// `App::install_integration` for the family id captured in
     /// `App::pending_install_family_id`. Used by the "X not
     /// installed — install? y/n" prompt.
-    SiblingInstallConfirm,
+    IntegrationInstallConfirm,
     /// Accept ⇒ actually run `remove_integration_by_id` on the
     /// integration id stashed in `App::pending_integration_remove_id`.
     /// Two-button confirm dialog — user reported bumping the

@@ -547,7 +547,7 @@ fn visible_integration_indices(app: &App) -> Vec<usize> {
             if !ic.enabled {
                 return None;
             }
-            match crate::integration_detect::sibling_binary_for_command(&ic.command) {
+            match crate::integration_detect::integration_binary_for_command(&ic.command) {
                 None => Some(i), // built-in palette command — always available
                 Some(bin) if crate::integration_detect::is_binary_installed(bin) => Some(i),
                 Some(_) => None,

@@ -1398,7 +1398,7 @@ fn collect_codex_rows(pids: &[(String, u32, String)]) -> Vec<AgentRow> {
     collect_codex_rows_with_max_age(pids, Some(7 * 24 * 3600))
 }
 
-/// AgeFilter-aware sibling of `collect_codex_rows` — same rationale
+/// AgeFilter-aware integration of `collect_codex_rows` — same rationale
 /// as `collect_rows_with_max_age`. claude-agents SEV-2 2026-07-11.
 fn collect_codex_rows_with_max_age(
     pids: &[(String, u32, String)],

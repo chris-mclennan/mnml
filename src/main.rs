@@ -259,7 +259,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     }
     // Materialise the resolved active theme (even the default) to
     // `~/.config/mnml/current-theme.toml` so the family — mixr, the
-    // `mnml-*` siblings — can follow mnml's colours from one source of truth.
+    // `mnml-*` integrations — can follow mnml's colours from one source of truth.
     mnml::ui::theme::write_current(&mnml::ui::theme::cur());
 
     let mut app = match App::new(args.workspace, config) {
@@ -476,7 +476,7 @@ fn chain_subcommand(argv: Vec<String>) -> ExitCode {
     };
     // api-workflow SEV-2 2026-07-11: walk up from the chain file's
     // directory to find a `.mnml/` marker (same rationale as
-    // `do_run` in the sibling `run` command). Without this,
+    // `do_run` in the integration `run` command). Without this,
     // `mnml chain run .mnml/chains/oauth.chain.json` from the
     // project root defaulted the workspace to `.mnml/chains/` and
     // couldn't find `auth/login.curl` (which resolves against

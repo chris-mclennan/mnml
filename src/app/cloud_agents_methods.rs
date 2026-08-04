@@ -15,7 +15,7 @@ impl App {
     /// environment in the Console and exported
     /// `ANTHROPIC_ENVIRONMENT_KEY` + `ANTHROPIC_ENVIRONMENT_ID`.
     /// Detects missing `ant` binary and routes through the
-    /// `prompt_install_sibling` flow with a manual install hint
+    /// `prompt_install_integration` flow with a manual install hint
     /// in the toast.
     pub fn spawn_managed_agents_worker(&mut self) {
         if !binary_on_path("ant") {

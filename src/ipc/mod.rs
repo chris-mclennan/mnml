@@ -1157,8 +1157,8 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
         }
         IpcCommand::DumpRects => json_event(&[("event", "dump_rects")]),
         IpcCommand::InstallSibling { id } => {
-            app.install_sibling(id);
-            json_event(&[("event", "install_sibling"), ("id", id)])
+            app.install_integration(id);
+            json_event(&[("event", "install_integration"), ("id", id)])
         }
         IpcCommand::Quit => {
             // Scripts/E2E know what they're doing — force, bypassing the dirty guard.
