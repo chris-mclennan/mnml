@@ -3062,13 +3062,31 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .filter(|ic| ic.enabled)
         .count();
-    let marketplace_count = app
+    // Marketplace tab renders TWO groups: (a) installed-but-not-
+    // enabled chips at the top, (b) fetched marketplace entries
+    // below (dedup'd against installed ids). Counter should reflect
+    // both — otherwise the number reads as wrong when a user sees
+    // more rows than the label suggests. User report 2026-08-03.
+    let installed_ids_lc: std::collections::HashSet<String> = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .map(|i| i.id.clone())
+        .collect();
+    let disabled_chip_count = app
         .config
         .ui
         .integration_icons
         .iter()
         .filter(|ic| !ic.enabled)
         .count();
+    let unique_marketplace_entries = app
+        .marketplace_entries
+        .iter()
+        .filter(|e| !installed_ids_lc.contains(&e.id))
+        .count();
+    let marketplace_count = disabled_chip_count + unique_marketplace_entries;
     let installed_label = format!(" Installed ({installed_count}) ");
     let marketplace_label = format!(" Marketplace ({marketplace_count}) ");
     let installed_w = installed_label.chars().count() as u16;
