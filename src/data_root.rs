@@ -85,10 +85,32 @@ pub fn data_root() -> PathBuf {
     {
         return p;
     }
+    // XDG path IF it's the one the user actually uses. When XDG is
+    // set but empty on disk AND the historical HOME location has
+    // state, prefer the HOME path to avoid stranding existing users
+    // who suddenly export XDG_CONFIG_HOME. Once they migrate their
+    // state to the XDG location (or delete the HOME one), the XDG
+    // path wins automatically.
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
         && !xdg.is_empty()
     {
-        return PathBuf::from(xdg).join("mnml");
+        let xdg_path = PathBuf::from(&xdg).join("mnml");
+        // If the XDG path has any content, use it — user is on the
+        // XDG layout.
+        if xdg_path.join("config.toml").exists() || xdg_path.join("integrations").is_dir() {
+            return xdg_path;
+        }
+        // XDG path is empty. Check the HOME path — if it has state,
+        // use it (backwards compat).
+        if let Some(home) = std::env::var_os("HOME") {
+            let home_path = PathBuf::from(&home).join(".config").join("mnml");
+            if home_path.join("config.toml").exists() || home_path.join("integrations").is_dir() {
+                return home_path;
+            }
+        }
+        // Both empty — new install. Use XDG (respects the user's
+        // stated preference by having XDG set at all).
+        return xdg_path;
     }
     if let Some(home) = std::env::var_os("HOME") {
         return PathBuf::from(home).join(".config").join("mnml");
