@@ -396,6 +396,26 @@ impl App {
         // mechanism instead — uninstall deletes the manifest (step 1
         // above), and mnml core's config.rs filter drops surviving
         // `[[ui.integration_icon]]` blocks for retired ids at load.
+        //
+        // 2026-08-04 (user report) — also strip the id from the
+        // activity-bar pinned list so an uninstalled chip doesn't
+        // leave a dead entry in `activity_bar_pinned_integrations`.
+        // Silent no-op when the id wasn't pinned. Persist directly
+        // via `persist_activity_bar_pinned_integrations` since it
+        // only rewrites the one key (unlike the retired
+        // persist_integration_icons which rewrote whole blocks).
+        let pin_before = self.config.ui.activity_bar_pinned_integrations.len();
+        self.config
+            .ui
+            .activity_bar_pinned_integrations
+            .retain(|s| s != id);
+        if self.config.ui.activity_bar_pinned_integrations.len() != pin_before
+            && let Err(e) = persist_activity_bar_pinned_integrations(
+                &self.config.ui.activity_bar_pinned_integrations,
+            )
+        {
+            self.toast(format!("(pinned-list persist failed: {e})"));
+        }
     }
 
     /// Close the edit panel without saving. Esc binding inside the panel.
