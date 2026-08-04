@@ -48,18 +48,27 @@ struct AssignmentFile {
     entries: Vec<Assignment>,
 }
 
-/// Path to `~/.config/mnml/glyphs/`. `None` if `$HOME` is unset.
+/// Directory holding sibling-shipped SVGs. Still read by discover()
+/// for the current-generation `install_integration` copy-based flow;
+/// slated for removal in the bake-on-install redesign (mnml-bridge
+/// 0.5) which drops the disk SVGs entirely.
 fn sibling_glyphs_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("mnml")
-            .join("glyphs"),
-    )
+    Some(crate::data_root::data_root().join("glyphs"))
 }
 
+/// Path to `~/.config/mnml/sibling-glyphs.toml` (flat, top-level).
+/// 2026-08-04 — moved up out of `glyphs/` since the plan is to
+/// delete the whole `glyphs/` dir once the bake-on-install
+/// redesign lands. Keeping the id→codepoint map at the parent
+/// avoids an orphan directory holding a single TOML file.
 fn assignments_path() -> Option<PathBuf> {
+    Some(crate::data_root::data_root().join("sibling-glyphs.toml"))
+}
+
+/// Old location (pre-2026-08-04). If the file exists here but not
+/// at the new top-level path, we migrate on first load. Only
+/// consulted by `load_assignments()`.
+fn legacy_assignments_path() -> Option<PathBuf> {
     Some(sibling_glyphs_dir()?.join("assignments.toml"))
 }
 
@@ -67,6 +76,23 @@ fn load_assignments() -> AssignmentFile {
     let Some(p) = assignments_path() else {
         return AssignmentFile::default();
     };
+    // Migration: silently promote the pre-2026-08-04 location.
+    if !p.exists()
+        && let Some(legacy) = legacy_assignments_path()
+        && legacy.exists()
+    {
+        if let Some(parent) = p.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Prefer a rename (atomic on same fs); fall back to
+        // copy+remove if rename fails for any reason.
+        if std::fs::rename(&legacy, &p).is_err()
+            && let Ok(text) = std::fs::read_to_string(&legacy)
+        {
+            let _ = std::fs::write(&p, &text);
+            let _ = std::fs::remove_file(&legacy);
+        }
+    }
     let Ok(text) = std::fs::read_to_string(&p) else {
         return AssignmentFile::default();
     };
