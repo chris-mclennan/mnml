@@ -277,6 +277,15 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // installs that have never had legacy blocks (which is most of
     // them after the 2026-08-01 flip). Toasts on non-zero migrate
     // count so users see the change.
+    // 2026-08-04 — one-shot cleanup for retired-id manifests left
+    // behind by the buggy pre-c7d781b7 migration. Silent unless
+    // it actually finds files (rare).
+    let cleaned = mnml::app::discovery::cleanup_retired_id_manifests();
+    if cleaned > 0 {
+        app.toast(format!(
+            "cleaned up {cleaned} retired-integration manifest file(s) (slack/bitbucket/etc.)"
+        ));
+    }
     match mnml::app::discovery::migrate_legacy_integration_icon_blocks() {
         Ok((0, _)) => {}
         Ok((n, warns)) => {

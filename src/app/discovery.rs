@@ -1166,6 +1166,35 @@ fn toml_str(s: &str) -> String {
 /// blocks (0 when idempotent no-op) plus a Vec of anything that
 /// could not be migrated (unrecognized id shape, override write
 /// error). Both surface via startup toast when non-empty.
+/// 2026-08-04 — one-shot cleanup for retired-id manifest files that
+/// the buggy pre-c7d781b7 migration wrote to disk before the
+/// retired-id filter existed. Deletes any `<retired>.toml` +
+/// `<retired>.override.toml` in the integrations dir. Idempotent
+/// — a fresh install with no such files is a no-op.
+///
+/// The buggy path: legacy `[[ui.integration_icon]] id="slack"
+/// enabled=false` block → `write_override_toml` called with
+/// no base → promoted to `write_authored_manifest_toml` → `slack.toml`
+/// written with a dead `slack.open` command. Post-fix (c7d781b7) the
+/// migration filters these ids out before promotion, but the files
+/// created by the old buggy run stayed on disk and kept re-loading
+/// the chip on every launch. User report 2026-08-04: "why slack keep
+/// com ing back".
+pub fn cleanup_retired_id_manifests() -> usize {
+    let retired_ids = ["bitbucket", "linear", "gitlab", "cypress", "slack"];
+    let dir = crate::data_root::data_root().join("integrations");
+    let mut cleaned = 0usize;
+    for id in retired_ids {
+        for suffix in ["toml", "override.toml"] {
+            let p = dir.join(format!("{id}.{suffix}"));
+            if p.exists() && std::fs::remove_file(&p).is_ok() {
+                cleaned += 1;
+            }
+        }
+    }
+    cleaned
+}
+
 pub fn migrate_legacy_integration_icon_blocks() -> Result<(usize, Vec<String>), String> {
     let cfg_path = crate::config::user_config_path()
         .ok_or_else(|| "no user config path resolvable".to_string())?;
