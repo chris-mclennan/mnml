@@ -620,23 +620,14 @@ pub struct BuiltinGlyph {
 /// via `ChipSpec::glyph_svg + glyph_codepoint`. Only `dynamodb`
 /// (deferred, will migrate to `mnml-db`) still lives in mnml core.
 pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
-    BuiltinGlyph {
-        codepoint: 0xF1B07,
-        name: "aws-dynamodb-inv",
-        svg_relpath: "assets/glyphs/aws/dynamodb.svg",
-        width_frac: 1.25,
-        height_frac: 0.80,
-        center_frac: 0.36,
-        center_x_frac: 0.5,
-    },
-    // AI range (F1E00-F1EFF). 2026-07-19 — user report: the
-    // JBM-NF-patched F8B0/F8B1 glyphs render visibly higher than
-    // adjacent codicons and can't be re-baked without messing with
-    // the user's Nerd Font. Ship mnml-owned copies in
-    // `MnmlSymbols.ttf` at F1E00 / F1E01 so the glyph builder can
-    // iterate on `center_frac` until the user's happy. Starting
-    // center_frac=0.28 is a guess based on the visual drift; user
-    // tunes down further in the builder if needed.
+    // 2026-08-04 — dropped the AWS (dynamodb) + dev (btop/htop/iftop)
+    // entries. Every one of those is now owned by an integration
+    // (mnml-integrations catalog for btop/htop/iftop, mnml-db for
+    // dynamodb) via `ChipSpec::glyph_svg + glyph_codepoint`.
+    // mnml core keeps only the AI defaults it ships regardless of
+    // installed integrations.
+    //
+    // AI range (F1E00-F1EFF).
     BuiltinGlyph {
         codepoint: 0xF1E00,
         name: "ai-claude-spark",
@@ -653,43 +644,6 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.20,
         height_frac: 0.75,
         center_frac: 0.28,
-        center_x_frac: 0.5,
-    },
-    // DevTool range (F2000-F20FF). 2026-07-19 user request:
-    // "try to get icons from svgs for btop htop and iftop".
-    // Hand-drafted simple geometric SVGs — public domain art
-    // matching each tool's visual language (bars for btop,
-    // process rows for htop, in/out arrows for iftop).
-    BuiltinGlyph {
-        codepoint: 0xF2000,
-        name: "dev-btop",
-        // 2026-07-19 — potrace-traced from the official btop repo
-        // logo (aristocratos/btop/Img/logo.png). Just the leading
-        // "B" glyph, extracted from the 349×98 PNG and vectorized
-        // via `mkbitmap` + `potrace`. Sized to match the AI chip
-        // glyphs' visual weight so it doesn't read as smaller.
-        svg_relpath: "assets/glyphs/dev/btop.svg",
-        width_frac: 1.20,
-        height_frac: 0.75,
-        center_frac: 0.28,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF2001,
-        name: "dev-htop",
-        svg_relpath: "assets/glyphs/dev/htop.svg",
-        width_frac: 1.10,
-        height_frac: 0.75,
-        center_frac: 0.30,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF2002,
-        name: "dev-iftop",
-        svg_relpath: "assets/glyphs/dev/iftop.svg",
-        width_frac: 1.10,
-        height_frac: 0.65,
-        center_frac: 0.30,
         center_x_frac: 0.5,
     },
 ];
@@ -710,18 +664,6 @@ const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
     (
         "assets/glyphs/ai/codex.svg",
         include_bytes!("../assets/glyphs/ai/codex.svg"),
-    ),
-    (
-        "assets/glyphs/dev/btop.svg",
-        include_bytes!("../assets/glyphs/dev/btop.svg"),
-    ),
-    (
-        "assets/glyphs/dev/htop.svg",
-        include_bytes!("../assets/glyphs/dev/htop.svg"),
-    ),
-    (
-        "assets/glyphs/dev/iftop.svg",
-        include_bytes!("../assets/glyphs/dev/iftop.svg"),
     ),
 ];
 
