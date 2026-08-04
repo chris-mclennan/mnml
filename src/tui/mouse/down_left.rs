@@ -1101,6 +1101,22 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.integrations_panel_scroll = 0;
         return;
     }
+    // 2026-08-04 — click the ⟳ chip on the tab row → refresh the
+    // active tab's data source. Marketplace: re-fetch crates.io +
+    // GitHub launcher entries (async, doesn't block the tick).
+    // Installed: re-scan `<ws>/.mnml/integrations/` and
+    // `~/.config/mnml/integrations/` so a manifest just-written by
+    // a sibling `<name> --install` surfaces immediately.
+    if let Some(rect) = app.rects.integrations_tab_refresh
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.focus = crate::focus::Focus::Tree;
+        match app.integrations_panel_tab {
+            crate::app::IntegrationsPanelTab::Marketplace => app.refresh_marketplace(),
+            crate::app::IntegrationsPanelTab::Installed => app.refresh_integration_manifests(),
+        }
+        return;
+    }
     // Integrations filter chip — click to focus filter input.
     // 2026-07-25 — also move `app.focus` back to Tree. Otherwise if
     // the user had an integration pane open (focus == Focus::Pane),

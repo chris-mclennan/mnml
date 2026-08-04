@@ -2123,6 +2123,11 @@ pub struct PaneRects {
     /// chips below the header. Click switches the active tab.
     pub integrations_tab_installed: Option<Rect>,
     pub integrations_tab_marketplace: Option<Rect>,
+    /// 2026-08-04 — small `⟳` chip on the far right of the tab
+    /// row; clicks fire `marketplace.refresh` (on Marketplace tab)
+    /// or `integrations.refresh` (on Installed tab). Absent when
+    /// the panel is too narrow to fit the chip beside both tabs.
+    pub integrations_tab_refresh: Option<Rect>,
     /// 2026-07-09 user request — `+ Add integration` chip at the
     /// bottom of the Integrations panel. Click → sibling install
     /// picker. Prior to this the flow was
@@ -2853,6 +2858,7 @@ impl PaneRects {
         check_opt!(integrations_add_chip);
         check_opt!(integrations_tab_installed);
         check_opt!(integrations_tab_marketplace);
+        check_opt!(integrations_tab_refresh);
         check_opt!(integrations_filter_chip);
         check_opt!(sessions_panel_filter_input);
         check_opt!(glyph_builder_overlay_rect);

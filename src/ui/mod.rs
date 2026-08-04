@@ -3128,6 +3128,36 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.integrations_tab_installed = Some(installed_rect);
     app.rects.integrations_tab_marketplace = Some(marketplace_rect);
 
+    // Refresh affordance — small ⟳ chip on the far right of the tab
+    // row. Clicks fire `marketplace.refresh` when on the Marketplace
+    // tab (re-fetches crates.io + GitHub sources) or
+    // `integrations.refresh` on the Installed tab (re-scans local
+    // manifest dirs). User report 2026-08-04 — the palette commands
+    // existed but there was no visible button, so the panel felt
+    // stale between launches.
+    let refresh_label = " ⟳ ";
+    let refresh_w = refresh_label.chars().count() as u16;
+    if area.width > (installed_w + marketplace_w + refresh_w) {
+        let refresh_rect = Rect {
+            x: area.x + area.width.saturating_sub(refresh_w),
+            y: area.y + 1,
+            width: refresh_w,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(refresh_label).style(
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            refresh_rect,
+        );
+        app.rects.integrations_tab_refresh = Some(refresh_rect);
+    } else {
+        app.rects.integrations_tab_refresh = None;
+    }
+
     // qa-feature 2026-07-01 — filter row directly below the tabs.
     let filter_row = Rect {
         x: area.x,
