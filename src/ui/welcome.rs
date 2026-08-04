@@ -217,18 +217,36 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_widget(Paragraph::new(body).alignment(Alignment::Center), inner);
 
     // Register click rects. The paragraph is center-aligned, so each row's
-    // actual painted width depends on the line content. For click routing we
-    // make the click target full-width (the user clicks anywhere on the row).
+    // actual painted width depends on the line content — compute it from
+    // the source label so the click target hugs the painted text.
+    //
+    // User report 2026-08-04 — clicking in the empty space FAR to the
+    // left of the right-aligned filename opened the file. Full-width
+    // targets are too aggressive here since the pane is wide and the
+    // paths sit in a small central column; the empty gutter reads as
+    // untargetable.
     for (line_idx, path) in recent_rect_starts {
         let row_y = top + line_idx as u16;
         if row_y >= area.y + area.height {
             break;
         }
+        // Recreate the label text used to render the row so the rect
+        // matches the painted extent (leading "  " + rel path).
+        let rel = path
+            .strip_prefix(&app.workspace)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
+        let label_w = ("  ".chars().count() + rel.chars().count()) as u16;
+        // Paragraph::Center rounds `(area.width - line_width) / 2` for
+        // the left inset; mirror that so the click rect lines up
+        // exactly with the painted glyphs.
+        let inset = area.width.saturating_sub(label_w) / 2;
         app.rects.dashboard_rows.push((
             Rect {
-                x: area.x,
+                x: area.x + inset,
                 y: row_y,
-                width: area.width,
+                width: label_w.min(area.width),
                 height: 1,
             },
             path,
