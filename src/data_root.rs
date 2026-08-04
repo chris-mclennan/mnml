@@ -67,11 +67,28 @@ fn is_portable() -> bool {
 /// this process. Never panics — falls back to `./mnml` if HOME is
 /// unset AND no portable marker exists (a broken environment;
 /// safer to use CWD than to bail).
+///
+/// Resolution order:
+/// 1. Portable mode (`<binary>/mnml-data/.opted-in`)
+/// 2. `$XDG_CONFIG_HOME/mnml/` — XDG-conforming installs.
+///    2026-08-04: added because `config::home_config_path` already
+///    consulted XDG but data_root didn't, which split config into
+///    one dir and integrations/glyphs into another when both env
+///    vars were set (sandbox mode set both → the bug). Making
+///    data_root respect XDG means everything lives in one place
+///    regardless of layout.
+/// 3. `$HOME/.config/mnml/` — standard fallback.
+/// 4. `./mnml` — degenerate, no HOME.
 pub fn data_root() -> PathBuf {
     if is_portable()
         && let Some(p) = portable_candidate()
     {
         return p;
+    }
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+        && !xdg.is_empty()
+    {
+        return PathBuf::from(xdg).join("mnml");
     }
     if let Some(home) = std::env::var_os("HOME") {
         return PathBuf::from(home).join(".config").join("mnml");
