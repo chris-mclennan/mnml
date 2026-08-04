@@ -3356,7 +3356,22 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // hint. Left-click on any row → install action.
     if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
         let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
+        // Skip marketplace entries for ids the user already has
+        // installed — those appear in the top section of this same
+        // tab (installed-but-not-enabled chips) and rendering them
+        // twice reads as a bug (user report 2026-08-03: btop
+        // showed up in both places after they clicked [launcher] btop).
+        let installed_ids: std::collections::HashSet<String> = app
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .map(|i| i.id.clone())
+            .collect();
         for (idx, entry) in app.marketplace_entries.iter().enumerate() {
+            if installed_ids.contains(&entry.id) {
+                continue;
+            }
             // Filter by the same query string the icon list uses.
             if !filter_lc_mp.is_empty() {
                 let hay = format!(
