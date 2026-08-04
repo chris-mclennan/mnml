@@ -924,6 +924,18 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
         "codex" => vec!["codex"],
         _ => vec!["claude_code"],
     };
+    // User report 2026-08-04 — Claude Code / Codex chips were
+    // painting in the top cluster even when the integrations
+    // weren't enabled (mnml core defaults them off; the user hasn't
+    // "installed" them yet). Gate on the enabled state — a chip
+    // that isn't ready to run shouldn't clutter the palette bar.
+    ai_kinds.retain(|kind| {
+        app.config
+            .ui
+            .integration_icons
+            .iter()
+            .any(|ic| ic.id.as_str() == *kind && ic.enabled)
+    });
     // Drop AI chips one at a time (from the end, i.e. Codex first
     // in "both" mode) until the total width fits. Terminal + H/V
     // are never dropped — they're the load-bearing part of the

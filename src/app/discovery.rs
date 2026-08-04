@@ -1181,10 +1181,31 @@ fn toml_str(s: &str) -> String {
 /// the chip on every launch. User report 2026-08-04: "why slack keep
 /// com ing back".
 pub fn cleanup_retired_id_manifests() -> usize {
-    let retired_ids = ["bitbucket", "linear", "gitlab", "cypress", "slack"];
+    // Two categories of bogus files the pre-c7d781b7 migration wrote:
+    // 1. Retired ids (bitbucket, linear, gitlab, cypress, slack) —
+    //    always safe to delete; mnml core no longer knows about them.
+    // 2. Built-in ids (browser, claude_code, codex) — the migration
+    //    wrote authored manifests with `label = <id>` and empty chip
+    //    fields, which then shadowed mnml core's proper defaults.
+    //    Deleting lets the built-in defaults ("Claude Code", "Codex",
+    //    proper glyph + color) take over. Any user override state is
+    //    already the default (see the pre-existing filter at
+    //    config.rs:2033) so nothing user-authored gets lost.
+    let bogus_ids = [
+        // retired
+        "bitbucket",
+        "linear",
+        "gitlab",
+        "cypress",
+        "slack",
+        // built-in ids that never should have had authored manifests
+        "browser",
+        "claude_code",
+        "codex",
+    ];
     let dir = crate::data_root::data_root().join("integrations");
     let mut cleaned = 0usize;
-    for id in retired_ids {
+    for id in bogus_ids {
         for suffix in ["toml", "override.toml"] {
             let p = dir.join(format!("{id}.{suffix}"));
             if p.exists() && std::fs::remove_file(&p).is_ok() {
