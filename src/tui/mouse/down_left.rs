@@ -1667,41 +1667,38 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.focus_pane();
         return;
     }
-    // Statusline AI Claude chip → link prompt (unlinked) OR toast
-    // detail + refresh (linked). #876.
+    // Statusline AI Claude chip → toast detail + refresh. #876
+    // (2026-08-05 pivoted: no more OAuth link prompt — source is
+    // now ~/.claude/projects/**/*.jsonl, no auth needed).
     if let Some(r) = app.rects.statusline_ai_claude_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        if crate::ai_usage::read_claude_token().is_none() {
-            app.open_link_claude_token_prompt();
-        } else {
-            let detail = match &app.ai_usage_claude {
-                Some(u) if u.percent > 0 => {
-                    let reset = if u.resets_at > 0 {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        let secs = u.resets_at.saturating_sub(now);
-                        format!(" · resets in {}h{}m", secs / 3600, (secs % 3600) / 60)
-                    } else {
-                        String::new()
-                    };
-                    format!(
-                        "Claude: {}% (5h){} · weekly {}%",
-                        u.percent, reset, u.weekly_percent
-                    )
-                }
-                Some(u) => u
-                    .last_error
-                    .clone()
-                    .unwrap_or_else(|| "Claude: no data yet".to_string()),
-                None => "Claude: fetching…".to_string(),
-            };
-            app.toast(detail);
-            app.ai_usage_last_refresh_at = 0;
-            app.maybe_refresh_ai_usage();
-        }
+        let detail = match &app.ai_usage_claude {
+            Some(u) if u.tokens_5h > 0 => {
+                let reset = if u.resets_at > 0 {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let secs = u.resets_at.saturating_sub(now);
+                    format!(" · resets in {}h{}m", secs / 3600, (secs % 3600) / 60)
+                } else {
+                    String::new()
+                };
+                format!(
+                    "Claude 5h window: {} tok / {} ({}% of cap){}",
+                    u.tokens_5h, u.cap_5h, u.percent, reset
+                )
+            }
+            Some(u) => u
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "Claude: no assistant turns in the last 5h".to_string()),
+            None => "Claude: scanning…".to_string(),
+        };
+        app.toast(detail);
+        app.ai_usage_last_refresh_at = 0;
+        app.maybe_refresh_ai_usage();
         return;
     }
     // Statusline AI Codex chip → toast detail + refresh. #876.
