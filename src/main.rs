@@ -121,10 +121,33 @@ fn maybe_reexec_for_sandbox() {
     // back to CWD (which is often the user's real project dir on a
     // bare `mnml --sandbox` invocation). If they DID pass one, honor
     // their choice.
-    let has_workspace_arg = raw
-        .iter()
-        .skip(1)
-        .any(|a| !a.starts_with('-') && !a.eq_ignore_ascii_case("mnml"));
+    //
+    // Skip both the flag itself AND the value that immediately
+    // follows a value-taking flag (`--input vim` → "vim" is not a
+    // positional). Otherwise `mnml --sandbox --input vim` would
+    // falsely detect "vim" as a workspace and skip the injection.
+    const VALUE_FLAGS: &[&str] = &["--input", "--config", "--show"];
+    let mut has_workspace_arg = false;
+    let mut skip_next = false;
+    for a in raw.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if a.starts_with('-') {
+            if VALUE_FLAGS.contains(&a.as_str()) {
+                skip_next = true;
+            }
+            continue;
+        }
+        // Ignore the binary basename if it somehow appears (shouldn't
+        // in normal argv but harmless).
+        if a.eq_ignore_ascii_case("mnml") {
+            continue;
+        }
+        has_workspace_arg = true;
+        break;
+    }
     let mut child_args: Vec<String> = raw[1..].to_vec();
     if !has_workspace_arg {
         child_args.push(workspace.clone());
