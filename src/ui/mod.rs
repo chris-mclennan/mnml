@@ -3087,8 +3087,29 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         .filter(|e| !installed_ids_lc.contains(&e.id))
         .count();
     let marketplace_count = disabled_chip_count + unique_marketplace_entries;
-    let installed_label = format!(" Installed ({installed_count}) ");
-    let marketplace_label = format!(" Marketplace ({marketplace_count}) ");
+    // vscode-mouse SEV-2 2026-08-05 — was
+    //   `" Installed ({N}) "` + `" Marketplace ({M}) "`
+    // which needs ~32 chars minimum; the activity panel is ~28 wide
+    // so `(M)` on Marketplace got truncated ("Installed (1)
+    // Marketplace│"). Compress: drop the label word when short on
+    // width, keep just the count. `(N) Installed` reads unambiguously
+    // even without both words in the strip.
+    let full_installed = format!(" Installed ({installed_count}) ");
+    let full_marketplace = format!(" Marketplace ({marketplace_count}) ");
+    let compact_installed = format!(" Inst ({installed_count}) ");
+    let compact_marketplace = format!(" Mkt ({marketplace_count}) ");
+    let full_total = full_installed.chars().count() + full_marketplace.chars().count();
+    let use_compact = (full_total as u16) > area.width;
+    let installed_label = if use_compact {
+        compact_installed
+    } else {
+        full_installed
+    };
+    let marketplace_label = if use_compact {
+        compact_marketplace
+    } else {
+        full_marketplace
+    };
     let installed_w = installed_label.chars().count() as u16;
     let marketplace_w = marketplace_label.chars().count() as u16;
     let installed_rect = Rect {
