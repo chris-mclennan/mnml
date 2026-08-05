@@ -265,6 +265,13 @@ pub enum HoverChip {
     /// Stress meter — 4-block bar that fills as p95 frame time
     /// climbs. Tooltip shows the actual numbers. 2026-07-11.
     StatuslineStress,
+    /// Statusline AI Claude quota chip. Hovering it renders the
+    /// full `:ai.usage` panel as a rich tooltip; leaving the chip
+    /// dismisses it. Click still pins it open (Esc dismisses).
+    StatuslineAiClaude,
+    /// Statusline AI Codex activity chip. Not yet wired to an
+    /// overlay — click still just toasts detail.
+    StatuslineAiCodex,
     /// Mirror stress meter in the top-right cluster. Same tooltip
     /// content; kept as a separate variant so `hover_chip_at` can
     /// route each rect independently. 2026-07-12.

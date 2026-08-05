@@ -404,6 +404,16 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::StatuslineWrap);
     }
+    if let Some(r) = app.rects.statusline_ai_claude_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineAiClaude);
+    }
+    if let Some(r) = app.rects.statusline_ai_codex_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::StatuslineAiCodex);
+    }
     if let Some(r) = app.rects.statusline_autosave_chip
         && contains(r, x, y)
     {

@@ -503,20 +503,40 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .any(|ic| ic.id == "codex" && ic.enabled);
     if claude_enabled {
         let t = theme::cur();
-        // Show the MAX of session-5h and weekly (whichever is more
-        // constraining — matches what Claude Code's `/usage`
-        // emphasizes). Hover tooltip breaks out both.
+        // Config `[ai] claude_meter_mode` picks what the chip shows:
+        //   "session" (default): 5h utilization only — if you run
+        //      out of session you're done for that window, so this
+        //      is the more actionable number for right-now decisions.
+        //   "weekly": 7-day utilization only.
+        //   "both": both, e.g. `24%s · 81%w`.
+        let mode = app
+            .config
+            .ai
+            .as_table()
+            .and_then(|t| t.get("claude_meter_mode"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("session");
         let (text, fg) = match &app.ai_usage_claude {
             Some(u) if u.percent > 0 || u.weekly_percent > 0 => {
-                let shown = u.percent.max(u.weekly_percent);
-                let color = if shown >= 85 {
+                let (label, tier_pct) = match mode {
+                    "weekly" => (
+                        format!(" \u{F1E00} {}%w ", u.weekly_percent),
+                        u.weekly_percent,
+                    ),
+                    "both" => (
+                        format!(" \u{F1E00} {}%s·{}%w ", u.percent, u.weekly_percent),
+                        u.percent.max(u.weekly_percent),
+                    ),
+                    _ => (format!(" \u{F1E00} {}% ", u.percent), u.percent),
+                };
+                let color = if tier_pct >= 85 {
                     t.red
-                } else if shown >= 60 {
+                } else if tier_pct >= 60 {
                     t.yellow
                 } else {
                     t.green
                 };
-                (format!(" \u{F1E00} {}% ", shown), color)
+                (label, color)
             }
             Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
             None => (" \u{F1E00} … ".to_string(), t.comment),

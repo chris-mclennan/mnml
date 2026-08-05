@@ -18,21 +18,28 @@ use crate::ui::theme;
 const BAR_WIDTH: u16 = 60;
 
 pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
-    if !app.show_ai_usage {
+    // Two paths: pinned (`:ai.usage` toggled) or hovering the
+    // statusline chip. Hover state is transient — moving the mouse
+    // off the chip clears app.hover_chip which un-renders us next
+    // frame. Pinned persists until Esc / `:ai.usage` again.
+    let hovering = matches!(
+        app.hover_chip,
+        Some((crate::HoverChip::StatuslineAiClaude, _))
+    );
+    if !app.show_ai_usage && !hovering {
         return;
     }
     let t = theme::cur();
     let usage = app.ai_usage_claude.clone().unwrap_or_default();
-    let mut rows: Vec<Line<'static>> = Vec::new();
-
-    // Header for the panel
-    rows.push(Line::from(Span::styled(
-        " Claude usage · Esc to dismiss ".to_string(),
-        Style::default()
-            .fg(t.comment)
-            .add_modifier(Modifier::ITALIC),
-    )));
-    rows.push(Line::from(""));
+    let mut rows: Vec<Line<'static>> = vec![
+        Line::from(Span::styled(
+            " Claude usage · Esc to dismiss ".to_string(),
+            Style::default()
+                .fg(t.comment)
+                .add_modifier(Modifier::ITALIC),
+        )),
+        Line::from(""),
+    ];
 
     // Session section
     rows.push(Line::from(Span::styled(
@@ -105,9 +112,11 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     frame.render_widget(Paragraph::new(rows).block(block), area);
 }
 
-/// Progress bar row — `[filled..............][empty........] NN% used`.
-/// Uses `█`/`░` because they map cleanly to background-colored blocks
-/// in any font. Color: green <60%, yellow 60-85%, red 85%+.
+/// Progress bar row — full-width filled/empty frame + `N% used`
+/// suffix. Color: green <60%, yellow 60-85%, red 85%+. The empty
+/// portion uses a solid mid-tone background so the FRAME is always
+/// visible even at 0% (user report 2026-08-05: 0% Fable rendered
+/// as "nothing there").
 fn bar_row(percent: u16, t: &crate::ui::theme::Theme) -> Line<'static> {
     let clamped = percent.min(100);
     let filled_w = ((BAR_WIDTH as u32) * (clamped as u32) / 100) as u16;
@@ -119,11 +128,13 @@ fn bar_row(percent: u16, t: &crate::ui::theme::Theme) -> Line<'static> {
     } else {
         t.purple
     };
-    let filled: String = std::iter::repeat_n('█', filled_w as usize).collect();
-    let empty: String = std::iter::repeat_n('░', empty_w as usize).collect();
+    // Filled: solid background block. Empty: spaces on a slightly
+    // darker background so the whole bar reads as one framed rect.
+    let filled: String = " ".repeat(filled_w as usize);
+    let empty: String = " ".repeat(empty_w as usize);
     Line::from(vec![
-        Span::styled(filled, Style::default().fg(color)),
-        Span::styled(empty, Style::default().fg(t.bg_darker)),
+        Span::styled(filled, Style::default().bg(color)),
+        Span::styled(empty, Style::default().bg(t.bg2)),
         Span::styled(
             format!(" {}% used", percent),
             Style::default().fg(t.fg).add_modifier(Modifier::BOLD),

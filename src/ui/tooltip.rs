@@ -192,6 +192,18 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
             "click: toggle word wrap".into(),
             None,
         )),
+        HoverChip::StatuslineAiClaude => {
+            // Hover already renders the full overlay via
+            // ai_usage_overlay::draw when this HoverChip is
+            // active. Return None so the generic tooltip box
+            // doesn't ALSO fire — that would double-render.
+            None
+        }
+        HoverChip::StatuslineAiCodex => Some((
+            app.rects.statusline_ai_codex_chip?,
+            "click: refresh + toast Codex tokens today".into(),
+            None,
+        )),
         HoverChip::StatuslineAutosave => Some((
             app.rects.statusline_autosave_chip?,
             "click: show autosave config".into(),
