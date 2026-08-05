@@ -7131,12 +7131,7 @@ impl App {
         };
         self.marketplace_entries = cache.entries;
         self.marketplace_last_fetched = cache.fetched_at;
-        self.marketplace_entries.sort_by(|a, b| {
-            let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
-            let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
-            bp.cmp(&ap)
-                .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
-        });
+        sort_marketplace_entries(&mut self.marketplace_entries);
     }
 
     /// Interactive-startup hook: if the on-disk marketplace cache is
@@ -7228,14 +7223,7 @@ impl App {
             self.marketplace_entries.extend(entries);
         }
         if any {
-            // #849 UI phase — Official first, Community after,
-            // alphabetical by label within each group.
-            self.marketplace_entries.sort_by(|a, b| {
-                let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
-                let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
-                bp.cmp(&ap)
-                    .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
-            });
+            sort_marketplace_entries(&mut self.marketplace_entries);
         }
         for (source_id, e) in errored {
             eprintln!("marketplace: {source_id}: {e}");
@@ -14558,6 +14546,31 @@ fn maybe_show_sudo_tools_hint(app: &mut App) {
         "sudo needed for packet capture · skip the prompt: see docs/tools.md#passwordless",
         ToastLevel::Warn,
     );
+}
+
+/// Marketplace-tab sort order:
+/// 1. Official sources before Community.
+/// 2. Within a provenance, group by kind (Launcher before App) so
+///    the `[launcher]` and `[app]` chip strips stay contiguous
+///    instead of alphabetically interleaving.
+/// 3. Alphabetical (case-insensitive) by label within each group.
+fn sort_marketplace_entries(entries: &mut [crate::marketplace::MarketplaceEntry]) {
+    entries.sort_by(|a, b| {
+        let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
+        let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
+        let ak = kind_sort_key(&a.kind);
+        let bk = kind_sort_key(&b.kind);
+        bp.cmp(&ap)
+            .then_with(|| ak.cmp(&bk))
+            .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+    });
+}
+
+fn kind_sort_key(k: &crate::marketplace::MarketplaceKind) -> u8 {
+    match k {
+        crate::marketplace::MarketplaceKind::Launcher => 0,
+        crate::marketplace::MarketplaceKind::App => 1,
+    }
 }
 
 fn layout_from_saved(saved: &SavedLayout, idx_to_pane: &[Option<PaneId>]) -> Option<Layout> {
