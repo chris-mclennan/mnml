@@ -31,7 +31,7 @@
 #[derive(Debug, Clone)]
 pub struct MenuDef {
     /// Word painted on the chrome row (e.g. `"File"`).
-    pub label: &'static str,
+    pub label: String,
     /// Items in the dropdown, top-to-bottom.
     pub items: Vec<MenuItem>,
 }
@@ -43,12 +43,30 @@ pub enum MenuItem {
     /// `(label, palette_command_id)`. Click / Enter fires the
     /// command id via `crate::command::run` — same as the palette.
     /// The label is what the user sees; the command id is internal.
-    Action {
-        label: &'static str,
-        command_id: &'static str,
-    },
+    Action { label: String, command_id: String },
+    /// Nested dropdown. On mouse click / Enter / Right-arrow, opens
+    /// a submenu panel to the RIGHT of the parent, listing `items`.
+    /// The rendered row shows a trailing `▸` to signal nesting.
+    /// Only one level of nesting is supported — a Submenu inside a
+    /// Submenu is currently not rendered.
+    Submenu { label: String, items: Vec<MenuItem> },
     /// Visual separator. Skipped during keyboard nav.
     Separator,
+}
+
+impl MenuItem {
+    pub fn action(label: impl Into<String>, command_id: impl Into<String>) -> Self {
+        MenuItem::Action {
+            label: label.into(),
+            command_id: command_id.into(),
+        }
+    }
+    pub fn submenu(label: impl Into<String>, items: Vec<MenuItem>) -> Self {
+        MenuItem::Submenu {
+            label: label.into(),
+            items,
+        }
+    }
 }
 
 /// Active menu-bar state. `None` when no menu is open.
@@ -70,6 +88,11 @@ pub struct MenuOpenState {
     /// convention. Cleared on arrow-nav so re-pressing the letter
     /// starts fresh. design-round-4 issue 1 2026-07-14.
     pub last_mnemonic: Option<char>,
+    /// When the currently-highlighted item is a `Submenu` and it's
+    /// been opened (Right / Enter / click), this tracks the item
+    /// index in the child list. `None` when no submenu is open.
+    /// Only one level of nesting is currently supported.
+    pub sub_item_idx: Option<usize>,
 }
 
 impl MenuOpenState {
@@ -79,6 +102,7 @@ impl MenuOpenState {
             item_idx: 0,
             keyboard_opened: true,
             last_mnemonic: None,
+            sub_item_idx: None,
         }
     }
 
@@ -88,6 +112,7 @@ impl MenuOpenState {
             item_idx: usize::MAX,
             keyboard_opened: false,
             last_mnemonic: None,
+            sub_item_idx: None,
         }
     }
 }
@@ -95,10 +120,10 @@ impl MenuOpenState {
 /// The full menu bar — all menus left to right. The leading brand
 /// menu (`\u{e795}  mnml`) sits at the far left like the Apple
 /// menu on macOS.
-pub fn bar() -> Vec<MenuDef> {
+pub fn bar(app: &crate::app::App) -> Vec<MenuDef> {
     vec![
         brand_menu(),
-        file_menu(),
+        file_menu(app),
         edit_menu(),
         selection_menu(),
         view_menu(),
@@ -112,302 +137,156 @@ pub fn bar() -> Vec<MenuDef> {
 
 fn brand_menu() -> MenuDef {
     MenuDef {
-        // `\u{e795}` brand glyph + program name, macOS-style:
-        // single combined menu word at the far-left, opens the
-        // "app" menu (About / Settings / Updates / Quit). The
-        // first char isn't an Alt accelerator letter, so Alt+M
-        // is reserved for the user; the brand menu opens only
-        // via mouse click or arrow-left from File.
-        label: "❯_  mnml",
+        label: "❯_  mnml".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "About mnml…",
-                command_id: "view.about",
-            },
-            MenuItem::Action {
-                label: "Settings…",
-                command_id: "view.settings",
-            },
+            MenuItem::action("About mnml…", "view.about"),
+            MenuItem::action("Settings…", "view.settings"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Quit mnml",
-                command_id: "app.quit",
-            },
+            MenuItem::action("Quit mnml", "app.quit"),
         ],
     }
 }
 
-fn file_menu() -> MenuDef {
+fn file_menu(app: &crate::app::App) -> MenuDef {
+    // Build the Open Recent submenu from the live recent-files list
+    // (capped at 10 for menu sanity). Each entry fires
+    // `file.open_recent_N` — see command.rs registration.
+    let mut recent_items: Vec<MenuItem> = app
+        .recent_files
+        .iter()
+        .take(10)
+        .enumerate()
+        .map(|(i, p)| {
+            let label = p
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| p.to_string_lossy().into_owned());
+            MenuItem::action(label, format!("file.open_recent_{i}"))
+        })
+        .collect();
+    if recent_items.is_empty() {
+        recent_items.push(MenuItem::action("(no recent files)", "noop"));
+    } else {
+        recent_items.push(MenuItem::Separator);
+        recent_items.push(MenuItem::action("Clear recent files", "file.clear_recent"));
+    }
     MenuDef {
-        label: "File",
+        label: "File".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "New file",
-                command_id: "file.new",
-            },
-            MenuItem::Action {
-                // #polish 2026-07-07 (vscode-user SEV-2 #1) — was
-                // wired to view.discovery (click-hint overlay); VS
-                // Code users hit "Open file..." expecting a file
-                // picker. Now routes to picker.files.
-                label: "Open file…",
-                command_id: "picker.files",
-            },
-            MenuItem::Action {
-                label: "Open folder…",
-                command_id: "view.add_workspace",
-            },
-            MenuItem::Action {
-                label: "Open recent file…",
-                command_id: "picker.recent",
-            },
-            MenuItem::Action {
-                // `view.switch_workspace` surfaces the extras-workspace
-                // picker (primary + `[[workspaces]]` entries from
-                // config.toml), NOT a recency-tracked folder-open
-                // history. Label it accurately; a real "recent
-                // folders" list is a follow-up.
-                label: "Switch workspace…",
-                command_id: "view.switch_workspace",
-            },
-            MenuItem::Action {
-                label: "Clear recent files",
-                command_id: "file.clear_recent",
-            },
+            MenuItem::action("New file", "file.new"),
+            MenuItem::action("Open file…", "picker.files"),
+            MenuItem::action("Open folder…", "view.add_workspace"),
+            MenuItem::submenu("Open recent file", recent_items),
+            MenuItem::action("Open recent file (picker)…", "picker.recent"),
+            MenuItem::action("Switch workspace…", "view.switch_workspace"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Save",
-                command_id: "file.save",
-            },
-            MenuItem::Action {
-                label: "Save all",
-                command_id: "file.save_all",
-            },
+            MenuItem::action("Save", "file.save"),
+            MenuItem::action("Save all", "file.save_all"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Close tab",
-                command_id: "buffer.close",
-            },
+            MenuItem::action("Close tab", "buffer.close"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Settings…",
-                command_id: "view.settings",
-            },
-            MenuItem::Action {
-                label: "Quit",
-                command_id: "app.quit",
-            },
+            MenuItem::action("Settings…", "view.settings"),
+            MenuItem::action("Quit", "app.quit"),
         ],
     }
 }
 
 fn edit_menu() -> MenuDef {
     MenuDef {
-        label: "Edit",
+        label: "Edit".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "Find…",
-                command_id: "find.find",
-            },
-            MenuItem::Action {
-                label: "Find next",
-                command_id: "find.next",
-            },
-            MenuItem::Action {
-                label: "Find previous",
-                command_id: "find.prev",
-            },
-            MenuItem::Action {
-                label: "Replace…",
-                command_id: "find.replace",
-            },
+            MenuItem::action("Find…", "find.find"),
+            MenuItem::action("Find next", "find.next"),
+            MenuItem::action("Find previous", "find.prev"),
+            MenuItem::action("Replace…", "find.replace"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Find in files…",
-                command_id: "find.grep",
-            },
-            MenuItem::Action {
-                label: "Replace in files…",
-                command_id: "find.grep_replace",
-            },
+            MenuItem::action("Find in files…", "find.grep"),
+            MenuItem::action("Replace in files…", "find.grep_replace"),
         ],
     }
 }
 
 fn selection_menu() -> MenuDef {
     MenuDef {
-        label: "Selection",
+        label: "Selection".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "Expand selection",
-                command_id: "lsp.selection_expand",
-            },
-            MenuItem::Action {
-                label: "Shrink selection",
-                command_id: "lsp.selection_shrink",
-            },
+            MenuItem::action("Expand selection", "lsp.selection_expand"),
+            MenuItem::action("Shrink selection", "lsp.selection_shrink"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Add cursor above",
-                command_id: "editor.add_cursor_above",
-            },
-            MenuItem::Action {
-                label: "Add cursor below",
-                command_id: "editor.add_cursor_below",
-            },
-            MenuItem::Action {
-                label: "Add cursor at next match",
-                command_id: "editor.add_cursor_at_next_word",
-            },
-            MenuItem::Action {
-                label: "Select all occurrences",
-                command_id: "editor.select_all_occurrences",
-            },
-            MenuItem::Action {
-                label: "Clear extra cursors",
-                command_id: "editor.clear_extra_cursors",
-            },
+            MenuItem::action("Add cursor above", "editor.add_cursor_above"),
+            MenuItem::action("Add cursor below", "editor.add_cursor_below"),
+            MenuItem::action("Add cursor at next match", "editor.add_cursor_at_next_word"),
+            MenuItem::action("Select all occurrences", "editor.select_all_occurrences"),
+            MenuItem::action("Clear extra cursors", "editor.clear_extra_cursors"),
         ],
     }
 }
 
 fn view_menu() -> MenuDef {
     MenuDef {
-        label: "View",
+        label: "View".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "Command palette",
-                command_id: "view.discovery",
-            },
+            MenuItem::action("Command palette", "view.discovery"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Toggle file tree",
-                command_id: "view.toggle_tree",
-            },
-            MenuItem::Action {
-                label: "Toggle right panel",
-                command_id: "view.toggle_right_panel",
-            },
-            MenuItem::Action {
-                label: "Cycle menu bar (always / auto / hidden)",
-                command_id: "view.menu_bar_cycle",
-            },
-            MenuItem::Action {
-                label: "Toggle bufferline",
-                command_id: "view.toggle_bufferline",
-            },
-            MenuItem::Action {
-                label: "Toggle word wrap",
-                command_id: "view.toggle_wrap",
-            },
-            MenuItem::Action {
-                label: "Toggle zen mode",
-                command_id: "view.zen",
-            },
-            MenuItem::Action {
-                label: "Toggle hover-help strip",
-                command_id: "view.toggle_hover_help",
-            },
+            MenuItem::action("Toggle file tree", "view.toggle_tree"),
+            MenuItem::action("Toggle right panel", "view.toggle_right_panel"),
+            MenuItem::action(
+                "Cycle menu bar (always / auto / hidden)",
+                "view.menu_bar_cycle",
+            ),
+            MenuItem::action("Toggle bufferline", "view.toggle_bufferline"),
+            MenuItem::action("Toggle word wrap", "view.toggle_wrap"),
+            MenuItem::action("Toggle zen mode", "view.zen"),
+            MenuItem::action("Toggle hover-help strip", "view.toggle_hover_help"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Commands reference…",
-                command_id: "view.commands_reference",
-            },
+            MenuItem::action("Commands reference…", "view.commands_reference"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Pick theme…",
-                command_id: "theme.pick",
-            },
-            MenuItem::Action {
-                label: "Toggle theme",
-                command_id: "theme.toggle",
-            },
+            MenuItem::action("Pick theme…", "theme.pick"),
+            MenuItem::action("Toggle theme", "theme.toggle"),
         ],
     }
 }
 
 fn go_menu() -> MenuDef {
     MenuDef {
-        label: "Go",
+        label: "Go".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "Go to file…",
-                command_id: "view.discovery",
-            },
-            MenuItem::Action {
-                label: "Go to line…",
-                command_id: "editor.goto_line",
-            },
-            MenuItem::Action {
-                label: "Go to definition",
-                command_id: "lsp.peek_definition",
-            },
+            MenuItem::action("Go to file…", "view.discovery"),
+            MenuItem::action("Go to line…", "editor.goto_line"),
+            MenuItem::action("Go to definition", "lsp.peek_definition"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Previous buffer",
-                command_id: "buffer.prev",
-            },
-            MenuItem::Action {
-                label: "Next buffer",
-                command_id: "buffer.next",
-            },
-            MenuItem::Action {
-                label: "Last buffer",
-                command_id: "buffer.last",
-            },
+            MenuItem::action("Previous buffer", "buffer.prev"),
+            MenuItem::action("Next buffer", "buffer.next"),
+            MenuItem::action("Last buffer", "buffer.last"),
         ],
     }
 }
 
 fn run_menu() -> MenuDef {
     MenuDef {
-        label: "Run",
+        label: "Run".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "Start debugging",
-                command_id: "dap.run",
-            },
-            MenuItem::Action {
-                label: "Toggle breakpoint",
-                command_id: "dap.toggle_breakpoint",
-            },
-            MenuItem::Action {
-                label: "Conditional breakpoint…",
-                command_id: "dap.toggle_breakpoint_conditional",
-            },
+            MenuItem::action("Start debugging", "dap.run"),
+            MenuItem::action("Toggle breakpoint", "dap.toggle_breakpoint"),
+            MenuItem::action(
+                "Conditional breakpoint…",
+                "dap.toggle_breakpoint_conditional",
+            ),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Step in",
-                command_id: "dap.step_in",
-            },
-            MenuItem::Action {
-                label: "Step out",
-                command_id: "dap.step_out",
-            },
-            MenuItem::Action {
-                label: "Step back",
-                command_id: "dap.step_back",
-            },
+            MenuItem::action("Step in", "dap.step_in"),
+            MenuItem::action("Step out", "dap.step_out"),
+            MenuItem::action("Step back", "dap.step_back"),
         ],
     }
 }
 
 fn terminal_menu() -> MenuDef {
     MenuDef {
-        label: "Terminal",
+        label: "Terminal".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "New terminal (split below)",
-                command_id: "term.shell",
-            },
-            MenuItem::Action {
-                label: "Toggle scratch terminal",
-                command_id: "term.scratch_toggle",
-            },
-            MenuItem::Action {
-                label: "Rename terminal",
-                command_id: "term.rename",
-            },
+            MenuItem::action("New terminal (split below)", "term.shell"),
+            MenuItem::action("Toggle scratch terminal", "term.scratch_toggle"),
+            MenuItem::action("Rename terminal", "term.rename"),
         ],
     }
 }
@@ -421,124 +300,58 @@ fn window_menu() -> MenuDef {
     // group by Separator instead. Every action maps to an existing
     // palette command so no new command wiring is needed here.
     MenuDef {
-        label: "Window",
+        label: "Window".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "Reopen closed tab",
-                command_id: "buffer.reopen",
-            },
-            MenuItem::Action {
-                label: "Close other tabs",
-                command_id: "view.close_others",
-            },
-            MenuItem::Action {
-                label: "Pin / unpin tab",
-                command_id: "buffer.pin_toggle",
-            },
+            MenuItem::action("Reopen closed tab", "buffer.reopen"),
+            MenuItem::action("Close other tabs", "view.close_others"),
+            MenuItem::action("Pin / unpin tab", "buffer.pin_toggle"),
             MenuItem::Separator,
             // Split ── side by side / stacked / close / equalize.
-            MenuItem::Action {
-                label: "Split right",
-                command_id: "view.split_right",
-            },
-            MenuItem::Action {
-                label: "Split down",
-                command_id: "view.split_down",
-            },
-            MenuItem::Action {
-                label: "Close split",
-                command_id: "view.close_split",
-            },
-            MenuItem::Action {
-                label: "Equalize splits",
-                command_id: "view.equalize_splits",
-            },
-            MenuItem::Action {
-                label: "Auto-equalize on split / close (toggle)",
-                command_id: "view.toggle_auto_equalize_splits",
-            },
+            MenuItem::action("Split right", "view.split_right"),
+            MenuItem::action("Split down", "view.split_down"),
+            MenuItem::action("Close split", "view.close_split"),
+            MenuItem::action("Equalize splits", "view.equalize_splits"),
+            MenuItem::action(
+                "Auto-equalize on split / close (toggle)",
+                "view.toggle_auto_equalize_splits",
+            ),
             MenuItem::Separator,
             // #856/#857 — reversible layout reshape. Merge collapses
             // the whole split tree into one leaf's tabs; spread lays
             // each tab out into its own split via the auto-tile
             // shape heuristic. Reversible via each other.
-            MenuItem::Action {
-                label: "Merge splits into tabs",
-                command_id: "layout.merge_to_tabs",
-            },
-            MenuItem::Action {
-                label: "Spread tabs into splits",
-                command_id: "layout.spread_to_splits",
-            },
+            MenuItem::action("Merge splits into tabs", "layout.merge_to_tabs"),
+            MenuItem::action("Spread tabs into splits", "layout.spread_to_splits"),
             MenuItem::Separator,
             // Resize the active split.
-            MenuItem::Action {
-                label: "Grow split width",
-                command_id: "view.split_grow_width",
-            },
-            MenuItem::Action {
-                label: "Grow split height",
-                command_id: "view.split_grow_height",
-            },
+            MenuItem::action("Grow split width", "view.split_grow_width"),
+            MenuItem::action("Grow split height", "view.split_grow_height"),
             MenuItem::Separator,
             // Focus a neighbouring split — the "Halves" of macOS.
-            MenuItem::Action {
-                label: "Focus split left",
-                command_id: "view.focus_left",
-            },
-            MenuItem::Action {
-                label: "Focus split right",
-                command_id: "view.focus_right",
-            },
-            MenuItem::Action {
-                label: "Focus split up",
-                command_id: "view.focus_up",
-            },
-            MenuItem::Action {
-                label: "Focus split down",
-                command_id: "view.focus_down",
-            },
+            MenuItem::action("Focus split left", "view.focus_left"),
+            MenuItem::action("Focus split right", "view.focus_right"),
+            MenuItem::action("Focus split up", "view.focus_up"),
+            MenuItem::action("Focus split down", "view.focus_down"),
             MenuItem::Separator,
             // AI layout mode toggle (grid ↔ tabs). Same command
             // the palette-bar AI chip menu fires.
-            MenuItem::Action {
-                label: "AI layout: Grid (splits)",
-                command_id: "view.ai_layout_grid",
-            },
-            MenuItem::Action {
-                label: "AI layout: Tabs (stack in leaf)",
-                command_id: "view.ai_layout_tabs",
-            },
+            MenuItem::action("AI layout: Grid (splits)", "view.ai_layout_grid"),
+            MenuItem::action("AI layout: Tabs (stack in leaf)", "view.ai_layout_tabs"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "Restart mnml",
-                command_id: "app.restart",
-            },
+            MenuItem::action("Restart mnml", "app.restart"),
         ],
     }
 }
 
 fn help_menu() -> MenuDef {
     MenuDef {
-        label: "Help",
+        label: "Help".to_string(),
         items: vec![
-            MenuItem::Action {
-                label: "Welcome",
-                command_id: "view.welcome",
-            },
-            MenuItem::Action {
-                label: "Keybindings & help",
-                command_id: "view.help",
-            },
-            MenuItem::Action {
-                label: "Commands reference…",
-                command_id: "view.commands_reference",
-            },
+            MenuItem::action("Welcome", "view.welcome"),
+            MenuItem::action("Keybindings & help", "view.help"),
+            MenuItem::action("Commands reference…", "view.commands_reference"),
             MenuItem::Separator,
-            MenuItem::Action {
-                label: "About mnml",
-                command_id: "view.about",
-            },
+            MenuItem::action("About mnml", "view.about"),
         ],
     }
 }

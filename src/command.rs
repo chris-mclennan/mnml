@@ -231,6 +231,18 @@ fn build_commands_reference_text(dyn_cmds: &[DynCommand]) -> String {
     out
 }
 
+fn open_recent_by_idx(app: &mut App, idx: usize) {
+    let Some(path) = app.recent_files.get(idx).cloned() else {
+        app.toast(format!("no recent file at #{}", idx + 1));
+        return;
+    };
+    // Reuse the ex-command `:e <path>` dispatch — same code path a
+    // user typing that command would take, so buffer creation +
+    // cursor-restore + editorconfig apply all fire the same way.
+    let ex = format!("e {}", path.display());
+    app.run_ex_command(&ex);
+}
+
 fn builtin_commands() -> Vec<Command> {
     #[allow(unused_mut)]
     let mut cmds = vec![
@@ -2403,6 +2415,87 @@ fn builtin_commands() -> Vec<Command> {
                 app.recent_files.clear();
                 app.toast(format!("cleared {n} recent file(s)"));
             },
+        },
+        // Numeric shims for the File → Open Recent submenu. Each
+        // opens the Nth entry in `app.recent_files` when the submenu
+        // renders. Register 0-9 so the submenu can populate up to 10
+        // rows without any per-render command registration.
+        Command {
+            id: "file.open_recent_0",
+            title: "Open recent file #1",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 0),
+        },
+        Command {
+            id: "file.open_recent_1",
+            title: "Open recent file #2",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 1),
+        },
+        Command {
+            id: "file.open_recent_2",
+            title: "Open recent file #3",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 2),
+        },
+        Command {
+            id: "file.open_recent_3",
+            title: "Open recent file #4",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 3),
+        },
+        Command {
+            id: "file.open_recent_4",
+            title: "Open recent file #5",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 4),
+        },
+        Command {
+            id: "file.open_recent_5",
+            title: "Open recent file #6",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 5),
+        },
+        Command {
+            id: "file.open_recent_6",
+            title: "Open recent file #7",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 6),
+        },
+        Command {
+            id: "file.open_recent_7",
+            title: "Open recent file #8",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 7),
+        },
+        Command {
+            id: "file.open_recent_8",
+            title: "Open recent file #9",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 8),
+        },
+        Command {
+            id: "file.open_recent_9",
+            title: "Open recent file #10",
+            group: "file",
+            keys: &[],
+            run: |app| open_recent_by_idx(app, 9),
+        },
+        Command {
+            id: "noop",
+            title: "(no-op — placeholder for disabled menu items)",
+            group: "file",
+            keys: &[],
+            run: |_| {},
         },
         Command {
             id: "picker.files",

@@ -2191,7 +2191,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     let menu_visible =
         matches!(menu_mode, "always") || (menu_mode == "auto" && app.menu_open.is_some());
     if menu_visible {
-        let menus = crate::menu_bar::bar();
+        let menus = crate::menu_bar::bar(app);
         let mut mx = area.x;
         // mouse-verify #4 follow-up — the prior bg-overpaint fix
         // covered the cluster's exact footprint, but menu words

@@ -1172,7 +1172,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 return None;
             }
             let &(rect, _) = app.rects.menu_bar_words.iter().find(|(_, i)| *i == idx)?;
-            let menus = crate::menu_bar::bar();
+            let menus = crate::menu_bar::bar(app);
             let menu = menus.get(idx)?;
             let label_trim = menu.label.trim();
             // Alt accelerator letter (first ASCII alpha character).

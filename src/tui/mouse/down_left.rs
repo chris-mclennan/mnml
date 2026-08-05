@@ -76,21 +76,49 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // re-rendered yet, the item click would silently activate the
     // element behind the dropdown.
     if let Some(open) = app.menu_open.as_ref().cloned() {
-        // 1. Item hit — fire the palette command + close.
-        if let Some(&(_, item_idx)) = app
+        // 1. Item hit — fire the palette command + close, OR open a
+        // submenu, OR fire a submenu item.
+        if let Some(&(_, encoded_idx)) = app
             .rects
             .menu_bar_items
             .iter()
             .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
         {
-            let menus = crate::menu_bar::bar();
-            if let Some(menu) = menus.get(open.menu_idx)
-                && let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
-                    menu.items.get(item_idx)
-            {
-                let id = *command_id;
-                app.menu_open = None;
-                crate::command::run(id, app);
+            let menus = crate::menu_bar::bar(app);
+            if encoded_idx >= 1000 {
+                // Submenu Action row: encoded as `1000 + parent*100 + sub`.
+                let rest = encoded_idx - 1000;
+                let parent_idx = rest / 100;
+                let sub_idx = rest % 100;
+                if let Some(menu) = menus.get(open.menu_idx)
+                    && let Some(crate::menu_bar::MenuItem::Submenu { items, .. }) =
+                        menu.items.get(parent_idx)
+                    && let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
+                        items.get(sub_idx)
+                {
+                    let id = command_id.clone();
+                    app.menu_open = None;
+                    crate::command::run(&id, app);
+                }
+                return;
+            }
+            if let Some(menu) = menus.get(open.menu_idx) {
+                match menu.items.get(encoded_idx) {
+                    Some(crate::menu_bar::MenuItem::Action { command_id, .. }) => {
+                        let id = command_id.clone();
+                        app.menu_open = None;
+                        crate::command::run(&id, app);
+                    }
+                    Some(crate::menu_bar::MenuItem::Submenu { .. }) => {
+                        // Open (or re-open) the submenu with its first
+                        // action highlighted.
+                        if let Some(state) = app.menu_open.as_mut() {
+                            state.item_idx = encoded_idx;
+                            state.sub_item_idx = Some(0);
+                        }
+                    }
+                    _ => {}
+                }
             }
             return;
         }

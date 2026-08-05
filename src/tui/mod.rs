@@ -438,7 +438,7 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
 /// from `dispatch_key` only when no menu is currently open and the
 /// `[ui] menu_bar` mode isn't `"hidden"`.
 fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
-    let menus = crate::menu_bar::bar();
+    let menus = crate::menu_bar::bar(app);
     // keyboard-round-10 SEV-2 F1 2026-07-14 — the menu bar clips
     // menus that don't fit before the right-side chip cluster (at
     // 120 cols only File/Edit/Selection render). Alt+letter used
@@ -503,7 +503,7 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
 /// Handle a key while a menu dropdown is open. Returns true when the
 /// key was consumed by the menu (caller should stop dispatch).
 fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
-    let menus = crate::menu_bar::bar();
+    let menus = crate::menu_bar::bar(app);
     let Some(open) = app.menu_open.as_ref().cloned() else {
         return false;
     };
@@ -531,6 +531,60 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             return true;
         }
     }
+    // Submenu keyboard handling. If a submenu is open (`sub_item_idx
+    // is Some`), nav is routed into IT instead of the parent menu.
+    // Left closes the submenu (back to parent). Esc closes both.
+    if let Some(sub_idx) = open.sub_item_idx
+        && let Some(crate::menu_bar::MenuItem::Submenu { items, .. }) =
+            menu.items.get(open.item_idx)
+    {
+        match key.code {
+            KeyCode::Esc => {
+                app.menu_open = None;
+                return true;
+            }
+            KeyCode::Left => {
+                // Close just the submenu, stay on the parent row.
+                if let Some(s) = app.menu_open.as_mut() {
+                    s.sub_item_idx = None;
+                }
+                return true;
+            }
+            KeyCode::Up => {
+                let n = items.len();
+                if n > 0 {
+                    let start = (sub_idx + n - 1) % n;
+                    let new_idx = walk_to_action(items, start, false);
+                    if let Some(s) = app.menu_open.as_mut() {
+                        s.sub_item_idx = Some(new_idx);
+                    }
+                }
+                return true;
+            }
+            KeyCode::Down => {
+                let n = items.len();
+                if n > 0 {
+                    let start = (sub_idx + 1) % n;
+                    let new_idx = walk_to_action(items, start, true);
+                    if let Some(s) = app.menu_open.as_mut() {
+                        s.sub_item_idx = Some(new_idx);
+                    }
+                }
+                return true;
+            }
+            KeyCode::Enter | KeyCode::Right => {
+                if let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
+                    items.get(sub_idx)
+                {
+                    let id = command_id.clone();
+                    app.menu_open = None;
+                    crate::command::run(&id, app);
+                }
+                return true;
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Esc => {
             app.menu_open = None;
@@ -549,6 +603,14 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Right => {
+            // Submenu open-on-right when the highlighted parent row
+            // IS a Submenu. Otherwise fall through to next-menu nav.
+            if let Some(crate::menu_bar::MenuItem::Submenu { .. }) = menu.items.get(open.item_idx) {
+                if let Some(s) = app.menu_open.as_mut() {
+                    s.sub_item_idx = Some(0);
+                }
+                return true;
+            }
             let visible: Vec<usize> = app.rects.menu_bar_words.iter().map(|(_, i)| *i).collect();
             if let Some(next) = next_visible_menu(open.menu_idx, &visible, menus.len()) {
                 app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(next));
@@ -596,7 +658,14 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             // nearest Action if item_idx points somewhere invalid
             // (usize::MAX after a mouse open, or a Separator). Prior
             // impl silently swallowed Enter in those cases; users
-            // expected first-item activation.
+            // expected first-item activation. Enter on a Submenu row
+            // OPENS the submenu instead of firing.
+            if let Some(crate::menu_bar::MenuItem::Submenu { .. }) = menu.items.get(open.item_idx) {
+                if let Some(s) = app.menu_open.as_mut() {
+                    s.sub_item_idx = Some(0);
+                }
+                return true;
+            }
             let target = match menu.items.get(open.item_idx) {
                 Some(crate::menu_bar::MenuItem::Action { .. }) => open.item_idx,
                 _ => walk_to_action(&menu.items, 0, true),
@@ -604,9 +673,9 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             if let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
                 menu.items.get(target)
             {
-                let id = *command_id;
+                let id = command_id.clone();
                 app.menu_open = None;
-                crate::command::run(id, app);
+                crate::command::run(&id, app);
             }
             true
         }
