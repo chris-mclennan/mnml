@@ -1676,19 +1676,19 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
             app.open_link_claude_token_prompt();
         } else {
             let detail = match &app.ai_usage_claude {
-                Some(u) if u.percent > 0 => {
+                Some(u) if u.percent > 0 || u.weekly_percent > 0 => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
                     let reset = if u.resets_at > 0 {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
                         let secs = u.resets_at.saturating_sub(now);
-                        format!(" · resets in {}h{}m", secs / 3600, (secs % 3600) / 60)
+                        format!(" · 5h resets in {}h{}m", secs / 3600, (secs % 3600) / 60)
                     } else {
                         String::new()
                     };
                     format!(
-                        "Claude 5h: {}% · weekly {}%{}",
+                        "Claude · session {}% · weekly {}%{}",
                         u.percent, u.weekly_percent, reset
                     )
                 }

@@ -225,78 +225,108 @@ fn redact_bearer(s: &str) -> String {
     out
 }
 
-/// Best-effort JSON parse. The endpoint's schema isn't officially
-/// documented, so we probe several plausible field names + fall back
-/// to zero if a field is missing. If the entire body doesn't look
-/// like JSON, return Err.
+/// Parse the real Anthropic `/api/oauth/usage` response.
+/// Verified shape (2026-08-05):
+///   `{five_hour: {utilization, resets_at (ISO-8601 string), …},
+///     seven_day: {utilization, resets_at, …},
+///     limits: [{kind: "session"|"weekly_all"|…, percent, resets_at, …}], …}`
+/// Both `five_hour` and `seven_day` are optional (older tiers may
+/// omit); the `limits[]` array is the fallback when the top-level
+/// shortcuts are missing.
 fn parse_claude_response(text: &str) -> Result<ClaudeUsage, String> {
     let v: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("parse json: {e}"))?;
-    // Reviewer 2026-08-05 — DFS walk is a wrong-value risk (any
-    // nested field with a matching name silently wins) + a
-    // stack-overflow risk on deep payloads. Prefer KNOWN PATHS
-    // first (targeting the shape we expect), fall back to walk()
-    // only when nothing matched, and cap walk depth.
-    let five_hour = v.get("five_hour").or_else(|| v.get("session"));
-    let weekly = v.get("weekly").or_else(|| v.get("week"));
-    let percent = five_hour
-        .and_then(|x| x.get("percent"))
-        .and_then(|x| x.as_f64())
-        .or_else(|| {
-            v.get("five_hour_percent")
-                .or_else(|| v.get("session_percent"))
-                .and_then(|x| x.as_f64())
-        })
-        .or_else(|| pick_percent_walk(&v, &["five_hour_percent", "session_percent"]))
-        .map(|n| n.round().clamp(0.0, 999.0) as u16)
-        .unwrap_or(0);
-    let weekly_percent = weekly
-        .and_then(|x| x.get("percent"))
-        .and_then(|x| x.as_f64())
-        .or_else(|| {
-            v.get("weekly_percent")
-                .or_else(|| v.get("week_percent"))
-                .and_then(|x| x.as_f64())
-        })
-        .or_else(|| pick_percent_walk(&v, &["weekly_percent", "week_percent"]))
-        .map(|n| n.round().clamp(0.0, 999.0) as u16)
-        .unwrap_or(0);
-    let resets_at = five_hour
-        .and_then(|x| x.get("resets_at").or_else(|| x.get("reset_at")))
-        .and_then(|x| x.as_u64())
-        .or_else(|| {
-            v.get("five_hour_resets_at")
-                .or_else(|| v.get("resets_at"))
-                .and_then(|x| x.as_u64())
-        })
-        .unwrap_or(0);
-    let tokens_5h = five_hour
-        .and_then(|x| x.get("tokens").or_else(|| x.get("total_tokens")))
-        .and_then(|x| x.as_u64())
-        .or_else(|| {
-            v.get("five_hour_tokens")
-                .or_else(|| v.get("session_tokens"))
-                .and_then(|x| x.as_u64())
-        })
-        .unwrap_or(0);
-    let fetched_at = now_unix();
+    let (percent, resets_at) = extract_session(&v);
+    let (weekly_percent, _weekly_resets) = extract_weekly(&v);
     Ok(ClaudeUsage {
         percent,
         weekly_percent,
         resets_at,
-        tokens_5h,
-        fetched_at,
+        tokens_5h: 0, // endpoint doesn't return raw token counts
+        fetched_at: now_unix(),
         last_error: None,
     })
 }
 
-fn pick_percent_walk(v: &serde_json::Value, keys: &[&str]) -> Option<f64> {
-    for &k in keys {
-        if let Some(n) = walk(v, k, 0).and_then(|x| x.as_f64()) {
-            return Some(n);
+/// Pull the 5h/session utilization + reset time. Preferred path:
+/// `five_hour.utilization` + `.resets_at`. Fallback: scan the
+/// `limits[]` array for `kind == "session"`.
+fn extract_session(v: &serde_json::Value) -> (u16, u64) {
+    if let Some(fh) = v.get("five_hour") {
+        let util = fh
+            .get("utilization")
+            .and_then(|x| x.as_f64())
+            .map(|n| n.round().clamp(0.0, 999.0) as u16)
+            .unwrap_or(0);
+        let resets = fh
+            .get("resets_at")
+            .and_then(|x| x.as_str())
+            .and_then(parse_iso8601_secs)
+            .unwrap_or(0);
+        if util > 0 || resets > 0 {
+            return (util, resets);
         }
     }
-    None
+    // Fallback: limits[] with kind "session".
+    if let Some(limits) = v.get("limits").and_then(|x| x.as_array()) {
+        for entry in limits {
+            let kind = entry.get("kind").and_then(|x| x.as_str()).unwrap_or("");
+            if kind == "session" {
+                let pct = entry
+                    .get("percent")
+                    .and_then(|x| x.as_f64())
+                    .map(|n| n.round().clamp(0.0, 999.0) as u16)
+                    .unwrap_or(0);
+                let resets = entry
+                    .get("resets_at")
+                    .and_then(|x| x.as_str())
+                    .and_then(parse_iso8601_secs)
+                    .unwrap_or(0);
+                return (pct, resets);
+            }
+        }
+    }
+    (0, 0)
+}
+
+/// Same pattern for the 7-day/weekly window. Preferred:
+/// `seven_day.utilization`. Fallback: `limits[]` with kind
+/// `weekly_all` (the top-level weekly, not per-model scoped).
+fn extract_weekly(v: &serde_json::Value) -> (u16, u64) {
+    if let Some(sd) = v.get("seven_day") {
+        let util = sd
+            .get("utilization")
+            .and_then(|x| x.as_f64())
+            .map(|n| n.round().clamp(0.0, 999.0) as u16)
+            .unwrap_or(0);
+        let resets = sd
+            .get("resets_at")
+            .and_then(|x| x.as_str())
+            .and_then(parse_iso8601_secs)
+            .unwrap_or(0);
+        if util > 0 || resets > 0 {
+            return (util, resets);
+        }
+    }
+    if let Some(limits) = v.get("limits").and_then(|x| x.as_array()) {
+        for entry in limits {
+            let kind = entry.get("kind").and_then(|x| x.as_str()).unwrap_or("");
+            if kind == "weekly_all" {
+                let pct = entry
+                    .get("percent")
+                    .and_then(|x| x.as_f64())
+                    .map(|n| n.round().clamp(0.0, 999.0) as u16)
+                    .unwrap_or(0);
+                let resets = entry
+                    .get("resets_at")
+                    .and_then(|x| x.as_str())
+                    .and_then(parse_iso8601_secs)
+                    .unwrap_or(0);
+                return (pct, resets);
+            }
+        }
+    }
+    (0, 0)
 }
 
 /// Depth-first search for a key anywhere in the JSON tree, capped
@@ -327,6 +357,69 @@ fn walk<'a>(v: &'a serde_json::Value, key: &str, depth: usize) -> Option<&'a ser
         }
     }
     None
+}
+
+/// Minimal ISO-8601 → Unix seconds parser. Handles the shape
+/// Anthropic's OAuth-usage endpoint writes for `resets_at`:
+/// `2026-08-05T22:50:00.123240+00:00` or `2026-08-05T22:50:00Z`.
+fn parse_iso8601_secs(s: &str) -> Option<u64> {
+    if s.len() < 19 {
+        return None;
+    }
+    let (y, rest) = (s.get(0..4)?.parse::<i64>().ok()?, s.get(5..)?);
+    let (mo, rest) = (rest.get(0..2)?.parse::<u64>().ok()?, rest.get(3..)?);
+    let (d, rest) = (rest.get(0..2)?.parse::<u64>().ok()?, rest.get(3..)?);
+    let (h, rest) = (rest.get(0..2)?.parse::<u64>().ok()?, rest.get(3..)?);
+    let (mi, rest) = (rest.get(0..2)?.parse::<u64>().ok()?, rest.get(3..)?);
+    let sec: u64 = rest.get(0..2)?.parse().ok()?;
+    // Skip optional `.fff…` fractional seconds, then read the tz.
+    let tz_start = rest.get(2..)?;
+    let tz_str = if let Some(dot) = tz_start.strip_prefix('.') {
+        dot.trim_start_matches(|c: char| c.is_ascii_digit())
+    } else {
+        tz_start
+    };
+    let tz_offset_secs: i64 = match tz_str.chars().next() {
+        Some('Z') | Some('z') | None => 0,
+        Some(sign_ch) if sign_ch == '+' || sign_ch == '-' => {
+            let sign: i64 = if sign_ch == '-' { -1 } else { 1 };
+            let body = tz_str.get(1..)?;
+            let (hh, mm) = if let Some((h_str, m_str)) = body.split_once(':') {
+                (h_str.parse::<i64>().ok()?, m_str.parse::<i64>().ok()?)
+            } else if body.len() >= 4 {
+                (
+                    body.get(0..2)?.parse::<i64>().ok()?,
+                    body.get(2..4)?.parse::<i64>().ok()?,
+                )
+            } else {
+                return None;
+            };
+            sign * (hh * 3600 + mm * 60)
+        }
+        _ => 0,
+    };
+    let year_days = |y: i64| -> i64 {
+        let y = y - 1;
+        (y * 365) + (y / 4) - (y / 100) + (y / 400)
+    };
+    let is_leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let month_days = if is_leap {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut d_of_year: i64 = (d as i64) - 1;
+    for m_idx in 0..(mo as usize).saturating_sub(1) {
+        d_of_year += month_days.get(m_idx).copied().unwrap_or(0) as i64;
+    }
+    let days_since_epoch = year_days(y) - year_days(1970) + d_of_year;
+    let local_secs = days_since_epoch * 86400 + (h as i64) * 3600 + (mi as i64) * 60 + sec as i64;
+    let utc_secs = local_secs - tz_offset_secs;
+    if utc_secs < 0 {
+        None
+    } else {
+        Some(utc_secs as u64)
+    }
 }
 
 /// Spawn a worker to scan `~/.codex/sessions/*.jsonl` for today's

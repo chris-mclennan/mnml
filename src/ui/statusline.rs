@@ -503,16 +503,20 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .any(|ic| ic.id == "codex" && ic.enabled);
     if claude_enabled {
         let t = theme::cur();
+        // Show the MAX of session-5h and weekly (whichever is more
+        // constraining — matches what Claude Code's `/usage`
+        // emphasizes). Hover tooltip breaks out both.
         let (text, fg) = match &app.ai_usage_claude {
-            Some(u) if u.percent > 0 => {
-                let color = if u.percent >= 85 {
+            Some(u) if u.percent > 0 || u.weekly_percent > 0 => {
+                let shown = u.percent.max(u.weekly_percent);
+                let color = if shown >= 85 {
                     t.red
-                } else if u.percent >= 60 {
+                } else if shown >= 60 {
                     t.yellow
                 } else {
                     t.green
                 };
-                (format!(" \u{F1E00} {}% ", u.percent), color)
+                (format!(" \u{F1E00} {}% ", shown), color)
             }
             Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
             None => (" \u{F1E00} … ".to_string(), t.comment),
