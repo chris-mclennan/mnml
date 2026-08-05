@@ -412,7 +412,14 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
         }
     };
     // Re-open last session's buffers (no-op when [session] restore = false).
-    app.try_restore_session();
+    // Sandbox mode also skips restore — the whole point is a fresh
+    // "brand-new user" look, so restoring the user's real dock
+    // widgets / open tabs / layout from a session.json would defeat
+    // that. User report 2026-08-05: sandbox showed Note 1 / Note 2
+    // from the real ~/Projects/mnml/.mnml/session.json.
+    if !args.sandbox {
+        app.try_restore_session();
+    }
     // #851 phase 3 — one-shot aggressive migration of any legacy
     // `[[ui.integration_icon]]` blocks in ~/.config/mnml/config.toml
     // into `<id>.override.toml` sidecars. Idempotent — no-op on
