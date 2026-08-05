@@ -697,6 +697,46 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             _ => return,
         }
     }
+    // Ctrl+K inside the LinkClaudeToken prompt = "auto-fetch from
+    // macOS Keychain via `security find-generic-password`". Puts the
+    // whole `claudeAiOauth` JSON in the prompt input so the user can
+    // just hit Enter. Falls back to a toast on failure.
+    if matches!(p.kind, crate::prompt::PromptKind::LinkClaudeToken)
+        && ctrl
+        && matches!(key.code, KeyCode::Char('k' | 'K'))
+    {
+        match std::process::Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+            ])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if raw.is_empty() {
+                    app.toast("keychain returned empty — is Claude Code auth'd?".to_string());
+                } else if let Some(prompt) = app.prompt.as_mut() {
+                    prompt.input = raw;
+                    prompt.cursor = prompt.input.chars().count();
+                    app.toast("fetched from Keychain — press Enter to link".to_string());
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                app.toast(format!(
+                    "keychain lookup failed: {}",
+                    stderr.trim().lines().next().unwrap_or("unknown error")
+                ));
+            }
+            Err(e) => {
+                app.toast(format!("could not run `security`: {e}"));
+            }
+        }
+        return;
+    }
     let was_find = matches!(p.kind, crate::prompt::PromptKind::Find);
     // Ctrl+H inside the Find prompt = "accept find + open replace" —
     // a single fluid chord instead of Ctrl+F, type, Enter, Ctrl+H, type.

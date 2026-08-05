@@ -552,6 +552,7 @@ fn placeholder_for(kind: &crate::prompt::PromptKind) -> Option<&'static str> {
     use crate::prompt::PromptKind::*;
     match kind {
         BrowserUrl => Some("https://example.com"),
+        LinkClaudeToken => Some("Ctrl+K: auto-fetch from macOS Keychain"),
         _ => None,
     }
 }
