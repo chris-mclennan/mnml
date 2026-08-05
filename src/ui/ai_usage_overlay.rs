@@ -92,7 +92,9 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
     )));
 
     let title = " Usage ";
-    let inner_w = (BAR_WIDTH as usize) + 12;
+    // nvchad-user r2 (2026-08-05) — was `+ 12`, footer overflowed
+    // by 4 chars. Widened to `+ 16` so the raw-JSON hint fits.
+    let inner_w = (BAR_WIDTH as usize) + 16;
     let w = (inner_w as u16 + 4).min(screen.width);
     let h = (rows.len() as u16 + 2).min(screen.height);
     let x = screen

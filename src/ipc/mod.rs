@@ -339,7 +339,18 @@ pub struct Ipc {
     /// `abort()` remain uncatchable by design (no Rust-runnable
     /// code can race the kernel).
     exit_event_written: std::sync::atomic::AtomicBool,
+    /// Last (width, height) passed through `dump_screen_status`.
+    /// Used by the Snapshot IPC handler's scratch paint so its
+    /// backend matches the outer loop's dimensions. `None` until
+    /// the first real dump.
+    last_backend_size: std::cell::Cell<Option<(u16, u16)>>,
 }
+
+/// Fallback dimensions when the Snapshot IPC handler fires before
+/// the outer loop has done its first paint (edge case — normally
+/// the first paint runs before drain_commands).
+pub const DEFAULT_HEADLESS_W: u16 = 200;
+pub const DEFAULT_HEADLESS_H: u16 = 60;
 
 impl Drop for Ipc {
     fn drop(&mut self) {
@@ -394,6 +405,7 @@ impl Ipc {
             events_path,
             cmd_offset: 0,
             exit_event_written: std::sync::atomic::AtomicBool::new(false),
+            last_backend_size: std::cell::Cell::new(None),
         };
         if !pre_queued.is_empty() {
             let lines = pre_queued.lines().count();
@@ -1204,6 +1216,11 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
 /// after rendering — headless reads `TestBackend::buffer()`, the terminal loop
 /// reads `Terminal::current_buffer_mut()`.
 pub fn dump_screen_status(ipc: &Ipc, screen: &ratatui::buffer::Buffer, app: &App) {
+    // Record the buffer size so the Snapshot IPC handler's scratch
+    // paint can match. Interior mutability via Cell — Ipc is passed
+    // as &Ipc from the outer loop's paint path.
+    let area = screen.area();
+    ipc.last_backend_size.set(Some((area.width, area.height)));
     ipc.write_screen(&screen_to_text(screen));
     ipc.write_status(&status_json(app));
     // Always emit `rects.json` alongside the screen so headless
@@ -1289,6 +1306,15 @@ pub fn rects_dump_json(app: &App) -> String {
     );
     one!("statusline_lncol_chip", app.rects.statusline_lncol_chip);
     one!("statusline_test_chip", app.rects.statusline_test_chip);
+    // vscode-mouse r2 (2026-08-05) — AI meter chips #876.
+    one!(
+        "statusline_ai_claude_chip",
+        app.rects.statusline_ai_claude_chip
+    );
+    one!(
+        "statusline_ai_codex_chip",
+        app.rects.statusline_ai_codex_chip
+    );
     one!("statusline_file_chip", app.rects.statusline_file_chip);
     one!(
         "statusline_diagnostics_chip",
@@ -1628,8 +1654,35 @@ pub fn drain_commands(ipc: &mut Ipc, app: &mut App) -> bool {
     for c in &cmds {
         let ev = apply(app, c);
         ipc.append_event(&ev);
+        // nvchad-user r2 (2026-08-05) — snapshot used to be a
+        // no-op stub. Now: after the handler runs, paint a fresh
+        // frame into a scratch TestBackend + dump. Same-batch
+        // expect_screen then reads current state instead of the
+        // previous iteration's stale screen.txt.
+        if matches!(c, IpcCommand::Snapshot) {
+            force_snapshot_paint(ipc, app);
+        }
     }
     any
+}
+
+/// Render the current app state into a scratch TestBackend and
+/// dump it to `screen.txt` / `status.json`. Called by the Snapshot
+/// IPC handler to give assertions a fresh view without waiting for
+/// the outer loop's next paint.
+fn force_snapshot_paint(ipc: &Ipc, app: &mut App) {
+    let (w, h) = ipc
+        .last_backend_size
+        .get()
+        .unwrap_or((DEFAULT_HEADLESS_W, DEFAULT_HEADLESS_H));
+    let backend = ratatui::backend::TestBackend::new(w, h);
+    let mut term = match ratatui::Terminal::new(backend) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    if term.draw(|f| crate::ui::draw(f, app)).is_ok() {
+        dump_screen_status(ipc, term.backend().buffer(), app);
+    }
 }
 
 /// Emit a `{"event":"plugin-command","id":…}` line for every plugin-registered

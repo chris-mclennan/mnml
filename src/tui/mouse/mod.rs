@@ -960,6 +960,14 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
         app.show_about = false;
         return;
     }
+    // AI usage overlay — mirror the about behavior. Both testers
+    // (nvchad-r2, vscode-mouse-r2 2026-08-05) flagged the missing
+    // click-outside dismiss; module docstring already promised it.
+    // Any left-click while pinned dismisses.
+    if app.show_ai_usage && matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) {
+        app.show_ai_usage = false;
+        return;
+    }
     // Settings overlay — wheel scrolls the focused row; left-click
     // on a row focuses it (then `←/→` to adjust the value); left-
     // click outside the panel saves + closes (matches Enter). Other

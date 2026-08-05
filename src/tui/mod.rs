@@ -875,9 +875,18 @@ fn walk_to_action(items: &[crate::menu_bar::MenuItem], start: usize, forward: bo
     let n = items.len();
     let mut idx = start;
     for _ in 0..n {
+        // nvchad-user r2 2026-08-05 — added `Submenu` to the match.
+        // Was: `Action` only, so Down/Up arrow silently skipped
+        // over `Open recent file ▸` and the submenu was
+        // keyboard-unreachable. Submenu is a selectable row too —
+        // the parent's Right/Enter handler opens the child when
+        // it's highlighted.
         if matches!(
             items.get(idx),
-            Some(crate::menu_bar::MenuItem::Action { .. })
+            Some(
+                crate::menu_bar::MenuItem::Action { .. }
+                    | crate::menu_bar::MenuItem::Submenu { .. }
+            )
         ) {
             return idx;
         }
@@ -1895,6 +1904,16 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         }
         app.show_about = false;
         app.show_ai_usage = false;
+    }
+    // nvchad-user r2 + vscode-mouse r2 (2026-08-05) — AI usage
+    // overlay must steal every non-Esc key so it doesn't leak into
+    // the editor beneath. Was: unhandled keys fell through, so `i`
+    // + typed chars silently mutated the file behind the panel.
+    // Esc was handled above; anything else while pinned = swallow +
+    // dismiss so a single key press feels like "get me out."
+    if app.show_ai_usage {
+        app.show_ai_usage = false;
+        return;
     }
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels
