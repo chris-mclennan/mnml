@@ -7372,7 +7372,19 @@ impl App {
         }
         self.ai_usage_last_refresh_at = now;
         if claude_enabled && self.ai_usage_pending_claude.is_none() {
-            let cap = crate::ai_usage::CLAUDE_DEFAULT_5H_CAP;
+            // Read `[ai] claude_5h_cap` from the raw toml passthrough
+            // (the `[ai]`/`[tools]` tables are stored as
+            // toml::Value on Config; no per-key strong typing).
+            // Missing / non-integer → default.
+            let cap = self
+                .config
+                .ai
+                .as_table()
+                .and_then(|t| t.get("claude_5h_cap"))
+                .and_then(|v| v.as_integer())
+                .and_then(|n| u64::try_from(n).ok())
+                .filter(|&n| n > 0)
+                .unwrap_or(crate::ai_usage::CLAUDE_DEFAULT_5H_CAP);
             self.ai_usage_pending_claude = Some(crate::ai_usage::spawn_claude_fetch(cap));
         }
         if codex_enabled && self.ai_usage_pending_codex.is_none() {

@@ -15,8 +15,12 @@
 //!   is one turn; assistant lines carry a `message.usage` object
 //!   with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
 //!   `cache_read_input_tokens`. We sum input + output + cache_creation
-//!   inside a rolling 5-hour window (matches the Max subscription's
-//!   quota bucket). `cache_read` is free and excluded from the sum.
+//!   inside a rolling 5-hour window — an APPROXIMATION of the Max
+//!   subscription's quota bucket, not a verified match (Anthropic
+//!   hasn't published the exact weighting formula, and
+//!   `cache_creation` is billed at a premium). Treat the percent
+//!   as directional, not authoritative. `cache_read` is heavily
+//!   discounted and excluded from the sum.
 //! * **Codex**: `~/.codex/sessions/*.jsonl`, one `token_usage` /
 //!   `usage` object per turn. Same shape, different key.
 
@@ -175,8 +179,12 @@ fn sum_claude_tokens_in_window(path: &Path, cutoff: u64) -> (u64, Option<u64>) {
             continue;
         }
         // Assistant turns carry `message.usage`. Sum
-        // input + output + cache_creation; skip cache_read
-        // (Anthropic doesn't charge / bucket those).
+        // input + output + cache_creation as an APPROXIMATION of
+        // what the Max quota tracks. `cache_creation` is billed
+        // at a ~1.25x premium so summing it 1:1 slightly
+        // underweights it; `cache_read` is heavily discounted and
+        // excluded. Anthropic hasn't published the exact quota
+        // formula — treat the percent as directional.
         let usage = v
             .get("message")
             .and_then(|m| m.get("usage"))
@@ -219,7 +227,7 @@ fn extract_timestamp(v: &serde_json::Value) -> Option<u64> {
 
 /// Minimal ISO-8601 → Unix seconds parser. Handles the shape
 /// Claude Code writes: `2026-08-05T12:34:56.789Z` or
-/// `2026-08-05T12:34:56Z` or `2026-08-05T12:34:56+00:00`. Returns
+/// `2026-08-05T12:34:56Z` or `2026-08-05T12:34:56±HH:MM`. Returns
 /// None on anything else. We don't need full RFC 3339 coverage —
 /// just what the emitter produces.
 fn parse_iso8601_secs(s: &str) -> Option<u64> {
@@ -233,6 +241,40 @@ fn parse_iso8601_secs(s: &str) -> Option<u64> {
     let (h, rest) = (rest.get(0..2)?.parse::<u64>().ok()?, rest.get(3..)?);
     let (mi, rest) = (rest.get(0..2)?.parse::<u64>().ok()?, rest.get(3..)?);
     let sec: u64 = rest.get(0..2)?.parse().ok()?;
+    // Consume optional fractional seconds `.NNN…` so we can find
+    // the timezone suffix regardless of subsecond precision.
+    let tz_start = rest.get(2..)?;
+    let tz_str = if let Some(dot) = tz_start.strip_prefix('.') {
+        // Skip the fractional digits, then whatever's left is the tz.
+        dot.trim_start_matches(|c: char| c.is_ascii_digit())
+    } else {
+        tz_start
+    };
+    // Reviewer 2026-08-05 — timezone-aware. `Z` is UTC (offset 0).
+    // `±HH:MM` (or `±HHMM`) is an offset that we SUBTRACT from the
+    // local-clock time we parsed above to get UTC. Missing/empty tz
+    // is treated as UTC (fallback; Claude Code writes `Z` in
+    // practice, but we don't want to silently skew if that changes).
+    let tz_offset_secs: i64 = match tz_str.chars().next() {
+        Some('Z') | Some('z') | None => 0,
+        Some(sign_ch) if sign_ch == '+' || sign_ch == '-' => {
+            let sign: i64 = if sign_ch == '-' { -1 } else { 1 };
+            let body = tz_str.get(1..)?;
+            // Accept "HHMM" or "HH:MM"
+            let (hh, mm) = if let Some((h_str, m_str)) = body.split_once(':') {
+                (h_str.parse::<i64>().ok()?, m_str.parse::<i64>().ok()?)
+            } else if body.len() >= 4 {
+                (
+                    body.get(0..2)?.parse::<i64>().ok()?,
+                    body.get(2..4)?.parse::<i64>().ok()?,
+                )
+            } else {
+                return None;
+            };
+            sign * (hh * 3600 + mm * 60)
+        }
+        _ => 0,
+    };
     // Days since 1970-01-01 (proleptic Gregorian).
     let year_days = |y: i64| -> i64 {
         let y = y - 1;
@@ -249,8 +291,15 @@ fn parse_iso8601_secs(s: &str) -> Option<u64> {
         d_of_year += month_days.get(m_idx).copied().unwrap_or(0) as i64;
     }
     let days_since_epoch = year_days(y) - year_days(1970) + d_of_year;
-    let secs = days_since_epoch * 86400 + (h as i64) * 3600 + (mi as i64) * 60 + sec as i64;
-    if secs < 0 { None } else { Some(secs as u64) }
+    let local_secs = days_since_epoch * 86400 + (h as i64) * 3600 + (mi as i64) * 60 + sec as i64;
+    // Local → UTC: subtract the offset (e.g. `+05:00` means clock
+    // is 5h ahead of UTC, so UTC = local - 5h).
+    let utc_secs = local_secs - tz_offset_secs;
+    if utc_secs < 0 {
+        None
+    } else {
+        Some(utc_secs as u64)
+    }
 }
 
 /// Best-effort JSON parse. The endpoint's schema isn't officially
