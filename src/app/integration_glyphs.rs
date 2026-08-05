@@ -70,27 +70,6 @@ fn pending_glyphs_dir() -> Option<PathBuf> {
     )
 }
 
-/// One-shot wipe of the pre-0.6 `<data_root>/glyphs/` directory.
-/// Everything under there was the legacy install-copy destination;
-/// bridge 0.6 doesn't write there any more and mnml core doesn't
-/// scan it. Idempotent — a missing dir is a no-op.
-pub fn wipe_legacy_glyphs_dir() -> usize {
-    let dir = crate::data_root::data_root().join("glyphs");
-    if !dir.is_dir() {
-        return 0;
-    }
-    let mut removed = 0usize;
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            if std::fs::remove_file(entry.path()).is_ok() {
-                removed += 1;
-            }
-        }
-    }
-    let _ = std::fs::remove_dir(&dir);
-    removed
-}
-
 /// Path to `~/.config/mnml/integration-glyphs.toml` (flat, top-level).
 /// 2026-08-04 — moved up out of `glyphs/` since the plan is to
 /// delete the whole `glyphs/` dir once the bake-on-install
