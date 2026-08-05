@@ -4653,6 +4653,10 @@ pub struct App {
     /// SHA + workspace metadata (theme, repos, LSP servers, tab/pane
     /// counts). In-memory only, dismisses on Esc / click outside.
     pub show_about: bool,
+    /// `:ai.usage` overlay — full-panel version of the Claude usage
+    /// meter (progress bars for session / weekly / per-model scoped).
+    /// Same data source as the statusline chip.
+    pub show_ai_usage: bool,
     /// True after a quit was refused because of unsaved changes — a second
     /// `request_quit` then goes through. Cleared by saving.
     pub quit_armed: bool,
@@ -5563,6 +5567,7 @@ impl App {
             update_check: None,
             startup_picker: None,
             show_about: false,
+            show_ai_usage: false,
             scratch_term: None,
             tree_drag: None,
             pending_tree_move: None,
@@ -6186,6 +6191,17 @@ impl App {
     /// welcome overlay which only auto-opens once per workspace).
     pub fn toggle_about(&mut self) {
         self.show_about = !self.show_about;
+    }
+
+    /// `:ai.usage` — toggle the full-panel Claude usage overlay.
+    /// Kicks a fresh fetch on open so the numbers reflect what
+    /// Anthropic sees right now, not what mnml last polled.
+    pub fn toggle_ai_usage(&mut self) {
+        self.show_ai_usage = !self.show_ai_usage;
+        if self.show_ai_usage {
+            self.ai_usage_last_refresh_at = 0;
+            self.maybe_refresh_ai_usage();
+        }
     }
 
     /// Toggle the welcome overlay manually (palette / `:welcome`). Showing

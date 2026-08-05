@@ -21,17 +21,33 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 /// Last-fetched snapshot for the Claude chip. `percent` is the 5-hour
-/// window utilization; `weekly_percent` is the weekly window (if the
-/// endpoint returns it — currently uncertain, defaults 0). `resets_at`
-/// is a Unix timestamp when the current 5h window ends.
+/// window utilization; `weekly_percent` is the weekly window.
+/// `resets_at` is a Unix timestamp when the current 5h window ends.
 #[derive(Debug, Clone, Default)]
 pub struct ClaudeUsage {
     pub percent: u16,
     pub weekly_percent: u16,
     pub resets_at: u64,
+    /// Unix timestamp when the 7-day weekly window resets. Used by
+    /// the `:ai.usage` panel to show "Resets Aug 10 at 2am" line.
+    pub weekly_resets_at: u64,
+    /// Per-model weekly limits (`kind == weekly_scoped` entries in
+    /// the response). Populated when the user has model-specific
+    /// caps (Fable, Opus, Sonnet, etc.).
+    pub scoped_limits: Vec<ScopedLimit>,
     pub tokens_5h: u64,
     pub fetched_at: u64,
     pub last_error: Option<String>,
+}
+
+/// One entry from the response's `limits[]` array with
+/// `kind == weekly_scoped`. Represents a per-model or per-surface
+/// weekly cap (e.g. "Current week (Fable)").
+#[derive(Debug, Clone, Default)]
+pub struct ScopedLimit {
+    pub model_display_name: String,
+    pub percent: u16,
+    pub resets_at: u64,
 }
 
 /// Last-fetched snapshot for the Codex chip. Cumulative tokens
@@ -237,15 +253,57 @@ fn parse_claude_response(text: &str) -> Result<ClaudeUsage, String> {
     let v: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("parse json: {e}"))?;
     let (percent, resets_at) = extract_session(&v);
-    let (weekly_percent, _weekly_resets) = extract_weekly(&v);
+    let (weekly_percent, weekly_resets_at) = extract_weekly(&v);
+    let scoped_limits = extract_scoped_limits(&v);
     Ok(ClaudeUsage {
         percent,
         weekly_percent,
         resets_at,
+        weekly_resets_at,
+        scoped_limits,
         tokens_5h: 0, // endpoint doesn't return raw token counts
         fetched_at: now_unix(),
         last_error: None,
     })
+}
+
+/// Per-model weekly limits from the `limits[]` array. Each entry
+/// with `kind == "weekly_scoped"` carries a nested
+/// `scope.model.display_name` we surface as the row label.
+fn extract_scoped_limits(v: &serde_json::Value) -> Vec<ScopedLimit> {
+    let Some(arr) = v.get("limits").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in arr {
+        let kind = entry.get("kind").and_then(|x| x.as_str()).unwrap_or("");
+        if kind != "weekly_scoped" {
+            continue;
+        }
+        let name = entry
+            .get("scope")
+            .and_then(|s| s.get("model"))
+            .and_then(|m| m.get("display_name"))
+            .and_then(|x| x.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let pct = entry
+            .get("percent")
+            .and_then(|x| x.as_f64())
+            .map(|n| n.round().clamp(0.0, 999.0) as u16)
+            .unwrap_or(0);
+        let resets = entry
+            .get("resets_at")
+            .and_then(|x| x.as_str())
+            .and_then(parse_iso8601_secs)
+            .unwrap_or(0);
+        out.push(ScopedLimit {
+            model_display_name: name,
+            percent: pct,
+            resets_at: resets,
+        });
+    }
+    out
 }
 
 /// Pull the 5h/session utilization + reset time. Preferred path:

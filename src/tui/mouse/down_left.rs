@@ -1667,40 +1667,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.focus_pane();
         return;
     }
-    // Statusline AI Claude chip — unlinked → link prompt; linked
-    // → toast detail + refresh. #876.
+    // Statusline AI Claude chip — unlinked → link prompt;
+    // linked → open the full-panel usage overlay. #876.
     if let Some(r) = app.rects.statusline_ai_claude_chip
         && crate::app::dispatch::contains(r, x, y)
     {
         if crate::ai_usage::read_claude_token().is_none() {
             app.open_link_claude_token_prompt();
         } else {
-            let detail = match &app.ai_usage_claude {
-                Some(u) if u.percent > 0 || u.weekly_percent > 0 => {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let reset = if u.resets_at > 0 {
-                        let secs = u.resets_at.saturating_sub(now);
-                        format!(" · 5h resets in {}h{}m", secs / 3600, (secs % 3600) / 60)
-                    } else {
-                        String::new()
-                    };
-                    format!(
-                        "Claude · session {}% · weekly {}%{}",
-                        u.percent, u.weekly_percent, reset
-                    )
-                }
-                Some(u) => u
-                    .last_error
-                    .clone()
-                    .unwrap_or_else(|| "Claude: no data yet".to_string()),
-                None => "Claude: fetching…".to_string(),
-            };
-            app.toast(detail);
-            app.ai_usage_last_refresh_at = 0;
-            app.maybe_refresh_ai_usage();
+            app.toggle_ai_usage();
         }
         return;
     }

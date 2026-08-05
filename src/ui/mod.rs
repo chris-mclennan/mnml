@@ -21,6 +21,7 @@
 
 pub mod about_overlay;
 pub mod activity_bar;
+pub mod ai_usage_overlay;
 pub mod ai_view;
 pub mod design_tokens;
 pub mod spend_report_view;
@@ -1453,6 +1454,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     welcome_overlay::draw(frame, app, area);
     // About overlay — `:about` / view.about.
     about_overlay::draw(frame, app, area);
+    ai_usage_overlay::draw(frame, app, area);
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
     // Integration edit panel — freestanding overlay opened from

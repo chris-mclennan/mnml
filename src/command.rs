@@ -5733,6 +5733,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_link_claude_token_prompt(),
         },
         Command {
+            id: "ai.usage",
+            title: "AI: show Claude usage panel (session + weekly + per-model)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.toggle_ai_usage(),
+        },
+        Command {
             id: "ai.show_last_response",
             title: "AI: show last Claude quota response (debug)",
             group: "ai",

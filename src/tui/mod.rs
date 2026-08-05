@@ -1894,6 +1894,7 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             app.dismiss_welcome();
         }
         app.show_about = false;
+        app.show_ai_usage = false;
     }
     // Flash intercept: when label overlay is up, Esc cancels; a printable
     // char matching a label commits the jump; an unmatched key cancels
