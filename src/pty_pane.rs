@@ -173,6 +173,26 @@ fn default_shell() -> String {
     }
 }
 
+/// Process-global "terminal" label — swappable via
+/// `[ui] terminal_label` in config.toml so a user who runs mnml
+/// inside ghostty (or kitty, wezterm, alacritty) can rebrand every
+/// shell chip. Populated once at startup by `App::new` from
+/// `config.ui.terminal_label`. Falls back to `"terminal"` if unset.
+static TERMINAL_LABEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Called once from `App::new` after config load so subsequent
+/// `BinaryProfile::shell()` calls pick up the user's chosen label.
+pub fn set_terminal_label(label: String) {
+    let _ = TERMINAL_LABEL.set(label);
+}
+
+fn terminal_label() -> &'static str {
+    TERMINAL_LABEL
+        .get()
+        .map(String::as_str)
+        .unwrap_or("terminal")
+}
+
 impl BinaryProfile {
     /// The user's `$SHELL` (interactive), or the platform default
     /// (see [`default_shell`]).
@@ -184,7 +204,7 @@ impl BinaryProfile {
             .unwrap_or("shell")
             .to_string();
         BinaryProfile {
-            label: format!("terminal ({name})"),
+            label: format!("{} ({name})", terminal_label()),
             exe,
             args: Vec::new(),
             cwd,

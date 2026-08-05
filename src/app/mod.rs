@@ -5124,6 +5124,11 @@ impl App {
     }
 
     pub fn new(workspace: PathBuf, config: Config) -> Result<App, String> {
+        // Propagate `[ui] terminal_label` into pty_pane's process-
+        // global so every `BinaryProfile::shell()` picks up the
+        // user's rebrand (default "terminal"; users on ghostty /
+        // kitty / wezterm can set their own).
+        crate::pty_pane::set_terminal_label(config.ui.terminal_label.clone());
         let workspace = workspace
             .canonicalize()
             .map_err(|e| format!("cannot open workspace {}: {e}", workspace.display()))?;

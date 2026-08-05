@@ -4045,10 +4045,19 @@ fn pty_icon(
     // literal airplane, matches user's "why is it a plane?"
     // report) to `\u{ea85}` (nf-cod-terminal) so ANY unmatched
     // Pty gets the standard terminal icon, not a random glyph.
+    // Match the label OR its leading word (labels from
+    // `BinaryProfile::shell` are `"<terminal_label> (<shell_name>)"`
+    // — first word is the terminal brand, "terminal" by default but
+    // e.g. "ghostty" when [ui] terminal_label overrides it).
+    let leading_word = profile_label_lower
+        .split_whitespace()
+        .next()
+        .unwrap_or(&profile_label_lower);
+    let user_terminal_label_lower = app.config.ui.terminal_label.to_ascii_lowercase();
     let is_plain_shell = matches!(
-        profile_label_lower.as_str(),
+        leading_word,
         "shell" | "zsh" | "bash" | "sh" | "fish" | "nu" | "nushell" | "terminal" | "term" | "tty"
-    );
+    ) || leading_word == user_terminal_label_lower;
     match (sibling_glyph, spinner, codex_thinking) {
         (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
         (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),

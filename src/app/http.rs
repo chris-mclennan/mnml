@@ -6570,10 +6570,31 @@ impl App {
         let done: Vec<HttpJobDone> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
         let workspace = self.workspace.clone();
-        // Snapshot the active envset ONCE before the mut-borrow loop
-        // so per-pane history writes below can expand `{{VAR}}` values
-        // (api-workflow SEV-2 2026-08-05) without re-borrowing self.
-        let hist_env = self.active_envset();
+        // Base envset snapshot for the batch — per-job code below
+        // clones this and layers on the running-env values keyed by
+        // the job's source_path. Doing the base pull once (immutable
+        // self borrow) is fine; the merge_http_running_env call
+        // per-job also uses immutable self, so both stay clean of
+        // the mut borrow on self.panes below. (Fixed 2026-08-05
+        // reviewer flag: sharing a single un-merged snapshot missed
+        // @capture-d vars — the exact case SEV-2 exists to solve.)
+        let hist_env_base = self.active_envset();
+        // Per-job source_path lookup — sniff before the mut-borrow
+        // loop so the merge step can be a plain hashmap read.
+        let job_source_paths: std::collections::HashMap<u64, Option<std::path::PathBuf>> = done
+            .iter()
+            .filter_map(|(job_id, _)| {
+                self.panes.iter().find_map(|p| {
+                    if let Pane::Request(rp) = p
+                        && rp.job_id == *job_id
+                    {
+                        Some((*job_id, rp.source_path.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
         // Deferred captures to persist after the mut-borrow loop.
         let mut carry_forward: Vec<(Option<std::path::PathBuf>, Vec<(String, String)>)> =
             Vec::new();
@@ -6615,8 +6636,23 @@ impl App {
                     // `file.save` doesn't bake secrets into the
                     // source file), but the history log needs the
                     // resolved values to be useful for jq/grep audit
-                    // workflows. Envset snapshotted once at the top
-                    // of drain to avoid re-borrowing self mid-loop.
+                    // workflows.
+                    //
+                    // Reviewer 2026-08-05 follow-up — clone the base
+                    // envset per-job + layer on the running-env
+                    // values keyed by THIS job's source_path so
+                    // @capture-d vars resolve correctly (matches
+                    // the live send path at ~4382/4436). Inline the
+                    // merge instead of calling merge_http_running_env
+                    // because we hold a mut borrow on self.panes.
+                    let mut hist_env = hist_env_base.clone();
+                    let src = job_source_paths.get(&job_id).and_then(|p| p.as_deref());
+                    let key = src.map(|p| p.to_path_buf()).unwrap_or_default();
+                    if let Some(entries) = self.http_running_env.get(&key) {
+                        for (k, v) in entries {
+                            hist_env.vars.insert(k.clone(), v.clone());
+                        }
+                    }
                     let hist_url = crate::http::template::expand(&rp.request.url, &hist_env);
                     let hist_headers: Vec<(String, String)> = rp
                         .request

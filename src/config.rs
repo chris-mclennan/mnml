@@ -861,6 +861,31 @@ pub struct UiConfig {
     /// ```
     pub menu_bar: String,
 
+    /// Custom label for the generic terminal (bare `:term` with no
+    /// binary — shell/zsh/bash/etc). Default `"terminal"` matches
+    /// the profile label; set to your terminal-of-choice's name
+    /// (`"ghostty"`, `"kitty"`, `"wezterm"`, `"alacritty"`) to
+    /// personalize how mnml renders the chip in the CC/H/V split
+    /// cluster + tab bufferline. Renders as the label text next to
+    /// the terminal glyph.
+    ///
+    /// ```toml
+    /// [ui]
+    /// terminal_label = "ghostty"
+    /// ```
+    pub terminal_label: String,
+
+    /// Optional custom SVG for the terminal chip glyph, overriding
+    /// the default `\u{ea85}` (nf-cod-terminal). Path to an SVG on
+    /// disk; baked into MnmlSymbols.ttf on startup at a reserved
+    /// codepoint (U+F0AF6). Empty = use the default glyph.
+    ///
+    /// ```toml
+    /// [ui]
+    /// terminal_glyph_svg = "~/Downloads/ghostty.svg"
+    /// ```
+    pub terminal_glyph_svg: String,
+
     /// Top-right chrome cluster mode. Values:
     ///   - `"auto"` (default) — show the full cluster if it fits, drop
     ///     to compact when horizontal space is tight, hide entirely if
@@ -1228,6 +1253,8 @@ impl Default for Config {
                 preferred_music_app: "mixr".to_string(),
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
+                terminal_label: "terminal".to_string(),
+                terminal_glyph_svg: String::new(),
                 top_bar_cluster_mode: "auto".to_string(),
                 // 2026-07-12 user request — default to Claude Code
                 // only (was "both", which added Codex right next to
@@ -1602,6 +1629,12 @@ struct RawUi {
     /// See [`UiConfig::menu_bar`].
     #[serde(default)]
     menu_bar: Option<String>,
+    /// See [`UiConfig::terminal_label`].
+    #[serde(default)]
+    terminal_label: Option<String>,
+    /// See [`UiConfig::terminal_glyph_svg`].
+    #[serde(default)]
+    terminal_glyph_svg: Option<String>,
     /// See [`UiConfig::top_bar_cluster_mode`].
     #[serde(default)]
     top_bar_cluster_mode: Option<String>,
@@ -2088,6 +2121,15 @@ impl Config {
             if matches!(normalized.as_str(), "always" | "auto" | "hidden") {
                 self.ui.menu_bar = normalized;
             }
+        }
+        if let Some(s) = raw.ui.terminal_label {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                self.ui.terminal_label = trimmed.to_string();
+            }
+        }
+        if let Some(s) = raw.ui.terminal_glyph_svg {
+            self.ui.terminal_glyph_svg = s.trim().to_string();
         }
         if let Some(s) = raw.ui.top_bar_cluster_mode {
             let normalized = s.trim().to_ascii_lowercase();
