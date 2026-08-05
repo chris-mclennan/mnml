@@ -49,6 +49,15 @@ fn main() -> ExitCode {
             args.next();
             test_subcommand(args.collect())
         }
+        Some("commands") => {
+            // `mnml commands` — dump the full command registry to
+            // stdout, grouped + sorted, using the same text builder
+            // the in-app `:commands` scratch buffer uses. Handy for
+            // audits or generating a CHANGELOG-friendly list.
+            let text = mnml::command::build_commands_reference_text_public(&[]);
+            print!("{text}");
+            ExitCode::SUCCESS
+        }
         _ => {
             // TUI path only — `--sandbox` self-redirect belongs here
             // and NOT ahead of subcommand dispatch (`mnml run FILE
