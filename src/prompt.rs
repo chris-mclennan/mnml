@@ -21,6 +21,10 @@ pub enum PromptKind {
     LspRename,
     /// Accept ⇒ launch Chrome on the typed URL in a `Pane::Browser` (CDP).
     BrowserUrl,
+    /// `:ai.link_claude_token` — user pastes their Claude Code OAuth
+    /// token. Accept writes it to `~/.config/mnml/ai_token` (chmod
+    /// 600) via `App::accept_link_claude_token`.
+    LinkClaudeToken,
     /// Accept ⇒ `Page.navigate` the active browser pane to the typed URL.
     BrowserNavigate,
     /// Accept ⇒ `Runtime.evaluate` the typed JS in the active browser pane.

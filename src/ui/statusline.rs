@@ -165,6 +165,17 @@ fn collect_dynamic_segments(
 /// Convert a packed dynamic segment into a `Seg` for the render
 /// pipeline. Named theme color lookup falls back to `comment`
 /// (matches the manifest loader's fallback).
+/// Compact `12.3k` / `4.5M` formatter for Codex token counts.
+fn format_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 fn seg_from_dynamic(rd: &RenderedDynamicSegment) -> Seg {
     let t = theme::cur();
     let fg = t.bg_darker; // dark text on colored chip
@@ -469,6 +480,58 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             theme::cur().bg_darker,
             theme::cur().yellow,
         ));
+    }
+    // AI usage meters — Claude (F1E00, %) + Codex (F1E01, tokens).
+    // Each chip renders only when the corresponding integration is
+    // enabled. Green/yellow/red per usage tier for Claude; single
+    // color for Codex (no known quota to grade against). #876.
+    app.rects.statusline_ai_claude_chip = None;
+    app.rects.statusline_ai_codex_chip = None;
+    let mut ai_claude_seg_idx: Option<usize> = None;
+    let mut ai_codex_seg_idx: Option<usize> = None;
+    let claude_enabled = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .any(|ic| ic.id == "claude_code" && ic.enabled);
+    let codex_enabled = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .any(|ic| ic.id == "codex" && ic.enabled);
+    if claude_enabled {
+        let t = theme::cur();
+        let (text, fg) = match &app.ai_usage_claude {
+            Some(u) if u.percent > 0 => {
+                let color = if u.percent >= 85 {
+                    t.red
+                } else if u.percent >= 60 {
+                    t.yellow
+                } else {
+                    t.green
+                };
+                (format!(" \u{F1E00} {}% ", u.percent), color)
+            }
+            Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
+            None => (" \u{F1E00} … ".to_string(), t.comment),
+        };
+        ai_claude_seg_idx = Some(right.len());
+        right.push(Seg::new(text, fg, t.bg));
+    }
+    if codex_enabled {
+        let t = theme::cur();
+        let (text, fg) = match &app.ai_usage_codex {
+            Some(u) if u.tokens_today > 0 => (
+                format!(" \u{F1E01} {} ", format_tokens(u.tokens_today)),
+                t.cyan,
+            ),
+            Some(_) => (" \u{F1E01} 0 ".to_string(), t.comment),
+            None => (" \u{F1E01} … ".to_string(), t.comment),
+        };
+        ai_codex_seg_idx = Some(right.len());
+        right.push(Seg::new(text, fg, t.bg));
     }
     // Now-playing chip — pushed first so it's the leftmost segment of
     // the right cluster (closer to centre). Doubles as the mixr launch
@@ -902,6 +965,29 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     }
     app.rects.statusline_lncol_chip = to_rect(lncol_seg_idx, &right_rects);
     app.rects.statusline_stress_chip = to_rect(stress_seg_idx, &right_rects);
+    // AI usage meter chips — same pattern as the others (#876).
+    if let Some(idx) = ai_claude_seg_idx
+        && let Some(&(start, w)) = right_rects.get(idx)
+        && w > 0
+    {
+        app.rects.statusline_ai_claude_chip = Some(Rect {
+            x: right_lane_x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        });
+    }
+    if let Some(idx) = ai_codex_seg_idx
+        && let Some(&(start, w)) = right_rects.get(idx)
+        && w > 0
+    {
+        app.rects.statusline_ai_codex_chip = Some(Rect {
+            x: right_lane_x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        });
+    }
 
     // Register the git-branch chip's click rect for `git.graph` routing.
     // `left_rects[i] = (start_col_within_left_lane, width_in_cols)` — translate

@@ -2181,6 +2181,12 @@ pub struct PaneRects {
     /// Click rect for the `🧪 <label>` statusline chip — shown
     /// while `last_test_run` is set. Click → focus the test pane.
     pub statusline_test_chip: Option<Rect>,
+    /// AI usage meter chips (#876) — Claude quota % + Codex tokens
+    /// today. `None` when the chip isn't rendered (integration
+    /// disabled). Click: unlinked → open link prompt; linked →
+    /// refresh + toast the details.
+    pub statusline_ai_claude_chip: Option<Rect>,
+    pub statusline_ai_codex_chip: Option<Rect>,
     /// Strip reserved at the top of the editor body for inline
     /// dock widgets at TL / TR corners. Editor body is shrunk by
     /// `height` from the top. `None` = no inline top widgets.
@@ -3562,6 +3568,21 @@ pub struct App {
     /// froze the render thread for up to 10s.
     pub launcher_install_pending:
         Vec<std::sync::mpsc::Receiver<Result<(String, std::path::PathBuf), (String, String)>>>,
+    /// AI usage meter state (#876). `None` = never fetched (chip
+    /// shows dashes / hidden depending on integration enabled).
+    /// Populated by background workers spawned via
+    /// `maybe_refresh_ai_usage` + drained per tick via
+    /// `drain_ai_usage`.
+    pub ai_usage_claude: Option<crate::ai_usage::ClaudeUsage>,
+    pub ai_usage_codex: Option<crate::ai_usage::CodexUsage>,
+    pub ai_usage_pending_claude:
+        Option<std::sync::mpsc::Receiver<Result<crate::ai_usage::ClaudeUsage, String>>>,
+    pub ai_usage_pending_codex:
+        Option<std::sync::mpsc::Receiver<Result<crate::ai_usage::CodexUsage, String>>>,
+    /// Unix seconds of the last refresh spawn — throttles the
+    /// per-tick "should I refresh again" check to at most once per
+    /// 5 min.
+    pub ai_usage_last_refresh_at: u64,
     /// Unix seconds when the marketplace cache was last successfully
     /// written. 0 means "never fetched this session"; the disk cache
     /// may still be readable.
@@ -5261,6 +5282,11 @@ impl App {
             marketplace_entries: Vec::new(),
             marketplace_pending: Vec::new(),
             launcher_install_pending: Vec::new(),
+            ai_usage_claude: None,
+            ai_usage_codex: None,
+            ai_usage_pending_claude: None,
+            ai_usage_pending_codex: None,
+            ai_usage_last_refresh_at: 0,
             marketplace_last_fetched: 0,
             pending_install_family_id: None,
             pending_install_after_action: None,
@@ -7311,6 +7337,114 @@ impl App {
                 });
                 self.launcher_install_pending.push(rx);
             }
+        }
+    }
+
+    /// AI usage meter — kick off background fetches if it's been
+    /// >5 min since the last spawn AND no fetch is currently in
+    /// flight. Cheap no-op the other 99% of ticks. Called from the
+    /// per-tick loop.
+    pub fn maybe_refresh_ai_usage(&mut self) {
+        const REFRESH_INTERVAL_SECS: u64 = 5 * 60;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if now.saturating_sub(self.ai_usage_last_refresh_at) < REFRESH_INTERVAL_SECS {
+            return;
+        }
+        // Only spawn if the corresponding integration is enabled;
+        // otherwise the chip won't render anyway.
+        let claude_enabled = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .any(|ic| ic.id == "claude_code" && ic.enabled);
+        let codex_enabled = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .any(|ic| ic.id == "codex" && ic.enabled);
+        if !claude_enabled && !codex_enabled {
+            return;
+        }
+        self.ai_usage_last_refresh_at = now;
+        if claude_enabled && self.ai_usage_pending_claude.is_none() {
+            self.ai_usage_pending_claude = Some(crate::ai_usage::spawn_claude_fetch());
+        }
+        if codex_enabled && self.ai_usage_pending_codex.is_none() {
+            self.ai_usage_pending_codex = Some(crate::ai_usage::spawn_codex_fetch());
+        }
+    }
+
+    /// Drain any completed AI-usage worker replies. Called per tick.
+    /// Failures are stored on the snapshot's `last_error` so the
+    /// chip's hover tooltip can surface them.
+    pub fn drain_ai_usage(&mut self) {
+        if let Some(rx) = &self.ai_usage_pending_claude {
+            match rx.try_recv() {
+                Ok(Ok(u)) => {
+                    self.ai_usage_claude = Some(u);
+                    self.ai_usage_pending_claude = None;
+                }
+                Ok(Err(e)) => {
+                    let mut u = self.ai_usage_claude.clone().unwrap_or_default();
+                    u.last_error = Some(e);
+                    self.ai_usage_claude = Some(u);
+                    self.ai_usage_pending_claude = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.ai_usage_pending_claude = None;
+                }
+            }
+        }
+        if let Some(rx) = &self.ai_usage_pending_codex {
+            match rx.try_recv() {
+                Ok(Ok(u)) => {
+                    self.ai_usage_codex = Some(u);
+                    self.ai_usage_pending_codex = None;
+                }
+                Ok(Err(e)) => {
+                    let mut u = self.ai_usage_codex.clone().unwrap_or_default();
+                    u.last_error = Some(e);
+                    self.ai_usage_codex = Some(u);
+                    self.ai_usage_pending_codex = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.ai_usage_pending_codex = None;
+                }
+            }
+        }
+    }
+
+    /// `:ai.link_claude_token` — open a prompt for the user to
+    /// paste their Claude Code OAuth token. Accepting writes to
+    /// `~/.config/mnml/ai_token` (chmod 600) + kicks a fresh
+    /// fetch.
+    pub fn open_link_claude_token_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::LinkClaudeToken,
+            "Paste your Claude Code OAuth token (starts with `sk-ant-oat…`)",
+        ));
+    }
+
+    /// Called from the prompt accept handler after the user pastes
+    /// a token. Writes to disk + kicks the first fetch immediately.
+    pub fn accept_link_claude_token(&mut self, token: String) {
+        match crate::ai_usage::write_claude_token(&token) {
+            Ok(path) => {
+                self.toast(format!("linked → {}", path.display()));
+                // Force an immediate refresh — bypass the 5-min
+                // throttle so the chip lights up right away.
+                self.ai_usage_last_refresh_at = 0;
+                self.ai_usage_pending_claude = None;
+                self.maybe_refresh_ai_usage();
+            }
+            Err(e) => self.toast(format!("link failed: {e}")),
         }
     }
 
@@ -14304,6 +14438,8 @@ impl App {
         self.drain_ai_session_search();
         self.drain_marketplace();
         self.drain_launcher_installs();
+        self.maybe_refresh_ai_usage();
+        self.drain_ai_usage();
         self.drain_suggestions();
         self.maybe_fire_suggestion();
         self.drain_tests_jobs();

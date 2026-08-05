@@ -5726,6 +5726,24 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_browser("about:blank"),
         },
         Command {
+            id: "ai.link_claude_token",
+            title: "AI: link Claude Code OAuth token (for usage meter)",
+            group: "ai",
+            keys: &[],
+            run: |app| app.open_link_claude_token_prompt(),
+        },
+        Command {
+            id: "ai.refresh_usage",
+            title: "AI: refresh usage meter (Claude + Codex)",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                app.ai_usage_last_refresh_at = 0;
+                app.maybe_refresh_ai_usage();
+                app.toast("refreshing AI usage…".to_string());
+            },
+        },
+        Command {
             id: "browser.open_url",
             title: "Browser: open Chrome at a URL (prompt)",
             group: "browser",

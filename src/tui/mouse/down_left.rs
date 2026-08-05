@@ -1667,6 +1667,65 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.focus_pane();
         return;
     }
+    // Statusline AI Claude chip → link prompt (unlinked) OR toast
+    // detail + refresh (linked). #876.
+    if let Some(r) = app.rects.statusline_ai_claude_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        if crate::ai_usage::read_claude_token().is_none() {
+            app.open_link_claude_token_prompt();
+        } else {
+            let detail = match &app.ai_usage_claude {
+                Some(u) if u.percent > 0 => {
+                    let reset = if u.resets_at > 0 {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let secs = u.resets_at.saturating_sub(now);
+                        format!(" · resets in {}h{}m", secs / 3600, (secs % 3600) / 60)
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "Claude: {}% (5h){} · weekly {}%",
+                        u.percent, reset, u.weekly_percent
+                    )
+                }
+                Some(u) => u
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| "Claude: no data yet".to_string()),
+                None => "Claude: fetching…".to_string(),
+            };
+            app.toast(detail);
+            app.ai_usage_last_refresh_at = 0;
+            app.maybe_refresh_ai_usage();
+        }
+        return;
+    }
+    // Statusline AI Codex chip → toast detail + refresh. #876.
+    if let Some(r) = app.rects.statusline_ai_codex_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        let detail = match &app.ai_usage_codex {
+            Some(u) if u.tokens_today > 0 => {
+                format!(
+                    "Codex: {} tokens today across {} session(s)",
+                    u.tokens_today, u.sessions_today
+                )
+            }
+            Some(u) => u
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "Codex: 0 tokens today".to_string()),
+            None => "Codex: scanning…".to_string(),
+        };
+        app.toast(detail);
+        app.ai_usage_last_refresh_at = 0;
+        app.maybe_refresh_ai_usage();
+        return;
+    }
     // Statusline mode chip → toggle input style (vim ↔ standard).
     if let Some(r) = app.rects.statusline_mode_chip
         && crate::app::dispatch::contains(r, x, y)

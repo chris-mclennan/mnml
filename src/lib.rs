@@ -24,6 +24,7 @@
 //! See `CLAUDE.md` for the full design.
 
 pub mod ai;
+pub mod ai_usage;
 pub mod app;
 // Port-back helpers from the retired `rqst` app (2026-06-19).
 // `jwt`: claims-only JWT decoder; `auth`: bearer-token extraction
