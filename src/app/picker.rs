@@ -1776,6 +1776,9 @@ impl App {
                 }
             }
             crate::prompt::PromptKind::BrowserUrl => self.open_browser(p.input.trim()),
+            crate::prompt::PromptKind::LinkClaudeToken => {
+                self.accept_link_claude_token(p.input.clone())
+            }
             crate::prompt::PromptKind::BrowserNavigate => {
                 let url = p.input.clone();
                 if let Some(Pane::Browser(b)) = self.active.and_then(|i| self.panes.get_mut(i)) {

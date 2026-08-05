@@ -504,10 +504,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if claude_enabled {
         let t = theme::cur();
         let (text, fg) = match &app.ai_usage_claude {
-            Some(u) if u.tokens_5h > 0 => {
-                // If percent is over 100 the default cap is wrong
-                // for this user's plan — render raw tokens instead
-                // (more honest than "999%"), still colored by tier.
+            Some(u) if u.percent > 0 => {
                 let color = if u.percent >= 85 {
                     t.red
                 } else if u.percent >= 60 {
@@ -515,12 +512,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     t.green
                 };
-                let label = if u.percent > 100 {
-                    format!(" \u{F1E00} {}/5h ", format_tokens(u.tokens_5h))
-                } else {
-                    format!(" \u{F1E00} {}% ", u.percent)
-                };
-                (label, color)
+                (format!(" \u{F1E00} {}% ", u.percent), color)
             }
             Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
             None => (" \u{F1E00} … ".to_string(), t.comment),

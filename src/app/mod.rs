@@ -7372,20 +7372,7 @@ impl App {
         }
         self.ai_usage_last_refresh_at = now;
         if claude_enabled && self.ai_usage_pending_claude.is_none() {
-            // Read `[ai] claude_5h_cap` from the raw toml passthrough
-            // (the `[ai]`/`[tools]` tables are stored as
-            // toml::Value on Config; no per-key strong typing).
-            // Missing / non-integer → default.
-            let cap = self
-                .config
-                .ai
-                .as_table()
-                .and_then(|t| t.get("claude_5h_cap"))
-                .and_then(|v| v.as_integer())
-                .and_then(|n| u64::try_from(n).ok())
-                .filter(|&n| n > 0)
-                .unwrap_or(crate::ai_usage::CLAUDE_DEFAULT_5H_CAP);
-            self.ai_usage_pending_claude = Some(crate::ai_usage::spawn_claude_fetch(cap));
+            self.ai_usage_pending_claude = Some(crate::ai_usage::spawn_claude_fetch());
         }
         if codex_enabled && self.ai_usage_pending_codex.is_none() {
             self.ai_usage_pending_codex = Some(crate::ai_usage::spawn_codex_fetch());
@@ -7431,6 +7418,32 @@ impl App {
                     self.ai_usage_pending_codex = None;
                 }
             }
+        }
+    }
+
+    /// `:ai.link_claude_token` — open a prompt for the user to
+    /// paste their Claude Code OAuth token. Accepting writes to
+    /// `~/.config/mnml/ai_token` (chmod 600) + kicks a fresh fetch.
+    pub fn open_link_claude_token_prompt(&mut self) {
+        self.prompt = Some(crate::prompt::Prompt::new(
+            crate::prompt::PromptKind::LinkClaudeToken,
+            "Paste your Claude Code OAuth token (starts with `sk-ant-oat…`)",
+        ));
+    }
+
+    /// Called from the prompt accept handler after the user pastes
+    /// a token. Writes to disk + kicks the first fetch immediately.
+    pub fn accept_link_claude_token(&mut self, token: String) {
+        match crate::ai_usage::write_claude_token(&token) {
+            Ok(path) => {
+                self.toast(format!("linked → {}", path.display()));
+                // Force an immediate refresh — bypass the 5-min
+                // throttle so the chip lights up right away.
+                self.ai_usage_last_refresh_at = 0;
+                self.ai_usage_pending_claude = None;
+                self.maybe_refresh_ai_usage();
+            }
+            Err(e) => self.toast(format!("link failed: {e}")),
         }
     }
 
