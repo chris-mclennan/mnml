@@ -160,6 +160,23 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
         .map_err(|e| format!("fetch: {e}"))?;
     let status = resp.status();
     let text = resp.text().map_err(|e| format!("body read: {e}"))?;
+    // Debug hook — always write the last raw response to a
+    // predictable path so `:ai.show_last_response` can open it
+    // when the parser returns 0% for something the endpoint
+    // clearly filled in. Best-effort, silent on failure.
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let dir = home.join(".cache").join("mnml");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(
+            dir.join("ai_last_response.json"),
+            format!(
+                "// HTTP {}\n// fetched_at: {}\n{}\n",
+                status.as_u16(),
+                now_unix(),
+                text
+            ),
+        );
+    }
     if !status.is_success() {
         // Reviewer 2026-08-05 — don't echo the response body on
         // auth failures. Some auth middlewares include the raw

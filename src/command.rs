@@ -5733,6 +5733,27 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_link_claude_token_prompt(),
         },
         Command {
+            id: "ai.show_last_response",
+            title: "AI: show last Claude quota response (debug)",
+            group: "ai",
+            keys: &[],
+            run: |app| {
+                let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+                    app.toast("no $HOME");
+                    return;
+                };
+                let path = home
+                    .join(".cache")
+                    .join("mnml")
+                    .join("ai_last_response.json");
+                if !path.exists() {
+                    app.toast("no response cached yet — hit :ai.refresh_usage first");
+                    return;
+                }
+                app.run_ex_command(&format!("e {}", path.display()));
+            },
+        },
+        Command {
             id: "ai.refresh_usage",
             title: "AI: refresh usage meter (Claude + Codex)",
             group: "ai",
