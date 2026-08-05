@@ -67,6 +67,61 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.commit_pending_undo();
         return;
     }
+    // vscode-mouse SEV-2 2026-08-05 — when a menu dropdown is open,
+    // handle its clicks BEFORE any body-of-app rect check so a click
+    // on a menu item doesn't fall through to the tree/pane rect
+    // underneath. Previously the menu_bar_items check ran after
+    // marketplace/integration/tree checks, and if the current
+    // frame's rects had already been reset but the menu hadn't
+    // re-rendered yet, the item click would silently activate the
+    // element behind the dropdown.
+    if let Some(open) = app.menu_open.as_ref().cloned() {
+        // 1. Item hit — fire the palette command + close.
+        if let Some(&(_, item_idx)) = app
+            .rects
+            .menu_bar_items
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            let menus = crate::menu_bar::bar();
+            if let Some(menu) = menus.get(open.menu_idx)
+                && let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
+                    menu.items.get(item_idx)
+            {
+                let id = *command_id;
+                app.menu_open = None;
+                crate::command::run(id, app);
+            }
+            return;
+        }
+        // 2. Word hit on the SAME menu — toggle (close). Different
+        // word → let the normal menu_bar_words handler switch.
+        if let Some(&(_, menu_idx)) = app
+            .rects
+            .menu_bar_words
+            .iter()
+            .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+            && menu_idx == open.menu_idx
+        {
+            app.menu_open = None;
+            return;
+        }
+        // 3. Click anywhere else with menu open → close menu and
+        // swallow the click. The user's intent was "dismiss," not
+        // "activate what's behind the panel."
+        //
+        // If the click hit a different menu word (case 2), fall
+        // through so the menu_bar_words handler below can switch.
+        if !app
+            .rects
+            .menu_bar_words
+            .iter()
+            .any(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+        {
+            app.menu_open = None;
+            return;
+        }
+    }
     // 2026-07-19 — the activity-bar icons live on a 4-cell strip at
     // the far-left of the rail; hover-tooltips consistently report
     // the correct section but clicks were being swallowed by stale

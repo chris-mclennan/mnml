@@ -3554,6 +3554,14 @@ pub struct App {
         String, // source id
         std::sync::mpsc::Receiver<Result<Vec<crate::marketplace::MarketplaceEntry>, String>>,
     )>,
+    /// Pending launcher-install fetches — one entry per click-Install
+    /// on a marketplace launcher row. Each thread downloads the
+    /// launcher .toml + returns Ok(id, path) / Err(id, message).
+    /// Drained per-tick by `drain_launcher_installs`. vscode-mouse
+    /// SEV-1 2026-08-05: prior blocking `install_launcher_from_url`
+    /// froze the render thread for up to 10s.
+    pub launcher_install_pending:
+        Vec<std::sync::mpsc::Receiver<Result<(String, std::path::PathBuf), (String, String)>>>,
     /// Unix seconds when the marketplace cache was last successfully
     /// written. 0 means "never fetched this session"; the disk cache
     /// may still be readable.
@@ -5252,6 +5260,7 @@ impl App {
             pending_tool_install: None,
             marketplace_entries: Vec::new(),
             marketplace_pending: Vec::new(),
+            launcher_install_pending: Vec::new(),
             marketplace_last_fetched: 0,
             pending_install_family_id: None,
             pending_install_after_action: None,
@@ -7289,26 +7298,57 @@ impl App {
                 let id = entry.id.clone();
                 let url = url.clone();
                 self.toast(format!("fetching launcher {id}…"));
-                match install_launcher_from_url(&id, &url) {
-                    Ok(_path) => {
-                        self.toast(format!("installed {id} — see Installed tab"));
-                        // Manifest just landed on disk — re-scan so
-                        // the Installed tab picks it up without a
-                        // restart. Then flip the tab so the user gets
-                        // immediate visual feedback about where the
-                        // chip landed (user report 2026-08-05: click
-                        // installed btop but couldn't find it —
-                        // Marketplace tab hides installed ids, and
-                        // Installed tab wasn't auto-focused).
-                        self.refresh_integration_manifests();
-                        self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
-                    }
-                    Err(e) => {
-                        self.toast(format!("install failed: {e}"));
-                        self.refresh_integration_manifests();
-                    }
+                // vscode-mouse SEV-1 2026-08-05 — was: blocking
+                // reqwest::blocking on the UI thread (froze render
+                // for up to 10s). Now: worker thread + per-tick
+                // drain in `drain_launcher_installs`.
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let result = install_launcher_from_url(&id, &url)
+                        .map(|path| (id.clone(), path))
+                        .map_err(|e| (id, e));
+                    let _ = tx.send(result);
+                });
+                self.launcher_install_pending.push(rx);
+            }
+        }
+    }
+
+    /// Drain worker replies from any pending launcher-install
+    /// fetches. Called each tick. Successful installs refresh the
+    /// integration manifests + flip the panel to Installed so the
+    /// user sees where the chip landed. Failures toast the error.
+    pub fn drain_launcher_installs(&mut self) {
+        let mut delivered: Vec<Result<(String, std::path::PathBuf), (String, String)>> = Vec::new();
+        self.launcher_install_pending
+            .retain_mut(|rx| match rx.try_recv() {
+                Ok(msg) => {
+                    delivered.push(msg);
+                    false
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => true,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+            });
+        if delivered.is_empty() {
+            return;
+        }
+        let mut any_ok = false;
+        for r in delivered {
+            match r {
+                Ok((id, _path)) => {
+                    any_ok = true;
+                    self.toast(format!("installed {id} — see Installed tab"));
+                }
+                Err((_id, e)) => {
+                    self.toast(format!("install failed: {e}"));
                 }
             }
+        }
+        // Refresh once per drain (not per-entry) even on partial
+        // failures — the manifest state may have partial writes.
+        self.refresh_integration_manifests();
+        if any_ok {
+            self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
         }
     }
 
@@ -14263,6 +14303,7 @@ impl App {
         self.drain_ai_jobs();
         self.drain_ai_session_search();
         self.drain_marketplace();
+        self.drain_launcher_installs();
         self.drain_suggestions();
         self.maybe_fire_suggestion();
         self.drain_tests_jobs();
