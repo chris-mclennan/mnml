@@ -138,7 +138,7 @@ pub fn push_text_at(app: &mut crate::app::App, corner: DockCorner) {
         corner,
         format!("Note {n}"),
         format!(
-            "Dock widget #{n} at {corner:?}.\nClick × to close, or run `dock.close_all` to clear them all."
+            "Dock widget #{n} at {corner:?}.\nUse the ⋮ menu → Close, or run `dock.close_all` to clear them all."
         ),
     ));
 }
