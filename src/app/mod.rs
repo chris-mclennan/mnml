@@ -7285,12 +7285,24 @@ impl App {
                 let url = url.clone();
                 self.toast(format!("fetching launcher {id}…"));
                 match install_launcher_from_url(&id, &url) {
-                    Ok(path) => self.toast(format!("installed {id} → {}", path.display())),
-                    Err(e) => self.toast(format!("install failed: {e}")),
+                    Ok(_path) => {
+                        self.toast(format!("installed {id} — see Installed tab"));
+                        // Manifest just landed on disk — re-scan so
+                        // the Installed tab picks it up without a
+                        // restart. Then flip the tab so the user gets
+                        // immediate visual feedback about where the
+                        // chip landed (user report 2026-08-05: click
+                        // installed btop but couldn't find it —
+                        // Marketplace tab hides installed ids, and
+                        // Installed tab wasn't auto-focused).
+                        self.refresh_integration_manifests();
+                        self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
+                    }
+                    Err(e) => {
+                        self.toast(format!("install failed: {e}"));
+                        self.refresh_integration_manifests();
+                    }
                 }
-                // Manifest just landed on disk — re-scan so the
-                // Installed tab picks it up without a restart.
-                self.refresh_integration_manifests();
             }
         }
     }

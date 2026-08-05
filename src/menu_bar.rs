@@ -162,7 +162,12 @@ fn file_menu() -> MenuDef {
                 command_id: "picker.recent",
             },
             MenuItem::Action {
-                label: "Open recent folder…",
+                // `view.switch_workspace` surfaces the extras-workspace
+                // picker (primary + `[[workspaces]]` entries from
+                // config.toml), NOT a recency-tracked folder-open
+                // history. Label it accurately; a real "recent
+                // folders" list is a follow-up.
+                label: "Switch workspace…",
                 command_id: "view.switch_workspace",
             },
             MenuItem::Action {

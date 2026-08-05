@@ -15,6 +15,14 @@ use mnml::app::App;
 use mnml::config::Config;
 
 fn main() -> ExitCode {
+    // `--sandbox` self-redirect. If the flag is present but $HOME isn't
+    // already a tempdir, create one + re-exec ourselves with
+    // HOME/XDG_CONFIG_HOME set. Must run before any config load so
+    // every downstream HOME lookup sees the redirected path. Fixes the
+    // "sandbox flag set but $HOME is NOT redirected" warning users
+    // used to hit when running `mnml --sandbox` without the run.sh
+    // wrapper — now the flag alone is enough.
+    maybe_reexec_for_sandbox();
     let mut args = std::env::args().skip(1).peekable();
     match args.peek().map(String::as_str) {
         Some("run") => {
@@ -51,6 +59,65 @@ fn main() -> ExitCode {
         }
         _ => run_tui(args.collect()),
     }
+}
+
+// ───────────────────────── `--sandbox` self-redirect ──────────────
+
+/// True when `$HOME` looks like a sandbox tempdir (either under the
+/// system temp root, or named `mnml-sandbox-*`). Used both by the
+/// self-redirect probe and by the in-app banner logic so a bare
+/// `mnml --sandbox` invocation without the redirect gets caught.
+fn home_is_sandbox_tempdir() -> bool {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .is_some_and(|home| {
+            let tmp = std::env::temp_dir();
+            home.starts_with(&tmp)
+                || home
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("mnml-sandbox-"))
+        })
+}
+
+/// If `--sandbox` is on argv but `$HOME` isn't a tempdir yet, create
+/// one + re-exec ourselves with `HOME` + `XDG_CONFIG_HOME` redirected.
+/// Runs BEFORE any config load so every downstream HOME lookup sees
+/// the new path. On second entry (post-exec) `home_is_sandbox_tempdir`
+/// is true → we return early and continue normally.
+fn maybe_reexec_for_sandbox() {
+    let raw: Vec<String> = std::env::args().collect();
+    if !raw.iter().any(|a| a == "--sandbox") {
+        return;
+    }
+    if home_is_sandbox_tempdir() {
+        return;
+    }
+    // Create the sandbox root. Shell out to `mktemp` for portability
+    // — `std::env::temp_dir()` gives the parent but not a fresh dir.
+    let out = std::process::Command::new("mktemp")
+        .args(["-d", "-t", "mnml-sandbox-XXXXXXXX"])
+        .output();
+    let root = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => {
+            eprintln!("mnml: --sandbox: failed to create tempdir");
+            std::process::exit(1);
+        }
+    };
+    let xdg = format!("{root}/xdg");
+    let _ = std::fs::create_dir_all(&xdg);
+    eprintln!("mnml: --sandbox self-redirect: HOME={root}");
+    // Unix exec() replaces the current process image — no fork, no
+    // wait, no double-mnml running.
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(&raw[0])
+        .args(&raw[1..])
+        .env("HOME", &root)
+        .env("XDG_CONFIG_HOME", &xdg)
+        .exec();
+    eprintln!("mnml: --sandbox: exec failed: {err}");
+    std::process::exit(1);
 }
 
 // ───────────────────────── `.test` E2E runner ─────────────────────
@@ -333,17 +400,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // real ~/.config/mnml/. When we detect that gap, the banner
     // downgrades to a warning so the user isn't lied to.
     if args.sandbox {
-        let home_is_temp = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .is_some_and(|home| {
-                let tmp = std::env::temp_dir();
-                home.starts_with(&tmp)
-                    || home
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("mnml-sandbox-"))
-            });
-        if home_is_temp {
+        if home_is_sandbox_tempdir() {
             app.toast_persistent(
                 "sandbox-mode",
                 "SANDBOX MODE — real config safe. Nothing here persists. \
