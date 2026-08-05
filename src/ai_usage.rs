@@ -108,9 +108,51 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
     let status = resp.status();
     let text = resp.text().map_err(|e| format!("body read: {e}"))?;
     if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status.as_u16(), truncate(&text, 80)));
+        // Reviewer 2026-08-05 — don't echo the response body on
+        // auth failures. Some auth middlewares include the raw
+        // Authorization header value in error strings ("invalid
+        // Authorization header: Bearer sk-ant-oat-…"), which
+        // would then flow into `last_error` → toast → `screen.txt`
+        // on disk. Better to render a generic hint. For other
+        // status codes, redact any bearer-token-like substring.
+        let msg = if status.as_u16() == 401 || status.as_u16() == 403 {
+            "token rejected — re-link via :ai.link_claude_token".to_string()
+        } else {
+            truncate(&redact_bearer(&text), 80)
+        };
+        return Err(format!("HTTP {}: {}", status.as_u16(), msg));
     }
     parse_claude_response(&text)
+}
+
+/// Replace anything that looks like a bearer token with `<redacted>`
+/// so error responses that echo it back can't leak into logs /
+/// toasts / on-disk screen.txt. Matches `sk-ant-…`, `sk-…`, and
+/// generic `Bearer <hex-ish blob>` shapes.
+fn redact_bearer(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(idx) = rest.find(['s', 'B']) {
+        out.push_str(&rest[..idx]);
+        let tail = &rest[idx..];
+        // Consume until whitespace / closing quote / end
+        let end = tail
+            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+            .unwrap_or(tail.len());
+        let candidate = &tail[..end];
+        let looks_bearer = candidate.starts_with("sk-")
+            || candidate.starts_with("Bearer ")
+            || candidate.starts_with("sk_ant")
+            || (candidate.len() > 40 && candidate.starts_with("sk"));
+        if looks_bearer {
+            out.push_str("<redacted>");
+        } else {
+            out.push_str(candidate);
+        }
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Best-effort JSON parse. The endpoint's schema isn't officially
@@ -120,32 +162,53 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
 fn parse_claude_response(text: &str) -> Result<ClaudeUsage, String> {
     let v: serde_json::Value =
         serde_json::from_str(text).map_err(|e| format!("parse json: {e}"))?;
-    // Try common shapes: {five_hour: {percent, resets_at, tokens}} +
-    // {weekly: {percent}}. Fall back to top-level percent fields.
-    let percent =
-        pick_percent(&v, &["five_hour_percent", "session_percent", "percent"]).unwrap_or(0);
-    let weekly_percent =
-        pick_percent(&v, &["weekly_percent", "week_percent", "weekly"]).unwrap_or(0);
-    let resets_at = pick_u64(
-        &v,
-        &[
-            "five_hour_resets_at",
-            "resets_at",
-            "reset_at",
-            "session_resets_at",
-        ],
-    )
-    .unwrap_or(0);
-    let tokens_5h = pick_u64(
-        &v,
-        &[
-            "five_hour_tokens",
-            "session_tokens",
-            "tokens",
-            "input_tokens",
-        ],
-    )
-    .unwrap_or(0);
+    // Reviewer 2026-08-05 — DFS walk is a wrong-value risk (any
+    // nested field with a matching name silently wins) + a
+    // stack-overflow risk on deep payloads. Prefer KNOWN PATHS
+    // first (targeting the shape we expect), fall back to walk()
+    // only when nothing matched, and cap walk depth.
+    let five_hour = v.get("five_hour").or_else(|| v.get("session"));
+    let weekly = v.get("weekly").or_else(|| v.get("week"));
+    let percent = five_hour
+        .and_then(|x| x.get("percent"))
+        .and_then(|x| x.as_f64())
+        .or_else(|| {
+            v.get("five_hour_percent")
+                .or_else(|| v.get("session_percent"))
+                .and_then(|x| x.as_f64())
+        })
+        .or_else(|| pick_percent_walk(&v, &["five_hour_percent", "session_percent"]))
+        .map(|n| n.round().clamp(0.0, 999.0) as u16)
+        .unwrap_or(0);
+    let weekly_percent = weekly
+        .and_then(|x| x.get("percent"))
+        .and_then(|x| x.as_f64())
+        .or_else(|| {
+            v.get("weekly_percent")
+                .or_else(|| v.get("week_percent"))
+                .and_then(|x| x.as_f64())
+        })
+        .or_else(|| pick_percent_walk(&v, &["weekly_percent", "week_percent"]))
+        .map(|n| n.round().clamp(0.0, 999.0) as u16)
+        .unwrap_or(0);
+    let resets_at = five_hour
+        .and_then(|x| x.get("resets_at").or_else(|| x.get("reset_at")))
+        .and_then(|x| x.as_u64())
+        .or_else(|| {
+            v.get("five_hour_resets_at")
+                .or_else(|| v.get("resets_at"))
+                .and_then(|x| x.as_u64())
+        })
+        .unwrap_or(0);
+    let tokens_5h = five_hour
+        .and_then(|x| x.get("tokens").or_else(|| x.get("total_tokens")))
+        .and_then(|x| x.as_u64())
+        .or_else(|| {
+            v.get("five_hour_tokens")
+                .or_else(|| v.get("session_tokens"))
+                .and_then(|x| x.as_u64())
+        })
+        .unwrap_or(0);
     let fetched_at = now_unix();
     Ok(ClaudeUsage {
         percent,
@@ -157,41 +220,38 @@ fn parse_claude_response(text: &str) -> Result<ClaudeUsage, String> {
     })
 }
 
-fn pick_percent(v: &serde_json::Value, keys: &[&str]) -> Option<u16> {
+fn pick_percent_walk(v: &serde_json::Value, keys: &[&str]) -> Option<f64> {
     for &k in keys {
-        if let Some(n) = walk(v, k).and_then(|x| x.as_f64()) {
-            return Some(n.round().clamp(0.0, 999.0) as u16);
-        }
-    }
-    None
-}
-
-fn pick_u64(v: &serde_json::Value, keys: &[&str]) -> Option<u64> {
-    for &k in keys {
-        if let Some(n) = walk(v, k).and_then(|x| x.as_u64()) {
+        if let Some(n) = walk(v, k, 0).and_then(|x| x.as_f64()) {
             return Some(n);
         }
     }
     None
 }
 
-/// Depth-first search for a key anywhere in the JSON tree. Returns
-/// the first match. Safer than assuming a schema shape when the
-/// endpoint isn't documented.
-fn walk<'a>(v: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+/// Depth-first search for a key anywhere in the JSON tree, capped
+/// at MAX_DEPTH so a pathological / attacker-crafted deep JSON can't
+/// blow the worker's stack. Returns the first match. Used only as a
+/// FALLBACK — see `parse_claude_response` for the preferred
+/// known-path lookups.
+fn walk<'a>(v: &'a serde_json::Value, key: &str, depth: usize) -> Option<&'a serde_json::Value> {
+    const MAX_DEPTH: usize = 8;
+    if depth > MAX_DEPTH {
+        return None;
+    }
     if let Some(map) = v.as_object() {
         if let Some(hit) = map.get(key) {
             return Some(hit);
         }
         for val in map.values() {
-            if let Some(hit) = walk(val, key) {
+            if let Some(hit) = walk(val, key, depth + 1) {
                 return Some(hit);
             }
         }
     }
     if let Some(arr) = v.as_array() {
         for item in arr {
-            if let Some(hit) = walk(item, key) {
+            if let Some(hit) = walk(item, key, depth + 1) {
                 return Some(hit);
             }
         }
@@ -224,7 +284,6 @@ fn fetch_codex_blocking() -> Result<CodexUsage, String> {
             ..Default::default()
         });
     }
-    let _today = today_string();
     let mut tokens_today = 0u64;
     let mut sessions_today = 0u64;
     let entries = std::fs::read_dir(&sessions_dir).map_err(|e| format!("read_dir: {e}"))?;
@@ -252,16 +311,25 @@ fn fetch_codex_blocking() -> Result<CodexUsage, String> {
 }
 
 fn sum_tokens_in_jsonl(path: &Path) -> Option<u64> {
-    let text = std::fs::read_to_string(path).ok()?;
+    use std::io::{BufRead, BufReader};
+    // Reviewer 2026-08-05 — was `read_to_string` which slurped the
+    // entire session file (potentially many MB after a long day).
+    // Stream line-by-line so peak memory is bounded to one line +
+    // its parsed Value. Also cap total lines read per file so a
+    // runaway JSONL never blocks the worker indefinitely.
+    const MAX_LINES_PER_FILE: usize = 100_000;
+    let file = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
     let mut sum = 0u64;
-    for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+    for (i, line) in reader.lines().enumerate() {
+        if i >= MAX_LINES_PER_FILE {
+            break;
+        }
+        let Ok(line) = line else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
-        // Codex CLI records `token_usage: {input_tokens, output_tokens, ...}`
-        // on turn-record objects. Sum whatever we find — schema
-        // varies between Codex CLI releases so probe several fields.
-        let usage = walk(&v, "token_usage").or_else(|| walk(&v, "usage"));
+        let usage = walk(&v, "token_usage", 0).or_else(|| walk(&v, "usage", 0));
         if let Some(usage) = usage {
             let inp = usage
                 .get("input_tokens")
@@ -286,63 +354,6 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
-}
-
-fn today_string() -> String {
-    // YYYY-MM-DD in local time (via chrono would be tidier but we
-    // stay dep-light here; the epoch math + local offset is enough
-    // for a "same day" check).
-    let secs = now_unix() as i64;
-    let days = secs / 86400;
-    // 1970-01-01 is day 0. Adjust to local — approximate via
-    // TZ envvar not applied; sufficient for a rough today filter.
-    // (mtime comparison is used for the actual filter — this string
-    // is only for parity with future rolling-day logic.)
-    let (y, m, d) = day_to_ymd(days);
-    format!("{y:04}-{m:02}-{d:02}")
-}
-
-fn day_to_ymd(days: i64) -> (i32, u32, u32) {
-    // From `chrono`'s NaiveDate::from_num_days_from_ce, simplified.
-    // We approximate: 1970-01-01 is day 719_162 in CE.
-    let mut d = days + 719_162;
-    let mut y: i32 = 400 * (d as i32 / 146_097);
-    d %= 146_097;
-    if d == 146_096 {
-        y += 400;
-        d = 0;
-    }
-    let (mut yi, mut di) = (y as i64, d);
-    // 100-year cycles.
-    let c = (di / 36524).min(3);
-    di -= c * 36524;
-    yi += c * 100;
-    // 4-year cycles.
-    let f = di / 1461;
-    di -= f * 1461;
-    yi += f * 4;
-    // Single years.
-    let g = (di / 365).min(3);
-    di -= g * 365;
-    yi += g;
-    // Month/day.
-    let leap = (yi % 4 == 0) && (yi % 100 != 0 || yi % 400 == 0);
-    let days_per_month = if leap {
-        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    } else {
-        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    };
-    let mut m: u32 = 1;
-    let mut rem = di as u32;
-    for &dpm in days_per_month.iter() {
-        if rem < dpm {
-            break;
-        }
-        rem -= dpm;
-        m += 1;
-    }
-    let day = rem + 1;
-    (yi as i32, m, day)
 }
 
 fn is_today(t: std::time::SystemTime) -> bool {
