@@ -5827,8 +5827,11 @@ impl App {
         self.merge_integration_manifests();
         // 2026-08-01 (P4b) — populate marketplace entries from the
         // on-disk cache so the Marketplace tab has something to
-        // render on cold start. First actual fetch is user-triggered
-        // via `marketplace.refresh` palette command.
+        // render on cold start. Passive: no network I/O here — the
+        // interactive-startup auto-refresh lives in
+        // `App::maybe_refresh_marketplace_on_startup()`, called from
+        // `main.rs` after `App::new` so tests / headless / E2E stays
+        // hermetic.
         self.load_marketplace_cache();
         self
     }
@@ -7114,32 +7117,48 @@ impl App {
     /// Load the on-disk marketplace cache into `marketplace_entries`.
     /// Best-effort — silent no-op if the cache is missing / malformed.
     /// Called once at App::new so a fresh mnml has something to render
-    /// even before the first fetch completes. When the cache is
-    /// missing OR expired past its TTL, kicks off a background
-    /// refresh so retired/added entries reconcile without needing the
-    /// user to click ⟳ (fixes the "removed launcher persists forever"
-    /// class of complaint).
+    /// even before the first fetch completes. Passive: no network I/O
+    /// here — the auto-refresh path is
+    /// `maybe_refresh_marketplace_on_startup()`, invoked by the real
+    /// interactive `main.rs` after `App::new` returns so unit tests /
+    /// headless runs / `.test` E2E stays hermetic.
     pub fn load_marketplace_cache(&mut self) {
         let Some(path) = crate::marketplace::MarketplaceCache::path() else {
             return;
         };
-        let cache_expired = match crate::marketplace::MarketplaceCache::load_from(&path) {
-            Some(cache) => {
-                let expired = cache.is_expired();
-                self.marketplace_entries = cache.entries;
-                self.marketplace_last_fetched = cache.fetched_at;
-                self.marketplace_entries.sort_by(|a, b| {
-                    let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
-                    let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
-                    bp.cmp(&ap)
-                        .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
-                });
-                expired
-            }
+        let Some(cache) = crate::marketplace::MarketplaceCache::load_from(&path) else {
+            return;
+        };
+        self.marketplace_entries = cache.entries;
+        self.marketplace_last_fetched = cache.fetched_at;
+        self.marketplace_entries.sort_by(|a, b| {
+            let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
+            let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
+            bp.cmp(&ap)
+                .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+        });
+    }
+
+    /// Interactive-startup hook: if the on-disk marketplace cache is
+    /// missing or past its TTL, kick off a silent background refresh
+    /// so entries added/removed from the catalog reconcile without
+    /// the user having to click ⟳. Called only from `main.rs` after
+    /// `App::new`, never from the shared constructor path, so the
+    /// test suite / headless / E2E harness never touches the network.
+    pub fn maybe_refresh_marketplace_on_startup(&mut self) {
+        if !self.config.marketplace.enabled {
+            return;
+        }
+        let path = match crate::marketplace::MarketplaceCache::path() {
+            Some(p) => p,
+            None => return,
+        };
+        let stale = match crate::marketplace::MarketplaceCache::load_from(&path) {
+            Some(cache) => cache.is_expired(),
             None => true,
         };
-        if cache_expired && self.config.marketplace.enabled {
-            self.refresh_marketplace();
+        if stale {
+            self.refresh_marketplace_silent();
         }
     }
 
@@ -7151,6 +7170,21 @@ impl App {
             self.toast("marketplace disabled — enable in config".to_string());
             return;
         }
+        let count = self.spawn_marketplace_fetches();
+        self.toast(format!("marketplace: refreshing {count} source(s)…"));
+    }
+
+    /// Same as `refresh_marketplace()` but without the toast — used by
+    /// the startup auto-refresh so a routine relaunch doesn't pop
+    /// unexpected chatter over the recent-files splash.
+    pub fn refresh_marketplace_silent(&mut self) {
+        if !self.config.marketplace.enabled {
+            return;
+        }
+        self.spawn_marketplace_fetches();
+    }
+
+    fn spawn_marketplace_fetches(&mut self) -> usize {
         self.marketplace_pending.clear();
         for source in self.config.marketplace.effective_sources() {
             let id = source.id().to_string();
@@ -7161,10 +7195,7 @@ impl App {
             });
             self.marketplace_pending.push((id, rx));
         }
-        self.toast(format!(
-            "marketplace: refreshing {} source(s)…",
-            self.marketplace_pending.len()
-        ));
+        self.marketplace_pending.len()
     }
 
     /// Poll every pending marketplace fetch. Called from the event

@@ -164,8 +164,10 @@ fn cdp_eval_result_text(v: &serde_json::Value) -> String {
 }
 
 impl App {
-    /// `browser.open` — prompt for a URL, then launch Chrome on it. Multiple
-    /// browser panes can coexist; each gets its own CDP worker + (in
+    /// `browser.open_url` — prompt for a URL, then launch Chrome on
+    /// it. `browser.open` (rail chip default) skips the prompt and
+    /// goes straight to `about:blank`. Multiple browser panes can
+    /// coexist; each gets its own CDP worker + (in
     /// `workspace` / `shared` modes) a per-pane sibling profile dir.
     pub fn open_browser_prompt(&mut self) {
         // Empty seed — the prompt UI paints a dimmed "https://example.com"

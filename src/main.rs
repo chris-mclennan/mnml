@@ -314,6 +314,12 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // the backup — surface it as a persistent toast with the restore
     // one-liner so the user isn't left wondering where their config went.
     app.maybe_show_reset_toast();
+    // Interactive-only: if the on-disk marketplace cache is missing
+    // or past its TTL, kick off a silent background refresh so
+    // catalog changes reconcile without needing manual ⟳. Lives in
+    // `main.rs` (not `App::new`) so the test suite / headless / E2E
+    // never touches the network.
+    app.maybe_refresh_marketplace_on_startup();
     // Startup workspace picker (--startup-picker / MNML_STARTUP_PICKER=1).
     if mnml::app::App::want_startup_picker(args.startup_picker) {
         app.startup_picker = Some(mnml::app::StartupPickerState::default());
