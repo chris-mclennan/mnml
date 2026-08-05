@@ -356,14 +356,16 @@ impl App {
             }
         }
         self.focus = Focus::Pane;
-        // On the first browser pane, surface the HTTP activity panel
-        // (files / recent requests / captured traffic) so the network-
-        // debugging surface is one glance away without hunting for it.
-        // Subsequent browser panes leave the activity bar alone —
-        // the user has already made a section choice.
-        if existing_browsers == 0 && self.active_section != crate::app::ActivitySection::Http {
-            self.set_activity_section(crate::app::ActivitySection::Http);
-        }
+        // NOTE: previously auto-switched to the HTTP activity section
+        // here to surface network-debug files. Removed 2026-08-05
+        // (api-workflow SEV-1): `set_activity_section(Http)` has a
+        // side effect that unconditionally spawns a blank scratch
+        // Request pane, which then covers the browser we just opened.
+        // The guard meant to prevent this reads `self.active` after
+        // it's already been pointed at the Browser pane, so it never
+        // fires. If we want to nudge the user toward HTTP later,
+        // reach it a different way (e.g. a toast with a click-to-
+        // open, or a purely visual section change with no pane spawn).
     }
 
     /// `g` in a browser pane — prompt for a URL to navigate to (seeded with the

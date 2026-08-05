@@ -6570,6 +6570,10 @@ impl App {
         let done: Vec<HttpJobDone> = rx.try_iter().collect();
         let mut toasts: Vec<String> = Vec::new();
         let workspace = self.workspace.clone();
+        // Snapshot the active envset ONCE before the mut-borrow loop
+        // so per-pane history writes below can expand `{{VAR}}` values
+        // (api-workflow SEV-2 2026-08-05) without re-borrowing self.
+        let hist_env = self.active_envset();
         // Deferred captures to persist after the mut-borrow loop.
         let mut carry_forward: Vec<(Option<std::path::PathBuf>, Vec<(String, String)>)> =
             Vec::new();
@@ -6604,11 +6608,32 @@ impl App {
                     // Phase 9 — append to .rqst/history.jsonl so
                     // grep/jq workflows AND the in-app `http.history`
                     // viewer see the request.
+                    //
+                    // api-workflow SEV-2 2026-08-05 — expand `{{VAR}}`
+                    // templates before writing. `rp.request` is
+                    // deliberately kept templated on the pane (so
+                    // `file.save` doesn't bake secrets into the
+                    // source file), but the history log needs the
+                    // resolved values to be useful for jq/grep audit
+                    // workflows. Envset snapshotted once at the top
+                    // of drain to avoid re-borrowing self mid-loop.
+                    let hist_url = crate::http::template::expand(&rp.request.url, &hist_env);
+                    let hist_headers: Vec<(String, String)> = rp
+                        .request
+                        .headers
+                        .iter()
+                        .map(|(k, v)| (k.clone(), crate::http::template::expand(v, &hist_env)))
+                        .collect();
+                    let hist_body = rp
+                        .request
+                        .body
+                        .as_deref()
+                        .map(|b| crate::http::template::expand(b, &hist_env));
                     crate::http::history::append_with_global_mirror(
                         &workspace,
                         &crate::http::history::Entry {
                             method: &rp.request.method,
-                            url: &rp.request.url,
+                            url: &hist_url,
                             status: Some(rv.status),
                             duration_ms: Some(rv.elapsed.as_millis()),
                             // api-round-14 SEV-2 2026-07-16 — was
@@ -6623,8 +6648,8 @@ impl App {
                                 rv.body.len()
                             }),
                             error: None,
-                            headers: Some(&rp.request.headers),
-                            request_body: rp.request.body.as_deref(),
+                            headers: Some(&hist_headers),
+                            request_body: hist_body.as_deref(),
                         },
                     );
                     // 2026-06-19 — diff support: shift the
