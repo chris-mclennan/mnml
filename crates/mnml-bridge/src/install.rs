@@ -26,7 +26,6 @@
 //!         glyph: "\u{F0839}".into(),
 //!         fallback: "Sk".into(),
 //!         color: "purple".into(),
-//!         label: Some("Slack".into()),
 //!         enabled: true,
 //!         in_palette_bar: false,
 //!         badge_key: Some("slack".into()),
@@ -46,7 +45,7 @@
 use serde::Serialize;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Complete integration description written to the manifest
 /// file. Only `id`, `label`, and `binary` are required —
@@ -102,18 +101,6 @@ pub struct ChipSpec {
     pub in_palette_bar: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub badge_key: Option<String>,
-    /// **Deprecated in 0.5** — kept for backwards compat with
-    /// 0.4 integrations. Path (relative to the sibling repo root,
-    /// or absolute) to an SVG file the integration owns. On
-    /// [`install_integration`] the file is copied to
-    /// `~/.config/mnml/glyphs/<id>.svg` where it lives permanently.
-    /// User feedback: that persistent copy under `~/.config/` is
-    /// noise. Use [`glyph_svg_bytes`] instead — bytes get written
-    /// to `~/.cache/mnml/pending-glyphs/`, mnml bakes them into
-    /// `MnmlSymbols.ttf` at next startup, then deletes the pending
-    /// file so nothing lingers under the user's config dir.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub glyph_svg: Option<PathBuf>,
     /// SVG bytes for the integration's icon — typically produced
     /// by `include_bytes!("assets/icons/<id>.svg").to_vec()` at the
     /// integration binary's build time.
@@ -123,10 +110,9 @@ pub struct ChipSpec {
     /// pending SVGs into `~/Library/Fonts/MnmlSymbols.ttf` at the
     /// next startup and DELETES the pending file so there's no
     /// permanent glyph state under `~/.config/mnml/`. `glyph_codepoint`
-    /// (if set) pins the codepoint the sibling wants; otherwise
+    /// (if set) pins the codepoint the integration wants; otherwise
     /// mnml auto-assigns from the `U+F1C00–U+F1CFF` range.
     ///
-    /// This is the preferred field over [`glyph_svg`] since 0.5.
     /// Never serialized to the manifest TOML — bytes are consumed
     /// at install time and discarded.
     #[serde(skip)]
@@ -226,10 +212,10 @@ pub struct Requires {
 /// directory if needed. Overwrites any existing file with the
 /// same id. Returns the path written.
 ///
-/// If `spec.chip.glyph_svg` is set, ALSO copies the referenced
-/// SVG to `~/.config/mnml/glyphs/<id>.svg` so mnml can discover
-/// and bake it. A missing / unreadable SVG is a warning, not a
-/// failure — the manifest is the primary contract.
+/// If `spec.chip.glyph_svg_bytes` is set, writes the bytes to
+/// `~/.cache/mnml/pending-glyphs/<id>.svg`. mnml bakes on next
+/// startup + deletes the pending file. Nothing persistent under
+/// `~/.config/mnml/`.
 ///
 /// Fails if `spec.id` contains `/` or `\` (dir traversal
 /// protection), or if the manifest fs write itself fails.
@@ -240,42 +226,25 @@ pub fn install_integration(spec: &IntegrationSpec) -> io::Result<PathBuf> {
     let path = dir.join(format!("{}.toml", spec.id));
     let toml = toml_serialize(spec)?;
     fs::write(&path, toml)?;
-    // 0.5 preferred path: `glyph_svg_bytes` → write to the
-    // pending-glyphs cache so mnml can bake + discard on next
-    // startup, leaving no permanent SVG under `~/.config/mnml/`.
-    // Falls back to the 0.4 `glyph_svg` copy path only when bytes
-    // aren't provided (backwards compat with older integrations).
-    if let Some(chip) = &spec.chip {
-        if let Some(bytes) = chip.glyph_svg_bytes.as_deref() {
-            match write_pending_glyph(&spec.id, bytes) {
-                Ok(dest) => eprintln!(
-                    "mnml-bridge: queued glyph → {} (mnml bakes + deletes on next startup)",
-                    dest.display()
-                ),
-                Err(e) => eprintln!(
-                    "mnml-bridge: WARN failed to queue glyph for {}: {e}",
-                    spec.id
-                ),
-            }
-        } else if let Some(svg_src) = &chip.glyph_svg {
-            match copy_glyph_svg(&spec.id, svg_src) {
-                Ok(dest) => eprintln!(
-                    "mnml-bridge: copied glyph SVG → {} (0.4 path — persists under ~/.config/)",
-                    dest.display()
-                ),
-                Err(e) => eprintln!(
-                    "mnml-bridge: WARN failed to copy glyph SVG {}: {e}",
-                    svg_src.display()
-                ),
-            }
+    if let Some(chip) = &spec.chip
+        && let Some(bytes) = chip.glyph_svg_bytes.as_deref()
+    {
+        match write_pending_glyph(&spec.id, bytes) {
+            Ok(dest) => eprintln!(
+                "mnml-bridge: queued glyph → {} (mnml bakes + deletes on next startup)",
+                dest.display()
+            ),
+            Err(e) => eprintln!(
+                "mnml-bridge: WARN failed to queue glyph for {}: {e}",
+                spec.id
+            ),
         }
     }
     Ok(path)
 }
 
-/// 0.5 write path — dump `bytes` to
-/// `~/.cache/mnml/pending-glyphs/<id>.svg`. mnml's startup path
-/// picks these up, bakes them into `MnmlSymbols.ttf`, then deletes
+/// Dump `bytes` to `~/.cache/mnml/pending-glyphs/<id>.svg`. mnml's
+/// startup path bakes these into `MnmlSymbols.ttf`, then deletes
 /// the pending file. Nothing lands under `~/.config/mnml/glyphs/`.
 fn write_pending_glyph(id: &str, bytes: &[u8]) -> io::Result<PathBuf> {
     validate_id(id)?;
@@ -286,10 +255,9 @@ fn write_pending_glyph(id: &str, bytes: &[u8]) -> io::Result<PathBuf> {
     Ok(dest)
 }
 
-/// `~/.cache/mnml/pending-glyphs/` — 0.5 handoff location for
-/// integration-shipped SVGs the sibling passes as bytes. mnml
-/// bakes + deletes at startup. Nothing here is expected to
-/// persist across a launch cycle.
+/// `~/.cache/mnml/pending-glyphs/` — handoff location for
+/// integration-shipped SVGs. mnml bakes + deletes at startup.
+/// Nothing here is expected to persist across a launch cycle.
 pub fn pending_glyphs_dir() -> io::Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "$HOME is not set"))?;
@@ -299,41 +267,6 @@ pub fn pending_glyphs_dir() -> io::Result<PathBuf> {
         .join("pending-glyphs"))
 }
 
-/// Copy `src` (relative to CWD or absolute) to
-/// `~/.config/mnml/glyphs/<id>.svg`. Creates the parent dir if
-/// missing. Overwrites any existing file (idempotent).
-fn copy_glyph_svg(id: &str, src: &Path) -> io::Result<PathBuf> {
-    validate_id(id)?;
-    if !src.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("glyph SVG not found: {}", src.display()),
-        ));
-    }
-    let dir = sibling_glyphs_dir()?;
-    fs::create_dir_all(&dir)?;
-    let dest = dir.join(format!("{id}.svg"));
-    fs::copy(src, &dest)?;
-    Ok(dest)
-}
-
-/// User-config dir for sibling-shipped glyph SVGs — the sibling
-/// side of the sibling-icons SDK. mnml scans this dir at startup +
-/// on `integrations.refresh`, assigns each SVG a stable codepoint
-/// in the `U+F1C00–U+F1CFF` range, and (on
-/// `integrations.bake_sibling_glyphs`) bakes them into the
-/// runtime symbols font. Sibling code doesn't usually need to
-/// touch this dir — [`install_integration`] copies the SVG here
-/// automatically when `ChipSpec::glyph_svg` is set.
-pub fn sibling_glyphs_dir() -> io::Result<PathBuf> {
-    let home = std::env::var_os("HOME")
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "$HOME is not set"))?;
-    Ok(PathBuf::from(home)
-        .join(".config")
-        .join("mnml")
-        .join("glyphs"))
-}
-
 /// Delete the manifest at `~/.config/mnml/integrations/<id>.toml`.
 /// Returns `Ok(true)` if the file was removed, `Ok(false)` if
 /// the file didn't exist (already uninstalled). Fails on other
@@ -341,17 +274,12 @@ pub fn sibling_glyphs_dir() -> io::Result<PathBuf> {
 pub fn uninstall_integration(id: &str) -> io::Result<bool> {
     validate_id(id)?;
     let path = integration_manifest_path(id)?;
-    // Drop the integration-owned glyph SVG if one exists. Best
-    // effort — a NotFound isn't an error (integration may not have
-    // shipped an SVG at all). The codepoint assignment persists in
-    // `~/.config/mnml/integration-glyphs.toml` so re-installing
-    // the integration later gets the same codepoint back.
-    // Purge both 0.4 (`~/.config/mnml/glyphs/`) and 0.5
-    // (`~/.cache/mnml/pending-glyphs/`) locations so upgraded
-    // installs don't leave stragglers behind.
-    if let Ok(glyph_dir) = sibling_glyphs_dir() {
-        let _ = fs::remove_file(glyph_dir.join(format!("{id}.svg")));
-    }
+    // Drop any leftover pending-glyph SVG for this id (rare — the
+    // startup auto-purge already deletes baked ones, but a fresh
+    // install that hasn't been baked yet would still have the file).
+    // The codepoint assignment persists in
+    // `~/.config/mnml/integration-glyphs.toml` so re-installing later
+    // gets the same codepoint back.
     if let Ok(pending) = pending_glyphs_dir() {
         let _ = fs::remove_file(pending.join(format!("{id}.svg")));
     }
@@ -536,7 +464,7 @@ mod tests {
         };
         let toml = toml_serialize(&spec).unwrap();
         assert!(toml.contains("id = \"slack\""));
-        assert!(toml.contains("name = \"Slack\""));
+        assert!(toml.contains("label = \"Slack\""));
         assert!(toml.contains("binary = \"mnml-msg-slack\""));
     }
 
@@ -553,7 +481,7 @@ mod tests {
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
-                glyph_svg: None,
+                glyph_svg_bytes: None,
                 glyph_codepoint: None,
             }),
             commands: vec![CommandSpec {
@@ -574,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn glyph_svg_and_codepoint_serialize_when_set() {
+    fn glyph_codepoint_serializes_when_set() {
         let spec = IntegrationSpec {
             id: "amplify".into(),
             label: "Amplify".into(),
@@ -586,26 +514,22 @@ mod tests {
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
-                glyph_svg: Some(PathBuf::from("assets/icons/amplify.svg")),
+                glyph_svg_bytes: None,
                 glyph_codepoint: Some("F1B00".into()),
             }),
             ..Default::default()
         };
         let toml = toml_serialize(&spec).unwrap();
-        assert!(toml.contains("glyph_svg = \"assets/icons/amplify.svg\""));
         assert!(toml.contains("glyph_codepoint = \"F1B00\""));
+        // glyph_svg_bytes is #[serde(skip)] — must not appear in TOML.
+        assert!(!toml.contains("glyph_svg_bytes"));
     }
 
     #[test]
-    fn install_copies_glyph_svg_into_glyphs_dir() {
+    fn install_writes_glyph_bytes_to_pending_dir() {
         let _lk = home_lock().lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HOME", tmp.path()) };
-
-        // Stage a fake SVG the sibling would ship.
-        let src_svg = tmp.path().join("assets/icons/amplify.svg");
-        fs::create_dir_all(src_svg.parent().unwrap()).unwrap();
-        fs::write(&src_svg, b"<svg/>").unwrap();
 
         let spec = IntegrationSpec {
             id: "amplify".into(),
@@ -618,25 +542,22 @@ mod tests {
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
-                glyph_svg: Some(src_svg.clone()),
+                glyph_svg_bytes: Some(b"<svg/>".to_vec()),
                 glyph_codepoint: Some("F1B00".into()),
             }),
             ..Default::default()
         };
         install_integration(&spec).unwrap();
 
-        let dest = sibling_glyphs_dir().unwrap().join("amplify.svg");
-        assert!(dest.exists(), "glyph SVG should be copied to {dest:?}");
+        let dest = pending_glyphs_dir().unwrap().join("amplify.svg");
+        assert!(dest.exists(), "glyph SVG bytes should land at {dest:?}");
         assert_eq!(fs::read(&dest).unwrap(), b"<svg/>");
-
-        // Manifest also mirrors the fields back so mnml can read them.
-        let manifest = fs::read_to_string(integration_manifest_path("amplify").unwrap()).unwrap();
-        assert!(manifest.contains("glyph_codepoint = \"F1B00\""));
-        assert!(manifest.contains("glyph_svg ="));
-
-        // Uninstall removes the SVG copy alongside the manifest.
+        // Uninstall removes the pending SVG alongside the manifest.
         uninstall_integration("amplify").unwrap();
-        assert!(!dest.exists(), "glyph SVG should be removed on uninstall");
+        assert!(
+            !dest.exists(),
+            "pending glyph SVG should be removed on uninstall"
+        );
     }
 
     #[test]
@@ -656,12 +577,12 @@ mod tests {
                 enabled: true,
                 in_palette_bar: false,
                 badge_key: None,
-                glyph_svg: Some(PathBuf::from("/nonexistent/path/to/nothing.svg")),
+                glyph_svg_bytes: None,
                 glyph_codepoint: None,
             }),
             ..Default::default()
         };
-        // A missing SVG is a warning, NOT a failure — the manifest
+        // A chip with no glyph_svg_bytes is fine — the manifest
         // still gets written so `--install` succeeds even when the
         // sibling packager forgot to bundle the SVG.
         install_integration(&spec).unwrap();

@@ -4,7 +4,7 @@
 //! The integration side lives in `mnml-bridge::install_integration` /
 //! `mnml-bridge::integration_glyphs_dir`. When an integration declares
 //! `ChipSpec::glyph_svg`, `--install` copies the SVG to
-//! `~/.config/mnml/glyphs/<id>.svg`. This module handles what
+//! `~/.cache/mnml/pending-glyphs/<id>.svg`. This module handles what
 //! happens on the mnml side:
 //!
 //! 1. **Discovery.** [`App::discover_integration_glyphs`] scans that
@@ -52,14 +52,10 @@ struct AssignmentFile {
 /// for the current-generation `install_integration` copy-based flow;
 /// slated for removal in the bake-on-install redesign (mnml-bridge
 /// 0.5) which drops the disk SVGs entirely.
-fn integration_glyphs_dir() -> Option<PathBuf> {
-    Some(crate::data_root::data_root().join("glyphs"))
-}
-
-/// 0.5 handoff dir — `~/.cache/mnml/pending-glyphs/`. Integrations
+/// Handoff dir — `~/.cache/mnml/pending-glyphs/`. Integrations
 /// using `ChipSpec::glyph_svg_bytes` write here at install time;
-/// mnml bakes + deletes on the next bake invocation so nothing
-/// persistent lands under `~/.config/mnml/`.
+/// mnml bakes + deletes on the next startup so nothing persistent
+/// lands anywhere.
 ///
 /// The `mnml-bridge::pending_glyphs_dir()` writer targets HOME-only.
 /// This reader mirrors that (not data_root(), since we don't want a
@@ -72,6 +68,27 @@ fn pending_glyphs_dir() -> Option<PathBuf> {
             .join("mnml")
             .join("pending-glyphs"),
     )
+}
+
+/// One-shot wipe of the pre-0.6 `<data_root>/glyphs/` directory.
+/// Everything under there was the legacy install-copy destination;
+/// bridge 0.6 doesn't write there any more and mnml core doesn't
+/// scan it. Idempotent — a missing dir is a no-op.
+pub fn wipe_legacy_glyphs_dir() -> usize {
+    let dir = crate::data_root::data_root().join("glyphs");
+    if !dir.is_dir() {
+        return 0;
+    }
+    let mut removed = 0usize;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if std::fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    let _ = std::fs::remove_dir(&dir);
+    removed
 }
 
 /// Path to `~/.config/mnml/integration-glyphs.toml` (flat, top-level).
@@ -142,7 +159,7 @@ fn save_assignments(file: &AssignmentFile) {
 }
 
 /// #853 — uninstall cleanup for the sibling-icons SDK's on-disk
-/// state. Deletes `~/.config/mnml/glyphs/<id>.svg` (if present)
+/// state. Deletes `~/.cache/mnml/pending-glyphs/<id>.svg` (if present)
 /// AND drops the matching entry from `assignments.toml` (if any).
 /// Leaves everything else in the assignments file untouched.
 ///
@@ -158,7 +175,10 @@ fn save_assignments(file: &AssignmentFile) {
 /// alongside the base + override manifest deletes so a single
 /// uninstall gesture cleans everything.
 pub(crate) fn purge_integration_glyph_state(id: &str) -> (bool, bool) {
-    let svg_deleted = integration_glyphs_dir()
+    // Bridge 0.6 writes to `~/.cache/mnml/pending-glyphs/`; the
+    // pre-0.6 `<data_root>/glyphs/` location is wiped wholesale
+    // at startup so we only look at pending here.
+    let svg_deleted = pending_glyphs_dir()
         .map(|d| d.join(format!("{id}.svg")))
         .is_some_and(|p| p.exists() && std::fs::remove_file(&p).is_ok());
     let mut file = load_assignments();
@@ -274,15 +294,15 @@ pub(crate) fn discover(
 }
 
 impl App {
-    /// Scan `~/.config/mnml/glyphs/*.svg`, assign codepoints
+    /// Scan `~/.cache/mnml/pending-glyphs/*.svg`, assign codepoints
     /// (respecting `IntegrationManifest.chip.glyph_codepoint`
     /// overrides), and populate `App::integration_glyph_codepoints`.
     /// Idempotent — safe to call from `App::new` AND from
     /// `integrations.refresh`.
     pub fn discover_integration_glyphs(&mut self) {
         // Build the manifest-driven override map: id → explicit
-        // codepoint declared by the sibling's manifest. Non-hex or
-        // out-of-u32 values are silently skipped (defense in depth).
+        // codepoint declared by the integration's manifest. Non-hex
+        // or out-of-u32 values are silently skipped (defense in depth).
         let mut overrides: HashMap<String, u32> = HashMap::new();
         for m in &self.integration_manifests {
             let Some(chip) = &m.chip else { continue };
@@ -293,29 +313,12 @@ impl App {
                 overrides.insert(m.id.clone(), cp);
             }
         }
-        // Discover from BOTH the legacy `~/.config/mnml/glyphs/`
-        // (0.4 install path, persistent) AND the new 0.5
-        // `~/.cache/mnml/pending-glyphs/` handoff dir. Pending
-        // entries win on id-collision — they're the freshest bytes
-        // (a re-install would have overwritten the pending file).
-        let mut all_svgs: Vec<(String, PathBuf)> = Vec::new();
-        let mut merged_assignments: HashMap<String, u32> = HashMap::new();
-        if let Some(dir) = integration_glyphs_dir() {
-            let (svgs, assignments) = discover(&dir, &overrides);
-            all_svgs.extend(svgs);
-            merged_assignments.extend(assignments);
-        }
-        if let Some(pending) = pending_glyphs_dir() {
-            let (svgs, assignments) = discover(&pending, &overrides);
-            // Overwrite any legacy entries — pending is newer.
-            for (id, path) in svgs {
-                all_svgs.retain(|(i, _)| i != &id);
-                all_svgs.push((id, path));
-            }
-            merged_assignments.extend(assignments);
-        }
-        self.integration_glyph_svgs = all_svgs;
-        self.integration_glyph_codepoints = merged_assignments;
+        let Some(pending) = pending_glyphs_dir() else {
+            return;
+        };
+        let (svgs, assignments) = discover(&pending, &overrides);
+        self.integration_glyph_svgs = svgs;
+        self.integration_glyph_codepoints = assignments;
     }
 
     /// Delete pending-dir SVGs whose bytes have already been baked
@@ -327,7 +330,7 @@ impl App {
     ///
     /// Called at startup after discovery, so a fresh mnml launch
     /// after a successful bake cleans up automatically. Legacy
-    /// `~/.config/mnml/glyphs/` files are LEFT ALONE — 0.4
+    /// `~/.cache/mnml/pending-glyphs/` files are LEFT ALONE — 0.4
     /// integrations still expect them there.
     pub fn purge_baked_pending_glyphs(&self) -> usize {
         let Some(pending) = pending_glyphs_dir() else {
@@ -373,7 +376,7 @@ impl App {
     /// dependency and firing it every launch would be user-hostile.
     pub fn bake_integration_glyphs(&mut self) {
         if self.integration_glyph_svgs.is_empty() {
-            self.toast("bake sibling glyphs: no SVGs in ~/.config/mnml/glyphs/");
+            self.toast("bake sibling glyphs: no SVGs in ~/.cache/mnml/pending-glyphs/");
             return;
         }
         let Some(home) = std::env::var_os("HOME") else {
@@ -531,7 +534,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _home = crate::EnvGuard::set("HOME", tmp.path());
-        let dir = tmp.path().join(".config/mnml/glyphs");
+        let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
         write_svg(&dir, "one.svg");
         let (_svgs, first) = discover(&dir, &HashMap::new());
@@ -556,7 +559,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _home = crate::EnvGuard::set("HOME", tmp.path());
-        let dir = tmp.path().join(".config/mnml/glyphs");
+        let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
         // Seed two sibling glyphs; discover assigns codepoints.
         write_svg(&dir, "victim.svg");
@@ -592,7 +595,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         let _home = crate::EnvGuard::set("HOME", tmp.path());
-        let dir = tmp.path().join(".config/mnml/glyphs");
+        let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
         write_svg(&dir, "victim.svg");
         write_svg(&dir, "keeper.svg");

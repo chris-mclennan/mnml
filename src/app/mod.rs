@@ -5815,8 +5815,16 @@ impl App {
     /// into the sibling-icons SDK (`chip.glyph_svg` set, `chip.glyph`
     /// empty).
     fn with_integration_manifests_merged(mut self) -> Self {
+        // Bridge 0.6 dropped the legacy `<data_root>/glyphs/` copy
+        // location entirely. One-shot wipe on every startup —
+        // idempotent no-op when the dir doesn't exist. Any old-install
+        // leftovers get cleaned in a single launch.
+        let wiped = crate::app::integration_glyphs::wipe_legacy_glyphs_dir();
+        if wiped > 0 {
+            eprintln!("mnml: wiped {wiped} legacy glyph file(s) from <data_root>/glyphs/");
+        }
         self.discover_integration_glyphs();
-        // #869 — mnml-bridge 0.5 handoff. Any pending-glyph SVG
+        // #869 — mnml-bridge 0.6 handoff. Any pending-glyph SVG
         // whose bytes have already been baked into MnmlSymbols.ttf
         // (proxy: font mtime > SVG mtime) gets deleted. Steady
         // state is zero SVGs under ~/.cache/mnml/pending-glyphs/.
