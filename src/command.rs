@@ -3313,6 +3313,43 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.set_activity_section(crate::app::ActivitySection::Http),
         },
         Command {
+            id: "integrations.show_installed",
+            title: "Integrations: show Installed tab",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.set_activity_section(crate::app::ActivitySection::Integrations);
+                app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
+            },
+        },
+        Command {
+            id: "integrations.show_marketplace",
+            title: "Integrations: show Marketplace tab",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.set_activity_section(crate::app::ActivitySection::Integrations);
+                app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+            },
+        },
+        Command {
+            id: "integrations.toggle_tab",
+            title: "Integrations: toggle Installed/Marketplace tab",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                app.set_activity_section(crate::app::ActivitySection::Integrations);
+                app.integrations_panel_tab = match app.integrations_panel_tab {
+                    crate::app::IntegrationsPanelTab::Installed => {
+                        crate::app::IntegrationsPanelTab::Marketplace
+                    }
+                    crate::app::IntegrationsPanelTab::Marketplace => {
+                        crate::app::IntegrationsPanelTab::Installed
+                    }
+                };
+            },
+        },
+        Command {
             id: "view.activity_notes",
             title: "Activity: show Notes (workspace scratch notes)",
             group: "view",
