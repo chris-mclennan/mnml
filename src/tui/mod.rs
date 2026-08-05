@@ -324,6 +324,67 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                         }
                         continue;
                     }
+                    // Tree filter (when filter_mode is active).
+                    if app.tree.filter_mode {
+                        for c in text.chars() {
+                            if c != '\n' && c != '\r' && (c as u32) >= 0x20 {
+                                app.tree.filter_push(c);
+                            }
+                        }
+                        continue;
+                    }
+                    // Pane-scoped inputs (Cheatsheet, Browser
+                    // filters, WebSocket send input). Only handle if
+                    // the active pane matches AND its input mode is
+                    // on.
+                    if let Some(active) = app.active
+                        && let Some(pane) = app.panes.get_mut(active)
+                    {
+                        match pane {
+                            crate::pane::Pane::Cheatsheet(c) if c.filter_mode => {
+                                for ch in text.chars() {
+                                    if ch != '\n' && ch != '\r' && (ch as u32) >= 0x20 {
+                                        c.query.push(ch);
+                                    }
+                                }
+                                continue;
+                            }
+                            crate::pane::Pane::Browser(b) => {
+                                let target: Option<&mut String> = if b.net_filter_mode {
+                                    Some(&mut b.net_filter)
+                                } else if b.dom_filter_mode {
+                                    Some(&mut b.dom_filter)
+                                } else if b.cookies_filter_mode {
+                                    Some(&mut b.cookies_filter)
+                                } else if b.storage_filter_mode {
+                                    Some(&mut b.storage_filter)
+                                } else {
+                                    None
+                                };
+                                if let Some(dst) = target {
+                                    for ch in text.chars() {
+                                        if ch != '\n' && ch != '\r' && (ch as u32) >= 0x20 {
+                                            dst.push(ch);
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                            crate::pane::Pane::Websocket(w) => {
+                                // WS send-input is a multi-line
+                                // buffer (paste JSON payload etc.),
+                                // so we preserve newlines here.
+                                for ch in text.chars() {
+                                    if ch == '\r' {
+                                        continue;
+                                    }
+                                    w.input.push(ch);
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     // Priority 1 — drag-and-drop of external files
                     // (#7): terminals emit a bracketed-paste with a
                     // filesystem path when the user drops a file.

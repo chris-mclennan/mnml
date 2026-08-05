@@ -56,21 +56,74 @@ pub fn claude_token_path() -> Option<PathBuf> {
 
 pub fn read_claude_token() -> Option<String> {
     let path = claude_token_path()?;
-    std::fs::read_to_string(path).ok().and_then(|s| {
-        let t = s.trim().to_string();
-        if t.is_empty() { None } else { Some(t) }
-    })
+    let raw = std::fs::read_to_string(path).ok()?;
+    let s = raw.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // Two accepted formats:
+    //   1. Plain access token string (starts with `sk-ant-…`)
+    //   2. JSON with `accessToken` (+ optional `refreshToken`,
+    //      `expiresAt`) — same shape as Claude Code's keychain
+    //      `claudeAiOauth` entry so the user can paste the whole
+    //      block instead of digging the accessToken out.
+    if s.starts_with('{') {
+        let v: serde_json::Value = serde_json::from_str(s).ok()?;
+        // Accept either `{claudeAiOauth: {…}}` or a bare
+        // `{accessToken: …}` inner object.
+        let inner = v.get("claudeAiOauth").unwrap_or(&v);
+        let token = inner.get("accessToken")?.as_str()?.trim().to_string();
+        if token.is_empty() { None } else { Some(token) }
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// If the on-disk token file is a JSON blob with a `refreshToken`,
+/// return it. `None` when the file is a plain-string token or the
+/// blob doesn't include a refresh token.
+pub fn read_claude_refresh_token() -> Option<String> {
+    let path = claude_token_path()?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    let s = raw.trim();
+    if !s.starts_with('{') {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_str(s).ok()?;
+    let inner = v.get("claudeAiOauth").unwrap_or(&v);
+    inner
+        .get("refreshToken")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Persist the OAuth token to `~/.config/mnml/ai_token` with 0600
 /// perms (owner read/write only). Idempotent — overwrites the
 /// existing file if any.
+///
+/// Accepts EITHER a plain `sk-ant-oat…` access token OR the whole
+/// `claudeAiOauth` JSON blob (as pasted from `security
+/// find-generic-password -s 'Claude Code-credentials' -w`). Storing
+/// the JSON preserves the refresh token so mnml can auto-refresh on
+/// 401 without prompting the user daily.
 pub fn write_claude_token(token: &str) -> Result<PathBuf, String> {
     let path = claude_token_path().ok_or_else(|| "no $HOME".to_string())?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     }
-    std::fs::write(&path, token.trim()).map_err(|e| format!("write: {e}"))?;
+    // Best-effort: if the input is a JSON blob, pretty-print it so
+    // the on-disk file is readable if the user cats it. Otherwise
+    // store verbatim.
+    let trimmed = token.trim();
+    let to_write = if trimmed.starts_with('{') {
+        serde_json::from_str::<serde_json::Value>(trimmed)
+            .and_then(|v| serde_json::to_string_pretty(&v))
+            .unwrap_or_else(|_| trimmed.to_string())
+    } else {
+        trimmed.to_string()
+    };
+    std::fs::write(&path, to_write).map_err(|e| format!("write: {e}"))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

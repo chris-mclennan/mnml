@@ -7427,7 +7427,7 @@ impl App {
     pub fn open_link_claude_token_prompt(&mut self) {
         self.prompt = Some(crate::prompt::Prompt::new(
             crate::prompt::PromptKind::LinkClaudeToken,
-            "Paste your Claude Code OAuth token (starts with `sk-ant-oat…`)",
+            "Paste access token OR the whole claudeAiOauth JSON (keeps refresh token → no daily re-paste)",
         ));
     }
 
