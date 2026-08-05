@@ -18,9 +18,8 @@
 /vendor/libghostty-vt/**/*.so.*
 /vendor/libghostty-vt/out/
 
-# Working files from hunter / verification agents — the .md reports stay
-# (useful audit trail), but the throwaway test workspaces under each hunt
-# directory shouldn't bloat git. They're regenerated fresh each session.
-findings/**/workspaces/
-findings/**/ws*/
+# Findings / QA-sweep reports are private now — the historical `findings/`
+# archive (2026-06 → 2026-07) lives under `.findings/archive-2026-07/`.
+# Anything written to either path stays local.
+findings/
 .findings/
