@@ -1982,26 +1982,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
-    // Menu-bar item click — fire the palette command and
-    // close the dropdown.
-    if let Some(&(_, item_idx)) = app
-        .rects
-        .menu_bar_items
-        .iter()
-        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        && let Some(open) = app.menu_open.as_ref().cloned()
-    {
-        let menus = crate::menu_bar::bar();
-        if let Some(menu) = menus.get(open.menu_idx)
-            && let Some(crate::menu_bar::MenuItem::Action { command_id, .. }) =
-                menu.items.get(item_idx)
-        {
-            let id = *command_id;
-            app.menu_open = None;
-            crate::command::run(id, app);
-        }
-        return;
-    }
+    // Menu-bar item click — handled earlier by the menu-open
+    // early guard (see the `if let Some(open) = app.menu_open ...`
+    // block near the top of this handler). By the time execution
+    // reaches here `menu_open` is always None and this rect check
+    // was previously guarded on `menu_open.is_some()`, so it's
+    // dead code — removed 2026-08-05 per reviewer drift-risk
+    // note. Menu-bar word click below is still live (it fires
+    // when NO menu is open yet).
+
     // Menu-bar word click — toggle the dropdown.
     if let Some(&(_, menu_idx)) = app
         .rects
