@@ -33,9 +33,12 @@ use std::sync::mpsc;
 const CLAUDE_WINDOW_SECS: u64 = 5 * 3600;
 
 /// Default token cap used to derive percent when the config hasn't
-/// been overridden. Rough approximation of a Max 5x tier's 5h
-/// quota; user can override via `[ai] claude_5h_cap`.
-pub const CLAUDE_DEFAULT_5H_CAP: u64 = 500_000;
+/// been overridden. Heavy Max users routinely blow past 500k in a
+/// 5h window (Opus + tool-heavy sessions), so default at 5M —
+/// still an under-estimate for the top Max tier but keeps the
+/// chip in a useful range for the common case. User can override
+/// via `[ai] claude_5h_cap`.
+pub const CLAUDE_DEFAULT_5H_CAP: u64 = 5_000_000;
 
 /// Last-fetched snapshot for the Claude chip. Sourced from Claude
 /// Code's own JSONL transcripts (`~/.claude/projects/**/*.jsonl`),
