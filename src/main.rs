@@ -113,13 +113,28 @@ fn maybe_reexec_for_sandbox() {
         }
     };
     let xdg = format!("{root}/xdg");
+    let workspace = format!("{root}/workspace");
     let _ = std::fs::create_dir_all(&xdg);
+    let _ = std::fs::create_dir_all(&workspace);
+    // nvchad-user SEV-3 2026-08-05 — if no workspace positional was
+    // passed, inject the sandbox workspace so mnml doesn't fall
+    // back to CWD (which is often the user's real project dir on a
+    // bare `mnml --sandbox` invocation). If they DID pass one, honor
+    // their choice.
+    let has_workspace_arg = raw
+        .iter()
+        .skip(1)
+        .any(|a| !a.starts_with('-') && !a.eq_ignore_ascii_case("mnml"));
+    let mut child_args: Vec<String> = raw[1..].to_vec();
+    if !has_workspace_arg {
+        child_args.push(workspace.clone());
+    }
     eprintln!("mnml: --sandbox self-redirect: HOME={root}");
     // Unix exec() replaces the current process image — no fork, no
     // wait, no double-mnml running.
     use std::os::unix::process::CommandExt;
     let err = std::process::Command::new(&raw[0])
-        .args(&raw[1..])
+        .args(&child_args)
         .env("HOME", &root)
         .env("XDG_CONFIG_HOME", &xdg)
         .exec();
