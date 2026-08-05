@@ -3320,6 +3320,12 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| {
                 app.set_activity_section(crate::app::ActivitySection::Integrations);
                 app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
+                // Match the mouse-click behavior at src/tui/mouse/
+                // down_left.rs — reset focus to Tree so `/` +
+                // arrow-nav land on the panel instead of a stale
+                // pane. `set_activity_section` skips the reset when
+                // the section is already Integrations.
+                app.focus = crate::focus::Focus::Tree;
             },
         },
         Command {
@@ -3330,6 +3336,7 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| {
                 app.set_activity_section(crate::app::ActivitySection::Integrations);
                 app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+                app.focus = crate::focus::Focus::Tree;
             },
         },
         Command {
@@ -3347,6 +3354,7 @@ fn builtin_commands() -> Vec<Command> {
                         crate::app::IntegrationsPanelTab::Installed
                     }
                 };
+                app.focus = crate::focus::Focus::Tree;
             },
         },
         Command {

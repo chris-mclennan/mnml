@@ -764,10 +764,22 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             // has no whitespace AND no `+` (i.e. it's not a chord
             // modifier), AND parse_key_spec rejects the whole thing,
             // fall back to per-char split so `"gg"` → `["g","g"]`.
+            //
+            // Reviewer 2026-08-05 — guard against typo-swallowing:
+            // limit the per-char fallback to inputs that PLAUSIBLY
+            // look like vim chord chains. Real chains are almost
+            // always ≤2 chars OR are digit-prefixed motions like
+            // `2j`/`10G`. A 3+ alphabetic-only string (`esx`, `hom`)
+            // is almost certainly a misspelled named key — surface
+            // it as `key_unparsed` rather than silently dispatching
+            // wrong keystrokes.
+            let looks_like_typo =
+                spec.chars().count() >= 3 && spec.chars().all(|c| c.is_ascii_alphabetic());
             let tokens: Vec<String> = if !spec.contains(char::is_whitespace)
                 && !spec.contains('+')
                 && parse_key_spec(spec).is_none()
                 && spec.chars().count() >= 2
+                && !looks_like_typo
             {
                 spec.chars().map(|c| c.to_string()).collect()
             } else {

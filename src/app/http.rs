@@ -6598,6 +6598,19 @@ impl App {
         // Deferred captures to persist after the mut-borrow loop.
         let mut carry_forward: Vec<(Option<std::path::PathBuf>, Vec<(String, String)>)> =
             Vec::new();
+        // Reviewer 2026-08-05 — same-tick capture visibility. If two
+        // jobs in the SAME drain tick are dependent (A captures
+        // TOKEN, B references {{TOKEN}}), B's history-log expansion
+        // must see A's fresh capture. `carry_forward` is applied to
+        // `self.http_running_env` only AFTER this loop, so we keep a
+        // per-batch overlay here and layer it on top of the per-job
+        // env in the expand step. The live wire request is already
+        // safe (sends are sequenced pre-drain); only history.jsonl
+        // was affected.
+        let mut batch_captures: std::collections::HashMap<
+            std::path::PathBuf,
+            std::collections::HashMap<String, String>,
+        > = std::collections::HashMap::new();
         for (job_id, result) in done {
             let Some(Pane::Request(rp)) = self.panes.iter_mut().find(
                 |p| matches!(p, Pane::Request(rp) if rp.job_id == job_id && matches!(rp.state, RunState::Sending)),
@@ -6613,6 +6626,14 @@ impl App {
                     // SEV-1 fix — previously chain-only.
                     if !rv.captures.is_empty() {
                         carry_forward.push((rp.source_path.clone(), rv.captures.clone()));
+                        // Also fold into the per-batch overlay so
+                        // any subsequent job in this same drain tick
+                        // sees these captures when expanding history.
+                        let key = rp.source_path.clone().unwrap_or_default();
+                        let overlay = batch_captures.entry(key).or_default();
+                        for (k, v) in &rv.captures {
+                            overlay.insert(k.clone(), v.clone());
+                        }
                     }
                     let failed = rv.assertions.iter().filter(|a| !a.passed).count();
                     let total = rv.assertions.len();
@@ -6650,6 +6671,14 @@ impl App {
                     let key = src.map(|p| p.to_path_buf()).unwrap_or_default();
                     if let Some(entries) = self.http_running_env.get(&key) {
                         for (k, v) in entries {
+                            hist_env.vars.insert(k.clone(), v.clone());
+                        }
+                    }
+                    // Layer this batch's not-yet-persisted captures
+                    // on top so a dependent job draining in the same
+                    // tick sees the fresh values.
+                    if let Some(overlay) = batch_captures.get(&key) {
+                        for (k, v) in overlay {
                             hist_env.vars.insert(k.clone(), v.clone());
                         }
                     }
