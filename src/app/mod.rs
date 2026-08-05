@@ -7114,24 +7114,33 @@ impl App {
     /// Load the on-disk marketplace cache into `marketplace_entries`.
     /// Best-effort — silent no-op if the cache is missing / malformed.
     /// Called once at App::new so a fresh mnml has something to render
-    /// even before the first fetch completes.
+    /// even before the first fetch completes. When the cache is
+    /// missing OR expired past its TTL, kicks off a background
+    /// refresh so retired/added entries reconcile without needing the
+    /// user to click ⟳ (fixes the "removed launcher persists forever"
+    /// class of complaint).
     pub fn load_marketplace_cache(&mut self) {
         let Some(path) = crate::marketplace::MarketplaceCache::path() else {
             return;
         };
-        let Some(cache) = crate::marketplace::MarketplaceCache::load_from(&path) else {
-            return;
+        let cache_expired = match crate::marketplace::MarketplaceCache::load_from(&path) {
+            Some(cache) => {
+                let expired = cache.is_expired();
+                self.marketplace_entries = cache.entries;
+                self.marketplace_last_fetched = cache.fetched_at;
+                self.marketplace_entries.sort_by(|a, b| {
+                    let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
+                    let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
+                    bp.cmp(&ap)
+                        .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
+                });
+                expired
+            }
+            None => true,
         };
-        self.marketplace_entries = cache.entries;
-        self.marketplace_last_fetched = cache.fetched_at;
-        // #849 UI phase — sort even at cache-load so the pre-fetch
-        // render already groups Official-first.
-        self.marketplace_entries.sort_by(|a, b| {
-            let ap = matches!(a.provenance, crate::marketplace::Provenance::Official);
-            let bp = matches!(b.provenance, crate::marketplace::Provenance::Official);
-            bp.cmp(&ap)
-                .then_with(|| a.label.to_lowercase().cmp(&b.label.to_lowercase()))
-        });
+        if cache_expired && self.config.marketplace.enabled {
+            self.refresh_marketplace();
+        }
     }
 
     /// Spawn a fetch thread for every configured marketplace source.

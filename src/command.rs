@@ -5574,6 +5574,13 @@ fn builtin_commands() -> Vec<Command> {
             title: "Browser: open Chrome (CDP) — console / nav / eval",
             group: "browser",
             keys: &[],
+            run: |app| app.open_browser("about:blank"),
+        },
+        Command {
+            id: "browser.open_url",
+            title: "Browser: open Chrome at a URL (prompt)",
+            group: "browser",
+            keys: &[],
             run: |app| app.open_browser_prompt(),
         },
         Command {

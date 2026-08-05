@@ -354,6 +354,14 @@ impl App {
             }
         }
         self.focus = Focus::Pane;
+        // On the first browser pane, surface the HTTP activity panel
+        // (files / recent requests / captured traffic) so the network-
+        // debugging surface is one glance away without hunting for it.
+        // Subsequent browser panes leave the activity bar alone —
+        // the user has already made a section choice.
+        if existing_browsers == 0 && self.active_section != crate::app::ActivitySection::Http {
+            self.set_activity_section(crate::app::ActivitySection::Http);
+        }
     }
 
     /// `g` in a browser pane — prompt for a URL to navigate to (seeded with the
