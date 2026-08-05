@@ -758,7 +758,21 @@ pub fn apply(app: &mut App, cmd: &IpcCommand) -> String {
             // single-chord only, so test scripts firing chord
             // sequences silently got `key_unparsed`. Each token
             // is parsed independently and dispatched in order.
-            let tokens: Vec<&str> = spec.split_whitespace().collect();
+            //
+            // 2026-08-05 nvchad SEV-3 — also accept adjacent chars
+            // like "gg" or "yy" (vim double-key ops). If the spec
+            // has no whitespace AND no `+` (i.e. it's not a chord
+            // modifier), AND parse_key_spec rejects the whole thing,
+            // fall back to per-char split so `"gg"` → `["g","g"]`.
+            let tokens: Vec<String> = if !spec.contains(char::is_whitespace)
+                && !spec.contains('+')
+                && parse_key_spec(spec).is_none()
+                && spec.chars().count() >= 2
+            {
+                spec.chars().map(|c| c.to_string()).collect()
+            } else {
+                spec.split_whitespace().map(String::from).collect()
+            };
             let parsed: Vec<KeyEvent> = tokens.iter().filter_map(|t| parse_key_spec(t)).collect();
             if parsed.len() == tokens.len() && !parsed.is_empty() {
                 for ev in parsed {
