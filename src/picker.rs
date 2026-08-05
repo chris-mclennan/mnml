@@ -380,6 +380,19 @@ impl Picker {
         self.query.push(c);
         self.refilter();
     }
+    /// Insert a whole string at the query end (used by the
+    /// bracketed-paste handler in `tui/mod.rs`). Skips newlines +
+    /// control chars so a multi-line paste doesn't corrupt the
+    /// single-line query field.
+    pub fn insert_str(&mut self, s: &str) {
+        for c in s.chars() {
+            if c == '\n' || c == '\r' || (c as u32) < 0x20 {
+                continue;
+            }
+            self.query.push(c);
+        }
+        self.refilter();
+    }
     pub fn backspace(&mut self) {
         self.query.pop();
         self.refilter();

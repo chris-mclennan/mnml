@@ -297,6 +297,33 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                         p.insert_str(text.trim_end_matches('\n'));
                         continue;
                     }
+                    // Picker (Ctrl+P / Ctrl+Shift+P / etc.) — user
+                    // report 2026-08-05: paste into the Open File
+                    // picker dropped silently. Same treatment as
+                    // prompt: insert at end of query, skip newlines.
+                    if let Some(p) = app.picker.as_mut() {
+                        p.insert_str(text.trim_end_matches('\n'));
+                        continue;
+                    }
+                    // Workspace picker filter — same class as the
+                    // main picker, different backing store.
+                    if app.workspace_picker_open {
+                        for c in text.chars() {
+                            if c != '\n' && c != '\r' && (c as u32) >= 0x20 {
+                                app.workspace_picker_filter.push(c);
+                            }
+                        }
+                        continue;
+                    }
+                    // Grep-panel filter — same pattern.
+                    if app.git_palette_filter_focused {
+                        for c in text.chars() {
+                            if c != '\n' && c != '\r' && (c as u32) >= 0x20 {
+                                app.git_palette_filter.push(c);
+                            }
+                        }
+                        continue;
+                    }
                     // Priority 1 — drag-and-drop of external files
                     // (#7): terminals emit a bracketed-paste with a
                     // filesystem path when the user drops a file.
