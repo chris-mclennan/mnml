@@ -157,6 +157,18 @@ fn file_menu() -> MenuDef {
                 label: "Open folder…",
                 command_id: "view.add_workspace",
             },
+            MenuItem::Action {
+                label: "Open recent file…",
+                command_id: "picker.recent",
+            },
+            MenuItem::Action {
+                label: "Open recent folder…",
+                command_id: "view.switch_workspace",
+            },
+            MenuItem::Action {
+                label: "Clear recent files",
+                command_id: "file.clear_recent",
+            },
             MenuItem::Separator,
             MenuItem::Action {
                 label: "Save",

@@ -2394,6 +2394,17 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_recent_files_picker(),
         },
         Command {
+            id: "file.clear_recent",
+            title: "Clear recent files list",
+            group: "file",
+            keys: &[],
+            run: |app| {
+                let n = app.recent_files.len();
+                app.recent_files.clear();
+                app.toast(format!("cleared {n} recent file(s)"));
+            },
+        },
+        Command {
             id: "picker.files",
             title: "Open file…",
             group: "go",
