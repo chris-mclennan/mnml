@@ -5816,6 +5816,14 @@ impl App {
     /// empty).
     fn with_integration_manifests_merged(mut self) -> Self {
         self.discover_integration_glyphs();
+        // #869 — mnml-bridge 0.5 handoff. Any pending-glyph SVG
+        // whose bytes have already been baked into MnmlSymbols.ttf
+        // (proxy: font mtime > SVG mtime) gets deleted. Steady
+        // state is zero SVGs under ~/.cache/mnml/pending-glyphs/.
+        let purged = self.purge_baked_pending_glyphs();
+        if purged > 0 {
+            eprintln!("mnml: cleaned up {purged} baked pending-glyph SVG(s)");
+        }
         self.merge_integration_manifests();
         // 2026-08-01 (P4b) — populate marketplace entries from the
         // on-disk cache so the Marketplace tab has something to

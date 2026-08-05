@@ -56,6 +56,24 @@ fn integration_glyphs_dir() -> Option<PathBuf> {
     Some(crate::data_root::data_root().join("glyphs"))
 }
 
+/// 0.5 handoff dir — `~/.cache/mnml/pending-glyphs/`. Integrations
+/// using `ChipSpec::glyph_svg_bytes` write here at install time;
+/// mnml bakes + deletes on the next bake invocation so nothing
+/// persistent lands under `~/.config/mnml/`.
+///
+/// The `mnml-bridge::pending_glyphs_dir()` writer targets HOME-only.
+/// This reader mirrors that (not data_root(), since we don't want a
+/// portable-mode install to double up caches).
+fn pending_glyphs_dir() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    Some(
+        PathBuf::from(home)
+            .join(".cache")
+            .join("mnml")
+            .join("pending-glyphs"),
+    )
+}
+
 /// Path to `~/.config/mnml/integration-glyphs.toml` (flat, top-level).
 /// 2026-08-04 — moved up out of `glyphs/` since the plan is to
 /// delete the whole `glyphs/` dir once the bake-on-install
@@ -262,9 +280,6 @@ impl App {
     /// Idempotent — safe to call from `App::new` AND from
     /// `integrations.refresh`.
     pub fn discover_integration_glyphs(&mut self) {
-        let Some(dir) = integration_glyphs_dir() else {
-            return;
-        };
         // Build the manifest-driven override map: id → explicit
         // codepoint declared by the sibling's manifest. Non-hex or
         // out-of-u32 values are silently skipped (defense in depth).
@@ -278,11 +293,73 @@ impl App {
                 overrides.insert(m.id.clone(), cp);
             }
         }
-        let (svgs, assignments) = discover(&dir, &overrides);
-        // Remember the discovered set on the app so
-        // merge_integration_manifests + bake can find each SVG.
-        self.integration_glyph_svgs = svgs;
-        self.integration_glyph_codepoints = assignments;
+        // Discover from BOTH the legacy `~/.config/mnml/glyphs/`
+        // (0.4 install path, persistent) AND the new 0.5
+        // `~/.cache/mnml/pending-glyphs/` handoff dir. Pending
+        // entries win on id-collision — they're the freshest bytes
+        // (a re-install would have overwritten the pending file).
+        let mut all_svgs: Vec<(String, PathBuf)> = Vec::new();
+        let mut merged_assignments: HashMap<String, u32> = HashMap::new();
+        if let Some(dir) = integration_glyphs_dir() {
+            let (svgs, assignments) = discover(&dir, &overrides);
+            all_svgs.extend(svgs);
+            merged_assignments.extend(assignments);
+        }
+        if let Some(pending) = pending_glyphs_dir() {
+            let (svgs, assignments) = discover(&pending, &overrides);
+            // Overwrite any legacy entries — pending is newer.
+            for (id, path) in svgs {
+                all_svgs.retain(|(i, _)| i != &id);
+                all_svgs.push((id, path));
+            }
+            merged_assignments.extend(assignments);
+        }
+        self.integration_glyph_svgs = all_svgs;
+        self.integration_glyph_codepoints = merged_assignments;
+    }
+
+    /// Delete pending-dir SVGs whose bytes have already been baked
+    /// into `MnmlSymbols.ttf` — proxy: the font's mtime is newer
+    /// than the SVG's mtime. Safe because fontforge reads the SVG
+    /// synchronously at bake time; anything predating the current
+    /// font is either already inside it OR the bake failed (in
+    /// which case a re-install would rewrite the SVG anyway).
+    ///
+    /// Called at startup after discovery, so a fresh mnml launch
+    /// after a successful bake cleans up automatically. Legacy
+    /// `~/.config/mnml/glyphs/` files are LEFT ALONE — 0.4
+    /// integrations still expect them there.
+    pub fn purge_baked_pending_glyphs(&self) -> usize {
+        let Some(pending) = pending_glyphs_dir() else {
+            return 0;
+        };
+        if !pending.is_dir() {
+            return 0;
+        }
+        let Some(home) = std::env::var_os("HOME") else {
+            return 0;
+        };
+        let font = std::path::PathBuf::from(home).join("Library/Fonts/MnmlSymbols.ttf");
+        let Ok(font_meta) = std::fs::metadata(&font) else {
+            return 0;
+        };
+        let Ok(font_mtime) = font_meta.modified() else {
+            return 0;
+        };
+        let mut deleted = 0usize;
+        for (id, _) in &self.integration_glyph_svgs {
+            let candidate = pending.join(format!("{id}.svg"));
+            let Ok(svg_meta) = std::fs::metadata(&candidate) else {
+                continue;
+            };
+            let Ok(svg_mtime) = svg_meta.modified() else {
+                continue;
+            };
+            if font_mtime > svg_mtime && std::fs::remove_file(&candidate).is_ok() {
+                deleted += 1;
+            }
+        }
+        deleted
     }
 
     /// Bake every discovered sibling SVG into MnmlSymbols.ttf in
