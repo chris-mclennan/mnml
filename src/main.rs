@@ -15,14 +15,6 @@ use mnml::app::App;
 use mnml::config::Config;
 
 fn main() -> ExitCode {
-    // `--sandbox` self-redirect. If the flag is present but $HOME isn't
-    // already a tempdir, create one + re-exec ourselves with
-    // HOME/XDG_CONFIG_HOME set. Must run before any config load so
-    // every downstream HOME lookup sees the redirected path. Fixes the
-    // "sandbox flag set but $HOME is NOT redirected" warning users
-    // used to hit when running `mnml --sandbox` without the run.sh
-    // wrapper — now the flag alone is enough.
-    maybe_reexec_for_sandbox();
     let mut args = std::env::args().skip(1).peekable();
     match args.peek().map(String::as_str) {
         Some("run") => {
@@ -57,7 +49,16 @@ fn main() -> ExitCode {
             args.next();
             test_subcommand(args.collect())
         }
-        _ => run_tui(args.collect()),
+        _ => {
+            // TUI path only — `--sandbox` self-redirect belongs here
+            // and NOT ahead of subcommand dispatch (`mnml run FILE
+            // --sandbox` shouldn't silently redirect HOME/XDG on a
+            // one-shot request). Runs BEFORE `run_tui` so every
+            // downstream HOME lookup — including config load — sees
+            // the redirected path.
+            maybe_reexec_for_sandbox();
+            run_tui(args.collect())
+        }
     }
 }
 
@@ -93,6 +94,12 @@ fn maybe_reexec_for_sandbox() {
     if home_is_sandbox_tempdir() {
         return;
     }
+    // Best-effort GC of prior sandbox dirs. Since exec() replaces the
+    // process image, we can't rely on Drop/atexit to clean up on
+    // exit; instead prune anything older than 6h at the top of every
+    // new sandbox session. Keeps `/tmp` from accumulating dead
+    // `mnml-sandbox-*` dirs indefinitely.
+    gc_stale_sandbox_tempdirs();
     // Create the sandbox root. Shell out to `mktemp` for portability
     // — `std::env::temp_dir()` gives the parent but not a fresh dir.
     let out = std::process::Command::new("mktemp")
@@ -118,6 +125,36 @@ fn maybe_reexec_for_sandbox() {
         .exec();
     eprintln!("mnml: --sandbox: exec failed: {err}");
     std::process::exit(1);
+}
+
+/// Prune old `mnml-sandbox-*` directories from the system temp root.
+/// Called before creating a new sandbox tempdir so `/tmp` doesn't
+/// accumulate dead sessions (exec-based self-redirect can't rely on
+/// process-exit cleanup). Any dir with mtime older than 6h is
+/// removed; younger ones (possibly a live sibling session) are
+/// left alone. Best-effort — errors are swallowed.
+fn gc_stale_sandbox_tempdirs() {
+    const STALE_SECS: u64 = 6 * 3600;
+    let tmp = std::env::temp_dir();
+    let Ok(entries) = std::fs::read_dir(&tmp) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with("mnml-sandbox-") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let Ok(mtime) = meta.modified() else { continue };
+        let Ok(age) = now.duration_since(mtime) else {
+            continue;
+        };
+        if age.as_secs() > STALE_SECS {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 // ───────────────────────── `.test` E2E runner ─────────────────────
