@@ -557,18 +557,20 @@ fn sum_tokens_in_jsonl(path: &Path) -> Option<u64> {
         };
         // claude-agents-user r3+r4 (2026-08-05/06) — real Codex
         // rollout-*.jsonl files nest usage under
-        // `payload.info.total_token_usage` (and `.last_token_usage`),
-        // NOT top-level `token_usage`/`usage`. Prior key names
-        // returned no matches → chip always read 0.
+        // `payload.info.last_token_usage` (delta per turn) and
+        // `.total_token_usage` (cumulative), NOT top-level
+        // `token_usage`/`usage`. Prior key names never matched →
+        // chip always read 0.
         //
-        // Prefer `total_token_usage` (cumulative for the turn/call)
-        // over `last_token_usage` (delta for the most recent
-        // request) so the daily sum reflects total spend.
+        // MUST sum `last_token_usage` (delta), NOT
+        // `total_token_usage` (cumulative — summing it inflates by
+        // N× where N = event count in the file). See the same
+        // rule enforced elsewhere: `src/claude_agents.rs:1814`
+        // "total_token_usage is cumulative — overwrite, don't sum".
         //
-        // Older key names kept as fallback in case the CLI schema
-        // ever ships them.
-        let usage = walk(&v, "total_token_usage", 0)
-            .or_else(|| walk(&v, "last_token_usage", 0))
+        // Fallbacks: older top-level keys are treated as deltas
+        // (that's their historical semantics in older CLI builds).
+        let usage = walk(&v, "last_token_usage", 0)
             .or_else(|| walk(&v, "token_usage", 0))
             .or_else(|| walk(&v, "usage", 0));
         if let Some(usage) = usage {
