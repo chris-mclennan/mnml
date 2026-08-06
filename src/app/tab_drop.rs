@@ -124,24 +124,38 @@ impl App {
             return false;
         };
         let insert_idx = self.tab_strip_insert_idx(leaf_active, x);
+        // vscode-user r3 SEV-1 (2026-08-05) — same-leaf reorder where
+        // src IS the active tab used to orphan src: `remove_leaf`
+        // reassigns the leaf's `active` to a surviving tab, so the
+        // subsequent `active_leaf_mut(leaf_active)` lookup returned
+        // None, hit the "target vanished" branch, and left src out
+        // of every leaf. Fix: capture a stable identifier for the
+        // destination leaf (any surviving tab ≠ src) BEFORE remove,
+        // then relocate the leaf after remove via
+        // `leaf_containing_mut(survivor)` — which works regardless
+        // of what happened to `active`.
+        let dest_survivor: Option<PaneId> = self
+            .layout()
+            .leaf_containing(leaf_active)
+            .and_then(|tabs| tabs.iter().copied().find(|&t| t != src));
         // Remove src from wherever it lives, then insert at idx.
         self.layout_mut().remove_leaf(src);
-        if let Some((_active, tabs)) = self.layout_mut().active_leaf_mut(leaf_active) {
+        let dest_leaf = dest_survivor.and_then(|p| self.layout_mut().leaf_containing_mut(p));
+        if let Some((active, tabs)) = dest_leaf {
             // Clamp index since remove_leaf may have shifted things.
             let idx = insert_idx.min(tabs.len());
             // Avoid double-insert if src is somehow already there.
             if !tabs.contains(&src) {
                 tabs.insert(idx, src);
             }
+            *active = src;
         } else {
-            // Target leaf vanished — fall back to making src the
-            // visible leaf so we don't leave it orphaned.
+            // Target leaf had no survivor (src was solo there) —
+            // src's leaf was destroyed by remove. Fall back to
+            // replacing the addressable slot with a fresh leaf so
+            // src stays visible.
             self.layout_mut()
                 .replace_leaf(leaf_active, Layout::leaf(src));
-        }
-        // Flip the leaf's active to src so the drop is visible.
-        if let Some((active, _tabs)) = self.layout_mut().active_leaf_mut(leaf_active) {
-            *active = src;
         }
         self.active = Some(src);
         self.focus = Focus::Pane;
@@ -500,5 +514,43 @@ mod tests {
         // Center of the pane body — landing zone for a center drop.
         app.drop_tab_on_pane(only, body.x + body.width / 2, body.y + body.height / 2);
         assert!(matches!(app.layout(), Layout::Leaf { active: id, .. } if *id == only));
+    }
+
+    /// vscode-user r3 SEV-1 (2026-08-05) — dropping the active tab
+    /// onto its own strip (reorder within same leaf) used to orphan
+    /// the tab entirely: after `remove_leaf(src)` the leaf's
+    /// `active` had shifted, so the follow-up `active_leaf_mut`
+    /// lookup missed. Now we identify the destination leaf via a
+    /// surviving sibling, and src ends up back in the leaf at the
+    /// requested index.
+    #[test]
+    fn same_leaf_reorder_of_active_tab_keeps_src_in_the_leaf() {
+        let mut app = app_two_panes();
+        // Collapse to a single leaf with two tabs.
+        *app.layout_mut() = crate::layout::Layout::leaf_with_tabs(0, vec![0, 1]);
+        app.active = Some(0);
+        // Register the strip + one chip so the drop can hit.
+        let strip = Rect::new(0, 0, 40, 1);
+        app.rects.split_tab_strip_areas = vec![(strip, 0)];
+        // (chip_rect, tab_pane, leaf_active_pane) — leaf_active is 0
+        app.rects.split_tab_chips = vec![
+            (Rect::new(0, 0, 10, 1), 0, 0),
+            (Rect::new(10, 0, 10, 1), 1, 0),
+        ];
+        // Drop pane 0 (the active tab) past pane 1 to reorder it right.
+        assert!(app.drop_tab_on_strip(0, 25, 0));
+        // Layout must still contain both panes as tabs in one leaf.
+        match app.layout() {
+            crate::layout::Layout::Leaf { active, tabs } => {
+                assert_eq!(*active, 0, "src should be active after drop");
+                assert!(tabs.contains(&0), "src (0) must still be in the tabs list");
+                assert!(
+                    tabs.contains(&1),
+                    "sibling (1) must still be in the tabs list"
+                );
+            }
+            other => panic!("expected a single leaf, got {other:?}"),
+        }
+        assert_eq!(app.active, Some(0));
     }
 }

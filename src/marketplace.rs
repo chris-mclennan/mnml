@@ -386,6 +386,20 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         // Database family — dev-database (E64D is in Devicons)
         "mnml-db" => ("\u{E64D}", "blue"),
 
+        // Database drivers — Devicons where the driver's engine has
+        // one; MDI warehouse for the two AWS services with no glyph
+        // (Redshift + ClickHouse). Purple so the whole driver
+        // family reads uniform.
+        "mnml-db-driver-postgres" => ("\u{E76E}", "purple"), // dev-postgresql
+        "mnml-db-driver-mariadb" => ("\u{E828}", "purple"),  // dev-mariadb
+        "mnml-db-driver-mysql" => ("\u{E704}", "purple"),    // dev-mysql
+        "mnml-db-driver-redis" => ("\u{E76D}", "purple"),    // dev-redis
+        "mnml-db-driver-sqlite" => ("\u{E7C4}", "purple"),   // dev-sqlite
+        "mnml-db-driver-docdb" => ("\u{E7A4}", "purple"),    // dev-mongodb (DocDB is Mongo-compat)
+        "mnml-db-driver-clickhouse" => ("\u{F0F81}", "purple"), // md-warehouse (no dedicated glyph)
+        "mnml-db-driver-redshift" => ("\u{F0F81}", "purple"), // md-warehouse (no dedicated glyph)
+        "mnml-db-driver-dynamodb" => ("\u{F1C06}", "purple"), // AWS SVG bake
+
         // SCM hosts — Devicons range (E5FA-E8EF).
         "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
         "mnml-scm-github" | "mnml-forge-github" | "github" => ("\u{E709}", "fg"),
