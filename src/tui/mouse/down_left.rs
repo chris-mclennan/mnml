@@ -1163,17 +1163,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         return;
     }
     // qa-feature 2026-07-01 — Installed / Marketplace tab chips in the
-    // Integrations panel. Click switches the active sub-view; also
-    // resets the panel scroll so the new list starts at the top.
+    // Integrations panel. Click switches the active sub-view.
     // 2026-07-25 — move focus to Tree so subsequent keyboard nav
     // (arrows, `/` filter, Enter) targets the panel instead of a
     // previously-focused pane.
+    // 2026-08-05 — scroll is per-tab now; switching preserves the
+    // last scroll position on each tab (removed the reset-to-top).
     if let Some(rect) = app.rects.integrations_tab_installed
         && crate::app::dispatch::contains(rect, x, y)
     {
         app.focus = crate::focus::Focus::Tree;
         app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
-        app.integrations_panel_scroll = 0;
         return;
     }
     if let Some(rect) = app.rects.integrations_tab_marketplace
@@ -1181,7 +1181,6 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     {
         app.focus = crate::focus::Focus::Tree;
         app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
-        app.integrations_panel_scroll = 0;
         return;
     }
     // 2026-08-04 — click the ⟳ chip on the tab row → refresh the
