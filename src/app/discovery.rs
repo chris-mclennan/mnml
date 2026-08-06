@@ -817,24 +817,26 @@ pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf,
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let base_path = dir.join(format!("{}.toml", icon.id));
     if !base_path.exists() {
-        // 2026-08-06 — was: promote to authored manifest for any
-        // id with no base file. Fine for launcher-scaffolded chips,
-        // BROKEN for first-party built-ins (browser / claude_code /
-        // codex) because the in-memory slot got its glyph/label
-        // from Rust defaults, so writing the slot as an "authored
-        // manifest" captured whatever partial state we had — often
-        // empty glyph + id-as-label. Result: right-click "Show on
-        // top bar" replaced Claude's real chip with a stub.
+        // 2026-08-06 — was: promote to authored manifest from the
+        // live slot for any id with no base file. Broken for
+        // built-ins (browser / claude_code / codex) because the
+        // in-memory slot's glyph/label can be stale/partial by the
+        // time this fires — the resulting manifest scaffold wrote
+        // empty glyph + id-as-label + fake `<id>.open` command,
+        // then the next scan loaded THAT as authoritative and
+        // clobbered the Rust defaults with garbage.
         //
-        // Now: for built-ins (ids in the shipped default list),
-        // skip the file write. In-memory config already has the
-        // toggle applied; persistence goes through config.toml's
-        // `[[ui.integration_icon]]` block instead (which the merge
-        // path treats as an OVERRIDE and inherits the real glyph
-        // from the Rust default).
+        // Now: for built-in ids, rebuild the icon from the shipped
+        // Rust defaults (source-of-truth) and preserve only the
+        // user's toggle values (enabled + in_palette_bar). That
+        // way the scaffolded manifest carries the real glyph,
+        // label, color, and command regardless of what the slot
+        // looked like at toggle time.
         if is_builtin_integration_id(&icon.id) {
-            persist_builtin_integration_override_to_config_toml(icon)?;
-            return Ok(dir.join(format!("{}.config.toml", icon.id)));
+            let mut authoritative = builtin_default_icon(&icon.id).unwrap_or(icon.clone());
+            authoritative.enabled = icon.enabled;
+            authoritative.in_palette_bar = icon.in_palette_bar;
+            return write_authored_manifest_toml(&authoritative);
         }
         return write_authored_manifest_toml(icon);
     }
@@ -862,6 +864,16 @@ pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf,
 /// live slot risks capturing a stale/partial snapshot.
 pub fn is_builtin_integration_id(id: &str) -> bool {
     matches!(id, "browser" | "claude_code" | "codex")
+}
+
+/// Look up the shipped Rust default for a built-in integration id.
+/// Returns `None` for anything not in the shipped default list.
+/// Used by `write_override_toml`'s built-in scaffold path to
+/// resurrect authoritative glyph/label/color/command values so a
+/// user-triggered toggle doesn't clobber them with a stale slot.
+pub fn builtin_default_icon(id: &str) -> Option<crate::config::IntegrationIcon> {
+    let cfg = crate::config::Config::default();
+    cfg.ui.integration_icons.into_iter().find(|i| i.id == id)
 }
 
 /// Upsert a `[[ui.integration_icon]] id = "<id>" enabled = X
