@@ -3472,6 +3472,18 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .map(|i| i.id.clone())
             .collect();
+        // vscode-mouse r4 SEV-1 (2026-08-06) — scroll now advances
+        // past the icons list into marketplace_entries. Prior code
+        // painted entries starting at whatever `y` icons left off,
+        // ignoring `start_idx`, so scrolling could push icons off
+        // but marketplace entries stayed put — capping the visible
+        // scroll at (icons.len() - 1) rows.
+        //
+        // Global start_idx counts icons + eligible marketplace
+        // rows in one virtual list. Skip past the entries the icons
+        // loop already displaced.
+        let entries_skip = start_idx.saturating_sub(icons.len());
+        let mut skipped = 0usize;
         for (idx, entry) in app.marketplace_entries.iter().enumerate() {
             if installed_ids.contains(&entry.id) {
                 continue;
@@ -3488,6 +3500,12 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 if !hay.contains(&filter_lc_mp) {
                     continue;
                 }
+            }
+            // Advance past scroll offset (post-filter so the count
+            // matches marketplace_extra_len used by max_scroll).
+            if skipped < entries_skip {
+                skipped += 1;
+                continue;
             }
             if y + 1 >= area.y + area.height {
                 break;
