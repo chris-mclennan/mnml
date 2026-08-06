@@ -5864,8 +5864,20 @@ impl App {
             {
                 Some(slot) => {
                     let mut merged = new_icon;
-                    merged.enabled = slot.enabled;
-                    merged.in_palette_bar = slot.in_palette_bar;
+                    // For built-in integrations the manifest file IS the
+                    // user pref (right-click Enable scaffolds it via
+                    // `write_authored_manifest_toml`), so its chip.enabled /
+                    // chip.in_palette_bar override the built-in default in
+                    // `config.rs`. For third-party manifests we keep the
+                    // prior "slot wins" rule so config.toml overrides still
+                    // take effect.
+                    if crate::app::discovery::is_builtin_integration_id(&m.id) {
+                        merged.enabled = chip.enabled;
+                        merged.in_palette_bar = chip.in_palette_bar;
+                    } else {
+                        merged.enabled = slot.enabled;
+                        merged.in_palette_bar = slot.in_palette_bar;
+                    }
                     *slot = merged;
                 }
                 None => self.config.ui.integration_icons.push(new_icon),
