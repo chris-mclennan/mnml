@@ -2012,11 +2012,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         .iter()
         .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
     {
-        // 2026-08-06 — was `install_marketplace_entry(mp_idx)` which
-        // fired cargo install immediately with zero confirmation.
-        // Now opens a two-button `[Install] [Cancel]` dialog so a
-        // misclick doesn't kick off a multi-minute compile.
-        app.open_marketplace_install_prompt(mp_idx);
+        // 2026-08-06 — was `install_marketplace_entry(mp_idx)`
+        // (immediate install, zero confirmation — user surprise).
+        // Then briefly a confirm dialog. Now: opens the existing
+        // integration-detail pane in the main area so the user
+        // sees description / source / links first, and the pane's
+        // `[Install]` button routes to the same confirm dialog.
+        if let Some(entry) = app.marketplace_entries.get(mp_idx) {
+            let id = entry.id.clone();
+            app.open_integration_detail_pane(&id);
+        }
         return;
     }
     if let Some(&(_, icon_idx)) = app

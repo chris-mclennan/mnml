@@ -27,8 +27,12 @@ impl App {
     /// panel is closed.
     pub fn open_integration_detail_pane(&mut self, id: &str) {
         // Refuse silently if the id doesn't resolve to an installed
-        // (or Marketplace-listed) integration — toast a hint.
-        let known = self.config.ui.integration_icons.iter().any(|i| i.id == id);
+        // integration OR a fetched marketplace entry — toast a hint.
+        // 2026-08-06 — was `integration_icons` only; extended to
+        // include marketplace_entries so left-clicking a marketplace
+        // row opens the detail pane instead of firing install.
+        let known = self.config.ui.integration_icons.iter().any(|i| i.id == id)
+            || self.marketplace_entries.iter().any(|e| e.id == id);
         if !known {
             self.toast(format!("no integration with id `{id}`"));
             return;

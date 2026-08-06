@@ -7408,11 +7408,20 @@ impl App {
         match &entry.install {
             crate::marketplace::InstallSpec::Cargo { name } => {
                 self.toast(format!("installing {name}…"));
-                // Spawn `cargo install <name>` in a Pty pane via mnml's
-                // :term handler — user sees compile output there. The
-                // sibling's own `--install` step (writing its manifest)
-                // is a separate command the user runs afterward.
-                self.run_ex_command(&format!("term cargo install {name}"));
+                // 2026-08-06 — auto-chain the sibling's own
+                // `--install` subcommand so the marketplace click is
+                // truly one-step (dialog → cargo → chip visible).
+                // Was: user had to `<binary> --install` manually
+                // after cargo finished. Chained via `&&` so a
+                // failed cargo (compile error, network, etc) skips
+                // the second step cleanly.
+                //
+                // Runs in the same Pty pane so the user sees both
+                // outputs sequentially. `cargo install --force`
+                // isn't necessary — a fresh install won't collide.
+                self.run_ex_command(&format!(
+                    "term cargo install {name} && {name} --install && echo '✓ {name} installed — run integrations.refresh to pick up the chip'"
+                ));
             }
             crate::marketplace::InstallSpec::LauncherToml { url } => {
                 let id = entry.id.clone();

@@ -58,6 +58,13 @@ pub(crate) enum DetailAction {
     /// Fire the integration's own primary command
     /// (`icon.command` — either an id or a `:ex` string).
     RunPrimary(String),
+    /// 2026-08-06 — for marketplace-only entries (id in
+    /// `App::marketplace_entries` but not yet in
+    /// `config.ui.integration_icons`), the detail pane surfaces an
+    /// `[Install]` button. Firing it routes to the same
+    /// `open_marketplace_install_prompt` the row-click uses so the
+    /// user always lands on the confirm dialog before cargo runs.
+    InstallFromMarketplace(String),
 }
 
 pub fn draw(
@@ -106,7 +113,9 @@ pub fn draw(
     // Build the button set + link set + command-row set. This drives
     // both the visible layout and the cursor's actionable-row
     // mapping, so it MUST match what the click-router walks below.
-    let (buttons, commands, links) = build_actionable(&id, icon.as_ref());
+    let is_marketplace_only = icon.is_none() && app.marketplace_entries.iter().any(|e| e.id == id);
+    let (buttons, commands, links) =
+        build_actionable_with_marketplace(&id, icon.as_ref(), is_marketplace_only);
     let total_actions = buttons.len() + commands.len() + links.len();
 
     // Clamp + read the pane's cursor.
@@ -530,9 +539,36 @@ pub(crate) fn build_actionable(
     Vec<IntegrationIconCommand>,
     Vec<(String, String)>,
 ) {
+    build_actionable_with_marketplace(id, icon, false)
+}
+
+/// Extended form that also emits the `[Install]` button when the id
+/// refers to a marketplace-only entry (not yet installed). Callers
+/// with access to `App::marketplace_entries` pass `true` when the
+/// id resolves to a marketplace row.
+pub(crate) fn build_actionable_with_marketplace(
+    id: &str,
+    icon: Option<&IntegrationIcon>,
+    is_marketplace_only: bool,
+) -> (
+    Vec<DetailButton>,
+    Vec<IntegrationIconCommand>,
+    Vec<(String, String)>,
+) {
     let mut buttons: Vec<DetailButton> = Vec::new();
     let mut commands: Vec<IntegrationIconCommand> = Vec::new();
     let mut links: Vec<(String, String)> = Vec::new();
+
+    if icon.is_none() && is_marketplace_only {
+        // Marketplace-only entry — one button: [Install]. Routes
+        // through the same confirm-prompt path as row-click so cargo
+        // install doesn't fire from a stray Enter/click.
+        buttons.push(DetailButton {
+            label: "Install".to_string(),
+            action: DetailAction::InstallFromMarketplace(id.to_string()),
+        });
+        return (buttons, commands, links);
+    }
 
     if let Some(ic) = icon {
         // Primary Enable/Disable toggle — label reflects state.
@@ -618,7 +654,9 @@ pub(crate) fn fire_action(app: &mut App, pane_id: PaneId, action_idx: usize) {
         .iter()
         .find(|i| i.id == id)
         .cloned();
-    let (buttons, commands, links) = build_actionable(&id, icon.as_ref());
+    let is_marketplace_only = icon.is_none() && app.marketplace_entries.iter().any(|e| e.id == id);
+    let (buttons, commands, links) =
+        build_actionable_with_marketplace(&id, icon.as_ref(), is_marketplace_only);
     let btn_n = buttons.len();
     let cmd_n = commands.len();
     let toast_msg = if action_idx < btn_n {
@@ -689,6 +727,15 @@ fn dispatch_detail_action(app: &mut App, action: &DetailAction, label: &str) -> 
                 crate::command::run(cmd, app);
             }
             format!("Ran {cmd}")
+        }
+        DetailAction::InstallFromMarketplace(id) => {
+            if let Some(idx) = app.marketplace_entries.iter().position(|e| e.id == *id) {
+                app.open_marketplace_install_prompt(idx);
+                format!("Confirm to install {id}")
+            } else {
+                app.toast(format!("marketplace entry `{id}` not found"));
+                format!("no marketplace entry {id}")
+            }
         }
     }
 }
