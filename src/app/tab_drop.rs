@@ -138,6 +138,21 @@ impl App {
             .layout()
             .leaf_containing(leaf_active)
             .and_then(|tabs| tabs.iter().copied().find(|&t| t != src));
+        // reviewer flag on b08d66e0 — same-leaf drop of a solo tab
+        // would collapse its leaf (no survivor) then fail to
+        // replace_leaf (nothing with active==src exists post-remove),
+        // orphaning src entirely. That's a self-drop of the only
+        // tab — a genuine no-op. Bail before any mutation.
+        if dest_survivor.is_none() {
+            let same_leaf = self
+                .layout()
+                .leaf_containing(src)
+                .is_some_and(|tabs| tabs.contains(&leaf_active));
+            if same_leaf {
+                self.focus = Focus::Pane;
+                return true;
+            }
+        }
         // Remove src from wherever it lives, then insert at idx.
         self.layout_mut().remove_leaf(src);
         let dest_leaf = dest_survivor.and_then(|p| self.layout_mut().leaf_containing_mut(p));
@@ -550,6 +565,31 @@ mod tests {
                 );
             }
             other => panic!("expected a single leaf, got {other:?}"),
+        }
+        assert_eq!(app.active, Some(0));
+    }
+
+    /// Reviewer follow-up (2026-08-06) — same-leaf drop of a SOLO
+    /// tab used to empty the layout: no `dest_survivor`, so
+    /// `remove_leaf(src)` destroyed the leaf and `replace_leaf`
+    /// couldn't find a target with `active==src`. Now bails early.
+    #[test]
+    fn same_leaf_reorder_of_solo_tab_is_a_noop() {
+        let mut app = app_two_panes();
+        // Collapse to a single leaf with ONE tab (pane 0).
+        *app.layout_mut() = crate::layout::Layout::leaf(0);
+        app.active = Some(0);
+        let strip = Rect::new(0, 0, 40, 1);
+        app.rects.split_tab_strip_areas = vec![(strip, 0)];
+        app.rects.split_tab_chips = vec![(Rect::new(0, 0, 10, 1), 0, 0)];
+        assert!(app.drop_tab_on_strip(0, 5, 0));
+        // Layout must be unchanged.
+        match app.layout() {
+            crate::layout::Layout::Leaf { active, tabs } => {
+                assert_eq!(*active, 0);
+                assert_eq!(tabs, &vec![0]);
+            }
+            other => panic!("expected the single leaf preserved, got {other:?}"),
         }
         assert_eq!(app.active, Some(0));
     }

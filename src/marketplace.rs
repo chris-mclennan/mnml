@@ -395,7 +395,7 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         "mnml-db-driver-mysql" => ("\u{E704}", "orange"),  // dev-mysql — orange dolphin
         "mnml-db-driver-redis" => ("\u{E76D}", "red"),     // dev-redis — red cube
         "mnml-db-driver-sqlite" => ("\u{E7C4}", "blue"),   // dev-sqlite
-        "mnml-db-driver-docdb" => ("\u{E7A4}", "green"), // dev-mongodb — green leaf (DocDB is Mongo-compat)
+        "mnml-db-driver-docdb" => ("\u{F1C11}", "blue"), // AWS DocumentDB SVG bake — matches redshift/dynamodb AWS blue
         "mnml-db-driver-clickhouse" => ("\u{F1C0F}", "yellow"), // ClickHouse SVG bake in MnmlSymbols
         "mnml-db-driver-redshift" => ("\u{F1C10}", "blue"), // AWS Redshift SVG bake (blue cylinder + graph)
         "mnml-db-driver-dynamodb" => ("\u{F1C06}", "blue"), // AWS SVG bake — DynamoDB blue
