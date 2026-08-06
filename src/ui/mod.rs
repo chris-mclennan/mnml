@@ -3231,9 +3231,18 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut icons: Vec<(usize, crate::config::IntegrationIcon)> = all_icons
         .iter()
         .enumerate()
-        .filter(|(_, icon)| match active_tab {
-            crate::app::IntegrationsPanelTab::Installed => icon.enabled,
-            crate::app::IntegrationsPanelTab::Marketplace => !icon.enabled,
+        // 2026-08-06 user report — was: Installed → only `enabled`,
+        // Marketplace → `!enabled`. That put disabled installed
+        // chips on the MARKETPLACE tab, which reads as "you don't
+        // have this yet" — wrong. New: Installed = every installed
+        // integration (enabled + disabled); disabled ones sort to
+        // the bottom + render dimmed (below). Marketplace = only
+        // fetched crates.io/launcher entries the user hasn't
+        // installed at all (already filtered by `installed_ids`
+        // in the entries loop).
+        .filter(|(_, _icon)| match active_tab {
+            crate::app::IntegrationsPanelTab::Installed => true,
+            crate::app::IntegrationsPanelTab::Marketplace => false,
         })
         .filter(|(_, icon)| {
             if filter_lc.is_empty() {
@@ -3266,6 +3275,11 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 .to_ascii_lowercase();
             key_a.cmp(&key_b)
         });
+    } else if matches!(active_tab, crate::app::IntegrationsPanelTab::Installed) {
+        // 2026-08-06 — enabled first, disabled at the bottom. The
+        // config-file order (user's own Move up / Move down) is
+        // preserved within each group.
+        icons.sort_by_key(|(_, a)| !a.enabled);
     }
 
     // Empty-state per tab.
@@ -3422,6 +3436,15 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 (t.comment, Some(format!("  ({} not installed)", bin)))
             }
         };
+        // 2026-08-06 — disabled (chip-hidden) installed integrations
+        // sort to the bottom AND render dimmed so the "still there,
+        // just hidden from the rail" state reads at a glance.
+        let disabled_dim = if icon.enabled {
+            Modifier::empty()
+        } else {
+            Modifier::DIM
+        };
+        let disabled_suffix = if icon.enabled { "" } else { "  (hidden)" };
         let row1 = Rect {
             x: area.x,
             y,
@@ -3429,9 +3452,27 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             height: 1,
         };
         let mut name_spans: Vec<Span<'static>> = vec![
-            Span::styled(format!("  {glyph} "), Style::default().fg(fg).bg(bg)),
-            Span::styled(name, Style::default().fg(name_fg).bg(bg)),
+            Span::styled(
+                format!("  {glyph} "),
+                Style::default().fg(fg).bg(bg).add_modifier(disabled_dim),
+            ),
+            Span::styled(
+                name,
+                Style::default()
+                    .fg(name_fg)
+                    .bg(bg)
+                    .add_modifier(disabled_dim),
+            ),
         ];
+        if !disabled_suffix.is_empty() {
+            name_spans.push(Span::styled(
+                disabled_suffix.to_string(),
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM | Modifier::ITALIC),
+            ));
+        }
         if let Some(suffix) = suffix {
             name_spans.push(Span::styled(
                 suffix,

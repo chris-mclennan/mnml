@@ -354,7 +354,7 @@ pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str,
         ToolInstallConfirm | IntegrationInstallConfirm | MarketplaceInstallConfirm => {
             ("  Install  ", " Cancel ")
         }
-        IntegrationRemoveConfirm => ("  Remove  ", " Cancel "),
+        IntegrationRemoveConfirm => ("  Uninstall  ", " Cancel "),
         ResetToDefaultsConfirm => ("  Reset  ", " Cancel "),
         PortableChoicePrompt => ("  Portable  ", "  Normal  "),
         _ => return None,

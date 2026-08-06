@@ -315,12 +315,19 @@ impl App {
             self.toast(format!("integration: {id} not in rail"));
             return;
         }
-        // Backtick-quoted id to match every other confirm-dialog
-        // title (`Delete branch \`name\`?`, `Remove worktree
-        // \`name\`?`, etc.). design-critic 2026-07-09.
-        // Shortened copy so it doesn't truncate at ~45 cells on
-        // longer ids — vscode-user-mouse 2026-07-09.
-        let title = format!("Remove integration `{id}`?");
+        // 2026-08-06 — "Remove integration `X`?" → "Uninstall `X`?"
+        // matches the new menu label + the toast this action
+        // already emits ("uninstalled {id}").
+        let title = format!("Uninstall `{id}`?");
+        // Stash the manifest's binary name (if any) so the accept
+        // handler can toast a follow-up hint about
+        // `cargo uninstall <bin>` for users who also want the
+        // compiled binary gone from ~/.cargo/bin.
+        self.pending_integration_remove_binary = self
+            .integration_manifests
+            .iter()
+            .find(|m| m.id == id)
+            .and_then(|m| m.binary.clone());
         self.pending_integration_remove_id = Some(id);
         let mut p =
             crate::prompt::Prompt::new(crate::prompt::PromptKind::IntegrationRemoveConfirm, title);

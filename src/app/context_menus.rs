@@ -593,7 +593,15 @@ impl App {
                 ));
             }
         }
-        items.push(MenuItem::new("Remove", MenuAction::RemoveIntegration(id)));
+        // 2026-08-06 — renamed "Remove" → "Uninstall". User asked
+        // whether "remove" matched what the action does; it deletes
+        // the manifest + codepoint + rail entry + SVG on disk,
+        // which is a proper uninstall. Own function name
+        // `remove_integration_by_id` stays; only the label changes.
+        items.push(MenuItem::new(
+            "Uninstall",
+            MenuAction::RemoveIntegration(id),
+        ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 

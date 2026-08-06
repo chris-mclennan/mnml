@@ -2014,13 +2014,36 @@ impl App {
                 }
             }
             crate::prompt::PromptKind::IntegrationRemoveConfirm => {
-                if p.input.trim().eq_ignore_ascii_case("remove") {
-                    if let Some(id) = self.pending_integration_remove_id.take() {
+                // 2026-08-06 — 2-button dialog accepts on either
+                // "remove" (legacy — kept so existing dispatcher
+                // paths still fire) or the new "Uninstall" label
+                // that the confirm_labels arm emits.
+                let accept = {
+                    let t = p.input.trim();
+                    t.eq_ignore_ascii_case("remove") || t.eq_ignore_ascii_case("uninstall")
+                };
+                if accept {
+                    let id = self.pending_integration_remove_id.take();
+                    let bin = self.pending_integration_remove_binary.take();
+                    if let Some(id) = id {
                         self.remove_integration_by_id(&id);
+                        // Follow-up hint for users who also want the
+                        // compiled binary gone. mnml doesn't run
+                        // `cargo uninstall` automatically — it lives
+                        // in the user's ~/.cargo/bin and other
+                        // things may depend on it — but we surface
+                        // the exact command so it's a copy-paste
+                        // away.
+                        if let Some(bin) = bin {
+                            self.toast(format!(
+                                "uninstalled {id} — run `cargo uninstall {bin}` to remove the binary too"
+                            ));
+                        }
                     }
                 } else {
                     self.pending_integration_remove_id = None;
-                    self.toast("integration remove cancelled");
+                    self.pending_integration_remove_binary = None;
+                    self.toast("integration uninstall cancelled");
                 }
             }
             crate::prompt::PromptKind::ResetToDefaultsConfirm => {

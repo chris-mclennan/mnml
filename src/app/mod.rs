@@ -4992,6 +4992,12 @@ pub struct App {
     /// (or the integrations.remove palette picker), resolved on
     /// prompt accept.
     pub pending_integration_remove_id: Option<String>,
+    /// 2026-08-06 — stashed alongside `pending_integration_remove_id`
+    /// so the confirm dialog can offer a third-button "Uninstall +
+    /// binary" that also runs `cargo uninstall <binary>` after the
+    /// manifest teardown. `None` for data-only launchers — dialog
+    /// falls back to the two-button `[Uninstall] [Cancel]` shape.
+    pub pending_integration_remove_binary: Option<String>,
     /// Integration id awaiting a launcher-script value from the
     /// `PromptKind::IntegrationLauncher` prompt. Set by the chip's
     /// "Set launcher script…" menu, read by the prompt-accept.
@@ -5689,6 +5695,7 @@ impl App {
             pending_kill_batch: Vec::new(),
             pending_branch_delete: None,
             pending_integration_remove_id: None,
+            pending_integration_remove_binary: None,
             pending_integration_launcher_id: None,
             pending_worktree_path: None,
             pending_merge_source: None,
@@ -6691,7 +6698,7 @@ impl App {
                 ToolInstallConfirm | IntegrationInstallConfirm | MarketplaceInstallConfirm => {
                     "y".into()
                 }
-                IntegrationRemoveConfirm => "remove".into(),
+                IntegrationRemoveConfirm => "uninstall".into(),
                 ResetToDefaultsConfirm => "reset".into(),
                 // Both options are valid — primary=portable, cancel=normal.
                 // The accept handler discriminates on the input string.
