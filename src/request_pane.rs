@@ -666,9 +666,33 @@ impl RequestPane {
     }
     pub fn focus_next_field(&mut self) {
         self.focus = self.focus.next();
+        self.sync_edit_tab_to_focus();
     }
     pub fn focus_prev_field(&mut self) {
         self.focus = self.focus.prev();
+        self.sync_edit_tab_to_focus();
+    }
+
+    /// api-workflow-user r4 SEV-2 (2026-08-06) — Tab-cycling
+    /// through EditField (URL → Method → Headers → Body → …) used
+    /// to update `focus` but not `edit_tab`. If the visible tab was
+    /// Body and the user Tab'd to Headers, keystrokes appended to
+    /// the raw `headers_buffer` with zero visual feedback,
+    /// corrupting the last header value. Switch the visible tab to
+    /// match the new focus so what the user sees is what they type
+    /// into.
+    fn sync_edit_tab_to_focus(&mut self) {
+        let target = match self.focus {
+            EditField::Headers => Some(EditTab::Headers),
+            EditField::Body => Some(EditTab::Body),
+            EditField::Source => Some(EditTab::Source),
+            // Url/Method live in the header row above the tab strip;
+            // no tab flip needed for those.
+            EditField::Url | EditField::Method => None,
+        };
+        if let Some(tab) = target {
+            self.edit_tab = tab;
+        }
     }
 
     /// Mutable handle to the focused field's `(text, cursor)`. Returns `None`
