@@ -4280,7 +4280,10 @@ fn icon_for_pane(
         Pane::CloudAgentRun(_) => s(if nerd { "\u{F0956}" } else { "☁" }, theme::cur().blue),
         Pane::NewCloudAgentWizard(_) => s(if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().green),
         Pane::NewCloudRunWizard(_) => s(if nerd { "\u{F0FB1}" } else { "+" }, theme::cur().cyan),
-        Pane::IntegrationDetail(_) => s(if nerd { "\u{F09FF}" } else { "◈" }, theme::cur().cyan),
+        // nf-md-puzzle — matches the Integrations activity-bar chip
+        // so the tab icon reads unambiguously as "integration detail"
+        // (user 2026-08-06: was a lighthouse-looking glyph).
+        Pane::IntegrationDetail(_) => s(if nerd { "\u{F0431}" } else { "◈" }, theme::cur().cyan),
     }
 }
 

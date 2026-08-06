@@ -108,14 +108,53 @@ pub fn draw(
         .iter()
         .find(|i| i.id == id)
         .cloned();
+    // 2026-08-06 — marketplace-only fallback so the detail pane
+    // renders full metadata (label, description, source) for entries
+    // the user hasn't installed yet, not just the "not found"
+    // placeholder. Synthesize an IntegrationIcon from the
+    // marketplace entry's fields.
+    let marketplace_entry = if icon.is_none() {
+        app.marketplace_entries.iter().find(|e| e.id == id).cloned()
+    } else {
+        None
+    };
+    let synthesized_icon: Option<IntegrationIcon> =
+        marketplace_entry
+            .as_ref()
+            .map(|e| crate::config::IntegrationIcon {
+                id: e.id.clone(),
+                glyph: e.glyph.clone().unwrap_or_default(),
+                fallback: String::new(),
+                command: String::new(),
+                color: e.color.clone().unwrap_or_else(|| "fg".to_string()),
+                label: Some(e.label.clone()),
+                enabled: false,
+                in_palette_bar: false,
+                description: e.description.clone(),
+                homepage: None,
+                docs: None,
+                repository: None,
+                author: None,
+                version: None,
+                commands: Vec::new(),
+            });
+    let installed_icon = icon.clone();
+    // For rendering, prefer the real installed icon; fall back to
+    // the marketplace-synthesized one so display fields (label,
+    // description, glyph, color) always show.
+    let icon: Option<IntegrationIcon> = icon.or(synthesized_icon);
     let nerd = !app.config.ui.ascii_icons;
 
     // Build the button set + link set + command-row set. This drives
     // both the visible layout and the cursor's actionable-row
     // mapping, so it MUST match what the click-router walks below.
-    let is_marketplace_only = icon.is_none() && app.marketplace_entries.iter().any(|e| e.id == id);
+    // Pass the ORIGINAL icon (None for marketplace-only) so the
+    // helper switches on the marketplace-only path and emits just
+    // an [Install] button rather than the installed-integration
+    // button set.
+    let is_marketplace_only = marketplace_entry.is_some();
     let (buttons, commands, links) =
-        build_actionable_with_marketplace(&id, icon.as_ref(), is_marketplace_only);
+        build_actionable_with_marketplace(&id, installed_icon.as_ref(), is_marketplace_only);
     let total_actions = buttons.len() + commands.len() + links.len();
 
     // Clamp + read the pane's cursor.
