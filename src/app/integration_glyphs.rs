@@ -319,17 +319,7 @@ impl App {
         {
             return;
         }
-        if std::fs::copy(&path, &dst).is_ok() {
-            // `fs::copy` on macOS uses `fclonefileat` which PRESERVES
-            // source mtime — so a freshly-copied SVG whose source is
-            // older than the font would be misidentified as
-            // already-baked by `purge_baked_pending_glyphs` and
-            // deleted the same tick. Stamp it now so the purge sees
-            // it as fresh.
-            if let Ok(f) = std::fs::File::open(&dst) {
-                let _ = f.set_modified(std::time::SystemTime::now());
-            }
-        }
+        let _ = std::fs::copy(&path, &dst);
     }
 
     pub fn discover_integration_glyphs(&mut self) {
