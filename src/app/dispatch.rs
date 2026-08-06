@@ -1060,16 +1060,22 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
         && let Some(ar) = app.rects.integrations_panel_area
         && contains(ar, x, y)
     {
+        // 2026-08-05 — write to the tab-specific scroll field so
+        // Installed / Marketplace remember independent positions.
         let d = list_scroll_clamp(delta);
         let step = 3usize;
+        let target: &mut usize = match app.integrations_panel_tab {
+            crate::app::IntegrationsPanelTab::Installed => {
+                &mut app.integrations_panel_scroll_installed
+            }
+            crate::app::IntegrationsPanelTab::Marketplace => {
+                &mut app.integrations_panel_scroll_marketplace
+            }
+        };
         if d < 0 {
-            app.integrations_panel_scroll = app
-                .integrations_panel_scroll
-                .saturating_sub(step * d.unsigned_abs() as usize);
+            *target = target.saturating_sub(step * d.unsigned_abs() as usize);
         } else {
-            app.integrations_panel_scroll = app
-                .integrations_panel_scroll
-                .saturating_add(step * d as usize);
+            *target = target.saturating_add(step * d as usize);
         }
         return;
     }

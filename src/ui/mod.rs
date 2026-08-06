@@ -3333,12 +3333,24 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // Each entry takes 3 rows: glyph+name, command dim, blank.
     // Clamp the scroll so at least one entry stays visible.
     let rows_per = 3usize;
+    // 2026-08-05 — per-tab scroll state (previously one shared
+    // integrations_panel_scroll for both). Switching Installed ↔
+    // Marketplace now preserves each tab's scroll position.
+    let scroll = match active_tab {
+        crate::app::IntegrationsPanelTab::Installed => &mut app.integrations_panel_scroll_installed,
+        crate::app::IntegrationsPanelTab::Marketplace => {
+            &mut app.integrations_panel_scroll_marketplace
+        }
+    };
     let max_scroll = icons.len().saturating_sub(1).saturating_mul(rows_per);
-    if app.integrations_panel_scroll > max_scroll {
-        app.integrations_panel_scroll = max_scroll;
+    if *scroll > max_scroll {
+        *scroll = max_scroll;
     }
+    let skip_rows = *scroll;
+    // Mirror into the legacy shared field so pre-migration callers
+    // (mouse wheel etc.) still bump the currently-visible tab.
+    app.integrations_panel_scroll = skip_rows;
     let mut y = area.y + 4;
-    let skip_rows = app.integrations_panel_scroll;
     // Convert scroll to a "start icon index" that begins on a
     // 3-row boundary so we don't render half of an icon at the top.
     let start_idx = skip_rows / rows_per;
@@ -3485,24 +3497,48 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 crate::marketplace::Provenance::Official => ("✓", "Official", t.green),
                 crate::marketplace::Provenance::Community => ("~", "Community", t.comment),
             };
-            let name_spans: Vec<Span<'static>> = vec![
-                Span::styled(
+            // 2026-08-05 — leading glyph column ONLY when the
+            // catalog knows this entry. Unknown entries skip the
+            // glyph entirely (previous attempt: a package-icon
+            // fallback rendered as tofu because MnmlSymbols didn't
+            // have F0487, and any letter fallback looked worse than
+            // clean whitespace).
+            let entry_glyph_span: Option<Span<'static>> = entry.glyph.as_ref().map(|g| {
+                let fg = entry
+                    .color
+                    .as_deref()
+                    .map(|c| crate::ui::theme::color_from_slot(c, &t))
+                    .unwrap_or(t.fg);
+                Span::styled(format!("  {g}  "), Style::default().fg(fg).bg(bg))
+            });
+            let mut name_spans: Vec<Span<'static>> = Vec::with_capacity(6);
+            if let Some(g) = entry_glyph_span {
+                name_spans.push(g);
+                name_spans.push(Span::styled(
+                    format!("{kind_tag} "),
+                    Style::default().fg(kind_fg).bg(bg),
+                ));
+            } else {
+                name_spans.push(Span::styled(
                     format!("  {kind_tag} "),
                     Style::default().fg(kind_fg).bg(bg),
-                ),
-                Span::styled(entry.label.clone(), Style::default().fg(t.fg).bg(bg)),
-                Span::styled(
-                    format!("  {prov_glyph} {prov_label}"),
-                    Style::default().fg(prov_fg).bg(bg),
-                ),
-                Span::styled(
-                    format!("  ({})", entry.source_id),
-                    Style::default()
-                        .fg(t.comment)
-                        .bg(bg)
-                        .add_modifier(Modifier::DIM),
-                ),
-            ];
+                ));
+            }
+            name_spans.push(Span::styled(
+                entry.label.clone(),
+                Style::default().fg(t.fg).bg(bg),
+            ));
+            name_spans.push(Span::styled(
+                format!("  {prov_glyph} {prov_label}"),
+                Style::default().fg(prov_fg).bg(bg),
+            ));
+            name_spans.push(Span::styled(
+                format!("  ({})", entry.source_id),
+                Style::default()
+                    .fg(t.comment)
+                    .bg(bg)
+                    .add_modifier(Modifier::DIM),
+            ));
             frame.render_widget(Paragraph::new(ratatui::text::Line::from(name_spans)), row1);
             app.rects.marketplace_row_rects.push((row1, idx));
 
@@ -3531,14 +3567,32 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    // 2026-07-03 — scrollbar on the far-right column of the
-    // panel body. Renders whenever the icon list is taller than
-    // the body area (both Installed + Marketplace tabs). Cheap
-    // manual paint — one column of dim rail, plus a solid thumb
-    // whose length + offset track the current scroll state.
+    // 2026-07-03 — scrollbar on the far-right column of the panel
+    // body. Renders whenever the visible-tab row list is taller than
+    // the body area.
+    //
+    // 2026-08-05 — count TAB-SPECIFIC rows so the Marketplace tab
+    // (which paints both `icons` + `marketplace_entries` below the
+    // icon list) doesn't undercount and hide the scrollbar.
     let body_h = body_area.height as usize;
     let visible_rows = (body_h / rows_per).max(1);
-    let total_rows = icons.len();
+    let extra_marketplace_rows =
+        if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
+            let installed_ids: std::collections::HashSet<String> = app
+                .config
+                .ui
+                .integration_icons
+                .iter()
+                .map(|i| i.id.clone())
+                .collect();
+            app.marketplace_entries
+                .iter()
+                .filter(|e| !installed_ids.contains(&e.id))
+                .count()
+        } else {
+            0
+        };
+    let total_rows = icons.len() + extra_marketplace_rows;
     if total_rows > visible_rows {
         let track_x = area.x + area.width.saturating_sub(1);
         let track_h = body_area.height;

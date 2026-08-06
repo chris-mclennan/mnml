@@ -4437,9 +4437,14 @@ pub struct App {
     /// Clamped to the content height each render.
     pub agents_panel_scroll: usize,
     /// qa-feature 2026-07-01 — vertical scroll offset for the
-    /// Integrations activity panel. Each icon takes 3 rows;
-    /// mouse-wheel + PageUp/Down bump this by 3.
+    /// Integrations activity panel scroll — per-tab so switching
+    /// Installed ↔ Marketplace remembers where you were on each.
+    /// Each icon takes 3 rows; wheel + PageUp/Down bump by 3.
+    /// (Legacy shared field kept until callers migrate; new UI
+    /// reads/writes the tab-specific fields instead.)
     pub integrations_panel_scroll: usize,
+    pub integrations_panel_scroll_installed: usize,
+    pub integrations_panel_scroll_marketplace: usize,
     /// Integrations activity panel — filter query.
     /// Case-insensitive substring match against each icon's
     /// tooltip / id / command. Empty ⇒ no filter.
@@ -5422,6 +5427,8 @@ impl App {
             sessions_panel_cursor: 0,
             agents_panel_scroll: 0,
             integrations_panel_scroll: 0,
+            integrations_panel_scroll_installed: 0,
+            integrations_panel_scroll_marketplace: 0,
             integrations_panel_filter: String::new(),
             integrations_panel_filter_focused: false,
             integrations_panel_tab: IntegrationsPanelTab::Installed,

@@ -356,49 +356,71 @@ pub fn parse_launcher_toml(
 /// mnml site that OVERRIDES this map so community entries pick up
 /// icons without a mnml release.
 pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
+    // All codepoints below are inside the standard Nerd Fonts
+    // ranges (Devicons E700-E8EF, Codicons EA60-EC1E, MDI
+    // F0001-F1AFF) OR the mnml-baked PUA range (F1B00-F20FF).
+    // Ghostty's `font-codepoint-map` must route these to a real
+    // Nerd Font (e.g. Symbols Nerd Font Mono) for the last three
+    // ranges, and to MnmlSymbols for the PUA one.
     let (glyph, color): (&str, &str) = match id {
-        // System monitors (also shipped as launcher TOMLs — this is
-        // the fallback for the crates.io keyword hit before the
-        // TOML entry has been fetched).
-        "btop" => ("\u{F0AEF}", "cyan"),
-        "htop" => ("\u{F0AF5}", "green"),
-        "iftop" => ("\u{F0AF6}", "cyan"),
+        // System monitors — real MDI codepoints (verified in font).
+        // Prior F0AEF/F0AF5/F0AF6 were md-alpha_b/h/i (letter icons),
+        // corrected 2026-08-05.
+        "btop" => ("\u{F0A07}", "red"),   // md-monitor_dashboard
+        "htop" => ("\u{F0379}", "green"), // md-monitor
+        "iftop" => ("\u{F06F3}", "cyan"), // md-network
 
-        // Editors / IDEs
-        "vscode" | "VSCode" => ("\u{EC29}", "blue"),
+        // Editors / IDEs — nf-dev-vscode (E8DA). Chose over cod-
+        // vscode (EC29) because ghostty 1.3.1 doesn't route EC29
+        // even with the codicon range extended — devicon E8DA
+        // renders reliably. Both are official VS Code glyphs.
+        "vscode" | "VSCode" => ("\u{E8DA}", "blue"),
 
-        // AI (first-party integrations)
+        // AI (first-party, baked into MnmlSymbols)
         "claude_code" | "claude-code" => ("\u{F1E00}", "orange"),
         "codex" => ("\u{F1E01}", "cyan"),
+
+        // Browser — nf-cod-browser
         "browser" => ("\u{EB01}", "blue"),
 
-        // Database family
-        "mnml-db" => ("\u{E64D}", "purple"),
+        // Database family — dev-database (E64D is in Devicons)
+        "mnml-db" => ("\u{E64D}", "blue"),
 
-        // SCM hosts
-        "mnml-scm-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
+        // SCM hosts — Devicons range (E5FA-E8EF).
+        "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
+        "mnml-scm-github" | "mnml-forge-github" | "github" => ("\u{E709}", "fg"),
+
+        // Messaging — Font Awesome BMP (F000-F2E0).
+        "mnml-msg-slack" | "slack" => ("\u{F198}", "purple"),
+
+        // Jira tracker app (3 chips on install) — same F0303 as
+        // the launcher so preview matches the installed chip.
+        "mnml-tracker-jira" => ("\u{F0303}", "blue"),
 
         // AWS integrations — SVGs baked from
-        // ~/Downloads/mnml-aws-icon-preview-inverted → codepoints
-        // in the mnml integration PUA range (F1C00-F1CFF). Users
-        // need MnmlSymbols.ttf baked with these SVGs for the glyphs
-        // to render; the sibling crates ship their own SVG + a
-        // `chip.glyph_codepoint` override so on-install baking
-        // preserves the codepoint.
-        "mnml-aws-amplify" => ("\u{F1C0E}", "orange"),
-        "mnml-aws-cloudwatch" => ("\u{F1C03}", "orange"),
-        "mnml-aws-codebuild" => ("\u{F1C04}", "orange"),
-        "mnml-aws-cognito" => ("\u{F1C05}", "orange"),
-        "mnml-aws-dynamodb" => ("\u{F1C06}", "orange"),
-        "mnml-aws-ecr" => ("\u{F1C07}", "orange"),
-        "mnml-aws-ecs" => ("\u{F1C08}", "orange"),
-        "mnml-aws-eventbridge" => ("\u{F1C09}", "orange"),
-        "mnml-aws-lambda" => ("\u{F1C0A}", "orange"),
-        "mnml-aws-rds" => ("\u{F1C0B}", "orange"),
-        "mnml-aws-sns" => ("\u{F1C0C}", "orange"),
-        "mnml-aws-sqs" => ("\u{F1C0D}", "orange"),
+        // ~/Downloads/mnml-aws-icon-preview-inverted at F1C03-F1C0E.
+        // Colors sourced directly from each SVG's fill= attribute so
+        // the marketplace matches AWS's official brand palette:
+        //   #ED7100 orange  = Compute (ECR, ECS, Lambda)
+        //   #C925D1 purple  = Database + DevTools (DynamoDB, RDS, CodeBuild)
+        //   #E7157B magenta = App Integration + Observability
+        //                     (EventBridge, SNS, SQS, CloudWatch)
+        //   #DD344C red     = Security + Front-End (Cognito, Amplify)
+        "mnml-aws-amplify" => ("\u{F1C0E}", "red"), // #DD344C
+        "mnml-aws-cloudwatch" => ("\u{F1C03}", "magenta"), // #E7157B
+        "mnml-aws-codebuild" => ("\u{F1C04}", "purple"), // #C925D1
+        "mnml-aws-cognito" => ("\u{F1C05}", "red"), // #DD344C
+        "mnml-aws-dynamodb" => ("\u{F1C06}", "purple"), // #C925D1
+        "mnml-aws-ecr" => ("\u{F1C07}", "orange"),  // #ED7100
+        "mnml-aws-ecs" => ("\u{F1C08}", "orange"),  // #ED7100
+        "mnml-aws-eventbridge" => ("\u{F1C09}", "magenta"), // #E7157B
+        "mnml-aws-lambda" => ("\u{F1C0A}", "orange"), // #ED7100
+        "mnml-aws-rds" => ("\u{F1C0B}", "purple"),  // #C925D1
+        "mnml-aws-sns" => ("\u{F1C0C}", "magenta"), // #E7157B
+        "mnml-aws-sqs" => ("\u{F1C0D}", "magenta"), // #E7157B
 
-        // Anything else — no match; renderer uses kind default.
+        // Anything else — no match; renderer skips the leading
+        // glyph column and just prints the [kind] tag.
         _ => return (None, None),
     };
     (Some(glyph.to_string()), Some(color.to_string()))
