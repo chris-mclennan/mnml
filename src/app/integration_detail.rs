@@ -232,6 +232,16 @@ impl App {
             .find(|i| i.id == id)
             .map(|slot| {
                 slot.enabled = !slot.enabled;
+                // 2026-08-06 — enabling defaults `in_palette_bar` to
+                // true so the chip shows up on the top bar without
+                // a second click. User can right-click "Hide from
+                // top bar" to opt-out. Was: only `enabled` flipped
+                // and any prior `in_palette_bar = false` (from a
+                // stale slot) survived, so enabling did nothing
+                // visible.
+                if slot.enabled {
+                    slot.in_palette_bar = true;
+                }
                 slot.clone()
             })
         else {
