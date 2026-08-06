@@ -63,11 +63,16 @@ pub struct CodexUsage {
 
 /// Path where the user's Claude Code OAuth token lives after the
 /// `:ai.link_claude_token` prompt persists it. Chmod 600. Returns
-/// None if $HOME can't be resolved (headless / bad env).
+/// None if the data root can't be resolved (headless / bad env).
+///
+/// claude-agents-user r3+r4 (2026-08-05/06) — was `env::var("HOME")`
+/// directly, bypassing the `data_root()` helper. Under Portable
+/// mode that leaked the OAuth token to the real $HOME, defeating
+/// the "no HOME footprint" guarantee. Now routes through
+/// `crate::data_root::data_root()` like the ~13 other user-scoped
+/// file callers migrated in the 2026-07 sweep.
 pub fn claude_token_path() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|h| h.join(".config").join("mnml").join("ai_token"))
+    Some(crate::data_root::data_root().join("ai_token"))
 }
 
 pub fn read_claude_token() -> Option<String> {
@@ -550,7 +555,22 @@ fn sum_tokens_in_jsonl(path: &Path) -> Option<u64> {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
-        let usage = walk(&v, "token_usage", 0).or_else(|| walk(&v, "usage", 0));
+        // claude-agents-user r3+r4 (2026-08-05/06) — real Codex
+        // rollout-*.jsonl files nest usage under
+        // `payload.info.total_token_usage` (and `.last_token_usage`),
+        // NOT top-level `token_usage`/`usage`. Prior key names
+        // returned no matches → chip always read 0.
+        //
+        // Prefer `total_token_usage` (cumulative for the turn/call)
+        // over `last_token_usage` (delta for the most recent
+        // request) so the daily sum reflects total spend.
+        //
+        // Older key names kept as fallback in case the CLI schema
+        // ever ships them.
+        let usage = walk(&v, "total_token_usage", 0)
+            .or_else(|| walk(&v, "last_token_usage", 0))
+            .or_else(|| walk(&v, "token_usage", 0))
+            .or_else(|| walk(&v, "usage", 0));
         if let Some(usage) = usage {
             let inp = usage
                 .get("input_tokens")

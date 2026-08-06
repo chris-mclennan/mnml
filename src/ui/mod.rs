@@ -3355,9 +3355,28 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 .iter()
                 .map(|i| i.id.clone())
                 .collect();
+            // Apply the SAME filter the render loop uses so max_scroll
+            // and entries_skip stay in sync when the user has an
+            // integrations-panel filter active. Reviewer flag on
+            // 9670a164 — unfiltered count let scroll run past the
+            // last visible row into blank space.
+            let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
             app.marketplace_entries
                 .iter()
                 .filter(|e| !installed_ids.contains(&e.id))
+                .filter(|e| {
+                    if filter_lc_mp.is_empty() {
+                        return true;
+                    }
+                    let hay = format!(
+                        "{} {} {}",
+                        e.label,
+                        e.id,
+                        e.description.as_deref().unwrap_or(""),
+                    )
+                    .to_ascii_lowercase();
+                    hay.contains(&filter_lc_mp)
+                })
                 .count()
         } else {
             0

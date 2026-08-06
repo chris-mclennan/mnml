@@ -7413,7 +7413,18 @@ impl App {
                     self.ai_usage_pending_claude = None;
                 }
                 Ok(Err(e)) => {
+                    // claude-agents-user r3+r4 (2026-08-05/06) — on
+                    // fetch error, zero out `percent`/`weekly_percent`
+                    // so the chip color reflects "no fresh data" and
+                    // the overlay's empty-state ("last error: …")
+                    // kicks in. Leaving the cached values in place
+                    // meant an expired/revoked token silently showed
+                    // yesterday's numbers forever, with only the
+                    // hover tooltip surfacing the failure.
                     let mut u = self.ai_usage_claude.clone().unwrap_or_default();
+                    u.percent = 0;
+                    u.weekly_percent = 0;
+                    u.scoped_limits.clear();
                     u.last_error = Some(e);
                     self.ai_usage_claude = Some(u);
                     self.ai_usage_pending_claude = None;
