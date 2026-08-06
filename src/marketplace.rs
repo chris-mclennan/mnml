@@ -391,24 +391,25 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         // uses each engine's brand color so the icons read like the
         // real logos, not a uniform purple wash.
         "mnml-db-driver-postgres" => ("\u{E76E}", "blue"), // dev-postgresql — postgres elephant blue
-        "mnml-db-driver-mariadb" => ("\u{E828}", "teal"),  // dev-mariadb — dark teal seal
+        "mnml-db-driver-mariadb" => ("\u{F1C12}", "teal"), // MariaDB SVG bake (mono seal) — dark teal to match brand
         "mnml-db-driver-mysql" => ("\u{E704}", "orange"),  // dev-mysql — orange dolphin
-        "mnml-db-driver-redis" => ("\u{E76D}", "red"),     // dev-redis — red cube
-        "mnml-db-driver-sqlite" => ("\u{E7C4}", "blue"),   // dev-sqlite
+        "mnml-db-driver-redis" => ("\u{F1C13}", "red"), // Redis SVG bake (mono cube) in Redis red
+        "mnml-db-driver-sqlite" => ("\u{E7C4}", "blue"), // dev-sqlite
         "mnml-db-driver-docdb" => ("\u{F1C11}", "blue"), // AWS DocumentDB SVG bake — matches redshift/dynamodb AWS blue
         "mnml-db-driver-clickhouse" => ("\u{F1C0F}", "yellow"), // ClickHouse SVG bake in MnmlSymbols
-        "mnml-db-driver-redshift" => ("\u{F1C10}", "blue"), // AWS Redshift SVG bake (blue cylinder + graph)
-        "mnml-db-driver-dynamodb" => ("\u{F1C06}", "blue"), // AWS SVG bake — DynamoDB blue
+        "mnml-db-driver-redshift" => ("\u{F1C10}", "purple"), // AWS Redshift SVG bake (re-baked from aws-amazon-redshift.svg, inverted from purple bg)
+        "mnml-db-driver-dynamodb" => ("\u{F1C06}", "blue"),   // AWS SVG bake — DynamoDB blue
 
         // SCM hosts — Devicons range (E5FA-E8EF).
         "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
         "mnml-scm-github" | "mnml-forge-github" | "github" => ("\u{E709}", "fg"),
 
-        // Messaging — Font Awesome BMP (F000-F2E0). Yellow matches
-        // the "star" accent color in Slack's brand palette — more
-        // distinctive than the aubergine purple and doesn't collide
-        // with the mnml-db family purple.
-        "mnml-msg-slack" | "slack" => ("\u{F198}", "yellow"),
+        // Messaging — Font Awesome BMP (F000-F2E0). Rendered in
+        // theme fg (white on dark themes) so the Slack hashtag glyph
+        // reads as neutral — user preferred white over both the
+        // aubergine purple (collided with the mnml-db family) and
+        // the yellow star accent.
+        "mnml-msg-slack" | "slack" => ("\u{F198}", "fg"),
 
         // Jira tracker app (3 chips on install) — same F0303 as
         // the launcher so preview matches the installed chip.
