@@ -629,34 +629,13 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     // ever need a mnml-owned codepoint. (dynamodb stays out — it's
     // owned by the mnml-db sibling which DOES ship its own SVG.)
     //
-    // DevTool range (F2000-F20FF).
-    BuiltinGlyph {
-        codepoint: 0xF2000,
-        name: "dev-btop",
-        svg_relpath: "assets/glyphs/dev/btop.svg",
-        width_frac: 1.20,
-        height_frac: 0.75,
-        center_frac: 0.28,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF2001,
-        name: "dev-htop",
-        svg_relpath: "assets/glyphs/dev/htop.svg",
-        width_frac: 1.10,
-        height_frac: 0.75,
-        center_frac: 0.30,
-        center_x_frac: 0.5,
-    },
-    BuiltinGlyph {
-        codepoint: 0xF2002,
-        name: "dev-iftop",
-        svg_relpath: "assets/glyphs/dev/iftop.svg",
-        width_frac: 1.10,
-        height_frac: 0.65,
-        center_frac: 0.30,
-        center_x_frac: 0.5,
-    },
+    // DevTool range (F2000-F20FF) — used to bake btop/htop/iftop
+    // PUA glyphs before launchers switched to the real Nerd Fonts
+    // codepoints (F0A07/F0379/F06F3 = md-monitor_dashboard/
+    // md-monitor/md-network) on 2026-08-05. Entries removed +
+    // assets/glyphs/dev/ folder deleted 2026-08-06. Range stays
+    // reserved for future first-party dev-tool bakes.
+    //
     // AI range (F1E00-F1EFF).
     BuiltinGlyph {
         codepoint: 0xF1E00,
@@ -695,18 +674,9 @@ const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
         "assets/glyphs/ai/codex.svg",
         include_bytes!("../assets/glyphs/ai/codex.svg"),
     ),
-    (
-        "assets/glyphs/dev/btop.svg",
-        include_bytes!("../assets/glyphs/dev/btop.svg"),
-    ),
-    (
-        "assets/glyphs/dev/htop.svg",
-        include_bytes!("../assets/glyphs/dev/htop.svg"),
-    ),
-    (
-        "assets/glyphs/dev/iftop.svg",
-        include_bytes!("../assets/glyphs/dev/iftop.svg"),
-    ),
+    // assets/glyphs/dev/{btop,htop,iftop}.svg — removed 2026-08-06
+    // together with their BUILTIN_GLYPHS entries. Launchers now use
+    // real Nerd Fonts codepoints.
 ];
 
 /// Locate a shipped SVG on disk. Tries in order:

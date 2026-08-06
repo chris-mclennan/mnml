@@ -1,7 +1,0 @@
-<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
-  <!-- Two horizontal arrows facing opposite directions — the
-       classic "network in / network out" motif iftop's live
-       display evokes. Upper arrow → right, lower arrow ← left. -->
-  <path d="M 10 30 L 70 30 L 70 20 L 90 40 L 70 60 L 70 50 L 10 50 Z" />
-  <path d="M 90 70 L 30 70 L 30 60 L 10 80 L 30 100 L 30 90 L 90 90 Z" transform="translate(0, -10)" />
-</svg>

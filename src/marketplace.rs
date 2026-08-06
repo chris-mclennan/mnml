@@ -404,8 +404,11 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
         "mnml-scm-github" | "mnml-forge-github" | "github" => ("\u{E709}", "fg"),
 
-        // Messaging — Font Awesome BMP (F000-F2E0).
-        "mnml-msg-slack" | "slack" => ("\u{F198}", "purple"),
+        // Messaging — Font Awesome BMP (F000-F2E0). Yellow matches
+        // the "star" accent color in Slack's brand palette — more
+        // distinctive than the aubergine purple and doesn't collide
+        // with the mnml-db family purple.
+        "mnml-msg-slack" | "slack" => ("\u{F198}", "yellow"),
 
         // Jira tracker app (3 chips on install) — same F0303 as
         // the launcher so preview matches the installed chip.
