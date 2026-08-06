@@ -366,7 +366,7 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         // System monitors — real MDI codepoints (verified in font).
         // Prior F0AEF/F0AF5/F0AF6 were md-alpha_b/h/i (letter icons),
         // corrected 2026-08-05.
-        "btop" => ("B", "red"), // literal letter B in red — user pref 2026-08-06
+        "btop" => ("\u{F0AEF}", "red"), // nf-md-alpha_b — full-cell "B" glyph, red
         "htop" => ("\u{F0379}", "green"), // md-monitor
         "iftop" => ("\u{F06F3}", "cyan"), // md-network
 
