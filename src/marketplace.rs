@@ -404,12 +404,12 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
         "mnml-scm-github" | "mnml-forge-github" | "github" => ("\u{E709}", "fg"),
 
-        // Messaging — Font Awesome BMP (F000-F2E0). Rendered in
-        // theme fg (white on dark themes) so the Slack hashtag glyph
-        // reads as neutral — user preferred white over both the
+        // Messaging — Font Awesome BMP (F000-F2E0). Pure white
+        // (not theme fg which is off-white/grey-tinted for
+        // readability). User preferred white over both the
         // aubergine purple (collided with the mnml-db family) and
         // the yellow star accent.
-        "mnml-msg-slack" | "slack" => ("\u{F198}", "fg"),
+        "mnml-msg-slack" | "slack" => ("\u{F198}", "white"),
 
         // Jira tracker app (3 chips on install) — same F0303 as
         // the launcher so preview matches the installed chip.

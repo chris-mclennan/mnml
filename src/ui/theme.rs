@@ -297,6 +297,8 @@ pub fn color_from_slot(name: &str, t: &Theme) -> ratatui::style::Color {
         "comment" => t.comment,
         "bg" => t.bg,
         "bg2" => t.bg2,
+        "white" => ratatui::style::Color::White,
+        "black" => ratatui::style::Color::Black,
         _ => t.bg2,
     }
 }
