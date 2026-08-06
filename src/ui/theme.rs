@@ -292,7 +292,15 @@ pub fn color_from_slot(name: &str, t: &Theme) -> ratatui::style::Color {
         "purple" => t.purple,
         "red" => t.red,
         "teal" => t.teal,
-        "magenta" => t.purple, // magenta isn't a distinct slot
+        // 2026-08-06 — magenta + pink now distinct from purple so
+        // AWS integration icons (codebuild/eventbridge/cloudwatch,
+        // all originally the same "purple family") render as three
+        // visibly different tints matching AWS's brand hexes.
+        // magenta = bright fuchsia (Color::Magenta), pink = a
+        // deliberately hotter/redder shade for AWS analytics
+        // family (#E7157B territory).
+        "magenta" => ratatui::style::Color::Magenta,
+        "pink" => ratatui::style::Color::Rgb(0xE7, 0x15, 0x7B),
         "fg" => t.fg,
         "comment" => t.comment,
         "bg" => t.bg,

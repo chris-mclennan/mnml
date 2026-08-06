@@ -401,7 +401,7 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         "mnml-db-driver-dynamodb" => ("\u{F1C06}", "blue"),   // AWS SVG bake — DynamoDB blue
 
         // SCM hosts — Devicons range (E5FA-E8EF).
-        "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
+        "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{F00A8}", "blue"),
         "mnml-scm-github" | "mnml-forge-github" | "github" => ("\u{E709}", "fg"),
 
         // Messaging — Font Awesome BMP (F000-F2E0). Pure white
@@ -425,8 +425,8 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         //                     (EventBridge, SNS, SQS, CloudWatch)
         //   #DD344C red     = Security + Front-End (Cognito, Amplify)
         "mnml-aws-amplify" => ("\u{F1C0E}", "red"), // #DD344C
-        "mnml-aws-cloudwatch" => ("\u{F1C03}", "magenta"), // #E7157B
-        "mnml-aws-codebuild" => ("\u{F1C04}", "purple"), // #C925D1
+        "mnml-aws-cloudwatch" => ("\u{F1C03}", "pink"), // #E7157B (Analytics — pink)
+        "mnml-aws-codebuild" => ("\u{F1C04}", "pink"), // #C925D1 (DevTools — pink per user)
         "mnml-aws-cognito" => ("\u{F1C05}", "red"), // #DD344C
         "mnml-aws-dynamodb" => ("\u{F1C06}", "purple"), // #C925D1
         "mnml-aws-ecr" => ("\u{F1C07}", "orange"),  // #ED7100
