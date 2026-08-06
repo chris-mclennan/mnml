@@ -568,11 +568,13 @@ fn sum_tokens_in_jsonl(path: &Path) -> Option<u64> {
         // rule enforced elsewhere: `src/claude_agents.rs:1814`
         // "total_token_usage is cumulative — overwrite, don't sum".
         //
-        // Fallbacks: older top-level keys are treated as deltas
-        // (that's their historical semantics in older CLI builds).
-        let usage = walk(&v, "last_token_usage", 0)
-            .or_else(|| walk(&v, "token_usage", 0))
-            .or_else(|| walk(&v, "usage", 0));
+        // No fallback keys — earlier fix added `token_usage`/`usage`
+        // as "older schema" fallbacks but the delta-vs-cumulative
+        // semantics of those keys is unverified, and this exact
+        // ambiguity is what re-introduces the inflation bug (per
+        // reviewer flag on 61a551c1). Better to under-count on an
+        // unrecognized schema than silently over-count.
+        let usage = walk(&v, "last_token_usage", 0);
         if let Some(usage) = usage {
             let inp = usage
                 .get("input_tokens")
