@@ -3342,7 +3342,28 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             &mut app.integrations_panel_scroll_marketplace
         }
     };
-    let max_scroll = icons.len().saturating_sub(1).saturating_mul(rows_per);
+    // 2026-08-06 — max_scroll must include marketplace_entries on
+    // the Marketplace tab, else the wheel/drag caps at the (usually
+    // tiny) disabled-icon count and the user can't scroll to the
+    // real marketplace list. Compute total renderable rows per tab.
+    let marketplace_extra_len =
+        if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
+            let installed_ids: std::collections::HashSet<String> = app
+                .config
+                .ui
+                .integration_icons
+                .iter()
+                .map(|i| i.id.clone())
+                .collect();
+            app.marketplace_entries
+                .iter()
+                .filter(|e| !installed_ids.contains(&e.id))
+                .count()
+        } else {
+            0
+        };
+    let total_row_count = icons.len() + marketplace_extra_len;
+    let max_scroll = total_row_count.saturating_sub(1).saturating_mul(rows_per);
     if *scroll > max_scroll {
         *scroll = max_scroll;
     }
@@ -3576,23 +3597,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // icon list) doesn't undercount and hide the scrollbar.
     let body_h = body_area.height as usize;
     let visible_rows = (body_h / rows_per).max(1);
-    let extra_marketplace_rows =
-        if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
-            let installed_ids: std::collections::HashSet<String> = app
-                .config
-                .ui
-                .integration_icons
-                .iter()
-                .map(|i| i.id.clone())
-                .collect();
-            app.marketplace_entries
-                .iter()
-                .filter(|e| !installed_ids.contains(&e.id))
-                .count()
-        } else {
-            0
-        };
-    let total_rows = icons.len() + extra_marketplace_rows;
+    let total_rows = total_row_count;
     if total_rows > visible_rows {
         let track_x = area.x + area.width.saturating_sub(1);
         let track_h = body_area.height;
