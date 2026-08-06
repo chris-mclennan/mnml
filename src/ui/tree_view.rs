@@ -405,14 +405,13 @@ fn workspace_action_chip_specs(
 /// Drops trailing chips when the header is too narrow to host the full
 /// cluster with at least one space of separation from the label.
 ///
-/// mouse-round-12 SEV-2 F1 2026-07-14 — chips render + register hit
-/// rects ONLY when the mouse is over the header row. Without this
-/// gate, a cold left-click on the "empty" whitespace between the
-/// workspace name and the right edge (icons blend into the rail bg
-/// at some widths) silently fired file.new_folder / git.pull /
-/// tree.refresh — the icon rects were always live even when the user
-/// couldn't tell they were there. Matches VS Code Explorer: hover
-/// the header → action icons appear.
+/// 2026-08-05 — chips are now ALWAYS visible (user asked for it).
+/// Painted on a distinct `bg2` backdrop so the cluster reads as a
+/// deliberate control strip, not phantom whitespace. This resolves
+/// the original 2026-07-14 concern (mouse-round-12 SEV-2 F1: cold
+/// clicks on "empty" strip silently fired file.new_folder / git.pull
+/// / tree.refresh because rects were live but glyphs blended in) —
+/// visible = clickable, no invisible hit surface.
 fn workspace_header_chips(
     app: &mut App,
     header_rect: Rect,
@@ -420,9 +419,7 @@ fn workspace_header_chips(
     nerd: bool,
     rail_bg: ratatui::style::Color,
 ) -> Vec<Span<'static>> {
-    let hovered = app.mouse_pos.is_some_and(|(mx, my)| {
-        my == header_rect.y && mx >= header_rect.x && mx < header_rect.x + header_rect.width
-    });
+    let chip_bg = rail_bg;
     let chips = workspace_action_chip_specs(app);
     let width = header_rect.width as usize;
     let chip_w = 3usize;
@@ -437,20 +434,13 @@ fn workspace_header_chips(
     let chips_used = chip_count * chip_w;
     let pad = width.saturating_sub(label_used + chips_used);
     let mut spans: Vec<Span<'static>> = Vec::with_capacity(1 + chip_count);
-    if !hovered {
-        // Not hovered → the row is a plain header. Fill with rail bg
-        // so the workspace toggle claim on the whole row is unambiguous.
-        let fill = width.saturating_sub(label_used);
-        spans.push(Span::styled(" ".repeat(fill), Style::default().bg(rail_bg)));
-        return spans;
-    }
     spans.push(Span::styled(" ".repeat(pad), Style::default().bg(rail_bg)));
     let cluster_start_x = header_rect.x + (label_used + pad) as u16;
     for (i, (glyph_nerd, glyph_ascii, cmd_id, fg)) in chips.iter().take(chip_count).enumerate() {
         let glyph = if nerd { *glyph_nerd } else { *glyph_ascii };
         spans.push(Span::styled(
             format!(" {glyph} "),
-            Style::default().fg(*fg).bg(rail_bg),
+            Style::default().fg(*fg).bg(chip_bg),
         ));
         let chip_x = cluster_start_x + (i * chip_w) as u16;
         app.rects.tree_icon_buttons.push((

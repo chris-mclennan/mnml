@@ -3459,13 +3459,17 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             if y + 1 >= area.y + area.height {
                 break;
             }
-            let kind_tag = match entry.kind {
-                crate::marketplace::MarketplaceKind::App => "[app]",
-                crate::marketplace::MarketplaceKind::Launcher => "[launcher]",
-            };
-            let kind_fg = match entry.kind {
-                crate::marketplace::MarketplaceKind::App => t.orange,
-                crate::marketplace::MarketplaceKind::Launcher => t.cyan,
+            // 2026-08-05 — driver crates (mnml-db-driver-*) render
+            // as `[driver]` in purple (DB family color) so the
+            // marketplace visually groups them apart from apps.
+            let is_driver = entry.id.contains("-driver-") || entry.id.ends_with("-driver");
+            let (kind_tag, kind_fg) = if is_driver {
+                ("[driver]", t.purple)
+            } else {
+                match entry.kind {
+                    crate::marketplace::MarketplaceKind::App => ("[app]", t.orange),
+                    crate::marketplace::MarketplaceKind::Launcher => ("[launcher]", t.cyan),
+                }
             };
             let row1 = Rect {
                 x: area.x,

@@ -77,6 +77,22 @@ pub struct MarketplaceEntry {
     /// `Community` (safe under-count).
     #[serde(default)]
     pub provenance: Provenance,
+    /// 2026-08-05 — Nerd Font glyph rendered in the marketplace row,
+    /// so an unlisted entry looks like its installed counterpart at
+    /// a glance. Sources:
+    ///   1. Launcher TOMLs — pulled from `chip.glyph` at parse time.
+    ///   2. `builtin_catalog()` — well-known crates.io app IDs
+    ///      hardcoded in mnml so users see icons on first fetch
+    ///      before any hosted catalog is deployed.
+    ///   3. (Future) hosted catalog JSON on mnml's site, fetched as
+    ///      a `Catalog` source variant that enriches entries by id.
+    /// `None` triggers the kind-based fallback in the renderer.
+    #[serde(default)]
+    pub glyph: Option<String>,
+    /// Companion to `glyph` — theme color name (`"blue"`, `"cyan"`,
+    /// `"yellow"`, …), applied to the glyph span. `None` → `t.fg`.
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,6 +256,7 @@ pub fn parse_crates_response(source_id: &str, body: &str) -> Result<Vec<Marketpl
         .into_iter()
         .map(|c| {
             let label = c.name.clone();
+            let (glyph, color) = catalog_lookup(&c.name);
             MarketplaceEntry {
                 source_id: source_id.to_string(),
                 kind: MarketplaceKind::App,
@@ -253,6 +270,8 @@ pub fn parse_crates_response(source_id: &str, body: &str) -> Result<Vec<Marketpl
                     updated_at: c.updated_at.and_then(|s| parse_iso8601_secs(&s)),
                 },
                 provenance,
+                glyph,
+                color,
             }
         })
         .collect();
@@ -298,6 +317,14 @@ pub fn parse_launcher_toml(
 ) -> Result<MarketplaceEntry, String> {
     let m: crate::integration_manifest::IntegrationManifest =
         toml::from_str(body).map_err(|e| format!("launcher toml: {e}"))?;
+    // Launcher glyph comes from the manifest's chip spec. Fall back
+    // to the builtin catalog by id (e.g. a manifest that omits chip
+    // still shows a recognizable icon if we know the id).
+    let (chip_glyph, chip_color) = match &m.chip {
+        Some(c) => (Some(c.glyph.clone()), Some(c.color.clone())),
+        None => (None, None),
+    };
+    let (fallback_glyph, fallback_color) = catalog_lookup(&m.id);
     Ok(MarketplaceEntry {
         source_id: source_id.to_string(),
         kind: MarketplaceKind::Launcher,
@@ -309,7 +336,72 @@ pub fn parse_launcher_toml(
         },
         stats: EntryStats::default(),
         provenance: provenance_for(source_id),
+        glyph: chip_glyph.or(fallback_glyph),
+        color: chip_color.or(fallback_color),
     })
+}
+
+/// Marketplace row glyph lookup — well-known IDs get their real
+/// Nerd Font codepoint + color; anything else returns `(None, None)`
+/// so the renderer falls back to a neutral kind icon (package for
+/// App, plug for Launcher). No monograms — a two-letter placeholder
+/// was worse than an honest generic icon.
+///
+/// Launcher entries also get their glyph from their TOML manifest
+/// (populated in `parse_launcher_toml`), which takes precedence
+/// over this table. This table is here for **crates.io apps** —
+/// mnml has no manifest to consult until after install.
+///
+/// Future: a `Catalog` source variant will fetch a JSON on the
+/// mnml site that OVERRIDES this map so community entries pick up
+/// icons without a mnml release.
+pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
+    let (glyph, color): (&str, &str) = match id {
+        // System monitors (also shipped as launcher TOMLs — this is
+        // the fallback for the crates.io keyword hit before the
+        // TOML entry has been fetched).
+        "btop" => ("\u{F0AEF}", "cyan"),
+        "htop" => ("\u{F0AF5}", "green"),
+        "iftop" => ("\u{F0AF6}", "cyan"),
+
+        // Editors / IDEs
+        "vscode" | "VSCode" => ("\u{EC29}", "blue"),
+
+        // AI (first-party integrations)
+        "claude_code" | "claude-code" => ("\u{F1E00}", "orange"),
+        "codex" => ("\u{F1E01}", "cyan"),
+        "browser" => ("\u{EB01}", "blue"),
+
+        // Database family
+        "mnml-db" => ("\u{E64D}", "purple"),
+
+        // SCM hosts
+        "mnml-scm-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
+
+        // AWS integrations — SVGs baked from
+        // ~/Downloads/mnml-aws-icon-preview-inverted → codepoints
+        // in the mnml integration PUA range (F1C00-F1CFF). Users
+        // need MnmlSymbols.ttf baked with these SVGs for the glyphs
+        // to render; the sibling crates ship their own SVG + a
+        // `chip.glyph_codepoint` override so on-install baking
+        // preserves the codepoint.
+        "mnml-aws-amplify" => ("\u{F1C0E}", "orange"),
+        "mnml-aws-cloudwatch" => ("\u{F1C03}", "orange"),
+        "mnml-aws-codebuild" => ("\u{F1C04}", "orange"),
+        "mnml-aws-cognito" => ("\u{F1C05}", "orange"),
+        "mnml-aws-dynamodb" => ("\u{F1C06}", "orange"),
+        "mnml-aws-ecr" => ("\u{F1C07}", "orange"),
+        "mnml-aws-ecs" => ("\u{F1C08}", "orange"),
+        "mnml-aws-eventbridge" => ("\u{F1C09}", "orange"),
+        "mnml-aws-lambda" => ("\u{F1C0A}", "orange"),
+        "mnml-aws-rds" => ("\u{F1C0B}", "orange"),
+        "mnml-aws-sns" => ("\u{F1C0C}", "orange"),
+        "mnml-aws-sqs" => ("\u{F1C0D}", "orange"),
+
+        // Anything else — no match; renderer uses kind default.
+        _ => return (None, None),
+    };
+    (Some(glyph.to_string()), Some(color.to_string()))
 }
 
 // ── Cache ─────────────────────────────────────────────────────────
@@ -352,7 +444,19 @@ impl MarketplaceCache {
     /// parse fail, wrong shape) — the cache is best-effort.
     pub fn load_from(path: &Path) -> Option<Self> {
         let text = std::fs::read_to_string(path).ok()?;
-        serde_json::from_str(&text).ok()
+        let mut cache: Self = serde_json::from_str(&text).ok()?;
+        // 2026-08-05 — enrich pre-glyph caches on load so users see
+        // icons without waiting for the next refresh. New fetches
+        // already populate `glyph`/`color`; this is only for entries
+        // serialized before the field existed.
+        for e in &mut cache.entries {
+            if e.glyph.is_none() {
+                let (g, c) = catalog_lookup(&e.id);
+                e.glyph = g;
+                e.color = c;
+            }
+        }
+        Some(cache)
     }
 
     /// Write to disk. Creates the parent dir if missing. Returns
@@ -688,6 +792,8 @@ run = ":term htop"
                     updated_at: Some(1_753_000_000),
                 },
                 provenance: Provenance::Official,
+                glyph: None,
+                color: None,
             }],
         };
         original.save_to(&path).unwrap();
