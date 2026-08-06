@@ -1378,6 +1378,35 @@ fn install_launcher_from_url(id: &str, url: &str) -> Result<std::path::PathBuf, 
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
     let path = dir.join(format!("{id}.toml"));
     std::fs::write(&path, body).map_err(|e| format!("write: {e}"))?;
+    // 2026-08-06 — SVG asset side-fetch. If the launcher declares
+    // `chip.glyph_svg`, treat it as a filename relative to the TOML
+    // URL (typical: `htop.svg` next to `htop.toml` in the source
+    // repo's launcher folder). Fetch + drop into pending-glyphs so
+    // discover/bake can pick it up on next `integrations.refresh`
+    // (or on the next startup — the discover pass is idempotent).
+    // Best-effort — a missing SVG isn't a fatal install error; the
+    // launcher still installs and falls back to `chip.fallback` /
+    // any codepoint declared on `chip.glyph`.
+    if let Some(chip) = &parsed.chip
+        && let Some(svg_name) = &chip.glyph_svg
+        && !svg_name.is_empty()
+    {
+        let svg_url = url
+            .rsplit_once('/')
+            .map(|(prefix, _)| format!("{prefix}/{svg_name}"));
+        if let Some(svg_url) = svg_url {
+            let pending = home.join(".cache").join("mnml").join("pending-glyphs");
+            let _ = std::fs::create_dir_all(&pending);
+            if let Ok(bytes) = client
+                .get(&svg_url)
+                .send()
+                .and_then(|r| r.error_for_status())
+                .and_then(|r| r.bytes())
+            {
+                let _ = std::fs::write(pending.join(format!("{id}.svg")), &bytes);
+            }
+        }
+    }
     Ok(path)
 }
 
@@ -7514,7 +7543,23 @@ impl App {
         // Refresh once per drain (not per-entry) even on partial
         // failures — the manifest state may have partial writes.
         self.refresh_integration_manifests();
+        // 2026-08-06 — an installed launcher may have side-fetched
+        // its custom SVG into ~/.cache/mnml/pending-glyphs/. Kick a
+        // discover pass so the codepoint is assigned before the
+        // next paint. The actual bake stays a user action
+        // (fontforge is heavy) — surface a toast when there's new
+        // pending SVG bytes so the user knows to run
+        // `integrations.bake_integration_glyphs`.
         if any_ok {
+            let before = self.integration_glyph_svgs.len();
+            self.discover_integration_glyphs();
+            let after = self.integration_glyph_svgs.len();
+            if after > before {
+                self.toast(format!(
+                    "{} new SVG glyph(s) pending — run `integrations.bake_integration_glyphs` to render",
+                    after - before
+                ));
+            }
             self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Installed;
         }
     }
