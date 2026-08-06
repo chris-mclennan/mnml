@@ -817,11 +817,25 @@ pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf,
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
     let base_path = dir.join(format!("{}.toml", icon.id));
     if !base_path.exists() {
-        // No canonical → promote to authored full manifest. This
-        // covers first-party builtins (browser/claude_code/codex)
-        // and any user-added rail chip that predates the manifest
-        // era. Next scan finds the file and merges as if
-        // upstream-installed.
+        // 2026-08-06 — was: promote to authored manifest for any
+        // id with no base file. Fine for launcher-scaffolded chips,
+        // BROKEN for first-party built-ins (browser / claude_code /
+        // codex) because the in-memory slot got its glyph/label
+        // from Rust defaults, so writing the slot as an "authored
+        // manifest" captured whatever partial state we had — often
+        // empty glyph + id-as-label. Result: right-click "Show on
+        // top bar" replaced Claude's real chip with a stub.
+        //
+        // Now: for built-ins (ids in the shipped default list),
+        // skip the file write. In-memory config already has the
+        // toggle applied; persistence goes through config.toml's
+        // `[[ui.integration_icon]]` block instead (which the merge
+        // path treats as an OVERRIDE and inherits the real glyph
+        // from the Rust default).
+        if is_builtin_integration_id(&icon.id) {
+            persist_builtin_integration_override_to_config_toml(icon)?;
+            return Ok(dir.join(format!("{}.config.toml", icon.id)));
+        }
         return write_authored_manifest_toml(icon);
     }
     let path = dir.join(format!("{}.override.toml", icon.id));
@@ -838,6 +852,81 @@ pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf,
     body.push_str(&format!("in_palette_bar = {}\n", icon.in_palette_bar));
     std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
+}
+
+/// 2026-08-06 — the built-in integrations shipped in mnml's Rust
+/// defaults (browser / claude_code / codex). Toggling these
+/// persists as `[[ui.integration_icon]]` in config.toml, not as
+/// a scaffolded manifest — the Rust default is the source of
+/// truth for glyph/label/color, and writing a scaffold from the
+/// live slot risks capturing a stale/partial snapshot.
+pub fn is_builtin_integration_id(id: &str) -> bool {
+    matches!(id, "browser" | "claude_code" | "codex")
+}
+
+/// Upsert a `[[ui.integration_icon]] id = "<id>" enabled = X
+/// in_palette_bar = Y` block into `~/.config/mnml/config.toml`.
+/// Idempotent — replaces the matching block if it already exists,
+/// otherwise appends. Preserves the rest of the file byte-for-byte.
+///
+/// Called by `write_override_toml` when the toggled id is a
+/// built-in (`is_builtin_integration_id`) — the merge pass in
+/// `config.rs` layers the raw block over the Rust default so the
+/// real glyph/label survive.
+pub fn persist_builtin_integration_override_to_config_toml(
+    icon: &IntegrationIcon,
+) -> Result<(), String> {
+    let home = std::env::var_os("HOME").ok_or_else(|| "no $HOME set".to_string())?;
+    let path = std::path::PathBuf::from(home)
+        .join(".config")
+        .join("mnml")
+        .join("config.toml");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    // Naive block-locate: find "[[ui.integration_icon]]" followed
+    // by `id = "<id>"` within the next few lines. Rewrite that
+    // block's enabled / in_palette_bar; append fresh block if not
+    // present. TOML arrays-of-tables handle repeats — appending is
+    // safe.
+    let marker = format!("id = \"{}\"", icon.id);
+    let mut lines: Vec<String> = existing.lines().map(String::from).collect();
+    let mut replaced = false;
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].trim() == "[[ui.integration_icon]]" {
+            // Scan the next ~6 lines for the matching id + edit
+            // enabled/in_palette_bar in place.
+            let block_end = (i + 8).min(lines.len());
+            let is_ours = lines[i + 1..block_end].iter().any(|l| l.trim() == marker);
+            if is_ours {
+                for line in lines.iter_mut().take(block_end).skip(i + 1) {
+                    let t = line.trim();
+                    if t.is_empty() || t.starts_with("[[") {
+                        break;
+                    }
+                    if t.starts_with("enabled") {
+                        *line = format!("enabled = {}", icon.enabled);
+                    } else if t.starts_with("in_palette_bar") {
+                        *line = format!("in_palette_bar = {}", icon.in_palette_bar);
+                    }
+                }
+                replaced = true;
+                break;
+            }
+        }
+        i += 1;
+    }
+    let mut out = lines.join("\n");
+    if !replaced {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&format!(
+            "\n[[ui.integration_icon]]\nid = \"{}\"\nenabled = {}\nin_palette_bar = {}\n",
+            icon.id, icon.enabled, icon.in_palette_bar,
+        ));
+    }
+    std::fs::write(&path, out).map_err(|e| format!("write config.toml: {e}"))?;
+    Ok(())
 }
 
 /// Write a full `<id>.toml` authorial manifest for a user-created
