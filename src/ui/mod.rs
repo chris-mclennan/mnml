@@ -4230,14 +4230,31 @@ fn pty_icon(
         leading_word,
         "shell" | "zsh" | "bash" | "sh" | "fish" | "nu" | "nushell" | "terminal" | "term" | "tty"
     ) || leading_word == user_terminal_label_lower;
+    // 2026-08-06 — the plain-shell fallback used a fixed U+EA85
+    // (nf-cod-terminal). Now honors `[ui] terminal_glyph_svg`: if
+    // the user baked a custom terminal SVG via
+    // `integrations.bake_integration_glyphs`, resolve its
+    // assigned codepoint from `integration_glyph_codepoints` and
+    // render that instead. Falls back to EA85 on any miss so the
+    // chip never renders as a tofu box.
+    let terminal_glyph = app
+        .integration_glyph_codepoints
+        .get("terminal")
+        .and_then(|cp| char::from_u32(*cp))
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "\u{ea85}".to_string());
     match (sibling_glyph, spinner, codex_thinking) {
         (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
         (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),
         (Some((g, c)), _, _) if nerd => (g, c),
         (None, Some(g), _) if nerd => (g.to_string(), tt.teal),
-        _ if is_plain_shell && nerd => ("\u{ea85}".to_string(), tt.comment),
+        _ if is_plain_shell && nerd => (terminal_glyph.clone(), tt.comment),
         _ => (
-            (if nerd { "\u{ea85}" } else { "▶" }).to_string(),
+            if nerd {
+                terminal_glyph
+            } else {
+                "▶".to_string()
+            },
             tt.comment,
         ),
     }

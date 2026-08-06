@@ -278,6 +278,50 @@ impl App {
     /// overrides), and populate `App::integration_glyph_codepoints`.
     /// Idempotent — safe to call from `App::new` AND from
     /// `integrations.refresh`.
+    /// 2026-08-06 — if `[ui] terminal_glyph_svg` points at an
+    /// existing file, copy it to `~/.cache/mnml/pending-glyphs/
+    /// terminal.svg` so the next `integrations.refresh` +
+    /// `integrations.bake_integration_glyphs` picks it up and
+    /// assigns a codepoint. Idempotent — only copies when the
+    /// source is newer than the pending copy. Silent no-op on any
+    /// error (unreadable path, missing HOME, etc).
+    pub fn stage_terminal_glyph_svg(&mut self) {
+        let raw = self.config.ui.terminal_glyph_svg.trim();
+        if raw.is_empty() {
+            return;
+        }
+        let path = if let Some(rest) = raw.strip_prefix("~/") {
+            let Some(home) = std::env::var_os("HOME") else {
+                return;
+            };
+            std::path::PathBuf::from(home).join(rest)
+        } else {
+            std::path::PathBuf::from(raw)
+        };
+        if !path.exists() {
+            return;
+        }
+        let Some(pending) = std::env::var_os("HOME").map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".cache")
+                .join("mnml")
+                .join("pending-glyphs")
+        }) else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(&pending);
+        let dst = pending.join("terminal.svg");
+        // Skip re-copy when the pending file is already fresh.
+        let src_mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let dst_mtime = std::fs::metadata(&dst).and_then(|m| m.modified()).ok();
+        if let (Some(s), Some(d)) = (src_mtime, dst_mtime)
+            && s <= d
+        {
+            return;
+        }
+        let _ = std::fs::copy(&path, &dst);
+    }
+
     pub fn discover_integration_glyphs(&mut self) {
         // Build the manifest-driven override map: id → explicit
         // codepoint declared by the integration's manifest. Non-hex

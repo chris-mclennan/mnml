@@ -5908,6 +5908,10 @@ impl App {
     /// into the sibling-icons SDK (`chip.glyph_svg` set, `chip.glyph`
     /// empty).
     fn with_integration_manifests_merged(mut self) -> Self {
+        // 2026-08-06 — stage `[ui] terminal_glyph_svg` (if any)
+        // into pending-glyphs BEFORE discover so a fresh install /
+        // updated SVG gets its codepoint on this startup.
+        self.stage_terminal_glyph_svg();
         self.discover_integration_glyphs();
         // #869 — mnml-bridge 0.6 handoff. Any pending-glyph SVG
         // whose bytes have already been baked into MnmlSymbols.ttf
