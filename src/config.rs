@@ -1974,7 +1974,17 @@ impl Config {
                     label: builtin.label.clone(),
                     // User-controlled fields:
                     enabled: r.enabled.unwrap_or(builtin.enabled),
-                    in_palette_bar: r.in_palette_bar.unwrap_or(builtin.in_palette_bar),
+                    // 2026-08-06 — an enabled integration defaults
+                    // to showing on the palette bar unless the user
+                    // explicitly opted out (raw TOML has
+                    // `in_palette_bar = false`). Prior default
+                    // (builtin's value, usually false) meant
+                    // flipping `enabled` on didn't make the chip
+                    // appear on the top bar — surprising because
+                    // the rail chip DID appear.
+                    in_palette_bar: r.in_palette_bar.unwrap_or_else(|| {
+                        r.enabled.unwrap_or(builtin.enabled) || builtin.in_palette_bar
+                    }),
                     description: builtin.description.clone(),
                     homepage: builtin.homepage.clone(),
                     docs: builtin.docs.clone(),

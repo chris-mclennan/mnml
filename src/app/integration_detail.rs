@@ -131,6 +131,34 @@ impl App {
         }
     }
 
+    /// 2026-08-06 — flip `in_palette_bar` for `id` (top-bar
+    /// visibility). Mirrors `toggle_integration_enabled_by_id`'s
+    /// shape: mutate slot, snapshot, persist via
+    /// `write_override_toml`. Toasts the new state.
+    pub fn toggle_integration_palette_bar_by_id(&mut self, id: &str) {
+        let Some(slot_snapshot) = self
+            .config
+            .ui
+            .integration_icons
+            .iter_mut()
+            .find(|i| i.id == id)
+            .map(|slot| {
+                slot.in_palette_bar = !slot.in_palette_bar;
+                slot.clone()
+            })
+        else {
+            return;
+        };
+        let now = slot_snapshot.in_palette_bar;
+        self.toast(format!(
+            "integration {id} {} top bar",
+            if now { "shown on" } else { "hidden from" }
+        ));
+        if let Err(e) = crate::app::discovery::write_override_toml(&slot_snapshot) {
+            self.toast(format!("integration: persist failed ({e})"));
+        }
+    }
+
     /// Open the on-disk manifest for `id` in an editor pane. Prefers
     /// the workspace override (`<ws>/.mnml/integrations/<id>.toml`),
     /// falls back to the user manifest, else toasts a hint.

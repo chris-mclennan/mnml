@@ -473,6 +473,23 @@ impl App {
             toggle_label,
             MenuAction::ToggleIntegrationEnabled(id.clone()),
         ));
+        // 2026-08-06 — palette-bar visibility toggle. `enabled = true`
+        // controls the RAIL chip + palette command availability;
+        // `in_palette_bar = true` controls whether the chip also
+        // renders in the top-right cluster. Both default to true on
+        // enable; this menu item lets the user hide from the top bar
+        // without disabling the whole integration.
+        if icon.enabled {
+            let palette_label = if icon.in_palette_bar {
+                "Hide from top bar"
+            } else {
+                "Show on top bar"
+            };
+            items.push(MenuItem::new(
+                palette_label,
+                MenuAction::ToggleIntegrationPaletteBar(id.clone()),
+            ));
+        }
         // 2026-07-31 — Open the read-only detail pane. Sits above
         // Move / Edit / Remove so the discoverability path from
         // "right-click a chip → what is this thing?" is one hop.
@@ -1694,6 +1711,9 @@ impl App {
                 // (avoids the config.toml-drop bug from the
                 // 2026-08-01 flip; see integration_detail.rs).
                 self.toggle_integration_enabled_by_id(&id);
+            }
+            ToggleIntegrationPaletteBar(id) => {
+                self.toggle_integration_palette_bar_by_id(&id);
             }
             MoveIntegrationUp(id) => {
                 if let Some(pos) = self

@@ -2108,11 +2108,14 @@ fn paint_integration_chips_in_gap(
     // gate on enabled=true AND binary-present (or built-in). Without
     // the binary check, a chip with enabled=true but uninstalled
     // binary would render in the palette bar and silently fail.
-    // qa-feature 2026-07-01 — only render integrations that are
-    // both `enabled` AND `in_palette_bar`. `enabled` alone lets
-    // an integration surface in the sidebar panel + right-click
-    // menus but not on the top bar. Users opt each into palette-bar
-    // visibility so the top row stays quiet on first run.
+    // 2026-08-06 user pref — `enabled` alone puts the chip on the
+    // top bar. `in_palette_bar = false` is now opt-OUT (right-click
+    // → "Hide from top bar"). Prior rule required BOTH flags to be
+    // true, which meant you enabled both Claude Code and Codex but
+    // only Claude appeared because only Claude's saved
+    // `in_palette_bar` was true from an earlier manual toggle.
+    // The rail panel + right-click menus are unchanged — they
+    // always render every enabled integration.
     let enabled_integrations: Vec<(usize, &crate::config::IntegrationIcon)> = app
         .config
         .ui
@@ -2120,7 +2123,12 @@ fn paint_integration_chips_in_gap(
         .iter()
         .enumerate()
         .filter(|(_, i)| {
-            if !i.enabled || !i.in_palette_bar {
+            if !i.enabled {
+                return false;
+            }
+            // Explicit opt-out — user right-clicked "Hide from top bar"
+            // and the persisted flag flipped to false.
+            if !i.in_palette_bar {
                 return false;
             }
             match crate::integration_detect::integration_binary_for_command(&i.command) {

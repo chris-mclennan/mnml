@@ -275,6 +275,11 @@ pub enum MenuAction {
     /// chips reappear in the palette bar; visible chips hide.
     /// Persists to user config TOML.
     ToggleIntegrationEnabled(String),
+    /// 2026-08-06 — toggle an integration's `in_palette_bar` field.
+    /// When true the chip appears in the top-right palette-bar
+    /// cluster; when false only in the sidebar Integrations list.
+    /// Persists to user config TOML.
+    ToggleIntegrationPaletteBar(String),
     /// Move an integration chip one position earlier in the ordered
     /// list. No-op when already first. Persists via
     /// `persist_integration_icons`.
