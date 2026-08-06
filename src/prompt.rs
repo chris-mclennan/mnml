@@ -332,6 +332,14 @@ pub enum PromptKind {
     /// `App::pending_install_family_id`. Used by the "X not
     /// installed — install? y/n" prompt.
     IntegrationInstallConfirm,
+    /// Accept ⇒ install the marketplace entry whose index is stashed
+    /// in `App::pending_marketplace_install_idx` — routes to
+    /// `App::install_marketplace_entry`. vscode-mouse r4 SEV-2 +
+    /// user report (2026-08-06): left-click on a marketplace row
+    /// used to install immediately with zero confirmation, which
+    /// was jarring given every other add/remove action gates on a
+    /// button dialog. Now that click opens this confirm first.
+    MarketplaceInstallConfirm,
     /// Accept ⇒ actually run `remove_integration_by_id` on the
     /// integration id stashed in `App::pending_integration_remove_id`.
     /// Two-button confirm dialog — user reported bumping the

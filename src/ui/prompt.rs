@@ -351,7 +351,9 @@ pub fn confirm_labels(kind: &crate::prompt::PromptKind) -> Option<(&'static str,
         GitRebaseConfirm => ("  Rebase  ", " Cancel "),
         TreeMoveConfirm => ("  Move  ", " Cancel "),
         AiToolConfirm => ("  Allow  ", " Deny "),
-        ToolInstallConfirm | IntegrationInstallConfirm => ("  Install  ", " Cancel "),
+        ToolInstallConfirm | IntegrationInstallConfirm | MarketplaceInstallConfirm => {
+            ("  Install  ", " Cancel ")
+        }
         IntegrationRemoveConfirm => ("  Remove  ", " Cancel "),
         ResetToDefaultsConfirm => ("  Reset  ", " Cancel "),
         PortableChoicePrompt => ("  Portable  ", "  Normal  "),

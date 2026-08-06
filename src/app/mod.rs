@@ -4474,6 +4474,10 @@ pub struct App {
     pub integrations_panel_scroll: usize,
     pub integrations_panel_scroll_installed: usize,
     pub integrations_panel_scroll_marketplace: usize,
+    /// Held by `open_marketplace_install_prompt` while the
+    /// `MarketplaceInstallConfirm` two-button dialog is showing.
+    /// Accept path reads this to know which entry to install.
+    pub pending_marketplace_install_idx: Option<usize>,
     /// Integrations activity panel — filter query.
     /// Case-insensitive substring match against each icon's
     /// tooltip / id / command. Empty ⇒ no filter.
@@ -5458,6 +5462,7 @@ impl App {
             integrations_panel_scroll: 0,
             integrations_panel_scroll_installed: 0,
             integrations_panel_scroll_marketplace: 0,
+            pending_marketplace_install_idx: None,
             integrations_panel_filter: String::new(),
             integrations_panel_filter_focused: false,
             integrations_panel_tab: IntegrationsPanelTab::Installed,
@@ -6683,7 +6688,9 @@ impl App {
                 GitMergeConfirm => "merge".into(),
                 GitRebaseConfirm => "rebase".into(),
                 // Both install-confirm handlers just check `input.starts_with('y')`.
-                ToolInstallConfirm | IntegrationInstallConfirm => "y".into(),
+                ToolInstallConfirm | IntegrationInstallConfirm | MarketplaceInstallConfirm => {
+                    "y".into()
+                }
                 IntegrationRemoveConfirm => "remove".into(),
                 ResetToDefaultsConfirm => "reset".into(),
                 // Both options are valid — primary=portable, cancel=normal.
@@ -7359,6 +7366,41 @@ impl App {
     /// Blocking on the launcher path is fine because the file is tiny
     /// (kilobytes) and the request completes in ~200ms. Cargo install
     /// is naturally async via the Pty.
+    /// vscode-mouse r4 SEV-2 + user report 2026-08-06 — click on a
+    /// marketplace row now opens a `[Install] [Cancel]` dialog
+    /// instead of firing install immediately. Prevents the "I
+    /// misclicked and cargo started" surprise on a fat cursor.
+    pub fn open_marketplace_install_prompt(&mut self, idx: usize) {
+        let Some(entry) = self.marketplace_entries.get(idx) else {
+            return;
+        };
+        let title = match &entry.install {
+            crate::marketplace::InstallSpec::Cargo { name } => {
+                format!("Install `{name}` via cargo?")
+            }
+            crate::marketplace::InstallSpec::LauncherToml { .. } => {
+                format!("Install launcher `{}`?", entry.id)
+            }
+        };
+        self.pending_marketplace_install_idx = Some(idx);
+        let mut p =
+            crate::prompt::Prompt::new(crate::prompt::PromptKind::MarketplaceInstallConfirm, title);
+        p.cursor = 0; // focus [Install]
+        self.prompt = Some(p);
+    }
+
+    /// Accept handler for the MarketplaceInstallConfirm dialog. Same
+    /// input contract as the other confirm prompts — anything
+    /// starting with `y` = install.
+    pub fn marketplace_install_confirm_resolve(&mut self, input: &str) {
+        let idx = self.pending_marketplace_install_idx.take();
+        if input.trim().to_ascii_lowercase().starts_with('y')
+            && let Some(idx) = idx
+        {
+            self.install_marketplace_entry(idx);
+        }
+    }
+
     pub fn install_marketplace_entry(&mut self, idx: usize) {
         let Some(entry) = self.marketplace_entries.get(idx).cloned() else {
             return;

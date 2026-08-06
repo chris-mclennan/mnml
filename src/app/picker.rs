@@ -2145,6 +2145,10 @@ impl App {
                 let typed = p.input.clone();
                 self.install_integration_confirm_resolve(&typed);
             }
+            crate::prompt::PromptKind::MarketplaceInstallConfirm => {
+                let typed = p.input.clone();
+                self.marketplace_install_confirm_resolve(&typed);
+            }
             crate::prompt::PromptKind::FileMoveTo => {
                 let from_selected = p.take_selected_input();
                 let raw = from_selected.unwrap_or_else(|| p.input.trim().to_string());
