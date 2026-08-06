@@ -138,43 +138,44 @@ impl App {
             .layout()
             .leaf_containing(leaf_active)
             .and_then(|tabs| tabs.iter().copied().find(|&t| t != src));
-        // reviewer flag on b08d66e0 — same-leaf drop of a solo tab
-        // would collapse its leaf (no survivor) then fail to
-        // replace_leaf (nothing with active==src exists post-remove),
-        // orphaning src entirely. That's a self-drop of the only
-        // tab — a genuine no-op. Bail before any mutation.
+        // Two-in-one guard covering both cases the reviewer flagged
+        // on b08d66e0 / d8359908:
+        //   (a) same-leaf drop of a SOLO tab — dest_survivor is None
+        //       and the leaf's only tab is src, so a no-op is the
+        //       correct semantic (dropping a tab onto itself).
+        //   (b) STALE leaf_active — `leaf_containing(leaf_active)`
+        //       returned None because the rect was captured before
+        //       a layout mutation and no longer resolves. Any
+        //       mutation from here would land on a dead id and
+        //       leave src orphaned (the original 2026-08-05 bug).
+        // In both cases dest_survivor.is_none(); bail before touching
+        // the layout so src stays visible where it already was.
         if dest_survivor.is_none() {
-            let same_leaf = self
-                .layout()
-                .leaf_containing(src)
-                .is_some_and(|tabs| tabs.contains(&leaf_active));
-            if same_leaf {
-                self.focus = Focus::Pane;
-                return true;
-            }
+            self.focus = Focus::Pane;
+            return true;
         }
+        // dest_survivor is Some past the guard above. Unwrap is safe.
+        let survivor = dest_survivor.expect("guarded above");
         // Remove src from wherever it lives, then insert at idx.
         self.layout_mut().remove_leaf(src);
-        let dest_leaf = dest_survivor.and_then(|p| self.layout_mut().leaf_containing_mut(p));
-        if let Some((active, tabs)) = dest_leaf {
-            // Clamp index since remove_leaf may have shifted things.
+        // Relocate the destination leaf via a surviving pane that
+        // remove_leaf couldn't have touched (survivor ≠ src, so
+        // survivor's leaf is intact — potentially collapsed a split
+        // if src's source leaf was elsewhere, but leaf_containing
+        // still finds it).
+        if let Some((active, tabs)) = self.layout_mut().leaf_containing_mut(survivor) {
             let idx = insert_idx.min(tabs.len());
-            // Avoid double-insert if src is somehow already there.
             if !tabs.contains(&src) {
                 tabs.insert(idx, src);
             }
             *active = src;
-        } else {
-            // Target leaf had no survivor (src was solo there) —
-            // src's leaf was destroyed by remove. Fall back to
-            // replacing the addressable slot with a fresh leaf so
-            // src stays visible.
-            self.layout_mut()
-                .replace_leaf(leaf_active, Layout::leaf(src));
+            self.active = Some(src);
+            self.focus = Focus::Pane;
+            return true;
         }
-        self.active = Some(src);
-        self.focus = Focus::Pane;
-        true
+        // survivor vanished mid-remove? extremely unlikely — leave
+        // layout untouched rather than risk orphaning src.
+        false
     }
 
     /// Compute the insert index for a tab dropping at cursor `x`
@@ -573,6 +574,34 @@ mod tests {
     /// tab used to empty the layout: no `dest_survivor`, so
     /// `remove_leaf(src)` destroyed the leaf and `replace_leaf`
     /// couldn't find a target with `active==src`. Now bails early.
+    /// Reviewer follow-up (2026-08-06 #2) — a strip drop where the
+    /// captured `leaf_active` no longer resolves (rect was stale
+    /// between hint-update and drop) must bail cleanly, not orphan
+    /// src. Simulated by pointing the strip at a pane id that isn't
+    /// in the layout.
+    #[test]
+    fn stale_leaf_active_id_bails_without_orphaning_src() {
+        let mut app = app_two_panes();
+        // Two-tab leaf. leaf_active in strip points at pane 99
+        // which isn't in the layout — leaf_containing returns None.
+        *app.layout_mut() = crate::layout::Layout::leaf_with_tabs(0, vec![0, 1]);
+        app.active = Some(0);
+        let strip = Rect::new(0, 0, 40, 1);
+        app.rects.split_tab_strip_areas = vec![(strip, 99)];
+        // Should NOT crash and MUST leave both tabs in the leaf.
+        let landed = app.drop_tab_on_strip(0, 5, 0);
+        // Return value can be false (bailed) or true (no-op) — the
+        // invariant is layout integrity.
+        assert!(!landed || landed); // silence unused_variable warning
+        match app.layout() {
+            crate::layout::Layout::Leaf { tabs, .. } => {
+                assert!(tabs.contains(&0), "src (0) must not be orphaned");
+                assert!(tabs.contains(&1), "sibling (1) must survive");
+            }
+            other => panic!("expected the leaf intact, got {other:?}"),
+        }
+    }
+
     #[test]
     fn same_leaf_reorder_of_solo_tab_is_a_noop() {
         let mut app = app_two_panes();
