@@ -386,19 +386,19 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         // Database family — dev-database (E64D is in Devicons)
         "mnml-db" => ("\u{E64D}", "blue"),
 
-        // Database drivers — Devicons where the driver's engine has
-        // one; MDI warehouse for the two AWS services with no glyph
-        // (Redshift + ClickHouse). Purple so the whole driver
-        // family reads uniform.
-        "mnml-db-driver-postgres" => ("\u{E76E}", "purple"), // dev-postgresql
-        "mnml-db-driver-mariadb" => ("\u{E828}", "purple"),  // dev-mariadb
-        "mnml-db-driver-mysql" => ("\u{E704}", "purple"),    // dev-mysql
-        "mnml-db-driver-redis" => ("\u{E76D}", "purple"),    // dev-redis
-        "mnml-db-driver-sqlite" => ("\u{E7C4}", "purple"),   // dev-sqlite
-        "mnml-db-driver-docdb" => ("\u{E7A4}", "purple"),    // dev-mongodb (DocDB is Mongo-compat)
-        "mnml-db-driver-clickhouse" => ("\u{F0F81}", "purple"), // md-warehouse (no dedicated glyph)
-        "mnml-db-driver-redshift" => ("\u{F0F81}", "purple"), // md-warehouse (no dedicated glyph)
-        "mnml-db-driver-dynamodb" => ("\u{F1C06}", "purple"), // AWS SVG bake
+        // Database drivers — real engine icon + brand color.
+        // The [driver] tag is purple (family), but the glyph itself
+        // uses each engine's brand color so the icons read like the
+        // real logos, not a uniform purple wash.
+        "mnml-db-driver-postgres" => ("\u{E76E}", "blue"), // dev-postgresql — postgres elephant blue
+        "mnml-db-driver-mariadb" => ("\u{E828}", "teal"),  // dev-mariadb — dark teal seal
+        "mnml-db-driver-mysql" => ("\u{E704}", "orange"),  // dev-mysql — orange dolphin
+        "mnml-db-driver-redis" => ("\u{E76D}", "red"),     // dev-redis — red cube
+        "mnml-db-driver-sqlite" => ("\u{E7C4}", "blue"),   // dev-sqlite
+        "mnml-db-driver-docdb" => ("\u{E7A4}", "green"), // dev-mongodb — green leaf (DocDB is Mongo-compat)
+        "mnml-db-driver-clickhouse" => ("\u{F1C0F}", "yellow"), // ClickHouse SVG bake in MnmlSymbols
+        "mnml-db-driver-redshift" => ("\u{F1C10}", "blue"), // AWS Redshift SVG bake (blue cylinder + graph)
+        "mnml-db-driver-dynamodb" => ("\u{F1C06}", "blue"), // AWS SVG bake — DynamoDB blue
 
         // SCM hosts — Devicons range (E5FA-E8EF).
         "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{E703}", "blue"),
