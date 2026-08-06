@@ -415,6 +415,81 @@ pub fn draw(
         )));
     }
 
+    // ── README section ────────────────────────────────────
+    // Phase-1 rich detail (2026-08-06). Fetched async by
+    // `App::spawn_readme_fetch`; delivered by
+    // `drain_readme_fetches` on subsequent ticks. Rendered as
+    // wrapped plain text (no markdown styling yet — Phase 2).
+    match app.readme_cache.get(&id) {
+        Some(crate::app::integration_detail::ReadmeState::Loading) => {
+            lines.push(section_header("README", area.width, &t));
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default().bg(t.bg_dark)),
+                Span::styled(
+                    "Fetching README…",
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(t.bg_dark)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                " ",
+                Style::default().bg(t.bg_dark),
+            )));
+        }
+        Some(crate::app::integration_detail::ReadmeState::Text(body)) => {
+            lines.push(section_header("README", area.width, &t));
+            let wrap_w = (area.width as usize).saturating_sub(4);
+            // README rendering — cap paragraph length so a monster
+            // README doesn't OOM the wrap. Long tail is reachable
+            // by scrolling; hard cap at ~10k chars keeps the wrap
+            // bounded.
+            let capped: String = body.chars().take(10_000).collect();
+            for raw_line in capped.lines() {
+                let trimmed = raw_line.trim_end();
+                if trimmed.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        " ",
+                        Style::default().bg(t.bg_dark),
+                    )));
+                    continue;
+                }
+                // Wrap each source line independently — README
+                // authors often use hard breaks.
+                for chunk in wrap_paragraph(trimmed, wrap_w.max(20)) {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", Style::default().bg(t.bg_dark)),
+                        Span::styled(chunk, Style::default().fg(t.fg).bg(t.bg_dark)),
+                    ]));
+                }
+            }
+            if body.chars().count() > 10_000 {
+                lines.push(Line::from(vec![
+                    Span::styled("  ", Style::default().bg(t.bg_dark)),
+                    Span::styled(
+                        "… (README truncated at 10k chars)",
+                        Style::default()
+                            .fg(t.comment)
+                            .bg(t.bg_dark)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                ]));
+            }
+            lines.push(Line::from(Span::styled(
+                " ",
+                Style::default().bg(t.bg_dark),
+            )));
+        }
+        Some(crate::app::integration_detail::ReadmeState::NotFound) | None => {
+            // Nothing to render — either the fetch hasn't been
+            // triggered (`None`, shouldn't happen once
+            // `open_integration_detail_pane` runs) or the source
+            // has no README / GitHub URL. Skip silently rather
+            // than showing an empty "README" header.
+        }
+    }
+
     // ── Footer hint ───────────────────────────────────────
     let hint = if area.width >= 60 {
         "  ↑↓ / Tab move · Enter fire · Esc close · right-click link copies url"

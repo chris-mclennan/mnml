@@ -20,6 +20,17 @@ use crate::app::App;
 use crate::layout::PaneId;
 use crate::pane::{IntegrationDetailPane, Pane};
 
+/// 2026-08-06 — README state for the detail pane. `Loading` is
+/// the initial value after the pane opens (a worker is fetching);
+/// `Text` is a successful body; `NotFound` is any error (network,
+/// 404, or the source having no README).
+#[derive(Debug, Clone)]
+pub enum ReadmeState {
+    Loading,
+    Text(String),
+    NotFound,
+}
+
 impl App {
     /// Open (or refocus) the integration-detail pane for `id`. Hosts
     /// in the right panel by default (matches Outline / Diagnostics);
@@ -57,8 +68,113 @@ impl App {
         self.panes.push(pane);
         let new_id = self.panes.len() - 1;
         self.reveal_pane(new_id);
+        // Kick a README fetch if we don't already have one for this
+        // id. Idempotent — cached `Text` / `NotFound` states short-
+        // circuit here.
+        self.spawn_readme_fetch(id);
     }
 
+    /// Spawn a worker to fetch the README for `id`. Sources tried
+    /// in order:
+    ///   1. Installed integration's `repository` field → GitHub
+    ///      raw README (falls back to `main`/`master`).
+    ///   2. Marketplace app entries → `https://crates.io/api/v1/
+    ///      crates/<id>/readme` (returns raw markdown).
+    /// A cached `Loading`/`Text`/`NotFound` short-circuits the
+    /// spawn so re-opens don't refetch.
+    pub fn spawn_readme_fetch(&mut self, id: &str) {
+        if self.readme_cache.contains_key(id) {
+            return;
+        }
+        // Resolve the fetch source.
+        let repo_url = self
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .find(|i| i.id == id)
+            .and_then(|i| i.repository.clone())
+            .filter(|s| !s.trim().is_empty());
+        let is_marketplace_app = self
+            .marketplace_entries
+            .iter()
+            .find(|e| e.id == id)
+            .is_some_and(|e| matches!(e.kind, crate::marketplace::MarketplaceKind::App));
+        let source_id = id.to_string();
+        self.readme_cache
+            .insert(source_id.clone(), ReadmeState::Loading);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let state = fetch_readme_blocking(&source_id, repo_url.as_deref(), is_marketplace_app);
+            let _ = tx.send((source_id, state));
+        });
+        self.readme_pending.push(rx);
+    }
+
+    pub fn drain_readme_fetches(&mut self) {
+        let mut delivered: Vec<(String, ReadmeState)> = Vec::new();
+        self.readme_pending.retain_mut(|rx| match rx.try_recv() {
+            Ok(msg) => {
+                delivered.push(msg);
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+        });
+        for (id, state) in delivered {
+            self.readme_cache.insert(id, state);
+        }
+    }
+}
+
+fn fetch_readme_blocking(
+    id: &str,
+    repo_url: Option<&str>,
+    is_marketplace_app: bool,
+) -> ReadmeState {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(format!("mnml-readme-fetch/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .ok();
+    let Some(client) = client else {
+        return ReadmeState::NotFound;
+    };
+    // Path A: GitHub repository — try raw README.md on main then
+    // master. Only handles github.com URLs; other hosts fall
+    // through to NotFound.
+    if let Some(url) = repo_url
+        && let Some(rest) = url
+            .trim_end_matches('/')
+            .strip_prefix("https://github.com/")
+    {
+        for branch in ["main", "master"] {
+            let raw = format!("https://raw.githubusercontent.com/{rest}/{branch}/README.md");
+            if let Ok(resp) = client.get(&raw).send()
+                && resp.status().is_success()
+                && let Ok(body) = resp.text()
+                && !body.is_empty()
+            {
+                return ReadmeState::Text(body);
+            }
+        }
+    }
+    // Path B: crates.io app fallback. Same endpoint the crates.io
+    // web UI uses to render the README on the crate page.
+    if is_marketplace_app {
+        let url = format!("https://crates.io/api/v1/crates/{id}/readme");
+        if let Ok(resp) = client.get(&url).send()
+            && resp.status().is_success()
+            && let Ok(body) = resp.text()
+            && !body.is_empty()
+        {
+            return ReadmeState::Text(body);
+        }
+    }
+    ReadmeState::NotFound
+}
+
+impl App {
     /// Reveal an existing detail pane. Previously handled a right-
     /// panel branch; now that the detail pane lives in the center
     /// like any other pane, just delegate. (Kept the helper for

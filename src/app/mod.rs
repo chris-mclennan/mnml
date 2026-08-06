@@ -3597,6 +3597,16 @@ pub struct App {
     /// froze the render thread for up to 10s.
     pub launcher_install_pending:
         Vec<std::sync::mpsc::Receiver<Result<(String, std::path::PathBuf), (String, String)>>>,
+    /// 2026-08-06 — README cache for the integration-detail pane.
+    /// Keyed by integration id. `Loading` = worker spawned but not
+    /// yet delivered. `Text` = fetched body. `NotFound` = fetch
+    /// failed or the source has no README. The rendered pane
+    /// consults this map every draw; a background worker updates
+    /// it via `drain_readme_fetches`.
+    pub readme_cache:
+        std::collections::HashMap<String, crate::app::integration_detail::ReadmeState>,
+    pub readme_pending:
+        Vec<std::sync::mpsc::Receiver<(String, crate::app::integration_detail::ReadmeState)>>,
     /// AI usage meter state (#876). `None` = never fetched (chip
     /// shows dashes / hidden depending on integration enabled).
     /// Populated by background workers spawned via
@@ -5330,6 +5340,8 @@ impl App {
             marketplace_entries: Vec::new(),
             marketplace_pending: Vec::new(),
             launcher_install_pending: Vec::new(),
+            readme_cache: std::collections::HashMap::new(),
+            readme_pending: Vec::new(),
             ai_usage_claude: None,
             ai_usage_codex: None,
             ai_usage_pending_claude: None,
@@ -14578,6 +14590,7 @@ impl App {
         self.drain_ai_session_search();
         self.drain_marketplace();
         self.drain_launcher_installs();
+        self.drain_readme_fetches();
         self.maybe_refresh_ai_usage();
         self.drain_ai_usage();
         self.drain_suggestions();

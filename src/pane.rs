@@ -456,6 +456,10 @@ pub struct IntegrationDetailPane {
     /// Cleared by the pane after `TOAST_TTL` seconds — see
     /// `integration_detail_view::draw`.
     pub last_action: Option<(std::time::Instant, String)>,
+    /// Per-pane scroll offset — advances 1 row per wheel notch.
+    /// Rich detail (README body) can overflow the pane; scroll
+    /// lets the user reach the tail without shrinking the pane.
+    pub scroll: usize,
 }
 
 impl IntegrationDetailPane {
@@ -464,6 +468,7 @@ impl IntegrationDetailPane {
             id,
             cursor: 0,
             last_action: None,
+            scroll: 0,
         }
     }
     /// Short chrome for the bufferline tab / right-panel tab strip.
