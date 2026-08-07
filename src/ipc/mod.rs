@@ -1320,6 +1320,23 @@ pub fn rects_dump_json(app: &App) -> String {
         "statusline_coverage_chip",
         app.rects.statusline_coverage_chip
     );
+    // 2026-08-07 vscode-mouse r1 F4 — integration panel chrome rects
+    // for headless drivers (tests keep re-discovering these by
+    // pixel-probing without the dump).
+    one!(
+        "integrations_tab_installed",
+        app.rects.integrations_tab_installed
+    );
+    one!(
+        "integrations_tab_marketplace",
+        app.rects.integrations_tab_marketplace
+    );
+    one!(
+        "integrations_tab_refresh",
+        app.rects.integrations_tab_refresh
+    );
+    one!("integrations_tab_sort", app.rects.integrations_tab_sort);
+    one!("dock_empty_chip", app.rects.dock_empty_chip);
     one!("statusline_file_chip", app.rects.statusline_file_chip);
     one!(
         "statusline_diagnostics_chip",

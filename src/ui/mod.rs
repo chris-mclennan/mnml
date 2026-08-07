@@ -3399,10 +3399,16 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     }
 
     // qa-feature 2026-07-01 — filter row directly below the tabs.
+    // 2026-08-07 vscode-mouse r1 F5: sort chip painted at same y as
+    // filter row's rightmost cells. A long filter query would
+    // overpaint the sort chip. Constrain filter width so the chip
+    // stays visible (chip is still hit-testable regardless — the
+    // fix is visual only).
+    let sort_reserve = sort_rect.map(|r| r.width).unwrap_or(0);
     let filter_row = Rect {
         x: area.x,
         y: area.y + 2,
-        width: area.width,
+        width: area.width.saturating_sub(sort_reserve),
         height: 1,
     };
     let search_glyph = if nerd { "\u{f002}" } else { "/" };

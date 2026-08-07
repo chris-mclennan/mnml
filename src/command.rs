@@ -5458,6 +5458,52 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.refresh_marketplace(),
         },
+        // 2026-08-07 vscode-mouse r1 F2 — marketplace-row right-click
+        // menu targets. Each acts on `pending_marketplace_install_idx`
+        // (the entry the right-click landed on).
+        Command {
+            id: "marketplace.open_detail_focused",
+            title: "Marketplace: open details for right-clicked entry",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                if let Some(idx) = app.pending_marketplace_install_idx
+                    && let Some(entry) = app.marketplace_entries.get(idx).cloned()
+                {
+                    app.open_integration_detail_pane(&entry.id);
+                }
+            },
+        },
+        Command {
+            id: "marketplace.install_focused",
+            title: "Marketplace: install right-clicked entry",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                if let Some(idx) = app.pending_marketplace_install_idx {
+                    app.install_marketplace_entry(idx);
+                }
+            },
+        },
+        Command {
+            id: "marketplace.copy_id_focused",
+            title: "Marketplace: copy id of right-clicked entry",
+            group: "integrations",
+            keys: &[],
+            run: |app| {
+                if let Some(idx) = app.pending_marketplace_install_idx
+                    && let Some(entry) = app.marketplace_entries.get(idx).cloned()
+                {
+                    if let Err(e) =
+                        arboard::Clipboard::new().and_then(|mut cb| cb.set_text(entry.id.clone()))
+                    {
+                        app.toast(format!("copy failed: {e}"));
+                    } else {
+                        app.toast(format!("copied: {}", entry.id));
+                    }
+                }
+            },
+        },
         Command {
             id: "tattle_coverage.open",
             title: "Tattle Coverage: per-surface API + UI trend sparklines",

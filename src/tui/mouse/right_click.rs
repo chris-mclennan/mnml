@@ -1157,6 +1157,51 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         app.open_integration_chip_context_menu(icon_idx, (x, y));
         return;
     }
+    // 2026-08-07 vscode-mouse r1 F2 — marketplace rows were the only
+    // clickable list surface with a dead right-click. Simple menu
+    // gives parity with other lists + saves the trip to the detail
+    // pane for common quick-lookups.
+    if let Some(&(_, entry_idx)) = app
+        .rects
+        .marketplace_row_rects
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let entry = app.marketplace_entries.get(entry_idx).cloned();
+        let items = if let Some(e) = entry {
+            let is_installed = app.config.ui.integration_icons.iter().any(|i| i.id == e.id);
+            let _ = &e;
+            let mut items = vec![MenuItem::new(
+                "View details",
+                MenuAction::Command("marketplace.open_detail_focused"),
+            )];
+            if !is_installed {
+                items.push(MenuItem::new(
+                    "Install",
+                    MenuAction::Command("marketplace.install_focused"),
+                ));
+            }
+            items.push(MenuItem::new(
+                "Copy id",
+                MenuAction::Command("marketplace.copy_id_focused"),
+            ));
+            items
+        } else {
+            vec![MenuItem::new(
+                "View details",
+                MenuAction::Command("marketplace.open_detail_focused"),
+            )]
+        };
+        // Focus the row so the "focused" commands know which entry.
+        app.pending_marketplace_install_idx = Some(entry_idx);
+        app.context_menu = Some(ContextMenu::new(
+            Some("Marketplace entry".into()),
+            (x, y),
+            items,
+        ));
+        return;
+    }
     // 2026-08-01 (P2) — launcher-chip right-click routing deleted
     // with the LauncherIcon retirement. Integration chip menu covers
     // the surface.

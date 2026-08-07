@@ -2356,11 +2356,15 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.click_git_rail(hit);
         return;
     }
-    // Empty-state `+ dock` chip → fire dock.new_text.
+    // Empty-state `+ dock` chip → fire dock.new_text_br.
+    // 2026-08-07 vscode-mouse r1 F1 SEV-2 — was `dock.new_text`
+    // (BottomLeft), but the chip itself is painted at bottom-RIGHT
+    // (`ui/dock.rs:482-486`). Corner mismatch surprised users who
+    // expect the button to act where it sits.
     if let Some(r) = app.rects.dock_empty_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        crate::command::run("dock.new_text", app);
+        crate::command::run("dock.new_text_br", app);
         return;
     }
     // Open kebab-menu row click → apply choice + close.
