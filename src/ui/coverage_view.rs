@@ -39,7 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
             String::new(),
         ),
     };
-    let header_text = format!(" Coverage{title_extra} · r refresh · esc back ");
+    let header_text = format!(" Coverage{title_extra} · r refresh · esc blur · :bd close ");
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
