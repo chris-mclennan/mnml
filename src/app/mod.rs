@@ -3762,6 +3762,21 @@ pub struct App {
     /// Index into `right_panel_panes` for the currently-visible pane.
     /// Clamped to `[0, panes.len())` defensively at access time.
     pub right_panel_active_idx: usize,
+    /// 2026-08-07 — Phase 1 dockable-panes: bottom panel that hosts
+    /// any pane below the split tree and above the statusline.
+    /// Mirrors `right_panel_*` in structure. See
+    /// `docs/design/dockable-panes.md` for the roadmap.
+    pub bottom_panel_visible: bool,
+    /// Row count for the bottom panel body (border + tab strip take
+    /// their own extra rows). Default 12. Drag the top edge to resize.
+    pub bottom_panel_height: u16,
+    /// True while the user is mid-drag on the bottom panel's top edge.
+    pub dragging_bottom_panel_edge: bool,
+    /// Panes hosted in the bottom panel. Same tabbed model as
+    /// right_panel_panes.
+    pub bottom_panel_panes: Vec<usize>,
+    /// Index into `bottom_panel_panes` for the currently-visible pane.
+    pub bottom_panel_active_idx: usize,
     /// User-set MAX height for the INTEGRATIONS rail section. `None`
     /// = auto-size to content needed (the default). When `Some(h)`,
     /// the layout uses `min(h, content_needed)` so a too-large cap
@@ -5453,6 +5468,11 @@ impl App {
             dragging_right_panel_edge: false,
             right_panel_panes: Vec::new(),
             right_panel_active_idx: 0,
+            bottom_panel_visible: false,
+            bottom_panel_height: 12,
+            dragging_bottom_panel_edge: false,
+            bottom_panel_panes: Vec::new(),
+            bottom_panel_active_idx: 0,
             integrations_user_max_h: None,
             git_user_max_h: None,
             rail_section_drag: None,
