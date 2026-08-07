@@ -315,6 +315,19 @@ impl App {
             self.toast(format!("integration: {id} not in rail"));
             return;
         }
+        // 2026-08-07 — protect the first-party built-ins from an
+        // accidental uninstall. Browser / Claude Code / Codex / http
+        // ship in mnml core; there's no `<sibling> --install` to
+        // re-run to bring them back. User can still Disable via
+        // right-click → Disable (hides the chip but keeps the
+        // manifest). This is the same guard the settings pane
+        // should apply once it lands.
+        if is_builtin_integration_id(&id) {
+            self.toast(format!(
+                "integration: `{id}` is built-in — use Disable to hide the chip instead of Uninstall",
+            ));
+            return;
+        }
         // 2026-08-06 — "Remove integration `X`?" → "Uninstall `X`?"
         // matches the new menu label + the toast this action
         // already emits ("uninstalled {id}").
@@ -863,7 +876,7 @@ pub fn write_override_toml(icon: &IntegrationIcon) -> Result<std::path::PathBuf,
 /// truth for glyph/label/color, and writing a scaffold from the
 /// live slot risks capturing a stale/partial snapshot.
 pub fn is_builtin_integration_id(id: &str) -> bool {
-    matches!(id, "browser" | "claude_code" | "codex")
+    matches!(id, "browser" | "claude_code" | "codex" | "http")
 }
 
 /// Look up the shipped Rust default for a built-in integration id.
