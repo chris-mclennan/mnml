@@ -858,12 +858,28 @@ pub const SPLIT_BUTTONS_W: u16 = 9;
 pub const SPLIT_BUTTONS_W_WITH_AI: u16 = 12;
 
 /// Total width the cluster needs given the user's config.
+/// 2026-08-07 — was `tab_bar_ai_icon`-based; that desynced from
+/// `paint_split_buttons` which now derives AI chip count from the
+/// `enabled` state of each integration. When only claude_code was
+/// enabled but `tab_bar_ai_icon = "claude_code"`, both said 12 cells —
+/// but flipping codex on made paint draw 15 cells while the
+/// reservation stayed at 12, clobbering the mode chip. Now both
+/// source the count from the same predicate.
 pub fn split_buttons_width(app: &App) -> u16 {
-    match app.config.ui.tab_bar_ai_icon.as_str() {
-        "none" => SPLIT_BUTTONS_W,
-        "both" => SPLIT_BUTTONS_W + 6, // 2 AI chips × 3 cells each
-        _ => SPLIT_BUTTONS_W_WITH_AI,
+    if app.config.ui.tab_bar_ai_icon == "none" {
+        return SPLIT_BUTTONS_W;
     }
+    let n_ai = ["claude_code", "codex"]
+        .iter()
+        .filter(|id| {
+            app.config
+                .ui
+                .integration_icons
+                .iter()
+                .any(|ic| ic.id == **id && ic.enabled)
+        })
+        .count() as u16;
+    SPLIT_BUTTONS_W + n_ai * 3
 }
 
 /// Paint the AI (optional) + terminal + H / V split buttons at the
