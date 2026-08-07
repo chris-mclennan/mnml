@@ -3385,7 +3385,10 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // scrollbar on top, clobbering the last char of every long label.
     // Every other rail pane in the app (`diagnostics_view`, `grep_view`,
     // etc.) reserves this column up-front — matching that idiom here.
-    let row_width = area.width.saturating_sub(1);
+    // Reserve TWO cols: one for the scrollbar (at area.width-1),
+    // one for a visual gap so long truncated names don't kiss the
+    // scrollbar glyph (`✓ Of█` vs `✓ Off █`). 2026-08-07 tester r6.
+    let row_width = area.width.saturating_sub(2);
 
     // Each entry takes 3 rows: glyph+name, command dim, blank.
     // Clamp the scroll so at least one entry stays visible.
