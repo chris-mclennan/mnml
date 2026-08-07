@@ -1199,6 +1199,25 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // 2026-08-07 — click the sort chip → cycle the active tab's sort
+    // mode. Per-tab so switching Installed ↔ Marketplace preserves
+    // each side's selected mode.
+    if let Some(rect) = app.rects.integrations_tab_sort
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.focus = crate::focus::Focus::Tree;
+        match app.integrations_panel_tab {
+            crate::app::IntegrationsPanelTab::Installed => {
+                app.installed_sort = app.installed_sort.cycle();
+                app.toast(format!("sort: {}", app.installed_sort.label()));
+            }
+            crate::app::IntegrationsPanelTab::Marketplace => {
+                app.marketplace_sort = app.marketplace_sort.cycle();
+                app.toast(format!("sort: {}", app.marketplace_sort.label()));
+            }
+        }
+        return;
+    }
     // Integrations filter chip — click to focus filter input.
     // 2026-07-25 — also move `app.focus` back to Tree. Otherwise if
     // the user had an integration pane open (focus == Focus::Pane),

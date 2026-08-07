@@ -1566,6 +1566,67 @@ pub enum IntegrationsPanelTab {
     Marketplace,
 }
 
+/// 2026-08-07 — how the Installed tab is sorted.
+///   Default = user's config order (whatever was written to
+///   `[[ui.integration_icon]]` first stays first).
+///   Name = A-Z on the display label.
+///   EnabledFirst = enabled ones bubble to the top, then Name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstalledSort {
+    Default,
+    Name,
+    EnabledFirst,
+}
+
+impl InstalledSort {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Default => Self::Name,
+            Self::Name => Self::EnabledFirst,
+            Self::EnabledFirst => Self::Default,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "⇅ Default",
+            Self::Name => "⇅ A-Z",
+            Self::EnabledFirst => "⇅ Enabled first",
+        }
+    }
+}
+
+/// 2026-08-07 — how the Marketplace tab is sorted.
+///   Default = whatever order the catalog fetch returned.
+///   Name = A-Z on the entry label.
+///   OfficialFirst = Official entries bubble to the top, then Name.
+///   Kind = groups by kind (app / launcher / driver) then Name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarketplaceSort {
+    Default,
+    Name,
+    OfficialFirst,
+    Kind,
+}
+
+impl MarketplaceSort {
+    pub fn cycle(self) -> Self {
+        match self {
+            Self::Default => Self::Name,
+            Self::Name => Self::OfficialFirst,
+            Self::OfficialFirst => Self::Kind,
+            Self::Kind => Self::Default,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "⇅ Default",
+            Self::Name => "⇅ A-Z",
+            Self::OfficialFirst => "⇅ Official first",
+            Self::Kind => "⇅ By kind",
+        }
+    }
+}
+
 /// Marker for `App::ai_placeholder_slot` — the empty quadrant of a
 /// 2×2 Claude / Codex grid. Currently only Claude auto-tiles this
 /// way but the enum lets Codex slot in later without touching the
@@ -2158,6 +2219,9 @@ pub struct PaneRects {
     /// or `integrations.refresh` (on Installed tab). Absent when
     /// the panel is too narrow to fit the chip beside both tabs.
     pub integrations_tab_refresh: Option<Rect>,
+    /// 2026-08-07 — sort chip on the tab row (`⇅ A-Z`, etc.).
+    /// Left-click cycles through the modes for the active tab.
+    pub integrations_tab_sort: Option<Rect>,
     /// 2026-07-09 user request — `+ Add integration` chip at the
     /// bottom of the Integrations panel. Click → sibling install
     /// picker. Prior to this the flow was
@@ -2897,6 +2961,7 @@ impl PaneRects {
         check_opt!(integrations_tab_installed);
         check_opt!(integrations_tab_marketplace);
         check_opt!(integrations_tab_refresh);
+        check_opt!(integrations_tab_sort);
         check_opt!(integrations_filter_chip);
         check_opt!(sessions_panel_filter_input);
         check_opt!(glyph_builder_overlay_rect);
@@ -4514,6 +4579,14 @@ pub struct App {
     /// — the daily-driver rail. `Marketplace` lists everything
     /// else so the user can enable more.
     pub integrations_panel_tab: IntegrationsPanelTab,
+    /// 2026-08-07 — sort mode for the Installed tab. Click the
+    /// `⇅` chip in the panel header to cycle. Not persisted in v1
+    /// (per-session).
+    pub installed_sort: InstalledSort,
+    /// Sort mode for the Marketplace tab. Same UX as `installed_sort`
+    /// — the two tabs each carry their own sort state so switching
+    /// between them doesn't reset the other.
+    pub marketplace_sort: MarketplaceSort,
     /// `true` while the user's keyboard focus is in the rail
     /// agents panel's filter input.
     pub agents_panel_filter_focused: bool,
@@ -5497,6 +5570,8 @@ impl App {
             integrations_panel_filter: String::new(),
             integrations_panel_filter_focused: false,
             integrations_panel_tab: IntegrationsPanelTab::Installed,
+            installed_sort: InstalledSort::Name,
+            marketplace_sort: MarketplaceSort::Name,
             agents_panel_filter_focused: false,
             cloud_agents_view: CloudAgentsView::default(),
             cloud_agents_filter: String::new(),

@@ -3231,6 +3231,41 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         app.rects.integrations_tab_refresh = None;
     }
 
+    // 2026-08-07 — sort chip on the filter row's right edge.
+    // Left-click cycles through the modes for the ACTIVE tab.
+    // Label is short so it fits alongside the filter input.
+    let sort_label = match active_tab {
+        crate::app::IntegrationsPanelTab::Installed => app.installed_sort.label(),
+        crate::app::IntegrationsPanelTab::Marketplace => app.marketplace_sort.label(),
+    };
+    let sort_label_owned = format!(" {sort_label} ");
+    let sort_w = sort_label_owned.chars().count() as u16;
+    // Fit-or-drop guard so a very narrow panel doesn't cause overflow.
+    let sort_rect = if area.width > sort_w + 4 {
+        Some(Rect {
+            x: area.x + area.width.saturating_sub(sort_w),
+            y: area.y + 2,
+            width: sort_w,
+            height: 1,
+        })
+    } else {
+        None
+    };
+    if let Some(r) = sort_rect {
+        frame.render_widget(
+            Paragraph::new(sort_label_owned).style(
+                Style::default()
+                    .fg(t.cyan)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            r,
+        );
+        app.rects.integrations_tab_sort = Some(r);
+    } else {
+        app.rects.integrations_tab_sort = None;
+    }
+
     // qa-feature 2026-07-01 — filter row directly below the tabs.
     let filter_row = Rect {
         x: area.x,
@@ -3309,27 +3344,34 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .map(|(i, icon)| (i, icon.clone()))
         .collect();
-    if matches!(active_tab, crate::app::IntegrationsPanelTab::Marketplace) {
-        icons.sort_by(|(_, a), (_, b)| {
-            let key_a = a
-                .label
-                .clone()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| a.id.clone())
-                .to_ascii_lowercase();
-            let key_b = b
-                .label
-                .clone()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| b.id.clone())
-                .to_ascii_lowercase();
-            key_a.cmp(&key_b)
-        });
-    } else if matches!(active_tab, crate::app::IntegrationsPanelTab::Installed) {
-        // 2026-08-06 — enabled first, disabled at the bottom. The
-        // config-file order (user's own Move up / Move down) is
-        // preserved within each group.
-        icons.sort_by_key(|(_, a)| !a.enabled);
+    // 2026-08-07 — sort mode chip on the panel header cycles
+    // through modes. Default is Name (A-Z) for both tabs (was:
+    // hardcoded — alpha on Marketplace, enabled-first on Installed).
+    let name_key = |i: &crate::config::IntegrationIcon| -> String {
+        i.label
+            .clone()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| i.id.clone())
+            .to_ascii_lowercase()
+    };
+    match active_tab {
+        crate::app::IntegrationsPanelTab::Installed => match app.installed_sort {
+            crate::app::InstalledSort::Default => {} // preserve config order
+            crate::app::InstalledSort::Name => icons.sort_by_key(|(_, a)| name_key(a)),
+            crate::app::InstalledSort::EnabledFirst => icons.sort_by(|(_, a), (_, b)| {
+                (!a.enabled)
+                    .cmp(&!b.enabled)
+                    .then_with(|| name_key(a).cmp(&name_key(b)))
+            }),
+        },
+        crate::app::IntegrationsPanelTab::Marketplace => {
+            // Icons list is empty on Marketplace tab (filtered above),
+            // but keep the sort call for symmetry — the marketplace
+            // entries loop applies its own sort further down.
+            if matches!(app.marketplace_sort, crate::app::MarketplaceSort::Name) {
+                icons.sort_by_key(|(_, a)| name_key(a));
+            }
+        }
     }
 
     // Empty-state per tab.
@@ -3625,7 +3667,48 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         // loop already displaced.
         let entries_skip = start_idx.saturating_sub(icons.len());
         let mut skipped = 0usize;
-        for (idx, entry) in app.marketplace_entries.iter().enumerate() {
+        // 2026-08-07 — apply the sort mode to the marketplace entries.
+        // Build (original_idx, entry_ref) pairs so the render loop
+        // still uses `idx` for `marketplace_row_rects` (which is a
+        // stable index into `marketplace_entries`).
+        let mut sorted: Vec<(usize, &crate::marketplace::MarketplaceEntry)> =
+            app.marketplace_entries.iter().enumerate().collect();
+        let sort_key_name = |e: &crate::marketplace::MarketplaceEntry| -> String {
+            if e.label.is_empty() {
+                e.id.to_ascii_lowercase()
+            } else {
+                e.label.to_ascii_lowercase()
+            }
+        };
+        match app.marketplace_sort {
+            crate::app::MarketplaceSort::Default => {}
+            crate::app::MarketplaceSort::Name => sorted.sort_by_key(|(_, a)| sort_key_name(a)),
+            crate::app::MarketplaceSort::OfficialFirst => sorted.sort_by(|(_, a), (_, b)| {
+                let pa = !matches!(a.provenance, crate::marketplace::Provenance::Official);
+                let pb = !matches!(b.provenance, crate::marketplace::Provenance::Official);
+                pa.cmp(&pb)
+                    .then_with(|| sort_key_name(a).cmp(&sort_key_name(b)))
+            }),
+            crate::app::MarketplaceSort::Kind => sorted.sort_by(|(_, a), (_, b)| {
+                // App < Launcher; drivers (naming convention) get their
+                // own bucket sorted last.
+                let bucket = |e: &crate::marketplace::MarketplaceEntry| -> u8 {
+                    let is_driver = e.id.contains("-driver-") || e.id.ends_with("-driver");
+                    if is_driver {
+                        2
+                    } else {
+                        match e.kind {
+                            crate::marketplace::MarketplaceKind::App => 0,
+                            crate::marketplace::MarketplaceKind::Launcher => 1,
+                        }
+                    }
+                };
+                bucket(a)
+                    .cmp(&bucket(b))
+                    .then_with(|| sort_key_name(a).cmp(&sort_key_name(b)))
+            }),
+        }
+        for (idx, entry) in sorted.into_iter() {
             // 2026-08-07 — installed entries stay visible in the
             // Marketplace list but render greyed with an `[installed]`
             // tag replacing `[app]`/`[launcher]`/`[driver]`. Click
