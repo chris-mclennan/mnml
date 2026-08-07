@@ -3137,7 +3137,24 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let compact_installed = format!(" Inst ({installed_count}) ");
     let compact_marketplace = format!(" Mkt ({marketplace_count}) ");
     let full_total = full_installed.chars().count() + full_marketplace.chars().count();
-    let use_compact = (full_total as u16) > area.width;
+    let compact_total = compact_installed.chars().count() + compact_marketplace.chars().count();
+    // Refresh chip is 3 chars (" ⟳ "). Priority ladder: prefer showing the
+    // refresh button over showing the long labels, since refresh is a
+    // frequent action and Inst/Mkt read fine. vscode-user 2026-08-07:
+    // at a middle width the refresh disappeared while labels stayed full,
+    // then reappeared when the panel got narrower (labels shrunk to compact
+    // and refresh fit again). Fix: shrink labels FIRST, drop refresh LAST.
+    let refresh_w_usize: usize = 3;
+    let width_usize = area.width as usize;
+    let (use_compact, show_refresh) = if full_total + refresh_w_usize <= width_usize {
+        (false, true)
+    } else if compact_total + refresh_w_usize <= width_usize {
+        (true, true)
+    } else if full_total <= width_usize {
+        (false, false)
+    } else {
+        (true, false)
+    };
     let installed_label = if use_compact {
         compact_installed
     } else {
@@ -3196,7 +3213,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     // stale between launches.
     let refresh_label = " ⟳ ";
     let refresh_w = refresh_label.chars().count() as u16;
-    if area.width > (installed_w + marketplace_w + refresh_w) {
+    if show_refresh {
         let refresh_rect = Rect {
             x: area.x + area.width.saturating_sub(refresh_w),
             y: area.y + 1,
