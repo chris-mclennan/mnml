@@ -591,7 +591,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 }
                 None => (String::new(), t.comment),
             };
-            let text = format!(" \u{EC2E} {:.0}%{} ", now, delta_str);
+            let text = format!(" \u{EB03} {:.0}%{} ", now, delta_str);
             coverage_seg_idx = Some(right.len());
             right.push(Seg::new(text, fg, t.bg));
         }

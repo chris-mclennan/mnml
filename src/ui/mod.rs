@@ -4319,14 +4319,18 @@ fn pty_icon(
         (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),
         (Some((g, c)), _, _) if nerd => (g, c),
         (None, Some(g), _) if nerd => (g.to_string(), tt.teal),
-        _ if is_plain_shell && nerd => (terminal_glyph.clone(), tt.comment),
+        // 2026-08-07 — match the H/V cluster's pure-white terminal
+        // glyph. Was `tt.comment` (dim gray), which made the tab
+        // icon read as visibly darker than the cluster chip for the
+        // same terminal.
+        _ if is_plain_shell && nerd => (terminal_glyph.clone(), ratatui::style::Color::White),
         _ => (
             if nerd {
                 terminal_glyph
             } else {
                 "▶".to_string()
             },
-            tt.comment,
+            ratatui::style::Color::White,
         ),
     }
 }
@@ -4421,8 +4425,10 @@ fn icon_for_pane(
         // so the tab icon reads unambiguously as "integration detail"
         // (user 2026-08-06: was a lighthouse-looking glyph).
         Pane::IntegrationDetail(_) => s(if nerd { "\u{F0431}" } else { "◈" }, theme::cur().cyan),
-        // nf-cod-checklist (EC2E) — matches the coverage-testing theme.
-        Pane::Coverage(_) => s(if nerd { "\u{EC2E}" } else { "%" }, theme::cur().green),
+        // nf-cod-graph (EB03) — bar-chart glyph. Was EC2E (checklist)
+        // which sits above ghostty's font-codepoint-map (EA60-EC1E)
+        // and rendered as tofu.
+        Pane::Coverage(_) => s(if nerd { "\u{EB03}" } else { "%" }, theme::cur().green),
     }
 }
 
