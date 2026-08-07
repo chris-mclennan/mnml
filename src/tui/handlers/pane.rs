@@ -828,6 +828,21 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::End | KeyCode::Char('G') => {
                 app.integration_detail_cursor_move(isize::MAX / 2);
             }
+            // 2026-08-07 — PgUp/PgDn scrolls the pane body directly
+            // so the README + description below the actionable-row
+            // strip can be paged even when the cursor is already at
+            // the last row. User reported "no scrolling or arrowing
+            // will let me go downward" past the first screen.
+            KeyCode::PageDown => {
+                if let Some(Pane::IntegrationDetail(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(10);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::IntegrationDetail(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(10);
+                }
+            }
             KeyCode::Enter | KeyCode::Char(' ') => app.integration_detail_fire_focused(),
             KeyCode::Esc => app.focus_pane_or_tree(),
             _ => {}

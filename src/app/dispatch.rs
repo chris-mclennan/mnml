@@ -1544,13 +1544,19 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 // Wizard pane content is short and fits a single
                 // page; no scroll affordance needed for v1.
             }
-            Some(Pane::IntegrationDetail(_)) => {
-                // Wheel walks the actionable-row cursor (buttons +
-                // command rows + link rows). Matches ↑/↓ from the
-                // keyboard handler.
-                let d = delta.signum() as isize;
-                let n = delta.unsigned_abs() as isize;
-                app.integration_detail_cursor_move(d * n);
+            Some(Pane::IntegrationDetail(p)) => {
+                // 2026-08-07 — wheel scrolls the pane body (README +
+                // description overflow). Was: walked the actionable-
+                // row cursor, which meant the pane's long README was
+                // unreachable — user reported "I can only see one
+                // page of the description, no scrolling or arrowing
+                // will let me go downward". Keyboard ↑/↓ still walks
+                // the cursor for button/link selection.
+                if delta < 0 {
+                    p.scroll = p.scroll.saturating_sub(delta.unsigned_abs() as usize);
+                } else {
+                    p.scroll = p.scroll.saturating_add(delta as usize);
+                }
             }
             Some(Pane::Coverage(c)) => {
                 if delta < 0 {

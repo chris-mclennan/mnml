@@ -230,11 +230,73 @@ fn fetch_readme_blocking(
                 && let Ok(body) = resp.text()
                 && !body.is_empty()
             {
-                return ReadmeState::Text(body);
+                // crates.io's `/readme` endpoint returns rendered
+                // HTML (GitHub-flavored, with `<h1>`, `<p>`, `<pre>`,
+                // `<a>`, etc.) — not raw markdown. Strip tags so the
+                // pane renders readable prose instead of dumping tag
+                // source. Not a real markdown renderer — that's a
+                // separate follow-up.
+                return ReadmeState::Text(strip_html_to_plain(&body));
             }
         }
     }
     ReadmeState::NotFound
+}
+
+/// Minimal HTML → plain-text stripper for the crates.io /readme
+/// fallback. Removes tags, unescapes basic entities, and collapses
+/// runs of whitespace. Not a full HTML parser — targets exactly the
+/// GitHub-flavored markup that crates.io emits when it renders a
+/// README to HTML: `<h1>`/`<h2>`/`<p>`/`<pre>`/`<code>`/`<a>`/`<li>`/
+/// `<ol>`/`<ul>`/`<strong>`/`<em>`, plus `id=` / `class=` / `rel=` /
+/// `aria-label=` attribute clutter.
+fn strip_html_to_plain(html: &str) -> String {
+    // Preserve block breaks: replace `<br>`/`</p>`/`</li>`/`</h*>`/
+    // `</pre>` with a newline before dropping remaining tags.
+    let with_breaks = {
+        let re =
+            regex::Regex::new(r"(?i)</p>|</li>|</h[1-6]>|</pre>|</div>|</blockquote>|<br\s*/?>")
+                .ok();
+        match re {
+            Some(r) => r.replace_all(html, "\n").into_owned(),
+            None => html.to_string(),
+        }
+    };
+    // Drop every tag.
+    let tagless = {
+        let re = regex::Regex::new(r"<[^>]+>").ok();
+        match re {
+            Some(r) => r.replace_all(&with_breaks, "").into_owned(),
+            None => with_breaks.clone(),
+        }
+    };
+    // Unescape the entities crates.io/GitHub uses.
+    let unescaped = tagless
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ");
+    // Collapse runs of blank lines to at most 2, trim per-line
+    // whitespace. Preserves single-line structure so headers /
+    // paragraphs / list items sit apart.
+    let mut out = String::with_capacity(unescaped.len());
+    let mut blank_run = 0usize;
+    for line in unescaped.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.trim().is_empty() {
+            blank_run += 1;
+            if blank_run <= 2 {
+                out.push('\n');
+            }
+        } else {
+            blank_run = 0;
+            out.push_str(trimmed);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 impl App {
