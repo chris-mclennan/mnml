@@ -244,6 +244,7 @@ fn is_view_only_pane(pane: Option<&Pane>) -> bool {
             | Some(Pane::Flaky(_))
             | Some(Pane::Debug(_))
             | Some(Pane::IntegrationDetail(_))
+            | Some(Pane::Coverage(_))
     )
 }
 
@@ -841,6 +842,37 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('i') => app.toggle_active_image_header(),
             KeyCode::Char('r') => app.reload_active_image(),
             KeyCode::Esc => app.focus_tree(),
+            _ => {}
+        }
+        return;
+    }
+    // Coverage pane: j/k scroll, r refresh, Esc/q focus tree.
+    // Design-critic 2026-08-06 SEV-high: header advertised
+    // `r refresh · esc close` but neither key was wired.
+    if matches!(app.panes.get(i), Some(Pane::Coverage(_))) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => app.focus_tree(),
+            KeyCode::Char('r') => app.force_reload_coverage(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_sub(5);
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(Pane::Coverage(p)) = app.panes.get_mut(i) {
+                    p.scroll = p.scroll.saturating_add(5);
+                }
+            }
             _ => {}
         }
         return;

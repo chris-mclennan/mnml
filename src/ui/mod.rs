@@ -3081,13 +3081,12 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let active_tab = app.integrations_panel_tab;
     // #polish 2026-07-06 — tab labels carry counts so users see
     // how many entries are in each pool without switching tabs.
-    let installed_count = app
-        .config
-        .ui
-        .integration_icons
-        .iter()
-        .filter(|ic| ic.enabled)
-        .count();
+    // design-critic 2026-08-06 SEV-high: was `.filter(|ic| ic.enabled)`
+    // — but the Installed tab now renders EVERY installed integration,
+    // enabled AND disabled (with disabled sorted to bottom + dimmed).
+    // Counter must include disabled ones or "Inst (4)" reads while
+    // 6 rows render.
+    let installed_count = app.config.ui.integration_icons.len();
     // Marketplace tab renders TWO groups: (a) installed-but-not-
     // enabled chips at the top, (b) fetched marketplace entries
     // below (dedup'd against installed ids). Counter should reflect
@@ -3116,19 +3115,16 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         .filter_map(|i| crate::integration_detect::integration_binary_for_command(&i.command))
         .map(|s| s.to_string())
         .collect();
-    let disabled_chip_count = app
-        .config
-        .ui
-        .integration_icons
-        .iter()
-        .filter(|ic| !ic.enabled)
-        .count();
+    // design-critic 2026-08-06 SEV-high: was `disabled_chip_count +
+    // unique_marketplace_entries`. Since 2026-08-06, disabled chips
+    // render on Installed (not Marketplace), so the +disabled term
+    // inflates the Marketplace count. Drop it.
     let unique_marketplace_entries = app
         .marketplace_entries
         .iter()
         .filter(|e| !installed_ids_lc.contains(&e.id) && !installed_binaries.contains(&e.id))
         .count();
-    let marketplace_count = disabled_chip_count + unique_marketplace_entries;
+    let marketplace_count = unique_marketplace_entries;
     // vscode-mouse SEV-2 2026-08-05 — was
     //   `" Installed ({N}) "` + `" Marketplace ({M}) "`
     // which needs ~32 chars minimum; the activity panel is ~28 wide
@@ -3383,6 +3379,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         height: area.height.saturating_sub(4),
     };
     app.rects.integrations_panel_area = Some(body_area);
+    // design-critic 2026-08-06 SEV-high: reserve the last column for
+    // the scrollbar so row text can never overlap the `│` track or `█`
+    // thumb. Was rendering rows at full `area.width` and painting the
+    // scrollbar on top, clobbering the last char of every long label.
+    // Every other rail pane in the app (`diagnostics_view`, `grep_view`,
+    // etc.) reserves this column up-front — matching that idiom here.
+    let row_width = area.width.saturating_sub(1);
 
     // Each entry takes 3 rows: glyph+name, command dim, blank.
     // Clamp the scroll so at least one entry stays visible.
@@ -3498,7 +3501,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         let row1 = Rect {
             x: area.x,
             y,
-            width: area.width,
+            width: row_width,
             height: 1,
         };
         let mut name_spans: Vec<Span<'static>> = vec![
@@ -3546,7 +3549,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         let row2 = Rect {
             x: area.x,
             y: y + 1,
-            width: area.width,
+            width: row_width,
             height: 1,
         };
         frame.render_widget(
@@ -3643,7 +3646,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             let row1 = Rect {
                 x: area.x,
                 y,
-                width: area.width,
+                width: row_width,
                 height: 1,
             };
             // #849 UI phase — Official / Community provenance chip
@@ -3706,7 +3709,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             let row2 = Rect {
                 x: area.x,
                 y: y + 1,
-                width: area.width,
+                width: row_width,
                 height: 1,
             };
             let desc = entry.description.as_deref().unwrap_or("(no description)");
