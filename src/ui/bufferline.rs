@@ -936,13 +936,19 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     // request: "if both on it should show both unless user chooses
     // to show only one with right click on icon" — right-click
     // toggles `in_palette_bar` on the integration.
+    // 2026-08-06 — AI cluster chips ONLY check `enabled` (not
+    // `in_palette_bar`). AI chips don't live in the palette-bar gap
+    // — that gate belongs to `paint_integration_chips_in_gap`.
+    // Using both flags here means enable+manifest-preserves-old-flag
+    // creates a mismatched state where the panel says "hidden" but
+    // the cluster paints it (or vice versa).
     let mut ai_kinds: Vec<&'static str> = Vec::new();
     let ic_enabled = |id: &str| -> bool {
         app.config
             .ui
             .integration_icons
             .iter()
-            .any(|ic| ic.id == id && ic.enabled && ic.in_palette_bar)
+            .any(|ic| ic.id == id && ic.enabled)
     };
     if ic_enabled("claude_code") {
         ai_kinds.push("claude_code");
