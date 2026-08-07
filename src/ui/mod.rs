@@ -4421,8 +4421,8 @@ fn icon_for_pane(
         // so the tab icon reads unambiguously as "integration detail"
         // (user 2026-08-06: was a lighthouse-looking glyph).
         Pane::IntegrationDetail(_) => s(if nerd { "\u{F0431}" } else { "◈" }, theme::cur().cyan),
-        // nf-md-chart-line-variant — matches the trend theme.
-        Pane::Coverage(_) => s(if nerd { "\u{F12CE}" } else { "%" }, theme::cur().green),
+        // nf-cod-checklist (EC2E) — matches the coverage-testing theme.
+        Pane::Coverage(_) => s(if nerd { "\u{EC2E}" } else { "%" }, theme::cur().green),
     }
 }
 
