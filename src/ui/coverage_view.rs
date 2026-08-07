@@ -119,11 +119,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     // there is" or 32 (enough for the 12-cell sparkline + 5-wide %
     // + delta arrow + small pad).
     let name_w: u16 = 22;
-    let feats_w: u16 = 8;
     let axis_ideal: u16 = 28;
-    let axis_room = inner.width.saturating_sub(name_w + feats_w + 4) / 2;
+    let axis_room = inner.width.saturating_sub(name_w + 4) / 2;
     let axis_w: u16 = axis_ideal.min(axis_room).max(18);
-    let total_content_w: u16 = name_w + feats_w + axis_w * 2 + 4;
+    let total_content_w: u16 = name_w + axis_w * 2 + 4;
 
     // Sub-header row.
     let sub_y = inner.y + 2;
@@ -131,10 +130,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         let sub = Line::from(vec![
             Span::styled(
                 pad_right("  Surface", name_w as usize),
-                Style::default().fg(t.comment),
-            ),
-            Span::styled(
-                pad_right("Features", feats_w as usize),
                 Style::default().fg(t.comment),
             ),
             Span::styled(
@@ -174,18 +169,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         if row_y >= inner.y + inner.height {
             break;
         }
-        let latest = surface.latest();
-        let features = latest.map(|p| p.features).unwrap_or(0);
         let (api_span_group, ui_span_group) = axis_spans(surface, &t, axis_w as usize);
         let line = Line::from(
             [
                 vec![Span::styled(
                     pad_right(&format!("  {}", surface.name), name_w as usize),
                     Style::default().fg(t.fg),
-                )],
-                vec![Span::styled(
-                    pad_right(&format!("{features}"), feats_w as usize),
-                    Style::default().fg(t.comment),
                 )],
                 api_span_group,
                 ui_span_group,

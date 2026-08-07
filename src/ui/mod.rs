@@ -4010,7 +4010,20 @@ fn paint_leaf_tab_strip_with_hidden(
     // clicks → focus this leaf + split_active(dir).
     // Glyph naming follows the *visual* layout, not the
     // SplitDir axis label. See `bufferline::paint_split_buttons`.
-    let term_glyph = if nerd { "\u{ea85}" } else { "$" };
+    // Route through the custom-glyph map so `[ui] terminal_glyph_svg`
+    // (e.g. ghostty) shows here too — same as bufferline's H/V
+    // split cluster. Was: hardcoded EA85 (nf-cod-terminal) which
+    // reverted the ghostty glyph the moment a pane opened.
+    let term_glyph_owned: String = if nerd {
+        app.integration_glyph_codepoints
+            .get("terminal")
+            .and_then(|&cp| char::from_u32(cp))
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "\u{ea85}".to_string())
+    } else {
+        "$".to_string()
+    };
+    let term_glyph = term_glyph_owned.as_str();
     let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
     let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let dim_fg = t.comment;
