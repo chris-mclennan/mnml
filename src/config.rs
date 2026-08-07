@@ -1173,9 +1173,7 @@ impl Default for Config {
                         fallback: "B".to_string(),
                         command: "browser.open".to_string(),
                         color: "blue".to_string(),
-                        label: Some(
-                            "Browser (CDP Chrome-for-testing; can be captured in mnml)".to_string(),
-                        ),
+                        label: Some("Browser".to_string()),
                         enabled: true,
                         in_palette_bar: true,
                         description: None,
