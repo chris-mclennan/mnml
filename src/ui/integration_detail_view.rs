@@ -446,7 +446,39 @@ pub fn draw(
             // by scrolling; hard cap at ~10k chars keeps the wrap
             // bounded.
             let capped: String = body.chars().take(10_000).collect();
+            // 2026-08-07 — track fenced-code-block state so ASCII UI
+            // mocks / code samples inside triple-backtick fences
+            // don't get their internal whitespace collapsed by
+            // `wrap_paragraph`. User: "text-based depictions of the
+            // apps look bad". Inside a fenced block: emit the source
+            // line verbatim; outside: word-wrap as prose.
+            let mut in_fence = false;
             for raw_line in capped.lines() {
+                let trimmed_start = raw_line.trim_start();
+                if trimmed_start.starts_with("```") {
+                    in_fence = !in_fence;
+                    // Still render the fence marker itself as-is so
+                    // the block visually delimits.
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", Style::default().bg(t.bg_dark)),
+                        Span::styled(
+                            raw_line.to_string(),
+                            Style::default().fg(t.comment).bg(t.bg_dark),
+                        ),
+                    ]));
+                    continue;
+                }
+                if in_fence {
+                    // Verbatim — preserve every internal space.
+                    // Truncate at wrap_w to avoid horizontal overflow;
+                    // callers who need the tail can widen the pane.
+                    let content: String = raw_line.chars().take(wrap_w.max(20)).collect();
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", Style::default().bg(t.bg_dark)),
+                        Span::styled(content, Style::default().fg(t.fg).bg(t.bg_dark)),
+                    ]));
+                    continue;
+                }
                 let trimmed = raw_line.trim_end();
                 if trimmed.is_empty() {
                     lines.push(Line::from(Span::styled(
@@ -506,7 +538,13 @@ pub fn draw(
             .add_modifier(Modifier::DIM),
     )));
 
-    // ── Scroll math: keep the focused actionable row visible. ─
+    // ── Scroll math: cursor-based (keep the focused actionable row
+    // visible) + user-driven `pane.scroll` (wheel / PgUp / PgDn).
+    // 2026-08-07 — was cursor-only, which meant a user's PgDn to page
+    // past the last button did nothing (the cursor is already there,
+    // so the cursor-derived scroll is fixed). Now: the cursor scroll
+    // is a MINIMUM (keeps the cursor visible) and user scroll ADDS
+    // on top, clamped at the max.
     let h = area.height as usize;
     let cursor_line = row_to_action
         .iter()
@@ -516,7 +554,16 @@ pub fn draw(
     let mut scroll = 0usize;
     if lines.len() > h {
         let max_scroll = lines.len() - h;
-        scroll = cursor_line.saturating_sub(h / 2).min(max_scroll);
+        let cursor_scroll = cursor_line.saturating_sub(h / 2).min(max_scroll);
+        let user_scroll = app
+            .panes
+            .get(pane_id)
+            .and_then(|p| match p {
+                Pane::IntegrationDetail(d) => Some(d.scroll),
+                _ => None,
+            })
+            .unwrap_or(0);
+        scroll = cursor_scroll.saturating_add(user_scroll).min(max_scroll);
     }
 
     // ── Register click rects. Buttons are grouped on a row, so
