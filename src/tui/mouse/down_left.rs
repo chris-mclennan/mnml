@@ -1700,6 +1700,13 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.maybe_refresh_ai_usage();
         return;
     }
+    // Statusline coverage chip (#889) → open the Coverage pane.
+    if let Some(r) = app.rects.statusline_coverage_chip
+        && crate::app::dispatch::contains(r, x, y)
+    {
+        app.open_coverage_pane();
+        return;
+    }
     // Statusline mode chip → toggle input style (vim ↔ standard).
     if let Some(r) = app.rects.statusline_mode_chip
         && crate::app::dispatch::contains(r, x, y)

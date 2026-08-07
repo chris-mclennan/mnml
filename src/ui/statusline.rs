@@ -557,6 +557,45 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         ai_codex_seg_idx = Some(right.len());
         right.push(Seg::new(text, fg, t.bg));
     }
+    // Coverage meter — Tattle feature-coverage rollup. Only paints
+    // when trends.json exists at
+    // ~/.tattle-claude-artifacts/feature-coverage/_trends/. Click →
+    // `tattle_coverage.open`. Delta arrow colored green/red by
+    // direction vs 7d ago.
+    app.rects.statusline_coverage_chip = None;
+    app.ensure_coverage_loaded();
+    let mut coverage_seg_idx: Option<usize> = None;
+    if let Some(trends) = app.coverage_trends.as_ref() {
+        let t = theme::cur();
+        let now = trends.overall_current();
+        let prev = trends.overall_at(7);
+        if let Some(now) = now {
+            let (delta_str, fg) = match prev {
+                Some(p) => {
+                    let d = now - p;
+                    let arrow = if d.abs() < 0.05 {
+                        "±"
+                    } else if d > 0.0 {
+                        "▲"
+                    } else {
+                        "▼"
+                    };
+                    let color = if d.abs() < 0.05 {
+                        t.comment
+                    } else if d > 0.0 {
+                        t.green
+                    } else {
+                        t.red
+                    };
+                    (format!(" {arrow}{:.1}", d.abs()), color)
+                }
+                None => (String::new(), t.comment),
+            };
+            let text = format!(" \u{F12CE} {:.0}%{} ", now, delta_str);
+            coverage_seg_idx = Some(right.len());
+            right.push(Seg::new(text, fg, t.bg));
+        }
+    }
     // Now-playing chip — pushed first so it's the leftmost segment of
     // the right cluster (closer to centre). Doubles as the mixr launch
     // button: shows the track from whatever player the background
@@ -1006,6 +1045,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         && w > 0
     {
         app.rects.statusline_ai_codex_chip = Some(Rect {
+            x: right_lane_x + start as u16,
+            y: area.y,
+            width: w as u16,
+            height: 1,
+        });
+    }
+    if let Some(idx) = coverage_seg_idx
+        && let Some(&(start, w)) = right_rects.get(idx)
+        && w > 0
+    {
+        app.rects.statusline_coverage_chip = Some(Rect {
             x: right_lane_x + start as u16,
             y: area.y,
             width: w as u16,

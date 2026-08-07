@@ -2217,6 +2217,8 @@ pub struct PaneRects {
     /// refresh + toast the details.
     pub statusline_ai_claude_chip: Option<Rect>,
     pub statusline_ai_codex_chip: Option<Rect>,
+    /// Coverage rollup chip (#889). Click → `tattle_coverage.open`.
+    pub statusline_coverage_chip: Option<Rect>,
     /// Strip reserved at the top of the editor body for inline
     /// dock widgets at TL / TR corners. Editor body is shrunk by
     /// `height` from the top. `None` = no inline top widgets.
