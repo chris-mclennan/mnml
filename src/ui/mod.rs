@@ -3837,11 +3837,29 @@ fn paint_leaf_tab_strip_with_hidden(
     // Graceful degradation: on narrow leaves the AI chips drop
     // out (Codex first, then Claude) so terminal + splits are
     // never sacrificed. design-critic 2026-07-09 SEV-2.
+    // 2026-08-07 — was: `tab_bar_ai_icon` default of "claude_code"
+    // meant the per-leaf strip auto-rendered a Claude chip even when
+    // the integration was disabled. Result: opening a Pty pane
+    // suddenly showed Claude Code in the split cluster when the user
+    // hadn't enabled it. Now: derive purely from `enabled` state,
+    // matching `paint_split_buttons` in bufferline. `tab_bar_ai_icon`
+    // becomes an override — if user explicitly set it to "none" we
+    // honor that; otherwise it's ignored.
     let ai_kind_cfg = app.config.ui.tab_bar_ai_icon.as_str();
-    let mut ai_button_count: u16 = match ai_kind_cfg {
-        "none" => 0,
-        "both" => 2,
-        _ => 1,
+    let ic_enabled = |id: &str| -> bool {
+        app.config
+            .ui
+            .integration_icons
+            .iter()
+            .any(|ic| ic.id == id && ic.enabled)
+    };
+    let mut ai_button_count: u16 = if ai_kind_cfg == "none" {
+        0
+    } else {
+        [ic_enabled("claude_code"), ic_enabled("codex")]
+            .iter()
+            .filter(|b| **b)
+            .count() as u16
     };
     let base_split_w: u16 = SPLIT_BTN_W * 3;
     while strip.width < base_split_w + ai_button_count * SPLIT_BTN_W && ai_button_count > 0 {
@@ -4071,13 +4089,18 @@ fn paint_leaf_tab_strip_with_hidden(
     // on a 12-cell strip will paint 1 chip (Claude wins), and 9
     // cells will paint 0 chips. Terminal + splits are never
     // dropped.
-    let ai_kinds: Vec<&'static str> = match (ai_kind_cfg, ai_button_count) {
-        ("none", _) | (_, 0) => Vec::new(),
-        ("both", 1) => vec!["claude_code"],
-        ("both", _) => vec!["claude_code", "codex"],
-        ("codex", _) => vec!["codex"],
-        _ => vec!["claude_code"],
-    };
+    // 2026-08-07 — pure enabled-based (matches the top bufferline).
+    // ai_button_count already accounts for width downgrade above; if
+    // ai_button_count == 0 we render nothing.
+    let mut ai_kinds: Vec<&'static str> = Vec::new();
+    if ai_button_count > 0 && ic_enabled("claude_code") {
+        ai_kinds.push("claude_code");
+    }
+    if ai_button_count > 0 && ic_enabled("codex") {
+        ai_kinds.push("codex");
+    }
+    // Trim to ai_button_count in case width already downgraded.
+    ai_kinds.truncate(ai_button_count as usize);
     for kind in &ai_kinds {
         let (ai_glyph, ai_fallback, ai_fg) =
             theme::ai_chip_parts_for(kind, &t, app.config.ui.ai_chip_use_mnml_glyphs);
