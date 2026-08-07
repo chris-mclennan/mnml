@@ -195,32 +195,49 @@ fn fetch_readme_blocking(
                 )
             })
             .unwrap_or((None, None));
+        // Build a candidate list. If the crate's declared `repository`
+        // parses to a github repo, try that first; then always fall
+        // back to the mnml-integrations monorepo `apps/<id>/README.md`
+        // path for `mnml-*` crates (a lot of them declare a
+        // split-out repo that 404s — the monorepo path is the
+        // authoritative source). This keeps us on the RAW MARKDOWN
+        // path so ASCII-art code blocks and fenced sections render
+        // clean, instead of falling through to the crates.io HTML
+        // `/readme` endpoint which mangles alignment on strip.
+        // 2026-08-07 — user reported "text-based depictions of the
+        // apps look bad".
+        let mut candidates: Vec<String> = Vec::new();
         if let Some(url) = repo
             && let Some(rest) = url
                 .trim_end_matches('/')
                 .strip_prefix("https://github.com/")
         {
-            let rest = rest.to_string();
-            let candidates: Vec<String> = ["main", "master"]
-                .iter()
-                .flat_map(|branch| {
-                    vec![
-                        format!("https://raw.githubusercontent.com/{rest}/{branch}/README.md"),
-                        format!(
-                            "https://raw.githubusercontent.com/{rest}/{branch}/apps/{id}/README.md"
-                        ),
-                        format!("https://raw.githubusercontent.com/{rest}/{branch}/{id}/README.md"),
-                    ]
-                })
-                .collect();
-            for raw in candidates {
-                if let Ok(resp) = client.get(&raw).send()
-                    && resp.status().is_success()
-                    && let Ok(body) = resp.text()
-                    && !body.is_empty()
-                {
-                    return ReadmeState::Text(body);
-                }
+            for branch in ["main", "master"] {
+                candidates.push(format!(
+                    "https://raw.githubusercontent.com/{rest}/{branch}/README.md"
+                ));
+                candidates.push(format!(
+                    "https://raw.githubusercontent.com/{rest}/{branch}/apps/{id}/README.md"
+                ));
+                candidates.push(format!(
+                    "https://raw.githubusercontent.com/{rest}/{branch}/{id}/README.md"
+                ));
+            }
+        }
+        if id.starts_with("mnml-") {
+            for branch in ["main", "master"] {
+                candidates.push(format!(
+                    "https://raw.githubusercontent.com/chris-mclennan/mnml-integrations/{branch}/apps/{id}/README.md"
+                ));
+            }
+        }
+        for raw in candidates {
+            if let Ok(resp) = client.get(&raw).send()
+                && resp.status().is_success()
+                && let Ok(body) = resp.text()
+                && !body.is_empty()
+            {
+                return ReadmeState::Text(body);
             }
         }
         if let Some(v) = version {
