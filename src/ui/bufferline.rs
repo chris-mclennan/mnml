@@ -907,7 +907,19 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     //   - `\u{F8B0}` / `\u{F8B1}` — mnml-patched Claude Code / Codex
     //     brand glyphs. Painted only when `[ui] tab_bar_ai_icon` is
     //     set to a non-"none" value.
-    let term_glyph = if nerd { "\u{ea85}" } else { "$" };
+    // Terminal glyph: if the user set `[ui] terminal_glyph_svg` and it
+    // baked into a codepoint, use that; else fall back to
+    // nf-cod-terminal (\u{ea85}).
+    let term_glyph_owned: String = if nerd {
+        app.integration_glyph_codepoints
+            .get("terminal")
+            .and_then(|&cp| char::from_u32(cp))
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "\u{ea85}".to_string())
+    } else {
+        "$".to_string()
+    };
+    let term_glyph = term_glyph_owned.as_str();
     let side_by_side_glyph = if nerd { "\u{eb56}" } else { "|" };
     let stacked_glyph = if nerd { "\u{eb57}" } else { "-" };
     let bg = t.bg_darker;
@@ -917,25 +929,27 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     // without changing config. Each chip registers its own click
     // rect; the handler in tui/mouse dispatches to the right
     // `ai.*_new` command based on which was hit.
-    let ai_kind = app.config.ui.tab_bar_ai_icon.as_str();
-    let mut ai_kinds: Vec<&'static str> = match ai_kind {
-        "none" => Vec::new(),
-        "both" => vec!["claude_code", "codex"],
-        "codex" => vec!["codex"],
-        _ => vec!["claude_code"],
-    };
-    // User report 2026-08-04 — Claude Code / Codex chips were
-    // painting in the top cluster even when the integrations
-    // weren't enabled (mnml core defaults them off; the user hasn't
-    // "installed" them yet). Gate on the enabled state — a chip
-    // that isn't ready to run shouldn't clutter the palette bar.
-    ai_kinds.retain(|kind| {
+    // 2026-08-06 — chip visibility is now driven purely by the
+    // integration's `enabled` + `in_palette_bar` state. Was: gated
+    // by `[ui] tab_bar_ai_icon` which defaulted to "claude_code"
+    // and hid Codex even when the user had enabled it. User
+    // request: "if both on it should show both unless user chooses
+    // to show only one with right click on icon" — right-click
+    // toggles `in_palette_bar` on the integration.
+    let mut ai_kinds: Vec<&'static str> = Vec::new();
+    let ic_enabled = |id: &str| -> bool {
         app.config
             .ui
             .integration_icons
             .iter()
-            .any(|ic| ic.id.as_str() == *kind && ic.enabled)
-    });
+            .any(|ic| ic.id == id && ic.enabled && ic.in_palette_bar)
+    };
+    if ic_enabled("claude_code") {
+        ai_kinds.push("claude_code");
+    }
+    if ic_enabled("codex") {
+        ai_kinds.push("codex");
+    }
     // Drop AI chips one at a time (from the end, i.e. Codex first
     // in "both" mode) until the total width fits. Terminal + H/V
     // are never dropped — they're the load-bearing part of the
@@ -982,7 +996,10 @@ pub fn paint_split_buttons(frame: &mut Frame, app: &mut App, area: Rect) {
     };
     let term_line = Line::from(vec![
         Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(term_glyph, Style::default().fg(t.comment).bg(bg)),
+        Span::styled(
+            term_glyph,
+            Style::default().fg(ratatui::style::Color::White).bg(bg),
+        ),
         Span::styled(" ", Style::default().bg(bg)),
     ]);
     frame.render_widget(Paragraph::new(term_line), term_rect);

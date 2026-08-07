@@ -233,8 +233,23 @@ pub(crate) fn discover(
         });
         used.insert(*cp);
     }
-    // For each discovered SVG, find or assign a codepoint.
-    let mut out: HashMap<String, u32> = HashMap::new();
+    // 2026-08-06 — seed the codepoint map from ALL persisted
+    // assignments, not just currently-discovered SVGs. The SVG can
+    // be purged after bake (font is now newer than the SVG →
+    // `purge_baked_pending_glyphs` deletes it), but the glyph is
+    // still in the font at the assigned codepoint. Paint code needs
+    // the id → codepoint mapping to render it. Was: only populated
+    // for ids with a live SVG in pending-glyphs — terminal glyph
+    // vanished after the first bake.
+    let mut out: HashMap<String, u32> = file
+        .entries
+        .iter()
+        .filter_map(|e| {
+            u32::from_str_radix(&e.codepoint, 16)
+                .ok()
+                .map(|cp| (e.id.clone(), cp))
+        })
+        .collect();
     for (id, _path) in &svgs {
         if let Some(entry) = file.entries.iter().find(|e| &e.id == id)
             && let Ok(cp) = u32::from_str_radix(&entry.codepoint, 16)
@@ -452,12 +467,30 @@ impl App {
             // used by the built-in bake path. Per-sibling overrides
             // are a v2 nicety (would need a `[glyph]` sub-table in
             // the manifest); v1 assumes AWS-shaped square SVGs.
+            // 2026-08-06 — terminal glyph (custom SVG for the H/V
+            // cluster terminal chip) needs slightly larger height +
+            // lower baseline than the AWS default so it lines up
+            // with the H/V split icons visually. User-tuned pixel
+            // shift request.
+            let (width_frac, height_frac, center_frac, center_x_frac) = if id == "terminal" {
+                // Smaller than default + baseline lowered so the glyph
+                // matches the H/V split icons visually. Higher center
+                // = higher on screen (em units up from baseline), so
+                // 0.28 pulls it below the cap-height mid-point.
+                (1.07f32, 0.76f32, 0.30f32, 0.50f32)
+            } else {
+                (1.25f32, 0.80f32, 0.36f32, 0.50f32)
+            };
             args.push("--glyph".to_string());
             args.push(format!(
-                "{}:{:04X}:sibling-{}:width=1.25:height=0.80:center=0.36:x_center=0.50",
+                "{}:{:04X}:sibling-{}:width={:.2}:height={:.2}:center={:.2}:x_center={:.2}",
                 svg_path.display(),
                 cp,
                 id,
+                width_frac,
+                height_frac,
+                center_frac,
+                center_x_frac,
             ));
             // Persist per-bake metadata so the "edit existing" flow
             // in the glyph builder picks up the sibling SVG on
@@ -466,10 +499,10 @@ impl App {
                 codepoint: format!("{cp:04X}"),
                 name: format!("sibling-{id}"),
                 svg: svg_path.to_string_lossy().into_owned(),
-                width_frac: 1.25,
-                height_frac: 0.80,
-                center_frac: 0.36,
-                center_x_frac: 0.50,
+                width_frac,
+                height_frac,
+                center_frac,
+                center_x_frac,
             });
             baked += 1;
         }

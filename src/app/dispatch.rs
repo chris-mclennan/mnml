@@ -1552,6 +1552,13 @@ pub(crate) fn scroll_under(app: &mut App, x: u16, y: u16, delta: i32) {
                 let n = delta.unsigned_abs() as isize;
                 app.integration_detail_cursor_move(d * n);
             }
+            Some(Pane::Coverage(c)) => {
+                if delta < 0 {
+                    c.scroll = c.scroll.saturating_sub(delta.unsigned_abs() as usize);
+                } else {
+                    c.scroll = c.scroll.saturating_add(delta as usize);
+                }
+            }
             Some(Pane::CloudAgentRun(p)) => {
                 // Scroll the logs viewport. Negative delta = scroll up
                 // (older lines); positive = down. Crossing past the

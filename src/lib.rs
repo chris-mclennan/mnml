@@ -50,6 +50,7 @@ pub mod command;
 pub(crate) mod completion;
 pub mod config;
 pub(crate) mod context_menu;
+pub mod coverage;
 pub(crate) mod dap;
 pub mod data_root;
 pub mod e2e;

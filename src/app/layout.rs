@@ -1184,6 +1184,7 @@ impl App {
             Pane::NewCloudAgentWizard(_) => (None, None),
             Pane::NewCloudRunWizard(_) => (None, None),
             Pane::IntegrationDetail(_) => (None, None),
+            Pane::Coverage(_) => (None, None),
         };
         if self.layout().contains(id) {
             self.layout_mut().remove_leaf(id);

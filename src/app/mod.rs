@@ -27,6 +27,7 @@ use crate::tree::Tree;
 pub mod ai;
 mod cdp;
 mod context_menus;
+mod coverage_methods;
 mod dap;
 pub mod discovery;
 pub(crate) mod dispatch;
@@ -3622,6 +3623,14 @@ pub struct App {
     /// per-tick "should I refresh again" check to at most once per
     /// 5 min.
     pub ai_usage_last_refresh_at: u64,
+    /// Tattle Feature Coverage trends — read from
+    /// `~/.tattle-claude-artifacts/feature-coverage/_trends/trends.json`.
+    /// None until first load; hidden UI if the file doesn't exist.
+    pub coverage_trends: Option<crate::coverage::TrendsFile>,
+    /// Unix seconds of the last coverage-trends read; 0 = never loaded.
+    /// Throttles the per-tick re-read (file is written by an out-of-mnml
+    /// cron, no need to poll faster than ~5 min).
+    pub coverage_trends_last_loaded_at: u64,
     /// Unix seconds when the marketplace cache was last successfully
     /// written. 0 means "never fetched this session"; the disk cache
     /// may still be readable.
@@ -5347,6 +5356,8 @@ impl App {
             ai_usage_pending_claude: None,
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
+            coverage_trends: None,
+            coverage_trends_last_loaded_at: 0,
             marketplace_last_fetched: 0,
             pending_install_family_id: None,
             pending_install_after_action: None,
@@ -12394,6 +12405,7 @@ impl App {
             Pane::NewCloudAgentWizard(_) => Some(("+ New Agent from PR".to_string(), false)),
             Pane::NewCloudRunWizard(_) => Some(("+ New Cloud Run".to_string(), false)),
             Pane::IntegrationDetail(d) => Some((d.tab_title(), false)),
+            Pane::Coverage(c) => Some((c.tab_title(), false)),
         }
     }
 

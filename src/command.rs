@@ -5432,6 +5432,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.refresh_marketplace(),
         },
         Command {
+            id: "tattle_coverage.open",
+            title: "Tattle Coverage: per-surface API + UI trend sparklines",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.open_coverage_pane(),
+        },
+        Command {
+            id: "tattle_coverage.refresh",
+            title: "Tattle Coverage: re-read trends.json (bypasses 5-min throttle)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.force_reload_coverage(),
+        },
+        Command {
             id: "launcher.add_local",
             title: "Launcher: add a local chip (glyph / label / :term <cmd>)",
             group: "integrations",
