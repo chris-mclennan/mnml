@@ -112,11 +112,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
         },
     );
 
-    // Column layout for per-surface rows:
-    //   name (18) | feats (7) | API spark+% (25) | UI spark+% (25)
+    // Column layout for per-surface rows. Widths are fixed so
+    // on a wide pane the content stays compact on the left instead
+    // of spreading edge-to-edge — user reported the spread reads as
+    // "weird" at 250+ cols. axis_w picks the smaller of "the room
+    // there is" or 32 (enough for the 12-cell sparkline + 5-wide %
+    // + delta arrow + small pad).
     let name_w: u16 = 22;
     let feats_w: u16 = 8;
-    let axis_w: u16 = ((inner.width.saturating_sub(name_w + feats_w + 4)) / 2).max(20);
+    let axis_ideal: u16 = 28;
+    let axis_room = inner.width.saturating_sub(name_w + feats_w + 4) / 2;
+    let axis_w: u16 = axis_ideal.min(axis_room).max(18);
+    let total_content_w: u16 = name_w + feats_w + axis_w * 2 + 4;
 
     // Sub-header row.
     let sub_y = inner.y + 2;
@@ -144,7 +151,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
             Rect {
                 x: inner.x,
                 y: sub_y,
-                width: inner.width,
+                width: total_content_w.min(inner.width),
                 height: 1,
             },
         );
@@ -157,14 +164,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
     let scroll = pane.scroll;
     let first_row_y = inner.y + 4;
     let visible = inner.height.saturating_sub(4);
-    for (i, surface) in trends
-        .apps
-        .iter()
-        .skip(scroll)
-        .take(visible as usize)
-        .enumerate()
-    {
-        let row_y = first_row_y + i as u16;
+    // 2 lines per row: text + 1-line breather. User feedback:
+    // "maybe not let them get too far apart" — vertical padding
+    // reads more calmly than tight rows.
+    const ROW_STRIDE: u16 = 2;
+    let max_rows = (visible / ROW_STRIDE) as usize;
+    for (i, surface) in trends.apps.iter().skip(scroll).take(max_rows).enumerate() {
+        let row_y = first_row_y + (i as u16) * ROW_STRIDE;
         if row_y >= inner.y + inner.height {
             break;
         }
@@ -191,7 +197,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, id: PaneId, area: Rect, focused: b
             Rect {
                 x: inner.x,
                 y: row_y,
-                width: inner.width,
+                width: total_content_w.min(inner.width),
                 height: 1,
             },
         );
