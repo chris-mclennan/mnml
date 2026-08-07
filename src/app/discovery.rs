@@ -1844,6 +1844,72 @@ enabled = true
     /// them, which the loader discarded as an orphan override.
     /// Fix: promote to a full authored `<id>.toml` when no base
     /// exists.
+    /// 2026-08-07 regression — user report: Claude Code + Codex kept
+    /// getting disabled on every restart. Cause: unconditional cleanup
+    /// of built-in-id manifests nuked the file that `write_override_toml`
+    /// had legitimately written. This test proves an authored manifest
+    /// (real glyph + real command) survives the cleanup call.
+    #[test]
+    fn cleanup_preserves_legitimate_builtin_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
+        let icon = IntegrationIcon {
+            id: "codex".to_string(),
+            glyph: "\u{F1E01}".to_string(),
+            fallback: "\u{276F}_".to_string(),
+            command: "ai.codex".to_string(),
+            color: "cyan".to_string(),
+            label: Some("Codex".to_string()),
+            enabled: true,
+            in_palette_bar: true,
+            description: None,
+            homepage: None,
+            docs: None,
+            repository: None,
+            author: None,
+            version: None,
+            commands: Vec::new(),
+        };
+        let path = write_override_toml(&icon).expect("write");
+        assert!(path.exists(), "manifest written by toggle path");
+        let cleaned = cleanup_retired_id_manifests();
+        assert_eq!(
+            cleaned, 0,
+            "legitimate builtin manifest must not be deleted"
+        );
+        assert!(path.exists(), "codex.toml must survive cleanup");
+    }
+
+    /// 2026-08-07 — the OTHER side of the fix. A pre-c7d781b7 bogus
+    /// scaffold (empty glyph, `<id>.open` command) still gets deleted
+    /// so old broken files don't stick around forever.
+    #[test]
+    fn cleanup_still_deletes_bogus_builtin_scaffold() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _lk = crate::test_env_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _home = crate::EnvGuard::set("HOME", tmp.path());
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
+        let dir = tmp.path().join(".config").join("mnml").join("integrations");
+        std::fs::create_dir_all(&dir).unwrap();
+        let bogus = dir.join("codex.toml");
+        // Signature of the pre-c7d781b7 migration bug: `label = <id>`
+        // + empty glyph + `<id>.open` command.
+        std::fs::write(
+            &bogus,
+            "id = \"codex\"\nlabel = \"codex\"\ncommand = \"codex.open\"\n\n[chip]\nglyph = \"\"\n",
+        )
+        .unwrap();
+        let cleaned = cleanup_retired_id_manifests();
+        assert_eq!(cleaned, 1, "bogus scaffold must be deleted");
+        assert!(!bogus.exists(), "bogus codex.toml should be gone");
+    }
+
     #[test]
     fn write_override_toml_promotes_to_authored_when_no_base() {
         let tmp = tempfile::tempdir().unwrap();
