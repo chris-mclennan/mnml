@@ -1315,6 +1315,11 @@ pub fn rects_dump_json(app: &App) -> String {
         "statusline_ai_codex_chip",
         app.rects.statusline_ai_codex_chip
     );
+    // vscode-mouse r6 (2026-08-07) — coverage rollup chip.
+    one!(
+        "statusline_coverage_chip",
+        app.rects.statusline_coverage_chip
+    );
     one!("statusline_file_chip", app.rects.statusline_file_chip);
     one!(
         "statusline_diagnostics_chip",
