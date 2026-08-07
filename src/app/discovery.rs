@@ -1303,31 +1303,24 @@ fn toml_str(s: &str) -> String {
 /// the chip on every launch. User report 2026-08-04: "why slack keep
 /// com ing back".
 pub fn cleanup_retired_id_manifests() -> usize {
-    // Two categories of bogus files the pre-c7d781b7 migration wrote:
+    // Two categories:
     // 1. Retired ids (bitbucket, linear, gitlab, cypress, slack) —
     //    always safe to delete; mnml core no longer knows about them.
-    // 2. Built-in ids (browser, claude_code, codex) — the migration
-    //    wrote authored manifests with `label = <id>` and empty chip
-    //    fields, which then shadowed mnml core's proper defaults.
-    //    Deleting lets the built-in defaults ("Claude Code", "Codex",
-    //    proper glyph + color) take over. Any user override state is
-    //    already the default (see the pre-existing filter at
-    //    config.rs:2033) so nothing user-authored gets lost.
-    let bogus_ids = [
-        // retired
-        "bitbucket",
-        "linear",
-        "gitlab",
-        "cypress",
-        "slack",
-        // built-in ids that never should have had authored manifests
-        "browser",
-        "claude_code",
-        "codex",
-    ];
+    // 2. Built-in ids (browser, claude_code, codex, http) — only
+    //    delete when the manifest LOOKS BOGUS (pre-c7d781b7 migration
+    //    wrote `label = <id>` + empty glyph + `<id>.open` command,
+    //    which shadowed mnml core's proper defaults). Since 2026-08-06
+    //    `write_override_toml` writes AUTHORITATIVE manifests for
+    //    built-ins (real glyph/label/color/command from Rust
+    //    defaults). Those must NOT get deleted — otherwise the user's
+    //    `enabled = true` toggle for Claude Code / Codex evaporates
+    //    on every startup (user report 2026-08-07: "claude code and
+    //    codex keep getting disabled when I exit").
+    let retired_ids = ["bitbucket", "linear", "gitlab", "cypress", "slack"];
+    let builtin_ids = ["browser", "claude_code", "codex", "http"];
     let dir = crate::data_root::data_root().join("integrations");
     let mut cleaned = 0usize;
-    for id in bogus_ids {
+    for id in retired_ids {
         for suffix in ["toml", "override.toml"] {
             let p = dir.join(format!("{id}.{suffix}"));
             if p.exists() && std::fs::remove_file(&p).is_ok() {
@@ -1335,7 +1328,47 @@ pub fn cleanup_retired_id_manifests() -> usize {
             }
         }
     }
+    for id in builtin_ids {
+        for suffix in ["toml", "override.toml"] {
+            let p = dir.join(format!("{id}.{suffix}"));
+            if p.exists() && manifest_looks_bogus(&p, id) && std::fs::remove_file(&p).is_ok() {
+                cleaned += 1;
+            }
+        }
+    }
     cleaned
+}
+
+/// True when a built-in-id manifest at `path` looks like the pre-
+/// c7d781b7 bogus scaffold — empty glyph, id-as-label, or `<id>.open`
+/// command with no other content. Used by `cleanup_retired_id_manifests`
+/// to distinguish "delete me" old junk from "keep me" real
+/// user-enabled manifests written by `write_override_toml` since
+/// 2026-08-06.
+fn manifest_looks_bogus(path: &std::path::Path, id: &str) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(doc) = toml::from_str::<toml::Value>(&text) else {
+        // Parse failure = we can't tell — leave it alone so the user
+        // can fix it manually rather than losing custom edits silently.
+        return false;
+    };
+    // Bogus scaffold signature: empty/missing chip.glyph field.
+    let glyph_empty = doc
+        .get("chip")
+        .and_then(|c| c.get("glyph"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.is_empty())
+        .unwrap_or(true);
+    // Bogus scaffold signature: command == `<id>.open` (default the
+    // migration wrote when it didn't know the real one).
+    let bogus_command = doc
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(|s| s == format!("{id}.open"))
+        .unwrap_or(false);
+    glyph_empty || bogus_command
 }
 
 pub fn migrate_legacy_integration_icon_blocks() -> Result<(usize, Vec<String>), String> {

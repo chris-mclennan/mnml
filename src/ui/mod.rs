@@ -3115,16 +3115,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         .filter_map(|i| crate::integration_detect::integration_binary_for_command(&i.command))
         .map(|s| s.to_string())
         .collect();
-    // design-critic 2026-08-06 SEV-high: was `disabled_chip_count +
-    // unique_marketplace_entries`. Since 2026-08-06, disabled chips
-    // render on Installed (not Marketplace), so the +disabled term
-    // inflates the Marketplace count. Drop it.
-    let unique_marketplace_entries = app
-        .marketplace_entries
-        .iter()
-        .filter(|e| !installed_ids_lc.contains(&e.id) && !installed_binaries.contains(&e.id))
-        .count();
-    let marketplace_count = unique_marketplace_entries;
+    // 2026-08-07 — count ALL marketplace entries; installed ones now
+    // render dimmed rather than being hidden. Previously subtracted
+    // installed to avoid double-counting (they used to show at top
+    // of the tab); no longer applies. Keeps the count matching what
+    // renders below.
+    let _ = (&installed_ids_lc, &installed_binaries);
+    let marketplace_count = app.marketplace_entries.len();
     // vscode-mouse SEV-2 2026-08-05 — was
     //   `" Installed ({N}) "` + `" Marketplace ({M}) "`
     // which needs ~32 chars minimum; the activity panel is ~28 wide
@@ -3448,9 +3445,12 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             // 9670a164 — unfiltered count let scroll run past the
             // last visible row into blank space.
             let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
+            // 2026-08-07 — count includes installed entries (they now
+            // render dimmed rather than being hidden). Keep in sync
+            // with the marketplace-render loop below.
+            let _ = (&installed_ids, &installed_binaries);
             app.marketplace_entries
                 .iter()
-                .filter(|e| !installed_ids.contains(&e.id) && !installed_binaries.contains(&e.id))
                 .filter(|e| {
                     if filter_lc_mp.is_empty() {
                         return true;
@@ -3626,9 +3626,17 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         let entries_skip = start_idx.saturating_sub(icons.len());
         let mut skipped = 0usize;
         for (idx, entry) in app.marketplace_entries.iter().enumerate() {
-            if installed_ids.contains(&entry.id) || installed_binaries.contains(&entry.id) {
-                continue;
-            }
+            // 2026-08-07 — installed entries stay visible in the
+            // Marketplace list but render greyed with an `[installed]`
+            // tag replacing `[app]`/`[launcher]`/`[driver]`. Click
+            // still opens the detail view (which shows install /
+            // uninstall). Was: `continue` here, so installed items
+            // disappeared entirely from the marketplace tab and users
+            // had no obvious visual for "already installed" (user
+            // report 2026-08-07 — "when an integration is installed
+            // should it remain on marketplace tab but be greyed out").
+            let is_installed =
+                installed_ids.contains(&entry.id) || installed_binaries.contains(&entry.id);
             // Filter by the same query string the icon list uses.
             if !filter_lc_mp.is_empty() {
                 let hay = format!(
@@ -3655,13 +3663,23 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             // as `[driver]` in purple (DB family color) so the
             // marketplace visually groups them apart from apps.
             let is_driver = entry.id.contains("-driver-") || entry.id.ends_with("-driver");
-            let (kind_tag, kind_fg) = if is_driver {
+            let (kind_tag, kind_fg) = if is_installed {
+                ("[installed]", t.green)
+            } else if is_driver {
                 ("[driver]", t.purple)
             } else {
                 match entry.kind {
                     crate::marketplace::MarketplaceKind::App => ("[app]", t.orange),
                     crate::marketplace::MarketplaceKind::Launcher => ("[launcher]", t.cyan),
                 }
+            };
+            // Installed entries dim the whole row so they still read
+            // as "on your system" at a glance vs. installable options.
+            let row_fg = if is_installed { t.comment } else { t.fg };
+            let row_mod = if is_installed {
+                Modifier::DIM
+            } else {
+                Modifier::empty()
             };
             let row1 = Rect {
                 x: area.x,
@@ -3706,7 +3724,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             }
             name_spans.push(Span::styled(
                 entry.label.clone(),
-                Style::default().fg(t.fg).bg(bg),
+                Style::default().fg(row_fg).bg(bg).add_modifier(row_mod),
             ));
             name_spans.push(Span::styled(
                 format!("  {prov_glyph} {prov_label}"),
