@@ -4074,7 +4074,12 @@ fn paint_leaf_tab_strip_with_hidden(
         };
         let line = Line::from(vec![
             Span::styled(" ", Style::default().bg(strip_bg)),
-            Span::styled(term_glyph, Style::default().fg(dim_fg).bg(strip_bg)),
+            Span::styled(
+                term_glyph,
+                Style::default()
+                    .fg(ratatui::style::Color::White)
+                    .bg(strip_bg),
+            ),
             Span::styled(" ", Style::default().bg(strip_bg)),
         ]);
         frame.render_widget(Paragraph::new(line), term_rect);
