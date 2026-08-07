@@ -5451,6 +5451,25 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| app.refresh_integration_manifests(),
         },
+        // 2026-08-07 design-critic r2 #1: keyboard path for the sort
+        // chip. Cycles the ACTIVE tab's sort mode (mirrors what the
+        // click handler does), toasts the new state.
+        Command {
+            id: "integrations.cycle_sort",
+            title: "Integrations: cycle sort mode (active tab)",
+            group: "integrations",
+            keys: &[],
+            run: |app| match app.integrations_panel_tab {
+                crate::app::IntegrationsPanelTab::Installed => {
+                    app.installed_sort = app.installed_sort.cycle();
+                    app.toast(format!("sort: {}", app.installed_sort.label()));
+                }
+                crate::app::IntegrationsPanelTab::Marketplace => {
+                    app.marketplace_sort = app.marketplace_sort.cycle();
+                    app.toast(format!("sort: {}", app.marketplace_sort.label()));
+                }
+            },
+        },
         Command {
             id: "marketplace.refresh",
             title: "Marketplace: refresh (fetch published apps + community launchers)",

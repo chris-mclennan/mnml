@@ -2263,10 +2263,13 @@ fn draw_bottom_panel(frame: &mut Frame, app: &mut App, area: Rect) {
         height: 1,
     };
     let hosted = app.bottom_panel_panes.len();
+    // 2026-08-07 design-critic r2 #2: was advertising a right-click
+    // "Dock to → Bottom" flow that doesn't exist yet (not even on the
+    // right panel). Cut to what's true today.
     let title = if hosted == 0 {
-        "  BOTTOM  ·  empty — dock a pane here (right-click a tab → Dock to → Bottom)".to_string()
+        "  BOTTOM".to_string()
     } else {
-        format!("  BOTTOM  ·  {hosted} pane(s)  (slice C wires tab strip)")
+        format!("  BOTTOM  ·  {hosted} pane(s)")
     };
     frame.render_widget(
         Paragraph::new(title).style(
@@ -2303,12 +2306,9 @@ fn draw_bottom_panel(frame: &mut Frame, app: &mut App, area: Rect) {
             width: area.width.saturating_sub(4),
             height: area.height.saturating_sub(3),
         };
-        let hint = "This is the bottom panel — a new home for docked \
-                    tools like Coverage detail,\nlog tails, mini terminals, or \
-                    any Pane you want out of the way of the code area.\n\n\
-                    Use `view.toggle_bottom_panel` (Ctrl+Shift+J) to hide.\n\
-                    Slice C will add: right-click any tab → \"Dock to → Bottom\", \
-                    plus `view.dock_to_bottom` in the palette.";
+        let hint = "The bottom panel is empty. Docking a pane here \
+                    isn't wired yet.\n\n\
+                    Ctrl+Shift+J hides this panel.";
         frame.render_widget(
             Paragraph::new(hint)
                 .style(Style::default().fg(t.comment).bg(bg))
@@ -3885,7 +3885,13 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             // marketplace visually groups them apart from apps.
             let is_driver = entry.id.contains("-driver-") || entry.id.ends_with("-driver");
             let (kind_tag, kind_fg) = if is_installed {
-                ("[installed]", t.green)
+                // 2026-08-07 design-critic r2 #4: was `t.green` which
+                // collided with `✓ Official`'s green two spans over
+                // (both at full brightness — the dim modifier only
+                // reaches the label text between them). `t.comment`
+                // bold matches the "already on your system, secondary
+                // information" tone.
+                ("[installed]", t.comment)
             } else if is_driver {
                 ("[driver]", t.purple)
             } else {

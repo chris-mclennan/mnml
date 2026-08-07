@@ -1587,10 +1587,13 @@ impl InstalledSort {
         }
     }
     pub fn label(self) -> &'static str {
+        // 2026-08-07 design-critic r2 #1: trailing `▾` matches every
+        // other cycle-chip in the app (workspace pill, HTTP env chip,
+        // Agents time-range). Leading `⇅` was reading as a static icon.
         match self {
-            Self::Default => "⇅ Default",
-            Self::Name => "⇅ A-Z",
-            Self::EnabledFirst => "⇅ Enabled first",
+            Self::Default => "Default ▾",
+            Self::Name => "A-Z ▾",
+            Self::EnabledFirst => "Enabled first ▾",
         }
     }
 }
@@ -1619,10 +1622,10 @@ impl MarketplaceSort {
     }
     pub fn label(self) -> &'static str {
         match self {
-            Self::Default => "⇅ Default",
-            Self::Name => "⇅ A-Z",
-            Self::OfficialFirst => "⇅ Official first",
-            Self::Kind => "⇅ By kind",
+            Self::Default => "Default ▾",
+            Self::Name => "A-Z ▾",
+            Self::OfficialFirst => "Official first ▾",
+            Self::Kind => "By kind ▾",
         }
     }
 }

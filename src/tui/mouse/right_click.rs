@@ -1172,16 +1172,21 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         let items = if let Some(e) = entry {
             let is_installed = app.config.ui.integration_icons.iter().any(|i| i.id == e.id);
             let _ = &e;
-            let mut items = vec![MenuItem::new(
-                "View details",
-                MenuAction::Command("marketplace.open_detail_focused"),
-            )];
+            // 2026-08-07 design-critic r2 #3: lead with the state-
+            // changing action (Install) when it's meaningful, matching
+            // integration-chip menu convention. View details demoted
+            // to second — it's a pure duplicate of left-click.
+            let mut items: Vec<MenuItem> = Vec::new();
             if !is_installed {
                 items.push(MenuItem::new(
                     "Install",
                     MenuAction::Command("marketplace.install_focused"),
                 ));
             }
+            items.push(MenuItem::new(
+                "View details",
+                MenuAction::Command("marketplace.open_detail_focused"),
+            ));
             items.push(MenuItem::new(
                 "Copy id",
                 MenuAction::Command("marketplace.copy_id_focused"),
