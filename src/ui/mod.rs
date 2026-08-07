@@ -3100,6 +3100,22 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .map(|i| i.id.clone())
         .collect();
+    // 2026-08-06 — also treat a marketplace entry as installed when
+    // its crate id matches an installed integration's underlying
+    // binary. mnml-tracker-jira installs THREE manifests
+    // (jira_boards / jira_work / jira_fix_versions), so id-only
+    // dedup left mnml-tracker-jira listed under Marketplace after
+    // install. Now: any installed integration whose command routes
+    // through `:term <binary>` blocks a marketplace entry with the
+    // same id from appearing.
+    let installed_binaries: std::collections::HashSet<String> = app
+        .config
+        .ui
+        .integration_icons
+        .iter()
+        .filter_map(|i| crate::integration_detect::integration_binary_for_command(&i.command))
+        .map(|s| s.to_string())
+        .collect();
     let disabled_chip_count = app
         .config
         .ui
@@ -3110,7 +3126,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let unique_marketplace_entries = app
         .marketplace_entries
         .iter()
-        .filter(|e| !installed_ids_lc.contains(&e.id))
+        .filter(|e| !installed_ids_lc.contains(&e.id) && !installed_binaries.contains(&e.id))
         .count();
     let marketplace_count = disabled_chip_count + unique_marketplace_entries;
     // vscode-mouse SEV-2 2026-08-05 — was
@@ -3393,6 +3409,16 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 .iter()
                 .map(|i| i.id.clone())
                 .collect();
+            let installed_binaries: std::collections::HashSet<String> = app
+                .config
+                .ui
+                .integration_icons
+                .iter()
+                .filter_map(|i| {
+                    crate::integration_detect::integration_binary_for_command(&i.command)
+                })
+                .map(|s| s.to_string())
+                .collect();
             // Apply the SAME filter the render loop uses so max_scroll
             // and entries_skip stay in sync when the user has an
             // integrations-panel filter active. Reviewer flag on
@@ -3401,7 +3427,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             let filter_lc_mp = app.integrations_panel_filter.to_ascii_lowercase();
             app.marketplace_entries
                 .iter()
-                .filter(|e| !installed_ids.contains(&e.id))
+                .filter(|e| !installed_ids.contains(&e.id) && !installed_binaries.contains(&e.id))
                 .filter(|e| {
                     if filter_lc_mp.is_empty() {
                         return true;
@@ -3556,6 +3582,14 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             .iter()
             .map(|i| i.id.clone())
             .collect();
+        let installed_binaries: std::collections::HashSet<String> = app
+            .config
+            .ui
+            .integration_icons
+            .iter()
+            .filter_map(|i| crate::integration_detect::integration_binary_for_command(&i.command))
+            .map(|s| s.to_string())
+            .collect();
         // vscode-mouse r4 SEV-1 (2026-08-06) — scroll now advances
         // past the icons list into marketplace_entries. Prior code
         // painted entries starting at whatever `y` icons left off,
@@ -3569,7 +3603,7 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         let entries_skip = start_idx.saturating_sub(icons.len());
         let mut skipped = 0usize;
         for (idx, entry) in app.marketplace_entries.iter().enumerate() {
-            if installed_ids.contains(&entry.id) {
+            if installed_ids.contains(&entry.id) || installed_binaries.contains(&entry.id) {
                 continue;
             }
             // Filter by the same query string the icon list uses.

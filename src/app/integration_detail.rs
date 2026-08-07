@@ -133,7 +133,12 @@ fn fetch_readme_blocking(
     is_marketplace_app: bool,
 ) -> ReadmeState {
     let client = reqwest::blocking::Client::builder()
-        .user_agent(format!("mnml-readme-fetch/{}", env!("CARGO_PKG_VERSION")))
+        // crates.io rejects generic user-agents with 403. Follows the
+        // "App (contact)" convention documented in their crawler policy.
+        .user_agent(format!(
+            "mnml/{} (https://github.com/chris-mclennan/mnml)",
+            env!("CARGO_PKG_VERSION")
+        ))
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .ok();
@@ -159,16 +164,74 @@ fn fetch_readme_blocking(
             }
         }
     }
-    // Path B: crates.io app fallback. Same endpoint the crates.io
-    // web UI uses to render the README on the crate page.
+    // Path B: crates.io app fallback. The `/readme` endpoint requires
+    // a version segment (crates.io returns 400 without it), so we
+    // fetch the crate metadata first to get `max_stable_version` +
+    // `repository`, then try:
+    //   1. github raw README.md on main / master (repo root)
+    //   2. github raw apps/<id>/README.md (monorepo pattern —
+    //      mnml-integrations layout)
+    //   3. versioned crates.io /readme endpoint as last resort
+    // 2026-08-06: was the version-less `/readme` URL which always
+    // 400'd, so marketplace-only entries silently rendered without
+    // their README.
     if is_marketplace_app {
-        let url = format!("https://crates.io/api/v1/crates/{id}/readme");
-        if let Ok(resp) = client.get(&url).send()
-            && resp.status().is_success()
-            && let Ok(body) = resp.text()
-            && !body.is_empty()
+        let meta_url = format!("https://crates.io/api/v1/crates/{id}");
+        let (repo, version) = client
+            .get(&meta_url)
+            .send()
+            .ok()
+            .and_then(|r| r.text().ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .map(|v| {
+                let c = v.get("crate").cloned().unwrap_or_default();
+                (
+                    c.get("repository")
+                        .and_then(|s| s.as_str())
+                        .map(String::from),
+                    c.get("max_stable_version")
+                        .and_then(|s| s.as_str())
+                        .map(String::from),
+                )
+            })
+            .unwrap_or((None, None));
+        if let Some(url) = repo
+            && let Some(rest) = url
+                .trim_end_matches('/')
+                .strip_prefix("https://github.com/")
         {
-            return ReadmeState::Text(body);
+            let rest = rest.to_string();
+            let candidates: Vec<String> = ["main", "master"]
+                .iter()
+                .flat_map(|branch| {
+                    vec![
+                        format!("https://raw.githubusercontent.com/{rest}/{branch}/README.md"),
+                        format!(
+                            "https://raw.githubusercontent.com/{rest}/{branch}/apps/{id}/README.md"
+                        ),
+                        format!("https://raw.githubusercontent.com/{rest}/{branch}/{id}/README.md"),
+                    ]
+                })
+                .collect();
+            for raw in candidates {
+                if let Ok(resp) = client.get(&raw).send()
+                    && resp.status().is_success()
+                    && let Ok(body) = resp.text()
+                    && !body.is_empty()
+                {
+                    return ReadmeState::Text(body);
+                }
+            }
+        }
+        if let Some(v) = version {
+            let versioned = format!("https://crates.io/api/v1/crates/{id}/{v}/readme");
+            if let Ok(resp) = client.get(&versioned).send()
+                && resp.status().is_success()
+                && let Ok(body) = resp.text()
+                && !body.is_empty()
+            {
+                return ReadmeState::Text(body);
+            }
         }
     }
     ReadmeState::NotFound
