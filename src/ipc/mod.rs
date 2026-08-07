@@ -1722,6 +1722,7 @@ pub fn status_json(app: &App) -> String {
         crate::focus::Focus::Tree => "tree",
         crate::focus::Focus::Pane => "pane",
         crate::focus::Focus::RightPanel => "right_panel",
+        crate::focus::Focus::BottomPanel => "bottom_panel",
     };
     let active_file = app
         .active_editor()

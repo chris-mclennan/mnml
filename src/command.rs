@@ -1774,6 +1774,29 @@ fn builtin_commands() -> Vec<Command> {
         // idiom (Focus panel-of-kind chord). If the panel is
         // currently invisible, this opens it too.
         Command {
+            // 2026-08-07 — dockable panes Phase 1 slice B. Bottom
+            // panel mirrors right_panel structure. See
+            // docs/design/dockable-panes.md.
+            id: "view.toggle_bottom_panel",
+            title: "Toggle the bottom panel",
+            group: "view",
+            keys: &["Ctrl+Shift+J"],
+            run: |app| {
+                app.bottom_panel_visible = !app.bottom_panel_visible;
+                if !app.bottom_panel_visible {
+                    // Drain hosted panes so they don't linger as
+                    // ghost bufferline entries after hide (mirrors
+                    // the right_panel close-on-hide behavior added
+                    // in the 2026-06-28 keyboard-verifier pass).
+                    app.bottom_panel_panes.clear();
+                    app.bottom_panel_active_idx = 0;
+                    if app.focus == crate::focus::Focus::BottomPanel {
+                        app.focus = crate::focus::Focus::Pane;
+                    }
+                }
+            },
+        },
+        Command {
             id: "view.focus_right_panel",
             title: "Focus the right side panel",
             group: "view",
@@ -2498,10 +2521,14 @@ fn builtin_commands() -> Vec<Command> {
             run: |_| {},
         },
         Command {
+            // 2026-08-07 vscode-kbd r1 SEV-2 — also bind Ctrl+O to
+            // match VS Code's "Open File…" muscle memory. Ctrl+P is
+            // the fuzzy-open flow (mnml keeps both mapped to the
+            // same picker for simplicity).
             id: "picker.files",
             title: "Open file…",
             group: "go",
-            keys: &["ctrl+p"],
+            keys: &["ctrl+p", "ctrl+o"],
             run: |app| app.open_file_picker(),
         },
         Command {

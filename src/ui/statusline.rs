@@ -1279,6 +1279,7 @@ fn mode_chip(app: &App) -> (&'static str, Color) {
                 }
             }
             Focus::RightPanel => ("PANEL", theme::cur().cyan),
+            Focus::BottomPanel => ("BOTTOM", theme::cur().cyan),
         },
     }
 }

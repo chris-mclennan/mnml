@@ -105,6 +105,9 @@ fn pick_help_text(app: &App) -> (String, Option<String>) {
         crate::focus::Focus::RightPanel => {
             "right panel focus — arrows walk rows · Enter jumps · Ctrl+E cycles focus"
         }
+        crate::focus::Focus::BottomPanel => {
+            "bottom panel focus — arrows walk rows · Ctrl+Shift+J hides · Ctrl+E cycles focus"
+        }
     };
     (hint.to_string(), None)
 }

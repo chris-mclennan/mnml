@@ -12,6 +12,10 @@ pub enum Focus {
     /// through this when present. keyboard-round-7 SEV-2 #1 —
     /// previously the right panel had no keyboard focus path.
     RightPanel,
+    /// 2026-08-07 — bottom panel (dockable panes Phase 1). Only
+    /// reachable when `App::bottom_panel_visible`. Ctrl+E cycle
+    /// visits it after RightPanel when present.
+    BottomPanel,
     // Picker, Palette, Prompt,  // overlay tracks
 }
 
@@ -37,6 +41,7 @@ impl Focus {
                 }
             }
             Focus::RightPanel => Focus::Tree,
+            Focus::BottomPanel => Focus::Tree,
         }
     }
 }

@@ -267,8 +267,35 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(hover_help_h),
     ])
     .split(area);
-    let (palette_bar_area, upper, statusline_area, cmdline_bar_area, hover_help_area) =
+    let (palette_bar_area, mut upper, statusline_area, cmdline_bar_area, hover_help_area) =
         (v[0], v[1], v[2], v[3], v[4]);
+
+    // 2026-08-07 — bottom panel (dockable panes Phase 1). Carve
+    // `bottom_panel_height` rows off the bottom of `upper` if
+    // visible. Clamped so it never eats more than 2/3 of the
+    // upper area (leaves reasonable editor room even at silly
+    // heights). See docs/design/dockable-panes.md.
+    let bottom_panel_area: Option<Rect> = if app.bottom_panel_visible && upper.height >= 6 {
+        let requested = app.bottom_panel_height.max(3);
+        let max_allowed = (upper.height as u32 * 2 / 3) as u16;
+        let h = requested.min(max_allowed).max(3);
+        let split_y = upper.y + upper.height - h;
+        let panel = Rect {
+            x: upper.x,
+            y: split_y,
+            width: upper.width,
+            height: h,
+        };
+        upper = Rect {
+            x: upper.x,
+            y: upper.y,
+            width: upper.width,
+            height: upper.height - h,
+        };
+        Some(panel)
+    } else {
+        None
+    };
 
     if palette_bar_visible {
         draw_palette_bar(frame, app, palette_bar_area);
@@ -1332,6 +1359,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // ── statusline ──
+    // 2026-08-07 — bottom panel body (Phase 1 slice B). Empty
+    // placeholder for now; slice C wires "dock focused pane here"
+    // via right-click and a palette command. Docs:
+    // docs/design/dockable-panes.md.
+    if let Some(panel_area) = bottom_panel_area {
+        draw_bottom_panel(frame, app, panel_area);
+    }
     statusline::draw(frame, app, statusline_area);
     app.rects.statusline = Some(statusline_area);
 
@@ -2194,6 +2228,94 @@ fn paint_integration_chips_in_gap(
     // via the Integrations activity-bar section instead.
     let _ = x;
     app.rects.palette_add_integration_button = None;
+}
+
+/// 2026-08-07 — bottom panel body (dockable panes Phase 1 slice B).
+/// Empty-state renderer for now: a bordered box with a header row and
+/// a friendly hint. Slice C wires "dock focused pane here" via
+/// right-click + a palette command; slice D adds a proper tab strip
+/// for multi-pane hosting like right_panel_panes.
+fn draw_bottom_panel(frame: &mut Frame, app: &mut App, area: Rect) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+    let t = theme::cur();
+    let bg = t.bg;
+    use ratatui::style::Color;
+    // Fill the whole area with bg so nothing bleeds through.
+    let filler = " ".repeat(area.width as usize);
+    for row_y in 0..area.height {
+        frame.render_widget(
+            Paragraph::new(filler.clone()).style(Style::default().bg(bg)),
+            Rect {
+                x: area.x,
+                y: area.y + row_y,
+                width: area.width,
+                height: 1,
+            },
+        );
+    }
+    // 1-row header at the top with the panel title + close chip.
+    let header_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    let hosted = app.bottom_panel_panes.len();
+    let title = if hosted == 0 {
+        "  BOTTOM  ·  empty — dock a pane here (right-click a tab → Dock to → Bottom)".to_string()
+    } else {
+        format!("  BOTTOM  ·  {hosted} pane(s)  (slice C wires tab strip)")
+    };
+    frame.render_widget(
+        Paragraph::new(title).style(
+            Style::default()
+                .fg(t.comment)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+        header_area,
+    );
+    // Close chip on the top right.
+    if area.width >= 5 {
+        let close_rect = Rect {
+            x: area.x + area.width - 4,
+            y: area.y,
+            width: 3,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(" × ").style(
+                Style::default()
+                    .fg(Color::Red)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            close_rect,
+        );
+    }
+    // Body — empty-state hint. Later: hosted pane render.
+    if hosted == 0 && area.height >= 3 {
+        let body_area = Rect {
+            x: area.x + 2,
+            y: area.y + 2,
+            width: area.width.saturating_sub(4),
+            height: area.height.saturating_sub(3),
+        };
+        let hint = "This is the bottom panel — a new home for docked \
+                    tools like Coverage detail,\nlog tails, mini terminals, or \
+                    any Pane you want out of the way of the code area.\n\n\
+                    Use `view.toggle_bottom_panel` (Ctrl+Shift+J) to hide.\n\
+                    Slice C will add: right-click any tab → \"Dock to → Bottom\", \
+                    plus `view.dock_to_bottom` in the palette.";
+        frame.render_widget(
+            Paragraph::new(hint)
+                .style(Style::default().fg(t.comment).bg(bg))
+                .wrap(ratatui::widgets::Wrap { trim: false }),
+            body_area,
+        );
+    }
 }
 
 fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -3133,35 +3255,45 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let full_marketplace = format!(" Marketplace ({marketplace_count}) ");
     let compact_installed = format!(" Inst ({installed_count}) ");
     let compact_marketplace = format!(" Mkt ({marketplace_count}) ");
+    // 2026-08-07 nvchad-r1 SEV-2: still-clipping refresh at width ≤22.
+    // Add a THIRD compactness tier that drops the parenthesized counts,
+    // so refresh stays visible down to ~15-cell widths.
+    let tiny_installed = " Inst ".to_string();
+    let tiny_marketplace = " Mkt ".to_string();
     let full_total = full_installed.chars().count() + full_marketplace.chars().count();
     let compact_total = compact_installed.chars().count() + compact_marketplace.chars().count();
-    // Refresh chip is 3 chars (" ⟳ "). Priority ladder: prefer showing the
-    // refresh button over showing the long labels, since refresh is a
-    // frequent action and Inst/Mkt read fine. vscode-user 2026-08-07:
-    // at a middle width the refresh disappeared while labels stayed full,
-    // then reappeared when the panel got narrower (labels shrunk to compact
-    // and refresh fit again). Fix: shrink labels FIRST, drop refresh LAST.
+    let tiny_total = tiny_installed.chars().count() + tiny_marketplace.chars().count();
+    // Refresh chip is 3 chars (" ⟳ "). Priority ladder: prefer showing
+    // refresh over long labels since refresh is a frequent action and
+    // Inst/Mkt reads unambiguously.
     let refresh_w_usize: usize = 3;
     let width_usize = area.width as usize;
-    let (use_compact, show_refresh) = if full_total + refresh_w_usize <= width_usize {
-        (false, true)
+    #[derive(Clone, Copy)]
+    enum Tier {
+        Full,
+        Compact,
+        Tiny,
+    }
+    let (tier, show_refresh) = if full_total + refresh_w_usize <= width_usize {
+        (Tier::Full, true)
     } else if compact_total + refresh_w_usize <= width_usize {
-        (true, true)
+        (Tier::Compact, true)
+    } else if tiny_total + refresh_w_usize <= width_usize {
+        (Tier::Tiny, true)
     } else if full_total <= width_usize {
-        (false, false)
+        (Tier::Full, false)
+    } else if compact_total <= width_usize {
+        (Tier::Compact, false)
     } else {
-        (true, false)
+        (Tier::Tiny, false)
     };
-    let installed_label = if use_compact {
-        compact_installed
-    } else {
-        full_installed
+    let (installed_label, marketplace_label) = match tier {
+        Tier::Full => (full_installed, full_marketplace),
+        Tier::Compact => (compact_installed, compact_marketplace),
+        Tier::Tiny => (tiny_installed, tiny_marketplace),
     };
-    let marketplace_label = if use_compact {
-        compact_marketplace
-    } else {
-        full_marketplace
-    };
+    let use_compact = matches!(tier, Tier::Compact | Tier::Tiny);
+    let _ = use_compact; // retained for downstream readability
     let installed_w = installed_label.chars().count() as u16;
     let marketplace_w = marketplace_label.chars().count() as u16;
     let installed_rect = Rect {
