@@ -934,7 +934,22 @@ impl PtySession {
             return None;
         }
         const CYCLE_MS: u128 = 110;
-        const CLAUDE_FRAMES: &[char] = &['✳', '✢', '✳', '✶', '✻', '✽', '✻', '✶'];
+        // 2026-08-08 — swapped from raw Unicode dingbats (✳✢✶✻✽) to
+        // mnml-owned baked glyphs at F1E10..F1E14. The dingbats came
+        // from ghostty's fallback font at the text baseline, which put
+        // them visually below the tab's "Claude Code" label; the new
+        // set is baked with `center_frac = 0.36` (Latin cap-mid) so
+        // they sit vertically aligned with the caps.
+        const CLAUDE_FRAMES: &[char] = &[
+            '\u{F1E10}', // ~✳ 4-spoke
+            '\u{F1E11}', // ~✢ 4-spoke + hub
+            '\u{F1E10}',
+            '\u{F1E12}', // ~✶ 6-spoke
+            '\u{F1E13}', // ~✻ 8-spoke
+            '\u{F1E14}', // ~✽ 8-spoke + hub
+            '\u{F1E13}',
+            '\u{F1E12}',
+        ];
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         let start = START.get_or_init(std::time::Instant::now);
         let ms = std::time::Instant::now().duration_since(*start).as_millis();

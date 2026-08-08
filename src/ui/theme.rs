@@ -255,10 +255,41 @@ pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, rata
     // brand coral so the split-cluster AI chip matches the tab-glyph
     // color used by `pty_icon` (which also hardcodes this RGB when
     // the pane's integration_id is claude_code).
-    let claude_coral = ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51);
     match kind {
         "codex" => ("\u{F8B1}", "C", t.cyan),
-        _ => ("\u{F8B0}", "*", claude_coral),
+        _ => (
+            "\u{F8B0}",
+            "*",
+            brand_color_for_builtin("claude_code").unwrap_or(t.orange),
+        ),
+    }
+}
+
+/// 2026-08-08 — single source of truth for the brand color of every
+/// first-party built-in integration. Any renderer that draws a chip,
+/// row, or tab for a built-in id (`claude_code`, `codex`, `browser`,
+/// `http`) MUST consult this first and only fall back to the manifest's
+/// `color` field for third-party integrations. Prevents the "split-
+/// cluster chip is coral but the installed-list row is blue" class of
+/// drift the user reported: the two call sites used to hardcode the
+/// color in one place and read the manifest in the other, so a stale
+/// manifest / bad hex parse could make them disagree.
+///
+/// None → not a built-in; caller must fall back to `color_from_slot`
+/// on the manifest's color field.
+pub fn brand_color_for_builtin(id: &str) -> Option<ratatui::style::Color> {
+    use ratatui::style::Color;
+    match id {
+        // Anthropic Claude brand orange (RGB 209,109,81).
+        "claude_code" => Some(Color::Rgb(0xD1, 0x6D, 0x51)),
+        // Codex uses the cyan of the current theme — mnml has no
+        // published brand for it and matching the theme keeps it
+        // readable across themes.
+        "codex" => Some(cur().cyan),
+        // Browser + http don't have brand colors — first-party but
+        // theme-driven. Return None so caller falls through to the
+        // manifest color (which those manifests set to "blue").
+        _ => None,
     }
 }
 
@@ -272,10 +303,13 @@ pub fn ai_chip_parts_for(
     use_mnml: bool,
 ) -> (&'static str, &'static str, ratatui::style::Color) {
     if use_mnml {
-        let claude_coral = ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51);
         match kind {
             "codex" => ("\u{F1E01}", "C", t.cyan),
-            _ => ("\u{F1E00}", "*", claude_coral),
+            _ => (
+                "\u{F1E00}",
+                "*",
+                brand_color_for_builtin("claude_code").unwrap_or(t.orange),
+            ),
         }
     } else {
         ai_chip_parts(kind, t)

@@ -3684,7 +3684,14 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             icon.fallback.as_str()
         };
-        let fg = theme::color_from_slot(icon.color.as_str(), &t);
+        // 2026-08-08 — built-in chips get their color from the
+        // single-source-of-truth `brand_color_for_builtin` so this row
+        // can't drift from the split-cluster chip, palette-bar chip,
+        // or Pty tab glyph. Falls back to the manifest color slot for
+        // third-party integrations (and for first-party ids that don't
+        // declare a brand color, like browser/http).
+        let fg = theme::brand_color_for_builtin(&icon.id)
+            .unwrap_or_else(|| theme::color_from_slot(icon.color.as_str(), &t));
         let name = icon
             .label
             .as_deref()
@@ -3765,8 +3772,27 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
             width: row_width,
             height: 1,
         };
+        // 2026-08-08 — user asked to show the clean `<id>.open` form
+        // instead of the raw `:term …` shell command for sibling
+        // integrations. `icon.command` still holds the raw string
+        // because the "Add to activity bar" flow gates on the
+        // `:term ` prefix; only the DISPLAY changes here.
+        // Precedence: first manifest command's id (`bitbucket_prs.open`),
+        // else derive `<icon.id>.open`, else fall back to raw command.
+        let subtitle = icon
+            .commands
+            .first()
+            .map(|c| c.id.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if icon.command.starts_with(":term ") || icon.command.starts_with("term ") {
+                    format!("{}.open", icon.id)
+                } else {
+                    icon.command.clone()
+                }
+            });
         frame.render_widget(
-            Paragraph::new(ratatui::text::Line::from(format!("    {}", icon.command))).style(
+            Paragraph::new(ratatui::text::Line::from(format!("    {subtitle}"))).style(
                 Style::default()
                     .fg(t.comment)
                     .bg(bg)
@@ -4622,7 +4648,12 @@ fn pty_icon(
     // for the resolved-sibling path: force coral when the pane's
     // integration_id is claude_code, so the animation reads as Claude's
     // brand regardless of manifest state.
-    let claude_coral = ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51);
+    // 2026-08-08 — single source of truth for the Claude brand color
+    // (see `theme::brand_color_for_builtin`). Was a local `Rgb(…)`
+    // constant hardcoded here, which the user rightly complained about
+    // ("why aren't they controlled together").
+    let claude_coral = theme::brand_color_for_builtin("claude_code")
+        .unwrap_or(ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51));
     let force_claude_color = s
         .profile
         .integration_id
@@ -4644,9 +4675,6 @@ fn pty_icon(
             g.to_string(),
             if force_claude_color { claude_coral } else { c },
         ),
-        // Static path — the sibling glyph (F1E00 for Claude, wide nerd
-        // font) reads fine at the bufferline's default 1-cell gap;
-        // never add an extra trailing space here.
         (Some((g, c)), _, _) if nerd => (g, if force_claude_color { claude_coral } else { c }),
         (None, Some(g), _) if nerd => (
             g.to_string(),

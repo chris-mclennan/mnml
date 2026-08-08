@@ -193,6 +193,9 @@ def main() -> int:
         target_center = em * center_frac
         dy = target_center - (bbox[1] + glyph_h / 2.0)
         glyph.transform((1.0, 0.0, 0.0, 1.0, dx, dy))
+        # 2026-08-08 — tried 2× advance for F1E00 to reserve 2 cells;
+        # ghostty ignores font-advance for PUA codepoints (uses Unicode
+        # EastAsianWidth, "N" = neutral = 1 cell). Reverted.
         glyph.width = cell_w
         glyph.correctDirection()
         glyph.simplify()

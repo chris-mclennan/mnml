@@ -695,10 +695,16 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         // dead-center anchor.
         name: "ai-claude-spark",
         svg_relpath: "assets/glyphs/ai/claude-spark.svg",
-        width_frac: 1.55,
-        height_frac: 1.55,
+        // 2026-08-08 — settled at 1-cell width after the tuning spiral
+        // (center_x_frac nudges rounded to whole-pixel boundaries in
+        // ghostty and never actually shifted the icon). At 1.0 the
+        // glyph fits inside its cell, ghostty places it dead-center
+        // like every other nerd-font icon, and Claude visually
+        // matches its siblings in the list.
+        width_frac: 1.35,
+        height_frac: 1.35,
         center_frac: 0.30,
-        center_x_frac: 0.50,
+        center_x_frac: 0.35,
     },
     BuiltinGlyph {
         codepoint: 0xF1E01,
@@ -707,6 +713,58 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
         width_frac: 1.20,
         height_frac: 0.75,
         center_frac: 0.28,
+        center_x_frac: 0.5,
+    },
+    // 2026-08-08 — Claude thinking-spinner frames, mnml-owned so we can
+    // set `center_frac = 0.36` (Latin cap-mid) and align vertically with
+    // the tab label. Previously used raw Unicode dingbats (✳ ✢ ✶ ✻ ✽)
+    // rendered via ghostty's fallback font, which places them at the
+    // text baseline — visually LOWER than the caps above. F1E10..F1E14
+    // are private-use codepoints; the animation in pty_pane.rs maps to
+    // these so the spinner reads as a proper vertical peer to text.
+    BuiltinGlyph {
+        codepoint: 0xF1E10,
+        name: "ai-spinner-a",
+        svg_relpath: "assets/glyphs/ai/spinner/spinner-a.svg",
+        width_frac: 0.90,
+        height_frac: 0.90,
+        center_frac: 0.36,
+        center_x_frac: 0.5,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1E11,
+        name: "ai-spinner-b",
+        svg_relpath: "assets/glyphs/ai/spinner/spinner-b.svg",
+        width_frac: 0.90,
+        height_frac: 0.90,
+        center_frac: 0.36,
+        center_x_frac: 0.5,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1E12,
+        name: "ai-spinner-c",
+        svg_relpath: "assets/glyphs/ai/spinner/spinner-c.svg",
+        width_frac: 0.90,
+        height_frac: 0.90,
+        center_frac: 0.36,
+        center_x_frac: 0.5,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1E13,
+        name: "ai-spinner-d",
+        svg_relpath: "assets/glyphs/ai/spinner/spinner-d.svg",
+        width_frac: 0.90,
+        height_frac: 0.90,
+        center_frac: 0.36,
+        center_x_frac: 0.5,
+    },
+    BuiltinGlyph {
+        codepoint: 0xF1E14,
+        name: "ai-spinner-e",
+        svg_relpath: "assets/glyphs/ai/spinner/spinner-e.svg",
+        width_frac: 0.90,
+        height_frac: 0.90,
+        center_frac: 0.36,
         center_x_frac: 0.5,
     },
 ];
@@ -727,6 +785,26 @@ const EMBEDDED_SVGS: &[(&str, &[u8])] = &[
     (
         "assets/glyphs/ai/codex.svg",
         include_bytes!("../assets/glyphs/ai/codex.svg"),
+    ),
+    (
+        "assets/glyphs/ai/spinner/spinner-a.svg",
+        include_bytes!("../assets/glyphs/ai/spinner/spinner-a.svg"),
+    ),
+    (
+        "assets/glyphs/ai/spinner/spinner-b.svg",
+        include_bytes!("../assets/glyphs/ai/spinner/spinner-b.svg"),
+    ),
+    (
+        "assets/glyphs/ai/spinner/spinner-c.svg",
+        include_bytes!("../assets/glyphs/ai/spinner/spinner-c.svg"),
+    ),
+    (
+        "assets/glyphs/ai/spinner/spinner-d.svg",
+        include_bytes!("../assets/glyphs/ai/spinner/spinner-d.svg"),
+    ),
+    (
+        "assets/glyphs/ai/spinner/spinner-e.svg",
+        include_bytes!("../assets/glyphs/ai/spinner/spinner-e.svg"),
     ),
     // assets/glyphs/dev/{btop,htop,iftop}.svg — removed 2026-08-06
     // together with their BUILTIN_GLYPHS entries. Launchers now use

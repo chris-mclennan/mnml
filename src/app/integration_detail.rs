@@ -212,15 +212,23 @@ fn fetch_readme_blocking(
                 .trim_end_matches('/')
                 .strip_prefix("https://github.com/")
         {
+            // 2026-08-08 (user report) — reorder: try per-app subpaths
+            // BEFORE the repo-root README. Every sibling published from a
+            // monorepo (e.g. mnml-integrations) declares the monorepo as
+            // `repository`, so the root README returned the monorepo
+            // overview instead of the per-app README the user actually
+            // wanted. Standalone-repo siblings still resolve correctly
+            // — their `apps/<id>/README.md` 404s and falls through to
+            // root. Works for both layouts with no config from siblings.
             for branch in ["main", "master"] {
-                candidates.push(format!(
-                    "https://raw.githubusercontent.com/{rest}/{branch}/README.md"
-                ));
                 candidates.push(format!(
                     "https://raw.githubusercontent.com/{rest}/{branch}/apps/{id}/README.md"
                 ));
                 candidates.push(format!(
                     "https://raw.githubusercontent.com/{rest}/{branch}/{id}/README.md"
+                ));
+                candidates.push(format!(
+                    "https://raw.githubusercontent.com/{rest}/{branch}/README.md"
                 ));
             }
         }

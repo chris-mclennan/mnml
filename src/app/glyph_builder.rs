@@ -447,7 +447,13 @@ impl App {
     /// Bake the two mnml-owned AI chip glyphs (F1E00 claude-spark
     /// + F1E01 codex) into `~/Library/Fonts/MnmlSymbols.ttf`.
     pub fn bake_ai_glyphs_default(&mut self) {
-        self.bake_builtin_glyphs_matching(|cp| cp == 0xF1E00 || cp == 0xF1E01);
+        // 2026-08-08 — expanded from F1E00/F1E01 to include the
+        // Claude thinking-spinner frames at F1E10..F1E14 (baked with
+        // Latin cap-mid center_frac so they align with tab text
+        // instead of sitting at the font baseline like raw dingbats).
+        self.bake_builtin_glyphs_matching(|cp| {
+            cp == 0xF1E00 || cp == 0xF1E01 || (0xF1E10..=0xF1E14).contains(&cp)
+        });
     }
 
     /// #814 — one-tap rebake for a single codepoint. Skips the visual

@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+  <title>spinner-b</title>
+  <g stroke="currentColor" fill="currentColor"><line x1="12.00" y1="22.00" x2="12.00" y2="2.00" stroke-width="2.5" stroke-linecap="round"/><line x1="2.00" y1="12.00" x2="22.00" y2="12.00" stroke-width="2.5" stroke-linecap="round"/><line x1="12.00" y1="2.00" x2="12.00" y2="22.00" stroke-width="2.5" stroke-linecap="round"/><line x1="22.00" y1="12.00" x2="2.00" y2="12.00" stroke-width="2.5" stroke-linecap="round"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/></g>
+</svg>
