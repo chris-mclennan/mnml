@@ -18,7 +18,11 @@
 #   ./run.sh release [args]       cargo build --release [args]
 #   ./run.sh test [args]          cargo test [args]
 #   ./run.sh check                cargo clippy --all-targets
-#   ./run.sh watch                cargo watch -x build  (needs cargo-watch)
+#   ./run.sh watch [flags…]       Rebuild + relaunch mnml on src/ change
+#                                 (needs cargo-watch). Replaces the old dev.sh.
+#   ./run.sh menu                 Interactive numbered picker (standalone /
+#                                 headless / watch / build / release / test /
+#                                 check). Replaces the old start-launcher.sh.
 #   ./run.sh clean [mode]         Reclaim target/ space (it bloats past 100GB
 #                                 because cargo never GCs the incremental cache
 #                                 + dep rlibs). Default mode = `incremental`
@@ -147,11 +151,58 @@ case "${1:-start}" in
     du -sh "$REPO/target" 2>/dev/null | sed 's|'"$REPO"'/||'
     exit 0 ;;
   watch)
+    # 2026-08-08 — folded in the old dev.sh behavior (rebuild + relaunch
+    # on source save). Extra args pass through as mnml flags, matching
+    # dev.sh's shape: `./run.sh watch [WORKSPACE] [--input vim] [...]`.
     if ! command -v cargo-watch >/dev/null 2>&1; then
       echo "[run.sh] cargo-watch not installed — \`cargo install cargo-watch\`" >&2
       exit 1
     fi
-    exec cargo watch -x build
+    shift
+    # -w src so editing the binary's own dirs doesn't loop; -x run
+    # rebuilds + reruns whenever src/ or Cargo.toml changes.
+    exec cargo watch -q -c -w src -w Cargo.toml -x "run -- $*"
+    ;;
+  menu)
+    # 2026-08-08 — folded in the old start-launcher.sh behavior. Same
+    # interactive numbered picker, dispatches back to `./run.sh <mode>`.
+    shift
+    TEAL=$'\033[38;2;83;192;188m'
+    GREEN=$'\033[38;2;152;195;121m'
+    GREY=$'\033[38;2;92;99;112m'
+    BOLD=$'\033[1m'
+    RST=$'\033[0m'
+    printf '\n%s%s┌─ mnml launcher ──────────────────────────────────────┐%s\n' \
+        "$BOLD" "$TEAL" "$RST"
+    printf '%s%s│%s  Pick a mode:                                        %s%s│%s\n' \
+        "$BOLD" "$TEAL" "$RST" "$BOLD" "$TEAL" "$RST"
+    printf '%s%s└──────────────────────────────────────────────────────┘%s\n\n' \
+        "$BOLD" "$TEAL" "$RST"
+    PS3=$'\n'"  ${GREEN}→${RST} pick a number: "
+    COLUMNS=1
+    options=(
+        "mnml — standalone in this terminal"
+        "mnml — headless (no window; scripted stdin → file IPC)"
+        "watch — rebuild + relaunch on source save"
+        "build — debug build"
+        "release — release build"
+        "test — run cargo test"
+        "check — fmt + clippy (matches CI)"
+        "quit"
+    )
+    select choice in "${options[@]}"; do
+        case "$REPLY" in
+            1) exec "$0" ;;
+            2) exec "$0" headless ;;
+            3) exec "$0" watch ;;
+            4) exec "$0" build ;;
+            5) exec "$0" release ;;
+            6) exec "$0" test ;;
+            7) exec "$0" check ;;
+            8) echo "bye"; exit 0 ;;
+            *) printf '  %sunknown choice %q — try again%s\n' "$GREY" "$REPLY" "$RST" ;;
+        esac
+    done
     ;;
   # ── mnml-specific IPC subcommands ───────────────────────────────
   restart) send_cmd '{"cmd":"restart"}'; exit $? ;;

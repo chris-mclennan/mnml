@@ -555,7 +555,7 @@ impl App {
     }
 
     fn bake_builtin_glyphs_matching<F: Fn(u32) -> bool>(&mut self, keep: F) {
-        use crate::glyph_builder::{BUILTIN_GLYPHS, resolve_builtin_svg};
+        use crate::glyph_builder::{BUILTIN_GLYPHS, load_meta, resolve_builtin_svg};
         let ai_glyphs: Vec<_> = BUILTIN_GLYPHS
             .iter()
             .filter(|g| keep(g.codepoint))
@@ -564,18 +564,62 @@ impl App {
             self.toast("bake glyphs: no builtins matched the filter");
             return;
         }
-        let mut resolved: Vec<(String, u32, &'static str, f32, f32, f32, f32)> = Vec::new();
+        // 2026-08-08 (user report: "what happened to the ghostty
+        // icon?") — the fontforge script writes a NEW MnmlSymbols.ttf
+        // containing ONLY the `--glyph` args we pass. Prior versions
+        // of this fn passed just the filter set, which meant a
+        // selective rebake (e.g. tuning F1E00 size while iterating)
+        // wiped every other baked glyph: custom user glyphs (ghostty
+        // terminal), all sibling-baked AWS/GCP glyphs, everything.
+        // Fix: seed `resolved` from `glyph_meta.toml` (the record of
+        // every glyph ever baked into the font) so the output always
+        // includes them, then override any filter-matched entries
+        // with the fresh builtin values.
+        let mut resolved: Vec<(String, u32, String, f32, f32, f32, f32)> = Vec::new();
+        let mut seen_codepoints: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        // Seed from meta first — every previously-baked glyph.
+        for m in load_meta().glyphs {
+            let Ok(cp) = u32::from_str_radix(&m.codepoint, 16) else {
+                continue;
+            };
+            // Skip if the source SVG no longer exists — passing it to
+            // fontforge would abort the whole bake. Prefer silent drop
+            // (glyph won't be in the new font, but the bake succeeds
+            // for everything else) over hard failure.
+            if !std::path::Path::new(&m.svg).exists() {
+                continue;
+            }
+            if keep(cp) {
+                // This codepoint is in the filter — will be overridden
+                // by the builtin loop below with fresh values.
+                continue;
+            }
+            resolved.push((
+                m.svg,
+                cp,
+                m.name,
+                m.width_frac,
+                m.height_frac,
+                m.center_frac,
+                m.center_x_frac,
+            ));
+            seen_codepoints.insert(cp);
+        }
+        // Now layer in the freshly-filtered builtins (fresh tuning wins).
         for g in &ai_glyphs {
             match resolve_builtin_svg(g.svg_relpath) {
-                Some(path) => resolved.push((
-                    path.to_string_lossy().into_owned(),
-                    g.codepoint,
-                    g.name,
-                    g.width_frac,
-                    g.height_frac,
-                    g.center_frac,
-                    g.center_x_frac,
-                )),
+                Some(path) => {
+                    resolved.push((
+                        path.to_string_lossy().into_owned(),
+                        g.codepoint,
+                        g.name.to_string(),
+                        g.width_frac,
+                        g.height_frac,
+                        g.center_frac,
+                        g.center_x_frac,
+                    ));
+                    seen_codepoints.insert(g.codepoint);
+                }
                 None => {
                     self.toast(format!("bake AI glyphs: SVG not found — {}", g.svg_relpath));
                     return;
@@ -622,16 +666,23 @@ impl App {
                 "{svg}:{cp:04X}:{name}:width={:.2}:height={:.2}:center={:.2}:x_center={:.2}",
                 w, h, c, cx
             ));
-            crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
-                codepoint: format!("{cp:04X}"),
-                name: name.to_string(),
-                svg: svg.clone(),
-                width_frac: *w,
-                height_frac: *h,
-                center_frac: *c,
-                center_x_frac: *cx,
-            });
+            // Only upsert meta for entries that came from `ai_glyphs`
+            // — meta-sourced entries are already in the file. This
+            // also avoids rewriting them with identical values every
+            // bake.
+            if BUILTIN_GLYPHS.iter().any(|g| g.codepoint == *cp) {
+                crate::glyph_builder::upsert_meta(crate::glyph_builder::GlyphMeta {
+                    codepoint: format!("{cp:04X}"),
+                    name: name.clone(),
+                    svg: svg.clone(),
+                    width_frac: *w,
+                    height_frac: *h,
+                    center_frac: *c,
+                    center_x_frac: *cx,
+                });
+            }
         }
+        let preserved = resolved.len().saturating_sub(ai_glyphs.len());
         let profile = crate::pty_pane::BinaryProfile {
             label: "bake AI glyphs".to_string(),
             exe: "fontforge".to_string(),
@@ -642,9 +693,11 @@ impl App {
             integration_id: None,
         };
         self.open_pty(profile);
-        self.toast(
-            "baking AI chip glyphs (F1E00 + F1E01) · restart terminal after fontforge exits",
-        );
+        self.toast(format!(
+            "baking {} glyph(s) + preserving {} prior glyph(s) · restart terminal after fontforge exits",
+            ai_glyphs.len(),
+            preserved
+        ));
     }
 
     /// Where the UI should look for the current focus. Used by the

@@ -357,6 +357,65 @@ impl App {
         let (svgs, assignments) = discover(&pending, &overrides);
         self.integration_glyph_svgs = svgs;
         self.integration_glyph_codepoints = assignments;
+        // 2026-08-08 — reconcile against `glyph_meta.toml`, which is
+        // the source of truth for what's actually baked into the font.
+        // Every `bake_builtin_glyphs_matching` call writes an entry to
+        // that file with name "sibling-<id>" or "ai-<slug>"; if the
+        // integration-glyphs.toml assignment disagrees, the runtime
+        // HashMap ends up pointing at the wrong codepoint and the
+        // chip renders whatever else lives at the stale address. That's
+        // the "ghostty icon disappeared" report from tonight — the
+        // assignment said F1C00 (an AWS glyph), the font had ghostty
+        // at F1C14. Repair silently on every discovery pass.
+        self.reconcile_glyph_codepoints_from_meta();
+    }
+
+    /// Walk `glyph_meta.toml` and, for each entry whose name matches a
+    /// known runtime id pattern (`sibling-<id>` or `ai-<id>`), force
+    /// the runtime HashMap + persisted assignment to that codepoint.
+    /// Overwrites divergent values with the meta's authoritative
+    /// codepoint. Safe to run every startup — idempotent, cheap
+    /// (bounded by meta entry count, typically <100).
+    fn reconcile_glyph_codepoints_from_meta(&mut self) {
+        let meta = crate::glyph_builder::load_meta();
+        let mut assignments = load_assignments();
+        let mut changed = false;
+        for entry in &meta.glyphs {
+            let Ok(cp) = u32::from_str_radix(&entry.codepoint, 16) else {
+                continue;
+            };
+            // Runtime chips key by integration id ("terminal",
+            // "browser", "claude_code"). Meta names them
+            // "sibling-<id>" for integrations, "ai-<slug>" for the
+            // baked AI spark glyphs (F1E00/F1E01). Only reconcile the
+            // sibling-prefixed ones — the ai- ones are rendered via
+            // hardcoded codepoints in theme.rs, not the HashMap.
+            let Some(id) = entry.name.strip_prefix("sibling-") else {
+                continue;
+            };
+            let previous = self.integration_glyph_codepoints.get(id).copied();
+            if previous != Some(cp) {
+                self.integration_glyph_codepoints.insert(id.to_string(), cp);
+                changed = true;
+            }
+            // Sync the persisted assignment file too so a downstream
+            // `save_assignments` doesn't clobber the fix.
+            if let Some(slot) = assignments.entries.iter_mut().find(|e| e.id == id) {
+                if slot.codepoint != entry.codepoint {
+                    slot.codepoint = entry.codepoint.clone();
+                    changed = true;
+                }
+            } else {
+                assignments.entries.push(Assignment {
+                    id: id.to_string(),
+                    codepoint: entry.codepoint.clone(),
+                });
+                changed = true;
+            }
+        }
+        if changed {
+            save_assignments(&assignments);
+        }
     }
 
     /// Delete pending-dir SVGs whose bytes have already been baked

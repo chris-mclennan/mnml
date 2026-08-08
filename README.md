@@ -205,8 +205,9 @@ Development convenience wrappers:
 ./run.sh stop               # send quit to the running instance
 ./run.sh status             # show marker (workspace, IPC dir)
 ./run.sh headless [WS]      # same loop but --headless
-./run.sh build|release|test|check|watch   # cargo wrappers
-./dev.sh                    # cargo-watch auto-rebuild-on-save
+./run.sh build|release|test|check   # cargo wrappers
+./run.sh watch              # cargo-watch auto-rebuild + relaunch on save
+./run.sh menu               # interactive numbered picker
 ```
 
 Optional Cargo features:

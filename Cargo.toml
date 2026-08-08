@@ -9,7 +9,7 @@ resolver = "2"
 
 [package]
 name = "mnml-rs"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2024"
 rust-version = "1.90"
 description = "A NvChad-style terminal IDE in Rust — vim or standard editing, LSP, git, and an embedded HTTP client."
@@ -27,7 +27,6 @@ exclude = [
     ".github/",
     "assets/",
     "run.sh",
-    "dev.sh",
     # ~400 KiB of e2e .test fixtures + per-pane integration tests — useful
     # for repo contributors via the GitHub source tree, not for crates.io
     # consumers (they'd need the workspace setup anyway).

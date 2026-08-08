@@ -52,7 +52,8 @@ cargo fmt              # before committing
 ./run.sh headless [WS]  # same loop, but --headless (virtual screen + file-IPC)
 ./run.sh shot [OUT.png] # screenshot the *real* ghostty window (live pixels) → PNG you can Read
 ./run.sh clean [mode]   # reclaim target/ space — incremental (default, safe) | deps | all
-./dev.sh               # cargo-watch auto-rebuild-on-save loop (needs `cargo install cargo-watch`)
+./run.sh watch         # cargo-watch auto-rebuild-on-save loop (needs `cargo install cargo-watch`)
+./run.sh menu          # interactive numbered picker (standalone/headless/watch/build/…)
 
 cargo run -- [WS] [--input vim|standard] [--ascii] [--config PATH] [--headless]
 cargo run -- run FILE [--env NAME]    # HTTP: send a .http/.curl/.rest file headlessly
@@ -184,7 +185,7 @@ work landed:
    DIAGNOSTICS) with a `×` close button; below 16 cells the body shows a
    "too narrow" hint.
 
-3. **Build-system fix.** `run.sh` + `dev.sh` now prepend
+3. **Build-system fix.** `run.sh` now prepends
    `/opt/homebrew/opt/zig@0.15/bin` to PATH so `libghostty-vt-sys`'s build.rs
    doesn't silently fail on macOS shells without zig in PATH.
 
