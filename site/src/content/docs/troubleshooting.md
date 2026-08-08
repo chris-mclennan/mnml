@@ -80,7 +80,7 @@ If you'd rather target MSVC, `cargo build --target x86_64-pc-windows-msvc` will 
 
 The Homebrew `zig` formula installs to `/opt/homebrew/opt/zig/bin` (Apple Silicon). If that dir isn't on your shell's default `PATH`, `cargo build` from a fresh terminal will fail at the `mnml-libghostty-vt-sys` source-build step with `zig: No such file or directory`.
 
-The `./run.sh` and `./dev.sh` helpers in the repo prepend it automatically. For plain `cargo build`, add it to your shell profile yourself:
+The `./run.sh` helper in the repo prepends it automatically (including under `./run.sh watch`). For plain `cargo build`, add it to your shell profile yourself:
 
 ```sh
 # ~/.zshrc or ~/.bashrc

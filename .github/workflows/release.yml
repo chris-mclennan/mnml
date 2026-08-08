@@ -168,7 +168,7 @@ jobs:
       # to compile the vendored Ghostty terminal-emulation library.
       # Without zig on PATH the crate panics ("failed to execute zig
       # build: No such file or directory") and every target build
-      # fails. Matches the local dev setup (run.sh + dev.sh prepend
+      # fails. Matches the local dev setup (run.sh prepends
       # /opt/homebrew/opt/zig/bin).
       - name: Install zig 0.16.0
         uses: mlugg/setup-zig@v2

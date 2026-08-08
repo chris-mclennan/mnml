@@ -91,7 +91,7 @@ The first build downloads and compiles the vendored ghostty sources; the log wil
 
 ### macOS notes
 
-If `zig` isn't on your default shell `PATH` (Homebrew installs to `/opt/homebrew/opt/zig/bin` on Apple Silicon), the `./run.sh` and `./dev.sh` helpers in the repo prepend it for you. For a plain `cargo build`, add it to your shell profile yourself.
+If `zig` isn't on your default shell `PATH` (Homebrew installs to `/opt/homebrew/opt/zig/bin` on Apple Silicon), the `./run.sh` helper in the repo prepends it for you (including under `./run.sh watch`). For a plain `cargo build`, add it to your shell profile yourself.
 
 ### Linux notes
 

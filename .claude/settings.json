@@ -12,7 +12,6 @@
       "Bash(cargo update:*)",
       "Bash(cargo metadata:*)",
       "Bash(./run.sh:*)",
-      "Bash(./dev.sh:*)",
       "Bash(git status:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",

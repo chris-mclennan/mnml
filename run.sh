@@ -161,7 +161,16 @@ case "${1:-start}" in
     shift
     # -w src so editing the binary's own dirs doesn't loop; -x run
     # rebuilds + reruns whenever src/ or Cargo.toml changes.
-    exec cargo watch -q -c -w src -w Cargo.toml -x "run -- $*"
+    # 2026-08-08 (reviewer follow-up) — build the cargo-args string
+    # with per-arg shell-quoting via `printf %q` so a passed-through
+    # workspace path or flag containing a space survives cargo-watch's
+    # internal `sh -c` re-split. Prior `$*` collapsed everything on
+    # a single space and corrupted spaced args.
+    cargo_cmd="run --"
+    for a in "$@"; do
+      cargo_cmd="$cargo_cmd $(printf '%q' "$a")"
+    done
+    exec cargo watch -q -c -w src -w Cargo.toml -x "$cargo_cmd"
     ;;
   menu)
     # 2026-08-08 — folded in the old start-launcher.sh behavior. Same
