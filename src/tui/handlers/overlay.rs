@@ -23,30 +23,40 @@ pub(crate) fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
         .map(|s| s.filter_focused)
         .unwrap_or(false);
     if filter_focused {
+        // Enter / Esc first — they exit filter mode.
         match key.code {
-            KeyCode::Esc => {
+            KeyCode::Esc | KeyCode::Enter => {
                 if let Some(state) = app.help_overlay.as_mut() {
                     state.filter_focused = false;
                 }
-            }
-            KeyCode::Enter => {
-                if let Some(state) = app.help_overlay.as_mut() {
-                    state.filter_focused = false;
-                }
-            }
-            KeyCode::Backspace => {
-                if let Some(state) = app.help_overlay.as_mut() {
-                    state.query.pop();
-                    state.scroll = 0;
-                }
-            }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Some(state) = app.help_overlay.as_mut() {
-                    state.query.push(c);
-                    state.scroll = 0;
-                }
+                return;
             }
             _ => {}
+        }
+        // 2026-08-08 — common Ctrl/Cmd shortcuts: Ctrl+U clears,
+        // Ctrl+W kills the trailing word, Ctrl+V pastes.
+        if let Some(state) = app.help_overlay.as_mut() {
+            let before_len = state.query.len();
+            let r = crate::ui::text_input::handle_filter_shortcut(
+                key,
+                &mut state.query,
+                Some(&mut app.clipboard),
+            );
+            if r == crate::ui::text_input::TextKeyResult::Handled {
+                if let Some(state) = app.help_overlay.as_mut()
+                    && state.query.len() != before_len
+                {
+                    state.scroll = 0;
+                }
+                return;
+            }
+        }
+        if let KeyCode::Char(c) = key.code
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && let Some(state) = app.help_overlay.as_mut()
+        {
+            state.query.push(c);
+            state.scroll = 0;
         }
         return;
     }
@@ -91,35 +101,81 @@ pub(crate) fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
 
 pub(crate) fn handle_git_section_commit_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // Enter / Esc first — surface-specific meaning.
     match key.code {
-        KeyCode::Esc => app.git_section_commit_blur(),
-        KeyCode::Enter if ctrl => app.git_section_commit_submit(),
-        KeyCode::Backspace => app.git_section_commit_backspace(),
-        KeyCode::Char(c) if !ctrl => app.git_section_commit_insert_char(c),
+        KeyCode::Esc => {
+            app.git_section_commit_blur();
+            return;
+        }
+        KeyCode::Enter if ctrl => {
+            app.git_section_commit_submit();
+            return;
+        }
         _ => {}
+    }
+    // 2026-08-08 — common Ctrl+U / Ctrl+W / Ctrl+V shortcuts on the
+    // git commit input. This buffer is append-only (no caret model),
+    // so the filter-shortcut helper is the right level.
+    let r = crate::ui::text_input::handle_filter_shortcut(
+        key,
+        &mut app.git_section_commit_buffer,
+        Some(&mut app.clipboard),
+    );
+    if r == crate::ui::text_input::TextKeyResult::Handled {
+        return;
+    }
+    if let KeyCode::Char(c) = key.code
+        && !ctrl
+    {
+        app.git_section_commit_insert_char(c);
     }
 }
 
 pub(crate) fn handle_search_section_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // Enter / Esc / arrow-select first — surface-specific meaning.
     match key.code {
-        KeyCode::Esc => app.search_section_blur(),
+        KeyCode::Esc => {
+            app.search_section_blur();
+            return;
+        }
         KeyCode::Enter => {
-            // If the input has any text, Enter commits — runs the grep.
-            // If there are hits AND the input is empty, Enter jumps to
-            // the highlighted hit instead. Either way, after running
-            // the user can ↑↓ navigate without re-focusing.
             if app.search_query.trim().is_empty() && !app.search_hits.is_empty() {
                 app.search_section_open_selected();
             } else {
                 app.search_section_run();
             }
+            return;
         }
-        KeyCode::Backspace => app.search_section_backspace(),
-        KeyCode::Up if !ctrl => app.search_section_select(-1),
-        KeyCode::Down if !ctrl => app.search_section_select(1),
-        KeyCode::Char(c) if !ctrl => app.search_section_insert_char(c),
+        KeyCode::Up if !ctrl => {
+            app.search_section_select(-1);
+            return;
+        }
+        KeyCode::Down if !ctrl => {
+            app.search_section_select(1);
+            return;
+        }
         _ => {}
+    }
+    // 2026-08-08 — common Ctrl+U / Ctrl+W / Ctrl+V shortcuts. The
+    // search cursor field lives alongside `search_query`; keep it
+    // in sync after any mutation.
+    let before = app.search_query.len();
+    let r = crate::ui::text_input::handle_filter_shortcut(
+        key,
+        &mut app.search_query,
+        Some(&mut app.clipboard),
+    );
+    if r == crate::ui::text_input::TextKeyResult::Handled {
+        if app.search_query.len() != before {
+            app.search_cursor = app.search_query.chars().count();
+        }
+        return;
+    }
+    if let KeyCode::Char(c) = key.code
+        && !ctrl
+    {
+        app.search_section_insert_char(c);
     }
 }
 
@@ -146,19 +202,23 @@ pub(crate) fn handle_integration_edit_key(app: &mut App, key: KeyEvent) {
         app.integration_edit_paste();
         return;
     }
-    // Ctrl+A / Ctrl+E — start / end of line (shell + VS Code
-    // muscle memory).
-    if ctrl && text_field {
-        match key.code {
-            KeyCode::Char('a' | 'A') => {
-                app.integration_edit_move_home();
-                return;
-            }
-            KeyCode::Char('e' | 'E') => {
-                app.integration_edit_move_end();
-                return;
-            }
-            _ => {}
+    // 2026-08-08 — Ctrl+A/E (home/end), Ctrl+U (kill to start),
+    // Ctrl+W (word back), Ctrl+K (kill to end). Prompt-tier
+    // shortcut coverage on every text field.
+    if text_field {
+        use crate::ui::text_input::{TextKeyResult, TextOps, handle_common_text_key};
+        let mut ops = TextOps::new(app);
+        ops.backspace = Some(|app| app.integration_edit_backspace());
+        ops.delete_forward = Some(|app| app.integration_edit_delete_forward());
+        ops.delete_word_back = Some(|app| app.integration_edit_delete_word_back());
+        ops.delete_to_start = Some(|app| app.integration_edit_delete_to_start());
+        ops.delete_to_end = Some(|app| app.integration_edit_delete_to_end());
+        ops.move_left = Some(|app| app.integration_edit_move_left());
+        ops.move_right = Some(|app| app.integration_edit_move_right());
+        ops.move_home = Some(|app| app.integration_edit_move_home());
+        ops.move_end = Some(|app| app.integration_edit_move_end());
+        if handle_common_text_key(key, None, ops) == TextKeyResult::Handled {
+            return;
         }
     }
     match key.code {
@@ -225,19 +285,25 @@ pub(crate) fn handle_glyph_builder_key(app: &mut App, key: KeyEvent) {
         app.open_glyph_builder_svg_picker();
         return;
     }
-    // Ctrl+A / Ctrl+E — start / end of line, VS Code + shell muscle
-    // memory. Ctrl+U — delete to start.
-    if ctrl && text_field {
-        match key.code {
-            KeyCode::Char('a' | 'A') => {
-                app.glyph_builder_move_home();
-                return;
-            }
-            KeyCode::Char('e' | 'E') => {
-                app.glyph_builder_move_end();
-                return;
-            }
-            _ => {}
+    // 2026-08-08 — Ctrl+A/E (home/end), Ctrl+U (kill to start),
+    // Ctrl+W (word back), Ctrl+K (kill to end), Alt+←→ / Ctrl+←→
+    // (word motion), Cmd+Backspace (kill to start), Alt+Backspace
+    // (word back). Same shortcut coverage as the prompt overlay so
+    // typing feels the same regardless of which panel is open.
+    if text_field {
+        use crate::ui::text_input::{TextKeyResult, TextOps, handle_common_text_key};
+        let mut ops = TextOps::new(app);
+        ops.backspace = Some(|app| app.glyph_builder_backspace());
+        ops.delete_forward = Some(|app| app.glyph_builder_delete_forward());
+        ops.delete_word_back = Some(|app| app.glyph_builder_delete_word_back());
+        ops.delete_to_start = Some(|app| app.glyph_builder_delete_to_start());
+        ops.delete_to_end = Some(|app| app.glyph_builder_delete_to_end());
+        ops.move_left = Some(|app| app.glyph_builder_move_left());
+        ops.move_right = Some(|app| app.glyph_builder_move_right());
+        ops.move_home = Some(|app| app.glyph_builder_move_home());
+        ops.move_end = Some(|app| app.glyph_builder_move_end());
+        if handle_common_text_key(key, None, ops) == TextKeyResult::Handled {
+            return;
         }
     }
     match key.code {
@@ -285,14 +351,34 @@ pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
         .as_ref()
         .is_some_and(|s| s.filter_focused);
     if filter_focused {
+        // Enter / Esc first — commit / cancel.
         match key.code {
-            KeyCode::Esc => app.settings_filter_cancel(),
-            KeyCode::Enter => app.settings_filter_commit(),
-            KeyCode::Backspace => app.settings_filter_backspace(),
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.settings_filter_push(c);
+            KeyCode::Esc => {
+                app.settings_filter_cancel();
+                return;
+            }
+            KeyCode::Enter => {
+                app.settings_filter_commit();
+                return;
             }
             _ => {}
+        }
+        // 2026-08-08 — common Ctrl+U / Ctrl+W / Ctrl+V shortcuts on
+        // the settings filter buffer.
+        if let Some(state) = &mut app.settings_overlay {
+            let r = crate::ui::text_input::handle_filter_shortcut(
+                key,
+                &mut state.filter,
+                Some(&mut app.clipboard),
+            );
+            if r == crate::ui::text_input::TextKeyResult::Handled {
+                return;
+            }
+        }
+        if let KeyCode::Char(c) = key.code
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            app.settings_filter_push(c);
         }
         return;
     }
@@ -310,22 +396,116 @@ pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
     // cancels). Other navigation keys are intercepted to avoid the
     // overlay reacting twice.
     if app.settings_text_edit_active() {
-        // 2026-06-19 — user-reported: couldn't arrow-cursor inside
-        // the edit buffer, forcing backspace from the end to fix
-        // mid-string typos. Added Left/Right/Home/End/Delete.
+        // Enter / Esc first — commit / cancel.
         match key.code {
-            KeyCode::Esc => app.settings_text_edit_cancel(),
-            KeyCode::Enter => app.settings_text_edit_commit(),
-            KeyCode::Backspace => app.settings_text_edit_backspace(),
-            KeyCode::Delete => app.settings_text_edit_delete(),
-            KeyCode::Left => app.settings_text_edit_move_left(),
-            KeyCode::Right => app.settings_text_edit_move_right(),
-            KeyCode::Home => app.settings_text_edit_home(),
-            KeyCode::End => app.settings_text_edit_end(),
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.settings_text_edit_insert(c);
+            KeyCode::Esc => {
+                app.settings_text_edit_cancel();
+                return;
+            }
+            KeyCode::Enter => {
+                app.settings_text_edit_commit();
+                return;
             }
             _ => {}
+        }
+        // 2026-08-08 — route common Ctrl/Cmd shortcuts through the
+        // shared helper: Ctrl+A/E (home/end), Ctrl+U (kill to
+        // start), Ctrl+W (word back), Ctrl+K (kill to end), Ctrl+V
+        // (paste), Alt+←→ / Ctrl+←→ (word motion),
+        // Cmd+Backspace (kill to start), Alt+Backspace (word back).
+        use crate::ui::text_input::{
+            TextKeyResult, TextOps, clipboard_text_if_paste, handle_common_text_key,
+        };
+        let paste_text = clipboard_text_if_paste(key, &mut app.clipboard);
+        let mut ops = TextOps::new(app);
+        ops.insert_str = Some(|app, s| {
+            for c in s.chars() {
+                if !c.is_control() {
+                    app.settings_text_edit_insert(c);
+                }
+            }
+        });
+        ops.backspace = Some(|app| app.settings_text_edit_backspace());
+        ops.delete_forward = Some(|app| app.settings_text_edit_delete());
+        ops.delete_word_back = Some(|app| {
+            // Repeated backspace until we've crossed a
+            // whitespace-run + a non-whitespace-run boundary.
+            // Cheap-and-correct: read the buffer, compute the cut
+            // point, then apply as many backspaces as needed so
+            // apply_text_setting fires once per char (keeps the
+            // live-update semantics settings_text_edit relies on).
+            let (cur, cut) = {
+                let Some(state) = app.settings_overlay.as_ref() else {
+                    return;
+                };
+                let Some(edit) = state.text_edit.as_ref() else {
+                    return;
+                };
+                let cur = edit.cursor.min(edit.buffer.len());
+                let head = &edit.buffer[..cur];
+                let trimmed = head.trim_end_matches(char::is_whitespace);
+                let cut = trimmed
+                    .char_indices()
+                    .rev()
+                    .find(|&(_, c)| c.is_whitespace())
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(0);
+                (cur, cut)
+            };
+            let mut remaining = cur - cut;
+            while remaining > 0 {
+                let before = app
+                    .settings_overlay
+                    .as_ref()
+                    .and_then(|s| s.text_edit.as_ref())
+                    .map(|e| e.cursor)
+                    .unwrap_or(0);
+                app.settings_text_edit_backspace();
+                let after = app
+                    .settings_overlay
+                    .as_ref()
+                    .and_then(|s| s.text_edit.as_ref())
+                    .map(|e| e.cursor)
+                    .unwrap_or(0);
+                if after == before {
+                    break;
+                }
+                remaining = remaining.saturating_sub(before - after);
+            }
+        });
+        ops.delete_to_start = Some(|app| {
+            while app
+                .settings_overlay
+                .as_ref()
+                .and_then(|s| s.text_edit.as_ref())
+                .map(|e| e.cursor > 0)
+                .unwrap_or(false)
+            {
+                app.settings_text_edit_backspace();
+            }
+        });
+        ops.delete_to_end = Some(|app| {
+            while app
+                .settings_overlay
+                .as_ref()
+                .and_then(|s| s.text_edit.as_ref())
+                .map(|e| e.cursor < e.buffer.len())
+                .unwrap_or(false)
+            {
+                app.settings_text_edit_delete();
+            }
+        });
+        ops.move_left = Some(|app| app.settings_text_edit_move_left());
+        ops.move_right = Some(|app| app.settings_text_edit_move_right());
+        ops.move_home = Some(|app| app.settings_text_edit_home());
+        ops.move_end = Some(|app| app.settings_text_edit_end());
+        if handle_common_text_key(key, paste_text.as_deref(), ops) == TextKeyResult::Handled {
+            return;
+        }
+        if let KeyCode::Char(c) = key.code
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            app.settings_text_edit_insert(c);
         }
         return;
     }
@@ -399,6 +579,12 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
             app.on_picker_moved();
         }
         KeyCode::Char('u') if ctrl => picker.clear_query(),
+        // 2026-08-08 — Ctrl+W kill-word-back on the picker filter,
+        // matching every other filter surface.
+        KeyCode::Char('w') if ctrl => {
+            crate::ui::text_input::delete_word_back_in_string(&mut picker.query);
+            picker.refilter();
+        }
         // Ctrl+E on the icon picker: re-tune the currently-highlighted
         // custom glyph via the glyph builder, pre-filled from its
         // stored metadata. No-op when the selected glyph wasn't baked
@@ -808,6 +994,8 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             _ => {}
         }
     }
+    // Enter / Esc first — they bypass the common-text router because
+    // they mean "submit / cancel" here, not text-editing.
     match key.code {
         KeyCode::Esc => {
             app.prompt_cancel();
@@ -817,52 +1005,45 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
             app.prompt_accept();
             return;
         }
-        KeyCode::Backspace => {
-            if ctrl {
-                p.delete_word();
-            } else {
-                p.backspace();
-            }
-        }
-        KeyCode::Delete => p.delete_forward(),
-        KeyCode::Char('w') if ctrl => p.delete_word(),
-        KeyCode::Char('u') if ctrl => {
-            p.input.clear();
-            p.cursor = 0;
-        }
-        // api-workflow-user 2026-07-30 SEV-3 — Ctrl+A on a seeded
-        // prompt (e.g. right-click var → "Set value…") used to
-        // silently drop through to the char handler below, so typed
-        // text appended to the seeded value and got written to the
-        // env file. Emacs/readline convention: Ctrl+A moves to line
-        // start; users who want "select all + replace" chain Ctrl+A
-        // then Ctrl+U. Cover both intents in one keystroke class:
-        // Ctrl+A moves to start (Emacs); Ctrl+E moves to end.
-        KeyCode::Char('a' | 'A') if ctrl => p.move_home(),
-        KeyCode::Char('e' | 'E') if ctrl => p.move_end(),
-        // Ctrl+V — clipboard paste. On macOS Ghostty (and most macOS
-        // terminals) Cmd+V translates to a bracketed-paste event
-        // and hits the Event::Paste path in tui/mod.rs. Ctrl+V is
-        // passed through as a raw key event because it has shell
-        // meanings (Vim insert-literal etc.). In a text prompt the
-        // user's intent is clearly paste, so read the system
-        // clipboard and insert. Also handles Linux Ctrl+V where
-        // most terminals bind Ctrl+Shift+V for paste but leave
-        // Ctrl+V raw — same fix works.
-        KeyCode::Char('v' | 'V') if ctrl => {
-            // Release the borrow on `p` before touching app.clipboard.
-            let text = app.clipboard.text();
-            if let Some(p) = app.prompt.as_mut() {
-                p.insert_str(text.trim_end_matches('\n'));
-            }
-            return;
-        }
-        KeyCode::Left => p.move_left(),
-        KeyCode::Right => p.move_right(),
-        KeyCode::Home => p.move_home(),
-        KeyCode::End => p.move_end(),
-        KeyCode::Char(c) if !ctrl => p.insert_char(c),
         _ => {}
+    }
+    // 2026-08-08 — common Ctrl/Cmd text shortcuts route through
+    // the shared helper so every prompt gets consistent Ctrl+K /
+    // Alt+←→ / Cmd+Backspace etc. without each surface reinventing
+    // the switch statement.
+    use crate::ui::text_input::{
+        TextKeyResult, TextOps, clipboard_text_if_paste, handle_common_text_key,
+    };
+    let paste_text = clipboard_text_if_paste(key, &mut app.clipboard);
+    let Some(p) = app.prompt.as_mut() else { return };
+    let mut ops = TextOps::new(p);
+    ops.insert_str = Some(|p, s| p.insert_str(s));
+    ops.backspace = Some(|p| p.backspace());
+    ops.delete_forward = Some(|p| p.delete_forward());
+    ops.delete_word_back = Some(|p| p.delete_word());
+    ops.delete_to_start = Some(|p| {
+        p.input.clear();
+        p.cursor = 0;
+    });
+    ops.delete_to_end = Some(|p| p.kill_to_end());
+    ops.move_left = Some(|p| p.move_left());
+    ops.move_right = Some(|p| p.move_right());
+    ops.move_word_left = Some(|p| p.move_word_left());
+    ops.move_word_right = Some(|p| p.move_word_right());
+    ops.move_home = Some(|p| p.move_home());
+    ops.move_end = Some(|p| p.move_end());
+    if handle_common_text_key(key, paste_text.as_deref(), ops) == TextKeyResult::Handled {
+        // Live-preview handled below after the outer match.
+    } else {
+        // Fall back to insertion for plain printable chars. Ctrl-
+        // modified chars that didn't match a common shortcut are
+        // swallowed (matches the historical behavior).
+        if let KeyCode::Char(c) = key.code
+            && !ctrl
+            && let Some(p) = app.prompt.as_mut()
+        {
+            p.insert_char(c);
+        }
     }
     // Incremental find — live-update the editor's find state as the query
     // grows / shrinks so the user can see matches before Enter.

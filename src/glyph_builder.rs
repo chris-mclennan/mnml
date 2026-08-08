@@ -430,6 +430,52 @@ impl GlyphBuilderState {
         }
     }
 
+    /// 2026-08-08 — Ctrl+W kill-word-back on the focused text field.
+    pub fn delete_word_back(&mut self) {
+        let (buf, cursor) = match self.focused_field {
+            BuilderField::Path => (&mut self.svg_path, &mut self.svg_path_cursor),
+            BuilderField::Name => (&mut self.name, &mut self.name_cursor),
+            BuilderField::Codepoint => (&mut self.codepoint_hex, &mut self.codepoint_hex_cursor),
+            _ => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        let head = &buf[..cur];
+        let trimmed = head.trim_end_matches(char::is_whitespace);
+        let cut = trimmed
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| c.is_whitespace())
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        buf.replace_range(cut..cur, "");
+        *cursor = cut;
+    }
+
+    /// 2026-08-08 — Ctrl+U kill-to-start on the focused text field.
+    pub fn delete_to_start(&mut self) {
+        let (buf, cursor) = match self.focused_field {
+            BuilderField::Path => (&mut self.svg_path, &mut self.svg_path_cursor),
+            BuilderField::Name => (&mut self.name, &mut self.name_cursor),
+            BuilderField::Codepoint => (&mut self.codepoint_hex, &mut self.codepoint_hex_cursor),
+            _ => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        buf.replace_range(..cur, "");
+        *cursor = 0;
+    }
+
+    /// 2026-08-08 — Ctrl+K kill-to-end on the focused text field.
+    pub fn delete_to_end(&mut self) {
+        let (buf, cursor) = match self.focused_field {
+            BuilderField::Path => (&mut self.svg_path, &mut self.svg_path_cursor),
+            BuilderField::Name => (&mut self.name, &mut self.name_cursor),
+            BuilderField::Codepoint => (&mut self.codepoint_hex, &mut self.codepoint_hex_cursor),
+            _ => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        buf.truncate(cur);
+    }
+
     /// Read-only cursor byte offset for the currently-focused text
     /// field. Used by the renderer to draw the caret.
     pub fn active_text_cursor(&self) -> Option<usize> {

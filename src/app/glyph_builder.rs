@@ -249,6 +249,27 @@ impl App {
         }
     }
 
+    /// 2026-08-08 — Ctrl+W kill-word-back on the focused text field.
+    pub fn glyph_builder_delete_word_back(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.delete_word_back();
+        }
+    }
+
+    /// 2026-08-08 — Ctrl+U kill-to-start on the focused text field.
+    pub fn glyph_builder_delete_to_start(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.delete_to_start();
+        }
+    }
+
+    /// 2026-08-08 — Ctrl+K kill-to-end on the focused text field.
+    pub fn glyph_builder_delete_to_end(&mut self) {
+        if let Some(s) = self.glyph_builder.as_mut() {
+            s.delete_to_end();
+        }
+    }
+
     /// Ctrl+V paste into the currently-focused text field. Reads from
     /// the app's clipboard (which mirrors the OS clipboard on macOS).
     /// Trims surrounding whitespace + strips quotes so a shell-copied

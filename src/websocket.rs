@@ -233,6 +233,44 @@ impl WebsocketPane {
     pub fn input_end(&mut self) {
         self.input_cursor = self.input.len();
     }
+
+    /// 2026-08-08 — Ctrl+V paste. Newlines preserved (WS send
+    /// input is multi-line-friendly — JSON payloads etc.).
+    pub fn input_insert_str(&mut self, s: &str) {
+        self.input.insert_str(self.input_cursor, s);
+        self.input_cursor += s.len();
+    }
+
+    /// 2026-08-08 — Ctrl+W kill-word-back.
+    pub fn input_delete_word_back(&mut self) {
+        if self.input_cursor == 0 {
+            return;
+        }
+        let head = &self.input[..self.input_cursor];
+        let trimmed = head.trim_end_matches(char::is_whitespace);
+        let cut = trimmed
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| c.is_whitespace())
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        self.input.replace_range(cut..self.input_cursor, "");
+        self.input_cursor = cut;
+    }
+
+    /// 2026-08-08 — Ctrl+U kill to input start.
+    pub fn input_delete_to_start(&mut self) {
+        if self.input_cursor == 0 {
+            return;
+        }
+        self.input.replace_range(..self.input_cursor, "");
+        self.input_cursor = 0;
+    }
+
+    /// 2026-08-08 — Ctrl+K kill to input end.
+    pub fn input_delete_to_end(&mut self) {
+        self.input.truncate(self.input_cursor);
+    }
 }
 
 /// Toggle non-blocking on the underlying TCP stream. tungstenite's

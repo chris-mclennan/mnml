@@ -58,13 +58,29 @@ pub(crate) fn handle_tree_key(app: &mut App, key: KeyEvent) {
     // exits filter mode (keeping the filter); Esc clears + exits.
     if app.tree.filter_mode {
         match key.code {
-            KeyCode::Esc => app.tree.filter_clear_and_exit(),
-            KeyCode::Enter => app.tree.filter_mode = false,
-            KeyCode::Backspace => app.tree.filter_pop(),
+            KeyCode::Esc => {
+                app.tree.filter_clear_and_exit();
+                return;
+            }
+            KeyCode::Enter => {
+                app.tree.filter_mode = false;
+                return;
+            }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.tree.filter_push(c);
+                return;
             }
             _ => {}
+        }
+        // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V via the
+        // shared filter helper.
+        let r = crate::ui::text_input::handle_filter_shortcut(
+            key,
+            &mut app.tree.filter,
+            Some(&mut app.clipboard),
+        );
+        if r == crate::ui::text_input::TextKeyResult::Handled {
+            return;
         }
         return;
     }
@@ -381,107 +397,81 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
         // Filter-mode on either panel takes priority over every
         // navigation chord — printable keys narrow the list instead
         // of moving the cursor.
-        if net_filter_mode {
+        // 2026-08-08 — each browser filter (net / dom / cookies /
+        // storage) shares the same shortcut set. `sel` picks which
+        // filter's fields the shared helper targets so the four
+        // arms stay uniform.
+        enum BrowserFilter {
+            Net,
+            Dom,
+            Cookies,
+            Storage,
+        }
+        let sel = if net_filter_mode {
+            Some(BrowserFilter::Net)
+        } else if dom_filter_mode {
+            Some(BrowserFilter::Dom)
+        } else if cookies_filter_mode {
+            Some(BrowserFilter::Cookies)
+        } else if storage_filter_mode {
+            Some(BrowserFilter::Storage)
+        } else {
+            None
+        };
+        if let Some(which) = sel {
             match key.code {
                 KeyCode::Esc => {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.net_filter_clear_and_exit();
+                        match which {
+                            BrowserFilter::Net => b.net_filter_clear_and_exit(),
+                            BrowserFilter::Dom => b.dom_filter_clear_and_exit(),
+                            BrowserFilter::Cookies => b.cookies_filter_clear_and_exit(),
+                            BrowserFilter::Storage => b.storage_filter_clear_and_exit(),
+                        }
                     }
+                    return;
                 }
                 KeyCode::Enter => {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.net_filter_mode = false;
+                        match which {
+                            BrowserFilter::Net => b.net_filter_mode = false,
+                            BrowserFilter::Dom => b.dom_filter_mode = false,
+                            BrowserFilter::Cookies => b.cookies_filter_mode = false,
+                            BrowserFilter::Storage => b.storage_filter_mode = false,
+                        }
                     }
-                }
-                KeyCode::Backspace => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.net_filter_pop();
-                    }
+                    return;
                 }
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.net_filter_push(c);
+                        match which {
+                            BrowserFilter::Net => b.net_filter_push(c),
+                            BrowserFilter::Dom => b.dom_filter_push(c),
+                            BrowserFilter::Cookies => b.cookies_filter_push(c),
+                            BrowserFilter::Storage => b.storage_filter_push(c),
+                        }
                     }
+                    return;
                 }
                 _ => {}
             }
-            return;
-        }
-        if dom_filter_mode {
-            match key.code {
-                KeyCode::Esc => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.dom_filter_clear_and_exit();
-                    }
+            // Route Backspace / Ctrl+U / Ctrl+W / Ctrl+V through the
+            // shared filter helper — pick the field by `which`.
+            if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
+                let buf: &mut String = match which {
+                    BrowserFilter::Net => &mut b.net_filter,
+                    BrowserFilter::Dom => &mut b.dom_filter,
+                    BrowserFilter::Cookies => &mut b.cookies_filter,
+                    BrowserFilter::Storage => &mut b.storage_filter,
+                };
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    buf,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
                 }
-                KeyCode::Enter => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.dom_filter_mode = false;
-                    }
-                }
-                KeyCode::Backspace => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.dom_filter_pop();
-                    }
-                }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.dom_filter_push(c);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-        if cookies_filter_mode {
-            match key.code {
-                KeyCode::Esc => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.cookies_filter_clear_and_exit();
-                    }
-                }
-                KeyCode::Enter => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.cookies_filter_mode = false;
-                    }
-                }
-                KeyCode::Backspace => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.cookies_filter_pop();
-                    }
-                }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.cookies_filter_push(c);
-                    }
-                }
-                _ => {}
-            }
-            return;
-        }
-        if storage_filter_mode {
-            match key.code {
-                KeyCode::Esc => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.storage_filter_clear_and_exit();
-                    }
-                }
-                KeyCode::Enter => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.storage_filter_mode = false;
-                    }
-                }
-                KeyCode::Backspace => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.storage_filter_pop();
-                    }
-                }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if let Some(Pane::Browser(b)) = app.panes.get_mut(i) {
-                        b.storage_filter_push(c);
-                    }
-                }
-                _ => {}
             }
             return;
         }
@@ -953,67 +943,75 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
     // other pane); to close, use Ctrl+C or the palette.
     if matches!(app.panes.get(i), Some(Pane::Websocket(_))) {
         match key.code {
-            KeyCode::Esc => app.focus_tree(),
+            KeyCode::Esc => {
+                app.focus_tree();
+                return;
+            }
             KeyCode::Enter => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
                     p.send_input();
                 }
+                return;
             }
-            KeyCode::Backspace => {
-                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.input_backspace();
-                }
-            }
-            KeyCode::Delete => {
-                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.input_delete();
-                }
-            }
-            KeyCode::Left => {
-                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.input_left();
-                }
-            }
-            KeyCode::Right => {
-                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.input_right();
-                }
-            }
-            KeyCode::Home => {
-                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.input_home();
-                }
-            }
-            KeyCode::End => {
-                if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
-                    p.input_end();
-                }
-            }
+            // Ctrl+C on the WebSocket pane means "close connection"
+            // (Ctrl+C isn't Ctrl+E's cousin here — it's a universal
+            // cancel reflex). Runs BEFORE the common-shortcut helper
+            // so the helper's Ctrl+C-doesn't-touch-here contract
+            // isn't accidentally shadowed by anything downstream.
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
                     p.close();
                 }
                 app.toast("ws: closing connection…");
+                return;
             }
             KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.focus_tree();
+                return;
             }
             KeyCode::PageUp => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_add(10);
                 }
+                return;
             }
             KeyCode::PageDown => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
                     p.scroll = p.scroll.saturating_sub(10);
                 }
+                return;
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
                     p.input_insert(c);
                 }
+                return;
             }
             _ => {}
+        }
+        // 2026-08-08 — route common shortcuts (Backspace, Delete,
+        // arrows, Home/End, Ctrl+U/W/K/V, Alt/Cmd Backspace)
+        // through the shared helper. Word motion isn't implemented
+        // on the WebSocket input yet — leave the ops None.
+        use crate::ui::text_input::{
+            TextKeyResult, TextOps, clipboard_text_if_paste, handle_common_text_key,
+        };
+        let paste_text = clipboard_text_if_paste(key, &mut app.clipboard);
+        if let Some(Pane::Websocket(p)) = app.panes.get_mut(i) {
+            let mut ops = TextOps::new(p);
+            ops.insert_str = Some(|p, s| p.input_insert_str(s));
+            ops.backspace = Some(|p| p.input_backspace());
+            ops.delete_forward = Some(|p| p.input_delete());
+            ops.delete_word_back = Some(|p| p.input_delete_word_back());
+            ops.delete_to_start = Some(|p| p.input_delete_to_start());
+            ops.delete_to_end = Some(|p| p.input_delete_to_end());
+            ops.move_left = Some(|p| p.input_left());
+            ops.move_right = Some(|p| p.input_right());
+            ops.move_home = Some(|p| p.input_home());
+            ops.move_end = Some(|p| p.input_end());
+            if handle_common_text_key(key, paste_text.as_deref(), ops) == TextKeyResult::Handled {
+                return;
+            }
         }
         return;
     }
@@ -1313,25 +1311,40 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                         c.filter_mode = false;
                         c.selected = 0;
                     }
+                    return;
                 }
                 KeyCode::Enter => {
                     if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
                         c.filter_mode = false;
                     }
-                }
-                KeyCode::Backspace => {
-                    if let Some(Pane::Cheatsheet(c)) = app.panes.get_mut(i) {
-                        c.query.pop();
-                        c.selected = 0;
-                    }
+                    return;
                 }
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     if let Some(Pane::Cheatsheet(cp)) = app.panes.get_mut(i) {
                         cp.query.push(c);
                         cp.selected = 0;
                     }
+                    return;
                 }
                 _ => {}
+            }
+            // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V via
+            // the shared filter helper.
+            if let Some(Pane::Cheatsheet(cp)) = app.panes.get_mut(i) {
+                let before = cp.query.len();
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut cp.query,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    if let Some(Pane::Cheatsheet(cp)) = app.panes.get_mut(i)
+                        && cp.query.len() != before
+                    {
+                        cp.selected = 0;
+                    }
+                    return;
+                }
             }
             return;
         }
@@ -1840,41 +1853,15 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                 return;
             }
             match key.code {
-                KeyCode::Esc => app.blur_active_wip_commit_textarea(),
+                KeyCode::Esc => {
+                    app.blur_active_wip_commit_textarea();
+                    return;
+                }
                 KeyCode::Enter => {
                     if let Some(ta) = app.active_wip_commit_textarea_mut() {
                         ta.insert_char('\n');
                     }
-                }
-                KeyCode::Backspace => {
-                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
-                        ta.backspace();
-                    }
-                }
-                KeyCode::Delete => {
-                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
-                        ta.delete_forward();
-                    }
-                }
-                KeyCode::Left => {
-                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
-                        ta.move_left();
-                    }
-                }
-                KeyCode::Right => {
-                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
-                        ta.move_right();
-                    }
-                }
-                KeyCode::Home => {
-                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
-                        ta.move_line_start();
-                    }
-                }
-                KeyCode::End => {
-                    if let Some(ta) = app.active_wip_commit_textarea_mut() {
-                        ta.move_line_end();
-                    }
+                    return;
                 }
                 KeyCode::Char(ch)
                     if !key
@@ -1884,8 +1871,34 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
                     if let Some(ta) = app.active_wip_commit_textarea_mut() {
                         ta.insert_char(ch);
                     }
+                    return;
                 }
                 _ => {}
+            }
+            // 2026-08-08 — route common shortcuts (Ctrl+U/W/K, Ctrl+V,
+            // Alt/Ctrl+←→ word motion, Cmd+Backspace, arrows,
+            // Home/End) through the shared helper. `move_home/end`
+            // are line-scoped on this multi-line textarea.
+            use crate::ui::text_input::{
+                TextKeyResult, TextOps, clipboard_text_if_paste, handle_common_text_key,
+            };
+            let paste_text = clipboard_text_if_paste(key, &mut app.clipboard);
+            if let Some(ta) = app.active_wip_commit_textarea_mut() {
+                let mut ops = TextOps::new(ta);
+                ops.insert_str = Some(|ta, s| ta.insert_str(s));
+                ops.backspace = Some(|ta| ta.backspace());
+                ops.delete_forward = Some(|ta| ta.delete_forward());
+                ops.delete_word_back = Some(|ta| ta.delete_word_back());
+                ops.delete_to_start = Some(|ta| ta.delete_to_line_start());
+                ops.delete_to_end = Some(|ta| ta.delete_to_line_end());
+                ops.move_left = Some(|ta| ta.move_left());
+                ops.move_right = Some(|ta| ta.move_right());
+                ops.move_home = Some(|ta| ta.move_line_start());
+                ops.move_end = Some(|ta| ta.move_line_end());
+                if handle_common_text_key(key, paste_text.as_deref(), ops) == TextKeyResult::Handled
+                {
+                    return;
+                }
             }
             return;
         }
@@ -2837,13 +2850,10 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 // unexpected (Tab toggles to Response; Esc should
                 // be the inverse, not "leave the pane entirely").
                 // Now Esc toggles back to Response view.
-                KeyCode::Esc => rp.view = crate::request_pane::ViewMode::Response,
-                KeyCode::Backspace => rp.backspace(),
-                KeyCode::Delete => rp.delete_forward(),
-                KeyCode::Left => rp.move_left(),
-                KeyCode::Right => rp.move_right(),
-                KeyCode::Home => rp.move_home(),
-                KeyCode::End => rp.move_end(),
+                KeyCode::Esc => {
+                    rp.view = crate::request_pane::ViewMode::Response;
+                    return true;
+                }
                 KeyCode::Up
                     if matches!(
                         rp.focus,
@@ -2854,6 +2864,7 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     // Cross-line motion for multi-line fields (URL is one line).
                     rp.move_left();
                     rp.move_home();
+                    return true;
                 }
                 KeyCode::Down
                     if matches!(
@@ -2864,6 +2875,7 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                 {
                     rp.move_end();
                     rp.move_right();
+                    return true;
                 }
                 KeyCode::Enter => {
                     if matches!(
@@ -2874,8 +2886,10 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                         rp.type_char('\n');
                     } else {
                         // Enter on URL/Method = fire the request.
+                        let _ = rp;
                         app.send_request_from_active();
                     }
+                    return true;
                 }
                 KeyCode::Char(c) if !ctrl => {
                     // `r` from URL / Method fires; `r` inside multi-line fields
@@ -2889,8 +2903,39 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     // 4723. In Edit view, every printable char goes
                     // to the focused field.
                     rp.type_char(c);
+                    return true;
                 }
                 _ => {}
+            }
+            // 2026-08-08 — route common Ctrl/Cmd text shortcuts
+            // through the shared helper: Backspace, Delete, Home/End
+            // (line-scoped on multi-line fields), Left/Right, Ctrl+U,
+            // Ctrl+W, Ctrl+K, Ctrl+V, plus Cmd+Backspace /
+            // Alt+Backspace. Word motion isn't implemented on
+            // RequestPane yet — leave the ops None so those keys
+            // fall through as NotHandled.
+            use crate::ui::text_input::{
+                TextKeyResult, TextOps, clipboard_text_if_paste, handle_common_text_key,
+            };
+            let paste_text = clipboard_text_if_paste(key, &mut app.clipboard);
+            if let Some(id) = app.active
+                && let Some(Pane::Request(rp)) = app.panes.get_mut(id)
+            {
+                let mut ops = TextOps::new(rp);
+                ops.insert_str = Some(|rp, s| rp.insert_str(s));
+                ops.backspace = Some(|rp| rp.backspace());
+                ops.delete_forward = Some(|rp| rp.delete_forward());
+                ops.delete_word_back = Some(|rp| rp.delete_word_back());
+                ops.delete_to_start = Some(|rp| rp.delete_to_line_start());
+                ops.delete_to_end = Some(|rp| rp.delete_to_line_end());
+                ops.move_left = Some(|rp| rp.move_left());
+                ops.move_right = Some(|rp| rp.move_right());
+                ops.move_home = Some(|rp| rp.move_home());
+                ops.move_end = Some(|rp| rp.move_end());
+                if handle_common_text_key(key, paste_text.as_deref(), ops) == TextKeyResult::Handled
+                {
+                    return true;
+                }
             }
             return true;
         }
@@ -2912,10 +2957,6 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     rp.filter_focused = false;
                     return true;
                 }
-                KeyCode::Backspace => {
-                    rp.filter.pop();
-                    return true;
-                }
                 KeyCode::Tab => {
                     // Exit filter mode + fall through so Tab still
                     // toggles Edit ⇄ Response.
@@ -2925,7 +2966,19 @@ fn handle_request_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -
                     rp.filter.push(c);
                     return true;
                 }
-                _ => return true,
+                _ => {
+                    // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W /
+                    // Ctrl+V via the shared filter helper.
+                    let r = crate::ui::text_input::handle_filter_shortcut(
+                        key,
+                        &mut rp.filter,
+                        Some(&mut app.clipboard),
+                    );
+                    if r == crate::ui::text_input::TextKeyResult::Handled {
+                        return true;
+                    }
+                    return true;
+                }
             }
         }
         match key.code {

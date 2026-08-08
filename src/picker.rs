@@ -333,7 +333,7 @@ impl Picker {
         p
     }
 
-    fn refilter(&mut self) {
+    pub fn refilter(&mut self) {
         // vscode-user 3rd 2026-06-29 SEV-2: sort tuple is
         // (priority desc, score desc, index asc). Items with a
         // higher `priority` win regardless of score — used by the

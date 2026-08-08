@@ -108,6 +108,7 @@ pub mod signature;
 pub mod startup_picker;
 pub mod statusline;
 pub mod tests_view;
+pub mod text_input;
 pub mod theme;
 pub mod toast_stack;
 pub mod todos_panel;

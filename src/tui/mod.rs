@@ -1000,10 +1000,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.workspace_picker_filter.clear();
                 return;
             }
-            KeyCode::Backspace => {
-                app.workspace_picker_filter.pop();
-                return;
-            }
             KeyCode::Char(c)
                 if !key
                     .modifiers
@@ -1012,7 +1008,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.workspace_picker_filter.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.workspace_picker_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     // Workspaces editor overlay — intercept keyboard so arrows
@@ -1194,10 +1200,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                     app.integrations_panel_filter_focused = false;
                     return;
                 }
-                KeyCode::Backspace => {
-                    app.integrations_panel_filter.pop();
-                    return;
-                }
                 KeyCode::Char(c)
                     if !key
                         .modifiers
@@ -1206,7 +1208,18 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                     app.integrations_panel_filter.push(c);
                     return;
                 }
-                _ => {}
+                _ => {
+                    // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W /
+                    // Ctrl+V via the shared filter helper.
+                    let r = crate::ui::text_input::handle_filter_shortcut(
+                        key,
+                        &mut app.integrations_panel_filter,
+                        Some(&mut app.clipboard),
+                    );
+                    if r == crate::ui::text_input::TextKeyResult::Handled {
+                        return;
+                    }
+                }
             }
         }
     }
@@ -1244,11 +1257,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.http_panel_cursor_reset();
                 return;
             }
-            KeyCode::Backspace => {
-                app.http_panel_filter.pop();
-                app.http_panel_cursor_reset();
-                return;
-            }
             KeyCode::Enter => {
                 app.http_panel_filter_focused = false;
                 // Filter accepted — snap cursor to first visible
@@ -1265,7 +1273,23 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.http_panel_cursor_reset();
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V
+                // via the shared filter helper. cursor_reset() runs
+                // if the filter actually changed.
+                let before = app.http_panel_filter.len();
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.http_panel_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    if app.http_panel_filter.len() != before {
+                        app.http_panel_cursor_reset();
+                    }
+                    return;
+                }
+            }
         }
     }
     // HTTP panel row navigation — j/k / arrows / Enter when the
@@ -1324,10 +1348,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.todos_panel_filter_focused = false;
                 return;
             }
-            KeyCode::Backspace => {
-                app.todos_panel_filter.pop();
-                return;
-            }
             KeyCode::Enter => {
                 app.todos_panel_filter_focused = false;
                 return;
@@ -1340,7 +1360,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.todos_panel_filter.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.todos_panel_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     // Row nav on TODOs / Notes / Sessions when the panel has
@@ -1439,10 +1469,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.sessions_panel_filter_focused = false;
                 return;
             }
-            KeyCode::Backspace => {
-                app.sessions_panel_filter.pop();
-                return;
-            }
             KeyCode::Enter => {
                 app.sessions_panel_filter_focused = false;
                 return;
@@ -1455,7 +1481,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.sessions_panel_filter.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.sessions_panel_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     if !app.notes_panel_filter_focused
@@ -1484,10 +1520,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.notes_panel_filter_focused = false;
                 return;
             }
-            KeyCode::Backspace => {
-                app.notes_panel_filter.pop();
-                return;
-            }
             KeyCode::Enter => {
                 app.notes_panel_filter_focused = false;
                 return;
@@ -1500,7 +1532,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.notes_panel_filter.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.notes_panel_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     // Agents rail filter — `/` in the panel focuses filter (matches
@@ -1535,10 +1577,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.agents_panel_filter_focused = false;
                 return;
             }
-            KeyCode::Backspace => {
-                app.agents_panel_filter.pop();
-                return;
-            }
             KeyCode::Enter => {
                 app.agents_panel_filter_focused = false;
                 return;
@@ -1551,7 +1589,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.agents_panel_filter.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.agents_panel_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     // Cloud Agents quick-fire prompt — `/` to focus (matches the
@@ -1587,10 +1635,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.cloud_run_prompt_focused = false;
                 return;
             }
-            KeyCode::Backspace => {
-                app.cloud_run_prompt_input.pop();
-                return;
-            }
             KeyCode::Enter => {
                 app.cloud_run_quick_send();
                 return;
@@ -1603,7 +1647,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.cloud_run_prompt_input.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.cloud_run_prompt_input,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     // Same idiom for the Cloud Agents panel filter.
@@ -1620,10 +1674,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.cloud_agents_filter_focused = false;
                 return;
             }
-            KeyCode::Backspace => {
-                app.cloud_agents_filter.pop();
-                return;
-            }
             KeyCode::Enter => {
                 app.cloud_agents_filter_focused = false;
                 return;
@@ -1636,7 +1686,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.cloud_agents_filter.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.cloud_agents_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     // NewCloudRunWizard (Cloud Agents version) keys.
@@ -1748,10 +1808,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.git_palette_filter_focused = false;
                 return;
             }
-            KeyCode::Backspace => {
-                app.git_palette_filter.pop();
-                return;
-            }
             KeyCode::Enter => {
                 app.git_palette_filter_focused = false;
                 return;
@@ -1764,7 +1820,17 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 app.git_palette_filter.push(c);
                 return;
             }
-            _ => {}
+            _ => {
+                // 2026-08-08 — Backspace / Ctrl+U / Ctrl+W / Ctrl+V.
+                let r = crate::ui::text_input::handle_filter_shortcut(
+                    key,
+                    &mut app.git_palette_filter,
+                    Some(&mut app.clipboard),
+                );
+                if r == crate::ui::text_input::TextKeyResult::Handled {
+                    return;
+                }
+            }
         }
     }
     // Menu-bar dropdown — intercept keys before anything else so
@@ -2516,7 +2582,6 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                 }
                 app.no_pane_cmdline_commit();
             }
-            KeyCode::Backspace => app.no_pane_cmdline_backspace(),
             // 2026-06-19 — popup nav. Tab / Down advance the
             // highlighted match; Shift+Tab / Up retreat. Rewrites
             // the cmdline to the new selection so Enter fires
@@ -2530,22 +2595,27 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::PageUp => app.cmdline_popup_move(-8),
             KeyCode::Home => app.cmdline_popup_move_to(0),
             KeyCode::End => app.cmdline_popup_move_to(usize::MAX),
-            // 2026-08-08 — Ctrl+V paste into the `:` cmdline. Cmd+V
-            // usually arrives as a bracketed-paste (`Event::Paste`
-            // upstream), but Ctrl+V is passed as a raw key event.
-            // Route to the same clipboard-read helper the prompt uses.
-            KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let text = app.clipboard.text();
-                for c in text.chars() {
-                    if c != '\n' && c != '\r' && (c as u32) >= 0x20 {
-                        app.no_pane_cmdline_push_char(c);
+            _ => {
+                // 2026-08-08 — common Ctrl+U / Ctrl+W / Ctrl+V /
+                // Backspace shortcuts on the `:` cmdline. Uses the
+                // shared filter helper so the routing matches
+                // every other append-only surface.
+                if let Some(buf) = app.no_pane_cmdline.as_mut() {
+                    let r = crate::ui::text_input::handle_filter_shortcut(
+                        key,
+                        buf,
+                        Some(&mut app.clipboard),
+                    );
+                    if r == crate::ui::text_input::TextKeyResult::Handled {
+                        return;
                     }
                 }
+                if let KeyCode::Char(c) = key.code
+                    && !key.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    app.no_pane_cmdline_push_char(c);
+                }
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.no_pane_cmdline_push_char(c);
-            }
-            _ => {}
         }
         return;
     }

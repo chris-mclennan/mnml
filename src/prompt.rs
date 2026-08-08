@@ -627,6 +627,58 @@ impl Prompt {
         self.cursor = self.input.len();
     }
 
+    /// 2026-08-08 — kill from caret to end of line (Ctrl+K /
+    /// readline convention). Complements `delete_word`/Ctrl+U
+    /// (kill to start) that already lived on `Prompt`.
+    pub fn kill_to_end(&mut self) {
+        self.input.truncate(self.cursor);
+        self.refresh_suggestions();
+    }
+
+    /// 2026-08-08 — Alt+← / Ctrl+← — move caret one word left.
+    /// Word boundaries: whitespace-run + a non-whitespace run
+    /// (matches `delete_word`).
+    pub fn move_word_left(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let head = &self.input[..self.cursor];
+        let trimmed = head.trim_end_matches(char::is_whitespace);
+        let cut = trimmed
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| c.is_whitespace())
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        self.cursor = cut;
+    }
+
+    /// 2026-08-08 — Alt+→ / Ctrl+→ — move caret one word right.
+    pub fn move_word_right(&mut self) {
+        if self.cursor >= self.input.len() {
+            return;
+        }
+        let tail = &self.input[self.cursor..];
+        // Skip leading whitespace.
+        let mut off = 0;
+        for (i, c) in tail.char_indices() {
+            if c.is_whitespace() {
+                off = i + c.len_utf8();
+            } else {
+                break;
+            }
+        }
+        // Then skip the word run.
+        let rest = &tail[off..];
+        for (i, c) in rest.char_indices() {
+            if c.is_whitespace() {
+                self.cursor += off + i;
+                return;
+            }
+        }
+        self.cursor = self.input.len();
+    }
+
     /// Caret column for rendering (chars before the cursor).
     pub fn caret_col(&self) -> usize {
         self.input[..self.cursor].chars().count()
@@ -742,6 +794,51 @@ mod tests {
         p.insert_char('o');
         p.insert_char('o');
         assert!(p.suggestions.is_empty());
+    }
+
+    #[test]
+    fn kill_to_end_trims_from_caret() {
+        let mut p = Prompt::new(PromptKind::GitCommit, "");
+        for c in "hello world".chars() {
+            p.insert_char(c);
+        }
+        p.cursor = 5;
+        p.kill_to_end();
+        assert_eq!(p.input, "hello");
+        assert_eq!(p.cursor, 5);
+    }
+
+    #[test]
+    fn move_word_left_walks_over_whitespace_then_word() {
+        let mut p = Prompt::new(PromptKind::GitCommit, "");
+        for c in "one two three".chars() {
+            p.insert_char(c);
+        }
+        // Cursor at end.
+        assert_eq!(p.cursor, 13);
+        p.move_word_left();
+        assert_eq!(p.cursor, 8); // start of "three"
+        p.move_word_left();
+        assert_eq!(p.cursor, 4); // start of "two"
+        p.move_word_left();
+        assert_eq!(p.cursor, 0);
+        p.move_word_left();
+        assert_eq!(p.cursor, 0);
+    }
+
+    #[test]
+    fn move_word_right_walks_to_next_word_end() {
+        let mut p = Prompt::new(PromptKind::GitCommit, "");
+        for c in "one two three".chars() {
+            p.insert_char(c);
+        }
+        p.cursor = 0;
+        p.move_word_right();
+        assert_eq!(p.cursor, 3); // end of "one"
+        p.move_word_right();
+        assert_eq!(p.cursor, 7); // end of "two"
+        p.move_word_right();
+        assert_eq!(p.cursor, 13);
     }
 
     #[test]

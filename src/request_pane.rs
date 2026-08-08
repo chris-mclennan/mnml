@@ -732,6 +732,81 @@ impl RequestPane {
         *cur = pos + c.len_utf8();
     }
 
+    /// 2026-08-08 — insert a literal string at the caret. Used by
+    /// Ctrl+V paste routing. URL is single-line so embedded
+    /// newlines are collapsed to spaces; Headers / Body / Source
+    /// keep newlines verbatim.
+    pub fn insert_str(&mut self, s: &str) {
+        if self.focus == EditField::Method {
+            return;
+        }
+        let single_line = self.focus == EditField::Url;
+        let cleaned: String = if single_line {
+            s.chars()
+                .filter(|c| *c != '\0')
+                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                .collect()
+        } else {
+            s.chars().filter(|c| *c != '\0').collect()
+        };
+        let Some((buf, cur)) = self.focused_text_mut() else {
+            return;
+        };
+        let pos = (*cur).min(buf.len());
+        buf.insert_str(pos, &cleaned);
+        *cur = pos + cleaned.len();
+    }
+
+    /// 2026-08-08 — Ctrl+W: kill the trailing whitespace-run + word
+    /// on the current line of the focused field.
+    pub fn delete_word_back(&mut self) {
+        let Some((s, cur)) = self.focused_text_mut() else {
+            return;
+        };
+        let pos = (*cur).min(s.len());
+        if pos == 0 {
+            return;
+        }
+        let line_start = s[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let head = &s[line_start..pos];
+        let trimmed = head.trim_end_matches(char::is_whitespace);
+        let cut = trimmed
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| c.is_whitespace())
+            .map(|(i, c)| line_start + i + c.len_utf8())
+            .unwrap_or(line_start);
+        s.replace_range(cut..pos, "");
+        *cur = cut;
+    }
+
+    /// 2026-08-08 — Ctrl+U: kill to the current line's start.
+    pub fn delete_to_line_start(&mut self) {
+        let Some((s, cur)) = self.focused_text_mut() else {
+            return;
+        };
+        let pos = (*cur).min(s.len());
+        let line_start = s[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        if line_start == pos {
+            return;
+        }
+        s.replace_range(line_start..pos, "");
+        *cur = line_start;
+    }
+
+    /// 2026-08-08 — Ctrl+K: kill to the current line's end.
+    pub fn delete_to_line_end(&mut self) {
+        let Some((s, cur)) = self.focused_text_mut() else {
+            return;
+        };
+        let pos = (*cur).min(s.len());
+        let end = s[pos..].find('\n').map(|rel| pos + rel).unwrap_or(s.len());
+        if end == pos {
+            return;
+        }
+        s.replace_range(pos..end, "");
+    }
+
     /// Backspace at the focused field's caret.
     pub fn backspace(&mut self) {
         let Some((s, cur)) = self.focused_text_mut() else {

@@ -785,6 +785,67 @@ impl App {
             IntegrationEditField::Color => {}
         }
     }
+
+    /// 2026-08-08 — Ctrl+W kill-word-back on the focused text field.
+    pub fn integration_edit_delete_word_back(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        let (buf, cursor): (&mut String, &mut usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&mut panel.id, &mut panel.id_cursor),
+            IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor),
+            IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor),
+            IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor),
+            IntegrationEditField::Label => (&mut panel.label, &mut panel.label_cursor),
+            IntegrationEditField::Color => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        let head = &buf[..cur];
+        let trimmed = head.trim_end_matches(char::is_whitespace);
+        let cut = trimmed
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| c.is_whitespace())
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        buf.replace_range(cut..cur, "");
+        *cursor = cut;
+    }
+
+    /// 2026-08-08 — Ctrl+U kill-to-start on the focused text field.
+    pub fn integration_edit_delete_to_start(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        let (buf, cursor): (&mut String, &mut usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&mut panel.id, &mut panel.id_cursor),
+            IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor),
+            IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor),
+            IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor),
+            IntegrationEditField::Label => (&mut panel.label, &mut panel.label_cursor),
+            IntegrationEditField::Color => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        buf.replace_range(..cur, "");
+        *cursor = 0;
+    }
+
+    /// 2026-08-08 — Ctrl+K kill-to-end on the focused text field.
+    pub fn integration_edit_delete_to_end(&mut self) {
+        let Some(panel) = self.integration_edit.as_mut() else {
+            return;
+        };
+        let (buf, cursor): (&mut String, &mut usize) = match panel.focused_field {
+            IntegrationEditField::Id => (&mut panel.id, &mut panel.id_cursor),
+            IntegrationEditField::Command => (&mut panel.command, &mut panel.command_cursor),
+            IntegrationEditField::Glyph => (&mut panel.glyph, &mut panel.glyph_cursor),
+            IntegrationEditField::Fallback => (&mut panel.fallback, &mut panel.fallback_cursor),
+            IntegrationEditField::Label => (&mut panel.label, &mut panel.label_cursor),
+            IntegrationEditField::Color => return,
+        };
+        let cur = (*cursor).min(buf.len());
+        buf.truncate(cur);
+    }
 }
 
 /// Rewrite the `[[ui.integration_icon]]` section of the user's

@@ -380,6 +380,52 @@ impl WipCommitInput {
         self.scroll = 0;
     }
 
+    /// 2026-08-08 — Ctrl+W kill-word-back on the current line.
+    pub fn delete_word_back(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let line_start = self.text[..self.cursor]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let head = &self.text[line_start..self.cursor];
+        let trimmed = head.trim_end_matches(char::is_whitespace);
+        let cut = trimmed
+            .char_indices()
+            .rev()
+            .find(|&(_, c)| c.is_whitespace())
+            .map(|(i, c)| line_start + i + c.len_utf8())
+            .unwrap_or(line_start);
+        self.text.replace_range(cut..self.cursor, "");
+        self.cursor = cut;
+    }
+
+    /// 2026-08-08 — Ctrl+U kill from caret to current line start.
+    pub fn delete_to_line_start(&mut self) {
+        let line_start = self.text[..self.cursor]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if line_start == self.cursor {
+            return;
+        }
+        self.text.replace_range(line_start..self.cursor, "");
+        self.cursor = line_start;
+    }
+
+    /// 2026-08-08 — Ctrl+K kill from caret to current line end.
+    pub fn delete_to_line_end(&mut self) {
+        let end = self.text[self.cursor..]
+            .find('\n')
+            .map(|rel| self.cursor + rel)
+            .unwrap_or(self.text.len());
+        if end == self.cursor {
+            return;
+        }
+        self.text.replace_range(self.cursor..end, "");
+    }
+
     /// True when the buffer has no committable content (whitespace
     /// only or empty). The `Commit` button uses this to decide whether
     /// to toast vs actually commit.
