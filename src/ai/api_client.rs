@@ -1045,17 +1045,6 @@ fn agent_tools(write: bool, shell: bool) -> serde_json::Value {
             }
         }));
     }
-    tools.push(serde_json::json!({
-        "name": "install_mnml_sibling",
-        "description": "Install an mnml family sibling by its catalog id (e.g. `cloudwatch_logs`, `s3`, `bitbucket`). Spawns `cargo install --git <repo> [--tag <version>] <binary>` in a visible Pty pane so the user can watch progress. When the sibling supports the Bridge tier-4 Mount protocol, ALSO writes `~/.config/mnml/mounts/<id>.toml` so the activity-bar icon appears immediately. Always-on tool — does NOT require api_shell_tools. Use this whenever the user asks to add / install / set up a family integration.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "id": { "type": "string", "description": "Catalog id from family_catalog::CATALOG — e.g. cloudwatch_logs, s3, bitbucket, github, jira." }
-            },
-            "required": ["id"]
-        }
-    }));
     serde_json::Value::Array(tools)
 }
 
@@ -1176,60 +1165,8 @@ fn execute_tool(
                 .ok_or("shell_exec: missing `command`")?;
             tool_shell_exec(workspace, command)
         }
-        "install_mnml_sibling" => {
-            let id = input
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or("install_mnml_sibling: missing `id`")?;
-            tool_install_integration(workspace, id)
-        }
         other => Err(format!("unknown tool: {other}")),
     }
-}
-
-/// Hand the install off to mnml's main loop via the file-IPC
-/// channel. We're already in mnml's own process, but routing through
-/// IPC keeps the install side-effects on the main thread (where
-/// `install_integration` belongs) and avoids cross-thread `&mut App`.
-/// Returns immediately with a confirmation; the actual `cargo
-/// install` runs in a fresh Pty pane the user can watch.
-fn tool_install_integration(workspace: &Path, id: &str) -> Result<String, String> {
-    let sib = crate::integration_install::lookup(id).ok_or_else(|| {
-        format!(
-            "install_mnml_sibling: unknown id `{id}` — valid ids include cloudwatch_logs, s3, bitbucket, github, jira, plus any other entry in family_catalog::CATALOG"
-        )
-    })?;
-    let ipc_dir = workspace.join(".mnml").join("ipc");
-    if !ipc_dir.is_dir() {
-        return Err(format!(
-            "install_mnml_sibling: IPC dir missing at {} — is mnml running with workspace= {}?",
-            ipc_dir.display(),
-            workspace.display()
-        ));
-    }
-    let cmd_path = ipc_dir.join("command");
-    let line = format!(
-        r#"{{"cmd":"install-sibling","id":"{}"}}"#,
-        id.replace('"', "\\\"")
-    );
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&cmd_path)
-        .map_err(|e| format!("install_mnml_sibling: open IPC command file: {e}"))?;
-    use std::io::Write;
-    writeln!(f, "{line}").map_err(|e| format!("install_mnml_sibling: write IPC: {e}"))?;
-    let kind = crate::integration_install::install_kind(id);
-    let mount_note = match kind {
-        crate::integration_install::InstallKind::Mount => {
-            " · Mount manifest will be written to ~/.config/mnml/mounts/"
-        }
-        crate::integration_install::InstallKind::Pty => "",
-    };
-    Ok(format!(
-        "Triggered install of {} via mnml. Watch the Pty pane that just opened — `cargo install --git {} {}` is running there{mount_note}.",
-        sib.binary, sib.repo_url, sib.binary
-    ))
 }
 
 /// Run a shell command via `sh -c <command>` in the workspace. Enforces

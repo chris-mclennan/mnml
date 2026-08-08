@@ -235,16 +235,6 @@ impl CloudAgentsView {
     }
 }
 
-/// Stashed alongside a running install Pty. `drain_install_post_actions`
-/// fires `action` once the Pty exits if `binary` is on PATH, or toasts
-/// the failure otherwise. See `App::install_integration_with_action`.
-#[derive(Debug, Clone)]
-pub struct InstallTracker {
-    pub family_id: String,
-    pub binary: String,
-    pub action: crate::integration_install::PostInstallAction,
-}
-
 /// Direction for `Ctrl+W`-style focus navigation between splits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusDir {
@@ -3735,20 +3725,6 @@ pub struct App {
     /// written. 0 means "never fetched this session"; the disk cache
     /// may still be readable.
     pub marketplace_last_fetched: u64,
-    pub pending_install_family_id: Option<String>,
-    /// Action captured alongside `pending_install_family_id` — the
-    /// thing the user was originally trying to do when they hit
-    /// the "not installed" gate. Replayed automatically once the
-    /// install Pty exits and the binary is on PATH.
-    pub pending_install_after_action: Option<crate::integration_install::PostInstallAction>,
-    /// While a sibling install is running in a Pty pane, the
-    /// (PaneId, action) for it lives here. On each tick, mnml
-    /// checks whether the install Pty has exited; on success
-    /// (binary now on PATH) it fires the action automatically so
-    /// the user doesn't have to remember to re-trigger. SEV-4 UX
-    /// patch — first-time install used to leave the user staring
-    /// at a "completed" Pty wondering what's next.
-    pub install_post_actions: std::collections::HashMap<crate::layout::PaneId, InstallTracker>,
     /// Search activity-bar section: input + results state. The input
     /// captures keystrokes when `search_input_focused == true`; results
     /// render below the input regardless of focus.
@@ -5483,9 +5459,6 @@ impl App {
             coverage_trends: None,
             coverage_trends_last_loaded_at: 0,
             marketplace_last_fetched: 0,
-            pending_install_family_id: None,
-            pending_install_after_action: None,
-            install_post_actions: std::collections::HashMap::new(),
             search_query: String::new(),
             search_cursor: 0,
             search_hits: Vec::new(),
@@ -6874,9 +6847,7 @@ impl App {
                 GitMergeConfirm => "merge".into(),
                 GitRebaseConfirm => "rebase".into(),
                 // Both install-confirm handlers just check `input.starts_with('y')`.
-                ToolInstallConfirm | IntegrationInstallConfirm | MarketplaceInstallConfirm => {
-                    "y".into()
-                }
+                ToolInstallConfirm | MarketplaceInstallConfirm => "y".into(),
                 IntegrationRemoveConfirm => "uninstall".into(),
                 ResetToDefaultsConfirm => "reset".into(),
                 // Both options are valid — primary=portable, cancel=normal.
@@ -7603,10 +7574,25 @@ impl App {
                 // the second step cleanly.
                 //
                 // Runs in the same Pty pane so the user sees both
-                // outputs sequentially. `cargo install --force`
-                // isn't necessary — a fresh install won't collide.
+                // outputs sequentially.
+                // 2026-08-08 — after cargo install + --install both
+                // succeed, write a `run-command` JSON line to the mnml
+                // IPC command file to auto-fire integrations.refresh.
+                // Previously the toast asked the user to run it manually
+                // — but the Install button then stayed as "Install"
+                // until they did, which read as "install didn't work".
+                //
+                // `--force` is REQUIRED, not optional: without it,
+                // cargo silently skips whenever the binary is already
+                // installed at any version — so a marketplace click
+                // that means "upgrade to latest" turns into a no-op
+                // and the sibling's OLD --install runs, writing stale
+                // labels + missing SVGs. --force always installs the
+                // newest published version.
+                let ipc_cmd = self.workspace.join(".mnml").join("ipc").join("command");
                 self.run_ex_command(&format!(
-                    "term cargo install {name} && {name} --install && echo '✓ {name} installed — run integrations.refresh to pick up the chip'"
+                    "term cargo install --force {name} && {name} --install && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {name} installed'",
+                    ipc = ipc_cmd.display(),
                 ));
             }
             crate::marketplace::InstallSpec::LauncherToml { url } => {
@@ -9619,15 +9605,8 @@ impl App {
     /// pane. Friendly error toast when the binary isn't on PATH.
     pub fn open_cloudwatch_pane(&mut self, log_group: &str, filter: &str, label: &str) {
         if !binary_on_path("mnml-aws-cloudwatch-logs") {
-            // Capture this exact invocation so the auto-retry path
-            // fires the user's "Tail logs" intent verbatim after
-            // the install Pty exits successfully — no second click.
-            let action = crate::integration_install::PostInstallAction::CloudWatchLogs {
-                log_group: log_group.to_string(),
-                filter: filter.to_string(),
-                label: label.to_string(),
-            };
-            self.prompt_install_integration_with_action("cloudwatch_logs", Some(action));
+            self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+            self.toast("mnml-aws-cloudwatch-logs not installed — install from the Marketplace tab");
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {
@@ -9655,12 +9634,8 @@ impl App {
     /// when the binary isn't on PATH.
     pub fn open_s3_pane(&mut self, bucket: &str, prefix: &str, label: &str) {
         if !binary_on_path("mnml-fs-s3") {
-            let action = crate::integration_install::PostInstallAction::S3Browse {
-                bucket: bucket.to_string(),
-                prefix: prefix.to_string(),
-                label: label.to_string(),
-            };
-            self.prompt_install_integration_with_action("s3", Some(action));
+            self.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+            self.toast("mnml-fs-s3 not installed — install from the Marketplace tab");
             return;
         }
         let profile = crate::pty_pane::BinaryProfile {
@@ -14758,10 +14733,6 @@ impl App {
         self.drain_agents_panel_refresh();
         // Cloud-run trigger result, if a `+ New cloud run` is in flight.
         self.drain_cloud_run_trigger();
-        // Sibling-install Pty exits — fire any captured post-install
-        // action (CloudWatch tail, S3 browse, …) so the user doesn't
-        // have to re-click after the install finishes.
-        self.drain_install_post_actions();
         // CloudAgentRun panes — pull fresh log lines + artifact rows
         // from their worker threads into the pane state.
         self.drain_cloud_agent_run_panes();

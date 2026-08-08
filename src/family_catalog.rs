@@ -133,9 +133,7 @@ impl IntegrationApp {
     ///
     /// When `pinned_version == "main"` we drop the `--tag` flag so
     /// the command tracks HEAD (used for in-development siblings
-    /// that haven't tagged a release yet). Mirrors the same guard in
-    /// `integration_install::cargo_install_argv` — both the display
-    /// string and the actual cargo invocation match.
+    /// that haven't tagged a release yet).
     pub fn install_command(&self) -> String {
         if self.is_builtin() {
             return format!(

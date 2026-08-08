@@ -1241,13 +1241,14 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.integrations_panel_filter_focused = true;
         return;
     }
-    // `+ Add integration` chip at the bottom → opens the sibling
-    // install picker. Same discoverable entry point as `+ New
+    // `+ Add integration` chip at the bottom → switch the panel to
+    // the Marketplace tab. Same discoverable entry point as `+ New
     // note` on Notes and `+ New session` on Sessions.
     if let Some(rect) = app.rects.integrations_add_chip
         && crate::app::dispatch::contains(rect, x, y)
     {
-        app.open_integration_install_picker();
+        app.integrations_panel_tab = crate::app::IntegrationsPanelTab::Marketplace;
+        app.toast("switched to Marketplace — pick an integration to install");
         return;
     }
     // Bufferline tab — clicking the close badge closes; clicking elsewhere on the tab activates.

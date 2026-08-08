@@ -5559,20 +5559,6 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_launcher_add_local(),
         },
         Command {
-            id: "mounts.install",
-            title: "Mounts: install a Mount-capable family integration (auto-registers manifest)",
-            group: "mount",
-            keys: &[],
-            run: |app| app.open_mount_install_picker(),
-        },
-        Command {
-            id: "integration.install",
-            title: "Integration: install any family integration by id (Pty or Mount)",
-            group: "mount",
-            keys: &[],
-            run: |app| app.open_integration_install_picker(),
-        },
-        Command {
             id: "term.rename",
             title: "Terminal: rename this session (shown in the tab)",
             group: "term",

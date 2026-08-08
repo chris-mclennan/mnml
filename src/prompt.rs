@@ -327,11 +327,6 @@ pub enum PromptKind {
     /// palette command; requires `[cloud_agents]` to be
     /// configured.
     CloudRunTicket,
-    /// Accept ⇒ if the input starts with `y`, call
-    /// `App::install_integration` for the family id captured in
-    /// `App::pending_install_family_id`. Used by the "X not
-    /// installed — install? y/n" prompt.
-    IntegrationInstallConfirm,
     /// Accept ⇒ install the marketplace entry whose index is stashed
     /// in `App::pending_marketplace_install_idx` — routes to
     /// `App::install_marketplace_entry`. vscode-mouse r4 SEV-2 +

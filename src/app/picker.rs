@@ -1101,10 +1101,6 @@ impl App {
                     self.toast(format!("cookies: copied {pair}"));
                 }
             }
-            PickerKind::IntegrationInstall => {
-                let id = item.id.clone();
-                self.install_integration(&id);
-            }
             PickerKind::IconGlyphs => {
                 // Special "+ Create custom glyph…" row — opens the
                 // glyph builder in edit-panel context; commit routes
@@ -1561,8 +1557,6 @@ impl App {
         self.pending_branch_source = None;
         self.pending_branch_delete = None;
         self.pending_worktree_path = None;
-        self.pending_install_family_id = None;
-        self.pending_install_after_action = None;
         // render-reviewer #9 — pending_tool_install stash followed
         // the same pattern; cleared here for consistency even though
         // the realistic data-loss path is narrow.
@@ -2027,16 +2021,17 @@ impl App {
                     let bin = self.pending_integration_remove_binary.take();
                     if let Some(id) = id {
                         self.remove_integration_by_id(&id);
-                        // Follow-up hint for users who also want the
-                        // compiled binary gone. mnml doesn't run
-                        // `cargo uninstall` automatically — it lives
-                        // in the user's ~/.cargo/bin and other
-                        // things may depend on it — but we surface
-                        // the exact command so it's a copy-paste
-                        // away.
+                        // 2026-08-08 — spawn `cargo uninstall` in a
+                        // visible Pty pane (matches the Install flow's
+                        // shape) so the user sees the output instead
+                        // of a silent background process. Post-run,
+                        // fire integrations.refresh via the IPC file
+                        // so any cached view catches up.
                         if let Some(bin) = bin {
-                            self.toast(format!(
-                                "uninstalled {id} — run `cargo uninstall {bin}` to remove the binary too"
+                            let ipc_cmd = self.workspace.join(".mnml").join("ipc").join("command");
+                            self.run_ex_command(&format!(
+                                "term cargo uninstall {bin} && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {bin} uninstalled'",
+                                ipc = ipc_cmd.display(),
                             ));
                         }
                     }
@@ -2163,10 +2158,6 @@ impl App {
             crate::prompt::PromptKind::CloudRunTicket => {
                 let typed = p.input.clone();
                 self.fire_cloud_run(&typed);
-            }
-            crate::prompt::PromptKind::IntegrationInstallConfirm => {
-                let typed = p.input.clone();
-                self.install_integration_confirm_resolve(&typed);
             }
             crate::prompt::PromptKind::MarketplaceInstallConfirm => {
                 let typed = p.input.clone();

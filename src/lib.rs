@@ -96,7 +96,6 @@ pub(crate) mod picker;
 pub(crate) mod anthropic_api;
 pub(crate) mod cloud_agent_run;
 pub mod dock;
-pub(crate) mod integration_install;
 pub mod menu_bar;
 pub(crate) mod mount;
 pub(crate) mod mount_manifest;
