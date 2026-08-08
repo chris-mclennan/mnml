@@ -1197,7 +1197,11 @@ impl Default for Config {
                         glyph: "\u{F1E00}".to_string(),
                         fallback: "\u{2733}".to_string(),
                         command: "ai.claude_code".to_string(),
-                        color: "orange".to_string(),
+                        // 2026-08-08 — exact Anthropic Claude brand
+                        // orange (matches the fill in the shipped
+                        // claude-spark SVG). Was "orange" (theme slot,
+                        // varies per theme + never quite matched).
+                        color: "#D97757".to_string(),
                         label: Some("Claude Code".to_string()),
                         enabled: false,
                         in_palette_bar: false,

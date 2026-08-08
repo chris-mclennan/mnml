@@ -1362,14 +1362,15 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
         // PUA slot each AI kind uses (F8B0 / F8B1); the builder
         // lets users nudge width/height/center to fix baseline
         // drift against sibling codicons.
-        let ai_visibility_cur = app.config.ui.tab_bar_ai_icon.clone();
-        let mark = |val: &str| {
-            if ai_visibility_cur == val {
-                "✓ "
-            } else {
-                "  "
-            }
-        };
+        // 2026-08-07 — dropped the `Show Claude only / Show Codex
+        // only / Show both / Hide these icons` submenu. AI chip
+        // visibility is now controlled per-chip through the
+        // Integrations panel (right-click a chip → Enable/Disable,
+        // persisted to ~/.config/mnml/integrations/<id>.toml). The
+        // old `tab_bar_ai_icon` config knob is retained only for
+        // backward-compat with older configs — new state should
+        // never write it. `mark(...)` closure removed with the
+        // items that used it.
         // 2026-07-19 — chip renderer moved from JBM-NF-patched
         // F8B0/F8B1 to mnml-owned F1E00/F1E01 in MnmlSymbols.ttf.
         // Point the glyph builder at the new codepoints so
@@ -1410,24 +1411,6 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
             MenuItem::new(
                 format!("{}Layout: Tabs (stack in leaf)", layout_mark("tabs")),
                 MenuAction::Command("view.ai_layout_tabs"),
-            ),
-            // Visibility submenu — pick which AI chips render in
-            // this cluster.
-            MenuItem::new(
-                format!("{}Show Claude only", mark("claude_code")),
-                MenuAction::Command("view.tab_bar_ai_claude_only"),
-            ),
-            MenuItem::new(
-                format!("{}Show Codex only", mark("codex")),
-                MenuAction::Command("view.tab_bar_ai_codex_only"),
-            ),
-            MenuItem::new(
-                format!("{}Show both", mark("both")),
-                MenuAction::Command("view.tab_bar_ai_both"),
-            ),
-            MenuItem::new(
-                format!("{}Hide these icons", mark("none")),
-                MenuAction::Command("view.tab_bar_ai_none"),
             ),
             // Font glyph controls (2026-07-19). "Bake" installs the
             // AI chip glyphs into MnmlSymbols.ttf using the defaults

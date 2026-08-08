@@ -153,6 +153,60 @@ pub fn write_claude_token(token: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Claude Code's public OAuth client id — the same value the
+/// keychain-cached `claudeAiOauth` blob was minted against, so
+/// mnml's refresh must present it to Anthropic's token endpoint.
+const CLAUDE_OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+
+/// POST the refresh token to Claude's OAuth token endpoint. On
+/// success, writes the new `{accessToken, refreshToken, expiresAt}`
+/// JSON blob back to disk (preserving auto-refresh next cycle) and
+/// returns the new access token. Errors bubble up as human-readable
+/// strings — the caller falls back to the original 401 message.
+fn try_refresh_claude_token(
+    client: &reqwest::blocking::Client,
+    refresh_token: &str,
+) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct TokenResp {
+        access_token: String,
+        refresh_token: Option<String>,
+        expires_in: Option<u64>,
+    }
+    let body = serde_json::json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLAUDE_OAUTH_CLIENT_ID,
+    });
+    let body_str = serde_json::to_string(&body).map_err(|e| format!("refresh body: {e}"))?;
+    let resp = client
+        .post("https://console.anthropic.com/v1/oauth/token")
+        .header("Content-Type", "application/json")
+        .body(body_str)
+        .send()
+        .map_err(|e| format!("refresh: {e}"))?;
+    let status = resp.status();
+    let text = resp.text().map_err(|e| format!("refresh body read: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("refresh HTTP {}", status.as_u16()));
+    }
+    let tr: TokenResp = serde_json::from_str(&text).map_err(|e| format!("refresh parse: {e}"))?;
+    let expires_at_ms = tr
+        .expires_in
+        .map(|s| (now_unix().saturating_add(s)).saturating_mul(1000))
+        .unwrap_or(0);
+    let new_refresh = tr.refresh_token.as_deref().unwrap_or(refresh_token);
+    let blob = serde_json::json!({
+        "claudeAiOauth": {
+            "accessToken": tr.access_token,
+            "refreshToken": new_refresh,
+            "expiresAt": expires_at_ms,
+        }
+    });
+    let _ = write_claude_token(&blob.to_string());
+    Ok(tr.access_token)
+}
+
 /// Spawn a worker thread to fetch Claude usage from Anthropic's
 /// undocumented OAuth-usage endpoint. Returns immediately with a
 /// Receiver — poll via `try_recv()` in a per-tick drain. Emits Err
@@ -174,11 +228,27 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("http client: {e}"))?;
-    let resp = client
+    let mut resp = client
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", format!("Bearer {token}"))
         .send()
         .map_err(|e| format!("fetch: {e}"))?;
+    // 2026-08-08 — auto-refresh on 401/403 when a refreshToken is
+    // available. Claude Code OAuth tokens expire ~every 8h, and the
+    // "re-link daily" UX was noise. Try once; on refresh success,
+    // persist the new token JSON and re-issue the usage GET with the
+    // fresh bearer. On refresh failure, fall through to the original
+    // "token rejected" error so the chip still surfaces the state.
+    if (resp.status() == 401 || resp.status() == 403)
+        && let Some(refresh) = read_claude_refresh_token()
+        && let Ok(new_access) = try_refresh_claude_token(&client, &refresh)
+    {
+        resp = client
+            .get("https://api.anthropic.com/api/oauth/usage")
+            .header("Authorization", format!("Bearer {new_access}"))
+            .send()
+            .map_err(|e| format!("fetch (post-refresh): {e}"))?;
+    }
     let status = resp.status();
     let text = resp.text().map_err(|e| format!("body read: {e}"))?;
     // Debug hook — always write the last raw response to a

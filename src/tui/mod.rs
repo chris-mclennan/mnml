@@ -297,6 +297,20 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                         p.insert_str(text.trim_end_matches('\n'));
                         continue;
                     }
+                    // 2026-08-08 — `:` cmdline capture. Cmd+V arrives
+                    // as a bracketed-paste; without this branch the
+                    // paste silently dropped (user report). Same
+                    // filter as the typed-char path — strip control
+                    // chars and newlines so multi-line paste stays
+                    // single-line.
+                    if app.no_pane_cmdline.is_some() {
+                        for c in text.chars() {
+                            if c != '\n' && c != '\r' && (c as u32) >= 0x20 {
+                                app.no_pane_cmdline_push_char(c);
+                            }
+                        }
+                        continue;
+                    }
                     // Picker (Ctrl+P / Ctrl+Shift+P / etc.) — user
                     // report 2026-08-05: paste into the Open File
                     // picker dropped silently. Same treatment as
@@ -2516,6 +2530,18 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             KeyCode::PageUp => app.cmdline_popup_move(-8),
             KeyCode::Home => app.cmdline_popup_move_to(0),
             KeyCode::End => app.cmdline_popup_move_to(usize::MAX),
+            // 2026-08-08 — Ctrl+V paste into the `:` cmdline. Cmd+V
+            // usually arrives as a bracketed-paste (`Event::Paste`
+            // upstream), but Ctrl+V is passed as a raw key event.
+            // Route to the same clipboard-read helper the prompt uses.
+            KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let text = app.clipboard.text();
+                for c in text.chars() {
+                    if c != '\n' && c != '\r' && (c as u32) >= 0x20 {
+                        app.no_pane_cmdline_push_char(c);
+                    }
+                }
+            }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 app.no_pane_cmdline_push_char(c);
             }

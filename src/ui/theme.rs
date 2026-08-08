@@ -251,9 +251,14 @@ pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, rata
     // `[ui] ai_chip_use_mnml_glyphs = true`. This dispatcher
     // reads that flag from the current-theme fallback path so
     // callers don't need to plumb config through.
+    // 2026-08-08 — swap `t.orange` for the exact Anthropic Claude
+    // brand coral so the split-cluster AI chip matches the tab-glyph
+    // color used by `pty_icon` (which also hardcodes this RGB when
+    // the pane's integration_id is claude_code).
+    let claude_coral = ratatui::style::Color::Rgb(0xD9, 0x77, 0x57);
     match kind {
         "codex" => ("\u{F8B1}", "C", t.cyan),
-        _ => ("\u{F8B0}", "*", t.orange),
+        _ => ("\u{F8B0}", "*", claude_coral),
     }
 }
 
@@ -267,9 +272,10 @@ pub fn ai_chip_parts_for(
     use_mnml: bool,
 ) -> (&'static str, &'static str, ratatui::style::Color) {
     if use_mnml {
+        let claude_coral = ratatui::style::Color::Rgb(0xD9, 0x77, 0x57);
         match kind {
             "codex" => ("\u{F1E01}", "C", t.cyan),
-            _ => ("\u{F1E00}", "*", t.orange),
+            _ => ("\u{F1E00}", "*", claude_coral),
         }
     } else {
         ai_chip_parts(kind, t)
@@ -307,6 +313,19 @@ pub fn color_from_slot(name: &str, t: &Theme) -> ratatui::style::Color {
         "bg2" => t.bg2,
         "white" => ratatui::style::Color::White,
         "black" => ratatui::style::Color::Black,
+        // 2026-08-08 — accept `#RRGGBB` literals so a chip can carry an
+        // exact brand color without needing a new theme slot. Used by
+        // claude_code's `#D97757` (Anthropic Claude brand orange), which
+        // wasn't hitting the exact hue via the shared `orange` slot.
+        // Silent fallback to bg2 on parse failure (same shape as
+        // unknown-slot handling above).
+        hex if hex.starts_with('#') && hex.len() == 7 => {
+            let parse = |s: &str| u8::from_str_radix(s, 16).ok();
+            match (parse(&hex[1..3]), parse(&hex[3..5]), parse(&hex[5..7])) {
+                (Some(r), Some(g), Some(b)) => ratatui::style::Color::Rgb(r, g, b),
+                _ => t.bg2,
+            }
+        }
         _ => t.bg2,
     }
 }

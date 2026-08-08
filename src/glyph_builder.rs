@@ -639,12 +639,20 @@ pub const BUILTIN_GLYPHS: &[BuiltinGlyph] = &[
     // AI range (F1E00-F1EFF).
     BuiltinGlyph {
         codepoint: 0xF1E00,
+        // 2026-08-07 — swapped from the original "spark burst" SVG to
+        // the user-supplied Claude Code app-icon glyph (square 24×24
+        // viewBox with a keyboard-row pattern). Old values (1.20 /
+        // 0.75 / 0.28) were tuned for the tall-narrow spark and
+        // rendered the new shape as an oddly-warped blob.
+        // Fresh values: square aspect (1.4/1.4 slightly larger than
+        // cell so the glyph reads on par with sibling codicons),
+        // dead-center anchor.
         name: "ai-claude-spark",
         svg_relpath: "assets/glyphs/ai/claude-spark.svg",
-        width_frac: 1.20,
-        height_frac: 0.75,
-        center_frac: 0.28,
-        center_x_frac: 0.5,
+        width_frac: 1.55,
+        height_frac: 1.55,
+        center_frac: 0.30,
+        center_x_frac: 0.50,
     },
     BuiltinGlyph {
         codepoint: 0xF1E01,

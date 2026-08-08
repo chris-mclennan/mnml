@@ -3352,8 +3352,11 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
     let refresh_label = " ⟳ ";
     let refresh_w = refresh_label.chars().count() as u16;
     if show_refresh {
+        // 2026-08-08 — nudge 1 cell left of the panel edge so the chip
+        // isn't jammed against the vertical separator between the
+        // Integrations panel and the main content.
         let refresh_rect = Rect {
-            x: area.x + area.width.saturating_sub(refresh_w),
+            x: area.x + area.width.saturating_sub(refresh_w + 1),
             y: area.y + 1,
             width: refresh_w,
             height: 1,
@@ -4611,11 +4614,45 @@ fn pty_icon(
         .and_then(|cp| char::from_u32(*cp))
         .map(|c| c.to_string())
         .unwrap_or_else(|| "\u{ea85}".to_string());
+    // 2026-08-08 — the "animated ✳ shows blue instead of Claude orange"
+    // report. The `(None, Some(g), _)` arm falls to `tt.teal` (blue-ish)
+    // when the sibling lookup missed for a Claude Pty — happens when
+    // the integration slot's `color` didn't parse. Same-shape backstop
+    // for the resolved-sibling path: force coral when the pane's
+    // integration_id is claude_code, so the animation reads as Claude's
+    // brand regardless of manifest state.
+    let claude_coral = ratatui::style::Color::Rgb(0xD9, 0x77, 0x57);
+    let force_claude_color = s
+        .profile
+        .integration_id
+        .as_deref()
+        .is_some_and(|id| id == "claude_code");
     match (sibling_glyph, spinner, codex_thinking) {
         (Some((g, _)), _, true) if nerd => (g, codex_breath_color()),
-        (Some((_, c)), Some(g), _) if nerd => (g.to_string(), c),
-        (Some((g, c)), _, _) if nerd => (g, c),
-        (None, Some(g), _) if nerd => (g.to_string(), tt.teal),
+        // Spinner + sibling → use sibling color; but if this is a Claude
+        // pane, override any stale/mis-parsed slot color with the brand
+        // hex directly. Add a trailing space so the narrow dingbat char
+        // (✳ ✢ ✶ ✻ ✽) doesn't sit tight against the label.
+        (Some((_, c)), Some(g), _) if nerd => (
+            format!("{g}  "),
+            if force_claude_color { claude_coral } else { c },
+        ),
+        (Some((g, c)), _, _) if nerd => (
+            if force_claude_color {
+                format!("{g} ")
+            } else {
+                g
+            },
+            if force_claude_color { claude_coral } else { c },
+        ),
+        (None, Some(g), _) if nerd => (
+            format!("{g}  "),
+            if force_claude_color {
+                claude_coral
+            } else {
+                tt.teal
+            },
+        ),
         // 2026-08-07 — match the H/V cluster's pure-white terminal
         // glyph. Was `tt.comment` (dim gray), which made the tab
         // icon read as visibly darker than the cluster chip for the

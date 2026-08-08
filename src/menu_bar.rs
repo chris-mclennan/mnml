@@ -170,23 +170,29 @@ fn file_menu(app: &crate::app::App) -> MenuDef {
         recent_items.push(MenuItem::Separator);
         recent_items.push(MenuItem::action("Clear recent files", "file.clear_recent"));
     }
+    // 2026-08-07 — glyph-prefix experiment for File menu.
+    // Prefixing the icon directly into the label is the simplest
+    // way to eyeball this without touching MenuItem's shape. If the
+    // look holds up across menus, refactor to a dedicated `icon:`
+    // field on MenuItem::Action with a render-time column so the
+    // labels stay left-aligned even when some rows lack an icon.
     MenuDef {
         label: "File".to_string(),
         items: vec![
-            MenuItem::action("New file", "file.new"),
-            MenuItem::action("Open file…", "picker.files"),
-            MenuItem::action("Open folder…", "view.add_workspace"),
-            MenuItem::submenu("Open recent file", recent_items),
-            MenuItem::action("Open recent file (picker)…", "picker.recent"),
-            MenuItem::action("Switch workspace…", "view.switch_workspace"),
+            MenuItem::action("\u{F0224}  New file", "file.new"),
+            MenuItem::action("\u{F115}  Open file…", "picker.files"),
+            MenuItem::action("\u{F07C1}  Open folder…", "view.add_workspace"),
+            MenuItem::submenu("\u{F1DA}  Open recent file", recent_items),
+            MenuItem::action("\u{F1DA}  Open recent file (picker)…", "picker.recent"),
+            MenuItem::action("\u{F0770}  Switch workspace…", "view.switch_workspace"),
             MenuItem::Separator,
-            MenuItem::action("Save", "file.save"),
-            MenuItem::action("Save all", "file.save_all"),
+            MenuItem::action("\u{F0193}  Save", "file.save"),
+            MenuItem::action("\u{F0819}  Save all", "file.save_all"),
             MenuItem::Separator,
-            MenuItem::action("Close tab", "buffer.close"),
+            MenuItem::action("\u{F00D}  Close tab", "buffer.close"),
             MenuItem::Separator,
-            MenuItem::action("Settings…", "view.settings"),
-            MenuItem::action("Quit", "app.quit"),
+            MenuItem::action("\u{F013}  Settings…", "view.settings"),
+            MenuItem::action("\u{F011}  Quit", "app.quit"),
         ],
     }
 }
