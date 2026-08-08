@@ -4622,7 +4622,7 @@ fn pty_icon(
     // for the resolved-sibling path: force coral when the pane's
     // integration_id is claude_code, so the animation reads as Claude's
     // brand regardless of manifest state.
-    let claude_coral = ratatui::style::Color::Rgb(0xD9, 0x77, 0x57);
+    let claude_coral = ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51);
     let force_claude_color = s
         .profile
         .integration_id

@@ -887,39 +887,24 @@ pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
     // macOS Keychain via `security find-generic-password`". Puts the
     // whole `claudeAiOauth` JSON in the prompt input so the user can
     // just hit Enter. Falls back to a toast on failure.
+    // Ctrl+K inside the LinkClaudeToken prompt = "auto-fetch from
+    // macOS Keychain via `security find-generic-password`". Puts the
+    // whole `claudeAiOauth` JSON in the prompt input so the user can
+    // just hit Enter. 2026-08-08 (reviewer follow-up) — the
+    // subprocess is spawned on a worker thread; macOS's auth-prompt
+    // modal on `security` can block indefinitely on user response,
+    // and running it inline froze the whole TUI. Drained per-tick
+    // by `App::drain_pending_keychain`, which splices the fetched
+    // blob back into this prompt (if still open) + toasts the outcome.
     if matches!(p.kind, crate::prompt::PromptKind::LinkClaudeToken)
         && ctrl
         && matches!(key.code, KeyCode::Char('k' | 'K'))
     {
-        match std::process::Command::new("security")
-            .args([
-                "find-generic-password",
-                "-s",
-                "Claude Code-credentials",
-                "-w",
-            ])
-            .output()
-        {
-            Ok(out) if out.status.success() => {
-                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if raw.is_empty() {
-                    app.toast("keychain returned empty — is Claude Code auth'd?".to_string());
-                } else if let Some(prompt) = app.prompt.as_mut() {
-                    prompt.input = raw;
-                    prompt.cursor = prompt.input.chars().count();
-                    app.toast("fetched from Keychain — press Enter to link".to_string());
-                }
-            }
-            Ok(out) => {
-                let stderr = String::from_utf8_lossy(&out.stderr);
-                app.toast(format!(
-                    "keychain lookup failed: {}",
-                    stderr.trim().lines().next().unwrap_or("unknown error")
-                ));
-            }
-            Err(e) => {
-                app.toast(format!("could not run `security`: {e}"));
-            }
+        // No-op if a lookup is already in flight (avoid piling up
+        // Keychain modals).
+        if app.pending_keychain_fetch.is_none() {
+            app.pending_keychain_fetch = Some(crate::ai_usage::spawn_keychain_claude_token());
+            app.toast("fetching from Keychain…".to_string());
         }
         return;
     }

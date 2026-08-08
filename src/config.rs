@@ -1201,7 +1201,7 @@ impl Default for Config {
                         // orange (matches the fill in the shipped
                         // claude-spark SVG). Was "orange" (theme slot,
                         // varies per theme + never quite matched).
-                        color: "#D97757".to_string(),
+                        color: "#D16D51".to_string(),
                         label: Some("Claude Code".to_string()),
                         enabled: false,
                         in_palette_bar: false,

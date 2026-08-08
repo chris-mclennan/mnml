@@ -179,15 +179,26 @@ fn file_menu(app: &crate::app::App) -> MenuDef {
     MenuDef {
         label: "File".to_string(),
         items: vec![
+            // 2026-08-08 — glyph audit per user feedback ("some of
+            // these are wrong; trash for Save all is bad"). Rule of
+            // thumb: icon only where a widely-recognized nerd glyph
+            // matches the action semantically; drop the icon (spacer
+            // preserves alignment) where the closest glyph is
+            // ambiguous or misleading. Verified icons: file_plus,
+            // folder_open (nf-fa), history, save (single floppy),
+            // close, cog, power_off.
             MenuItem::action("\u{F0224}  New file", "file.new"),
             MenuItem::action("\u{F115}  Open file…", "picker.files"),
-            MenuItem::action("\u{F07C1}  Open folder…", "view.add_workspace"),
+            MenuItem::action("     Add folder to workspace…", "view.add_workspace"),
             MenuItem::submenu("\u{F1DA}  Open recent file", recent_items),
             MenuItem::action("\u{F1DA}  Open recent file (picker)…", "picker.recent"),
-            MenuItem::action("\u{F0770}  Switch workspace…", "view.switch_workspace"),
+            MenuItem::action("     Switch workspace…", "view.switch_workspace"),
             MenuItem::Separator,
             MenuItem::action("\u{F0193}  Save", "file.save"),
-            MenuItem::action("\u{F0819}  Save all", "file.save_all"),
+            // No confidently-correct "save all" glyph — the previous
+            // F0819 rendered as a trash can. Use the same floppy as
+            // Save; the label carries the "all".
+            MenuItem::action("\u{F0193}  Save all", "file.save_all"),
             MenuItem::Separator,
             MenuItem::action("\u{F00D}  Close tab", "buffer.close"),
             MenuItem::Separator,

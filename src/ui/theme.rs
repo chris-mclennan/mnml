@@ -255,7 +255,7 @@ pub fn ai_chip_parts(kind: &str, t: &Theme) -> (&'static str, &'static str, rata
     // brand coral so the split-cluster AI chip matches the tab-glyph
     // color used by `pty_icon` (which also hardcodes this RGB when
     // the pane's integration_id is claude_code).
-    let claude_coral = ratatui::style::Color::Rgb(0xD9, 0x77, 0x57);
+    let claude_coral = ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51);
     match kind {
         "codex" => ("\u{F8B1}", "C", t.cyan),
         _ => ("\u{F8B0}", "*", claude_coral),
@@ -272,7 +272,7 @@ pub fn ai_chip_parts_for(
     use_mnml: bool,
 ) -> (&'static str, &'static str, ratatui::style::Color) {
     if use_mnml {
-        let claude_coral = ratatui::style::Color::Rgb(0xD9, 0x77, 0x57);
+        let claude_coral = ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51);
         match kind {
             "codex" => ("\u{F1E01}", "C", t.cyan),
             _ => ("\u{F1E00}", "*", claude_coral),
@@ -535,16 +535,20 @@ mod tests {
         // slicing at byte 4 would split `é` mid-codepoint.
         let c2 = color_from_slot("#123\u{00E9}7", &t);
         assert_eq!(c2, t.bg2);
-        // Straddle at the `[5..7]` cut.
-        // "#1234é" — 5 ASCII + 2-byte é = 7 bytes; slicing at byte 6
-        // would split `é`.
+        // Trailing non-ASCII. "#1234é" — 5 ASCII + 2-byte é = 7 bytes.
+        // Both `[5..7]` boundaries are valid here (é starts at 5,
+        // ends at 7), so `get()` returns Some("é") whole; the
+        // fallback path here is the `is_ascii_hexdigit` filter, not
+        // the char-boundary guard. Still a useful regression case —
+        // a rewrite that dropped the hexdigit filter would accept `é`
+        // as garbage or panic in `from_str_radix`.
         let c3 = color_from_slot("#1234\u{00E9}", &t);
         assert_eq!(c3, t.bg2);
         // Sanity: valid hex still parses correctly.
-        let c4 = color_from_slot("#D97757", &t);
+        let c4 = color_from_slot("#D16D51", &t);
         assert_eq!(
             c4,
-            ratatui::style::Color::Rgb(0xD9, 0x77, 0x57),
+            ratatui::style::Color::Rgb(0xD1, 0x6D, 0x51),
             "valid hex must still parse"
         );
     }

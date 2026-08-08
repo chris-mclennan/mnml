@@ -3714,6 +3714,11 @@ pub struct App {
         Option<std::sync::mpsc::Receiver<Result<crate::ai_usage::ClaudeUsage, String>>>,
     pub ai_usage_pending_codex:
         Option<std::sync::mpsc::Receiver<Result<crate::ai_usage::CodexUsage, String>>>,
+    /// 2026-08-08 — Keychain lookup for the LinkClaudeToken prompt's
+    /// Ctrl+K helper. Threaded so a macOS auth-prompt on `security
+    /// find-generic-password` doesn't freeze the TUI event loop.
+    /// Result is a JSON blob (Ok) or a human-readable error string.
+    pub pending_keychain_fetch: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Unix seconds of the last refresh spawn — throttles the
     /// per-tick "should I refresh again" check to at most once per
     /// 5 min.
@@ -5472,6 +5477,7 @@ impl App {
             ai_usage_claude: None,
             ai_usage_codex: None,
             ai_usage_pending_claude: None,
+            pending_keychain_fetch: None,
             ai_usage_pending_codex: None,
             ai_usage_last_refresh_at: 0,
             coverage_trends: None,
@@ -7627,13 +7633,30 @@ impl App {
     /// >5 min since the last spawn AND no fetch is currently in
     /// flight. Cheap no-op the other 99% of ticks. Called from the
     /// per-tick loop.
+    ///
+    /// 2026-08-08 (v2) — when the last fetch produced an HTTP 429
+    /// (rate limit), retry sooner than the normal 5-min cadence.
+    /// Anthropic's 429s usually clear inside a minute; the previous
+    /// fixed 5-min tick left the chip stuck on `—!` for far longer
+    /// than the actual limit.
     pub fn maybe_refresh_ai_usage(&mut self) {
         const REFRESH_INTERVAL_SECS: u64 = 5 * 60;
+        const RATE_LIMIT_RETRY_SECS: u64 = 30;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        if now.saturating_sub(self.ai_usage_last_refresh_at) < REFRESH_INTERVAL_SECS {
+        let last_error_is_rate_limit = self
+            .ai_usage_claude
+            .as_ref()
+            .and_then(|u| u.last_error.as_deref())
+            .is_some_and(|e| e.contains("429"));
+        let interval = if last_error_is_rate_limit {
+            RATE_LIMIT_RETRY_SECS
+        } else {
+            REFRESH_INTERVAL_SECS
+        };
+        if now.saturating_sub(self.ai_usage_last_refresh_at) < interval {
             return;
         }
         // Only spawn if the corresponding integration is enabled;
@@ -7711,6 +7734,40 @@ impl App {
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.ai_usage_pending_codex = None;
                 }
+            }
+        }
+    }
+
+    /// 2026-08-08 — per-tick drain for the Keychain lookup worker
+    /// (see `spawn_keychain_claude_token`). On success, splice the
+    /// fetched blob into the LinkClaudeToken prompt if it's still
+    /// open; toast the outcome either way.
+    pub fn drain_pending_keychain(&mut self) {
+        let Some(rx) = &self.pending_keychain_fetch else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(raw)) => {
+                let is_link_prompt = matches!(
+                    self.prompt.as_ref().map(|p| &p.kind),
+                    Some(crate::prompt::PromptKind::LinkClaudeToken)
+                );
+                if is_link_prompt && let Some(prompt) = self.prompt.as_mut() {
+                    prompt.cursor = raw.chars().count();
+                    prompt.input = raw;
+                    self.toast("fetched from Keychain — press Enter to link".to_string());
+                } else {
+                    // Prompt closed while the worker was running; drop.
+                }
+                self.pending_keychain_fetch = None;
+            }
+            Ok(Err(e)) => {
+                self.toast(e);
+                self.pending_keychain_fetch = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.pending_keychain_fetch = None;
             }
         }
     }
@@ -14751,6 +14808,7 @@ impl App {
         self.drain_readme_fetches();
         self.maybe_refresh_ai_usage();
         self.drain_ai_usage();
+        self.drain_pending_keychain();
         self.drain_suggestions();
         self.maybe_fire_suggestion();
         self.drain_tests_jobs();

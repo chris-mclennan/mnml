@@ -144,13 +144,39 @@ pub fn write_claude_token(token: &str) -> Result<PathBuf, String> {
     } else {
         trimmed.to_string()
     };
-    std::fs::write(&path, to_write).map_err(|e| format!("write: {e}"))?;
+    // 2026-08-08 (reviewer follow-up) — close the write-then-chmod
+    // race. `fs::write` creates at the process umask (usually 0644)
+    // BEFORE `set_permissions` narrows to 0600, leaving a brief
+    // window where another local user could read the token. Open
+    // with the correct mode from the start.
+    write_secret_file(&path, to_write.as_bytes())?;
+    Ok(path)
+}
+
+/// Create-or-truncate a file with mode 0600 on Unix, using
+/// `OpenOptions` so the file never exists at the umask default
+/// during the write. Falls back to plain `fs::write` on non-Unix
+/// (Windows perms model is different anyway).
+fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| format!("open: {e}"))?;
+        f.write_all(bytes).map_err(|e| format!("write: {e}"))?;
+        f.flush().map_err(|e| format!("flush: {e}"))?;
+        Ok(())
     }
-    Ok(path)
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, bytes).map_err(|e| format!("write: {e}"))
+    }
 }
 
 /// Claude Code's public OAuth client id — the same value the
@@ -205,6 +231,51 @@ fn try_refresh_claude_token(
     });
     let _ = write_claude_token(&blob.to_string());
     Ok(tr.access_token)
+}
+
+/// 2026-08-08 — background lookup of the Claude Code OAuth blob from
+/// the macOS Keychain. Ctrl+K in the LinkClaudeToken prompt used to
+/// shell out to `security` synchronously on the event-loop thread —
+/// macOS can pop an auth-prompt modal here that blocks indefinitely,
+/// freezing the whole TUI. Same shape as `spawn_claude_fetch`: worker
+/// thread + mpsc; drained by the per-tick `drain_pending_keychain`.
+///
+/// Returns an mpsc Receiver — poll via `try_recv`. Ok(String) is the
+/// raw `claudeAiOauth` JSON blob (or the whole password field, if the
+/// user's Keychain entry stores something else). Err carries a short
+/// human-readable message for a toast.
+pub fn spawn_keychain_claude_token() -> mpsc::Receiver<Result<String, String>> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = match std::process::Command::new("security")
+            .args([
+                "find-generic-password",
+                "-s",
+                "Claude Code-credentials",
+                "-w",
+            ])
+            .output()
+        {
+            Ok(out) if out.status.success() => {
+                let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if raw.is_empty() {
+                    Err("keychain returned empty — is Claude Code auth'd?".to_string())
+                } else {
+                    Ok(raw)
+                }
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                Err(format!(
+                    "keychain lookup failed: {}",
+                    stderr.trim().lines().next().unwrap_or("unknown error")
+                ))
+            }
+            Err(e) => Err(format!("could not run `security`: {e}")),
+        };
+        let _ = tx.send(result);
+    });
+    rx
 }
 
 /// Spawn a worker thread to fetch Claude usage from Anthropic's
@@ -271,23 +342,19 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
     let _ = std::fs::create_dir_all(&dir);
     let path = dir.join("ai_last_response.json");
     let scrubbed = redact_bearer(&text);
-    if std::fs::write(
+    // 2026-08-08 (reviewer follow-up) — use `write_secret_file` so the
+    // file is created with 0600 from the start; the earlier
+    // `fs::write` then `set_permissions` left a brief 0644 window.
+    let _ = write_secret_file(
         &path,
         format!(
             "// HTTP {}\n// fetched_at: {}\n{}\n",
             status.as_u16(),
             now_unix(),
             scrubbed
-        ),
-    )
-    .is_ok()
-    {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
-    }
+        )
+        .as_bytes(),
+    );
     if !status.is_success() {
         // Reviewer 2026-08-05 — don't echo the response body on
         // auth failures. Some auth middlewares include the raw
