@@ -10,6 +10,43 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-08
+
+### Added
+- **Auto-refresh of Claude OAuth token** (`src/ai_usage.rs`). On 401/403
+  from the usage endpoint, mnml POSTs the on-disk `refreshToken` to
+  Anthropic's OAuth token endpoint, persists the new
+  `{accessToken, refreshToken, expiresAt}` blob, and re-issues the fetch.
+  Kills the "re-link every 8h" prompt users hit daily.
+- **`#RRGGBB` hex literals in `IntegrationIcon.color`** (`src/ui/theme.rs`
+  `color_from_slot`). Chips can carry an exact brand color without
+  needing a new theme slot. Multi-byte-safe (`get(..)` + `is_char_boundary`
+  gate), silent fallback to `t.bg2` on parse failure.
+- **Paste into the `:` cmdline** (`src/tui/mod.rs`). Ctrl+V + Cmd+V
+  (bracketed-paste) both route into the gutter buffer with control
+  chars/newlines stripped.
+
+### Changed
+- **Claude Code default color** swapped from the `"orange"` theme slot to
+  `"#D97757"` (Anthropic Claude brand orange). Applied consistently to
+  installed-list row, palette-bar chip, split-cluster AI chip, and Pty
+  tab spinner glyph — the tab glyph forces the coral even when the slot
+  lookup misses so the animation always reads as Claude regardless of
+  theme drift.
+- **Claude spark glyph (F1E00)** SVG swapped to the user-supplied Claude
+  Code app-icon path (fixed a relative-move bug that produced a
+  "thunderbolt right eye"). Sized 1.55×1.55 with a 0.30 vertical anchor.
+- **Pty tab spinner spacing** — 2-char gap after the animated glyph
+  (`✳ ✢ ✶ ✻ ✽`) so the dingbat char doesn't sit tight against "Claude Code".
+- **Integrations panel refresh chip** — nudged 1 cell inward from the
+  panel edge so it isn't jammed against the vertical separator.
+
+### Fixed
+- **Built-in chip enabled state reset on restart** (`4bcbb331`). Third
+  recurrence — the merge path preserved slot's Rust-default `enabled=false`
+  for built-ins, dropping the user's `true` from the authored manifest.
+  Gated preservation on `!is_builtin_integration_id`.
+
 ## [0.2.0] - 2026-08-03
 
 The v0.2.0 line covers a very large stretch of work — the

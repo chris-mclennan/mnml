@@ -319,9 +319,23 @@ pub fn color_from_slot(name: &str, t: &Theme) -> ratatui::style::Color {
         // wasn't hitting the exact hue via the shared `orange` slot.
         // Silent fallback to bg2 on parse failure (same shape as
         // unknown-slot handling above).
+        // Reviewer 2026-08-08 — `hex.len()` counts BYTES, but the
+        // `[1..3]`/`[3..5]`/`[5..7]` slices assume single-byte ASCII.
+        // A crafted 7-byte string with a multi-byte UTF-8 char straddling
+        // a cut point (e.g. `"#12中4"`) would panic on `is_char_boundary`
+        // — user-editable via the sibling TOML, called every frame from
+        // the render thread. Use `get(..)` (returns None on non-boundary)
+        // + `is_ascii_hexdigit` gate for defence-in-depth.
         hex if hex.starts_with('#') && hex.len() == 7 => {
-            let parse = |s: &str| u8::from_str_radix(s, 16).ok();
-            match (parse(&hex[1..3]), parse(&hex[3..5]), parse(&hex[5..7])) {
+            let parse = |s: Option<&str>| {
+                s.filter(|s| s.chars().all(|c| c.is_ascii_hexdigit()))
+                    .and_then(|s| u8::from_str_radix(s, 16).ok())
+            };
+            match (
+                parse(hex.get(1..3)),
+                parse(hex.get(3..5)),
+                parse(hex.get(5..7)),
+            ) {
                 (Some(r), Some(g), Some(b)) => ratatui::style::Color::Rgb(r, g, b),
                 _ => t.bg2,
             }
@@ -503,6 +517,29 @@ mod tests {
         assert_eq!(back.blue, src.blue);
         assert_eq!(back.red, src.red);
         assert_eq!(back.base16, src.base16);
+    }
+
+    // Reviewer 2026-08-08 — repro that used to panic:
+    // multi-byte UTF-8 chars in a 7-byte "#hex" string straddled a
+    // slice cut point (`hex[1..3]`) and killed the render thread.
+    // Regression guard: parser must fall back silently, not panic.
+    #[test]
+    fn color_from_slot_multibyte_hex_falls_back_without_panic() {
+        let t = *active().read().unwrap();
+        // "#12中4" — 3 ASCII + 3-byte U+4E2D + 1 ASCII = 7 bytes,
+        // but `[1..3]` cuts through the middle of the CJK char.
+        let c = color_from_slot("#12\u{4E2D}4", &t);
+        assert_eq!(c, t.bg2, "non-ASCII hex must fall back to bg2");
+        // Also cover the trailing-multi-byte case.
+        let c2 = color_from_slot("#1234\u{4E2D}", &t);
+        assert_eq!(c2, t.bg2);
+        // Sanity: valid hex still parses correctly.
+        let c3 = color_from_slot("#D97757", &t);
+        assert_eq!(
+            c3,
+            ratatui::style::Color::Rgb(0xD9, 0x77, 0x57),
+            "valid hex must still parse"
+        );
     }
 
     #[test]
