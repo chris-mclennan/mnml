@@ -946,6 +946,14 @@ pub(crate) fn hover_chip_at(app: &App, x: u16, y: u16) -> Option<crate::HoverChi
     {
         return Some(crate::HoverChip::CodeLensChip);
     }
+    // 2026-08-07 vscode-user r2 F2 — HoverChip::DockEmptyChip + its
+    // tooltip body were defined but this arm was missing, so
+    // hovering the chip produced no popup.
+    if let Some(r) = app.rects.dock_empty_chip
+        && contains(r, x, y)
+    {
+        return Some(crate::HoverChip::DockEmptyChip);
+    }
     None
 }
 

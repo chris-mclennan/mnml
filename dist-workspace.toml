@@ -7,8 +7,14 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
-# The installers to generate for each app
-installers = ["shell", "powershell", "msi"]
+# The installers to generate for each app.
+#
+# 2026-08-07 — dropped `msi` (Windows GUI installer). Developer users
+# get mnml via `cargo install`, Homebrew, winget, or the tarball —
+# the Windows .msi was heavyweight for what's a terminal editor and
+# duplicates winget's job. Shell + PowerShell curl-installers stay
+# because they're universal one-liners with no packaging overhead.
+installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax).
 #
 # 2026-08-02 — Windows target flipped from `x86_64-pc-windows-msvc` to
@@ -55,8 +61,8 @@ install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
 
-# macOS .pkg bundle identifier (reverse-DNS, your control). Kept at
-# the end of the file so it doesn't accidentally swallow the other
-# top-level [dist.*] keys.
-[dist.mac-pkg-config]
-identifier = "sh.mnml.app"
+# 2026-08-07 — removed [dist.mac-pkg-config]. macOS users install
+# mnml via `cargo install`, `brew install mnml/tap/mnml`, or the
+# tarball. A .pkg (Apple installer) is GUI-installer aesthetic —
+# wrong shape for a TUI editor whose audience is comfortable in a
+# terminal already.

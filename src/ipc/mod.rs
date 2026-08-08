@@ -1501,6 +1501,12 @@ pub fn rects_dump_json(app: &App) -> String {
     for (r, label) in &app.rects.tree_icon_buttons {
         push_rect(&mut out, &mut first, &format!("tree_icon:{label}"), *r);
     }
+    // 2026-08-07 vscode-user r2 F3 — marketplace row rects were
+    // missing from the dump; headless drivers had to pixel-probe
+    // to hit any Marketplace-tab row.
+    for (r, idx) in &app.rects.marketplace_row_rects {
+        push_rect(&mut out, &mut first, &format!("marketplace_row:{idx}"), *r);
+    }
     for (r, idx) in &app.rects.integration_icon_rects {
         push_rect(&mut out, &mut first, &format!("integration:{idx}"), *r);
     }

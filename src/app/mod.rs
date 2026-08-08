@@ -2225,6 +2225,10 @@ pub struct PaneRects {
     /// 2026-08-07 — sort chip on the tab row (`⇅ A-Z`, etc.).
     /// Left-click cycles through the modes for the active tab.
     pub integrations_tab_sort: Option<Rect>,
+    /// 2026-08-07 — bottom panel `×` close chip (vscode-user r2 F1).
+    /// Chip was painted but no rect registered, so clicks fell
+    /// through and the only close path was Ctrl+Shift+J.
+    pub bottom_panel_close: Option<Rect>,
     /// 2026-07-09 user request — `+ Add integration` chip at the
     /// bottom of the Integrations panel. Click → sibling install
     /// picker. Prior to this the flow was
@@ -2965,6 +2969,7 @@ impl PaneRects {
         check_opt!(integrations_tab_marketplace);
         check_opt!(integrations_tab_refresh);
         check_opt!(integrations_tab_sort);
+        check_opt!(bottom_panel_close);
         check_opt!(integrations_filter_chip);
         check_opt!(sessions_panel_filter_input);
         check_opt!(glyph_builder_overlay_rect);

@@ -347,6 +347,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         }
         return;
     }
+    // 2026-08-07 vscode-user r2 F1 SEV-2 — bottom-panel `×` chip
+    // was drawn but never wired to a click handler. Hides the
+    // panel (mirrors Ctrl+Shift+J), which also drains hosted
+    // panes so they don't linger as ghost bufferline entries.
+    if let Some(rect) = app.rects.bottom_panel_close
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        crate::command::run("view.toggle_bottom_panel", app);
+        return;
+    }
     // qa-feature 2026-07-02 — markdown pane swap chips at the top of
     // MdPreview + Editor(.md) panes. Checked BEFORE scrollbars so the
     // chip at the far-right of the banner row isn't shadowed by

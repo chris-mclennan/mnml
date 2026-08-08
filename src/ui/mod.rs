@@ -2280,7 +2280,9 @@ fn draw_bottom_panel(frame: &mut Frame, app: &mut App, area: Rect) {
         ),
         header_area,
     );
-    // Close chip on the top right.
+    // Close chip on the top right. 2026-08-07 vscode-user r2 F1 —
+    // register the rect so clicks actually close the panel (was
+    // painted but never in app.rects, so the ×  was inert).
     if area.width >= 5 {
         let close_rect = Rect {
             x: area.x + area.width - 4,
@@ -2297,6 +2299,9 @@ fn draw_bottom_panel(frame: &mut Frame, app: &mut App, area: Rect) {
             ),
             close_rect,
         );
+        app.rects.bottom_panel_close = Some(close_rect);
+    } else {
+        app.rects.bottom_panel_close = None;
     }
     // Body — empty-state hint. Later: hosted pane render.
     if hosted == 0 && area.height >= 3 {
