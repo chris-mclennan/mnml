@@ -6002,8 +6002,27 @@ impl App {
             {
                 Some(slot) => {
                     let mut merged = new_icon;
-                    merged.enabled = slot.enabled;
-                    merged.in_palette_bar = slot.in_palette_bar;
+                    // 2026-08-07 — built-in ids' authored manifests
+                    // ARE the user's toggle state (write_override_toml
+                    // regenerates the file from the Rust default plus
+                    // the toggle values every time the chip is
+                    // enabled/disabled). For those, the manifest wins.
+                    // For sibling manifests, preserve the slot's user-
+                    // set enabled / in_palette_bar so the sibling
+                    // author's default can't clobber later user prefs.
+                    //
+                    // Without this discriminator, built-in chips reset
+                    // to `enabled = false` on every restart: the slot
+                    // carried the Rust default (false), the merge
+                    // preserved it, and the user's true from the
+                    // authored manifest got dropped. User report
+                    // 2026-08-07 (third recurrence — earlier fix
+                    // eddbcc18 fixed the cleanup path but not the
+                    // merge path).
+                    if !crate::app::discovery::is_builtin_integration_id(&m.id) {
+                        merged.enabled = slot.enabled;
+                        merged.in_palette_bar = slot.in_palette_bar;
+                    }
                     *slot = merged;
                 }
                 None => self.config.ui.integration_icons.push(new_icon),
