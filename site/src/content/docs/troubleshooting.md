@@ -1,40 +1,9 @@
 ---
 title: Troubleshooting
-description: Common install / launch issues — Windows source-build prerequisites, the WSL bash trap for `.test`, the macOS Tahoe "Intel-based apps" warning, and how to recover.
+description: Common install / launch issues — Windows source-build prerequisites, the WSL bash trap for `.test`, and how to recover.
 ---
 
-## Nightly bundle
-
-`./scripts/build-app.sh --nightly` builds a second macOS bundle at `target/mnml-nightly.app` that's distinct from the stable `mnml.app`:
-
-- **Different bundle identifier** (`sh.mnml.app.nightly` vs `sh.mnml.app`) — both can live in `/Applications/` at once, both can be dock-pinned independently, Cmd-Tab shows them as separate apps.
-- **Inverted-color icon palette** — cool blue ground + charcoal `mnml` wordmark, so the two are visually distinguishable at a glance.
-- **The launcher execs your latest cargo build directly** (`$HOME/Projects/mnml/target/release/mnml`) instead of packaging a snapshot binary into the bundle. Rebuild with `cargo build --release` and the next launch of `mnml-nightly.app` picks up the new code — no rebundling, no `cp` into `/Applications/`.
-
-Use case: pin nightly to the dock for one-click access to whatever's currently in your local `target/release/`, while the stable bundle in `/Applications/` stays untouched.
-
-**Not part of release CI** — the `mnml.app` bundle is a maintainer-side / power-user convenience for Dock/Finder-open users. There's no auto-update and no signed artifact. Build it yourself with `./scripts/build-app.sh --nightly` and copy the result wherever you want it. Source: `scripts/build-app.sh`, `scripts/launcher-nightly.sh`, `scripts/Info-nightly.plist`. (2026-08-07: mnml no longer distributes `.dmg`/`.pkg` installers — see [platform support](/manual/platform-support/) for the change.)
-
-## "Intel-based apps" warning on macOS Tahoe (26) (historical)
-
-If you installed an mnml `.dmg` from a v0.1.1 or earlier release (before the DMG distribution was retired), you may see this warning:
-
-> **Support Ending for Intel-based Apps.** This version will not open in a future release of macOS.
-
-mnml ships native arm64 binaries for Apple Silicon. The warning was a false positive — the cause was a missing `LSMinimumSystemVersion = 11.0` key in the `.app` bundle's `Info.plist`. Fixed in v0.1.2. If you see it now, you're running an old install:
-
-```sh
-brew upgrade chris-mclennan/tap/mnml
-```
-
-You can confirm you're on a fixed build:
-
-```sh
-defaults read /Applications/mnml.app/Contents/Info.plist LSMinimumSystemVersion
-# 11.0
-```
-
-If it still prints `10.14` or doesn't exist, your bundle is pre-v0.1.2 — update.
+*(2026-08-07: mnml is a terminal editor — the `.dmg` / `.pkg` / `mnml.app` bundle install paths for macOS were retired. Install via `cargo install mnml-rs`, `brew install mnml/tap/mnml`, or the `.tar.xz` from [Install](/install/). If you're on an old `.dmg`-installed copy and see the "Intel-based Apps" Tahoe warning, just reinstall via one of those paths — the pre-v0.1.2 bundle issue that caused it is gone.)*
 
 ## Windows
 

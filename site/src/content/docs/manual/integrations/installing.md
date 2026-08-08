@@ -212,7 +212,7 @@ The probe walks `$PATH` first, then a per-OS list of well-known install dirs:
 | Linux | `$PATH` → `~/.cargo/bin` → `/home/linuxbrew/.linuxbrew/bin` → `/usr/local/bin` |
 | Windows | `%PATH%` → `%USERPROFILE%\.cargo\bin` → `%LOCALAPPDATA%\Programs\` |
 
-The fallback list exists because macOS `.app` bundles don't inherit your shell's `PATH` — Finder launches mnml.app with the minimal system PATH, and your `.zshrc` never runs. Without the fallback you'd `cargo install mnml-msg-slack`, see it in any shell, then launch mnml.app from Finder and watch the chip vanish despite the binary sitting in `~/.cargo/bin`. The direct probe covers the case.
+The fallback list exists because a launcher / IDE / tmux spawn may not inherit your shell's full `PATH`. Without the fallback you'd `cargo install mnml-msg-slack`, see it in any shell, then launch mnml from a wrapper that doesn't run your `.zshrc` and watch the chip vanish despite the binary sitting in `~/.cargo/bin`. The direct probe covers those cases.
 
 Results cache per session. After a fresh `cargo install` outside of mnml, drop the cache:
 
@@ -226,15 +226,14 @@ Internal palette commands with no prefix (e.g. `ai.claude_code`, `http.send`, `b
 
 ## Troubleshooting
 
-### "I installed via `cargo install` but mnml.app from Finder doesn't see the chip"
+### "I installed via `cargo install` but the chip doesn't appear"
 
-The macOS `PATH`-inheritance problem. Your shell sees `~/.cargo/bin/mnml-xxx` because your `.zshrc` adds `~/.cargo/bin` to `PATH`; the .app bundle launched from Finder doesn't run your `.zshrc`, so it doesn't see the addition.
+Likely a `PATH`-inheritance issue — the shell mnml was spawned from doesn't have `~/.cargo/bin` on `PATH`, or your `cargo install --root` prefix is non-standard.
 
 mnml's well-known-locations fallback covers `~/.cargo/bin` directly. If the chip still doesn't resolve, the binary likely landed somewhere unusual — check `cargo install --list` to see where. If your install prefix is non-standard:
 
 - Move the binary into `~/.cargo/bin` (a symlink works), or
-- Launch mnml from a shell (`mnml` in your terminal) rather than from Finder, or
-- Add the target directory to the launcher script at `/Applications/mnml.app/Contents/MacOS/launcher.sh`.
+- Prepend the target directory to `PATH` in your shell profile and relaunch.
 
 ### "The chip is dim / greyed out"
 

@@ -1,6 +1,6 @@
 ---
 title: Startup picker
-description: The JetBrains-style workspace chooser that pops up when you launch mnml with --startup-picker (or open mnml.app from Finder) — pick a configured workspace, open a file, or skip into whatever directory mnml was launched at.
+description: The JetBrains-style workspace chooser that pops up when you launch mnml with --startup-picker — pick a configured workspace, open a file, or skip into whatever directory mnml was launched at.
 ---
 
 When you launch mnml from a terminal you already know which workspace you want — you typed it on the command line. When you launch it from Finder, or from a dock icon, there's no terminal context to type a workspace path. The OS just hands mnml `$HOME` and walks away.
@@ -32,9 +32,9 @@ mnml shows the picker when **either** of these is true on launch:
 
 In every other case mnml goes straight to the editor with no overlay. The picker is opt-in — running `mnml` from a shell never shows it unless you ask.
 
-### The Finder / dock path
+### Env-var alias
 
-The `mnml.app` and `mnml-nightly.app` launchers (macOS bundles built locally via `./scripts/build-app.sh`; mnml no longer ships as a DMG) open mnml in Terminal.app with `--startup-picker` set, so clicking the mnml icon in Finder, Spotlight, or the dock lands you on the picker rather than dropping you straight into `$HOME` with no idea what's around.
+For shells that don't easily pass `--startup-picker`, `MNML_STARTUP_PICKER=1 mnml` produces the same effect. Handy in a wrapper script or a shell alias.
 
 ## Picker rows
 
@@ -116,7 +116,6 @@ The empty-state check is exact: mnml canonicalizes both its workspace path and `
 In practice:
 
 - `cd ~ && mnml .` → empty state (workspace == `$HOME`).
-- Clicking the mnml.app icon from Finder → empty state (Finder hands the bundle `$HOME`).
 - `cd ~/Projects/mnml && mnml .` → normal tree (workspace == `~/Projects/mnml`, not `$HOME`).
 - `mnml ~/Projects/mnml` from anywhere → normal tree.
 
