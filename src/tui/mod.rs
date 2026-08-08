@@ -422,6 +422,58 @@ fn run_loop(term: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> io:
                         app.http_paste_curl_from_text(&text);
                         continue;
                     }
+                    // 2026-08-08 (nvchad-user R5 SEV-2) — vim `:` cmdline
+                    // paste. The `no_pane_cmdline` branch above only fires
+                    // when there's no focused editor; when vim owns the
+                    // cmdline (the common case — editor pane focused,
+                    // user types `:e <path>` and pastes) the paste event
+                    // fell through silently. Route into the InputHandler's
+                    // cmdline API so the pasted text lands at the caret.
+                    if let Some(editor) = app.active_editor_mut()
+                        && let Some(mut cur) = editor.input.cmdline_get()
+                    {
+                        let caret = editor
+                            .input
+                            .cmdline_caret()
+                            .unwrap_or(cur.len())
+                            .min(cur.len());
+                        let clean: String = text
+                            .chars()
+                            .filter(|c| *c != '\n' && *c != '\r' && (*c as u32) >= 0x20)
+                            .collect();
+                        cur.insert_str(caret, &clean);
+                        let new_caret = caret + clean.len();
+                        editor.input.cmdline_set(Some(cur));
+                        editor.input.set_cmdline_caret(new_caret);
+                        continue;
+                    }
+                    // 2026-08-08 (nvchad-user R5 SEV-2) — insert-mode
+                    // paste in the editor (both vim insert mode and
+                    // Standard mode). Route via `EditOp::InsertStr`
+                    // through `Editor::apply` so vim's undo group stays
+                    // intact and the standard mode's history is
+                    // recorded consistently. In Normal / Visual the
+                    // buffer isn't accepting text input, so falls
+                    // through to the silent-drop below.
+                    let insert_mode = app.editing_mode() == crate::input::EditingMode::Insert;
+                    if insert_mode && app.active_editor_mut().is_some() {
+                        let clean: String = text.replace('\r', "");
+                        // Split-borrow: pull clipboard out first, then
+                        // reborrow the editor. Both live on `app`.
+                        let mut clip = std::mem::replace(
+                            &mut app.clipboard,
+                            crate::clipboard::Clipboard::detached(),
+                        );
+                        if let Some(editor) = app.active_editor_mut() {
+                            let _ = editor.editor.apply(
+                                crate::edit_op::EditOp::InsertStr(clean),
+                                24,
+                                &mut clip,
+                            );
+                        }
+                        app.clipboard = clip;
+                        continue;
+                    }
                     // Nothing else routes Paste events today; drop
                     // silently as before.
                 }

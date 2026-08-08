@@ -538,6 +538,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
                 };
                 (label, color)
             }
+            // R5 keyboard SEV-3 2026-08-08 — differentiate "genuine 0%"
+            // from "fetch failed" so the chip surfaces the state without
+            // requiring a hover-tooltip drill-down. Red em-dash + `!`
+            // sigil when `last_error` is populated; gray em-dash for
+            // "successfully fetched, 0% used". Also route 429 / other
+            // non-401 errors through the same visual as a token miss so
+            // the user knows something is off.
+            Some(u) if u.last_error.is_some() => (" \u{F1E00} —! ".to_string(), t.red),
             Some(_) => (" \u{F1E00} — ".to_string(), t.comment),
             None => (" \u{F1E00} … ".to_string(), t.comment),
         };

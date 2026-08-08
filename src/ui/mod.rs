@@ -4634,20 +4634,22 @@ fn pty_icon(
         // pane, override any stale/mis-parsed slot color with the brand
         // hex directly. Add a trailing space so the narrow dingbat char
         // (✳ ✢ ✶ ✻ ✽) doesn't sit tight against the label.
+        // Spinner path — dingbat chars (✳ ✢ ✶ ✻ ✽) are narrow.
+        // `tab_chip_spans` already wraps `" {g} "`, so keep the raw
+        // spinner char here — otherwise the sum is 2 trailing spaces
+        // (bufferline wrapper + this branch) and the tab label
+        // visibly jiggles right by one cell every time thinking starts.
+        // R5 keyboard SEV-3 + claude-power SEV-3, 2026-08-08.
         (Some((_, c)), Some(g), _) if nerd => (
-            format!("{g}  "),
+            g.to_string(),
             if force_claude_color { claude_coral } else { c },
         ),
-        (Some((g, c)), _, _) if nerd => (
-            if force_claude_color {
-                format!("{g} ")
-            } else {
-                g
-            },
-            if force_claude_color { claude_coral } else { c },
-        ),
+        // Static path — the sibling glyph (F1E00 for Claude, wide nerd
+        // font) reads fine at the bufferline's default 1-cell gap;
+        // never add an extra trailing space here.
+        (Some((g, c)), _, _) if nerd => (g, if force_claude_color { claude_coral } else { c }),
         (None, Some(g), _) if nerd => (
-            format!("{g}  "),
+            g.to_string(),
             if force_claude_color {
                 claude_coral
             } else {

@@ -5865,13 +5865,13 @@ fn builtin_commands() -> Vec<Command> {
             group: "ai",
             keys: &[],
             run: |app| {
-                let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
-                    app.toast("no $HOME");
-                    return;
-                };
-                let path = home
-                    .join(".cache")
-                    .join("mnml")
+                // 2026-08-08 (SEV-1 follow-up) — route through
+                // `data_root()` to match the writer in `ai_usage.rs`.
+                // Was `env::var_os("HOME")` directly, which under
+                // `--sandbox` / Portable mode pointed at the real $HOME
+                // while the writer had moved to `data_root/cache/`.
+                let path = crate::data_root::data_root()
+                    .join("cache")
                     .join("ai_last_response.json");
                 if !path.exists() {
                     app.toast("no response cached yet — hit :ai.refresh_usage first");

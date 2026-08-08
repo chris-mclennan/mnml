@@ -251,22 +251,42 @@ fn fetch_claude_blocking() -> Result<ClaudeUsage, String> {
     }
     let status = resp.status();
     let text = resp.text().map_err(|e| format!("body read: {e}"))?;
-    // Debug hook — always write the last raw response to a
-    // predictable path so `:ai.show_last_response` can open it
-    // when the parser returns 0% for something the endpoint
-    // clearly filled in. Best-effort, silent on failure.
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        let dir = home.join(".cache").join("mnml");
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(
-            dir.join("ai_last_response.json"),
-            format!(
-                "// HTTP {}\n// fetched_at: {}\n{}\n",
-                status.as_u16(),
-                now_unix(),
-                text
-            ),
-        );
+    // Debug hook — write the last response to a predictable path so
+    // `:ai.show_last_response` can open it when the parser returns 0%
+    // for something the endpoint clearly filled in. Best-effort, silent
+    // on failure.
+    //
+    // claude-agents-power-user r5 (2026-08-08) SEV-1 — three separate
+    // gaps closed here:
+    //   1. Response body was written BEFORE `redact_bearer()` scrubbed
+    //      it, defeating the mitigation added for auth middlewares that
+    //      echo the `Authorization` header back in error strings.
+    //   2. Path was `~/.cache/mnml/…` via bare `HOME`, bypassing
+    //      `data_root()` — under `--sandbox` / Portable mode the OAuth
+    //      response would leak to the real $HOME.
+    //   3. File was written with default (0644) perms → other local
+    //      users could read the response body. Chmod 600 like the
+    //      sibling `ai_token`.
+    let dir = crate::data_root::data_root().join("cache");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("ai_last_response.json");
+    let scrubbed = redact_bearer(&text);
+    if std::fs::write(
+        &path,
+        format!(
+            "// HTTP {}\n// fetched_at: {}\n{}\n",
+            status.as_u16(),
+            now_unix(),
+            scrubbed
+        ),
+    )
+    .is_ok()
+    {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
     }
     if !status.is_success() {
         // Reviewer 2026-08-05 — don't echo the response body on
