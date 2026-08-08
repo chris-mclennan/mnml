@@ -209,46 +209,12 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
-      # MANUAL EDIT — package mnml.app + mnml-<ver>.dmg on macOS targets.
-      # The DMG is the drag-to-install path Mac users expect (puts
-      # mnml.app in /Applications); the .pkg cargo-dist already builds
-      # is the CLI install path. Both ship in each release.
-      - name: Build macOS DMG
-        if: contains(matrix.targets[0], 'apple-darwin')
-        shell: bash
-        env:
-          # Notarization secrets — see docs/notarization.md for setup.
-          # When unset, the DMG ships unsigned (Gatekeeper will warn the
-          # user). When set, the DMG is code-signed + notarized + stapled.
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_DEVELOPER_ID_CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
-          APPLE_DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-        run: |
-          set -euo pipefail
-          TARGET="${{ matrix.targets[0] }}"
-          BIN="target/${TARGET}/dist/mnml"
-          if [ ! -f "$BIN" ]; then
-            echo "::warning::binary not at $BIN, searching..."
-            BIN="$(find target -name 'mnml' -type f -path '*/dist/*' | head -1)"
-          fi
-          echo "Packaging DMG from $BIN"
-          ./scripts/build-dmg.sh --bin-path "$BIN"
-          mkdir -p target/distrib/
-          # Rename DMG to match cargo-dist's package-name pattern so the
-          # install page's `releases/latest/download/mnml-rs-<triple>.dmg`
-          # URL resolves. (build-dmg.sh names by binary-version, which would
-          # both not match and force a docs change per release.)
-          for dmg in target/*.dmg; do
-            mv "$dmg" "target/distrib/mnml-rs-${TARGET}.dmg"
-          done
-          # Sign + notarize when secrets are configured (no-op otherwise).
-          # See docs/notarization.md for one-time setup.
-          for dmg in target/distrib/*.dmg; do
-            ./scripts/notarize-dmg.sh "$dmg"
-          done
-          ls -la target/distrib/*.dmg
+      # 2026-08-07 — dropped the manual macOS DMG packaging step +
+      # the notarize step. mnml is a TUI editor; Mac users install
+      # via `cargo install`, `brew install mnml/tap/mnml`, or the
+      # tarball. The DMG (drag-to-install into /Applications) was
+      # wrong shape for a terminal binary, and dropping it means we
+      # no longer need Apple developer cert secrets in CI.
       - name: "Upload artifacts"
         uses: actions/upload-artifact@v7
         with:
@@ -256,7 +222,6 @@ jobs:
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
-            target/distrib/*.dmg
 
   # Build and package all the platform-agnostic(ish) things
   build-global-artifacts:

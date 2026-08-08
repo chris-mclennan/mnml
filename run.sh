@@ -20,7 +20,9 @@
 #   ./run.sh check                cargo clippy --all-targets
 #   ./run.sh watch                cargo watch -x build  (needs cargo-watch)
 #   ./run.sh app [debug|release]  Build mnml.app into target/ (scripts/build-app.sh).
-#   ./run.sh dmg [debug|release]  Build mnml-<version>.dmg into target/.
+#                                 The bundle is a Terminal.app launcher — useful for
+#                                 Dock-pinning / Finder-open. NOT a DMG (2026-08-07:
+#                                 DMG distribution removed; the bundle stands alone).
 #   ./run.sh clean [mode]         Reclaim target/ space (it bloats past 100GB
 #                                 because cargo never GCs the incremental cache
 #                                 + dep rlibs). Default mode = `incremental`
@@ -97,7 +99,6 @@ case "${1:-start}" in
   dist-check) shift; exec ./scripts/dist-check.sh "$@" ;;
   newsletter) shift; exec ./scripts/send-release-newsletter.sh "$@" ;;
   app)     shift; exec ./scripts/build-app.sh "$@" ;;
-  dmg)     shift; exec ./scripts/build-dmg.sh "$@" ;;
   # ── target/ cleanup (cargo cache can balloon past 100GB) ────────
   # 2026-06-30 — discovered target/ at 238GB causing 22-minute
   # rebuilds. The incremental cache + dep rlibs accumulate stale

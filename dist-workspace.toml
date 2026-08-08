@@ -9,12 +9,16 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 # The installers to generate for each app.
 #
-# 2026-08-07 — dropped `msi` (Windows GUI installer). Developer users
-# get mnml via `cargo install`, Homebrew, winget, or the tarball —
-# the Windows .msi was heavyweight for what's a terminal editor and
-# duplicates winget's job. Shell + PowerShell curl-installers stay
-# because they're universal one-liners with no packaging overhead.
-installers = ["shell", "powershell"]
+# 2026-08-07 — decision: keep MSI. It's not featured on the install
+# page (docs point users at cargo/brew/winget/tarball first) but
+# winget's package format requires an MSI as its download source,
+# so removing MSI would break `winget install mnml`. The MSI stays
+# as a plumbing artifact, not a first-class advertised path.
+# macOS .pkg + .dmg are gone (see removed [dist.mac-pkg-config] +
+# release.yml step) because macOS has cargo + brew + tarball which
+# together cover the developer audience; no downstream package
+# manager needs the .pkg the way winget needs the .msi.
+installers = ["shell", "powershell", "msi"]
 # Target platforms to build apps for (Rust target-triple syntax).
 #
 # 2026-08-02 — Windows target flipped from `x86_64-pc-windows-msvc` to

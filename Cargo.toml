@@ -50,6 +50,9 @@ path = "src/main.rs"
 # WiX GUIDs — required by cargo-dist for the Windows MSI installer.
 # Stable for the life of the package; never regenerate (changing
 # them would orphan existing installs on upgrade).
+# 2026-08-07 — kept even after the DMG/.pkg drop because winget's
+# publish pipeline depends on the .msi artifact this WiX config
+# generates. See dist-workspace.toml comment for the full trade-off.
 [package.metadata.wix]
 upgrade-guid = "21DB6B89-F8E6-4078-B123-3A6FEAEECD56"
 path-guid = "F7EB5F6F-2277-4DF2-BC63-8A68BB048777"

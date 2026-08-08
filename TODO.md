@@ -298,10 +298,10 @@ repos):
 DON'T switch to `*-xlarge` or `*-large` runners — those are
 paid even on public repos.
 
-The existing `scripts/notarize-dmg.sh` cert plumbing
-(`APPLE_DEVELOPER_ID_CERT_BASE64` env) can be reused per sibling
-repo's CI workflow. ~15 min per repo to set up; 32 repos → ~8
-hours mechanical work; ~$0/year ongoing.
+(2026-08-07 — `scripts/notarize-dmg.sh` was removed with the DMG
+packaging drop. Siblings that want notarization would need to
+re-add cert plumbing; not doing this by default since siblings
+distribute via `cargo install` or their own scripts.)
 
 Trigger: push-to-main publishes to a `main-latest` GitHub
 release. `cargo-binstall` picks up the latest binary; no manual

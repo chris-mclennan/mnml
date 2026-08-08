@@ -13,11 +13,13 @@ The release train publishes prebuilt artifacts for these targets via [`cargo-dis
 
 | Platform | Target triple | Formats |
 |---|---|---|
-| macOS · Apple Silicon | `aarch64-apple-darwin` | `.dmg`, `.pkg`, `.tar.xz` |
-| macOS · Intel | `x86_64-apple-darwin` | `.dmg`, `.pkg`, `.tar.xz` |
-| Linux · x86_64 | `x86_64-unknown-linux-gnu` | `.deb`, `.rpm`, `.tar.xz`, `installer.sh` |
-| Linux · arm64 | `aarch64-unknown-linux-gnu` | `.deb`, `.rpm`, `.tar.xz` |
-| Windows · x86_64 | `x86_64-pc-windows-gnu` | `.msi`, `.zip`, `installer.ps1` |
+| macOS · Apple Silicon | `aarch64-apple-darwin` | `.tar.xz`, `installer.sh` |
+| macOS · Intel | `x86_64-apple-darwin` | `.tar.xz`, `installer.sh` |
+| Linux · x86_64 | `x86_64-unknown-linux-gnu` | `.tar.xz`, `installer.sh` |
+| Linux · arm64 | `aarch64-unknown-linux-gnu` | `.tar.xz`, `installer.sh` |
+| Windows · x86_64 | `x86_64-pc-windows-gnu` | `.zip`, `installer.ps1`, `.msi`* |
+
+*(2026-08-07: dropped `.dmg` / `.pkg` — mnml is a TUI editor; macOS developers install via `cargo install`, Homebrew, or the tarball. Windows `.msi` is retained as a build artifact because [winget](https://learn.microsoft.com/windows/package-manager/) requires it as the download source for `winget install mnml`, but it's not the recommended path — use `winget`, `cargo install mnml-rs`, or the `.zip` directly.)*
 
 Everything is downloadable from the [Install page](/install/) or via a one-liner installer (`curl … | sh` on Unix, `irm … | iex` on Windows).
 
@@ -29,8 +31,8 @@ mnml embeds a headless VT100 parser via `libghostty-vt` (the same engine Ghostty
 
 Practical consequences:
 
-- The MSI installs and runs correctly on both x86_64 Windows and arm64 Windows (via Microsoft's x86_64 emulation).
-- Native `aarch64-pc-windows-msvc` builds are on hold until either (a) upstream Ghostty gets MSVC support working, or (b) cargo-dist grows a per-target installer override so mnml can skip the MSI on arm64 (WiX isn't preinstalled on the `windows-11-arm` runner images).
+- The x86_64 build runs correctly on both native x86_64 Windows and arm64 Windows (via Microsoft's x86_64 emulation).
+- Native `aarch64-pc-windows-msvc` builds are on hold until upstream Ghostty gets MSVC support working.
 - If you'd rather build for MSVC yourself, `cargo build` will fail at link time inside `mnml-libghostty-vt-sys` — that's expected. Track upstream Ghostty for status.
 
 ### About `libghostty-vt` vendoring

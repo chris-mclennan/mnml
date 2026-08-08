@@ -63,16 +63,14 @@ Each script is templated at compile time via `cfg!` macros so the binary ships w
 
 ```text
 1/4  downloading sha256.sum…
-2/4  downloading mnml-rs-aarch64-apple-darwin.pkg…
+2/4  downloading mnml-rs-aarch64-apple-darwin.tar.xz…
 3/4  verifying SHA256…
-     expected: 3f1c2a98b5e7d4c1f8a6e2b9…
-     actual:   3f1c2a98b5e7d4c1f8a6e2b9…
      ✓ verified
-4/4  installing — this will prompt for your admin password
-Password:
+4/4  extracting + installing to ~/.cargo/bin/mnml…
+     ✓ installed: /Users/chris/.cargo/bin/mnml
 ```
 
-A bash script. Downloads `mnml-rs-<target>.pkg` (Apple Silicon: `aarch64-apple-darwin`; Intel: `x86_64-apple-darwin`), verifies via `shasum -a 256`, and runs `sudo installer -pkg <file> -target /`. The sudo prompt appears inside the Pty pane — type your password directly there. Installs to the same location Homebrew + the standalone `.pkg` use, so a subsequent `brew upgrade mnml` won't conflict.
+A bash script. Downloads `mnml-rs-<target>.tar.xz` (Apple Silicon: `aarch64-apple-darwin`; Intel: `x86_64-apple-darwin`), verifies via `shasum -a 256`, extracts, and `install -m 0755`s the binary to `~/.cargo/bin/mnml`. No sudo needed — `~/.cargo/bin` is user-writable and on your `PATH` if you use Rust. If you installed mnml via Homebrew, the fresh binary in `~/.cargo/bin` shadows the Homebrew copy as long as `~/.cargo/bin` appears earlier on `PATH`.
 
 ### Linux
 
@@ -91,21 +89,14 @@ A bash script. Downloads `mnml-rs-<target>.tar.xz` (`aarch64-unknown-linux-gnu` 
 
 ```text
 1/4  downloading sha256.sum…
-2/4  downloading mnml-rs-x86_64-pc-windows-gnu.msi…
+2/4  downloading mnml-rs-x86_64-pc-windows-gnu.zip…
 3/4  verifying SHA256…
-     expected: 8c4e91d2a7f3b5e6c9d8a1f4…
-     actual:   8c4e91d2a7f3b5e6c9d8a1f4…
      ✓ verified
-4/4  installing — Windows will show a UAC elevation prompt
+4/4  extracting + installing to %USERPROFILE%\.cargo\bin\mnml.exe…
+     ✓ installed
 ```
 
-A PowerShell script. Downloads `mnml-rs-<target>.msi` (`x86_64-pc-windows-gnu` today; `aarch64-pc-windows-msvc` ships when we add an ARM64 Windows runner), verifies via `Get-FileHash`, then launches the installer with elevation:
-
-```powershell
-Start-Process -FilePath 'msiexec.exe' `
-  -ArgumentList '/i', "`"$msiPath`"", '/qb!' `
-  -Verb RunAs -Wait -PassThru
-```
+A PowerShell script. Downloads `mnml-rs-<target>.zip` (`x86_64-pc-windows-gnu` today), verifies via `Get-FileHash`, extracts, and copies `mnml.exe` into `%USERPROFILE%\.cargo\bin\`. No elevation needed — the user-scope cargo bin dir is on `PATH` if you use Rust. Alternatively, `winget upgrade mnml` from the terminal.
 
 - `-Verb RunAs` triggers the UAC elevation prompt — the Windows dialog pops in front of mnml; click "Yes".
 - `/qb!` is msiexec's "basic UI, no modal at end" mode. You see a progress bar, but there's no final "Finish" dialog the user has to click through.
@@ -172,7 +163,7 @@ The check defends against partial downloads, CDN corruption, and a transparent p
 
 **Windows "press Enter to close" doesn't close the pane.** That's the script waiting — press Enter inside the pty pane (not in the editor). Or kill the pane with the close-pane keymap.
 
-**You want to skip the in-app updater entirely.** Use the same installer flow that gave you mnml the first time — `brew upgrade mnml`, redownload the `.pkg` / `.msi` from the [Install](/install/) page, or `cargo install mnml-rs`. The in-app updater is a convenience, not the only path.
+**You want to skip the in-app updater entirely.** Use the same installer flow that gave you mnml the first time — `brew upgrade mnml`, `winget upgrade mnml`, redownload the tarball from the [Install](/install/) page, or `cargo install mnml-rs`. The in-app updater is a convenience, not the only path.
 
 ## Next
 
