@@ -530,13 +530,20 @@ mod tests {
         // but `[1..3]` cuts through the middle of the CJK char.
         let c = color_from_slot("#12\u{4E2D}4", &t);
         assert_eq!(c, t.bg2, "non-ASCII hex must fall back to bg2");
-        // Also cover the trailing-multi-byte case.
-        let c2 = color_from_slot("#1234\u{4E2D}", &t);
+        // Reviewer 2026-08-08: cover a straddle at the `[3..5]` cut.
+        // "#123é7" — 4 ASCII + 2-byte é (U+00E9) + 1 ASCII = 7 bytes;
+        // slicing at byte 4 would split `é` mid-codepoint.
+        let c2 = color_from_slot("#123\u{00E9}7", &t);
         assert_eq!(c2, t.bg2);
+        // Straddle at the `[5..7]` cut.
+        // "#1234é" — 5 ASCII + 2-byte é = 7 bytes; slicing at byte 6
+        // would split `é`.
+        let c3 = color_from_slot("#1234\u{00E9}", &t);
+        assert_eq!(c3, t.bg2);
         // Sanity: valid hex still parses correctly.
-        let c3 = color_from_slot("#D97757", &t);
+        let c4 = color_from_slot("#D97757", &t);
         assert_eq!(
-            c3,
+            c4,
             ratatui::style::Color::Rgb(0xD9, 0x77, 0x57),
             "valid hex must still parse"
         );
