@@ -3,7 +3,7 @@ title: In-app updater
 description: mnml's launch-time release check and one-command install flow across macOS, Linux, and Windows.
 ---
 
-mnml watches its own releases. On launch a background thread pings the GitHub releases API, and if the latest tag differs from the running version a toast fires hinting at `:update.install_latest`. That command spawns a Pty pane that downloads the right artifact for your platform, SHA256-verifies it against the published `sha256.sum`, and runs the platform-native installer — `installer` on macOS, `install` to `~/.cargo/bin` on Linux, `msiexec` (UAC-elevated) on Windows.
+mnml watches its own releases. On launch a background thread pings the GitHub releases API, and if the latest tag differs from the running version a toast fires hinting at `:update.install_latest`. That command spawns a Pty pane that downloads the right artifact for your platform, SHA256-verifies it against the published `sha256.sum`, extracts the tarball / zip, and drops the new binary in `~/.cargo/bin/mnml`. No sudo / UAC prompts — the user-scope cargo bin dir is user-writable on every platform.
 
 The updater is deliberately split into two halves so neither blocks the other: a passive check that costs one HTTP request a session, and an active install that you opt into when you're ready to take the new version.
 
@@ -44,7 +44,7 @@ The command:
 2. Writes the platform-specific install script to a temp file (chmod 755 on Unix).
 3. Opens a `Pane::Pty` running the script via `bash` (macOS / Linux) or `powershell -File` (Windows).
 
-The Pty pane shows download progress, the SHA256 verification, the install step, and any admin / UAC prompt live. The currently-running mnml process keeps working throughout — its binary is in memory, not re-read from disk. When the script finishes:
+The Pty pane shows download progress, the SHA256 verification, and the install step live. The currently-running mnml process keeps working throughout — its binary is in memory, not re-read from disk. When the script finishes:
 
 ```
 ──────────────────────────────────────────────────────
@@ -98,11 +98,7 @@ A bash script. Downloads `mnml-rs-<target>.tar.xz` (`aarch64-unknown-linux-gnu` 
 
 A PowerShell script. Downloads `mnml-rs-<target>.zip` (`x86_64-pc-windows-gnu` today), verifies via `Get-FileHash`, extracts, and copies `mnml.exe` into `%USERPROFILE%\.cargo\bin\`. No elevation needed — the user-scope cargo bin dir is on `PATH` if you use Rust. Alternatively, `winget upgrade mnml` from the terminal.
 
-- `-Verb RunAs` triggers the UAC elevation prompt — the Windows dialog pops in front of mnml; click "Yes".
-- `/qb!` is msiexec's "basic UI, no modal at end" mode. You see a progress bar, but there's no final "Finish" dialog the user has to click through.
-- `-Wait` keeps the Pty pane alive until the elevated msiexec finishes, so you see whether it succeeded.
-
-The script also surfaces non-zero msiexec exit codes (`✗ msiexec exited with code N`) and cleans up the temp dir on success. After install, it prompts `Press Enter to close this pane.` so you can read the relaunch hint before the pane goes away.
+The script cleans up the temp dir on success and prompts `Press Enter to close this pane.` so you can read the relaunch hint before the pane goes away.
 
 ### Other platforms
 
@@ -157,9 +153,7 @@ The check defends against partial downloads, CDN corruption, and a transparent p
 
 **SHA256 mismatch.** The script exits 1 and the Pty pane stays open with the mismatch printed. Retry the install — if it persists, the release artifact is probably mid-upload or got re-uploaded out of sync with `sha256.sum`. File an issue at [github.com/chris-mclennan/mnml/issues](https://github.com/chris-mclennan/mnml/issues).
 
-**macOS sudo prompt won't take input.** The Pty pane's input must be focused. Click into it, or use the keymap that focuses the pty pane (default: `Ctrl-E` releases focus from the editor; then click or `Tab` into the pane).
-
-**Windows UAC was cancelled.** msiexec exits non-zero, the script prints the code, and the install is rolled back by Windows. Re-run `:update.install_latest`.
+**Extract or install step fails.** Usually a permissions issue on `~/.cargo/bin` (or `%USERPROFILE%\.cargo\bin\` on Windows). Create the dir manually (`mkdir -p ~/.cargo/bin`) and re-run. On Windows also make sure Defender isn't quarantining fresh `.exe` downloads.
 
 **Windows "press Enter to close" doesn't close the pane.** That's the script waiting — press Enter inside the pty pane (not in the editor). Or kill the pane with the close-pane keymap.
 

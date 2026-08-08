@@ -1,6 +1,6 @@
 ---
 title: Startup picker
-description: The JetBrains-style workspace chooser that pops up when you launch mnml.app from Finder — pick a configured workspace, open a file, or skip into whatever directory mnml was launched at.
+description: The JetBrains-style workspace chooser that pops up when you launch mnml with --startup-picker (or open mnml.app from Finder) — pick a configured workspace, open a file, or skip into whatever directory mnml was launched at.
 ---
 
 When you launch mnml from a terminal you already know which workspace you want — you typed it on the command line. When you launch it from Finder, or from a dock icon, there's no terminal context to type a workspace path. The OS just hands mnml `$HOME` and walks away.
@@ -34,7 +34,7 @@ In every other case mnml goes straight to the editor with no overlay. The picker
 
 ### The Finder / dock path
 
-The `mnml.app` and `mnml-nightly.app` launchers (the macOS bundles installed by the DMG, or built locally via `./scripts/build-app.sh`) open mnml in Terminal.app with `--startup-picker` set, so clicking the mnml icon in Finder, Spotlight, or the dock lands you on the picker rather than dropping you straight into `$HOME` with no idea what's around.
+The `mnml.app` and `mnml-nightly.app` launchers (macOS bundles built locally via `./scripts/build-app.sh`; mnml no longer ships as a DMG) open mnml in Terminal.app with `--startup-picker` set, so clicking the mnml icon in Finder, Spotlight, or the dock lands you on the picker rather than dropping you straight into `$HOME` with no idea what's around.
 
 ## Picker rows
 
