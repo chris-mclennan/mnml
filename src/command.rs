@@ -3506,6 +3506,20 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.todos_panel_refresh(),
         },
         Command {
+            id: "view.activity_findings",
+            title: "Activity: show Findings (.mnml/findings/*.md tester + review reports)",
+            group: "view",
+            keys: &[],
+            run: |app| app.set_activity_section(crate::app::ActivitySection::Findings),
+        },
+        Command {
+            id: "findings.refresh",
+            title: "Findings: rescan .mnml/findings/",
+            group: "view",
+            keys: &[],
+            run: |app| app.findings_panel_refresh(),
+        },
+        Command {
             id: "cloud_agents.new_run",
             title: "Cloud agents: fire a new ECS run for a Jira ticket",
             group: "view",

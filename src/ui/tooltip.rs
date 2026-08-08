@@ -327,6 +327,10 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                     "click: TODOs rail",
                     Some("TODO / FIXME / XXX / HACK / REVIEW hits"),
                 ),
+                ActivitySection::Findings => (
+                    "click: Findings rail",
+                    Some(".mnml/findings/*.md tester / review reports"),
+                ),
                 ActivitySection::Mount(_) => {
                     let (_, _, label, _) = section.meta();
                     return Some((rect, label.to_string(), None));

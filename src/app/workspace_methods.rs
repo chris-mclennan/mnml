@@ -1295,6 +1295,30 @@ impl App {
         self.http_panel_recent_cache.clear();
     }
 
+    /// Refresh the Findings panel file cache. Same shape as the
+    /// notes one — reads `.mnml/findings/*.md` sorted by mtime desc.
+    pub fn findings_panel_refresh(&mut self) {
+        let dir = crate::ui::findings_panel::findings_dir(&self.workspace);
+        let mut out: Vec<std::path::PathBuf> = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md") && p.is_file())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        out.sort_by_key(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| std::cmp::Reverse(d.as_secs()))
+                .unwrap_or(std::cmp::Reverse(0))
+        });
+        self.findings_panel_files_cache = out;
+        self.findings_panel_scanned_once = true;
+    }
+
     /// Refresh the Notes panel file cache. Same lazy pattern as the
     /// HTTP one. (#8)
     pub fn notes_panel_refresh(&mut self) {

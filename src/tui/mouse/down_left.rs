@@ -2888,6 +2888,17 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         app.open_path(&path);
         return;
     }
+    // Findings panel — row click opens the .md file (2026-08-07).
+    if let Some((_, path)) = app
+        .rects
+        .findings_panel_files
+        .iter()
+        .find(|(r, _)| crate::app::dispatch::contains(*r, x, y))
+    {
+        let path = path.clone();
+        app.open_path(&path);
+        return;
+    }
     // TODOs panel — refresh chip + row click (#9).
     if let Some(r) = app.rects.todos_panel_filter_input
         && crate::app::dispatch::contains(r, x, y)

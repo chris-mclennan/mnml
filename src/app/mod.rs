@@ -1694,6 +1694,13 @@ pub enum ActivitySection {
     /// `TODO` / `FIXME` / `XXX` / `HACK` / `REVIEW`). v1 v scans on
     /// section open, click a row to jump. (#9)
     Todos,
+    /// 2026-08-07 — Findings section. Reads `.mnml/findings/*.md`
+    /// (workspace-scoped, so mnml pointed at any repo picks up
+    /// that repo's findings automatically — mixr, tracker-jira,
+    /// etc. all get it for free). Click a row → open in editor
+    /// pane. v1 = read-only list; v2 = right-click menu (archive
+    /// / delete / mark reviewed).
+    Findings,
     /// A manifest-registered Mount sibling — the u16 indexes
     /// into `App::mount_manifests`. Icon, color, tooltip, and
     /// binary come from the manifest. Manifest mounts render
@@ -1740,6 +1747,8 @@ impl ActivitySection {
             Self::Notes => ("\u{F249}", "N", "Notes", "view.activity_notes"),
             // nf-fa-check_square — TODO markers across the workspace
             Self::Todos => ("\u{F046}", "O", "TODOs", "view.activity_todos"),
+            // nf-md-magnify_scan — findings archive (`.mnml/findings/*.md`)
+            Self::Findings => ("\u{F1391}", "F", "Findings", "view.activity_findings"),
             // Manifest mounts have per-entry metadata that lives
             // on `App::mount_manifests`; the activity-bar renderer
             // resolves it dynamically. This `meta()` arm is a
@@ -1767,6 +1776,7 @@ impl ActivitySection {
             Self::Http,
             Self::Notes,
             Self::Todos,
+            Self::Findings,
         ]
     }
 
@@ -1787,6 +1797,7 @@ impl ActivitySection {
             Self::Http => Some("http".to_string()),
             Self::Notes => Some("notes".to_string()),
             Self::Todos => Some("todos".to_string()),
+            Self::Findings => Some("findings".to_string()),
             Self::Mount(idx) => app.mount_manifests.get(*idx as usize).map(|m| m.id.clone()),
             Self::LauncherIcon(idx) => app
                 .config
@@ -2179,6 +2190,9 @@ pub struct PaneRects {
     /// `ActivitySection::Notes` panel — one row per `.mnml/notes/*.md`.
     /// Click → open the note in an editor pane. (#8)
     pub notes_panel_files: Vec<(Rect, std::path::PathBuf)>,
+    /// 2026-08-07 — Findings panel row rects (mirrors Notes shape).
+    pub findings_panel_files: Vec<(Rect, std::path::PathBuf)>,
+    pub findings_panel_filter_input: Option<Rect>,
     /// `ActivitySection::Notes` panel `+ New note` row rect.
     pub notes_panel_new_chip: Option<Rect>,
     /// `ActivitySection::Notes` panel `/` filter input row.
@@ -3044,6 +3058,9 @@ impl PaneRects {
         self.notes_panel_files.clear();
         self.notes_panel_new_chip = None;
         self.notes_panel_filter_input = None;
+        // Findings panel.
+        self.findings_panel_files.clear();
+        self.findings_panel_filter_input = None;
         // Todos panel.
         self.todos_panel_rows.clear();
         self.todos_panel_refresh_chip = None;
@@ -3597,6 +3614,9 @@ pub struct App {
     /// Same lazy pattern as `http_panel_files_cache`.
     pub notes_panel_files_cache: Vec<std::path::PathBuf>,
     pub notes_panel_scanned_once: bool,
+    /// 2026-08-07 — Findings file cache (mirrors notes cache).
+    pub findings_panel_files_cache: Vec<std::path::PathBuf>,
+    pub findings_panel_scanned_once: bool,
     /// qa-feature 2026-07-01 — stable position for the primary
     /// in the unified workspace visual list (primary + extras
     /// share one position space). Starts at 0. Promoting an
@@ -5643,6 +5663,8 @@ impl App {
             http_panel_section_collapsed: [false; 7],
             notes_panel_files_cache: Vec::new(),
             notes_panel_scanned_once: false,
+            findings_panel_files_cache: Vec::new(),
+            findings_panel_scanned_once: false,
             primary_position: 0,
             git_rail,
             image_protocol: crate::image::detect_protocol(),

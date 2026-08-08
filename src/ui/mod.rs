@@ -88,6 +88,7 @@ pub mod picker;
 pub mod agents_panel;
 pub mod cloud_agents_panel;
 pub mod dock;
+pub mod findings_panel;
 pub mod git_palette;
 pub mod hover_help;
 pub mod http_panel;
@@ -501,6 +502,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             }
             crate::app::ActivitySection::Todos => {
                 todos_panel::draw(frame, app, content_area);
+            }
+            crate::app::ActivitySection::Findings => {
+                findings_panel::draw(frame, app, content_area);
             }
             crate::app::ActivitySection::Mount(idx) => {
                 // Rail content for a manifest-mounted sibling is
