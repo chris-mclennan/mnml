@@ -4,7 +4,7 @@
 //   swift scripts/og/gen_og.swift                  # writes site/public/og/hero.png
 //   swift scripts/og/gen_og.swift path/to/out.png  # writes to a custom path
 //
-// Design: same family aesthetic as gen_icon.swift — deep-charcoal
+// Design: deep-charcoal
 // rounded body with the shell-prompt `> mnml` wordmark, mnml's cool
 // blue accent on the `>`, near-white on the name. A small tagline
 // sits under the wordmark. 1200x630 (Twitter's recommended card
