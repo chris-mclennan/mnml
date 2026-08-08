@@ -19,7 +19,7 @@ The release train publishes prebuilt artifacts for these targets via [`cargo-dis
 | Linux · arm64 | `aarch64-unknown-linux-gnu` | `.tar.xz`, `installer.sh` |
 | Windows · x86_64 | `x86_64-pc-windows-gnu` | `.zip`, `installer.ps1`, `.msi`* |
 
-*(2026-08-07: dropped `.dmg` / `.pkg` — mnml is a TUI editor; macOS developers install via `cargo install`, Homebrew, or the tarball. Windows `.msi` is retained as a build artifact because [winget](https://learn.microsoft.com/windows/package-manager/) requires it as the download source for `winget install mnml`, but it's not the recommended path — use `winget`, `cargo install mnml-rs`, or the `.zip` directly.)*
+macOS has no `.dmg` / `.pkg` / `.app` bundle — mnml is a TUI editor, and macOS developers already have Homebrew, `cargo install`, and the tarball path. The Windows `.msi` is a plumbing artifact: [winget](https://learn.microsoft.com/windows/package-manager/) requires an MSI as the download source for `winget install mnml`, so it stays in the release train, but the recommended Windows install is still `winget install mnml` (or `cargo install mnml-rs` / the `.zip` directly).
 
 Everything is downloadable from the [Install page](/install/) or via a one-liner installer (`curl … | sh` on Unix, `irm … | iex` on Windows).
 

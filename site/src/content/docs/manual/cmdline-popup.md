@@ -83,6 +83,19 @@ The whole popup is mouse-driven if you want:
 - **Click the cmdline bar** itself (the row at the bottom of the screen) → opens the cmdline if it's not already open. The hit area is the full bar; mouse path doesn't require knowing the `:` / `Ctrl+;` chord.
 - **Hover over rows** highlights without accepting. Useful when scanning a long popup.
 
+## Paste into the `:` cmdline
+
+`Cmd+V` (macOS) and `Ctrl+V` (other platforms) both paste the system clipboard into the `:` gutter cmdline. Useful when you've copied a command id from the palette, a URL you want to pass to `:e`, or a `:cmd` snippet from a chat.
+
+The two chords land at the cmdline via different paths:
+
+- **`Cmd+V` on macOS** — the terminal delivers a bracketed-paste event (`ESC[200~ … ESC[201~`). mnml's dispatcher checks for an open `:` cmdline first and routes the paste text through `no_pane_cmdline_push_char`, char by char.
+- **`Ctrl+V` elsewhere** — a plain key event. The cmdline dispatcher intercepts `Ctrl+V` / `Ctrl+v` explicitly, reads `app.clipboard.text()`, and feeds the same push-char loop.
+
+Both paths apply the same filter — control chars and newlines are stripped so a multi-line paste (e.g. a JSON blob copied out of a browser) collapses to a single line rather than accidentally firing multiple commands. Everything at `>= U+0020` and non-`\n\r` lands in the buffer.
+
+Before v0.2.3 the `:` cmdline had no paste handler at all — both chords silently dropped. If you were using the prompt overlay (`view.workspace_up` etc.) as a workaround, the cmdline now behaves the same way, so pastes belong wherever your muscle memory takes them.
+
 ## The empty cmdline — recent commands
 
 When the cmdline is empty (you just typed `:`, or opened `Ctrl+;` from tree focus), the popup renders your recent-commands list, most recent first:

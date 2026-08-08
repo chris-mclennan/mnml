@@ -3,9 +3,9 @@ title: Startup picker
 description: The JetBrains-style workspace chooser that pops up when you launch mnml with --startup-picker — pick a configured workspace, open a file, or skip into whatever directory mnml was launched at.
 ---
 
-When you launch mnml from a terminal you already know which workspace you want — you typed it on the command line. When you launch it from Finder, or from a dock icon, there's no terminal context to type a workspace path. The OS just hands mnml `$HOME` and walks away.
+When you launch mnml from a terminal you already know which workspace you want — you typed it on the command line. Some launch paths don't have that context — a wrapper script, a shell alias, or a launcher that hands mnml `$HOME` and walks away. Rather than dropping you into whatever `cwd` happened to leak in, mnml can pop a chooser first.
 
-The **startup picker** is the overlay that fills that gap. It's a small chooser that comes up on launch and lets you pick where to go before you see the editor.
+The **startup picker** is the overlay that fills that gap. It's a small chooser that comes up on launch and lets you pick where to go before you see the editor. It's opt-in — pass `--startup-picker` or set `MNML_STARTUP_PICKER=1` in a wrapper.
 
 ```
 ┌─ Open mnml — Esc to skip ─────────────────────────┐
@@ -34,7 +34,7 @@ In every other case mnml goes straight to the editor with no overlay. The picker
 
 ### Env-var alias
 
-For shells that don't easily pass `--startup-picker`, `MNML_STARTUP_PICKER=1 mnml` produces the same effect. Handy in a wrapper script or a shell alias.
+For shells that don't easily pass `--startup-picker`, `MNML_STARTUP_PICKER=1 mnml` produces the same effect. Handy in a wrapper script, a shell alias, or a launcher that spawns mnml on a fresh session where you'd otherwise land in `$HOME`.
 
 ## Picker rows
 
@@ -81,13 +81,13 @@ path = "~/Projects/notes"     # name defaults to "notes" (basename)
 
 ## What "skip" means in practice
 
-When mnml is launched from Finder, the workspace `mnml` was started at is whatever directory macOS hands to the `.app` bundle — usually `$HOME` for stable mnml, or the cwd of the launching shell for nightly. Skipping the picker (Esc / q / Row 1) means you start in that directory: the file rail roots at `$HOME`, the IPC mailbox goes to `~/.mnml/ipc/`, etc.
+The workspace `mnml` was started at is whatever the launcher's `cwd` was — for a plain terminal launch, whatever you `cd`'d into first; for a wrapper script, whatever the script sets. Skipping the picker (Esc / q / Row 1) means you start in that directory: the file rail roots at the launch `cwd`, the IPC mailbox goes to `<cwd>/.mnml/ipc/`, etc.
 
 If you want to switch to a different workspace from there, the file-rail's workspace headers and `view.switch_workspace` work the same as in any other mnml session. The picker is just a faster path to that switch on first launch.
 
 ## Empty workspace state
 
-The picker is one half of the no-real-workspace experience. The other half is the **file rail's empty state**, which kicks in whenever mnml's workspace path (canonicalized) equals your `$HOME` — the exact situation you land in when Finder hands the `.app` bundle no folder argument.
+The picker is one half of the no-real-workspace experience. The other half is the **file rail's empty state**, which kicks in whenever mnml's workspace path (canonicalized) equals your `$HOME` — the exact situation you land in when a launcher spawns mnml with no folder argument and you happen to have `$HOME` as `cwd`.
 
 Instead of trying to enumerate your entire home directory as if it were a project (which would dump `Documents/`, `Downloads/`, `Library/`, every dotfile, …), the workspace tree section paints a vscode-style panel:
 
@@ -130,4 +130,4 @@ The picker's state and key handling live in `src/app/startup_picker.rs`; the ove
 ## Next
 
 - [Workspaces & the file rail](/manual/workspaces/) — `[[workspaces]]` schema in depth, sibling workspaces, the marker pattern
-- [Install](/install/) — the `.app` / DMG packages whose launchers trigger the picker
+- [Install](/install/) — the install paths whose wrapper scripts / aliases can set `MNML_STARTUP_PICKER=1`

@@ -3,7 +3,9 @@ title: Troubleshooting
 description: Common install / launch issues — Windows source-build prerequisites, the WSL bash trap for `.test`, and how to recover.
 ---
 
-*(2026-08-07: mnml is a terminal editor — the `.dmg` / `.pkg` / `mnml.app` bundle install paths for macOS were retired. Install via `cargo install mnml-rs`, `brew install mnml/tap/mnml`, or the `.tar.xz` from [Install](/install/). If you're on an old `.dmg`-installed copy and see the "Intel-based Apps" Tahoe warning, just reinstall via one of those paths — the pre-v0.1.2 bundle issue that caused it is gone.)*
+## Install paths
+
+mnml is a terminal editor — there's no `.dmg`, `.pkg`, or `mnml.app` bundle for macOS. Install via `brew install chris-mclennan/tap/mnml`, `cargo install mnml-rs`, or the `.tar.xz` from the [Install page](/install/). If you're on an old `.dmg`-installed copy from before v0.2.3 and see the macOS Tahoe "Support Ending for Intel-based Apps" warning, reinstall via one of those paths — none of them ship an `Info.plist`, so the warning can't trigger.
 
 ## Windows
 

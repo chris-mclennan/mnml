@@ -219,6 +219,54 @@ A few patterns the tab strip enables:
 - **Resume a session.** Claude Code sessions started by mnml have a known `--session-id`. The wider AI track exposes `ai.session_view` to mirror the transcript, and `BinaryProfile::claude_code_resume(workspace, session_id)` to re-attach interactively — useful after a `Ctrl-C` on a long-running task.
 - **Headless verification.** AI panes work under `mnml --headless` — the file-IPC channel can drive a Claude session for E2E scripts. See the headless docs (or `tests/e2e/`) for examples.
 
+## Claude Code OAuth token + auto-refresh
+
+The Claude usage chip in the statusline (`:ai.usage` opens the full panel) reads from Anthropic's OAuth-usage endpoint — the same feed the Claude Code CLI uses to draw its 5-hour + weekly quota bars. To hit that endpoint mnml needs a Claude Code OAuth token pinned to disk.
+
+### Linking a token
+
+Run `:ai.link_claude_token` and paste the token when prompted. The paste target is your Claude Code OAuth token — mnml accepts two shapes:
+
+- **The plain access token** (`sk-ant-oat…`) — quickest to paste, but there's no refresh token, so when the access token expires (~every 8h) the chip will show `token rejected — re-link via :ai.link_claude_token` until you paste a fresh one.
+- **The full `claudeAiOauth` JSON blob** — pastes the `{ accessToken, refreshToken, expiresAt }` triple, which lets mnml auto-refresh silently in the background (see below). This is what you get from macOS Keychain:
+
+```sh
+security find-generic-password -s 'Claude Code-credentials' -w
+```
+
+The token is written to `~/.config/mnml/ai_token` with 0600 perms (owner read/write only). JSON blobs are stored pretty-printed so you can inspect the file with `cat` if you need to debug.
+
+### Auto-refresh (v0.2.3+)
+
+Claude Code OAuth access tokens expire roughly every 8 hours. Before v0.2.3, the usage chip would silently start showing `token rejected` once a day and you'd have to re-run `:ai.link_claude_token` — a common daily-noise complaint.
+
+As of v0.2.3, mnml watches for `401` / `403` on the usage GET. When it sees one, if the on-disk token file is the JSON-blob form (and therefore has a `refreshToken`), mnml:
+
+1. POSTs `{ grant_type: "refresh_token", refresh_token, client_id }` to `https://console.anthropic.com/v1/oauth/token` with Claude Code's public OAuth client id.
+2. On success, writes the new `{ accessToken, refreshToken, expiresAt }` blob back to `~/.config/mnml/ai_token` (preserving auto-refresh next cycle).
+3. Re-issues the usage GET with the fresh bearer.
+
+On refresh failure the chip falls through to the original `token rejected — re-link via :ai.link_claude_token` message, so the state is still visible — silent failure would be worse than the pre-v0.2.3 noise.
+
+You still run `:ai.link_claude_token` once, on first launch (or if you rotate your Claude Code credentials by re-signing in inside the CLI). After that, the token file self-heals in the background — no more daily re-link prompt.
+
+The plain-string token form (no JSON, no `refreshToken`) can't refresh — there's nothing to POST. If you're pasting the plain form and hitting the daily re-link, switch to the JSON blob.
+
+### Brand-color polish (v0.2.3+)
+
+The Claude Code chip picks up Anthropic's exact brand color (`#D97757`) across every surface it renders in: the installed-list row, the palette-bar chip, the split-cluster AI chip on each leaf's tab strip, and the Pty tab glyph (including the animated spinner while Claude is thinking). This is theme-independent — the chip stays coral even on gruvbox / tokyonight / kanagawa where a stock `orange` theme slot would drift.
+
+Under the hood the `IntegrationIcon.color` field now accepts literal `#RRGGBB` hex strings in addition to the existing theme-slot names (`orange`, `cyan`, `green`, …). Community manifest authors can carry brand hexes directly:
+
+```toml
+[[ui.integration_icon]]
+id       = "my-brand-thing"
+color    = "#4A90E2"          # any 6-char RGB hex works
+# glyph, fallback, command, label as usual
+```
+
+Slot-name entries still resolve through the theme; hex literals bypass the theme entirely and paint the exact color.
+
 ## The spend report — `:ai.spend_today`
 
 A side-pane that totals every Claude / Codex session touched in the last 24 hours, grouped by workspace, with sortable columns (workspace / tokens / cost).
