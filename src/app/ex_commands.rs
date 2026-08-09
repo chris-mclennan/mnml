@@ -4465,6 +4465,17 @@ impl App {
         } else if matches!(opt, "nohoverhelp" | "nohover_help" | "nohh") {
             self.config.ui.hover_help = false;
             self.toast("hover_help: off");
+        } else if matches!(opt, "wsdots" | "workspacedots" | "workspace_dots") {
+            self.config.ui.show_workspace_dots = true;
+            self.toast("workspace dots: on");
+        } else if matches!(opt, "nowsdots" | "noworkspacedots" | "noworkspace_dots") {
+            self.config.ui.show_workspace_dots = false;
+            self.toast("workspace dots: off");
+        } else if matches!(
+            opt,
+            "wsdots!" | "workspacedots!" | "workspace_dots!" | "invwsdots"
+        ) {
+            self.toggle_workspace_dots();
         } else if matches!(opt, "syncnormalize" | "sync_normalize" | "sn") {
             self.config.http.sync_normalize = true;
             self.toast("sync_normalize: on");

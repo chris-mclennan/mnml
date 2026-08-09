@@ -1744,6 +1744,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "view.toggle_workspace_dots",
+            title: "Toggle workspace status dots (● / ○ markers in the tree)",
+            group: "view",
+            keys: &[],
+            run: |app| app.toggle_workspace_dots(),
+        },
+        Command {
             id: "view.toggle_right_panel",
             // design-critic Issue 8 — note the VS Code conflict in the
             // title so a user porting muscle memory sees it in the

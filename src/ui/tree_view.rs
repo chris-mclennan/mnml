@@ -884,14 +884,22 @@ fn draw_primary_workspace_section(
     if app.tree.show_hidden {
         name_style = name_style.add_modifier(Modifier::ITALIC);
     }
-    let mut spans = vec![
-        Span::styled(
-            chev_str,
-            Style::default().fg(theme::cur().comment).bg(rail_bg),
-        ),
-        Span::styled("● ", Style::default().fg(theme::cur().green).bg(rail_bg)),
-        Span::styled(ws_name.clone(), name_style),
-    ];
+    let mut spans = vec![Span::styled(
+        chev_str,
+        Style::default().fg(theme::cur().comment).bg(rail_bg),
+    )];
+    // R6 R2 opt-out 2026-08-09 — `[ui] show_workspace_dots = false`
+    // suppresses the `● ` / `○ ` markers to the left of workspace-
+    // root rows. Row still expands/collapses via the chevron; the
+    // active-vs-inactive distinction is signaled by the label's
+    // color/weight (bold green for active — set below).
+    if app.config.ui.show_workspace_dots {
+        spans.push(Span::styled(
+            "● ",
+            Style::default().fg(theme::cur().green).bg(rail_bg),
+        ));
+    }
+    spans.push(Span::styled(ws_name.clone(), name_style));
     spans.extend(chip_spans);
     frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
     app.rects.tree_toggle = Some(header_rect);
@@ -1195,7 +1203,9 @@ fn draw_workspace_files(
         // before the name — same convention the git rail uses for branches.
         // Reserves 2 cells regardless of state so name columns align across
         // active and non-active repo rows.
-        let (repo_marker, repo_marker_color) = if is_repo_row {
+        // R6 R2 opt-out — same `show_workspace_dots` gate as the
+        // primary workspace-header row above.
+        let (repo_marker, repo_marker_color) = if is_repo_row && app.config.ui.show_workspace_dots {
             if is_active_repo {
                 ("● ", theme::cur().green)
             } else {
@@ -1333,20 +1343,24 @@ fn draw_extra_workspace_section(
         width: area.width,
         height: 1,
     };
-    let spans = vec![
-        Span::styled(
-            chev_str,
+    let mut spans = vec![Span::styled(
+        chev_str,
+        Style::default().fg(theme::cur().comment).bg(rail_bg),
+    )];
+    // R6 R2 opt-out — same gate as the primary/repo rows.
+    if app.config.ui.show_workspace_dots {
+        spans.push(Span::styled(
+            "○ ",
             Style::default().fg(theme::cur().comment).bg(rail_bg),
-        ),
-        Span::styled("○ ", Style::default().fg(theme::cur().comment).bg(rail_bg)),
-        Span::styled(
-            name.clone(),
-            Style::default()
-                .fg(theme::cur().fg)
-                .bg(rail_bg)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
+        ));
+    }
+    spans.push(Span::styled(
+        name.clone(),
+        Style::default()
+            .fg(theme::cur().fg)
+            .bg(rail_bg)
+            .add_modifier(Modifier::BOLD),
+    ));
     frame.render_widget(Paragraph::new(Line::from(spans)), header_rect);
     app.rects
         .extra_workspace_toggles
@@ -1500,7 +1514,9 @@ fn draw_extra_workspace_section(
         } else {
             icon_color
         };
-        let (repo_marker, repo_marker_color) = if is_repo_row {
+        // R6 R2 opt-out — same `show_workspace_dots` gate as the
+        // primary workspace-header row above.
+        let (repo_marker, repo_marker_color) = if is_repo_row && app.config.ui.show_workspace_dots {
             if is_active_repo {
                 ("● ", theme::cur().green)
             } else {

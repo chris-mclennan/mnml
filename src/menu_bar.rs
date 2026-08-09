@@ -275,6 +275,12 @@ fn view_menu() -> MenuDef {
                 "\u{F02D6}  Toggle hover-help strip",
                 "view.toggle_hover_help",
             ),
+            // mdi-circle-outline — "dot marker" semantic. If tofu,
+            // swap to a spacer per the R6 glyph convention.
+            MenuItem::action(
+                "\u{F0130}  Toggle workspace status dots",
+                "view.toggle_workspace_dots",
+            ),
             MenuItem::Separator,
             MenuItem::action("\u{F02D}  Commands reference…", "view.commands_reference"),
             MenuItem::Separator,

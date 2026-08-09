@@ -984,6 +984,19 @@ pub struct UiConfig {
     /// `:set hoverhelp`.
     pub hover_help: bool,
 
+    /// Paint the `● ` / `○ ` workspace-status dots on the left of
+    /// every workspace-root row in the tree. On by default —
+    /// existing users see no change. Toggle at runtime via
+    /// `view.toggle_workspace_dots` or `:set wsdots` / `:set nowsdots`.
+    /// Right-click on a workspace-root row also toggles this via the
+    /// context menu.
+    ///
+    /// R6 R2 request 2026-08-09: user finds the markers "convenient
+    /// but a little ugly" and prefers right-click → "Set as workspace"
+    /// as the discovery path. Cleared row uses zero-cell reservation
+    /// (label reclaims the two cells cleanly).
+    pub show_workspace_dots: bool,
+
     /// Markdown preview rendering engine. Values:
     ///   - `"builtin"` (default) — mnml's own line renderer
     ///     (`ui::md_preview::render_markdown`). Read-only, scrolls,
@@ -1262,6 +1275,7 @@ impl Default for Config {
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
                 hover_help: false,
+                show_workspace_dots: true,
                 md_preview_engine: "builtin".to_string(),
             },
             session: SessionConfig { restore: true },
@@ -1658,6 +1672,11 @@ struct RawUi {
     /// default — palette command `view.toggle_hover_help`.
     #[serde(default)]
     hover_help: Option<bool>,
+    /// See [`UiConfig::show_workspace_dots`]. Workspace-root row
+    /// `● ` / `○ ` markers. On by default — palette command
+    /// `view.toggle_workspace_dots` or `:set nowsdots`.
+    #[serde(default)]
+    show_workspace_dots: Option<bool>,
     /// See [`UiConfig::md_preview_engine`]. `"builtin"` (default)
     /// / `"glow"` / `"custom:<cmd>"`. 2026-07-07.
     #[serde(default)]
@@ -2167,6 +2186,9 @@ impl Config {
         }
         if let Some(b) = raw.ui.integrations_section_default_expanded {
             self.ui.integrations_section_default_expanded = b;
+        }
+        if let Some(b) = raw.ui.show_workspace_dots {
+            self.ui.show_workspace_dots = b;
         }
         if let Some(b) = raw.ui.hover_help {
             self.ui.hover_help = b;

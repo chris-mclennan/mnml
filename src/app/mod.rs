@@ -13233,6 +13233,22 @@ impl App {
         self.set_wrap(!self.config.ui.wrap);
     }
 
+    /// `:set wsdots` / `view.toggle_workspace_dots` — flip the
+    /// `[ui] show_workspace_dots` config field. R6 R2 request
+    /// 2026-08-09: opt-out for the `● ` / `○ ` workspace-status
+    /// markers to the left of every workspace-root row. When off,
+    /// the two cells reclaim as label width and the active/inactive
+    /// distinction lives in the label's color + weight.
+    pub fn toggle_workspace_dots(&mut self) {
+        self.config.ui.show_workspace_dots = !self.config.ui.show_workspace_dots;
+        let msg = if self.config.ui.show_workspace_dots {
+            "workspace dots: on"
+        } else {
+            "workspace dots: off"
+        };
+        self.toast(msg);
+    }
+
     /// `:set [no]todohl` / `view.toggle_todo_highlight` — paint
     /// TODO/FIXME/HACK/XXX keywords in bright red across the editor.
     /// `project.next_todo` (vim `]t`) / `project.prev_todo` (`[t`) —
