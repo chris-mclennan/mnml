@@ -301,7 +301,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.discovery",
-            title: "Click discovery overlay (palette: 'view: discovery')",
+            title: "Command palette · Go to file (click discovery overlay)",
             group: "view",
             // F1 used to live here too — collided with `view.help` and
             // `palette` (both claim F1). Kept on `view.help` only; the
@@ -328,7 +328,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.help",
-            title: "Help overlay (auto-generated keymap reference)",
+            title: "Keybindings & help — help overlay (auto-generated keymap reference)",
             group: "view",
             // F1 is the universal Help chord; doesn't collide with vim's `?`
             // (backwards search) or any editing input.
@@ -467,7 +467,7 @@ fn builtin_commands() -> Vec<Command> {
             // #1 muscle-memory trap (silently nukes redo and reshuffles
             // chrome). Zen lives in the palette as `view.zen`.
             id: "view.zen",
-            title: "Zen mode (hide tree + bufferline + statusline)",
+            title: "Toggle zen mode (hide tree + bufferline + statusline)",
             group: "view",
             // vscode-user-keyboard SEV-2 2026-07-11 — VS Code's
             // Ctrl+K Z toggles zen. F11 also falls back to Zen when
@@ -810,14 +810,14 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "find.grep",
-            title: "Grep workspace (rg / git grep) → results pane",
+            title: "Find in files — grep workspace (rg / git grep) → results pane",
             group: "find",
             keys: &["ctrl+shift+f"],
             run: |app| app.open_grep_prompt(),
         },
         Command {
             id: "find.grep_replace",
-            title: "Replace every grep hit across every file (active grep pane)",
+            title: "Replace in files — every grep hit across every file (active grep pane)",
             group: "find",
             keys: &[],
             run: |app| app.open_grep_replace_prompt(),
@@ -2557,7 +2557,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "buffer.close",
-            title: "Close buffer",
+            title: "Close tab (close active buffer)",
             group: "buffer",
             keys: &["ctrl+w"],
             run: |app| app.close_active_pane(),
@@ -3312,7 +3312,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.add_workspace",
-            title: "Add a workspace (runtime — not persisted)",
+            title: "Add folder to workspace (runtime — not persisted)",
             group: "view",
             keys: &[],
             run: |app| {
