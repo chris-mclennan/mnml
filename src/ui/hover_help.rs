@@ -236,8 +236,27 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
                     Some("Directory. Enter or Right expands / opens. j/k walks rows.".to_string()),
                 )
             } else {
+                // R6 R2 multilang-dev SEV-3 2026-08-09 — show the
+                // file's language on the tree row (`App.tsx` → "TypeScript
+                // (JSX)"), not just the generic "File." blurb. The
+                // editor-pane branch already surfaces `language_ext`
+                // once a file is open; users deserve the same signal
+                // while browsing so they can decide whether to open
+                // an unfamiliar file without opening it first.
+                let ext = row
+                    .path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_ascii_lowercase())
+                    .unwrap_or_default();
+                let lang = friendly_lang(&ext);
+                let primary_with_lang = if lang.is_empty() {
+                    name
+                } else {
+                    format!("{name}  ·  {lang}")
+                };
                 (
-                    name,
+                    primary_with_lang,
                     Some(
                         "File. Enter opens it in a new tab. Right-click for cut / copy / paste / rename."
                             .to_string(),
@@ -270,6 +289,60 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
                 ),
             ))
         }
+    }
+}
+
+/// Map a lower-case file extension to a friendly language name for
+/// the hover-help tree-row line. Unknown extensions fall back to
+/// the uppercased ext (`.foo` → "FOO"). Empty ext (no extension)
+/// returns "" — caller skips the ` · LANG` suffix.
+///
+/// R6 R2 multilang-dev SEV-3 2026-08-09 — the editor-pane branch
+/// exposes `language_ext.to_ascii_uppercase()`; this widens the same
+/// signal to the tree-row branch AND gives a friendly display name
+/// for the common cases so a `.tsx` file reads "TypeScript (JSX)"
+/// instead of "TSX".
+fn friendly_lang(ext: &str) -> String {
+    match ext {
+        "" => String::new(),
+        "rs" => "Rust".into(),
+        "ts" => "TypeScript".into(),
+        "tsx" => "TypeScript (JSX)".into(),
+        "js" => "JavaScript".into(),
+        "jsx" => "JavaScript (JSX)".into(),
+        "py" => "Python".into(),
+        "go" => "Go".into(),
+        "rb" => "Ruby".into(),
+        "java" => "Java".into(),
+        "kt" | "kts" => "Kotlin".into(),
+        "swift" => "Swift".into(),
+        "c" => "C".into(),
+        "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "hh" => "C++".into(),
+        "h" => "C header".into(),
+        "cs" => "C#".into(),
+        "php" => "PHP".into(),
+        "sh" | "bash" | "zsh" => "Shell".into(),
+        "lua" => "Lua".into(),
+        "vim" => "Vim script".into(),
+        "md" | "markdown" => "Markdown".into(),
+        "json" => "JSON".into(),
+        "yaml" | "yml" => "YAML".into(),
+        "toml" => "TOML".into(),
+        "xml" => "XML".into(),
+        "html" | "htm" => "HTML".into(),
+        "css" => "CSS".into(),
+        "scss" | "sass" => "Sass".into(),
+        "sql" => "SQL".into(),
+        "dockerfile" => "Dockerfile".into(),
+        "makefile" | "mk" => "Makefile".into(),
+        "proto" => "Protobuf".into(),
+        "graphql" | "gql" => "GraphQL".into(),
+        "http" | "curl" | "rest" => "HTTP request".into(),
+        "svg" => "SVG".into(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" => "Image".into(),
+        "pdf" => "PDF".into(),
+        "txt" | "text" => "Text".into(),
+        _ => ext.to_ascii_uppercase(),
     }
 }
 
@@ -350,5 +423,28 @@ mod tests {
     #[test]
     fn wrap_zero_width_returns_one_empty_line() {
         assert_eq!(wrap_words("hello world", 0), vec![String::new()]);
+    }
+
+    use super::friendly_lang;
+
+    #[test]
+    fn friendly_lang_known_extensions() {
+        assert_eq!(friendly_lang("rs"), "Rust");
+        assert_eq!(friendly_lang("tsx"), "TypeScript (JSX)");
+        assert_eq!(friendly_lang("py"), "Python");
+        assert_eq!(friendly_lang("go"), "Go");
+        assert_eq!(friendly_lang("md"), "Markdown");
+        assert_eq!(friendly_lang("yaml"), "YAML");
+        assert_eq!(friendly_lang("yml"), "YAML");
+    }
+
+    #[test]
+    fn friendly_lang_empty_ext_returns_empty() {
+        assert_eq!(friendly_lang(""), "");
+    }
+
+    #[test]
+    fn friendly_lang_unknown_ext_uppercased_fallback() {
+        assert_eq!(friendly_lang("xyz"), "XYZ");
     }
 }
