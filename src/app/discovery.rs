@@ -1068,58 +1068,8 @@ fn integrations_dir_or_err() -> Result<std::path::PathBuf, String> {
 /// `[ui]` section at all, adds one. Comments elsewhere in the file
 /// stay put.
 pub fn persist_ui_string(key: &'static str, value: &str) -> Result<std::path::PathBuf, String> {
-    let path = crate::config::user_config_path()
-        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-    }
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let new_line = format!("{key} = \"{value}\"");
-
-    let mut out: Vec<String> = Vec::new();
-    let mut in_ui = false;
-    let mut ui_header_idx: Option<usize> = None;
-    let mut key_replaced = false;
-    for line in existing.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            // Section header — leave `in_ui` for the `[ui]` case only.
-            in_ui = trimmed == "[ui]";
-            if in_ui {
-                ui_header_idx = Some(out.len());
-            }
-            out.push(line.to_string());
-            continue;
-        }
-        if in_ui
-            && !key_replaced
-            && (trimmed.starts_with(&format!("{key} ")) || trimmed.starts_with(&format!("{key}=")))
-        {
-            // Preserve indentation.
-            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            out.push(format!("{indent}{new_line}"));
-            key_replaced = true;
-            continue;
-        }
-        out.push(line.to_string());
-    }
-
-    if !key_replaced {
-        if let Some(idx) = ui_header_idx {
-            out.insert(idx + 1, new_line);
-        } else {
-            // No `[ui]` section anywhere — add one.
-            if !out.is_empty() && !out.last().is_some_and(|l| l.trim().is_empty()) {
-                out.push(String::new());
-            }
-            out.push("[ui]".to_string());
-            out.push(new_line);
-        }
-    }
-
-    let contents = out.join("\n") + "\n";
-    std::fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(path)
+    let esc = value.replace('\\', r"\\").replace('"', "\\\"");
+    persist_config_scalar("ui", key, format!("\"{esc}\""))
 }
 
 /// Persist the pinned-integration list to `[ui]
@@ -1136,6 +1086,90 @@ pub fn persist_activity_bar_pinned_integrations(
 /// TABS right-click menu.
 pub fn persist_top_bar_cluster_mode(mode: &'static str) -> Result<std::path::PathBuf, String> {
     persist_ui_string("top_bar_cluster_mode", mode)
+}
+
+/// Bool variant of [`persist_ui_string`] — see [`persist_ui_bool`].
+pub fn persist_ui_bool(key: &'static str, value: bool) -> Result<std::path::PathBuf, String> {
+    persist_config_scalar("ui", key, value.to_string())
+}
+
+/// Int variant of [`persist_ui_string`] — TOML integer literal.
+pub fn persist_ui_int(key: &'static str, value: i64) -> Result<std::path::PathBuf, String> {
+    persist_config_scalar("ui", key, value.to_string())
+}
+
+/// `[editor] KEY = <value>` (bool). Same in-place replace / append
+/// semantics as the `[ui]` helpers, targeting the `[editor]`
+/// section instead. Used by runtime editor toggles (auto-pair,
+/// breadcrumb, …) so interactive changes survive restart.
+pub fn persist_editor_bool(key: &'static str, value: bool) -> Result<std::path::PathBuf, String> {
+    persist_config_scalar("editor", key, value.to_string())
+}
+
+/// `[editor] KEY = "value"` (string). Used by `set_input_style` so
+/// swapping vim ↔ standard from a running mnml survives restart.
+pub fn persist_editor_string(key: &'static str, value: &str) -> Result<std::path::PathBuf, String> {
+    let esc = value.replace('\\', r"\\").replace('"', "\\\"");
+    persist_config_scalar("editor", key, format!("\"{esc}\""))
+}
+
+/// Shared writer for `[section] KEY = <toml-encoded-value>`. The
+/// caller pre-encodes the value (quoted string, bare bool, bare
+/// int) — this fn owns the section-header find / in-place replace
+/// / append behavior and preserves comments + surrounding keys.
+fn persist_config_scalar(
+    section: &str,
+    key: &str,
+    value_encoded: String,
+) -> Result<std::path::PathBuf, String> {
+    let path = crate::config::user_config_path()
+        .ok_or_else(|| "no $HOME or $XDG_CONFIG_HOME set".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let new_line = format!("{key} = {value_encoded}");
+    let header = format!("[{section}]");
+
+    let mut out: Vec<String> = Vec::new();
+    let mut in_section = false;
+    let mut section_header_idx: Option<usize> = None;
+    let mut key_replaced = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == header;
+            if in_section {
+                section_header_idx = Some(out.len());
+            }
+            out.push(line.to_string());
+            continue;
+        }
+        if in_section
+            && !key_replaced
+            && (trimmed.starts_with(&format!("{key} ")) || trimmed.starts_with(&format!("{key}=")))
+        {
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            out.push(format!("{indent}{new_line}"));
+            key_replaced = true;
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    if !key_replaced {
+        if let Some(idx) = section_header_idx {
+            out.insert(idx + 1, new_line);
+        } else {
+            if !out.is_empty() && !out.last().is_some_and(|l| l.trim().is_empty()) {
+                out.push(String::new());
+            }
+            out.push(header);
+            out.push(new_line);
+        }
+    }
+    let contents = out.join("\n") + "\n";
+    std::fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(path)
 }
 
 /// #864 — persist `[ui] integration_icon_order = ["id1", "id2", …]`

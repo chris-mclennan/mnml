@@ -4379,15 +4379,9 @@ impl App {
         {
             let s = v.trim();
             if s.is_empty() {
-                self.config.ui.color_column = 0;
-                self.toast("colorcolumn: off");
+                self.set_color_column(0);
             } else if let Ok(n) = s.parse::<usize>() {
-                self.config.ui.color_column = n;
-                if n == 0 {
-                    self.toast("colorcolumn: off");
-                } else {
-                    self.toast(format!("colorcolumn: {n}"));
-                }
+                self.set_color_column(n);
             } else {
                 self.toast(format!(":set colorcolumn={v} — not a number"));
             }
@@ -4471,11 +4465,9 @@ impl App {
             self.config.ui.hover_help = false;
             self.toast("hover_help: off");
         } else if matches!(opt, "wsdots" | "workspacedots" | "workspace_dots") {
-            self.config.ui.show_workspace_dots = true;
-            self.toast("workspace dots: on");
+            self.set_workspace_dots(true);
         } else if matches!(opt, "nowsdots" | "noworkspacedots" | "noworkspace_dots") {
-            self.config.ui.show_workspace_dots = false;
-            self.toast("workspace dots: off");
+            self.set_workspace_dots(false);
         } else if matches!(
             opt,
             "wsdots!" | "workspacedots!" | "workspace_dots!" | "invwsdots"
@@ -4679,8 +4671,7 @@ impl App {
                 }
             ));
         } else if matches!(opt, "nocolorcolumn" | "nocc") {
-            self.config.ui.color_column = 0;
-            self.toast("colorcolumn: off");
+            self.set_color_column(0);
         } else if matches!(opt, "colorcolumn!" | "cc!" | "invcolorcolumn") {
             self.toggle_color_column();
         } else if matches!(opt, "autoindent" | "ai") {
@@ -4742,27 +4733,21 @@ impl App {
         } else if matches!(opt, "wrap!" | "invwrap") {
             self.toggle_wrap();
         } else if matches!(opt, "todohl" | "todohighlight") {
-            self.config.ui.highlight_todo_keywords = true;
-            self.toast("todo highlight: on");
+            self.set_todo_highlight(true);
         } else if matches!(opt, "notodohl" | "notodohighlight") {
-            self.config.ui.highlight_todo_keywords = false;
-            self.toast("todo highlight: off");
+            self.set_todo_highlight(false);
         } else if matches!(opt, "todohl!" | "invtodohl") {
             self.toggle_todo_highlight();
         } else if matches!(opt, "rendermarkdown" | "rendermd") {
-            self.config.ui.render_markdown = true;
-            self.toast("render markdown: on");
+            self.set_render_markdown(true);
         } else if matches!(opt, "norendermarkdown" | "norendermd") {
-            self.config.ui.render_markdown = false;
-            self.toast("render markdown: off");
+            self.set_render_markdown(false);
         } else if matches!(opt, "rendermarkdown!" | "invrendermarkdown") {
             self.toggle_render_markdown();
         } else if matches!(opt, "stickycontext" | "sticky") {
-            self.config.ui.sticky_context = true;
-            self.toast("sticky context: on");
+            self.set_sticky_context(true);
         } else if matches!(opt, "nostickycontext" | "nosticky") {
-            self.config.ui.sticky_context = false;
-            self.toast("sticky context: off");
+            self.set_sticky_context(false);
         } else if matches!(opt, "stickycontext!" | "invstickycontext") {
             self.toggle_sticky_context();
         } else if matches!(opt, "foldarrows" | "showfoldarrows") {

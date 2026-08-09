@@ -13152,6 +13152,7 @@ impl App {
             }
         };
         self.config.editor.input_style = style.to_string();
+        let _ = crate::app::discovery::persist_editor_string("input_style", style);
         for pane in &mut self.panes {
             if let Pane::Editor(b) = pane {
                 b.input = crate::input::make_handler_for(style, &self.config);
@@ -13174,6 +13175,7 @@ impl App {
     /// `view.toggle_relative_numbers`).
     pub fn set_relative_line_numbers(&mut self, on: bool) {
         self.config.ui.relative_line_numbers = on;
+        let _ = crate::app::discovery::persist_ui_bool("relative_line_numbers", on);
         self.toast(if on {
             "relative line numbers: on"
         } else {
@@ -13187,6 +13189,7 @@ impl App {
     /// Toggle visible whitespace markers (`:set list` / `:set nolist`).
     pub fn set_show_whitespace(&mut self, on: bool) {
         self.config.ui.show_whitespace = on;
+        let _ = crate::app::discovery::persist_ui_bool("show_whitespace", on);
         self.toast(if on {
             "whitespace: on"
         } else {
@@ -13200,6 +13203,7 @@ impl App {
     /// Toggle rainbow-brackets (`:set rainbow` / `:set norainbow`).
     pub fn set_bracket_rainbow(&mut self, on: bool) {
         self.config.ui.bracket_rainbow = on;
+        let _ = crate::app::discovery::persist_ui_bool("bracket_rainbow", on);
         self.toast(if on {
             "rainbow brackets: on"
         } else {
@@ -13213,6 +13217,7 @@ impl App {
     /// Toggle the editor scrollbar (`:set scrollbar` / `:set noscrollbar`).
     pub fn set_scrollbar(&mut self, on: bool) {
         self.config.ui.scrollbar = on;
+        let _ = crate::app::discovery::persist_ui_bool("scrollbar", on);
         self.toast(if on {
             "scrollbar: on"
         } else {
@@ -13228,6 +13233,7 @@ impl App {
     /// forced to 0 in `editor_view` when wrap is on.
     pub fn set_wrap(&mut self, on: bool) {
         self.config.ui.wrap = on;
+        let _ = crate::app::discovery::persist_ui_bool("wrap", on);
         self.toast(if on { "wrap: on" } else { "wrap: off" });
     }
     pub fn toggle_wrap(&mut self) {
@@ -13241,13 +13247,26 @@ impl App {
     /// the two cells reclaim as label width and the active/inactive
     /// distinction lives in the label's color + weight.
     pub fn toggle_workspace_dots(&mut self) {
-        self.config.ui.show_workspace_dots = !self.config.ui.show_workspace_dots;
-        let msg = if self.config.ui.show_workspace_dots {
+        let new_value = !self.config.ui.show_workspace_dots;
+        self.set_workspace_dots(new_value);
+    }
+
+    /// Set + persist `[ui] show_workspace_dots`. Every mutation
+    /// site (palette toggle, menu-bar entry, right-click, `:set
+    /// wsdots` / `:set nowsdots`) funnels through here so the
+    /// disk write can't be forgotten — the reason the toggle
+    /// used to revert on restart.
+    pub fn set_workspace_dots(&mut self, value: bool) {
+        self.config.ui.show_workspace_dots = value;
+        let msg = if value {
             "workspace dots: on"
         } else {
             "workspace dots: off"
         };
-        self.toast(msg);
+        match crate::app::discovery::persist_ui_bool("show_workspace_dots", value) {
+            Ok(_) => self.toast(msg),
+            Err(e) => self.toast(format!("{msg} (not saved: {e})")),
+        }
     }
 
     /// `:set [no]todohl` / `view.toggle_todo_highlight` — paint
@@ -13293,36 +13312,49 @@ impl App {
         b.editor.place_cursor(row, col);
     }
 
-    pub fn toggle_todo_highlight(&mut self) {
-        self.config.ui.highlight_todo_keywords = !self.config.ui.highlight_todo_keywords;
-        self.toast(if self.config.ui.highlight_todo_keywords {
+    pub fn set_todo_highlight(&mut self, on: bool) {
+        self.config.ui.highlight_todo_keywords = on;
+        let _ = crate::app::discovery::persist_ui_bool("highlight_todo_keywords", on);
+        self.toast(if on {
             "todo highlight: on"
         } else {
             "todo highlight: off"
         });
     }
+    pub fn toggle_todo_highlight(&mut self) {
+        self.set_todo_highlight(!self.config.ui.highlight_todo_keywords);
+    }
 
-    pub fn toggle_render_markdown(&mut self) {
-        self.config.ui.render_markdown = !self.config.ui.render_markdown;
-        self.toast(if self.config.ui.render_markdown {
+    pub fn set_render_markdown(&mut self, on: bool) {
+        self.config.ui.render_markdown = on;
+        let _ = crate::app::discovery::persist_ui_bool("render_markdown", on);
+        self.toast(if on {
             "render markdown: on"
         } else {
             "render markdown: off"
         });
     }
+    pub fn toggle_render_markdown(&mut self) {
+        self.set_render_markdown(!self.config.ui.render_markdown);
+    }
 
-    pub fn toggle_sticky_context(&mut self) {
-        self.config.ui.sticky_context = !self.config.ui.sticky_context;
-        self.toast(if self.config.ui.sticky_context {
+    pub fn set_sticky_context(&mut self, on: bool) {
+        self.config.ui.sticky_context = on;
+        let _ = crate::app::discovery::persist_ui_bool("sticky_context", on);
+        self.toast(if on {
             "sticky context: on"
         } else {
             "sticky context: off"
         });
     }
+    pub fn toggle_sticky_context(&mut self) {
+        self.set_sticky_context(!self.config.ui.sticky_context);
+    }
 
     /// Toggle the editor breadcrumb row (`:set [no]breadcrumb`).
     pub fn set_breadcrumb(&mut self, on: bool) {
         self.config.editor.breadcrumb = on;
+        let _ = crate::app::discovery::persist_editor_bool("breadcrumb", on);
         self.toast(if on {
             "breadcrumb: on"
         } else {
@@ -13339,6 +13371,7 @@ impl App {
     /// future opens.
     pub fn set_auto_pair(&mut self, on: bool) {
         self.config.editor.auto_pair = on;
+        let _ = crate::app::discovery::persist_editor_bool("auto_pair", on);
         for p in self.panes.iter_mut() {
             if let Pane::Editor(b) = p {
                 b.editor.auto_pair = on;
@@ -13357,6 +13390,7 @@ impl App {
     /// Toggle trailing-whitespace highlight (`:set [no]trailing`).
     pub fn set_highlight_trailing_ws(&mut self, on: bool) {
         self.config.ui.highlight_trailing_ws = on;
+        let _ = crate::app::discovery::persist_ui_bool("highlight_trailing_ws", on);
         self.toast(if on {
             "trailing ws: highlighted"
         } else {
@@ -13370,6 +13404,7 @@ impl App {
     /// Toggle "highlight word under cursor" (`:set [no]hlword`).
     pub fn set_highlight_word_under_cursor(&mut self, on: bool) {
         self.config.ui.highlight_word_under_cursor = on;
+        let _ = crate::app::discovery::persist_ui_bool("highlight_word_under_cursor", on);
         self.toast(if on {
             "highlight word: on"
         } else {
@@ -14089,14 +14124,22 @@ impl App {
         }
     }
 
-    pub fn toggle_color_column(&mut self) {
-        if self.config.ui.color_column == 0 {
-            self.config.ui.color_column = 80;
-            self.toast("colorcolumn: 80");
-        } else {
-            self.config.ui.color_column = 0;
+    pub fn set_color_column(&mut self, col: usize) {
+        self.config.ui.color_column = col;
+        let _ = crate::app::discovery::persist_ui_int("color_column", col as i64);
+        if col == 0 {
             self.toast("colorcolumn: off");
+        } else {
+            self.toast(format!("colorcolumn: {col}"));
         }
+    }
+    pub fn toggle_color_column(&mut self) {
+        let next = if self.config.ui.color_column == 0 {
+            80
+        } else {
+            0
+        };
+        self.set_color_column(next);
     }
 
     /// Jump the cursor to the *next* pending match in `replace_confirm`

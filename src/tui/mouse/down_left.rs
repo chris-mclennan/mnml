@@ -1886,12 +1886,7 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     if let Some(r) = app.rects.statusline_wrap_chip
         && crate::app::dispatch::contains(r, x, y)
     {
-        app.config.ui.wrap = !app.config.ui.wrap;
-        app.toast(if app.config.ui.wrap {
-            "wrap: on"
-        } else {
-            "wrap: off"
-        });
+        app.toggle_wrap();
         return;
     }
     // Autosave chip → :set autosave_secs= prompt (palette command).
