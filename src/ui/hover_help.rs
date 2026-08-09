@@ -26,7 +26,12 @@ use crate::ui::theme;
 /// Number of rows the box occupies at the bottom of the left panel.
 /// One header row + one blank spacer + up to `INFO_BOX_HEIGHT - 2`
 /// wrapped content rows.
-pub const INFO_BOX_HEIGHT: u16 = 6;
+/// 1 separator + 1 header + up to `INFO_BOX_HEIGHT - 2` wrapped
+/// content rows. R8 vscode-mouse feedback: without the separator
+/// the box shares tree_rail bg and reads as accidental tree
+/// overflow. Adding a dim `─` rule at row 0 draws the eye without
+/// bumping to a bordered card.
+pub const INFO_BOX_HEIGHT: u16 = 7;
 
 /// Paint the info box over `area`. Caller reserves the rows only when
 /// `app.config.ui.hover_help` is on AND the left panel is tall enough
@@ -44,7 +49,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
 
     let (primary, secondary) = pick_help_text(app);
 
-    // Row 0 — header: `? Info` marker so users learn what the box is.
+    // Row 0 — separator rule. Dim `─` across the full width in the
+    // `comment` color so the info box is visually distinct from the
+    // tree rail directly above (both share bg_darker; without a
+    // separator they blend into one gray block).
+    let sep_line = "─".repeat(area.width as usize);
+    let sep_rect = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            sep_line,
+            Style::default()
+                .fg(t.comment)
+                .bg(bg)
+                .add_modifier(Modifier::DIM),
+        ))),
+        sep_rect,
+    );
+    if area.height <= 1 {
+        return;
+    }
+
+    // Row 1 — header: `? Info` marker so users learn what the box is.
     let header = Line::from(vec![
         Span::styled(" ", Style::default().bg(bg)),
         Span::styled(
@@ -58,16 +88,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     ]);
     let header_rect = Rect {
         x: area.x,
-        y: area.y,
+        y: area.y + 1,
         width: area.width,
         height: 1,
     };
     frame.render_widget(Paragraph::new(header), header_rect);
-    if area.height <= 1 {
+    if area.height <= 2 {
         return;
     }
 
-    // Rows 1..N — wrapped primary + optional secondary text.
+    // Rows 2..N — wrapped primary + optional secondary text.
     // Content width leaves a 1-cell gutter on each side.
     let content_w = area.width.saturating_sub(2) as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -96,11 +126,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ]));
         }
     }
+    // Body starts at row 2 (after separator + header).
     let body_rect = Rect {
         x: area.x,
-        y: area.y + 1,
+        y: area.y + 2,
         width: area.width,
-        height: area.height - 1,
+        height: area.height.saturating_sub(2),
     };
     // Truncate to available rows — no scrollbar needed; the box is
     // ephemeral information, not a document.
