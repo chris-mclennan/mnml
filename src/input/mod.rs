@@ -194,9 +194,6 @@ pub enum AppCommand {
     /// Move the cmdline completion popup's highlight by ±1.
     /// `i8` so the variant stays small; -1 = up, +1 = down.
     CmdlinePopupMove(i8),
-    /// Rewrite cmdline to the currently-highlighted popup match
-    /// + commit (run it). Used by Enter when the popup is showing.
-    CmdlinePopupAcceptCurrentAndCommit,
     /// User pressed Enter on the cmdline. If the popup is showing,
     /// accept the highlighted match and run that instead of the
     /// typed line; otherwise run the typed line as-is.
