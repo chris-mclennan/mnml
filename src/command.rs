@@ -276,7 +276,12 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.toggle_tree",
-            title: "Toggle file tree (rail on/off)",
+            // R6 vscode-keyboard SEV-3 2026-08-09 — retitled from
+            // "Toggle file tree" to match the Window menu's "Toggle
+            // left panel" label. The panel hosts more than files
+            // (Git / Integrations / Agents / HTTP / Findings), and
+            // palette search for "left panel" now finds this row.
+            title: "Toggle left panel (file tree · Git · Integrations · Agents · HTTP · Findings)",
             group: "view",
             keys: &["ctrl+b"],
             run: |app| app.toggle_tree_visibility(),

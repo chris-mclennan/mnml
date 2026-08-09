@@ -1,18 +1,15 @@
-# TypeScript monorepo: npm.test spawns pty at WORKSPACE ROOT, not at the
-# package being edited. In a pnpm/yarn workspace the user expects `npm test`
-# to run in packages/<current-pkg>/, but mnml always anchors to the first
-# package.json found walking up from self.workspace — which is the root
-# package.json.
+# TypeScript monorepo: npm.test should spawn the pty at the sub-package
+# containing the active file, not at the workspace root. Fixed 2026-06-28
+# via `run_manifest_command` walking up from the active editor's directory
+# (`src/app/playwright.rs:396+`). This test freezes the fix so future
+# tester rounds don't chase it as an open bug.
 #
-# Finding: npm.monorepo-cwd — SEV-2
-# run_manifest_command starts its walk at self.workspace (the workspace mnml
-# was launched with), not at the active editor's directory.  For a monorepo
-# launched as `mnml ~/Projects/mono-repo/`, self.workspace = ~/Projects/mono-repo/,
-# and the root package.json is found immediately.  The pty opens in that root,
-# not in packages/my-pkg/.
-#
-# Repro: stage a minimal monorepo, open a file in packages/pkg-a/, run npm.test.
-# Expect the pty label to reference pkg-a (it will not — it references root).
+# The assertion below (`expect screen lacks "no package.json"`) confirms
+# the manifest walk succeeded — a stronger cwd assertion needs a `spawn`
+# command that captures the child pty's cwd; not exposed in headless yet.
+# For a real cwd probe see `scratchpad/npm_monorepo_cwd_real.test`
+# (multilang-dev R2 repro), which asserts on the sub-package's own
+# script output ("PKG-A-RAN").
 
 shell mkdir -p packages/pkg-a/src
 shell echo '{"name":"root","workspaces":["packages/*"]}' > package.json
