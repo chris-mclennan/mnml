@@ -89,13 +89,22 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
         height: h,
     };
     // Make sure we don't overflow the screen.
+    // R7 vscode-keyboard SEV-1 2026-08-09: the height clamp was
+    // missing, so a Window menu (25 items + 2 borders = 27 rows)
+    // on a 25-row terminal painted past the buffer and panicked
+    // inside ratatui (`index outside of buffer (0, 25)`). Clamp
+    // both dimensions to the screen and drop y to 0 if height
+    // consumed everything — the dropdown just truncates at the
+    // bottom in that case, which is worse than we'd like but
+    // infinitely better than a session-ending crash.
     let screen_w = frame.area().width;
     let screen_h = frame.area().height;
+    let clamped_h = h.min(screen_h);
     let area = Rect {
         x: area.x.min(screen_w.saturating_sub(w)),
-        y: area.y.min(screen_h.saturating_sub(h)),
+        y: area.y.min(screen_h.saturating_sub(clamped_h)),
         width: w,
-        height: h,
+        height: clamped_h,
     };
     frame.render_widget(Clear, area);
 
