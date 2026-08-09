@@ -83,6 +83,12 @@ pub enum MenuAction {
     SetIntegrationLauncher(String),
     /// Run a registered command by id (e.g. `tree.refresh`).
     Command(&'static str),
+    /// R7 vscode-mouse F1 2026-08-09 — set the current mnml theme
+    /// to the named one. Surfaced by the bufferline theme-toggle
+    /// chip's right-click menu so users can pick a specific theme
+    /// without leaving the tab bar (Chrome / Firefox extension menu
+    /// idiom). Wraps `App::set_theme(&name)`.
+    SetTheme(String),
     /// Open the glyph builder pre-loaded with a specific codepoint
     /// so the user can nudge width / height / center. Surfaced by
     /// the tab-bar AI chip right-click for baseline-drift fixes.

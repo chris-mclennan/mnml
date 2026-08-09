@@ -1638,6 +1638,7 @@ impl App {
                 self.clipboard.set(text.clone(), false);
                 self.toast(format!("copied {text}"));
             }
+            SetTheme(name) => self.set_theme(&name),
             OpenCloudAgentRunDetail(idx) => {
                 self.open_cloud_agent_run(idx);
             }

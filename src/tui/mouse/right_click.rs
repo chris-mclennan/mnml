@@ -909,20 +909,60 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     if let Some(r) = app.rects.bufferline_theme_toggle
         && crate::app::dispatch::contains(r, x, y)
     {
+        // R7 vscode-mouse F1 2026-08-09 — enrich the theme menu with
+        // a full theme list. Was: Pick theme… / Toggle / Reset — the
+        // Pick opened a fuzzy picker overlay. That's one extra hop
+        // when the user already knows which theme they want, and
+        // Chrome's extension menu (the closest UI analog) lists
+        // installed themes inline.
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
-        let cur = crate::ui::theme::cur().name;
-        let items = vec![
-            MenuItem::new(format!("Theme: {cur}"), MenuAction::Command("noop.info")),
-            MenuItem::new("Pick theme…", MenuAction::Command("theme.pick")),
-            MenuItem::new(
-                "Toggle (primary ↔ alt)",
-                MenuAction::Command("theme.toggle"),
-            ),
-            MenuItem::new(
-                "Reset to config default",
-                MenuAction::Command("theme.reset"),
-            ),
-        ];
+        let cur = crate::ui::theme::cur().name.to_string();
+        let alt = app.config.ui.theme_toggle.clone();
+        let mut items: Vec<MenuItem> = Vec::new();
+        items.push(MenuItem::new(
+            format!("Theme: {cur}"),
+            MenuAction::Command("noop.info"),
+        ));
+        // The two "quick" actions stay at the top so muscle memory
+        // survives — Toggle + Reset are the fastest common paths.
+        items.push(MenuItem::new(
+            match alt.as_deref() {
+                Some(a) if !a.eq_ignore_ascii_case(&cur) => {
+                    format!("Toggle → {a}")
+                }
+                Some(_) => "Toggle (primary ↔ alt)".to_string(),
+                None => "Toggle (configure [ui] theme_toggle first)".to_string(),
+            },
+            MenuAction::Command("theme.toggle"),
+        ));
+        items.push(MenuItem::new(
+            "Auto (system light/dark) — coming soon",
+            MenuAction::Command("noop.info"),
+        ));
+        items.push(MenuItem::new(
+            "Reset to config default",
+            MenuAction::Command("theme.reset"),
+        ));
+        items.push(MenuItem::new(
+            "Pick theme…  (fuzzy)",
+            MenuAction::Command("theme.pick"),
+        ));
+        // Separator-style divider before the per-theme rows.
+        items.push(MenuItem::new(
+            "── themes ──".to_string(),
+            MenuAction::Command("noop.info"),
+        ));
+        for name in crate::ui::theme::names() {
+            let marker = if name.eq_ignore_ascii_case(&cur) {
+                "●"
+            } else {
+                " "
+            };
+            items.push(MenuItem::new(
+                format!("{marker} {name}"),
+                MenuAction::SetTheme(name.to_string()),
+            ));
+        }
         app.context_menu = Some(ContextMenu::new(Some("Theme".to_string()), (x, y), items));
         return;
     }
