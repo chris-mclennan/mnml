@@ -110,6 +110,8 @@ export default defineConfig({
             { label: 'Activity bar', slug: 'manual/activity-bar' },
             { label: 'TODOs, Notes & Sessions panels', slug: 'manual/activity-panels' },
             { label: 'Right side panel', slug: 'manual/right-panel' },
+            { label: 'Menu bar', slug: 'manual/menu-bar' },
+            { label: 'Hover-help', slug: 'manual/hover-help' },
             { label: 'Bridge & Mount (sibling integration)', slug: 'manual/bridge-mount' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
             { label: 'Platform support', slug: 'manual/platform-support' },

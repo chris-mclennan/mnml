@@ -224,6 +224,36 @@ Or restart mnml. The Marketplace-tab install path (`cargo install <name>` in a P
 
 Internal palette commands with no prefix (e.g. `ai.claude_code`, `http.send`, `browser.open`) never route through the probe — they don't shell out, so they're always assumed available.
 
+## Diagnostics
+
+Two palette commands surface drift between what's installed, what's on PATH, and what mnml can actually render. Both are read-first — the shadowed-binary one moves stale copies into a quarantine dir (reversibly); the glyph one only writes a report.
+
+### `integrations.audit_shadowed_binaries`
+
+Walks every `mnml-*` binary in `~/.cargo/bin/` and checks whether PATH-order would resolve `<name>` to a *different* copy on disk (a stale `~/.local/bin/<name>` from a prior install, an old build in `/usr/local/bin/`, etc.). Shadowing copies are moved to `~/.local/share/mnml/quarantine/shadowed-bins/<name>.<epoch>` — nothing is deleted, so if quarantining the "stale" one turns out to be wrong, `mv` it back.
+
+Fixes the case where you upgraded a sibling via `cargo install --force <sibling>`, cargo dropped the fresh binary in `~/.cargo/bin/`, and a `<sibling> --install` call from your shell still ran the stale copy elsewhere on PATH and wrote its old manifest.
+
+Toasts the count on success:
+
+```
+moved 3 shadowed sibling binaries → ~/.local/share/mnml/quarantine/shadowed-bins
+```
+
+The Marketplace install shell (`cargo install --force <name> && $HOME/.cargo/bin/<name> --install`) sidesteps this by targeting the cargo-bin path explicitly — this audit command is for shell-driven installs that don't use the mnml install shell.
+
+### `integrations.audit_glyphs`
+
+Read-only report over three drift classes:
+
+1. **Manifest glyphs that won't render** — the `[chip] glyph` codepoint on an installed integration falls outside your ghostty `font-codepoint-map` routed ranges AND isn't baked into `~/Library/Fonts/MnmlSymbols.ttf`. Guaranteed to tofu (render as an empty box) on this machine. Fix: swap the sibling's `chip.glyph` to a codepoint in a routed range (`F0001–F1AFF` for MDI, `E5FA–E8FF` for codicon / DevIcons) or ship an SVG the mnml glyph bake picks up.
+2. **id-alias duplicates in `~/.config/mnml/integration-glyphs.toml`** — two rows pointing at the same codepoint under different ids (e.g. `amplify` + `mnml-aws-amplify` both → `F1C0E`). Cosmetic today (the runtime uses whichever row was inserted last); load-bearing on the next re-install if the row-order disagrees with the sibling's declared id. Fix: delete the shorter / legacy id from the ledger.
+3. **Orphan `glyph_meta.toml` entries** — SVG source path no longer exists AND the codepoint isn't in the font either. Genuine dead entries; safe to drop.
+
+Writes a full report to `<workspace>/.mnml/findings/glyph-audit-<timestamp>.md` — the Findings activity-bar section picks it up automatically. Toasts the total drift count (or `glyph audit: clean — no drift detected` when the state is healthy).
+
+Nothing is repaired — the command is a diagnostic, not a fixer. Use the report to guide manual manifest edits.
+
 ## Troubleshooting
 
 ### "I installed via `cargo install` but the chip doesn't appear"

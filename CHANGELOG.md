@@ -10,6 +10,113 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-08-09
+
+Same-day rollup on top of v0.2.8 (which was itself the first
+cargo-dist success in 9 tag attempts). Two SEV-1 fixes plus a
+morning of menu-bar / hover-help / integrations-audit polish.
+
+### Fixed
+
+- **SEV-1: Headers tab typing corrupted the last header value on
+  the wire.** `headers_buffer` was rebuilt with no trailing `\n` and
+  every reload placed the cursor at end-of-buffer — landing INSIDE
+  the last header's value. Any keystroke while Headers was focused
+  silently mangled the last header, which is often `Authorization`.
+  Bearer tokens were being sent corrupted. Fixed by appending a
+  fresh newline to the reload; typing now starts on an empty row.
+- **SEV-1: `:qa` / `:qall` / `:quitall` silently discarded unsaved
+  work.** Vim requires `:qa!` to force. mnml's `:qa` set
+  `should_quit = true` unconditionally. Now walks every pane; any
+  dirty pane refuses with `unsaved changes — use :qa! to discard`.
+  `:qa!` still force-quits.
+- **HTTP panel MOCKS section always showed `(0)`.** `walk_for_http`
+  only accepted `.http`/`.curl`/`.rest`; sidecar `.mock.json` files
+  produced by `:http.save_mock` were structurally invisible to the
+  panel. Fixed by walking `**/*.mock.json` alongside.
+- **Menu bar Alt+letter for clipped menus was silently broken** —
+  the initial fix set `menu_open` but `draw_dropdown` bailed on
+  missing `menu_bar_words` entry, creating an invisible input
+  trap. The proper fix paints the dropdown at a fallback origin
+  (column 0 or after last-visible menu word) so keyboard nav works
+  even when the parent chip is clipped by the workspace cluster.
+- **Alt+letter no-ops when a picker / prompt / cmdline is open.**
+  Prior behavior stacked the menu dropdown on top of the overlay
+  and swallowed keys between them.
+- **Menu-open + top-level chord (Ctrl+P, F1, etc.) closes the menu
+  and runs the chord.** Prior behavior silently no-oped.
+- **F10 during a DAP session fires `dap.next`, not the File-menu
+  summon.** Menu-summon was unconditionally winning the chord race.
+- **Palette exact-phrase substring boost.** Query "hover-help" was
+  ranking `view.help` above `view.toggle_hover_help`. Boost pushes
+  literal-substring matches above pure fuzzy score.
+- **Dirty-quit + clean-quit confirm dialogs default focus to
+  `[Cancel]`**, not the destructive middle button. Enter is safe.
+- **`palette title` ↔ `menu label` drift** — `view.toggle_tree`
+  retitled to "Toggle left panel (file tree · Git · Integrations ·
+  Agents · HTTP · Findings)" so palette search matches the menu.
+
+### Added
+
+- **Menu-bar left-column glyphs on every menu** (was only File). File
+  / Edit / Selection / View / Go / Run / Terminal / Window / Help
+  + Brand each get glyph-prefix icons on rows where a widely-
+  recognized Nerd Font glyph matches; 3-space spacer preserves
+  alignment where nothing fits.
+- **Hover-help repositioned as an Ableton-style info box** at the
+  bottom of the left panel — 6-row word-wrapped card with a `? Info`
+  header. Replaces the old 1-row footer strip. Tree rows show file
+  language (`.tsx` → "TypeScript (JSX)"), Agents-dashboard rows get
+  their own description, and focus-target takes precedence over the
+  always-active-pane fallback.
+- **`view.toggle_workspace_dots` — opt-out for the `● / ○` markers.**
+  Config key `[ui] show_workspace_dots` (default `true`), palette
+  command, `:set wsdots` / `:set nowsdots` / `:set wsdots!` ex-
+  commands, AND a right-click item on any workspace-row context
+  menu. Three discovery paths.
+- **`integrations.audit_glyphs` diagnostic palette command.** Reports
+  three drift classes without repair: (a) manifests whose glyph
+  won't render in the user's `~/.config/ghostty/config`
+  `font-codepoint-map`, (b) id-alias duplicates in
+  `integration-glyphs.toml`, (c) orphan `glyph_meta.toml` entries.
+  Writes a full report to `.mnml/findings/glyph-audit-<ts>.md`.
+- **id-alias dedupe on manifest merge.** Prevents future recurrence
+  of the `amplify` + `mnml-aws-amplify` both-at-F1C0E class of
+  ledger drift. Auto-cleans existing dupes on next `integrations.refresh`.
+
+### Changed
+
+- **`view.toggle_bufferline` deleted.** The command + `[ui]
+  bufferline` config key + `:set [no]bufferline` ex-arms +
+  render-gate + `App::bufferline_visible` field are all gone.
+  Investigation showed the toggle only affected the launcher-cluster
+  row on the empty welcome screen, and the same cluster also renders
+  in the welcome body — so toggling it produced no visible change.
+- **Sibling: `mnml-msg-slack v0.1.2` published.** `slack_canvases` →
+  `slack_boards` rename (with `PREDECESSOR_IDS` cleanup so upgrading
+  users don't end up with 3 chips). Glyph swapped to `\u{F07D2}`
+  (mdi-slack, in ghostty's routed range so it renders as the Slack
+  logo). Colors: channels = white, boards = yellow.
+- **File menu**: `Open recent file (picker)…` row removed (Ctrl+R
+  covers keyboard access). `Save all` glyph swapped to a distinct
+  double-floppy F0194. Add-folder + switch-workspace + settings +
+  quit rows get their own glyphs.
+- **View menu**: `Toggle file tree` renamed → `Toggle left panel`
+  since the panel hosts Git / Integrations / Agents / HTTP / Findings
+  in addition to files.
+- **Window menu**: split-right / split-down glyphs match the top-
+  right H/V pane-cluster chips (EB56/EB57). Focus-split L/R/U/D get
+  matching arrow glyphs. Merge/spread/grow/AI-layout rows all get
+  Font-Awesome fallback glyphs (MDI first-picks tofu'd in the user's
+  font-codepoint-map).
+- **Legacy `family_catalog` install path deleted** (~640 lines).
+  CATALOG was `&[]` for months; every entry point was a silent
+  no-op. Marketplace is the only install path.
+- **Removed dead code**: `AppCommand::CmdlinePopupAcceptCurrentAndCommit`,
+  empty `PlaywrightConfig` struct, unreachable `Clone for SpendReportPane`,
+  and ~20 archaeology comments referencing subsystems removed months
+  ago.
+
 ## [0.2.8] - 2026-08-08
 
 First release in eight tags — v0.2.1 through v0.2.7 all had their

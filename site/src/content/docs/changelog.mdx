@@ -47,6 +47,27 @@ Already subscribed? [Manage your subscription](https://buttondown.com/chrismclen
 
 Versions auto-tagged at [github.com/chris-mclennan/mnml/releases](https://github.com/chris-mclennan/mnml/releases) — this page summarizes the user-facing changes. For commit-level history, see the GitHub release notes.
 
+### 0.2.9 — 2026-08-09
+
+Same-day rollup on top of v0.2.8. Two SEV-1 fixes plus a full morning of menu-bar / hover-help / integration-audit polish.
+
+- **SEV-1 fix — Headers-tab typing no longer corrupts the wire.** Any keystroke while the Request pane's Headers tab was focused was landing INSIDE the last header's value — silently mangling Auth Bearer tokens on the wire. The tab now reloads with a fresh newline; typing starts on an empty row.
+- **SEV-1 fix — `:qa` / `:qall` / `:quitall` no longer discards unsaved work silently.** Vim's `:qa` requires `:qa!` to force; mnml's `:qa` was setting quit unconditionally. Now walks every pane; any dirty pane refuses with `unsaved changes — use :qa! to discard`.
+- **Menu bar keyboard reachability fixed at typical terminal widths.** Alt+V / G / R / T / W / H had been silently no-oping (or worse: opening an invisible input trap) when the parent chip was clipped by the workspace cluster. Dropdown now paints at a fallback origin — every menu is keyboard-reachable at any width.
+- **Alt+letter is inert while a picker, prompt, or cmdline is open.** Prior behavior stacked the dropdown on top and swallowed keys between them.
+- **Menu-open + top-level chord** (Ctrl+P / F1 / etc.) closes the menu and runs the chord instead of silently no-oping.
+- **F10 during a DAP session fires `dap.next`** (step over), not the menu-summon.
+- **Quit-confirm dialog defaults keyboard focus to `[Cancel]`** — Enter is safe.
+- **`view.toggle_workspace_dots` — opt-out for the `● / ○` workspace-root markers.** Reachable via config key `[ui] show_workspace_dots`, palette command, `:set wsdots` / `:set nowsdots` ex-commands, and right-click on any workspace row.
+- **`integrations.audit_glyphs` palette diagnostic** — reports three drift classes without repairing: manifests whose glyph won't render in your ghostty `font-codepoint-map`, id-alias duplicates in `integration-glyphs.toml`, orphan `glyph_meta.toml` entries. Writes a full report to `.mnml/findings/glyph-audit-<timestamp>.md`.
+- **Left panel renamed from "file tree" throughout the UI** — palette title, menu label, hover-help — since the panel actually hosts Git / Integrations / Agents / HTTP / Findings in addition to files.
+- **Hover-help repositioned** as an Ableton-style info box docked to the bottom of the left panel (was a 1-row footer strip). Word-wrapped, 6 rows tall, with a `? Info` header. Tree rows show file language (`.tsx` → "TypeScript (JSX)"), Agents-dashboard rows get their own description, keyboard focus takes precedence over the always-active-pane fallback.
+- **Menu-bar left-column glyphs** on every menu (File / Edit / Selection / View / Go / Run / Terminal / Window / Help + Brand). Icons where a widely-recognized Nerd Font glyph matches; 3-space spacer preserves alignment where nothing fits.
+- **HTTP panel MOCKS section discovers `.mock.json` sidecar files** produced by `:http.save_mock` (was always showing `(0)`).
+- **`view.toggle_bufferline` deleted** — it only affected the launcher-cluster row on the empty welcome screen, which is duplicated in the welcome body anyway.
+- **Sibling published: `mnml-msg-slack 0.1.2`** — canvases → boards rename, `\u{F07D2}` mdi-slack glyph (renders as the classic Slack logo in ghostty's routed range), channels = white / boards = yellow.
+- Deleted ~640 lines of legacy `family_catalog` install-path scaffolding (CATALOG was `&[]` for months — every entry point was a silent no-op).
+
 ### 0.2.8 — 2026-08-08
 
 First actually-published release in eight tags. v0.2.1 through v0.2.7 all had tags pushed, but the Release workflow's Windows build silently failed on `use std::os::unix::process::CommandExt` in `src/main.rs` — nothing shipped. Root-caused, cfg-gated, cross-checked with `cargo check --target x86_64-pc-windows-gnu`. Rollup of the eight-tag arc below.

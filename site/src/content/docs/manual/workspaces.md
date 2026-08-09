@@ -83,6 +83,27 @@ Each workspace header has a small chip cluster on the right edge:
 - **Hidden files toggle** — flip dotfile visibility for this workspace.
 - **+ repo** — add a workspace at runtime (see [Sibling workspaces](#sibling-workspaces) below).
 
+### Workspace status dots
+
+Every workspace-root row in the tree carries a small marker on its left edge — `●` (filled) on the active workspace, `○` (hollow) on the others. Useful when you have several sibling workspaces pinned and want the active one obvious at a glance.
+
+On by default. Four ways to hide the markers:
+
+```toml
+[ui]
+show_workspace_dots = false
+```
+
+```vim
+:set nowsdots    " hide
+:set wsdots      " show
+:set wsdots!     " toggle
+```
+
+Palette command: `view.toggle_workspace_dots`. Menu bar: **View → Toggle workspace status dots**. Or **right-click any workspace-root row** — the context menu carries a `Hide workspace status dots (● / ○)` / `Show workspace status dots (● / ○)` toggle at the bottom (the label follows the current state).
+
+When hidden, the two cells the marker occupied are reclaimed by the workspace-row label — no gap, no ghost padding.
+
 ## Sibling workspaces
 
 A workspace can have *additional* directories pinned alongside it in the rail. Useful when you're working on a multi-repo project — say `mnml` + `mixr` + `fim-engine` — and want one mnml window with three collapsible workspace sections instead of three separate launches.

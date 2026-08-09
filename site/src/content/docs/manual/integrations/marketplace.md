@@ -138,18 +138,19 @@ Left-click on a Marketplace row dispatches based on the entry `kind`:
 mnml spawns a Pty pane running:
 
 ```sh
-cargo install <crate-name>
+cargo install --force <crate-name> && $HOME/.cargo/bin/<crate-name> --install
 ```
 
-You watch the build live. When `cargo` exits cleanly, the binary lands in `~/.cargo/bin` (which mnml's PATH detection covers even under Finder-launched .app bundles). The sibling's own `--install` subcommand — which writes its `~/.config/mnml/integrations/<id>.toml` manifest — is a **separate follow-up** you run manually:
+You watch the build live. When `cargo` exits cleanly, the binary lands in `~/.cargo/bin` (which mnml's PATH detection covers even under Finder-launched .app bundles) and the sibling's own `--install` subcommand runs immediately after, writing `~/.config/mnml/integrations/<id>.toml`.
 
-```sh
-mnml-db-postgres --install
-```
+Two footguns this shape closes:
 
-Then run `integrations.refresh` inside mnml (or restart) and the chip appears. This two-step flow is intentional — cargo takes minutes; the manifest-registration step is instant; splitting them means the manifest write can't race the cargo build.
+- **`--force`** — without it, `cargo install` skips silently when the crate is already installed at any version. That made "click Install to upgrade" a no-op. `--force` reinstalls unconditionally so a fresh build always lands.
+- **`$HOME/.cargo/bin/<name>` explicit path** — without the full path, the `--install` shell resolve runs whichever `<name>` PATH finds first. A stale copy in `~/.local/bin/` or another PATH entry could win and write its old manifest, leaving you with a fresh binary in `~/.cargo/bin/` but an outdated manifest on disk. Targeting the cargo-bin path directly bypasses PATH order.
 
-If a sibling doesn't ship an `--install` subcommand, you fall back to hand-authoring the manifest — see [Launcher manifests](/manual/integrations/launcher-manifests/) for the schema.
+If a sibling doesn't ship an `--install` subcommand, the second shell fails (or the `&&` chain short-circuits) — fall back to hand-authoring the manifest per [Launcher manifests](/manual/integrations/launcher-manifests/).
+
+For existing stale copies elsewhere on PATH — installed before `--force` shipped, or copied around by hand — see [Installing → Diagnostics](/manual/integrations/installing/#diagnostics) for the `integrations.audit_shadowed_binaries` command that quarantines them.
 
 ### `[launcher]` rows — download TOML
 

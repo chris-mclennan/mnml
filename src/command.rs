@@ -1737,7 +1737,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.toggle_hover_help",
-            title: "Toggle the Ableton-style hover-help strip (bottom-left)",
+            title: "Toggle the Ableton-style hover-help info box (bottom of left panel)",
             group: "view",
             keys: &[],
             run: |app| {

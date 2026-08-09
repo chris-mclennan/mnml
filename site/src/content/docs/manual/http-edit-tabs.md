@@ -137,6 +137,8 @@ The chord matches what most IDEs use for "format code" — and unlike them, mnml
 
 The `Key: Value` list. Editable as a flat textarea — type `Authorization: Bearer xyz\n` to add a line. Header keys render in cyan + bold, values in foreground; lines without a `:` render dim (a visible hint they're not yet a valid header).
 
+Typing when the cursor lands at the buffer's end (the default after any tab-switch) starts a **fresh new-header row** — the trailing newline is reserved so keystrokes never append to the last existing header's value. Before 2026-08-09, focus-return placed the cursor mid-value on the last row and any keypress silently mangled it on the wire (the trigger case being an `Authorization: Bearer …` line silently corrupted with the next thing you typed, producing unexplained 401s). Now: switching to Headers and typing always starts a new row cleanly.
+
 #### Insert a common header
 
 Don't know whether it's `Content-Type` or `ContentType`? Use the picker:

@@ -133,7 +133,8 @@ A deep ex-command surface, beyond just `:w` / `:q`:
 :w                          " write
 :wa                         " write all
 :q                          " quit
-:qa!                        " force-quit all
+:qa / :qall / :quitall      " quit all — refuses (toast) when any pane is dirty
+:qa!                        " force-quit all (discards unsaved work)
 :e <path>                   " open file
 :bn / :bp                   " buffer next/prev
 :b <name>                   " switch to buffer by name (fuzzy)

@@ -159,6 +159,9 @@ Each row drives a single `Config` slot. Useful when you want to find the matchin
 | File tree width | `[ui] tree_width` |
 | File-tree image preview | `[ui] tree_image_preview` |
 | Now-playing source | `[ui] now_playing_source` |
+| Hover-help info box | `[ui] hover_help` |
+| Workspace status dots (● / ○) | `[ui] show_workspace_dots` |
+| Menu bar visibility | `[ui] menu_bar` |
 | Input style | `[editor] input_style` |
 | Tab width | `[editor] tab_width` |
 | Trim trailing whitespace on save | `[editor] trim_trailing_ws_on_save` |
@@ -208,7 +211,26 @@ tree_image_preview = true         # hover-preview card for image files in the ra
 
 # Pty-tab auto-naming
 ticket_prefixes = ["TE-", "MIX-", "PROJ-"]  # see below
+
+# Chrome polish
+menu_bar = "always"               # "always" | "auto" | "hidden" — see Menu bar page
+hover_help = false                # Ableton-style info box at bottom of left panel
+show_workspace_dots = true        # ● / ○ markers on workspace-root rows
 ```
+
+#### `hover_help`
+
+Docks an info box at the bottom of the left panel that describes whatever the mouse (or keyboard focus) is on — chip / menu item / tree row / tab / pane summary. Off by default so the tree gets those six rows.
+
+Runtime toggle: `view.toggle_hover_help`, `:set hh` / `:set nohh` / `:set hh!`, or the **View → Toggle hover-help strip** menu item. Full surface in [Hover-help](/manual/hover-help/).
+
+#### `show_workspace_dots`
+
+Turns the `● / ○` markers on workspace-root rows in the tree on or off. On by default. Runtime toggle: `view.toggle_workspace_dots`, `:set wsdots` / `:set nowsdots` / `:set wsdots!`, the **View → Toggle workspace status dots** menu item, or right-click on any workspace-root row → **Hide / Show workspace status dots**. See [Workspaces → Workspace status dots](/manual/workspaces/#workspace-status-dots).
+
+#### `menu_bar`
+
+Cycles the chrome-row menu bar between `always` (words visible, click / Alt+letter / F10 all work), `auto` (hidden until summoned via Alt+letter, F10, or mouse-at-top-row), and `hidden` (paint and accelerators both off — palette-only flow). Runtime toggle: `view.menu_bar_cycle` or the **View → Cycle menu bar** entry. See [Menu bar](/manual/menu-bar/) for the full surface.
 
 #### Theme
 

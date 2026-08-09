@@ -100,6 +100,21 @@ Error cases:
 - Sibling `.mock.json` is missing → `http.replay_mock: read <path>: No such file or directory`.
 - Sibling is malformed JSON or missing `status` → `http.replay_mock: parse mock: …` / `http.replay_mock: mock missing status`.
 
+## Finding a mock — the MOCKS panel
+
+The HTTP activity-bar panel's **MOCKS** section lists every `.mock.json` sidecar discovered under the workspace. The workspace's `.http` / `.curl` / `.rest` file walk picks them up as siblings, so anywhere you save a mock (via `:http.save_mock`) shows up here on the next panel refresh — you don't need to move mocks into a dedicated folder.
+
+```
+▸ MOCKS (3)
+  auth/login.curl
+  users.list-users.http
+  orders/get-order.curl
+```
+
+Each row is the mock's filename with the `.mock.json` suffix stripped. `Enter` on a row opens the underlying source file so you can `:http.replay_mock` from there. `/` on the panel filters across every section — see [HTTP variables, edit split & panel filter → HTTP panel `/` filter](/manual/http-request-polish/#http-panel--filter).
+
+The panel used to always render `MOCKS (0)` because the discovery walk only checked the legacy `.rqst/mocks/` and `.mnml/mocks/` folders — not the sidecar location where `:http.save_mock` actually writes. As of 2026-08-09 the workspace walk collects any file ending in `.mock.json`, so the count reflects reality. The legacy `.rqst/mocks/` and `.mnml/mocks/` shallow-walk is still checked as a fallback for mocks manually placed there.
+
 ## The save-then-replay loop
 
 ```text
