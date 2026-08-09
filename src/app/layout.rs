@@ -403,7 +403,18 @@ impl App {
     /// there) when you want VS Code's preview-tab behavior in standard
     /// input style.
     pub fn open_path(&mut self, path: &Path) {
-        self.open_path_inner(path, false);
+        self.open_path_inner(path, false, false);
+    }
+
+    /// Like [`Self::open_path`] but forces the raw-editor pane —
+    /// bypasses the extension-based auto-routing to MdPreview /
+    /// Request / image viewer. `:e <path>` and `:edit <path>` route
+    /// here so vim-style callers get the raw text every time
+    /// (R7 vscode-mouse SEV-2 F5 2026-08-09 — user typed
+    /// `:e mnml_state.md` expecting to edit, got MdPreview instead).
+    /// Tree-clicks and picker-opens keep the auto-routing.
+    pub fn open_path_force_editor(&mut self, path: &Path) {
+        self.open_path_inner(path, false, true);
     }
 
     /// Open `path` from a tree-click. In **standard** input style this
@@ -420,10 +431,10 @@ impl App {
     /// dispatch, grep hits, definition jumps, session restore — wants
     /// pinned semantics.
     pub fn open_path_preview(&mut self, path: &Path) {
-        self.open_path_inner(path, true);
+        self.open_path_inner(path, true, false);
     }
 
-    fn open_path_inner(&mut self, path: &Path, preview: bool) {
+    fn open_path_inner(&mut self, path: &Path, preview: bool, force_editor: bool) {
         // canonicalize() requires the file to exist; for a vim-style
         // `:e <newfile>` we want an absolute path anyway so the
         // first save lands where the user expects (not relative to
@@ -441,7 +452,10 @@ impl App {
         });
         // Image files get their own viewer pane instead of being loaded as
         // a text buffer (the binary contents would render as gibberish).
-        if is_image_extension(&path) {
+        // R7 vscode-mouse SEV-2 F5 2026-08-09 — `force_editor` (vim's
+        // `:e`) skips these auto-routings so the raw editor opens even
+        // for image / markdown / .http files.
+        if !force_editor && is_image_extension(&path) {
             self.open_image_pane(&path);
             return;
         }
@@ -451,8 +465,9 @@ impl App {
         // swap to raw editing. Preview-mode opens from tree clicks pass
         // preview=true; permanent opens (:edit, picker, grep, etc.)
         // pass preview=false — but the display style (rendered vs.
-        // raw) is the same either way for markdown.
-        if is_markdown_path(&path) {
+        // raw) is the same either way for markdown UNLESS the caller
+        // is vim's `:e` (force_editor=true), which opens raw.
+        if !force_editor && is_markdown_path(&path) {
             self.open_md_preview_for_path(path.clone(), None, true);
             return;
         }
@@ -462,7 +477,8 @@ impl App {
         // writes back). The raw text view is still one right-click
         // away via "Open as text" (or the "raw" chip in the
         // Request pane top bar) — see `open_path_as_editor`.
-        if let Some(ext) = path.extension().and_then(|s| s.to_str())
+        if !force_editor
+            && let Some(ext) = path.extension().and_then(|s| s.to_str())
             && matches!(ext, "http" | "curl" | "rest")
         {
             self.open_request_pane_from_file(&path);

@@ -4152,7 +4152,12 @@ impl App {
                 None => ("", after_plus),
             };
             let p = self.workspace.join(path_part);
-            self.open_path(&p);
+            // R7 vscode-mouse SEV-2 F5 2026-08-09 — vim `:e` opens
+            // the RAW editor regardless of extension. `open_path`'s
+            // MdPreview / Request / image-viewer auto-routing is for
+            // tree-clicks and picker-opens; a user typing `:e foo.md`
+            // means "edit the text", not "render the markdown".
+            self.open_path_force_editor(&p);
             let line = if count_part.is_empty() {
                 self.active_editor()
                     .map(|b| b.editor.line_count())
@@ -4165,7 +4170,7 @@ impl App {
             }
         } else {
             let p = self.workspace.join(rest);
-            self.open_path(&p);
+            self.open_path_force_editor(&p);
         }
     }
 
