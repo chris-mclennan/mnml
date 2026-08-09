@@ -160,7 +160,7 @@ Each row drives a single `Config` slot. Useful when you want to find the matchin
 | File-tree image preview | `[ui] tree_image_preview` |
 | Now-playing source | `[ui] now_playing_source` |
 | Hover-help info box | `[ui] hover_help` |
-| Workspace markers (● / ○) | `[ui] show_workspace_dots` |
+| Workspace dots (● / ○) | `[ui] show_workspace_dots` |
 | Menu bar visibility | `[ui] menu_bar` |
 | Input style | `[editor] input_style` |
 | Tab width | `[editor] tab_width` |
@@ -226,7 +226,7 @@ Runtime toggle: `view.toggle_hover_help`, `:set hh` / `:set nohh` / `:set hh!`, 
 
 #### `show_workspace_dots`
 
-Turns the `● / ○` markers on workspace-root rows in the tree on or off. On by default. Runtime toggle: `view.toggle_workspace_dots`, `:set wsdots` / `:set nowsdots` / `:set wsdots!`, the **View → Toggle workspace markers** menu item, or right-click on any workspace-root row → **Hide / Show workspace markers**. See [Workspaces → Workspace markers](/manual/workspaces/#workspace-status-dots).
+Turns the `● / ○` markers on workspace-root rows in the tree on or off. On by default. Runtime toggle: `view.toggle_workspace_dots`, `:set wsdots` / `:set nowsdots` / `:set wsdots!`, the **View → Toggle workspace dots** menu item, or right-click on any workspace-root row → **Hide / Show workspace dots**. See [Workspaces → Workspace dots](/manual/workspaces/#workspace-status-dots).
 
 #### `menu_bar`
 

@@ -275,7 +275,7 @@ fn view_menu() -> MenuDef {
             // mdi-circle-outline — "dot marker" semantic. If tofu,
             // swap to a spacer per the R6 glyph convention.
             MenuItem::action(
-                "\u{F0130}  Toggle workspace markers",
+                "\u{F0130}  Toggle workspace dots",
                 "view.toggle_workspace_dots",
             ),
             MenuItem::Separator,

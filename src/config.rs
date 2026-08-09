@@ -984,7 +984,7 @@ pub struct UiConfig {
     /// `:set hoverhelp`.
     pub hover_help: bool,
 
-    /// Paint the `● ` / `○ ` workspace markers (● / ○) on the left of
+    /// Paint the `● ` / `○ ` workspace dots (● / ○) on the left of
     /// every workspace-root row in the tree. On by default —
     /// existing users see no change. Toggle at runtime via
     /// `view.toggle_workspace_dots` or `:set wsdots` / `:set nowsdots`.

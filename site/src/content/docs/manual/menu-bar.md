@@ -130,7 +130,7 @@ Selection expansion + multi-cursor. All rows fire editor operations that work id
 
 ### View
 
-Toggles for the panels, chrome, and theme. This menu grew the most in the 2026-08-09 sweep — new rows for hover-help and workspace markers landed alongside a rename and a deletion.
+Toggles for the panels, chrome, and theme. This menu grew the most in the 2026-08-09 sweep — new rows for hover-help and workspace dots landed alongside a rename and a deletion.
 
 | Row | Command |
 |---|---|
@@ -141,7 +141,7 @@ Toggles for the panels, chrome, and theme. This menu grew the most in the 2026-0
 | Toggle word wrap | `view.toggle_wrap` |
 | Toggle zen mode | `view.zen` |
 | Toggle hover-help strip | `view.toggle_hover_help` |
-| Toggle workspace markers | `view.toggle_workspace_dots` |
+| Toggle workspace dots | `view.toggle_workspace_dots` |
 | Commands reference… | `view.commands_reference` |
 | Pick theme… | `theme.pick` |
 | Toggle theme | `theme.toggle` |
@@ -151,7 +151,7 @@ Renames + removals in this menu:
 - **Toggle left panel** — was **Toggle file tree**. The panel hosts Git / Integrations / Agents / HTTP / Findings depending on activity-bar selection, so the label was misleading. The `EC02` codicon matches the sidebar-toggle chip in the palette bar.
 - **Toggle bufferline** — removed. It only affected the launcher-cluster row on the empty welcome screen (which the welcome body renders anyway); the toggle was inert. Deleted alongside the `bufferline_visible` field and `:set [no]bufferline` ex-arms.
 - **Toggle hover-help strip** — toggles the Ableton-style info box docked to the bottom of the left panel. See [Hover-help](/manual/hover-help/) for the full surface.
-- **Toggle workspace markers** — toggles the `● / ○` markers on workspace-root rows in the tree. See [Workspaces → Workspace markers](/manual/workspaces/#workspace-status-dots).
+- **Toggle workspace dots** — toggles the `● / ○` markers on workspace-root rows in the tree. See [Workspaces → Workspace dots](/manual/workspaces/#workspace-status-dots).
 
 ### Go
 
@@ -270,7 +270,7 @@ Any installed integration whose manifest declares `[[menu_bar]]` entries contrib
 ## Next
 
 - [Hover-help](/manual/hover-help/) — the info box the View menu's hover-help toggle drives
-- [Workspaces & the file rail](/manual/workspaces/) — the workspace markers the View menu's dot toggle drives
+- [Workspaces & the file rail](/manual/workspaces/) — the workspace dots the View menu's dot toggle drives
 - [Right side panel](/manual/right-panel/) — the panel the View menu's right-panel toggle drives
 - [Chord chains](/manual/chord-chains/) — how leader-based chords compose alongside the menu-bar accelerators
 - [Cheatsheet — all chords](/manual/cheatsheet-all/) — every default key across both input modes

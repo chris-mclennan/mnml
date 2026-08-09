@@ -83,7 +83,7 @@ Each workspace header has a small chip cluster on the right edge:
 - **Hidden files toggle** — flip dotfile visibility for this workspace.
 - **+ repo** — add a workspace at runtime (see [Sibling workspaces](#sibling-workspaces) below).
 
-### Workspace markers
+### Workspace dots
 
 Every workspace-root row in the tree carries a small marker on its left edge — `●` (filled) on the active workspace, `○` (hollow) on the others. Useful when you have several sibling workspaces pinned and want the active one obvious at a glance.
 
@@ -100,7 +100,7 @@ show_workspace_dots = false
 :set wsdots!     " toggle
 ```
 
-Palette command: `view.toggle_workspace_dots`. Menu bar: **View → Toggle workspace markers**. Or **right-click any workspace-root row** — the context menu carries a `Hide workspace markers (● / ○)` / `Show workspace markers (● / ○)` toggle at the bottom (the label follows the current state).
+Palette command: `view.toggle_workspace_dots`. Menu bar: **View → Toggle workspace dots**. Or **right-click any workspace-root row** — the context menu carries a `Hide workspace dots (● / ○)` / `Show workspace dots (● / ○)` toggle at the bottom (the label follows the current state).
 
 When hidden, the two cells the marker occupied are reclaimed by the workspace-row label — no gap, no ghost padding.
 

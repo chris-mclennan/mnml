@@ -1752,7 +1752,7 @@ fn builtin_commands() -> Vec<Command> {
         },
         Command {
             id: "view.toggle_workspace_dots",
-            title: "Toggle workspace markers (● / ○ dots on workspace-root rows)",
+            title: "Toggle workspace dots (● / ○ dots on workspace-root rows)",
             group: "view",
             keys: &[],
             run: |app| app.toggle_workspace_dots(),

@@ -813,9 +813,9 @@ impl App {
         // some users prefer since they're already right-clicking the
         // workspace row when they choose "Set as workspace".
         let dot_label = if self.config.ui.show_workspace_dots {
-            "Hide workspace markers (● / ○)"
+            "Hide workspace dots (● / ○)"
         } else {
-            "Show workspace markers (● / ○)"
+            "Show workspace dots (● / ○)"
         };
         items.push(MenuItem::new(
             dot_label,
@@ -917,9 +917,9 @@ impl App {
         // variant): match the primary workspace's dot-toggle entry so
         // right-clicking any workspace row surfaces the same control.
         let dot_label = if self.config.ui.show_workspace_dots {
-            "Hide workspace markers (● / ○)"
+            "Hide workspace dots (● / ○)"
         } else {
-            "Show workspace markers (● / ○)"
+            "Show workspace dots (● / ○)"
         };
         items.push(MenuItem::new(
             dot_label,
