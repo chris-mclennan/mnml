@@ -59,7 +59,6 @@ pub(crate) mod ecs_runner_trigger;
 pub mod edit_op;
 pub(crate) mod editor;
 pub(crate) mod editorconfig;
-pub mod family_catalog;
 pub(crate) mod flash;
 pub(crate) mod focus;
 pub(crate) mod formatter;

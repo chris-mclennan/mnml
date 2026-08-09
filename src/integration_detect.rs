@@ -16,6 +16,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 
+// 2026-08-08 — the `discover_mnml_binaries` / `mnml_discovery_cache` /
+// `looks_like_mnml_integration` subgraph was removed with the empty
+// family_catalog. Its only caller lived in that file. Marketplace is
+// the source of truth for available integrations now.
+
 fn cache() -> &'static Mutex<HashMap<String, bool>> {
     static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -136,88 +141,6 @@ fn well_known_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Walk `$PATH` + well-known dirs and return every binary matching
-/// the `mnml-<class>-<name>` family naming convention (`class` and
-/// `name` are at least one ASCII alphanumeric char each; `name` may
-/// contain `-`). De-duped, sorted, lowercase. Used by
-/// `family_catalog::discover_uncataloged` to surface installed
-/// community integrations the hardcoded catalog doesn't know about.
-///
-/// Cached per-session via [`clear_cache`] (the same `clear_cache`
-/// also drops the per-name install cache). Cheap to call from the `+`
-/// overlay open path.
-pub fn discover_mnml_binaries() -> Vec<String> {
-    {
-        let m = mnml_discovery_cache()
-            .lock()
-            .expect("mnml discovery cache poisoned");
-        if let Some(cached) = m.as_ref() {
-            return cached.clone();
-        }
-    }
-    let mut found = std::collections::BTreeSet::new();
-    let mut search_dirs: Vec<PathBuf> = Vec::new();
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            search_dirs.push(dir);
-        }
-    }
-    search_dirs.extend(well_known_dirs());
-
-    for dir in search_dirs {
-        let Ok(read) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in read.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            // Strip Windows .exe suffix for the convention check.
-            let stem = name.trim_end_matches(".exe").trim_end_matches(".EXE");
-            if !looks_like_mnml_integration(stem) {
-                continue;
-            }
-            if let Ok(ft) = entry.file_type()
-                && (ft.is_file() || ft.is_symlink())
-            {
-                found.insert(stem.to_ascii_lowercase());
-            }
-        }
-    }
-    let result: Vec<String> = found.into_iter().collect();
-    if let Ok(mut m) = mnml_discovery_cache().lock() {
-        *m = Some(result.clone());
-    }
-    result
-}
-
-fn mnml_discovery_cache() -> &'static Mutex<Option<Vec<String>>> {
-    static CACHE: OnceLock<Mutex<Option<Vec<String>>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
-}
-
-/// `true` for strings shaped like `mnml-<class>-<name>` where both
-/// segments are non-empty and consist of ASCII alphanumerics or `-`
-/// (after the first two `-`). The reserved root binary `mnml` and
-/// the family-info binary `mnml-info` return `false` — they're not
-/// integrations.
-fn looks_like_mnml_integration(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("mnml-") else {
-        return false;
-    };
-    // Require at least one more `-` so there's a class+name split.
-    let Some((class, suffix)) = rest.split_once('-') else {
-        return false;
-    };
-    if class.is_empty() || suffix.is_empty() {
-        return false;
-    }
-    let valid_class = class.chars().all(|c| c.is_ascii_alphanumeric());
-    let valid_suffix = suffix
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-');
-    valid_class && valid_suffix
-}
-
 /// Parse an integration `command` string and return the underlying
 /// integration binary name, if it has one.
 ///
@@ -273,33 +196,6 @@ mod tests {
         assert!(cache().lock().unwrap().contains_key(nonsense));
         clear_cache();
         assert!(!cache().lock().unwrap().contains_key(nonsense));
-    }
-
-    #[test]
-    fn looks_like_mnml_integration_accepts_canonical_names() {
-        assert!(looks_like_mnml_integration("mnml-aws-lambda"));
-        assert!(looks_like_mnml_integration("mnml-db-dynamodb"));
-        assert!(looks_like_mnml_integration("mnml-tracker-jira"));
-        assert!(looks_like_mnml_integration("mnml-forge-azdevops"));
-        assert!(looks_like_mnml_integration("mnml-fs-s3"));
-        // Names with hyphenated suffix still ok.
-        assert!(looks_like_mnml_integration("mnml-aws-cloudwatch-logs"));
-    }
-
-    #[test]
-    fn looks_like_mnml_integration_rejects_non_integrations() {
-        assert!(!looks_like_mnml_integration("mnml"));
-        assert!(!looks_like_mnml_integration("mnml-info"));
-        assert!(!looks_like_mnml_integration("mnml-"));
-        assert!(!looks_like_mnml_integration("mnml--x"));
-        assert!(!looks_like_mnml_integration("mxnml-aws-lambda"));
-        assert!(!looks_like_mnml_integration("aws-lambda"));
-        // Special chars rejected (no shell-injection vector etc.).
-        assert!(!looks_like_mnml_integration("mnml-aws-fn$weird"));
-        // Uppercase letters are tolerated by the predicate — the
-        // sweep lowercases names before storing, and most filesystems
-        // (macOS, Windows) match case-insensitively for the eventual
-        // `is_binary_installed` lookup.
     }
 
     #[cfg(windows)]
