@@ -3443,7 +3443,10 @@ repo  = "example-knowledge"
             .find(|i| i.id == "claude_code")
             .unwrap();
         assert_eq!(claude.command, "ai.claude_code");
-        assert_eq!(claude.color, "orange");
+        // 2026-08-09 — updated from "orange" (theme slot) to the
+        // exact Anthropic brand hex introduced 2026-08-08 alongside
+        // the `#RRGGBB` literals-in-integration-icons feature.
+        assert_eq!(claude.color, "#D16D51");
     }
 
     /// Regression 2026-07-03: reordering integration chips via

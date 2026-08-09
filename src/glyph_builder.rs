@@ -1094,19 +1094,36 @@ mod tests {
     #[test]
     fn reset_focused_uses_builtin_defaults_when_present() {
         // Codepoint matches a BUILTIN entry (F1E00 = AI Claude).
+        // 2026-08-09 — F1E00 defaults settled at
+        // width=1.35/height=1.35/center=0.30/center_x=0.35 after the
+        // 2026-08-08 tuning spiral; test asserts against the *current*
+        // BUILTIN entry so it survives future tunings without hand
+        // edits (read directly from BUILTIN_GLYPHS by codepoint).
+        let expected = super::BUILTIN_GLYPHS
+            .iter()
+            .find(|g| g.codepoint == 0xF1E00)
+            .expect("F1E00 entry present in BUILTIN_GLYPHS");
         let mut s = GlyphBuilderState::new();
         s.codepoint_hex = "F1E00".to_string();
         s.focused_field = BuilderField::CenterFrac;
         s.center_frac = 0.99; // way off
         s.reset_focused_to_default();
-        // F1E00's tuned default is 0.28.
-        assert!((s.center_frac - 0.28).abs() < 1e-6);
-        // Other fields untouched.
-        assert!((s.width_frac - 1.25).abs() < 1e-6);
+        assert!((s.center_frac - expected.center_frac).abs() < 1e-6);
+        // Other fields untouched (still whatever new() set — assert
+        // width_frac wasn't reset).
+        let fresh = GlyphBuilderState::new();
+        assert!((s.width_frac - fresh.width_frac).abs() < 1e-6);
     }
 
     #[test]
     fn reset_all_resets_every_numeric_field() {
+        // 2026-08-09 — Read expected values from the live BUILTIN
+        // entry so the test tracks tuning changes without hand
+        // edits (see the 2026-08-08 Claude icon iteration spiral).
+        let expected = super::BUILTIN_GLYPHS
+            .iter()
+            .find(|g| g.codepoint == 0xF1E00)
+            .expect("F1E00 entry present in BUILTIN_GLYPHS");
         let mut s = GlyphBuilderState::new();
         s.codepoint_hex = "F1E00".to_string();
         s.width_frac = 0.5;
@@ -1114,11 +1131,10 @@ mod tests {
         s.center_frac = 0.5;
         s.center_x_frac = 0.2;
         s.reset_all_to_default();
-        // Matches BUILTIN F1E00 entry.
-        assert!((s.width_frac - 1.20).abs() < 1e-6);
-        assert!((s.height_frac - 0.75).abs() < 1e-6);
-        assert!((s.center_frac - 0.28).abs() < 1e-6);
-        assert!((s.center_x_frac - 0.50).abs() < 1e-6);
+        assert!((s.width_frac - expected.width_frac).abs() < 1e-6);
+        assert!((s.height_frac - expected.height_frac).abs() < 1e-6);
+        assert!((s.center_frac - expected.center_frac).abs() < 1e-6);
+        assert!((s.center_x_frac - expected.center_x_frac).abs() < 1e-6);
     }
 
     #[test]
