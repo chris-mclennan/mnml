@@ -47,6 +47,24 @@ Already subscribed? [Manage your subscription](https://buttondown.com/chrismclen
 
 Versions auto-tagged at [github.com/chris-mclennan/mnml/releases](https://github.com/chris-mclennan/mnml/releases) — this page summarizes the user-facing changes. For commit-level history, see the GitHub release notes.
 
+### 0.2.8 — 2026-08-08
+
+First actually-published release in eight tags. v0.2.1 through v0.2.7 all had tags pushed, but the Release workflow's Windows build silently failed on `use std::os::unix::process::CommandExt` in `src/main.rs` — nothing shipped. Root-caused, cfg-gated, cross-checked with `cargo check --target x86_64-pc-windows-gnu`. Rollup of the eight-tag arc below.
+
+- **Marketplace install is now upgrade-safe.** Two overlapping bugs made "click Install on a sibling that's already at an older version" a silent no-op: (a) `cargo install` without `--force` skips when the binary already exists, and (b) even when the fresh binary lands in `~/.cargo/bin/`, a shell resolve of `<sibling> --install` would run whichever copy PATH found first — a stale `~/.local/bin/<sibling>` could win and write its old manifest. Fixed by passing `--force` and by targeting `$HOME/.cargo/bin/<name>` explicitly. Added palette command `integrations.audit_shadowed_binaries` to move existing stale copies into a quarantine dir so they stop shadowing.
+- **Legacy `family_catalog` install path deleted.** −680 lines. The compiled-in registry was `&[]` for months while the whole cargo-install + prompt + IPC + AI-tool + Mount-picker pipeline sat around as silent no-ops. Marketplace is the only install path. Follow-up cruft sweep removed another handful of dead types + palette commands + config structs.
+- **Bake-on-install glyph pipeline.** Each sibling ships its SVG via `mnml-bridge::ChipSpec::glyph_svg_bytes`; mnml bakes it into `MnmlSymbols.ttf` at a codepoint it owns, preserving user-baked glyphs across rebakes.
+- **Auto-refresh Claude Code OAuth tokens.** No more "re-link every 8h" prompt — mnml POSTs the on-disk refresh token to Anthropic's OAuth endpoint on the first 401/403 and persists the new blob.
+- **Claude thinking-spinner glyphs.** Five mnml-owned frames (F1E10..F1E14) baked at cap-mid height for the animated Claude Code tab.
+- **Menu-bar submenus.** `MenuItem::Submenu` variant with hover-open — File menu already has glyphs; Edit/Selection/View/etc coming next.
+- **Findings activity-bar section.** Live viewer over `.mnml/findings/*.md`; icon swapped to nf-md-file-search.
+- **Verified marketplace chip.** Curated allow-list surfaces a green `✓ Verified` badge alongside the Official/Community authorship chip.
+- **AI usage meter.** Claude + Codex quota chip on the statusline.
+- **Tree / integrations chevrons.** Swapped from Unicode BLACK triangles to nf-oct-chevron-right/down (F460 / F47C) so collapsible groups match the VS Code / IntelliJ tree convention.
+- **Shared text-input helper.** Ctrl+U/W/K/V + word-nav uniform across every text surface (vim cmdline, prompt overlays, request-pane fields).
+- **`bake_ai_glyphs` no longer wipes user-custom glyphs.** The bake path seeds from `glyph_meta.toml` first, then adds the builtins.
+- **Write-then-chmod race fixed on secret files.** `ai_token` + `ai_last_response.json` now use `OpenOptions::mode(0o600)` atomically. Also: redact-before-write on `ai_last_response.json` (previously wrote raw HTTP body before restricting perms).
+
 ### 0.2.3 — 2026-08-08
 
 Session-length UX polish around the Claude Code integration, plus a small ergonomic gap in the `:` cmdline. The headline is that Claude Code OAuth tokens now auto-refresh — no more "re-link every 8h" prompt.

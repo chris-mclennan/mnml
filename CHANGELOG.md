@@ -10,6 +10,72 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-08-08
+
+First release in eight tags — v0.2.1 through v0.2.7 all had their
+tags pushed, but Release-workflow cargo-dist builds silently failed
+on the Windows target (unconditional `use std::os::unix::…` in
+`src/main.rs` and `src/ai_usage.rs`). Fixed with cfg-gated exec +
+secret-file write; the next tag push actually cuts a release.
+
+Rollup of the eight tag arc — see individual commits for detail.
+
+### Added
+
+- **Bake-on-install glyph pipeline (v0.2.0-line finish)** — bridge
+  0.5+; each sibling ships its SVG via `ChipSpec::glyph_svg_bytes`,
+  mnml bakes into `MnmlSymbols.ttf` at codepoints it owns. Preserves
+  user-baked glyphs across rebakes.
+- **Auto-refresh Claude OAuth token** — no more "re-link every 8h"
+  prompts.
+- **Paste into `:` cmdline** — Ctrl+V + bracketed paste route to the
+  gutter buffer with control chars stripped.
+- **Claude tab thinking spinner** — mnml-owned F1E10..F1E14 frames
+  baked at cap-mid, coral brand color.
+- **Shared text-input helper** — Ctrl+U/W/K/V + word-nav uniform
+  across every text surface.
+- **AI usage meter chip** — Claude/Codex quota on the statusline.
+- **Verified marketplace chip** — curated allow-list (green ✓ Verified)
+  separate from Official/Community authorship.
+- **Menu-bar submenus** — `MenuItem::Submenu` variant with hover-open.
+- **Left-column glyphs on File menu** (rest of the bar coming next).
+- **Findings activity-bar section + `.mnml/findings/*.md` viewer**.
+- **Shadow-audit palette command** —
+  `integrations.audit_shadowed_binaries` finds stale `mnml-*` in
+  `$PATH` ahead of `~/.cargo/bin/`, moves them to a quarantine dir
+  so `--install` calls reach the newest binary.
+
+### Changed
+
+- **Marketplace install** uses `cargo install --force` AND explicit
+  `$HOME/.cargo/bin/<name> --install` — closes the PATH-shadowing
+  loophole where a stale `~/.local/bin/<name>` would win over the
+  fresh cargo install and write its old manifest.
+- **Tree / integrations chevrons** swapped from Unicode BLACK
+  triangles to nf-oct-chevron-right/down (F460/F47C).
+- **Findings icon** swapped from `nf-md-magnify_scan` to
+  `nf-md-file-search` (F1623).
+- **Legacy `family_catalog` install path removed** — CATALOG was
+  `&[]` for months; Marketplace is the only install path.
+  −680 lines across the delete + audit sweep that followed.
+- **Assorted cruft** — dead `AppCommand` variant, empty
+  `PlaywrightConfig` struct, unreachable `SpendReportPane` Clone
+  impl, dozens of stale archaeology comments.
+
+### Fixed
+
+- **Windows release blocker** (root cause of the eight-tag drought):
+  `use std::os::unix::process::CommandExt` in main.rs and
+  `use std::io::Write` in ai_usage.rs were unconditional. Cross-
+  checked with `cargo check --target x86_64-pc-windows-gnu`.
+- **`bake_ai_glyphs` no longer wipes user-custom glyphs** — the
+  bake path now seeds from `glyph_meta.toml` first, adds the
+  builtins, preserves everything else.
+- **Write-then-chmod race** on `ai_token` + `ai_last_response.json`
+  — write with `OpenOptions::mode(0o600)` atomically.
+- **Redact-before-write** on `ai_last_response.json` (previously
+  wrote raw HTTP body then chmod).
+
 ## [0.2.3] - 2026-08-08
 
 ### Added
