@@ -694,6 +694,35 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
     let Some(menu) = menus.get(open.menu_idx) else {
         return false;
     };
+    // R6 R2 vscode-keyboard F8 (2026-08-09) — a top-level global
+    // chord fired while a menu is open should close the menu and
+    // let the chord dispatcher take the key. VS Code convention.
+    // Previously Ctrl+P/Ctrl+Shift+P/F1/etc. silently no-oped:
+    // this fn returned `false` because Ctrl+letter didn't match a
+    // mnemonic, but `try_open_menu_from_key` also bailed because
+    // `menu_open.is_some()`, so nothing ever ran. Close the menu,
+    // return false so `dispatch_chord_chain` gets the key.
+    let is_ctrl_letter = key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char(c) if c.is_ascii_alphabetic());
+    let is_fkey = matches!(
+        key.code,
+        KeyCode::F(1)
+            | KeyCode::F(2)
+            | KeyCode::F(3)
+            | KeyCode::F(4)
+            | KeyCode::F(5)
+            | KeyCode::F(6)
+            | KeyCode::F(7)
+            | KeyCode::F(8)
+            | KeyCode::F(9)
+            | KeyCode::F(10)
+            | KeyCode::F(11)
+            | KeyCode::F(12)
+    );
+    if is_ctrl_letter || is_fkey {
+        app.menu_open = None;
+        return false;
+    }
     // keyboard-round-14 SEV-3 #11 2026-07-17 — Alt+letter that
     // matches the currently-open menu's first-alpha closes it
     // (VS Code convention: Alt+V opens View → Alt+V again closes).
