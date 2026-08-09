@@ -382,6 +382,19 @@ pub struct Prompt {
     /// For every other invocation (`Ctrl+F`), stays `false` and Enter
     /// just runs the search.
     pub chain_to_replace: bool,
+    /// R7 vscode-mouse F5 2026-08-09: browser-style "seeded content
+    /// is selected — first typed char replaces everything". Chrome's
+    /// URL bar has this: click into it, everything highlights, and
+    /// typing a new URL overwrites the current one instead of
+    /// appending. We don't render a real selection (single-line
+    /// prompt, no selection state), but we emulate the behavior by
+    /// clearing the input on the FIRST `insert_char`/`insert_str`
+    /// after open. Any explicit caret motion (arrows / Home / End),
+    /// deletion (Backspace / Delete / Ctrl-U / Ctrl-K), OR the user
+    /// hitting `Tab` clears the flag first, so keeping the seed
+    /// stays one keystroke away. Set by
+    /// [`Self::seeded_select_all`].
+    pub select_all_on_first_type: bool,
 }
 
 impl Prompt {
@@ -394,6 +407,7 @@ impl Prompt {
             suggestions: Vec::new(),
             selected_suggestion: None,
             chain_to_replace: false,
+            select_all_on_first_type: false,
         };
         p.refresh_suggestions();
         p
@@ -412,8 +426,24 @@ impl Prompt {
             suggestions: Vec::new(),
             selected_suggestion: None,
             chain_to_replace: false,
+            select_all_on_first_type: false,
         };
         p.refresh_suggestions();
+        p
+    }
+
+    /// Like [`Self::seeded`] but marks the seed as "selected" — the
+    /// first typed character (or paste) clears the input first, so
+    /// the user can overwrite the seed without hand-erasing it.
+    /// R7 vscode-mouse F5 2026-08-09 — Chrome's URL-bar behavior for
+    /// the browser navigate prompt (`g` in a browser pane).
+    pub fn seeded_select_all(
+        kind: PromptKind,
+        title: impl Into<String>,
+        input: impl Into<String>,
+    ) -> Self {
+        let mut p = Self::seeded(kind, title, input);
+        p.select_all_on_first_type = true;
         p
     }
 
@@ -424,7 +454,29 @@ impl Prompt {
         matches!(self.kind, PromptKind::AddWorkspace | PromptKind::FileMoveTo)
     }
 
+    /// Clear the select-all-on-first-type flag AND (if it was set)
+    /// wipe the seed to empty so the next `insert_char`/`insert_str`
+    /// starts fresh. Called from `insert_char`/`insert_str` before
+    /// the actual insert; also called from any user gesture that
+    /// says "keep the seed, I'm editing it" (arrow / Home / End /
+    /// Backspace / Delete / Tab). No-op if the flag is already off.
+    fn consume_select_all(&mut self) {
+        if self.select_all_on_first_type {
+            self.select_all_on_first_type = false;
+            self.input.clear();
+            self.cursor = 0;
+        }
+    }
+
+    /// Just clear the flag without touching the input — for gestures
+    /// that mean "I want to edit the seed as-is" (arrows, Home, End,
+    /// Backspace, Tab).
+    fn cancel_select_all(&mut self) {
+        self.select_all_on_first_type = false;
+    }
+
     pub fn insert_char(&mut self, c: char) {
+        self.consume_select_all();
         self.input.insert(self.cursor, c);
         self.cursor += c.len_utf8();
         self.refresh_suggestions();
@@ -436,6 +488,7 @@ impl Prompt {
     /// widget; embedded NUL is stripped so a pasted binary blob can't
     /// break the buffer.
     pub fn insert_str(&mut self, s: &str) {
+        self.consume_select_all();
         let cleaned: String = s
             .chars()
             .filter(|c| *c != '\0')
@@ -447,6 +500,10 @@ impl Prompt {
     }
 
     pub fn backspace(&mut self) {
+        // Backspace = "I want to edit this seed, one char at a time".
+        // Cancel the select-all flag (keep the seed) instead of
+        // wiping the whole input.
+        self.cancel_select_all();
         if self.cursor == 0 {
             return;
         }
@@ -463,6 +520,7 @@ impl Prompt {
     /// Delete — remove the char AT the caret (forward-delete).
     /// Complements `backspace` (which deletes BEFORE the caret).
     pub fn delete_forward(&mut self) {
+        self.cancel_select_all();
         if self.cursor >= self.input.len() {
             return;
         }
@@ -477,6 +535,7 @@ impl Prompt {
 
     /// Delete the word (and trailing run of spaces) before the caret — Ctrl+W.
     pub fn delete_word(&mut self) {
+        self.cancel_select_all();
         let head = &self.input[..self.cursor];
         let trimmed = head.trim_end_matches(' ');
         let cut = trimmed
@@ -593,6 +652,10 @@ impl Prompt {
     }
 
     pub fn move_left(&mut self) {
+        // Motion keys mean "I want to place my caret within the
+        // seed" — cancel the select-all-on-first-type flag, but
+        // keep the seed contents.
+        self.cancel_select_all();
         if self.cursor == 0 {
             return;
         }
@@ -604,6 +667,7 @@ impl Prompt {
     }
 
     pub fn move_right(&mut self) {
+        self.cancel_select_all();
         if self.cursor >= self.input.len() {
             return;
         }
@@ -616,9 +680,11 @@ impl Prompt {
     }
 
     pub fn move_home(&mut self) {
+        self.cancel_select_all();
         self.cursor = 0;
     }
     pub fn move_end(&mut self) {
+        self.cancel_select_all();
         self.cursor = self.input.len();
     }
 
@@ -626,6 +692,7 @@ impl Prompt {
     /// readline convention). Complements `delete_word`/Ctrl+U
     /// (kill to start) that already lived on `Prompt`.
     pub fn kill_to_end(&mut self) {
+        self.cancel_select_all();
         self.input.truncate(self.cursor);
         self.refresh_suggestions();
     }
@@ -634,6 +701,7 @@ impl Prompt {
     /// Word boundaries: whitespace-run + a non-whitespace run
     /// (matches `delete_word`).
     pub fn move_word_left(&mut self) {
+        self.cancel_select_all();
         if self.cursor == 0 {
             return;
         }
@@ -650,6 +718,7 @@ impl Prompt {
 
     /// 2026-08-08 — Alt+→ / Ctrl+→ — move caret one word right.
     pub fn move_word_right(&mut self) {
+        self.cancel_select_all();
         if self.cursor >= self.input.len() {
             return;
         }
@@ -773,6 +842,64 @@ mod tests {
         p.move_left();
         p.backspace();
         assert_eq!(p.input, "hélo");
+    }
+
+    #[test]
+    fn seeded_select_all_first_type_replaces() {
+        // R7 vscode-mouse F5: browser navigate prompt seeded with
+        // current URL. First typed char must replace the seed
+        // (Chrome URL-bar behavior).
+        let mut p = Prompt::seeded_select_all(
+            PromptKind::BrowserNavigate,
+            "Navigate to",
+            "https://old.example.com/page",
+        );
+        assert!(p.select_all_on_first_type);
+        p.insert_char('a');
+        assert_eq!(p.input, "a");
+        assert!(!p.select_all_on_first_type);
+        // Subsequent typing appends normally.
+        for c in "bc".chars() {
+            p.insert_char(c);
+        }
+        assert_eq!(p.input, "abc");
+    }
+
+    #[test]
+    fn seeded_select_all_paste_replaces() {
+        // First paste also counts as first-type and replaces.
+        let mut p = Prompt::seeded_select_all(
+            PromptKind::BrowserNavigate,
+            "Navigate to",
+            "https://old.example.com",
+        );
+        p.insert_str("https://new.example.com/x");
+        assert_eq!(p.input, "https://new.example.com/x");
+    }
+
+    #[test]
+    fn seeded_select_all_arrow_keeps_seed() {
+        // Any caret motion means "I'm editing this, not
+        // overwriting" — cancel the flag but keep the seed.
+        let seed = "https://old.example.com";
+        let mut p = Prompt::seeded_select_all(PromptKind::BrowserNavigate, "Navigate to", seed);
+        p.move_left();
+        assert!(!p.select_all_on_first_type);
+        assert_eq!(p.input, seed);
+        p.insert_char('!');
+        // Character inserted at (len-1), before the trailing 'm'.
+        assert_eq!(p.input, format!("{}!m", &seed[..seed.len() - 1]));
+    }
+
+    #[test]
+    fn seeded_select_all_backspace_keeps_seed_edits() {
+        // Backspace also means "I'm editing" — remove one char, keep
+        // the rest.
+        let seed = "https://old.example.com";
+        let mut p = Prompt::seeded_select_all(PromptKind::BrowserNavigate, "Navigate to", seed);
+        p.backspace();
+        assert!(!p.select_all_on_first_type);
+        assert_eq!(p.input, &seed[..seed.len() - 1]);
     }
 
     #[test]

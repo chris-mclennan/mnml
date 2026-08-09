@@ -375,16 +375,25 @@ impl App {
             Some(Pane::Browser(b)) => b.url.clone(),
             _ => return,
         };
-        let seed = if url.trim().is_empty() {
-            "https://".to_string()
+        // R7 vscode-mouse F5 2026-08-09: when the URL is non-empty
+        // (the common case — you're already on a page and hit `g`),
+        // use `seeded_select_all` so the first typed char replaces
+        // the seed. Chrome's URL-bar behavior. When empty, seed
+        // `https://` as usual — no "select" needed, the user is
+        // just going to append.
+        self.prompt = Some(if url.trim().is_empty() {
+            crate::prompt::Prompt::seeded(
+                crate::prompt::PromptKind::BrowserNavigate,
+                "Navigate to",
+                "https://",
+            )
         } else {
-            url
-        };
-        self.prompt = Some(crate::prompt::Prompt::seeded(
-            crate::prompt::PromptKind::BrowserNavigate,
-            "Navigate to",
-            seed,
-        ));
+            crate::prompt::Prompt::seeded_select_all(
+                crate::prompt::PromptKind::BrowserNavigate,
+                "Navigate to",
+                url,
+            )
+        });
     }
 
     /// `e` in a browser pane — prompt for JS to evaluate in the page.
