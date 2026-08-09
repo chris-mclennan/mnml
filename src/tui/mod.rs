@@ -593,31 +593,34 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
 /// `[ui] menu_bar` mode isn't `"hidden"`.
 fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
     let menus = crate::menu_bar::bar(app);
-    // keyboard-round-10 SEV-2 F1 2026-07-14 — the menu bar clips
-    // menus that don't fit before the right-side chip cluster (at
-    // 120 cols only File/Edit/Selection render). Alt+letter used
-    // to match ANY menu by first-alpha regardless of visibility,
-    // so `Alt+V` on a 120-col terminal opened the View menu in
-    // state without a dropdown ever rendering — Enter then fired
-    // the invisible menu's first Action. Only accept matches that
-    // correspond to a rect registered during last render.
-    let visible_idxs: std::collections::HashSet<usize> =
-        app.rects.menu_bar_words.iter().map(|(_, i)| *i).collect();
-    let is_visible = |i: usize| visible_idxs.is_empty() || visible_idxs.contains(&i);
+    // R6 keyboard/mouse/nvchad triple-corroborated 2026-08-09 — the
+    // menu-bar paint clips menus that don't fit before the centred
+    // workspace-chip cluster (at 120 cols only File/Edit/Selection
+    // render). The prior visibility gate on Alt+letter/F10 (added in
+    // keyboard-round-10 F1 to prevent firing an invisible first
+    // Action on Enter) locked six of the ten menus out of the
+    // keyboard path — Alt+V / G / R / T / W / H silently no-op'd at
+    // any real-world width and arrow-nav wrapped through only the
+    // three drawn menus.
+    //
+    // The stale rationale: "invisible menu + Enter = fires the
+    // wrong Action". That risk lives in `handle_menu_key`'s Enter
+    // handler, which fires whichever item is *highlighted*; the
+    // dropdown itself always paints (it renders over the workspace
+    // chip cluster), so once open the user sees exactly what they'd
+    // fire. Enter-safety comes from the dropdown paint, not the
+    // parent chip's visibility.
+    //
+    // Drop the visibility gate on both accelerators — Alt+V now
+    // opens the View dropdown even when the "View" word isn't drawn,
+    // and arrow-nav cycles through ALL menus.
     // F10 — open the first menu whose label is alphabetic
     // (skip the brand menu, whose label starts with a Nerd Font
     // glyph). Falls back to index 0 if no alphabetic menu exists.
     if key.code == KeyCode::F(10) && key.modifiers.is_empty() && !menus.is_empty() {
         let target = menus
             .iter()
-            .enumerate()
-            .position(|(i, m)| {
-                is_visible(i)
-                    && m.label
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic())
-            })
+            .position(|m| m.label.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
             .unwrap_or(0);
         app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(target));
         return true;
@@ -640,12 +643,11 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
         && let KeyCode::Char(ch) = key.code
     {
         let ch_lower = ch.to_ascii_lowercase();
-        if let Some((i, _)) = menus.iter().enumerate().find(|(i, m)| {
-            is_visible(*i)
-                && m.label
-                    .chars()
-                    .find(|c| c.is_ascii_alphabetic())
-                    .is_some_and(|c| c.to_ascii_lowercase() == ch_lower)
+        if let Some((i, _)) = menus.iter().enumerate().find(|(_, m)| {
+            m.label
+                .chars()
+                .find(|c| c.is_ascii_alphabetic())
+                .is_some_and(|c| c.to_ascii_lowercase() == ch_lower)
         }) {
             app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(i));
             return true;
@@ -745,13 +747,14 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
             true
         }
         KeyCode::Left => {
-            // keyboard-round-10 SEV-2 F1 2026-07-14 — skip menus
-            // that aren't currently visible in the bar. Otherwise
-            // Right from Selection at 120 cols advanced into an
-            // invisible View menu and subsequent Enter fired an
-            // action with no visible dropdown.
-            let visible: Vec<usize> = app.rects.menu_bar_words.iter().map(|(_, i)| *i).collect();
-            if let Some(prev) = prev_visible_menu(open.menu_idx, &visible, menus.len()) {
+            // R6 keyboard/mouse/nvchad 2026-08-09 — arrow-nav cycles
+            // through ALL menus, not just the ones currently painted.
+            // Same rationale as `try_open_menu_from_key`: dropdown
+            // Enter-safety comes from the dropdown paint itself, not
+            // the parent chip's visibility. Prior gate locked six of
+            // ten menus out of ←→ nav at typical widths.
+            let all: Vec<usize> = (0..menus.len()).collect();
+            if let Some(prev) = prev_visible_menu(open.menu_idx, &all, menus.len()) {
                 app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(prev));
             }
             true
@@ -765,8 +768,8 @@ fn handle_menu_key(app: &mut App, key: KeyEvent) -> bool {
                 }
                 return true;
             }
-            let visible: Vec<usize> = app.rects.menu_bar_words.iter().map(|(_, i)| *i).collect();
-            if let Some(next) = next_visible_menu(open.menu_idx, &visible, menus.len()) {
+            let all: Vec<usize> = (0..menus.len()).collect();
+            if let Some(next) = next_visible_menu(open.menu_idx, &all, menus.len()) {
                 app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(next));
             }
             true
