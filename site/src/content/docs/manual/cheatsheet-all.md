@@ -419,7 +419,6 @@ For sibling-provided chords: see the manifest of whichever integration you've in
 | Render markdown inline | (palette) | (palette) | `view.toggle_render_markdown` |
 | TODO highlight | (palette) | (palette) | `view.toggle_todo_highlight` |
 | Breadcrumb bar | (palette) | (palette) | `view.toggle_breadcrumb` |
-| Bufferline | (palette) | (palette) | `view.toggle_bufferline` |
 | Relative line numbers | (palette) | (palette) | `view.toggle_relative_numbers` |
 | Markdown preview | `<leader>m` | (palette) | `markdown.preview` |
 | Restart mnml (rebuild via run.sh) | `<leader>r` | (palette) | `app.restart` |

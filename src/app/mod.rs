@@ -3839,11 +3839,6 @@ pub struct App {
     /// visibility flags, which are remembered separately. Not persisted —
     /// always starts off so a fresh launch is a normal IDE view.
     pub zen_mode: bool,
-    /// When false, the bufferline (the open-tabs strip above the editor) is
-    /// hidden — useful in single-buffer workflows. Toggled via
-    /// `view.toggle_bufferline` / `:set [no]bufferline` / `:set bufferline!`.
-    /// Default true.
-    pub bufferline_visible: bool,
     /// Most-recently-opened files, newest first, capped at `RECENT_FILES_MAX`.
     /// Updated every time `open_path` opens a file. Persisted in session.json.
     pub recent_files: Vec<PathBuf>,
@@ -5491,7 +5486,6 @@ impl App {
             bufferline_first_visible: 0,
             bufferline_active_at_scroll: None,
             zen_mode: false,
-            bufferline_visible: true,
             recent_files: Vec::new(),
             harpoon: Default::default(),
             browser_url_history: Vec::new(),
@@ -13306,18 +13300,6 @@ impl App {
             "sticky context: on"
         } else {
             "sticky context: off"
-        });
-    }
-
-    /// `:set [no]bufferline` / `view.toggle_bufferline` — hide/show the
-    /// open-tabs strip above the editor body. Useful for single-buffer
-    /// workflows.
-    pub fn toggle_bufferline(&mut self) {
-        self.bufferline_visible = !self.bufferline_visible;
-        self.toast(if self.bufferline_visible {
-            "bufferline: on"
-        } else {
-            "bufferline: off"
         });
     }
 

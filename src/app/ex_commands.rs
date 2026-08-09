@@ -1320,7 +1320,18 @@ impl App {
                 self.save_all();
                 self.should_quit = true;
             }
-            "qa" | "qall" | "quitall" => self.should_quit = true,
+            // R6 nvchad-user SEV-1 2026-08-09 — `:qa` used to set
+            // should_quit unconditionally, silently discarding unsaved
+            // work. Vim's `:qa` refuses with E37 when any buffer's
+            // dirty; require `:qa!` to force. Same dirty-guard shape
+            // as `:q` above but walks every pane, not just the active.
+            "qa" | "qall" | "quitall" => {
+                if self.panes.iter().any(Pane::is_dirty) {
+                    self.toast("unsaved changes — use :qa! to discard");
+                } else {
+                    self.should_quit = true;
+                }
+            }
             "qa!" | "qall!" => self.should_quit = true,
             "bd" | "bdelete" => self.close_active_pane(),
             // `:bd!` / `:bdelete!` — force-close (bypass dirty prompt).
@@ -4757,14 +4768,6 @@ impl App {
                     "on hover only"
                 }
             ));
-        } else if matches!(opt, "bufferline" | "bl") {
-            self.bufferline_visible = true;
-            self.toast("bufferline: on");
-        } else if matches!(opt, "nobufferline" | "nobl") {
-            self.bufferline_visible = false;
-            self.toast("bufferline: off");
-        } else if matches!(opt, "bufferline!" | "invbufferline") {
-            self.toggle_bufferline();
         } else if matches!(opt, "formatontype" | "fot") {
             self.config.editor.format_on_type = true;
             self.toast(":set formatontype");

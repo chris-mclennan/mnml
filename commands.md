@@ -771,7 +771,6 @@ reference. Blank `keys` = palette-only (no default chord).
   view.toggle_auto_md_preview        Toggle auto-open markdown preview on file open                
   view.toggle_bracket_rainbow        Toggle rainbow brackets (depth-cycling color on ()[]{})       
   view.toggle_breadcrumb             Toggle the editor breadcrumb row (path above each pane)       
-  view.toggle_bufferline             Toggle bufferline (open-tabs strip)                           
   view.toggle_color_column           Toggle line-length color column (vim :set cc=80)              
   view.toggle_hidden                 Toggle hidden files in focused tree section                   
   view.toggle_hidden_all             Toggle hidden files across every workspace section            

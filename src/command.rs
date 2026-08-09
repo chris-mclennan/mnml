@@ -685,13 +685,6 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_wrap(),
         },
         Command {
-            id: "view.toggle_bufferline",
-            title: "Toggle bufferline (open-tabs strip)",
-            group: "view",
-            keys: &[],
-            run: |app| app.toggle_bufferline(),
-        },
-        Command {
             id: "view.menu_bar_cycle",
             title: "Cycle menu bar visibility (always → auto-hide → hidden)",
             group: "view",

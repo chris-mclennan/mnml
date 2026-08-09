@@ -5,9 +5,11 @@ write a.txt "first"
 open a.txt
 
 # Fire 3 toast-emitting commands in a row.
+# (Was `view.toggle_bufferline` ×2; that command was deleted 2026-08-09.
+# Swapped to two other cheap-toggle commands that emit toasts.)
 command editor.file_info
-command view.toggle_bufferline
-command view.toggle_bufferline
+command view.toggle_wrap
+command view.toggle_wrap
 
 # At least one of the three should appear in the screen. (The stack
 # overlay paints when len > 1; statusline still shows the most recent

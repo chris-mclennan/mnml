@@ -18,7 +18,7 @@ use crate::app::{App, RailSection};
 use crate::focus::Focus;
 use crate::git::rail::GitRailHit;
 use crate::git::status::FileState;
-use crate::ui::{icons, theme};
+use crate::ui::{hover_help, icons, theme};
 
 // Tree / integrations panel section chevrons. 2026-08-08 —
 // switched to nf-oct-chevron_right / chevron_down (F460 / F47C).
@@ -69,6 +69,31 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.height < 2 {
         return;
     }
+
+    // 2026-08-09 — Ableton-style hover-help info box docked at the
+    // bottom of the left panel. Reserve `INFO_BOX_HEIGHT` rows off
+    // the bottom when the toggle's on AND the panel has room to
+    // spare (tree needs at least ~8 rows of its own to still be
+    // useful; below that we drop the box to keep the tree usable).
+    let (area, hover_help_area): (Rect, Option<Rect>) =
+        if app.config.ui.hover_help && area.height >= hover_help::INFO_BOX_HEIGHT + 8 {
+            let box_h = hover_help::INFO_BOX_HEIGHT;
+            let tree = Rect {
+                x: area.x,
+                y: area.y,
+                width: area.width,
+                height: area.height - box_h,
+            };
+            let boxed = Rect {
+                x: area.x,
+                y: area.y + area.height - box_h,
+                width: area.width,
+                height: box_h,
+            };
+            (tree, Some(boxed))
+        } else {
+            (area, None)
+        };
 
     // qa-feature 2026-06-30 — INTEGRATIONS + GIT sections were
     // previously rendered at the bottom of the file browser as a
@@ -203,10 +228,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // *body* rendering; the header + chip cluster kept painting.
     // Skip the whole section when git_height == 0.
     if git_height == 0 {
+        hover_help_finish(frame, app, hover_help_area);
         return;
     }
     let git_header_y = git_top_y;
     if git_header_y >= area.y + area.height {
+        hover_help_finish(frame, app, hover_help_area);
         return;
     }
     let chev = section_chev(app.git_section_expanded, nerd);
@@ -333,13 +360,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.git_section_toggle = Some(git_header_rect);
 
     if !app.git_section_expanded {
+        hover_help_finish(frame, app, hover_help_area);
         return;
     }
     let body_y = git_header_y + 1;
     if body_y >= area.y + area.height {
+        hover_help_finish(frame, app, hover_help_area);
         return;
     }
     draw_git_section(frame, app, area, body_y, nerd, git_overflow_rows);
+    hover_help_finish(frame, app, hover_help_area);
+}
+
+/// Paint the bottom-of-left-panel hover-help info box after the tree
+/// has drawn. Nothing when the toggle is off or the panel was too
+/// short to reserve the rows.
+fn hover_help_finish(frame: &mut Frame, app: &mut App, area: Option<Rect>) {
+    if let Some(r) = area {
+        hover_help::draw(frame, app, r);
+    } else {
+        app.rects.hover_help_strip = None;
+    }
 }
 
 /// The four per-workspace action chips that hang off the right edge of

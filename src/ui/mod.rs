@@ -255,22 +255,19 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // when the window is wide enough.
     let palette_bar_visible = area.width >= 80;
     let palette_bar_h: u16 = if palette_bar_visible { 1 } else { 0 };
-    // Ableton-style hover-help strip — 1 row at the very bottom,
-    // BELOW the cmdline. Off by default; runtime-toggle via
-    // `view.toggle_hover_help`. Skipped on narrow terminals so
-    // the body stays roomy.
-    let hover_help_visible = app.config.ui.hover_help && area.height >= 8;
-    let hover_help_h: u16 = if hover_help_visible { 1 } else { 0 };
+    // 2026-08-09 — hover-help footer strip retired. Now renders as an
+    // Ableton-style info BOX docked at the bottom of the left panel
+    // (see `ui::tree_view` + `ui::hover_help`). Same on/off gate via
+    // `app.config.ui.hover_help`; the top-level layout no longer
+    // reserves a row for it.
     let v = RLayout::vertical([
         Constraint::Length(palette_bar_h),
         Constraint::Min(1),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(hover_help_h),
     ])
     .split(area);
-    let (palette_bar_area, mut upper, statusline_area, cmdline_bar_area, hover_help_area) =
-        (v[0], v[1], v[2], v[3], v[4]);
+    let (palette_bar_area, mut upper, statusline_area, cmdline_bar_area) = (v[0], v[1], v[2], v[3]);
 
     // 2026-08-07 — bottom panel (dockable panes Phase 1). Carve
     // `bottom_panel_height` rows off the bottom of `upper` if
@@ -385,45 +382,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         (None, None, upper)
     };
 
-    // right column: optionally a 1-row bufferline above the body.
-    // `app.bufferline_visible = false` ⇒ skip the strip; the body grows.
-    // 2026-06-22 — also skip when the current layout has any
-    // splits. Each split paints its own per-leaf tab strip above
-    // its body, and the global bufferline would duplicate that
-    // info (user feedback: "tabs on the left + subheading with
-    // the name = goofy"). The per-leaf strips are the source of
-    // truth when splits exist; only a single-leaf layout falls
-    // back to the global bufferline.
-    let has_splits = app
-        .layouts
-        .get(app.active_layout)
-        .map(|l| l.has_splits())
-        .unwrap_or(false);
-    // qa-feature 2026-06-30 — hide the bufferline when the active
-    // pane is GitGraph. The bufferline's tab slot for git graph is
-    // already skipped (viewer, not a file); showing the empty tab
-    // strip + palette-bar chips just cluttered the view. Sacrifice
-    // the 3 right-side icons (terminal / split-vert / split-horz)
-    // — user OK'd this since those interact awkwardly with the
-    // graph pane anyway.
-    let hide_for_git_graph = app
-        .active
-        .and_then(|i| app.panes.get(i))
-        .is_some_and(|p| matches!(p, crate::pane::Pane::GitGraph(_)));
-    // one-tab-type 2026-07-18 — only allocate the bufferline row
-    // when there are NO panes open. In that empty state the row
-    // hosts the launcher cluster (H/V/Term/Claude/Codex) so the
-    // user has an entry point. Once any pane exists, its per-leaf
-    // strip carries the cluster + tabs — the top row would just
-    // duplicate the launcher chips on an empty background.
-    let empty_workspace = app.panes.is_empty();
-    let (bufferline_area, body_area) =
-        if app.bufferline_visible && empty_workspace && !has_splits && !hide_for_git_graph {
-            let r = RLayout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(right);
-            (Some(r[0]), r[1])
-        } else {
-            (None, right)
-        };
+    // 2026-08-08 — the global 1-row bufferline above the empty-
+    // workspace body is retired. Per-leaf tab strips carry the
+    // launcher cluster in the split cases, and the empty-workspace
+    // body itself (welcome/tree renderers) surfaces the cluster on
+    // startup — the top-strip variant was a fourth spot that only
+    // ever ran on empty state and produced no visually distinct
+    // outcome vs. hiding it. `bufferline_visible` field + palette
+    // command + `:set bufferline` + toggle method were all deleted
+    // together.
+    let bufferline_area: Option<Rect> = None;
+    let body_area = right;
 
     // ── tree rail (full height of `upper`) ──
     // The rail is split into two columns: a 4-cell activity-bar
@@ -1480,11 +1449,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.peek_overlay.is_some() {
         peek_overlay_view::draw(frame, app, area);
     }
-    // Ableton-style hover-help strip — 1-row footer BELOW the
-    // cmdline that describes whatever's under the mouse.
-    if hover_help_visible {
-        hover_help::draw(frame, app, hover_help_area);
-    }
+    // Hover-help now renders inside `tree_view::draw` as a boxed
+    // info panel docked to the bottom of the left panel — moved off
+    // the full-width footer strip 2026-08-09.
+    //
     // Hover tooltip — sits above everything else (chip popups can't conflict
     // with picker/prompt/etc. because the hover_chip is only set when the
     // mouse moves freely outside any modal).

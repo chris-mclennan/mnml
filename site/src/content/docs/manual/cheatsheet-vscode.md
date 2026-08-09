@@ -272,7 +272,6 @@ VS Code's AI is via extensions. mnml ships AI as first-class panes.
 | Render markdown inline | (palette) | `view.toggle_render_markdown` | render-markdown.nvim style |
 | TODO highlight | (palette) | `view.toggle_todo_highlight` | TODO / FIXME / HACK / XXX |
 | Breadcrumb toggle | (palette) | `view.toggle_breadcrumb` | |
-| Bufferline toggle | (palette) | `view.toggle_bufferline` | |
 | Markdown Preview | `<leader>m` / palette | `markdown.preview` | Split |
 | Reveal in Finder/Explorer | (palette) | `view.reveal_active` | |
 
