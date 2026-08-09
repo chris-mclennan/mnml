@@ -592,6 +592,29 @@ fn fire_startup_action(action: crate::app::StartupPickerAction, app: &mut App) {
 /// from `dispatch_key` only when no menu is currently open and the
 /// `[ui] menu_bar` mode isn't `"hidden"`.
 fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
+    // R6 nvchad SEV-2 2026-08-09 — Alt+letter used to open the menu
+    // dropdown ON TOP OF any already-open overlay (Ctrl+P picker,
+    // Settings, workspace picker, prompt, vim `:` cmdline, no-pane
+    // cmdline). Result: a three-layer overlay stack eating keys
+    // across two input contexts. Bail before the accelerator handler
+    // when any modal overlay owns focus.
+    if app.picker.is_some()
+        || app.prompt.is_some()
+        || app.settings_overlay.is_some()
+        || app.workspace_picker_open
+        || app.no_pane_cmdline.is_some()
+    {
+        return false;
+    }
+    // Vim `:` cmdline lives inside the active editor pane's input
+    // handler — check via `cmdline_get()`, which returns None on
+    // handlers that don't own a cmdline (standard mode).
+    if let Some(idx) = app.active
+        && let Some(crate::pane::Pane::Editor(b)) = app.panes.get(idx)
+        && b.input.cmdline_get().is_some()
+    {
+        return false;
+    }
     let menus = crate::menu_bar::bar(app);
     // R6 keyboard/mouse/nvchad triple-corroborated 2026-08-09 — the
     // menu-bar paint clips menus that don't fit before the centred
@@ -620,7 +643,12 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
     if key.code == KeyCode::F(10) && key.modifiers.is_empty() && !menus.is_empty() {
         let target = menus
             .iter()
-            .position(|m| m.label.chars().next().is_some_and(|c| c.is_ascii_alphabetic()))
+            .position(|m| {
+                m.label
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+            })
             .unwrap_or(0);
         app.menu_open = Some(crate::menu_bar::MenuOpenState::new_keyboard(target));
         return true;
