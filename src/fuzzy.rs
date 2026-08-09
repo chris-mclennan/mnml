@@ -73,6 +73,38 @@ pub fn fuzzy_match(needle: &str, haystack: &str) -> Option<(i64, Vec<usize>)> {
     }
     score -= (hchars.len() as i64) / 8;
     score -= (matched.first().copied().unwrap_or(0) as i64) / 2;
+    // R6 R2 vscode-keyboard SEV-2 F2 2026-08-09 — exact-phrase
+    // substring boost. When the user's original needle (before
+    // separator stripping) appears as a case-insensitive substring
+    // of the haystack AT A WORD BOUNDARY, add a flat +50 so it
+    // outranks a shorter fuzzy match that just happens to share a
+    // prefix bucket. Motivating case: palette search "hover-help"
+    // ranked view.help above view.toggle_hover_help (whose title
+    // literally contains "hover-help"). The word-boundary gate
+    // preserves the existing boundary_bonus behavior — a mid-word
+    // contiguous match doesn't get the boost.
+    let needle_trim = needle.trim();
+    if !needle_trim.is_empty() && needle_trim.len() <= haystack.len() {
+        let needle_lower = needle_trim.to_lowercase();
+        let haystack_lower = haystack.to_lowercase();
+        // Substring must start at position 0 OR after a word-boundary
+        // character in the ORIGINAL haystack (before lowercasing).
+        let boundary_chars: &[char] = &['/', '_', '-', '.', ' ', ':'];
+        let mut search_from = 0usize;
+        while let Some(pos) = haystack_lower[search_from..].find(&needle_lower) {
+            let abs_pos = search_from + pos;
+            let at_boundary = abs_pos == 0
+                || haystack[..abs_pos]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| boundary_chars.contains(&c));
+            if at_boundary {
+                score += 50;
+                break;
+            }
+            search_from = abs_pos + 1;
+        }
+    }
     Some((score, matched))
 }
 
@@ -105,5 +137,35 @@ mod tests {
         let a = fuzzy_match("fk", "foo_key").unwrap().0;
         let b = fuzzy_match("fk", "xafkx").unwrap().0;
         assert!(a > b, "{a} vs {b}");
+    }
+
+    #[test]
+    fn exact_phrase_boost_at_word_boundary() {
+        // R6 R2 vscode-keyboard F2. Needle "abc" appears as a
+        // word-boundary substring in "prefix abc suffix" and gets
+        // the boost. Same needle appears contiguously in
+        // "xxxxxxxabc" but only mid-word — no boost. Both match
+        // greedy-subsequence-wise; the boost is the ONLY differentiator
+        // (haystack length + scatter identical enough).
+        let a = fuzzy_match("abc", "some abc thing").unwrap().0;
+        let b = fuzzy_match("abc", "somexabcthing").unwrap().0;
+        assert!(
+            a > b,
+            "word-boundary substring must outrank mid-word substring: {a} vs {b}"
+        );
+    }
+
+    #[test]
+    fn exact_phrase_boost_gated_on_word_boundary() {
+        // "fk" appearing mid-word ("xafkx") should NOT get the
+        // substring boost — the boundary_bonus test relies on
+        // "foo_key" (word-start) beating "xafkx" (mid-word) even
+        // though both contain the needle contiguously.
+        let word_start = fuzzy_match("fk", "foo_key").unwrap().0;
+        let mid_word = fuzzy_match("fk", "xafkx").unwrap().0;
+        assert!(
+            word_start > mid_word,
+            "boundary_bonus test invariant must hold: {word_start} vs {mid_word}"
+        );
     }
 }
