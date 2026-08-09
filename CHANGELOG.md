@@ -10,6 +10,85 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-08-09
+
+Re-release of v0.2.9 because the v0.2.9 release workflow scrubbed
+the plan output as containing a secret (a stored-secret substring
+match on a CHANGELOG phrase) and skipped the entire build matrix
+— v0.2.9 shipped with zero binaries. Sanitized the trigger phrase,
+plus a small rollup of fixes + one framework addition.
+
+### Fixed
+
+- **Menu-bar Alt+W panic on small terminals.** Window menu is 27
+  rows; on a 26-or-shorter terminal the dropdown drew past the
+  bottom and panicked in ratatui's Buffer bounds check. Height
+  now clamps to screen.
+- **Menu-bar Alt+letter for clipped menus was silently broken**
+  (initial fix landed as v0.2.9 but the dropdown still bailed
+  when the menu chip was clipped). Now paints at a fallback
+  origin so keyboard nav works even when the parent chip is
+  hidden behind the workspace cluster.
+- **Vim Ctrl+O / Ctrl+I stolen by file picker.** The chord
+  hijacked the jumplist. Ctrl+O / Ctrl+I now own the vim
+  jumplist chord in vim mode; file picker gets Ctrl+Shift+O.
+- **`:e file.md` opened MdPreview** instead of the raw editor.
+  Ex-command edit paths now route to the raw buffer regardless
+  of the config's default markdown-render preference.
+- **HTTP panel MOCKS section read a stale in-memory cache** and
+  FILES tab surfaced `.mock.json` sidecar files. MOCKS now
+  re-reads on refresh; FILES filters `.mock.json` out.
+- **Palette ranking now boosts exact-token matches** so a full
+  command id wins over a prefix-only hit (`hover-help` no longer
+  finds `view.help` first).
+- **Browser navigate prompt** — first keystroke now select-all
+  replaces the seed URL instead of appending after it.
+- **Integration chip color allow-list** rejected white / black
+  as "not a color". Both now allowed.
+- **CI test flakes on Ubuntu + Windows.** Three tests asserted
+  stale hardcoded defaults (integration-glyphs, Claude chip
+  color); rewritten to read from the live constant. Fourth
+  test (`purge_integration_glyph_state_drops_svg_and_assignment_entry`)
+  needed a hermetic HOME+XDG guard so it didn't sniff the CI
+  runner's `$HOME/.config/mnml`.
+
+### Added
+
+- **Every runtime UI / editor toggle now persists to user config.**
+  Previously toggling workspace dots, wrap, whitespace, rainbow
+  brackets, scrollbar, todo highlight, render markdown, sticky
+  context, breadcrumb, auto-pair, highlight trailing ws,
+  highlight-word, relative numbers, color column, and even the
+  vim ↔ standard input style all mutated in-memory config only
+  — the toast said "off" but restart reverted to the default.
+  New `persist_config_scalar` helper + persist call in every
+  `set_*` setter; refactored four inline toggles to the
+  `set_ + toggle_` pattern so palette / menu / right-click /
+  `:set` all share the same persist path.
+- **Marketplace `Reinstall` button** on already-installed
+  marketplace entries (previously showed nothing; had to
+  uninstall + install).
+- **Menu-bar `Toggle bottom panel`** entry under View.
+- **Theme chip right-click** now lists all installed themes
+  inline instead of opening the picker; also seeds an
+  `auto-system` stub (day/night sync with macOS appearance —
+  wiring lands in a follow-up).
+- **Hover-help info-box separator** at the top of the box
+  (dim `───` rule) so it visually detaches from the tree rail
+  it shares a background with.
+- **Info View v0.3 design doc** in
+  `docs/design/info-view-v0.3.md` — the v0.3 flagship: an
+  Ableton-style rich hover panel with agent-generated +
+  drift-checked copy across ~500 hover targets. Design only,
+  not shipped.
+
+### Changed
+
+- **"workspace status dots" → "workspace dots" everywhere.** The
+  markers are just visual chips, not status indicators. Palette
+  id + config key + ex-command + right-click label all
+  consistent now.
+
 ## [0.2.9] - 2026-08-09
 
 Same-day rollup on top of v0.2.8 (which was itself the first
@@ -23,8 +102,9 @@ morning of menu-bar / hover-help / integrations-audit polish.
   every reload placed the cursor at end-of-buffer — landing INSIDE
   the last header's value. Any keystroke while Headers was focused
   silently mangled the last header, which is often `Authorization`.
-  Bearer tokens were being sent corrupted. Fixed by appending a
-  fresh newline to the reload; typing now starts on an empty row.
+  Auth headers were going out with a corrupted value. Fixed by
+  appending a fresh newline to the reload; typing now starts on
+  an empty row.
 - **SEV-1: `:qa` / `:qall` / `:quitall` silently discarded unsaved
   work.** Vim requires `:qa!` to force. mnml's `:qa` set
   `should_quit = true` unconditionally. Now walks every pane; any
