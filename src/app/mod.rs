@@ -14219,12 +14219,20 @@ impl App {
         // prompt machinery. The renderer inspects the app for dirty
         // panes so buttons adapt (clean: Quit/Cancel; dirty: Save all
         // / Quit anyway / Cancel).
+        //
+        // R6 R2 vscode-keyboard SEV-3 F7 2026-08-09 — default focus
+        // to the CANCEL button so Enter is always safe. Was: cursor
+        // started at 0 → Save all (safe when dirty) OR Quit (DESTRUCTIVE
+        // when clean). Aligns with the delete-confirm dialog's
+        // "safety-first default" convention.
         let title = "Quit mnml?".to_string();
-        let prompt = crate::prompt::Prompt::seeded(
+        let mut prompt = crate::prompt::Prompt::seeded(
             crate::prompt::PromptKind::QuitConfirm,
             title,
             String::new(),
         );
+        let has_dirty = !self.dirty_buffer_names().is_empty();
+        prompt.cursor = if has_dirty { 2 } else { 1 };
         self.prompt = Some(prompt);
     }
 
