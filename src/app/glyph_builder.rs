@@ -444,8 +444,10 @@ impl App {
         }
     }
 
-    /// Bake the two mnml-owned AI chip glyphs (F1E00 claude-spark
-    /// + F1E01 codex) into `~/Library/Fonts/MnmlSymbols.ttf`.
+    /// Bake the mnml-owned AI chip glyphs into
+    /// `~/Library/Fonts/MnmlSymbols.ttf`. Covers:
+    /// - F1E00 (claude-spark), F1E01 (codex) — AI brand glyphs
+    /// - F1E10..F1E14 — Claude thinking-spinner frames
     pub fn bake_ai_glyphs_default(&mut self) {
         // 2026-08-08 — expanded from F1E00/F1E01 to include the
         // Claude thinking-spinner frames at F1E10..F1E14 (baked with

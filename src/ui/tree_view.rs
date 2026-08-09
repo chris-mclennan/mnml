@@ -20,23 +20,16 @@ use crate::git::rail::GitRailHit;
 use crate::git::status::FileState;
 use crate::ui::{icons, theme};
 
-// qa-feature 2026-07-01 — bigger triangles (`▼` U+25BC / `▶`
-// U+25B6) — the black-solid variants render at font-cap height
-// (vs the smaller `▾ / ▸` U+25BE/U+25B8) so they read more
-// clearly next to the folder icons at typical rail widths.
-// 2026-07-12 user feedback rounds — several attempts to get to
-// a Nerd Font chevron pair failed in the user's actual font:
-//   r1: MDI menu-down / menu-right (F01F5 / F01F6) → smileys.
-//   r2: codicon EAB4 / EAA0 → EAA0 rendered chevron-UP (same
-//       class as the EAA1 note at src/ui/mod.rs:2323).
-//   r3: EAB4 + MDI F0142 → F0142 rendered as huge tofu boxes.
-// Give up on Nerd Font chevrons — the Unicode BLACK triangles
-// (U+25BC / U+25B6) render everywhere. The tree section rows
-// are 1-cell wide so "bigger" glyphs are impossible without
-// changing the cell layout; users on a font with actual
-// chevrons can opt into ascii_icons variants.
-const CHEVRON_OPEN: &str = "▼";
-const CHEVRON_CLOSED: &str = "▶";
+// Tree / integrations panel section chevrons. 2026-08-08 —
+// switched to nf-oct-chevron_right / chevron_down (F460 / F47C).
+// User-suggested small chevrons; smaller than the mnml-baked
+// F1E20/F1E21 pair we tried first, which rendered clipped in
+// the user's ghostty. Historic failures (all reverted): MDI
+// F01F5/F01F6 → smileys; codicon EAB4/EAA0 → chevron-UP; MDI
+// F0142 → tofu. If F460/F47C also fail, fall back to baking
+// our own at F1E20/F1E21 with a redrawn narrower SVG.
+const CHEVRON_OPEN: &str = "\u{F47C}";
+const CHEVRON_CLOSED: &str = "\u{F460}";
 
 /// Max branches shown in the GIT section's branches sub-list when
 /// `App.git_branches_expanded` is false (the default). User clicks

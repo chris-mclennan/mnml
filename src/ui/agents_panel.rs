@@ -22,12 +22,11 @@ use crate::app::App;
 use crate::claude_agents::AgentState;
 use crate::ui::theme;
 
-/// Match the file-browser's chevron convention: nf-fa-angle-down
-/// for open, nf-fa-angle-right for closed. Same glyphs as
-/// `src/ui/tree_view.rs` so collapsible groups read the same
-/// across the rail.
-const CHEVRON_OPEN: &str = "\u{f107}";
-const CHEVRON_CLOSED: &str = "\u{f105}";
+/// Match the file-browser's chevron convention. Same glyphs as
+/// `src/ui/tree_view.rs` (nf-oct-chevron-down / chevron-right,
+/// F47C / F460) so collapsible groups read the same across the rail.
+const CHEVRON_OPEN: &str = "\u{F47C}";
+const CHEVRON_CLOSED: &str = "\u{F460}";
 
 /// 6-frame partial-circle spinner. Cycles based on the system
 /// clock so every rendered frame advances naturally — no need to

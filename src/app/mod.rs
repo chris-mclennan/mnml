@@ -1737,8 +1737,8 @@ impl ActivitySection {
             Self::Notes => ("\u{F249}", "N", "Notes", "view.activity_notes"),
             // nf-fa-check_square — TODO markers across the workspace
             Self::Todos => ("\u{F046}", "O", "TODOs", "view.activity_todos"),
-            // nf-md-magnify_scan — findings archive (`.mnml/findings/*.md`)
-            Self::Findings => ("\u{F1391}", "F", "Findings", "view.activity_findings"),
+            // nf-md-file-search — findings archive (`.mnml/findings/*.md`)
+            Self::Findings => ("\u{F1623}", "F", "Findings", "view.activity_findings"),
             // Manifest mounts have per-entry metadata that lives
             // on `App::mount_manifests`; the activity-bar renderer
             // resolves it dynamically. This `meta()` arm is a
@@ -7589,9 +7589,18 @@ impl App {
                 // and the sibling's OLD --install runs, writing stale
                 // labels + missing SVGs. --force always installs the
                 // newest published version.
+                //
+                // 2026-08-08 — SECOND landmine: the `<name> --install`
+                // that follows the cargo install shell-resolves via
+                // PATH. If ANY older copy of the binary sits in a
+                // PATH dir ahead of ~/.cargo/bin (e.g. a stale
+                // ~/.local/bin/<name>), the stale one runs and writes
+                // its old manifest — cargo installed the new binary
+                // for nothing. Explicit path to the freshly-installed
+                // binary ensures the RIGHT binary writes the manifest.
                 let ipc_cmd = self.workspace.join(".mnml").join("ipc").join("command");
                 self.run_ex_command(&format!(
-                    "term cargo install --force {name} && {name} --install && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {name} installed'",
+                    "term cargo install --force {name} && $HOME/.cargo/bin/{name} --install && echo '{{\"cmd\":\"run-command\",\"id\":\"integrations.refresh\"}}' >> {ipc} && echo '✓ {name} installed'",
                     ipc = ipc_cmd.display(),
                 ));
             }

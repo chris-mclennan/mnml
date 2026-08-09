@@ -124,8 +124,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         let icon = if app.config.ui.ascii_icons {
             "◧"
         } else {
-            // nf-md-magnify_scan — same glyph as the activity-bar icon.
-            "\u{F1391}"
+            // nf-md-file-search — same glyph as the activity-bar icon.
+            "\u{F1623}"
         };
         let age_str: String = std::fs::metadata(path)
             .and_then(|m| m.modified())
