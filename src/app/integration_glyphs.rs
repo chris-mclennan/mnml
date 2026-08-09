@@ -132,9 +132,65 @@ fn save_assignments(file: &AssignmentFile) {
     if let Some(dir) = p.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    if let Ok(text) = toml::to_string_pretty(file) {
+    // Dedupe id-alias rows before write: when a short id (e.g.
+    // `amplify`) and its family-qualified peer (e.g. `mnml-aws-amplify`)
+    // point at the SAME codepoint, keep only the family-qualified one.
+    // The short id is a legacy alias from the pre-Integration-SDK era —
+    // sibling siblings register under their crate name now, and
+    // leaving both in the ledger is what surfaced in the R6
+    // Amplify-icon confusion (audit 2026-08-09).
+    let deduped = dedupe_aliases(file);
+    if let Ok(text) = toml::to_string_pretty(&deduped) {
         let _ = std::fs::write(&p, text);
     }
+}
+
+/// True when `short` could be an alias for `long` — i.e. `long` has the
+/// form `mnml-<family>-<short>` for some `<family>` segment. Case-
+/// insensitive on the tail. Match returns the LONG id, so a caller
+/// building a "keep only the long form" set can consult one function.
+fn is_alias_pair(short: &str, long: &str) -> bool {
+    if short.is_empty() || long.len() <= short.len() {
+        return false;
+    }
+    long.strip_prefix("mnml-")
+        .and_then(|rest| rest.rsplit_once('-'))
+        .is_some_and(|(_family, tail)| tail.eq_ignore_ascii_case(short))
+}
+
+fn dedupe_aliases(file: &AssignmentFile) -> AssignmentFile {
+    // Group entries by codepoint so we can compare peers.
+    use std::collections::HashMap;
+    let mut by_cp: HashMap<String, Vec<&Assignment>> = HashMap::new();
+    for e in &file.entries {
+        by_cp.entry(e.codepoint.clone()).or_default().push(e);
+    }
+    let mut keep: Vec<Assignment> = Vec::with_capacity(file.entries.len());
+    for group in by_cp.values() {
+        if group.len() < 2 {
+            keep.push((*group[0]).clone());
+            continue;
+        }
+        // Multi-id-at-one-codepoint. Drop any short id whose long
+        // family-qualified peer is also in the group; keep everything
+        // else (unrelated dupes stay — they're real drift and the
+        // audit_glyphs command will still surface them).
+        let mut kept_ids: Vec<&Assignment> = Vec::new();
+        for candidate in group {
+            let overshadowed = group
+                .iter()
+                .any(|other| other.id != candidate.id && is_alias_pair(&candidate.id, &other.id));
+            if !overshadowed {
+                kept_ids.push(candidate);
+            }
+        }
+        for e in kept_ids {
+            keep.push((*e).clone());
+        }
+    }
+    // Restore stable order — sort by id for determinism.
+    keep.sort_by(|a, b| a.id.cmp(&b.id));
+    AssignmentFile { entries: keep }
 }
 
 /// #853 — uninstall cleanup for the sibling-icons SDK's on-disk
@@ -594,6 +650,78 @@ mod tests {
         let p = dir.join(name);
         fs::write(&p, b"<svg/>").unwrap();
         p
+    }
+
+    #[test]
+    fn is_alias_pair_matches_family_qualified_long_form() {
+        assert!(is_alias_pair("amplify", "mnml-aws-amplify"));
+        assert!(is_alias_pair("codebuild", "mnml-aws-codebuild"));
+        assert!(is_alias_pair("slack", "mnml-msg-slack"));
+        assert!(
+            is_alias_pair("AMPLIFY", "mnml-aws-amplify"),
+            "case-insensitive tail match"
+        );
+    }
+
+    #[test]
+    fn is_alias_pair_rejects_unrelated() {
+        assert!(!is_alias_pair("amplify", "mnml-aws-codebuild"));
+        assert!(!is_alias_pair("amplify", "amplify")); // same, not an alias-of-longer
+        assert!(!is_alias_pair("aws", "mnml-aws-amplify")); // family segment != short id
+        assert!(!is_alias_pair("", "mnml-aws-amplify"));
+    }
+
+    #[test]
+    fn dedupe_drops_short_id_when_long_peer_shares_codepoint() {
+        let file = AssignmentFile {
+            entries: vec![
+                Assignment {
+                    id: "amplify".into(),
+                    codepoint: "F1C0E".into(),
+                },
+                Assignment {
+                    id: "mnml-aws-amplify".into(),
+                    codepoint: "F1C0E".into(),
+                },
+                Assignment {
+                    id: "terminal".into(),
+                    codepoint: "F1C14".into(),
+                },
+            ],
+        };
+        let out = dedupe_aliases(&file);
+        assert_eq!(out.entries.len(), 2);
+        assert!(
+            out.entries
+                .iter()
+                .any(|e| e.id == "mnml-aws-amplify" && e.codepoint == "F1C0E")
+        );
+        assert!(out.entries.iter().any(|e| e.id == "terminal"));
+        assert!(
+            !out.entries.iter().any(|e| e.id == "amplify"),
+            "short alias dropped"
+        );
+    }
+
+    #[test]
+    fn dedupe_leaves_unrelated_dupes_alone() {
+        // Two unrelated ids sharing a codepoint (real drift, not
+        // aliasing) — the alias-dedupe pass should NOT collapse them.
+        // The audit_glyphs command still flags this for the user.
+        let file = AssignmentFile {
+            entries: vec![
+                Assignment {
+                    id: "foo".into(),
+                    codepoint: "F1C99".into(),
+                },
+                Assignment {
+                    id: "bar".into(),
+                    codepoint: "F1C99".into(),
+                },
+            ],
+        };
+        let out = dedupe_aliases(&file);
+        assert_eq!(out.entries.len(), 2, "unrelated dupes preserved");
     }
 
     #[test]
