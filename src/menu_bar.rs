@@ -275,7 +275,7 @@ fn view_menu() -> MenuDef {
             // mdi-circle-outline — "dot marker" semantic. If tofu,
             // swap to a spacer per the R6 glyph convention.
             MenuItem::action(
-                "\u{F0130}  Toggle workspace status dots",
+                "\u{F0130}  Toggle workspace markers",
                 "view.toggle_workspace_dots",
             ),
             MenuItem::Separator,
@@ -292,15 +292,17 @@ fn go_menu() -> MenuDef {
         label: "Go".to_string(),
         items: vec![
             MenuItem::action("\u{F002}  Go to file…", "view.discovery"),
-            // No confidently-correct "go to line number" glyph in the
-            // Nerd Font subset — F149 (level-down) was a corner arrow
-            // and read as "return" not "jump to line". Spacer for now.
-            MenuItem::action("   Go to line…", "editor.goto_line"),
-            MenuItem::action("   Go to definition", "lsp.peek_definition"),
+            // fa-hashtag — universal "line #N" mark.
+            MenuItem::action("\u{F292}  Go to line…", "editor.goto_line"),
+            // codicon-arrow-right — "jump-to" (distinct from Prev/Next
+            // fa-arrow-* below which are wider single arrows).
+            MenuItem::action("\u{EAB5}  Go to definition", "lsp.peek_definition"),
             MenuItem::Separator,
             MenuItem::action("\u{F060}  Previous buffer", "buffer.prev"),
             MenuItem::action("\u{F061}  Next buffer", "buffer.next"),
-            MenuItem::action("   Last buffer", "buffer.last"),
+            // fa-step-forward — media-control "to the end" shape,
+            // same-family as Prev/Next arrows but distinct.
+            MenuItem::action("\u{F050}  Last buffer", "buffer.last"),
         ],
     }
 }
