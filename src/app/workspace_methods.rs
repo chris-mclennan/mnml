@@ -1061,10 +1061,11 @@ impl App {
             })
             .cloned()
             .collect();
-        // The main file walk may not include `.mock.json` today
-        // (it filters to source extensions). Do a shallow walk of
-        // `.rqst/mocks` and `.mnml/mocks` as a fallback for
-        // captured-response mocks.
+        // As of R6 api-workflow SEV-2 (2026-08-09) `walk_for_http`
+        // ALSO collects `*.mock.json` sidecars, which is where
+        // `sibling_path_for_block` actually writes them. This
+        // `.rqst/mocks` / `.mnml/mocks` shallow-walk stays as a
+        // fallback for mocks manually placed into those legacy dirs.
         for sub in [".rqst", ".mnml"] {
             let dir = self.workspace.join(sub).join("mocks");
             if let Ok(rd) = std::fs::read_dir(&dir) {
@@ -1410,6 +1411,18 @@ fn walk_for_http(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::Pat
         } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
             && (ext == "http" || ext == "curl" || ext == "rest")
         {
+            out.push(path);
+        } else if name_str.ends_with(".mock.json") {
+            // R6 api-workflow SEV-2 2026-08-09 — sidecar mocks live
+            // next to their source (e.g. `get.curl.mock.json` in the
+            // workspace root, not under `.rqst/mocks/`). Without this
+            // branch, `App::http_panel_refresh` filters an already-
+            // empty `http_panel_files_cache` for `.mock.json` and
+            // always renders MOCKS `(0)` — the actual save path
+            // (`sibling_path_for_block`) and the panel's discovery
+            // never intersect. `path.extension()` on `foo.curl.mock.json`
+            // returns `"json"`, not `"mock.json"`, so match on the
+            // full-name suffix instead.
             out.push(path);
         }
     }
