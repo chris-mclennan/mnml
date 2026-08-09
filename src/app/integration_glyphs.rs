@@ -801,30 +801,60 @@ mod tests {
         let _lk = crate::test_env_lock()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        // Ubuntu-CI flake 2026-08-09: GitHub runners sometimes have
+        // XDG_CONFIG_HOME set (empty or otherwise) — `data_root()`
+        // consults XDG BEFORE $HOME, so a stray XDG value routes the
+        // assignments file OUTSIDE the tempdir. Remove XDG for the
+        // test's duration alongside the HOME override. Same pattern
+        // as `src/shell_prompt.rs::tests`.
+        let _xdg = crate::EnvGuard::remove("XDG_CONFIG_HOME");
         let _home = crate::EnvGuard::set("HOME", tmp.path());
         let dir = tmp.path().join(".cache/mnml/pending-glyphs");
         fs::create_dir_all(&dir).unwrap();
         // Seed two sibling glyphs; discover assigns codepoints.
         write_svg(&dir, "victim.svg");
         write_svg(&dir, "keeper.svg");
-        let (_svgs, _) = discover(&dir, &HashMap::new());
+        let (_svgs, assignments) = discover(&dir, &HashMap::new());
         // Sanity — both SVGs on disk, both entries in assignments.
         assert!(dir.join("victim.svg").exists());
         assert!(dir.join("keeper.svg").exists());
+        // Diagnostic: what did discover produce? On Ubuntu we saw
+        // this test fail without a clear pre/post breakdown; make
+        // the failure message explicit.
         let assign_pre = load_assignments();
-        assert!(assign_pre.entries.iter().any(|e| e.id == "victim"));
-        assert!(assign_pre.entries.iter().any(|e| e.id == "keeper"));
+        let ids_pre: Vec<&str> = assign_pre.entries.iter().map(|e| e.id.as_str()).collect();
+        assert!(
+            assign_pre.entries.iter().any(|e| e.id == "victim"),
+            "pre-purge: victim missing from assignments (in-memory={:?}, on-disk ids={:?}, data_root={:?})",
+            assignments.keys().collect::<Vec<_>>(),
+            ids_pre,
+            crate::data_root::data_root(),
+        );
+        assert!(
+            assign_pre.entries.iter().any(|e| e.id == "keeper"),
+            "pre-purge: keeper missing from assignments (in-memory={:?}, on-disk ids={:?}, data_root={:?})",
+            assignments.keys().collect::<Vec<_>>(),
+            ids_pre,
+            crate::data_root::data_root(),
+        );
         // Purge just "victim".
         let (svg_gone, assignment_gone) = purge_integration_glyph_state("victim");
-        assert!(svg_gone);
-        assert!(assignment_gone);
+        assert!(svg_gone, "svg file was expected to exist + delete cleanly");
+        assert!(
+            assignment_gone,
+            "assignment entry was expected to exist + drop cleanly"
+        );
         assert!(!dir.join("victim.svg").exists(), "svg deleted");
         assert!(dir.join("keeper.svg").exists(), "keeper's svg untouched");
         let assign_post = load_assignments();
-        assert!(!assign_post.entries.iter().any(|e| e.id == "victim"));
+        let ids_post: Vec<&str> = assign_post.entries.iter().map(|e| e.id.as_str()).collect();
+        assert!(
+            !assign_post.entries.iter().any(|e| e.id == "victim"),
+            "post-purge: victim survived (on-disk ids={ids_post:?})",
+        );
         assert!(
             assign_post.entries.iter().any(|e| e.id == "keeper"),
-            "keeper's assignment entry preserved"
+            "post-purge: keeper's assignment entry preserved (on-disk ids={ids_post:?})",
         );
     }
 
