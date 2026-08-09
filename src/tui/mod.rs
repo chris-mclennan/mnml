@@ -640,7 +640,20 @@ fn try_open_menu_from_key(app: &mut App, key: KeyEvent) -> bool {
     // F10 — open the first menu whose label is alphabetic
     // (skip the brand menu, whose label starts with a Nerd Font
     // glyph). Falls back to index 0 if no alphabetic menu exists.
-    if key.code == KeyCode::F(10) && key.modifiers.is_empty() && !menus.is_empty() {
+    //
+    // R6 R2 vscode-keyboard SEV-2 F3 2026-08-09 — DAP-gate. When
+    // a debug session is active, F10 belongs to dap.next
+    // (VS Code + IntelliJ convention). Prior behavior unconditionally
+    // summoned the File menu, blocking step-over for the entire
+    // debug session. Skip the menu-summon when app.dap is Some;
+    // dispatch_chord_chain then reaches the F10 → dap.next binding
+    // in the normal way. Users who still want the menu bar during
+    // a debug session have Alt+F / Alt+E / etc.
+    if key.code == KeyCode::F(10)
+        && key.modifiers.is_empty()
+        && !menus.is_empty()
+        && app.dap.is_none()
+    {
         let target = menus
             .iter()
             .position(|m| {
