@@ -309,7 +309,7 @@ fn run_menu() -> MenuDef {
             MenuItem::action("\u{F04B}  Start debugging", "dap.run"),
             MenuItem::action("\u{F111}  Toggle breakpoint", "dap.toggle_breakpoint"),
             MenuItem::action(
-                "   Conditional breakpoint…",
+                "\u{EA97}  Conditional breakpoint…",
                 "dap.toggle_breakpoint_conditional",
             ),
             MenuItem::Separator,
