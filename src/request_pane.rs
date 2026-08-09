@@ -414,12 +414,28 @@ impl EditField {
 }
 
 /// Serialise headers as `Key: Value\n…` for the editable text buffer.
+///
+/// **Always emits a trailing `\n`** so callers that rebuild the buffer +
+/// place the cursor at `headers_buffer.len()` (there are ~10 such call
+/// sites across `src/app/http.rs`, see the r4 comment at
+/// `http_next_block`) land on a fresh empty line rather than mid-value
+/// in the last existing header. Without the trailer, any keystroke on
+/// `focus == Headers` after a rebuild silently appends to the last
+/// header's value — and in the common case where the last header is
+/// `Authorization`, that value goes out on the wire as a corrupted
+/// Bearer token with no error and no visual clue.
+/// See R6 api-workflow SEV-1 (2026-08-09).
 pub fn headers_to_text(headers: &[(String, String)]) -> String {
-    headers
+    if headers.is_empty() {
+        return String::new();
+    }
+    let mut out = headers
         .iter()
         .map(|(k, v)| format!("{k}: {v}"))
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    out.push('\n');
+    out
 }
 
 /// Parse the editable headers buffer back into `Vec<(name, value)>`. Lines
@@ -1159,6 +1175,59 @@ mod tests {
     }
 
     #[test]
+    fn headers_to_text_emits_trailing_newline() {
+        // R6 api-workflow SEV-1 2026-08-09 — without the trailer, a
+        // cursor placed at buffer.len() (which ~10 call sites do on
+        // rebuild) lands inside the LAST header's value; any typed
+        // key silently corrupts it and — for Authorization — sends
+        // a mangled Bearer over the wire. Trailer makes cursor-at-end
+        // start a fresh line instead.
+        let headers = vec![
+            ("Authorization".to_string(), "Bearer abc".to_string()),
+            ("X-Trace".to_string(), "42".to_string()),
+        ];
+        let text = headers_to_text(&headers);
+        assert!(
+            text.ends_with('\n'),
+            "headers_to_text output must end with \\n so cursor-at-end lands on a fresh line, got {text:?}"
+        );
+        // And the round-trip still works — the parser drops trailing
+        // blank lines, so headers survive intact.
+        assert_eq!(parse_headers_text(&text), headers);
+    }
+
+    #[test]
+    fn headers_to_text_empty_returns_empty_string() {
+        // Zero headers → empty string (no bare newline). A cursor
+        // at .len() on an empty string is column 0 of an empty line —
+        // typing starts a new header without corrupting anything.
+        assert_eq!(headers_to_text(&[]), "");
+    }
+
+    #[test]
+    fn typing_after_headers_rebuild_does_not_corrupt_last_value() {
+        // End-to-end: rebuild the headers buffer + place cursor at
+        // .len() (the shape every rebuild call site uses), then
+        // append a keystroke and re-parse. The last header's value
+        // must be unchanged; the appended text must land as its own
+        // line (which the parser drops as unrecognised — no
+        // colon — but crucially does NOT merge into the prior row).
+        let mut buf = headers_to_text(&[
+            ("Authorization".to_string(), "Bearer TOKEN".to_string()),
+            ("X-Shared".to_string(), "shared-secret".to_string()),
+        ]);
+        buf.push_str("X-Trace: abc"); // simulate cursor-at-end keystroke
+        let rows = parse_headers_text(&buf);
+        // The two original headers survive intact.
+        assert_eq!(rows[0], ("Authorization".into(), "Bearer TOKEN".into()));
+        assert_eq!(rows[1], ("X-Shared".into(), "shared-secret".into()));
+        // The typed row becomes its own new header, not appended to
+        // X-Shared's value.
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[2], ("X-Trace".into(), "abc".into()));
+    }
+
+    #[test]
     fn parse_headers_text_preserves_colons_in_value() {
         // End-to-end via the parser callers actually use.
         let rows = parse_headers_text(
@@ -1214,9 +1283,12 @@ mod tests {
             insecure: false,
         };
         let mut p = RequestPane::new(None, req, Script::default(), 1);
+        // Trailing `\n` is intentional as of R6 api-workflow SEV-1 —
+        // see `headers_to_text` doc + the
+        // `headers_to_text_emits_trailing_newline` test.
         assert_eq!(
             p.headers_buffer,
-            "Accept: application/json\nAuthorization: Bearer xyz"
+            "Accept: application/json\nAuthorization: Bearer xyz\n"
         );
 
         // Edit: focus Headers, append a new line `X-Trace: abc`.
