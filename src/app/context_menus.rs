@@ -807,6 +807,20 @@ impl App {
             "Expand all",
             MenuAction::Command("tree.expand_all"),
         ));
+        // 2026-08-09 — audit Tier-1 #4: right-click discovery for
+        // `view.toggle_workspace_dots`. Palette + menu-bar + `:set
+        // wsdots` were shipped in e230a6bf; this is the mouse path
+        // some users prefer since they're already right-clicking the
+        // workspace row when they choose "Set as workspace".
+        let dot_label = if self.config.ui.show_workspace_dots {
+            "Hide workspace status dots (● / ○)"
+        } else {
+            "Show workspace status dots (● / ○)"
+        };
+        items.push(MenuItem::new(
+            dot_label,
+            MenuAction::Command("view.toggle_workspace_dots"),
+        ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
 
@@ -898,6 +912,18 @@ impl App {
         items.push(MenuItem::new(
             "Expand all",
             MenuAction::Command("tree.expand_all"),
+        ));
+        // 2026-08-09 — audit Tier-1 #4 (extra-workspace-header
+        // variant): match the primary workspace's dot-toggle entry so
+        // right-clicking any workspace row surfaces the same control.
+        let dot_label = if self.config.ui.show_workspace_dots {
+            "Hide workspace status dots (● / ○)"
+        } else {
+            "Show workspace status dots (● / ○)"
+        };
+        items.push(MenuItem::new(
+            dot_label,
+            MenuAction::Command("view.toggle_workspace_dots"),
         ));
         self.context_menu = Some(ContextMenu::new(Some(title), anchor, items));
     }
