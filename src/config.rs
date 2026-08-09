@@ -95,7 +95,6 @@ pub struct Config {
     /// `crate::dap::AdapterConfig` at runtime via `dap::parse_adapters`.
     pub dap: BTreeMap<String, toml::Value>,
     pub browser: BrowserConfig,
-    pub playwright: PlaywrightConfig,
     pub ci: CiConfig,
     // [gitlab] config moved to mnml-forge-gitlab.
     // [azdevops] config moved to mnml-forge-azdevops.
@@ -366,12 +365,6 @@ pub struct CiConfig {
     pub project: Option<String>,
     pub region: Option<String>,
 }
-
-/// `[playwright]` — settings used by the Playwright integration. Reserved
-/// for future expansion (currently empty after `[playwright.docdb]` moved
-/// out to a private terminal integration).
-#[derive(Debug, Clone, Default)]
-pub struct PlaywrightConfig {}
 
 #[derive(Debug, Clone)]
 pub struct BrowserConfig {
@@ -1292,7 +1285,6 @@ impl Default for Config {
                 profile_mode: "workspace".to_string(),
                 autocapture_to_log: true,
             },
-            playwright: PlaywrightConfig::default(),
             ci: CiConfig::default(),
             workspaces: Vec::new(),
             marketplace: MarketplaceConfig::default(),
