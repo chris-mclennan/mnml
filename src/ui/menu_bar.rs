@@ -24,15 +24,45 @@ pub fn draw_dropdown(frame: &mut Frame, app: &mut App) {
     let Some(menu) = menus.get(open.menu_idx) else {
         return;
     };
-    let Some((word_rect, _)) = app
+    // R6 R2 vscode-keyboard + claude-agents SEV-2 F1 (regression from
+    // 195723ee) — if the parent chip word isn't in `menu_bar_words`
+    // (menu word was clipped off the chrome by the workspace-chip
+    // cluster), fall back to painting the dropdown just right of
+    // the LAST visible menu word. Previously this early-returned,
+    // leaving `menu_open = Some(idx)` set but nothing rendered — an
+    // invisible input trap that swallowed keystrokes AND fired the
+    // phantom first Action on Enter. Now the dropdown paints at a
+    // sensible fallback position so the user always sees what
+    // they're navigating.
+    let word_rect = app
         .rects
         .menu_bar_words
         .iter()
         .find(|(_, i)| *i == open.menu_idx)
-        .copied()
-    else {
-        return;
-    };
+        .map(|(r, _)| *r)
+        .unwrap_or_else(|| {
+            // Compute a fallback origin: right after the last visible
+            // menu word, or col 0 if nothing's visible.
+            let fallback_x = app
+                .rects
+                .menu_bar_words
+                .iter()
+                .map(|(r, _)| r.x + r.width + 1)
+                .max()
+                .unwrap_or(0);
+            let fallback_y = app
+                .rects
+                .menu_bar_words
+                .first()
+                .map(|(r, _)| r.y)
+                .unwrap_or(0);
+            Rect {
+                x: fallback_x,
+                y: fallback_y,
+                width: 0,
+                height: 1,
+            }
+        });
 
     let t = theme::cur();
     // Widest label sets the panel width; +4 for padding + borders.
