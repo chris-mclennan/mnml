@@ -747,6 +747,19 @@ pub(crate) fn build_actionable_with_marketplace(
                 action: DetailAction::RunPrimary(ic.command.clone()),
             });
         }
+        // R7 vscode-mouse F4 2026-08-09 — Reinstall. Only meaningful
+        // when the integration exists in the marketplace catalog
+        // (there's something to re-`cargo install` from). Common
+        // case: user got a stale build, wants to bump to latest
+        // without hunting for the palette command. Routes to the
+        // same InstallFromMarketplace prompt; cargo install is
+        // idempotent (installs even when the binary already exists).
+        if is_marketplace_only {
+            buttons.push(DetailButton {
+                label: "Reinstall".to_string(),
+                action: DetailAction::InstallFromMarketplace(id.to_string()),
+            });
+        }
         // Uninstall — only meaningful for non-built-ins (i.e.
         // things a sibling manifest or the user added). For
         // built-ins Removing == "remove from your rail", which
@@ -1065,6 +1078,40 @@ mod tests {
         assert!(b.is_empty());
         assert!(c.is_empty());
         assert!(l.is_empty());
+    }
+
+    #[test]
+    fn build_actionable_installed_marketplace_gets_reinstall() {
+        // R7 vscode-mouse F4: an installed integration whose id ALSO
+        // exists in the marketplace catalog gets a Reinstall button
+        // between Open and Uninstall.
+        let icon = sample_icon();
+        let (buttons, _, _) = build_actionable_with_marketplace(&icon.id, Some(&icon), true);
+        let labels: Vec<&str> = buttons.iter().map(|b| b.label.as_str()).collect();
+        assert!(
+            labels.contains(&"Reinstall"),
+            "installed marketplace entry should include Reinstall: got {labels:?}"
+        );
+        let reinstall_pos = labels.iter().position(|l| *l == "Reinstall").unwrap();
+        let uninstall_pos = labels.iter().position(|l| *l == "Uninstall").unwrap();
+        assert!(
+            reinstall_pos < uninstall_pos,
+            "Reinstall should render before Uninstall: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn build_actionable_installed_non_marketplace_has_no_reinstall() {
+        // Non-marketplace installed integration (e.g. a built-in or a
+        // user's local manifest): NO reinstall button — nothing to
+        // reinstall from.
+        let icon = sample_icon();
+        let (buttons, _, _) = build_actionable_with_marketplace(&icon.id, Some(&icon), false);
+        let labels: Vec<&str> = buttons.iter().map(|b| b.label.as_str()).collect();
+        assert!(
+            !labels.contains(&"Reinstall"),
+            "non-marketplace entry should not include Reinstall: got {labels:?}"
+        );
     }
 
     #[test]
