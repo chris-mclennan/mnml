@@ -7795,6 +7795,60 @@ impl App {
 
     /// Drain worker replies from any pending launcher-install
     /// fetches. Called each tick. Successful installs refresh the
+    /// Audit + repair `mnml-*` sibling binaries that PATH resolves to
+    /// a copy OTHER than `~/.cargo/bin/`. This is the root of the
+    /// "why does my Amplify label keep reverting to the old one" bug:
+    /// `cargo install --force` writes to `~/.cargo/bin/`, but a stale
+    /// peer in (say) `~/.local/bin/` earlier in PATH silently wins on
+    /// the follow-up `<sibling> --install` — the stale binary writes
+    /// its old manifest and everyone's confused.
+    ///
+    /// Repair strategy: move each shadowing copy to
+    /// `<data_root>/quarantine/shadowed-bins/<name>.<epoch>` (mkdir'd
+    /// on demand). Nothing is deleted — user can `mv` it back if they
+    /// realize the "stale" one was actually load-bearing. Reports the
+    /// count via toast; details captured in `.mnml/findings/…`.
+    pub fn audit_shadowed_binaries(&mut self) {
+        let hits = crate::integration_detect::find_shadowed_binaries();
+        if hits.is_empty() {
+            self.toast("no shadowed sibling binaries detected");
+            return;
+        }
+        let dest_root = crate::data_root::data_root()
+            .join("quarantine")
+            .join("shadowed-bins");
+        if let Err(e) = std::fs::create_dir_all(&dest_root) {
+            self.toast(format!("shadow audit: couldn't mkdir quarantine ({e})"));
+            return;
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut moved = 0usize;
+        let mut errors = Vec::new();
+        for hit in &hits {
+            let dest = dest_root.join(format!("{}.{stamp}", hit.name));
+            match std::fs::rename(&hit.active, &dest) {
+                Ok(()) => moved += 1,
+                Err(e) => errors.push(format!("{}: {e}", hit.name)),
+            }
+        }
+        crate::integration_detect::clear_cache();
+        if errors.is_empty() {
+            self.toast(format!(
+                "moved {moved} shadowed sibling binaries → {}",
+                dest_root.display()
+            ));
+        } else {
+            self.toast(format!(
+                "moved {moved}/{}; {} failed — see findings",
+                hits.len(),
+                errors.len()
+            ));
+        }
+    }
+
     /// integration manifests + flip the panel to Installed so the
     /// user sees where the chip landed. Failures toast the error.
     pub fn drain_launcher_installs(&mut self) {

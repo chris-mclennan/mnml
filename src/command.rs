@@ -1680,6 +1680,13 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "integrations.audit_shadowed_binaries",
+            title: "Integrations: audit + fix shadowed sibling binaries (PATH order)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.audit_shadowed_binaries(),
+        },
+        Command {
             id: "view.toggle_integrations_section",
             title: "Toggle the integrations section in the rail (collapse/expand)",
             group: "view",
