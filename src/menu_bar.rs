@@ -139,10 +139,10 @@ fn brand_menu() -> MenuDef {
     MenuDef {
         label: "❯_  mnml".to_string(),
         items: vec![
-            MenuItem::action("About mnml…", "view.about"),
-            MenuItem::action("Settings…", "view.settings"),
+            MenuItem::action("\u{F129}  About mnml…", "view.about"),
+            MenuItem::action("\u{F013}  Settings…", "view.settings"),
             MenuItem::Separator,
-            MenuItem::action("Quit mnml", "app.quit"),
+            MenuItem::action("\u{F011}  Quit mnml", "app.quit"),
         ],
     }
 }
@@ -209,16 +209,20 @@ fn file_menu(app: &crate::app::App) -> MenuDef {
 }
 
 fn edit_menu() -> MenuDef {
+    // Same glyph-audit rule as File (2026-08-08): icon only where a
+    // widely-recognized nerd glyph matches semantically; 5-space
+    // spacer preserves alignment where no confidently-correct glyph
+    // exists.
     MenuDef {
         label: "Edit".to_string(),
         items: vec![
-            MenuItem::action("Find…", "find.find"),
-            MenuItem::action("Find next", "find.next"),
-            MenuItem::action("Find previous", "find.prev"),
-            MenuItem::action("Replace…", "find.replace"),
+            MenuItem::action("\u{F002}  Find…", "find.find"),
+            MenuItem::action("     Find next", "find.next"),
+            MenuItem::action("     Find previous", "find.prev"),
+            MenuItem::action("\u{F0EC}  Replace…", "find.replace"),
             MenuItem::Separator,
-            MenuItem::action("Find in files…", "find.grep"),
-            MenuItem::action("Replace in files…", "find.grep_replace"),
+            MenuItem::action("\u{F002}  Find in files…", "find.grep"),
+            MenuItem::action("\u{F0EC}  Replace in files…", "find.grep_replace"),
         ],
     }
 }
@@ -227,14 +231,23 @@ fn selection_menu() -> MenuDef {
     MenuDef {
         label: "Selection".to_string(),
         items: vec![
-            MenuItem::action("Expand selection", "lsp.selection_expand"),
-            MenuItem::action("Shrink selection", "lsp.selection_shrink"),
+            MenuItem::action("\u{F065}  Expand selection", "lsp.selection_expand"),
+            MenuItem::action("\u{F066}  Shrink selection", "lsp.selection_shrink"),
             MenuItem::Separator,
-            MenuItem::action("Add cursor above", "editor.add_cursor_above"),
-            MenuItem::action("Add cursor below", "editor.add_cursor_below"),
-            MenuItem::action("Add cursor at next match", "editor.add_cursor_at_next_word"),
-            MenuItem::action("Select all occurrences", "editor.select_all_occurrences"),
-            MenuItem::action("Clear extra cursors", "editor.clear_extra_cursors"),
+            MenuItem::action("\u{F062}  Add cursor above", "editor.add_cursor_above"),
+            MenuItem::action("\u{F063}  Add cursor below", "editor.add_cursor_below"),
+            MenuItem::action(
+                "\u{F067}  Add cursor at next match",
+                "editor.add_cursor_at_next_word",
+            ),
+            MenuItem::action(
+                "     Select all occurrences",
+                "editor.select_all_occurrences",
+            ),
+            MenuItem::action(
+                "\u{F00D}  Clear extra cursors",
+                "editor.clear_extra_cursors",
+            ),
         ],
     }
 }
@@ -243,23 +256,25 @@ fn view_menu() -> MenuDef {
     MenuDef {
         label: "View".to_string(),
         items: vec![
-            MenuItem::action("Command palette", "view.discovery"),
+            MenuItem::action("\u{F0C9}  Command palette", "view.discovery"),
             MenuItem::Separator,
-            MenuItem::action("Toggle file tree", "view.toggle_tree"),
-            MenuItem::action("Toggle right panel", "view.toggle_right_panel"),
+            MenuItem::action("     Toggle file tree", "view.toggle_tree"),
+            MenuItem::action("     Toggle right panel", "view.toggle_right_panel"),
             MenuItem::action(
-                "Cycle menu bar (always / auto / hidden)",
+                "     Cycle menu bar (always / auto / hidden)",
                 "view.menu_bar_cycle",
             ),
-            MenuItem::action("Toggle bufferline", "view.toggle_bufferline"),
-            MenuItem::action("Toggle word wrap", "view.toggle_wrap"),
-            MenuItem::action("Toggle zen mode", "view.zen"),
-            MenuItem::action("Toggle hover-help strip", "view.toggle_hover_help"),
+            MenuItem::action("     Toggle bufferline", "view.toggle_bufferline"),
+            MenuItem::action("     Toggle word wrap", "view.toggle_wrap"),
+            // fa-eye — zen = single-focus, not dark mode (F186 moon
+            // was wrong; that reads as theme-dark).
+            MenuItem::action("\u{F06E}  Toggle zen mode", "view.zen"),
+            MenuItem::action("     Toggle hover-help strip", "view.toggle_hover_help"),
             MenuItem::Separator,
-            MenuItem::action("Commands reference…", "view.commands_reference"),
+            MenuItem::action("\u{F02D}  Commands reference…", "view.commands_reference"),
             MenuItem::Separator,
-            MenuItem::action("Pick theme…", "theme.pick"),
-            MenuItem::action("Toggle theme", "theme.toggle"),
+            MenuItem::action("\u{F1FC}  Pick theme…", "theme.pick"),
+            MenuItem::action("\u{F042}  Toggle theme", "theme.toggle"),
         ],
     }
 }
@@ -268,13 +283,16 @@ fn go_menu() -> MenuDef {
     MenuDef {
         label: "Go".to_string(),
         items: vec![
-            MenuItem::action("Go to file…", "view.discovery"),
-            MenuItem::action("Go to line…", "editor.goto_line"),
-            MenuItem::action("Go to definition", "lsp.peek_definition"),
+            MenuItem::action("\u{F002}  Go to file…", "view.discovery"),
+            // No confidently-correct "go to line number" glyph in the
+            // Nerd Font subset — F149 (level-down) was a corner arrow
+            // and read as "return" not "jump to line". Spacer for now.
+            MenuItem::action("     Go to line…", "editor.goto_line"),
+            MenuItem::action("     Go to definition", "lsp.peek_definition"),
             MenuItem::Separator,
-            MenuItem::action("Previous buffer", "buffer.prev"),
-            MenuItem::action("Next buffer", "buffer.next"),
-            MenuItem::action("Last buffer", "buffer.last"),
+            MenuItem::action("\u{F060}  Previous buffer", "buffer.prev"),
+            MenuItem::action("\u{F061}  Next buffer", "buffer.next"),
+            MenuItem::action("     Last buffer", "buffer.last"),
         ],
     }
 }
@@ -283,16 +301,22 @@ fn run_menu() -> MenuDef {
     MenuDef {
         label: "Run".to_string(),
         items: vec![
-            MenuItem::action("Start debugging", "dap.run"),
-            MenuItem::action("Toggle breakpoint", "dap.toggle_breakpoint"),
+            MenuItem::action("\u{F04B}  Start debugging", "dap.run"),
+            MenuItem::action("\u{F111}  Toggle breakpoint", "dap.toggle_breakpoint"),
             MenuItem::action(
-                "Conditional breakpoint…",
+                "     Conditional breakpoint…",
                 "dap.toggle_breakpoint_conditional",
             ),
             MenuItem::Separator,
-            MenuItem::action("Step in", "dap.step_in"),
-            MenuItem::action("Step out", "dap.step_out"),
-            MenuItem::action("Step back", "dap.step_back"),
+            // fa-angle-double-down / -up — "step in" descends into a
+            // frame, "step out" ascends out. Prior draft used single
+            // arrows (F062/F063) which read as generic move, not
+            // debug semantics. F103/F102 mirror VS Code's chevron-
+            // pair convention. Step-back stays F048 (media
+            // step-backward) — a distinct action, distinct shape.
+            MenuItem::action("\u{F103}  Step in", "dap.step_in"),
+            MenuItem::action("\u{F102}  Step out", "dap.step_out"),
+            MenuItem::action("\u{F048}  Step back", "dap.step_back"),
         ],
     }
 }
@@ -301,9 +325,9 @@ fn terminal_menu() -> MenuDef {
     MenuDef {
         label: "Terminal".to_string(),
         items: vec![
-            MenuItem::action("New terminal (split below)", "term.shell"),
-            MenuItem::action("Toggle scratch terminal", "term.scratch_toggle"),
-            MenuItem::action("Rename terminal", "term.rename"),
+            MenuItem::action("\u{F120}  New terminal (split below)", "term.shell"),
+            MenuItem::action("\u{F120}  Toggle scratch terminal", "term.scratch_toggle"),
+            MenuItem::action("\u{F040}  Rename terminal", "term.rename"),
         ],
     }
 }
@@ -319,17 +343,17 @@ fn window_menu() -> MenuDef {
     MenuDef {
         label: "Window".to_string(),
         items: vec![
-            MenuItem::action("Reopen closed tab", "buffer.reopen"),
-            MenuItem::action("Close other tabs", "view.close_others"),
-            MenuItem::action("Pin / unpin tab", "buffer.pin_toggle"),
+            MenuItem::action("\u{F0E2}  Reopen closed tab", "buffer.reopen"),
+            MenuItem::action("\u{F00D}  Close other tabs", "view.close_others"),
+            MenuItem::action("\u{F08D}  Pin / unpin tab", "buffer.pin_toggle"),
             MenuItem::Separator,
             // Split ── side by side / stacked / close / equalize.
-            MenuItem::action("Split right", "view.split_right"),
-            MenuItem::action("Split down", "view.split_down"),
-            MenuItem::action("Close split", "view.close_split"),
-            MenuItem::action("Equalize splits", "view.equalize_splits"),
+            MenuItem::action("\u{F0DB}  Split right", "view.split_right"),
+            MenuItem::action("     Split down", "view.split_down"),
+            MenuItem::action("\u{F00D}  Close split", "view.close_split"),
+            MenuItem::action("     Equalize splits", "view.equalize_splits"),
             MenuItem::action(
-                "Auto-equalize on split / close (toggle)",
+                "     Auto-equalize on split / close (toggle)",
                 "view.toggle_auto_equalize_splits",
             ),
             MenuItem::Separator,
@@ -337,25 +361,28 @@ fn window_menu() -> MenuDef {
             // the whole split tree into one leaf's tabs; spread lays
             // each tab out into its own split via the auto-tile
             // shape heuristic. Reversible via each other.
-            MenuItem::action("Merge splits into tabs", "layout.merge_to_tabs"),
-            MenuItem::action("Spread tabs into splits", "layout.spread_to_splits"),
+            MenuItem::action("     Merge splits into tabs", "layout.merge_to_tabs"),
+            MenuItem::action("     Spread tabs into splits", "layout.spread_to_splits"),
             MenuItem::Separator,
             // Resize the active split.
-            MenuItem::action("Grow split width", "view.split_grow_width"),
-            MenuItem::action("Grow split height", "view.split_grow_height"),
+            MenuItem::action("     Grow split width", "view.split_grow_width"),
+            MenuItem::action("     Grow split height", "view.split_grow_height"),
             MenuItem::Separator,
             // Focus a neighbouring split — the "Halves" of macOS.
-            MenuItem::action("Focus split left", "view.focus_left"),
-            MenuItem::action("Focus split right", "view.focus_right"),
-            MenuItem::action("Focus split up", "view.focus_up"),
-            MenuItem::action("Focus split down", "view.focus_down"),
+            MenuItem::action("\u{F060}  Focus split left", "view.focus_left"),
+            MenuItem::action("\u{F061}  Focus split right", "view.focus_right"),
+            MenuItem::action("\u{F062}  Focus split up", "view.focus_up"),
+            MenuItem::action("\u{F063}  Focus split down", "view.focus_down"),
             MenuItem::Separator,
             // AI layout mode toggle (grid ↔ tabs). Same command
             // the palette-bar AI chip menu fires.
-            MenuItem::action("AI layout: Grid (splits)", "view.ai_layout_grid"),
-            MenuItem::action("AI layout: Tabs (stack in leaf)", "view.ai_layout_tabs"),
+            MenuItem::action("     AI layout: Grid (splits)", "view.ai_layout_grid"),
+            MenuItem::action(
+                "     AI layout: Tabs (stack in leaf)",
+                "view.ai_layout_tabs",
+            ),
             MenuItem::Separator,
-            MenuItem::action("Restart mnml", "app.restart"),
+            MenuItem::action("\u{F021}  Restart mnml", "app.restart"),
         ],
     }
 }
@@ -364,11 +391,11 @@ fn help_menu() -> MenuDef {
     MenuDef {
         label: "Help".to_string(),
         items: vec![
-            MenuItem::action("Welcome", "view.welcome"),
-            MenuItem::action("Keybindings & help", "view.help"),
-            MenuItem::action("Commands reference…", "view.commands_reference"),
+            MenuItem::action("\u{F0EB}  Welcome", "view.welcome"),
+            MenuItem::action("\u{F11C}  Keybindings & help", "view.help"),
+            MenuItem::action("\u{F02D}  Commands reference…", "view.commands_reference"),
             MenuItem::Separator,
-            MenuItem::action("About mnml", "view.about"),
+            MenuItem::action("\u{F129}  About mnml", "view.about"),
         ],
     }
 }
