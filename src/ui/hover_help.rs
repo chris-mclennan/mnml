@@ -384,6 +384,42 @@ fn describe_active_pane(pane: &crate::pane::Pane) -> Option<(String, Option<Stri
             pane.title(),
             Some("Claude / Codex session — type at the bottom prompt.".into()),
         )),
+        Pane::ClaudeAgents(p) => {
+            // R6 R2 claude-agents-power SEV-3 2026-08-09 — the
+            // Agents dashboard is dense enough that the generic
+            // pane title tells the user nothing. Pull the
+            // currently-selected row and describe it: source /
+            // workspace / state / model / last activity.
+            if let Some(row) = p.rows.get(p.selected) {
+                let source = match row.source {
+                    crate::claude_agents::AgentSource::Claude => "Claude Code",
+                    crate::claude_agents::AgentSource::Codex => "Codex",
+                    crate::claude_agents::AgentSource::Ecs => "ECS runner",
+                    crate::claude_agents::AgentSource::AnthropicManaged => "Anthropic Managed",
+                };
+                let state = format!("{:?}", row.state);
+                let workspace = if row.workspace.is_empty() {
+                    "(unknown)".to_string()
+                } else {
+                    row.workspace.clone()
+                };
+                let short_id = row.session_id.chars().take(8).collect::<String>();
+                let primary = format!("{source} · {workspace} · {state} · {short_id}");
+                let secondary = Some(
+                    "Agents dashboard — j/k walks rows, K kills, Enter drills in, / filters."
+                        .to_string(),
+                );
+                Some((primary, secondary))
+            } else {
+                Some((
+                    pane.title(),
+                    Some(
+                        "Agents dashboard — no sessions found. j/k walks rows once populated, / filters."
+                            .into(),
+                    ),
+                ))
+            }
+        }
         _ => Some((pane.title(), None)),
     }
 }
