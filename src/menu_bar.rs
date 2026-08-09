@@ -263,6 +263,10 @@ fn view_menu() -> MenuDef {
             // HTTP / Findings depending on activity-bar selection.
             MenuItem::action("\u{EC02}  Toggle left panel", "view.toggle_tree"),
             MenuItem::action("\u{EC00}  Toggle right panel", "view.toggle_right_panel"),
+            // codicon-layout-panel — mirrors the sidebar codicons above;
+            // R7 vscode-mouse SEV-2 F4 (no visible mouse path to open
+            // the bottom panel before this).
+            MenuItem::action("\u{EC17}  Toggle bottom panel", "view.toggle_bottom_panel"),
             MenuItem::action(
                 "\u{F0C9}  Cycle menu bar (always / auto / hidden)",
                 "view.menu_bar_cycle",
