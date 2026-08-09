@@ -84,7 +84,7 @@ use std::path::{Path, PathBuf};
 /// surface (same rule mount manifests use).
 pub const ALLOWED_COLORS: &[&str] = &[
     "red", "orange", "yellow", "green", "blue", "cyan", "teal", "purple", "pink", "comment",
-    "magenta", "fg", "bg2",
+    "magenta", "fg", "bg2", "white", "black",
 ];
 
 /// OS notification escalation policy.
