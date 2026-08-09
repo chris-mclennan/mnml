@@ -6,26 +6,18 @@
 use std::path::PathBuf;
 
 use crate::ai::AiPane;
-// AWS CodeBuild + CloudWatch panes moved to mnml-aws-codebuild in 2026-06.
-// Azure DevOps panes moved to mnml-forge-azdevops in 2026-06.
 use crate::browser_pane::BrowserPane;
 use crate::buffer::Buffer;
 use crate::cheatsheet::CheatsheetPane;
 use crate::git::diff::Hunk;
 use crate::git::graph::GitGraphPane;
 use crate::git::stage::GitStatusPane;
-// GitHub panes were split out into the standalone
-// `mnml-forge-github` binary in 2026-06.
-// GitLab panes moved to mnml-forge-gitlab in 2026-06.
 use crate::grep_pane::GrepPane;
 use crate::image::ImagePane;
 use crate::lsp::diagnostics_pane::DiagnosticsPane;
 use crate::lsp::outline_pane::OutlinePane;
-// `Pane::PipelineLog` was kept as scaffolding through the 2026-06
-// SCM split but never re-populated; removed once the dust settled.
 use crate::playwright::TestsPane;
 use crate::playwright::flaky_pane::FlakyPane;
-// `TracePane` moved to mnml-test-playwright in 2026-06.
 use crate::pty_pane::PtySession;
 use crate::request_pane::RequestPane;
 
@@ -53,7 +45,6 @@ pub enum Pane {
     Ai(AiPane),
     /// A Playwright test run + its results tree.
     Tests(TestsPane),
-    // `Pane::Trace` moved to mnml-test-playwright in 2026-06.
     /// The flaky-test dashboard — every wobbly test in the workspace's history.
     Flaky(FlakyPane),
     /// A persistent symbol outline for one editor — the `documentSymbol` reply,
@@ -72,8 +63,6 @@ pub enum Pane {
     /// Vim's `q:` — a scrollable list of recent `:` cmdline entries.
     /// Enter re-fires the highlighted entry; Esc closes.
     CmdlineHistory(CmdlineHistoryPane),
-    // `Pane::CodeBuilds` + `Pane::LogTail` moved to mnml-aws-codebuild
-    // in 2026-06.
     /// NvCheatsheet-style browseable list of every active chord → command,
     /// grouped by `Command::group`. `/`-filterable, scrollable. Opened
     /// via `view.cheatsheet` / `<leader>?`.
@@ -157,11 +146,6 @@ pub enum Pane {
     /// show current API + UI coverage with a braille sparkline of
     /// recent history and a delta arrow vs 7 days ago.
     Coverage(CoveragePane),
-    // `HttpHome` variant was removed 2026-07-05. It shipped as an
-    // early "hub" dashboard for the HTTP activity section, but the
-    // activity icon now opens a blank Request pane directly (per
-    // user feedback), which makes the dashboard a duplicate surface
-    // for content already served by the sectioned sidebar.
 }
 
 /// State for [`Pane::SpendReport`]. Re-snapshots
