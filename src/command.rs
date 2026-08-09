@@ -1685,6 +1685,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.audit_shadowed_binaries(),
         },
         Command {
+            id: "integrations.audit_glyphs",
+            title: "Integrations: audit glyphs (report drift, no changes)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.audit_glyphs(),
+        },
+        Command {
             id: "view.toggle_integrations_section",
             title: "Toggle the integrations section in the rail (collapse/expand)",
             group: "view",

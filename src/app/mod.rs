@@ -50,6 +50,7 @@ mod reset;
 // pipeline_log removed after 2026-06 SCM split.
 pub(crate) mod cloud_agents_methods;
 pub(crate) mod cmdline_methods;
+pub(crate) mod integration_audit;
 pub(crate) mod integration_glyphs;
 pub(crate) mod integration_install_methods;
 mod playwright;
