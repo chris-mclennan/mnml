@@ -189,16 +189,12 @@ fn file_menu(app: &crate::app::App) -> MenuDef {
             // close, cog, power_off.
             MenuItem::action("\u{F0224}  New file", "file.new"),
             MenuItem::action("\u{F115}  Open file…", "picker.files"),
-            MenuItem::action("     Add folder to workspace…", "view.add_workspace"),
+            MenuItem::action("\u{EEC7}  Add folder to workspace…", "view.add_workspace"),
             MenuItem::submenu("\u{F1DA}  Open recent file", recent_items),
-            MenuItem::action("\u{F1DA}  Open recent file (picker)…", "picker.recent"),
-            MenuItem::action("     Switch workspace…", "view.switch_workspace"),
+            MenuItem::action("\u{F443}  Switch workspace…", "view.switch_workspace"),
             MenuItem::Separator,
             MenuItem::action("\u{F0193}  Save", "file.save"),
-            // No confidently-correct "save all" glyph — the previous
-            // F0819 rendered as a trash can. Use the same floppy as
-            // Save; the label carries the "all".
-            MenuItem::action("\u{F0193}  Save all", "file.save_all"),
+            MenuItem::action("\u{F0194}  Save all", "file.save_all"),
             MenuItem::Separator,
             MenuItem::action("\u{F00D}  Close tab", "buffer.close"),
             MenuItem::Separator,
@@ -217,8 +213,8 @@ fn edit_menu() -> MenuDef {
         label: "Edit".to_string(),
         items: vec![
             MenuItem::action("\u{F002}  Find…", "find.find"),
-            MenuItem::action("     Find next", "find.next"),
-            MenuItem::action("     Find previous", "find.prev"),
+            MenuItem::action("\u{F063}  Find next", "find.next"),
+            MenuItem::action("\u{F062}  Find previous", "find.prev"),
             MenuItem::action("\u{F0EC}  Replace…", "find.replace"),
             MenuItem::Separator,
             MenuItem::action("\u{F002}  Find in files…", "find.grep"),
@@ -241,7 +237,7 @@ fn selection_menu() -> MenuDef {
                 "editor.add_cursor_at_next_word",
             ),
             MenuItem::action(
-                "     Select all occurrences",
+                "\u{EB85}  Select all occurrences",
                 "editor.select_all_occurrences",
             ),
             MenuItem::action(
@@ -256,20 +252,29 @@ fn view_menu() -> MenuDef {
     MenuDef {
         label: "View".to_string(),
         items: vec![
-            MenuItem::action("\u{F0C9}  Command palette", "view.discovery"),
+            MenuItem::action("\u{F4B5}  Command palette", "view.discovery"),
             MenuItem::Separator,
-            MenuItem::action("     Toggle file tree", "view.toggle_tree"),
-            MenuItem::action("     Toggle right panel", "view.toggle_right_panel"),
+            // Same codicon glyphs as the palette-bar chips
+            // (`layout-sidebar-left-off` EC02, `layout-sidebar-right-off`
+            // EC00) so the menu-bar entry and the toolbar chip read
+            // as the same control. "Left panel" reads as parallel to
+            // "Right panel" and no longer implies the panel is only
+            // for files — it also hosts GIT / Integrations / Agents /
+            // HTTP / Findings depending on activity-bar selection.
+            MenuItem::action("\u{EC02}  Toggle left panel", "view.toggle_tree"),
+            MenuItem::action("\u{EC00}  Toggle right panel", "view.toggle_right_panel"),
             MenuItem::action(
-                "     Cycle menu bar (always / auto / hidden)",
+                "\u{F0C9}  Cycle menu bar (always / auto / hidden)",
                 "view.menu_bar_cycle",
             ),
-            MenuItem::action("     Toggle bufferline", "view.toggle_bufferline"),
-            MenuItem::action("     Toggle word wrap", "view.toggle_wrap"),
+            MenuItem::action("\u{EB80}  Toggle word wrap", "view.toggle_wrap"),
             // fa-eye — zen = single-focus, not dark mode (F186 moon
             // was wrong; that reads as theme-dark).
             MenuItem::action("\u{F06E}  Toggle zen mode", "view.zen"),
-            MenuItem::action("     Toggle hover-help strip", "view.toggle_hover_help"),
+            MenuItem::action(
+                "\u{F02D6}  Toggle hover-help strip",
+                "view.toggle_hover_help",
+            ),
             MenuItem::Separator,
             MenuItem::action("\u{F02D}  Commands reference…", "view.commands_reference"),
             MenuItem::Separator,
@@ -287,12 +292,12 @@ fn go_menu() -> MenuDef {
             // No confidently-correct "go to line number" glyph in the
             // Nerd Font subset — F149 (level-down) was a corner arrow
             // and read as "return" not "jump to line". Spacer for now.
-            MenuItem::action("     Go to line…", "editor.goto_line"),
-            MenuItem::action("     Go to definition", "lsp.peek_definition"),
+            MenuItem::action("   Go to line…", "editor.goto_line"),
+            MenuItem::action("   Go to definition", "lsp.peek_definition"),
             MenuItem::Separator,
             MenuItem::action("\u{F060}  Previous buffer", "buffer.prev"),
             MenuItem::action("\u{F061}  Next buffer", "buffer.next"),
-            MenuItem::action("     Last buffer", "buffer.last"),
+            MenuItem::action("   Last buffer", "buffer.last"),
         ],
     }
 }
@@ -304,7 +309,7 @@ fn run_menu() -> MenuDef {
             MenuItem::action("\u{F04B}  Start debugging", "dap.run"),
             MenuItem::action("\u{F111}  Toggle breakpoint", "dap.toggle_breakpoint"),
             MenuItem::action(
-                "     Conditional breakpoint…",
+                "   Conditional breakpoint…",
                 "dap.toggle_breakpoint_conditional",
             ),
             MenuItem::Separator,
@@ -348,12 +353,15 @@ fn window_menu() -> MenuDef {
             MenuItem::action("\u{F08D}  Pin / unpin tab", "buffer.pin_toggle"),
             MenuItem::Separator,
             // Split ── side by side / stacked / close / equalize.
-            MenuItem::action("\u{F0DB}  Split right", "view.split_right"),
-            MenuItem::action("     Split down", "view.split_down"),
+            // EB56/EB57 mirror the H/V chips in the top-right cluster
+            // so the menu item and the toolbar icon read as the same
+            // control.
+            MenuItem::action("\u{EB56}  Split right", "view.split_right"),
+            MenuItem::action("\u{EB57}  Split down", "view.split_down"),
             MenuItem::action("\u{F00D}  Close split", "view.close_split"),
-            MenuItem::action("     Equalize splits", "view.equalize_splits"),
+            MenuItem::action("\u{F02C1}  Equalize splits", "view.equalize_splits"),
             MenuItem::action(
-                "     Auto-equalize on split / close (toggle)",
+                "\u{F0758}  Auto-equalize on split / close (toggle)",
                 "view.toggle_auto_equalize_splits",
             ),
             MenuItem::Separator,
@@ -361,12 +369,19 @@ fn window_menu() -> MenuDef {
             // the whole split tree into one leaf's tabs; spread lays
             // each tab out into its own split via the auto-tile
             // shape heuristic. Reversible via each other.
-            MenuItem::action("     Merge splits into tabs", "layout.merge_to_tabs"),
-            MenuItem::action("     Spread tabs into splits", "layout.spread_to_splits"),
+            // fa-object-group / -ungroup — "combine into one" vs
+            // "break out into many". First-round MDI picks (F0575 /
+            // F0577) tofu'd in the user's Nerd Font subset.
+            MenuItem::action("\u{F247}  Merge splits into tabs", "layout.merge_to_tabs"),
+            MenuItem::action(
+                "\u{F248}  Spread tabs into splits",
+                "layout.spread_to_splits",
+            ),
             MenuItem::Separator,
-            // Resize the active split.
-            MenuItem::action("     Grow split width", "view.split_grow_width"),
-            MenuItem::action("     Grow split height", "view.split_grow_height"),
+            // Resize the active split. fa-arrows-alt-h / -v — universal
+            // horizontal / vertical two-headed arrows.
+            MenuItem::action("\u{F07E}  Grow split width", "view.split_grow_width"),
+            MenuItem::action("\u{F07D}  Grow split height", "view.split_grow_height"),
             MenuItem::Separator,
             // Focus a neighbouring split — the "Halves" of macOS.
             MenuItem::action("\u{F060}  Focus split left", "view.focus_left"),
@@ -376,9 +391,11 @@ fn window_menu() -> MenuDef {
             MenuItem::Separator,
             // AI layout mode toggle (grid ↔ tabs). Same command
             // the palette-bar AI chip menu fires.
-            MenuItem::action("     AI layout: Grid (splits)", "view.ai_layout_grid"),
+            // fa-th (3x3 grid) vs fa-list-alt (stacked rows) — clear
+            // visual contrast for the grid-vs-stack choice.
+            MenuItem::action("\u{F00A}  AI layout: Grid (splits)", "view.ai_layout_grid"),
             MenuItem::action(
-                "     AI layout: Tabs (stack in leaf)",
+                "\u{F022}  AI layout: Tabs (stack in leaf)",
                 "view.ai_layout_tabs",
             ),
             MenuItem::Separator,
