@@ -100,6 +100,30 @@ pub fn fuzzy_match(needle: &str, haystack: &str) -> Option<(i64, Vec<usize>)> {
                     .is_some_and(|c| boundary_chars.contains(&c));
             if at_boundary {
                 score += 50;
+                // R7 api-workflow SEV-2 F3 2026-08-09 — exact-token
+                // boost. When the boundary-substring hit is also a
+                // COMPLETE token in the haystack (followed by
+                // end-of-string OR a non-identifier separator like
+                // `.`, ` `, `:`, `-`, `/`), add a further +150 so a
+                // full-id needle outranks a shorter fuzzy prefix hit.
+                // Motivating case: query `integrations.refresh` was
+                // firing `integrations.refresh_binary_cache` — both
+                // haystacks satisfied the +50 (needle appears at a
+                // boundary in both), and `_` counts as an identifier
+                // continuation so it isn't a token terminator here.
+                // The palette label format is
+                // `"{group}  ·  {title}  ·  {id}"`, so the exact-id
+                // needle lands at end-of-string and picks up the
+                // full +200 (50+150).
+                let end_abs = abs_pos + needle_lower.len();
+                let terminates = end_abs == haystack.len()
+                    || haystack[end_abs..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| matches!(c, '.' | ' ' | ':' | '-' | '/'));
+                if terminates {
+                    score += 150;
+                }
                 break;
             }
             search_from = abs_pos + 1;
@@ -152,6 +176,31 @@ mod tests {
         assert!(
             a > b,
             "word-boundary substring must outrank mid-word substring: {a} vs {b}"
+        );
+    }
+
+    #[test]
+    fn exact_id_beats_prefix_of_longer_id() {
+        // R7 api-workflow F3 2026-08-09. Palette label format:
+        // `"{group}  ·  {title}  ·  {id}"`. Typing an EXACT id
+        // (`integrations.refresh`) must outrank a fuzzy hit on a
+        // longer id that shares the same prefix
+        // (`integrations.refresh_binary_cache`). Both haystacks
+        // contain the needle at a word boundary — the +50 boost
+        // fires for both — the +150 exact-token gate is the
+        // disambiguator (needle ends the string in the winner,
+        // continues into `_` in the loser).
+        let winner = fuzzy_match(
+            "integrations.refresh",
+            "integrations  ·  Integrations: re-scan manifests in .mnml/integrations/  ·  integrations.refresh",
+        ).unwrap().0;
+        let loser = fuzzy_match(
+            "integrations.refresh",
+            "integrations  ·  Integrations: refresh installed-binary detection  ·  integrations.refresh_binary_cache",
+        ).unwrap().0;
+        assert!(
+            winner > loser,
+            "exact-id match must outrank prefix-hit on longer id: {winner} vs {loser}"
         );
     }
 
