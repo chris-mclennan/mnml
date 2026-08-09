@@ -2596,7 +2596,24 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         vim_normal_or_visual
             && ctrl
             && !key.modifiers.contains(KeyModifiers::ALT)
-            && matches!(key.code, KeyCode::Char('b') | KeyCode::Char('B'))
+            // R7 nvchad SEV-2 2026-08-09 — extended from `b`/`B`
+            // (page-back) to also include `o`/`O`/`i`. Vim owns:
+            //   Ctrl+B / Ctrl+F — page back/forward
+            //   Ctrl+O / Ctrl+I — jumplist back/forward
+            // Without this bypass, the global keymap fires
+            // `picker.files` (Ctrl+O bound in command.rs:2550) and
+            // Ctrl+I is a no-op even though vim.rs at :2717 returns
+            // `AppCommand::RunCommand("nav.back")` for Ctrl+O — dead
+            // code because chord_chain got there first.
+            && matches!(
+                key.code,
+                KeyCode::Char('b')
+                    | KeyCode::Char('B')
+                    | KeyCode::Char('o')
+                    | KeyCode::Char('O')
+                    | KeyCode::Char('i')
+                    | KeyCode::Char('I')
+            )
     };
 
     // keyboard-round-14 SEV-2 2026-07-16 — when a Pty pane is
