@@ -69,10 +69,7 @@ pub fn parse_ghostty_codepoint_map(config_text: &str) -> Vec<GhosttyRange> {
         let Some((lo_str, hi_str)) = range_spec.split_once('-') else {
             // Single-codepoint form.
             if let Some(cp) = parse_ghostty_cp(range_spec) {
-                out.push(GhosttyRange {
-                    start: cp,
-                    end: cp,
-                });
+                out.push(GhosttyRange { start: cp, end: cp });
             }
             continue;
         };
@@ -319,7 +316,10 @@ fn read_ledger() -> Vec<(String, u32)> {
     };
     for entry in entries {
         let id = entry.get("id").and_then(|v| v.as_str()).unwrap_or("");
-        let cp_hex = entry.get("codepoint").and_then(|v| v.as_str()).unwrap_or("");
+        let cp_hex = entry
+            .get("codepoint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if id.is_empty() || cp_hex.is_empty() {
             continue;
         }
@@ -334,9 +334,7 @@ fn read_ledger() -> Vec<(String, u32)> {
 /// We also stamp whether the codepoint IS in the font — an orphan meta
 /// row + baked outline is a "SVG source deleted but the outline survives"
 /// case (still worth flagging but distinct from "genuinely dead").
-fn read_orphan_meta_entries(
-    baked: &std::collections::HashSet<u32>,
-) -> Vec<OrphanMeta> {
+fn read_orphan_meta_entries(baked: &std::collections::HashSet<u32>) -> Vec<OrphanMeta> {
     let mut out = Vec::new();
     // The meta file lives next to MnmlSymbols.ttf's build state; a
     // small round-trip through the glyph_builder module reader keeps
@@ -356,7 +354,10 @@ fn read_orphan_meta_entries(
         .cloned()
         .unwrap_or_default();
     for entry in entries {
-        let cp_hex = entry.get("codepoint").and_then(|v| v.as_str()).unwrap_or("");
+        let cp_hex = entry
+            .get("codepoint")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let svg_path_str = entry.get("svg_path").and_then(|v| v.as_str()).unwrap_or("");
         if svg_path_str.is_empty() || cp_hex.is_empty() {
             continue;
@@ -412,7 +413,9 @@ fn write_report(workspace: &std::path::Path, f: &AuditFindings) -> Option<PathBu
 
     body.push_str("## id-alias duplicates in `integration-glyphs.toml`\n\n");
     if f.duplicates.is_empty() {
-        body.push_str("None. Every codepoint in the assignment ledger is claimed by exactly one id.\n\n");
+        body.push_str(
+            "None. Every codepoint in the assignment ledger is claimed by exactly one id.\n\n",
+        );
     } else {
         body.push_str("| Codepoint | Ids sharing it | Fix |\n|---|---|---|\n");
         for (cp, ids) in &f.duplicates {
@@ -429,7 +432,9 @@ fn write_report(workspace: &std::path::Path, f: &AuditFindings) -> Option<PathBu
     if f.orphans.is_empty() {
         body.push_str("None. Every meta entry references a real SVG on disk.\n\n");
     } else {
-        body.push_str("| Codepoint | SVG path (missing) | Outline baked | Fix |\n|---|---|---|---|\n");
+        body.push_str(
+            "| Codepoint | SVG path (missing) | Outline baked | Fix |\n|---|---|---|---|\n",
+        );
         for o in &f.orphans {
             body.push_str(&format!(
                 "| U+{:04X} | `{}` | {} | {} |\n",
@@ -459,7 +464,13 @@ mod tests {
         let cfg = "font-codepoint-map = U+E5FA-U+E8FF=Symbols Nerd Font Mono\n";
         let out = parse_ghostty_codepoint_map(cfg);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0], GhosttyRange { start: 0xE5FA, end: 0xE8FF });
+        assert_eq!(
+            out[0],
+            GhosttyRange {
+                start: 0xE5FA,
+                end: 0xE8FF
+            }
+        );
     }
 
     #[test]
@@ -489,12 +500,21 @@ font-codepoint-map = U+F1B00-U+F20FF=MnmlSymbols
     #[test]
     fn is_routed_true_when_in_any_range() {
         let ranges = vec![
-            GhosttyRange { start: 0xE5FA, end: 0xE8FF },
-            GhosttyRange { start: 0xF0001, end: 0xF1AFF },
+            GhosttyRange {
+                start: 0xE5FA,
+                end: 0xE8FF,
+            },
+            GhosttyRange {
+                start: 0xF0001,
+                end: 0xF1AFF,
+            },
         ];
         assert!(is_routed(0xE8A4, &ranges));
         assert!(is_routed(0xF07D2, &ranges));
-        assert!(!is_routed(0xF0F6, &ranges), "F0F6 falls outside routed ranges — should tofu");
+        assert!(
+            !is_routed(0xF0F6, &ranges),
+            "F0F6 falls outside routed ranges — should tofu"
+        );
     }
 
     #[test]
