@@ -162,16 +162,37 @@ fn maybe_reexec_for_sandbox() {
         child_args.push(workspace.clone());
     }
     eprintln!("mnml: --sandbox self-redirect: HOME={root}");
-    // Unix exec() replaces the current process image — no fork, no
-    // wait, no double-mnml running.
-    use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(&raw[0])
-        .args(&child_args)
-        .env("HOME", &root)
-        .env("XDG_CONFIG_HOME", &xdg)
-        .exec();
-    eprintln!("mnml: --sandbox: exec failed: {err}");
-    std::process::exit(1);
+    // Unix: exec() replaces the current process image — no fork, no
+    // wait, no double-mnml running. Windows: no exec in stdlib, so
+    // spawn + wait + propagate the child's exit code. Costs one extra
+    // process for the lifetime of the sandbox — fine, sandbox mode
+    // isn't the hot path.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(&raw[0])
+            .args(&child_args)
+            .env("HOME", &root)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .exec();
+        eprintln!("mnml: --sandbox: exec failed: {err}");
+        std::process::exit(1);
+    }
+    #[cfg(not(unix))]
+    {
+        match std::process::Command::new(&raw[0])
+            .args(&child_args)
+            .env("HOME", &root)
+            .env("XDG_CONFIG_HOME", &xdg)
+            .status()
+        {
+            Ok(status) => std::process::exit(status.code().unwrap_or(1)),
+            Err(err) => {
+                eprintln!("mnml: --sandbox: spawn failed: {err}");
+                std::process::exit(1);
+            }
+        }
+    }
 }
 
 /// Prune old `mnml-sandbox-*` directories from the system temp root.

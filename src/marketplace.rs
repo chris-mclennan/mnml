@@ -93,6 +93,15 @@ pub struct MarketplaceEntry {
     /// `"yellow"`, …), applied to the glyph span. `None` → `t.fg`.
     #[serde(default)]
     pub color: Option<String>,
+    /// 2026-08-08 — separate from `provenance` ("who wrote it"), this
+    /// flags "have WE actually used and verified it in real work". A
+    /// curated allow-list in mnml core (see `verified_ids()`) — never
+    /// a manifest field since the sibling author could just set it.
+    /// Rendered as a `✓ Verified` chip on the marketplace row alongside
+    /// (not instead of) the Official/Community chip. Community-authored
+    /// integrations can also be verified once we've used them.
+    #[serde(default)]
+    pub verified: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +160,32 @@ pub fn provenance_for(source_id: &str) -> Provenance {
     } else {
         Provenance::Community
     }
+}
+
+/// 2026-08-08 — the curated list of marketplace ids we (the maintainer)
+/// have actually used in real work and confirmed function correctly.
+/// Rendered as a green `✓ Verified` chip on the marketplace row. Add
+/// an id here after using the crate end-to-end without hitting
+/// blockers; remove one if a real user reports it's broken.
+///
+/// Distinct from [`Provenance`], which is about AUTHORSHIP (who wrote
+/// it). A community-authored integration can be verified once we've
+/// used it; an official integration is unverified until we've tried it.
+pub fn verified_ids() -> &'static [&'static str] {
+    &[
+        "mnml-forge-bitbucket",
+        "mnml-tracker-jira",
+        "mnml-aws-amplify",
+        "mnml-aws-codebuild",
+        "mnml-db",
+        "mnml-forge-github",
+        "mnml-msg-slack",
+    ]
+}
+
+/// Convenience — does the given entry id appear in `verified_ids()`?
+pub fn is_verified(id: &str) -> bool {
+    verified_ids().contains(&id)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,6 +292,7 @@ pub fn parse_crates_response(source_id: &str, body: &str) -> Result<Vec<Marketpl
         .map(|c| {
             let label = c.name.clone();
             let (glyph, color) = catalog_lookup(&c.name);
+            let name_for_verified = c.name.clone();
             MarketplaceEntry {
                 source_id: source_id.to_string(),
                 kind: MarketplaceKind::App,
@@ -272,6 +308,7 @@ pub fn parse_crates_response(source_id: &str, body: &str) -> Result<Vec<Marketpl
                 provenance,
                 glyph,
                 color,
+                verified: is_verified(&name_for_verified),
             }
         })
         .collect();
@@ -325,6 +362,7 @@ pub fn parse_launcher_toml(
         None => (None, None),
     };
     let (fallback_glyph, fallback_color) = catalog_lookup(&m.id);
+    let verified = is_verified(&m.id);
     Ok(MarketplaceEntry {
         source_id: source_id.to_string(),
         kind: MarketplaceKind::Launcher,
@@ -338,6 +376,7 @@ pub fn parse_launcher_toml(
         provenance: provenance_for(source_id),
         glyph: chip_glyph.or(fallback_glyph),
         color: chip_color.or(fallback_color),
+        verified,
     })
 }
 
@@ -834,6 +873,7 @@ run = ":term htop"
                 provenance: Provenance::Official,
                 glyph: None,
                 color: None,
+                verified: false,
             }],
         };
         original.save_to(&path).unwrap();

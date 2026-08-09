@@ -3996,6 +3996,18 @@ fn draw_integrations_section(frame: &mut Frame, app: &mut App, area: Rect) {
                 format!("  {prov_glyph} {prov_label}"),
                 Style::default().fg(prov_fg).bg(bg),
             ));
+            // 2026-08-08 — Verified chip. Curated allow-list in
+            // marketplace::verified_ids() signals "we (maintainer) used
+            // this in real work and it functions correctly." Separate
+            // axis from Official (authorship) — a Community integration
+            // could also be Verified once we've used it. Sits after the
+            // Official/Community chip.
+            if entry.verified {
+                name_spans.push(Span::styled(
+                    "  ✓ Verified".to_string(),
+                    Style::default().fg(t.green).bg(bg),
+                ));
+            }
             name_spans.push(Span::styled(
                 format!("  ({})", entry.source_id),
                 Style::default()

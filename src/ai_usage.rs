@@ -158,9 +158,9 @@ pub fn write_claude_token(token: &str) -> Result<PathBuf, String> {
 /// during the write. Falls back to plain `fs::write` on non-Unix
 /// (Windows perms model is different anyway).
 fn write_secret_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
     #[cfg(unix)]
     {
+        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut f = std::fs::OpenOptions::new()
             .create(true)
