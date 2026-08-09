@@ -1048,11 +1048,13 @@ impl App {
         chains.sort();
         self.http_panel_chains_cache = chains;
         // Mocks — collect all `*.mock.json` picked up by the http
-        // file walk. Cheap: the walk already produced the list and
-        // we just filter it. Mocks live as siblings of the source
-        // files they mock, so the walk covers them.
-        let mut mocks: Vec<std::path::PathBuf> = self
-            .http_panel_files_cache
+        // file walk. R7 api-workflow SEV-2 2026-08-09: was reading
+        // `self.http_panel_files_cache` — which is only assigned at
+        // line 1242 below — so the first refresh always saw the
+        // PRIOR call's cache. Now reads from `all_workspace_files`
+        // (fresh, sorted at line 1007). Mocks live as siblings of
+        // the source files they mock, so the walk covers them.
+        let mut mocks: Vec<std::path::PathBuf> = all_workspace_files
             .iter()
             .filter(|p| {
                 p.file_name()
@@ -1192,10 +1194,21 @@ impl App {
         // dir; parents with ≥2 request files become collection roots.
         // Skip the workspace root itself (that would eat every loose
         // .http; the "workspace as one big collection" case isn't
-        // what the user wants).
+        // what the user wants). R7 api-workflow SEV-3 2026-08-09:
+        // `.mock.json` sidecars are NOT request files and shouldn't
+        // count toward the ≥2 threshold — a folder with 1 `.curl` +
+        // 1 `foo.curl.mock.json` isn't a collection.
+        let is_mock_sidecar = |p: &std::path::Path| -> bool {
+            p.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|n| n.ends_with(".mock.json"))
+        };
         let mut by_parent: std::collections::HashMap<std::path::PathBuf, usize> =
             std::collections::HashMap::new();
         for f in &all_workspace_files {
+            if is_mock_sidecar(f) {
+                continue;
+            }
             if let Some(parent) = f.parent()
                 && parent != self.workspace
             {
@@ -1221,6 +1234,14 @@ impl App {
         let mut in_collection: Vec<std::path::PathBuf> = Vec::new();
         let mut stragglers: Vec<std::path::PathBuf> = Vec::new();
         for f in all_workspace_files {
+            // R7 api-workflow SEV-3 2026-08-09: exclude .mock.json
+            // sidecars from both FILES and COLLECTIONS — they live
+            // in the MOCKS section only. `all_workspace_files`
+            // includes them (needed for the mocks-collect above)
+            // but they shouldn't render as clickable request files.
+            if is_mock_sidecar(&f) {
+                continue;
+            }
             if is_in_collection(&f) {
                 in_collection.push(f);
             } else {
