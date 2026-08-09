@@ -218,34 +218,6 @@ impl SpendSortKey {
     }
 }
 
-// mpsc::Receiver isn't Clone; the snapshot view is. Hand-impl
-// Clone so the unrelated callers (test helpers) that clone panes
-// can still do so — the cloned report just won't have an active
-// background worker (treated as not-loading).
-//
-// code-reviewer 3rd 2026-06-29 W-2: WARNING — Pane itself does
-// not currently derive Clone, so this impl is unreachable today.
-// Kept defensively in case someone adds #[derive(Clone)] to Pane
-// later. CLONING DROPS THE PENDING RECEIVER: the cloned pane
-// silently shows stale data forever with no spinner. If you do
-// add Pane: Clone, ALSO call `.refresh()` on the cloned
-// SpendReportPane to start a fresh worker.
-impl Clone for SpendReportPane {
-    fn clone(&self) -> Self {
-        Self {
-            snapshot: self.snapshot.clone(),
-            built_at: self.built_at,
-            selected: self.selected,
-            scroll: self.scroll,
-            sort_by: self.sort_by,
-            sort_desc: self.sort_desc,
-            pending: None,
-            loading: false,
-            abort_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }
-    }
-}
-
 impl Drop for SpendReportPane {
     fn drop(&mut self) {
         // code-reviewer 3rd 2026-06-29 W-3: tell the worker to
