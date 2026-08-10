@@ -3780,8 +3780,6 @@ pub struct App {
     /// Row count for the bottom panel body (border + tab strip take
     /// their own extra rows). Default 12. Drag the top edge to resize.
     pub bottom_panel_height: u16,
-    /// True while the user is mid-drag on the bottom panel's top edge.
-    pub dragging_bottom_panel_edge: bool,
     /// Panes hosted in the bottom panel. Same tabbed model as
     /// right_panel_panes.
     pub bottom_panel_panes: Vec<usize>,
@@ -4062,14 +4060,6 @@ pub struct App {
     /// falsely report "no down" to the jitter guard — tester
     /// found tabs still orphaning on ≥120ms holds. 2026-07-24.
     pub mouse_down_at: Option<(u16, u16)>,
-    /// Timestamp of the last wheel-scroll event we APPLIED to a slow-
-    /// scroll surface (tree / git rail / sidebar list). macOS Terminal +
-    /// Ghostty + iTerm2 fire several scroll events per real wheel
-    /// notch under smooth-scrolling; without a throttle the cursor in
-    /// a short list runs past the visible area on a single notch.
-    /// `dispatch::scroll_under` drops events that arrive within
-    /// `LIST_SCROLL_THROTTLE_MS` of the previous applied one.
-    pub last_list_scroll_at: Option<std::time::Instant>,
     /// Token bucket for the wheel-flywheel dampener — Logitech
     /// MX-style free-spin wheels keep emitting real OS wheel
     /// events for several seconds after the user physically
@@ -4337,13 +4327,6 @@ pub struct App {
     /// `App.websocket{,_pane_id}` removed.
     pub http_sync_started: Option<std::time::Instant>,
     pub lookup_fire_started: Option<std::time::Instant>,
-    /// 2026-06-19 — v2 polish: shared "user has asked us to stop"
-    /// flag the long-running HTTP workers poll between iterations.
-    /// Set by `:http.abort` (and Esc on a Request pane that's
-    /// in-flight). Workers don't preempt mid-network-call —
-    /// granularity is 1 request — but they exit the loop on the
-    /// next iteration boundary instead of running to completion.
-    pub http_abort: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Domain-keyed cookie jar. Loaded from `.mnml/cookies.json`
     /// at App init; written by `:cookies.persist`. Auto-injected
     /// into Request pane sends via `spawn_http_job`.
@@ -4419,12 +4402,6 @@ pub struct App {
     /// feedback after clicking. Set by the down-left handler;
     /// cleared on activity-section change or repo switch.
     pub git_palette_selected: Option<String>,
-    /// qa-feature 2026-06-30 — first visible row offset for
-    /// wheel-scroll on the git palette. When the palette content
-    /// is taller than the rail, rows above `git_palette_scroll`
-    /// are skipped. Bounded by render to [0, max] where max keeps
-    /// at least one row visible.
-    pub git_palette_scroll: usize,
     /// qa-feature 2026-06-30 — set of git-palette SECTION names
     /// the user has collapsed (LOCAL / REMOTE / WORKTREES / PRS /
     /// STASHES / TAGS). Click the section header to toggle. When
@@ -4437,13 +4414,6 @@ pub struct App {
     /// as `section:folder` to disambiguate `chore` under LOCAL
     /// vs REMOTE.
     pub git_palette_collapsed_folders: std::collections::HashSet<String>,
-    /// qa-feature 2026-06-30 — keyboard cursor inside the git
-    /// palette (when Focus::Tree + active_section == Git). ↑/↓
-    /// move it; Enter fires the same action as clicking the row.
-    /// Counts logical rows (branches / remote branches / worktrees
-    /// / pulls / stashes / tags) — not section headers / blank
-    /// separators.
-    pub git_palette_cursor: usize,
     /// `true` while the workspace-picker dropdown is open (anchored
     /// under the workspace header in the rail). Click the `▾` chip
     /// to toggle; click a row to switch + close; Esc / click-out
@@ -5473,7 +5443,6 @@ impl App {
             right_panel_active_idx: 0,
             bottom_panel_visible: false,
             bottom_panel_height: 12,
-            dragging_bottom_panel_edge: false,
             bottom_panel_panes: Vec::new(),
             bottom_panel_active_idx: 0,
             integrations_user_max_h: None,
@@ -5532,14 +5501,11 @@ impl App {
             last_click: None,
             click_echo: None,
             mouse_down_at: None,
-            last_list_scroll_at: None,
             scroll_bucket: 25.0,
             scroll_bucket_last_refill: None,
             git_palette_filter: String::new(),
             git_palette_filter_focused: false,
             git_palette_selected: None,
-            git_palette_scroll: 0,
-            git_palette_cursor: 0,
             git_palette_collapsed_sections: {
                 // qa-feature 2026-06-30 — REMOTE starts collapsed
                 // by default; it's often 100+ entries and dominates
@@ -5712,7 +5678,6 @@ impl App {
             http_bench_progress: None,
             http_sync_started: None,
             lookup_fire_started: None,
-            http_abort: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cookie_jar: cookie_jar_init,
             http_running_env: std::collections::HashMap::new(),
             pending_captured_rows: Vec::new(),

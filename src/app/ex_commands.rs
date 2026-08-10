@@ -355,12 +355,7 @@ impl App {
         }
     }
 
-    pub fn run_sort_lines(&mut self, unique: bool, reverse: bool) {
-        self.run_sort_lines_opts(unique, reverse, false);
-    }
-
-    /// Same as [`Self::run_sort_lines`] but with a case-insensitive flag —
-    /// vim's `:sort i`. `case_insensitive=true` compares lines via their
+    /// vim's `:sort [i]` — set `case_insensitive=true` to compare via
     /// lowercase form (ASCII; cheap, matches vim's default behavior).
     pub fn run_sort_lines_opts(&mut self, unique: bool, reverse: bool, case_insensitive: bool) {
         self.run_sort_lines_full(unique, reverse, case_insensitive, false, None);

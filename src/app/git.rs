@@ -869,29 +869,6 @@ impl App {
         self.focus = Focus::Pane;
     }
 
-    /// Open one file's contribution to a commit as a `Pane::Diff`
-    /// (`git show <hash> -- <rel_path>`). Used by the commit-detail
-    /// panel's "Diff view" button.
-    pub fn open_commit_file_diff(&mut self, hash: &str, rel_path: &std::path::Path) {
-        let scope = crate::pane::DiffScope::CommitFile {
-            hash: hash.to_string(),
-            rel_path: rel_path.to_path_buf(),
-        };
-        let hunks = self.fetch_diff(&scope);
-        if hunks.is_empty() {
-            self.toast(format!(
-                "{} — no diff for {}",
-                hash.chars().take(9).collect::<String>(),
-                rel_path.display()
-            ));
-            return;
-        }
-        self.panes
-            .push(Pane::Diff(self.make_diff_view(scope, hunks)));
-        let id = self.panes.len() - 1;
-        self.reveal_pane(id);
-    }
-
     /// Click handler for a changed-file row in the GitGraph
     /// commit-detail panel. Opens the file's diff as an embedded
     /// diff INSIDE the GitGraph pane (replacing the commit list)
@@ -2013,10 +1990,6 @@ impl App {
         self.git_section_commit_buffer.push(c);
     }
 
-    pub fn git_section_commit_backspace(&mut self) {
-        self.git_section_commit_buffer.pop();
-    }
-
     /// Submit the inline commit buffer via `git commit -m`. Refuses
     /// when the buffer is empty (toasts an explanation); clears the
     /// buffer + blurs on success.
@@ -2096,24 +2069,6 @@ impl App {
         {
             g.wip_commit.focused = false;
         }
-    }
-
-    /// Returns true when the active pane is a GitGraph whose WIP
-    /// commit textarea is focused. Lets `tui::dispatch_key` route
-    /// printable / Backspace / arrow / Enter keys to the textarea
-    /// before the GitGraph chord table sees them.
-    pub fn active_wip_commit_textarea_focused(&self) -> bool {
-        self.active
-            .and_then(|i| self.panes.get(i))
-            .and_then(|p| {
-                if let Pane::GitGraph(g) = p {
-                    Some(g)
-                } else {
-                    None
-                }
-            })
-            .map(|g| g.wip_commit.focused)
-            .unwrap_or(false)
     }
 
     /// Mutable handle to the active GitGraph pane's commit textarea

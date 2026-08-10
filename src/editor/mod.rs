@@ -1574,19 +1574,12 @@ impl Editor {
     pub fn has_selection(&self) -> bool {
         self.anchor.map(|a| a != self.cursor).unwrap_or(false)
     }
-    pub fn is_at_line_start(&self) -> bool {
-        self.cursor == self.line_start(self.current_line())
-    }
     pub fn is_at_line_end(&self) -> bool {
         self.cursor == self.line_end(self.current_line())
     }
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }
-    pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
-    }
-
     /// How many undo steps go back to a snapshot at least `secs` old. Used
     /// by `:earlier <N><unit>` — caller multiplies the result by Undo to
     /// walk that far back. Walks newest→oldest until it finds a snapshot
@@ -1879,14 +1872,6 @@ impl Editor {
         if self.undo.len() > UNDO_LIMIT {
             self.undo.remove(0);
         }
-    }
-
-    /// Current number of undo entries. Callers can checkpoint, run a
-    /// multi-op atomic edit (e.g. `:%s/.../.../g`), then truncate the
-    /// stack back to `len + 1` so a single `u` undoes the whole run
-    /// instead of one entry per replacement.
-    pub fn undo_len(&self) -> usize {
-        self.undo.len()
     }
 
     /// Push one pre-state checkpoint, run `body`, then collapse every
