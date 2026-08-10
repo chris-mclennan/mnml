@@ -726,6 +726,20 @@ pub(crate) fn handle_confirm_modal_key(app: &mut App, key: KeyEvent) {
 
 pub(crate) fn handle_prompt_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // R10 vscode-keyboard SEV-2 — Ctrl+Shift+P from inside a prompt
+    // used to be swallowed by the prompt input handler below, so
+    // the palette-open path (which now dismisses the underlying
+    // prompt in `open_command_palette`) never ran. Escape the
+    // prompt first, then run the palette command; `open_command_palette`
+    // itself will re-clear `app.prompt` for extra safety.
+    if ctrl
+        && key.modifiers.contains(KeyModifiers::SHIFT)
+        && matches!(key.code, KeyCode::Char('P') | KeyCode::Char('p'))
+    {
+        app.prompt = None;
+        crate::command::run("palette", app);
+        return;
+    }
     let Some(p) = app.prompt.as_mut() else { return };
     // #polish 2026-07-06 — DeleteConfirm — button dialog. Same
     // shape as QuitConfirm: Left/Right cycle, Enter fires focused
