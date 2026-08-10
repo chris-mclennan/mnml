@@ -2544,7 +2544,11 @@ fn builtin_commands() -> Vec<Command> {
             id: "picker.files",
             title: "Open file…",
             group: "go",
-            keys: &["ctrl+p", "ctrl+o"],
+            // R9 nvchad SEV-3 — `<leader>ff` was the NvChad muscle
+            // memory for telescope find-files; adding the chord
+            // (space f f) so vim-mode users don't have to remember
+            // the vscode-style Ctrl+P / Ctrl+O.
+            keys: &["ctrl+p", "ctrl+o", "space f f"],
             run: |app| app.open_file_picker(),
         },
         Command {
