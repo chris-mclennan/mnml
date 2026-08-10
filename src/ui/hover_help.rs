@@ -212,10 +212,19 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
 ///      or when the focus target had nothing useful to show.
 ///   3. Focus hint pointing at the palette (last resort).
 fn pick_help_text(app: &App) -> (String, Option<String>) {
-    if let Some((chip, _)) = app.hover_chip
-        && let Some((primary, secondary)) = crate::ui::tooltip::describe_text(chip, app)
-    {
-        return (primary, secondary);
+    // Info View v0.3 Phase 1.5 — InfoViewCopy takes precedence when a
+    // curated entry exists. Falls through to the legacy tooltip
+    // describe_text for chips we haven't written copy for yet.
+    // Both branches use to_flat_pair for now; the rich renderer
+    // (shortcuts / try_it / chord glyphs) is Phase 1.6+.
+    if let Some((chip, _)) = app.hover_chip {
+        let target = crate::ui::info_view::InfoViewTarget::Chip(chip);
+        if let Some(copy) = crate::ui::info_view_copy::lookup(app, &target) {
+            return copy.to_flat_pair();
+        }
+        if let Some((primary, secondary)) = crate::ui::tooltip::describe_text(chip, app) {
+            return (primary, secondary);
+        }
     }
     // Focus-target description takes precedence over the active
     // pane whenever focus isn't on a pane. Otherwise a keyboard
@@ -261,6 +270,15 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| row.path.to_string_lossy().into_owned());
+            // Info View v0.3 Phase 1.5 — prefer a curated tree-row
+            // entry when one exists (language-specific hint copy).
+            let target = crate::ui::info_view::InfoViewTarget::TreeRow {
+                label: name.clone(),
+                is_dir: row.is_dir,
+            };
+            if let Some(copy) = crate::ui::info_view_copy::lookup(app, &target) {
+                return Some(copy.to_flat_pair());
+            }
             let (primary, secondary) = if row.is_dir {
                 (
                     format!("{name}/"),
