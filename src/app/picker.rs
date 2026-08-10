@@ -551,6 +551,12 @@ impl App {
     /// plugin-registered ones).
     pub fn open_command_palette(&mut self) {
         use crate::picker::PickerItem;
+        // R9 vscode-keyboard SEV-3 — the palette used to stack on
+        // top of an already-open prompt, and the user's Ctrl+Shift+P
+        // keystrokes then leaked into the underneath prompt when
+        // Esc was pressed. Dismiss any prompt as step 1 so the
+        // palette is always the ONLY input target after open.
+        self.prompt = None;
         // 2026-06-19 — keyboard hunt SEV-2: include the command
         // id in the label so a user typing the dotted id (VS Code
         // muscle memory) finds the command directly. The id renders
