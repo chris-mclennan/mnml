@@ -92,6 +92,8 @@ pub mod findings_panel;
 pub mod git_palette;
 pub mod hover_help;
 pub mod http_panel;
+pub mod info_view;
+pub mod info_view_copy;
 pub mod md_preview_external;
 pub mod menu_bar;
 pub mod mount_view;
