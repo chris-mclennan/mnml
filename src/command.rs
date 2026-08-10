@@ -1741,13 +1741,10 @@ fn builtin_commands() -> Vec<Command> {
             group: "view",
             keys: &[],
             run: |app| {
-                app.config.ui.hover_help = !app.config.ui.hover_help;
-                let state = if app.config.ui.hover_help {
-                    "on"
-                } else {
-                    "off"
-                };
-                app.toast(format!("hover-help {state}"));
+                let on = !app.config.ui.hover_help;
+                app.config.ui.hover_help = on;
+                let _ = crate::app::discovery::persist_ui_bool("hover_help", on);
+                app.toast(format!("hover-help {}", if on { "on" } else { "off" }));
             },
         },
         Command {
@@ -3064,6 +3061,7 @@ fn builtin_commands() -> Vec<Command> {
             keys: &[],
             run: |app| {
                 app.config.ui.clock = false;
+                let _ = crate::app::discovery::persist_ui_bool("clock", false);
                 app.toast("clock: hidden (`:set clock` to restore)");
             },
         },

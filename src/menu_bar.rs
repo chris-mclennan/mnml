@@ -271,7 +271,7 @@ fn view_menu() -> MenuDef {
                 "\u{F0C9}  Cycle menu bar (always / auto / hidden)",
                 "view.menu_bar_cycle",
             ),
-            MenuItem::action("\u{EB80}  Toggle word wrap", "view.toggle_wrap"),
+            MenuItem::action("\u{EB80}  Toggle line wrap", "view.toggle_wrap"),
             // fa-eye — zen = single-focus, not dark mode (F186 moon
             // was wrong; that reads as theme-dark).
             MenuItem::action("\u{F06E}  Toggle zen mode", "view.zen"),
