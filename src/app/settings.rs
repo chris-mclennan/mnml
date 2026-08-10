@@ -384,6 +384,26 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         cfg.ui.render_markdown,
         d.ui.render_markdown,
     ));
+    // R9 vscode-keyboard SEV-2 — three persistable toggles were
+    // palette-only and had no Settings row.
+    out.push(bool_row(
+        "ui.hover_help",
+        "Hover-help info box (bottom of left panel)",
+        cfg.ui.hover_help,
+        d.ui.hover_help,
+    ));
+    out.push(bool_row(
+        "ui.show_workspace_dots",
+        "Workspace-root dots ( ● / ○ )",
+        cfg.ui.show_workspace_dots,
+        d.ui.show_workspace_dots,
+    ));
+    out.push(bool_row(
+        "ui.highlight_todo_keywords",
+        "Highlight TODO / FIXME / HACK / XXX",
+        cfg.ui.highlight_todo_keywords,
+        d.ui.highlight_todo_keywords,
+    ));
     out.push(bool_row(
         "ui.always_show_fold_arrows",
         "Persistent fold arrows",
@@ -775,6 +795,9 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.wrap" => set_bool(&mut cfg.ui.wrap, opt_idx),
         "ui.sticky_context" => set_bool(&mut cfg.ui.sticky_context, opt_idx),
         "ui.render_markdown" => set_bool(&mut cfg.ui.render_markdown, opt_idx),
+        "ui.hover_help" => set_bool(&mut cfg.ui.hover_help, opt_idx),
+        "ui.show_workspace_dots" => set_bool(&mut cfg.ui.show_workspace_dots, opt_idx),
+        "ui.highlight_todo_keywords" => set_bool(&mut cfg.ui.highlight_todo_keywords, opt_idx),
         "ui.always_show_fold_arrows" => set_bool(&mut cfg.ui.always_show_fold_arrows, opt_idx),
         "ui.auto_md_preview" => set_bool(&mut cfg.ui.auto_md_preview, opt_idx),
         "ui.picker_position" => {
@@ -1004,6 +1027,15 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
         "ui.wrap" => vec![("ui", "wrap", b(cfg.ui.wrap))],
         "ui.sticky_context" => vec![("ui", "sticky_context", b(cfg.ui.sticky_context))],
         "ui.render_markdown" => vec![("ui", "render_markdown", b(cfg.ui.render_markdown))],
+        "ui.hover_help" => vec![("ui", "hover_help", b(cfg.ui.hover_help))],
+        "ui.show_workspace_dots" => {
+            vec![("ui", "show_workspace_dots", b(cfg.ui.show_workspace_dots))]
+        }
+        "ui.highlight_todo_keywords" => vec![(
+            "ui",
+            "highlight_todo_keywords",
+            b(cfg.ui.highlight_todo_keywords),
+        )],
         "ui.always_show_fold_arrows" => vec![(
             "ui",
             "always_show_fold_arrows",
