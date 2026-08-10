@@ -1761,10 +1761,6 @@ impl BrowserPane {
         self.storage_filter.push(c);
         self.storage_sel = 0;
     }
-    pub fn storage_filter_pop(&mut self) {
-        self.storage_filter.pop();
-        self.storage_sel = 0;
-    }
     pub fn storage_filter_clear_and_exit(&mut self) {
         self.storage_filter.clear();
         self.storage_filter_mode = false;
@@ -1882,10 +1878,6 @@ impl BrowserPane {
 
     pub fn cookies_filter_push(&mut self, c: char) {
         self.cookies_filter.push(c);
-        self.cookies_sel = 0;
-    }
-    pub fn cookies_filter_pop(&mut self) {
-        self.cookies_filter.pop();
         self.cookies_sel = 0;
     }
     pub fn cookies_filter_clear_and_exit(&mut self) {

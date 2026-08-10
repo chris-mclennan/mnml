@@ -496,14 +496,6 @@ impl App {
         self.toast("trace viewer: run `mnml-test-playwright <path>` in a shell");
     }
 
-    /// Stub kept after the Trace pane moved out — the standalone
-    /// `mnml-test-playwright` has its own `r` reload. The mnml command
-    /// surface (`tests.refresh_trace`) is preserved as a no-op so
-    /// existing keybindings don't error.
-    pub fn refresh_active_trace(&mut self) {
-        self.toast("trace viewer moved to mnml-test-playwright; press `r` inside the hosted pane");
-    }
-
     /// `test.heal` (`h` in a tests pane) — hand the highlighted *failing* test (its
     /// title, file, error, and the spec source) to `claude -p` and ask for a fix.
     /// Reuses the AI machinery; `c` in the resulting `Pane::Ai` promotes it to an

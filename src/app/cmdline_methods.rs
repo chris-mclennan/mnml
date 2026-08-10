@@ -373,13 +373,6 @@ impl App {
         }
     }
 
-    /// Backspace one char.
-    pub fn no_pane_cmdline_backspace(&mut self) {
-        if let Some(buf) = self.no_pane_cmdline.as_mut() {
-            buf.pop();
-        }
-    }
-
     /// Commit the typed cmdline — runs the body as an ex-command and
     /// closes the line. Empty body just closes (matches vim's
     /// Enter-on-empty behavior).

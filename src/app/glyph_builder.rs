@@ -5,7 +5,7 @@
 //! The panel state itself lives in `crate::glyph_builder`.
 
 use crate::app::App;
-use crate::glyph_builder::{BUILTIN_GLYPHS, BuilderField, GlyphBuilderState, GlyphMetaFile};
+use crate::glyph_builder::{BUILTIN_GLYPHS, GlyphBuilderState, GlyphMetaFile};
 
 /// Pick the next free codepoint in mnml's PUA range (0xF1B00+) that
 /// isn't already occupied by a shipped built-in OR a user-baked
@@ -706,12 +706,6 @@ impl App {
             ai_glyphs.len(),
             preserved
         ));
-    }
-
-    /// Where the UI should look for the current focus. Used by the
-    /// key handler + the renderer to keep the two in sync.
-    pub fn glyph_builder_focused_field(&self) -> Option<BuilderField> {
-        self.glyph_builder.as_ref().map(|s| s.focused_field)
     }
 
     /// Open the 3-option "what do you want to do with a glyph?"

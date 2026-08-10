@@ -39,24 +39,7 @@ pub enum EditingMode {
     VisualBlock,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CursorShape {
-    Bar,
-    Block,
-    Underline,
-}
-
 impl EditingMode {
-    pub fn cursor_shape(self) -> CursorShape {
-        match self {
-            EditingMode::Insert | EditingMode::None => CursorShape::Bar,
-            EditingMode::Replace => CursorShape::Underline,
-            EditingMode::Normal
-            | EditingMode::Visual
-            | EditingMode::VisualLine
-            | EditingMode::VisualBlock => CursorShape::Block,
-        }
-    }
     /// `None` ⇒ render no mode chip at all.
     pub fn label(self) -> Option<&'static str> {
         match self {

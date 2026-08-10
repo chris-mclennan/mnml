@@ -303,11 +303,6 @@ impl Keymap {
         }
     }
 
-    /// Number of bound sequences. Used by the About / Settings display.
-    pub fn binding_count(&self) -> usize {
-        self.map.len()
-    }
-
     /// Iterate `(chord_seq, command_id)` pairs. Useful for `:Maps` discovery
     /// and similar listings. Order is undefined (HashMap-backed). Single-
     /// chord bindings yield a 1-element slice; chord chains yield N>1.

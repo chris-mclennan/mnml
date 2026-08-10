@@ -249,22 +249,6 @@ impl CloudAgentsConfig {
         }
     }
 
-    pub fn effective_label(&self) -> &str {
-        if self.label.is_empty() {
-            "ECS runner"
-        } else {
-            &self.label
-        }
-    }
-
-    pub fn effective_short_id(&self) -> &str {
-        if self.short_id.is_empty() {
-            "ecs"
-        } else {
-            &self.short_id
-        }
-    }
-
     pub fn effective_default_workspace_label(&self) -> &str {
         if self.default_workspace_label.is_empty() {
             "cloud"
@@ -337,12 +321,6 @@ pub struct WorkspaceConfig {
 // mnml-forge-bitbucket / mnml-forge-github binaries, hosted via
 // `:term mnml-forge-bitbucket` / `:term mnml-forge-github`.
 // The integration icon strip seeds rows pointing at them.
-
-/// Long-lived branches the per-branch pipelines view defaults to
-/// when a repo's `branches` field is empty.
-pub fn default_branches() -> &'static [&'static str] {
-    &["main", "master", "develop", "staging"]
-}
 
 // `[gitlab]` panes + config moved to mnml-forge-gitlab in 2026-06.
 // `[azdevops]` panes + config moved to mnml-forge-azdevops in 2026-06.

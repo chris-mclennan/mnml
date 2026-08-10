@@ -420,13 +420,6 @@ impl Buffer {
         Ok(b)
     }
 
-    /// Open a buffer that input can't mutate (diff views, log tails, …).
-    pub fn open_readonly(path: &Path, cfg: &Config) -> std::io::Result<Buffer> {
-        let mut b = Buffer::open(path, cfg)?;
-        b.read_only = true;
-        Ok(b)
-    }
-
     /// Open `path`, or return an empty in-memory buffer with `path`
     /// set when the file doesn't exist yet (vim's `:e <newfile>`
     /// semantics). The empty buffer is marked dirty so the first

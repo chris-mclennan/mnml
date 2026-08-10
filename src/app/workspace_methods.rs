@@ -16,14 +16,6 @@ impl App {
     }
 
     /// Handle a click on a row inside an extra-workspace's body. Updates that
-    /// tree's cursor, then opens the file or toggles the dir under it. Repo-
-    /// dir clicks also switch the active repo (sibling of the primary-tree
-    /// behavior in `tui::dispatch_mouse`).
-    pub fn click_extra_workspace_row(&mut self, ws_idx: usize, row_idx: usize) {
-        self.click_extra_workspace_row_ex(ws_idx, row_idx, false);
-    }
-
-    /// Handle a click on a row inside an extra-workspace's body. Updates that
     /// tree's cursor, then opens the file or toggles the dir under it.
     /// `recursive = true` triggers recursive expand/collapse on the dir
     /// (Alt+click gesture). Repo-dir clicks also switch the active repo

@@ -190,14 +190,3 @@ pub fn chip_bar_span(glyph: impl AsRef<str>, active: bool) -> Span<'static> {
         Style::default().fg(fg).bg(t.bg_dark),
     )
 }
-
-/// Style for a section-label row inside a modal — the dim italic
-/// tag above a group of related fields (e.g. `preview` label above
-/// the preview area). Optional; use where visual grouping helps.
-pub fn section_label_style() -> Style {
-    let t = theme::cur();
-    Style::default()
-        .fg(t.comment)
-        .bg(t.bg_dark)
-        .add_modifier(Modifier::ITALIC)
-}

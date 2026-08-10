@@ -56,18 +56,6 @@ impl GrepPane {
         }
     }
 
-    /// Toggle a specific hit by index (mouse click on the checkbox).
-    pub fn toggle_hit(&mut self, idx: usize) {
-        if idx >= self.hits.len() {
-            return;
-        }
-        if self.disabled.contains(&idx) {
-            self.disabled.remove(&idx);
-        } else {
-            self.disabled.insert(idx);
-        }
-    }
-
     /// Re-enable every hit.
     pub fn enable_all(&mut self) {
         self.disabled.clear();

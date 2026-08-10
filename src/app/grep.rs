@@ -6,18 +6,6 @@
 use super::*;
 
 impl App {
-    /// Search activity-bar section: focus the inline input box so the
-    /// next keystrokes append to `search_query`. Also switches the
-    /// active section to Search if it wasn't already + ensures the
-    /// rail is visible.
-    pub fn search_section_focus_input(&mut self) {
-        if !self.tree_visible {
-            self.tree_visible = true;
-        }
-        self.active_section = crate::app::ActivitySection::Search;
-        self.search_input_focused = true;
-    }
-
     /// Release focus on the search input. Other dispatch paths route
     /// to the editor again.
     pub fn search_section_blur(&mut self) {
@@ -30,14 +18,6 @@ impl App {
     pub fn search_section_insert_char(&mut self, c: char) {
         self.search_query.push(c);
         self.search_cursor = self.search_query.chars().count();
-    }
-
-    /// Drop the trailing char from the search query.
-    pub fn search_section_backspace(&mut self) {
-        if !self.search_query.is_empty() {
-            self.search_query.pop();
-            self.search_cursor = self.search_query.chars().count();
-        }
     }
 
     /// Run the workspace grep on the current query — Enter inside the

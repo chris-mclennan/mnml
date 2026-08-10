@@ -1206,14 +1206,6 @@ impl App {
         }
     }
 
-    /// Pops the last char from the filter buffer.
-    pub fn settings_filter_backspace(&mut self) {
-        if let Some(s) = self.settings_overlay.as_mut() {
-            s.filter.pop();
-            s.selected_row = 0;
-        }
-    }
-
     /// Move the focused row by `delta` (positive = down). Skips
     /// section headers — `selected_row` only counts editable rows.
     pub fn settings_move_row(&mut self, delta: isize) {
