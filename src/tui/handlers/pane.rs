@@ -2489,6 +2489,18 @@ fn handle_md_preview_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize
     {
         return false;
     }
+    // R10 nvchad SEV-2 follow-up — the R9 fix stopped the catch-all
+    // from swallowing `:`, but nothing upstream picks `:` up for a
+    // non-editor pane (vim's cmdline lives inside the editor handler,
+    // and md-preview has no editor). Bind `:` here to open the app-
+    // level `no_pane_cmdline` so `:bd!`, `:e file`, `:q` reach the ex
+    // dispatcher from a preview pane too.
+    if let Some(Pane::MdPreview(_)) = app.panes.get(i)
+        && matches!(key.code, KeyCode::Char(':'))
+    {
+        app.open_ex_command_prompt();
+        return true;
+    }
     if let Some(Pane::MdPreview(p)) = app.panes.get_mut(i) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => p.scroll = p.scroll.saturating_sub(1),
