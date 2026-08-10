@@ -2093,6 +2093,16 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // note. Menu-bar word click below is still live (it fires
     // when NO menu is open yet).
 
+    // Menu-bar overflow chip (`»`) — click opens the first HIDDEN
+    // menu. From there Alt+<letter> reaches the rest per the
+    // v0.2.10 clipped-menu-open fix. R9 vscode-mouse SEV-2.
+    if let Some((rect, first_hidden_idx)) = app.rects.menu_bar_overflow
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        app.menu_open = Some(crate::menu_bar::MenuOpenState::new_mouse(first_hidden_idx));
+        return;
+    }
+
     // Menu-bar word click — toggle the dropdown.
     if let Some(&(_, menu_idx)) = app
         .rects

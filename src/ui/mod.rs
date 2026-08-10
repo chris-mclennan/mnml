@@ -2315,6 +2315,7 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
     // standard macOS / Windows / Linux menu-bar position.
     // Visibility per `[ui] menu_bar` mode.
     app.rects.menu_bar_words.clear();
+    app.rects.menu_bar_overflow = None;
     let menu_mode = app.config.ui.menu_bar.as_str();
     let menu_visible =
         matches!(menu_mode, "always") || (menu_mode == "auto" && app.menu_open.is_some());
@@ -2330,15 +2331,45 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
         // Stop painting menu words at that x so none of their
         // tail can poke into the cluster footprint.
         const CONSERVATIVE_CLUSTER_W: u16 = 50;
+        // Reserve 3 cells for the ` » ` overflow chip so a menu word
+        // never occupies the slot where we'd want to render it.
+        // R9 vscode-mouse SEV-2: mouse users couldn't reach View / Go
+        // / Run / Terminal / Window / Help when narrow terminals
+        // clipped them, and there was no visual affordance saying
+        // "more menus over here." The chip is only drawn when we
+        // actually skip a menu; the reservation just guarantees the
+        // slot when we need it.
+        const OVERFLOW_RESERVE: u16 = 3;
         let cluster_left_safe = area
             .x
             .saturating_add(area.width.saturating_sub(CONSERVATIVE_CLUSTER_W) / 2);
+        let mut first_hidden: Option<usize> = None;
         for (i, m) in menus.iter().enumerate() {
             let label_w = m.label.chars().count() as u16 + 2;
-            if mx.saturating_add(label_w) > area.x + area.width {
+            // Once anything's been skipped, all subsequent menus are
+            // hidden too — don't paint a second half after a gap.
+            if first_hidden.is_some() {
                 break;
             }
-            if mx.saturating_add(label_w) > cluster_left_safe {
+            // Reserve the overflow slot when there are still menus
+            // left AFTER this one so a chevron can fit.
+            let need_overflow_slot = i + 1 < menus.len();
+            let effective_area_end = if need_overflow_slot {
+                (area.x + area.width).saturating_sub(OVERFLOW_RESERVE)
+            } else {
+                area.x + area.width
+            };
+            let effective_cluster_bound = if need_overflow_slot {
+                cluster_left_safe.saturating_sub(OVERFLOW_RESERVE)
+            } else {
+                cluster_left_safe
+            };
+            if mx.saturating_add(label_w) > effective_area_end {
+                first_hidden = Some(i);
+                break;
+            }
+            if mx.saturating_add(label_w) > effective_cluster_bound {
+                first_hidden = Some(i);
                 break;
             }
             let word_rect = Rect {
@@ -2417,6 +2448,27 @@ fn draw_palette_bar(frame: &mut Frame, app: &mut App, area: Rect) {
             );
             app.rects.menu_bar_words.push((word_rect, i));
             mx = mx.saturating_add(label_w);
+        }
+        // R9 vscode-mouse SEV-2 — `»` chip when we skipped any menu.
+        // Click opens the first hidden menu; from there Alt+letter
+        // reaches the others (per the v0.2.10 clipped-menu-open fix).
+        if let Some(first_hidden_idx) = first_hidden
+            && mx + 3 <= area.x + area.width
+        {
+            let chip_rect = Rect {
+                x: mx,
+                y: area.y,
+                width: 3,
+                height: 1,
+            };
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(Line::from(vec![Span::styled(
+                    " » ",
+                    Style::default().fg(t.cyan).bg(t.bg_dark),
+                )])),
+                chip_rect,
+            );
+            app.rects.menu_bar_overflow = Some((chip_rect, first_hidden_idx));
         }
     }
 

@@ -2021,6 +2021,11 @@ pub struct PaneRects {
     /// `(rect, menu_idx)` per menu word on the chrome row. Click to
     /// drop the corresponding menu. Cleared + repopulated every frame.
     pub menu_bar_words: Vec<(Rect, usize)>,
+    /// `»` overflow chip at the right edge of the menu bar when
+    /// terminal width can't fit every menu word. Click opens the
+    /// FIRST hidden menu; from there Alt+letter reaches the others.
+    /// `usize` = index of the first hidden menu.
+    pub menu_bar_overflow: Option<(Rect, usize)>,
     /// `(rect, item_idx)` per item row in the currently-open menu
     /// dropdown. Empty when no menu is open. Used for click + hover-
     /// highlight dispatch.
@@ -2995,6 +3000,11 @@ impl PaneRects {
         check_vec!(pty_tabs);
         check_vec!(context_menu_items);
         check_vec!(menu_bar_words);
+        if let Some((r, _)) = self.menu_bar_overflow
+            && (r.width == 0 || r.height == 0)
+        {
+            return Err("menu_bar_overflow: rect is empty".into());
+        }
         check_vec!(menu_bar_items);
         hits
     }
