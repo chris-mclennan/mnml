@@ -299,20 +299,33 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             )],
             ..Default::default()
         }),
-        // src: src/ui/request_view.rs::draw_http_toolbar
+        // src: src/ui/http_panel.rs — top toolbar row of the HTTP
+        // activity panel. R11 api-workflow SEV-3 correction: was
+        // vague about being toolbar-wide vs per-index; now describes
+        // the ROW (which is the visible cluster).
         HttpToolbarChip(_) => Some(InfoViewCopy {
-            title: "HTTP-panel toolbar chip".into(),
-            body: "Filter / sort / refresh controls for the HTTP left-panel \
-                   section. Click for actions; right-click for a fuller menu."
+            title: "HTTP-panel toolbar".into(),
+            body: "Panel-wide toolbar for the HTTP activity section — search, \
+                   new-request, collapse-all, refresh. Same actions live in the \
+                   palette (`http.refresh`, `http.new_request`)."
                 .into(),
-            try_it: vec![PaletteLink::new("http.refresh", "Refresh HTTP list")],
+            try_it: vec![
+                PaletteLink::new("http.refresh", "Refresh HTTP list"),
+                PaletteLink::new("http.new_request", "New request"),
+            ],
             ..Default::default()
         }),
-        // src: src/ui/request_view.rs::draw_http_section_headers
+        // src: src/ui/http_panel.rs — per-section mini icon-button
+        // row (Filter / Refresh / Clear / New, one row per FILES /
+        // RECENT / CAPTURED / etc. section). NOT the header row —
+        // that has its own rects at `http_panel_section_headers`.
+        // R11 api-workflow SEV-2 correction: was describing the
+        // header/collapse behavior which lives elsewhere.
         HttpSectionChip(_) => Some(InfoViewCopy {
-            title: "HTTP section header".into(),
-            body: "One of the FILES / RECENT / CAPTURED / ENVS / CHAINS / MOCKS / \
-                   COLLECTIONS section headers. Click to collapse / expand."
+            title: "HTTP section mini-button".into(),
+            body: "Filter / refresh / clear / new button for ONE section of the \
+                   HTTP panel (FILES / RECENT / CAPTURED / ENVS / CHAINS / MOCKS / \
+                   COLLECTIONS). The header row above collapses the whole section."
                 .into(),
             ..Default::default()
         }),

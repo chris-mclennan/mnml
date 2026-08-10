@@ -2702,10 +2702,25 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         .and_then(|p| p.as_editor())
         .map(|b| b.input.is_cmdline_open())
         .unwrap_or(false);
+    // R11 claude-agents SEV-2 — the Claude Agents dashboard uses
+    // bare `space` as its multi-select toggle, but the global
+    // `<leader>` chord chain sat above the pane handler and
+    // swallowed every space keystroke there, making batch-select /
+    // batch-kill unreachable via keyboard. When the active pane is
+    // one that treats bare Space as a first-class key, bypass the
+    // chord chain for THAT key so the pane handler sees it.
+    let pane_wants_bare_space = matches!(key.code, KeyCode::Char(' '))
+        && key.modifiers.is_empty()
+        && app
+            .active
+            .and_then(|i| app.panes.get(i))
+            .map(|p| matches!(p, crate::pane::Pane::ClaudeAgents(_)))
+            .unwrap_or(false);
     if !vim_reserves_key
         && !pty_reserves_key
         && !delete_owns_focus
         && !vim_cmdline_open
+        && !pane_wants_bare_space
         && dispatch_chord_chain(app, key)
     {
         return;
