@@ -2613,6 +2613,14 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
                     | KeyCode::Char('O')
                     | KeyCode::Char('i')
                     | KeyCode::Char('I')
+                    // R10 nvchad SEV-3 — Ctrl+W is vim's window-
+                    // prefix chord (Ctrl+W h/j/k/l/w/q ...).
+                    // Standard mode's `Ctrl+W = buffer.close` used
+                    // to win globally; now vim keeps ownership of
+                    // Ctrl+W so the chord chain reaches
+                    // handle_normal's Ctrl+W arm.
+                    | KeyCode::Char('w')
+                    | KeyCode::Char('W')
             )
     };
 
