@@ -7,14 +7,41 @@ and the bits of architecture worth knowing before you change code.
 
 ```bash
 git clone https://github.com/chris-mclennan/mnml
+git clone https://github.com/chris-mclennan/fim-engine   # sibling, not optional
 cd mnml
 cargo build
 cargo test
 ```
 
+`fim-engine` is a path dependency (`../fim-engine`), so it has to sit next to
+the mnml checkout on every platform — cargo can't resolve it from crates.io.
+
 mnml builds on stable Rust — MSRV **1.87**, edition 2024. A
 [Nerd Font](https://www.nerdfonts.com/) helps when running the UI, but isn't
 needed to build or test.
+
+### Windows
+
+Windows needs the **`x86_64-pc-windows-gnu`** toolchain, not msvc — upstream
+ghostty supports `x86_64-windows-gnu` for libghostty-vt and marks msvc as not
+working yet. Set it for both host and target (`rustup override set
+stable-x86_64-pc-windows-gnu`); a msvc *host* would need an MSVC linker just to
+build the build scripts. You also need MinGW-w64 GCC on PATH as the linker
+driver, **zig 0.16.0** (`mnml-libghostty-vt-sys` source-builds libghostty-vt),
+and **libclang** from an LLVM install for bindgen.
+
+If the final link fails with `___chkstk_ms` undefined, reported as
+`relocation truncated to fit: IMAGE_REL_AMD64_REL32`, link with LLD instead:
+
+```toml
+# ~/.cargo/config.toml
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+```
+
+Some MinGW binutils versions open the right `libgcc.a` but never extract
+`_chkstk_ms.o`, which only shows up on a binary mnml's size — a minimal one
+links fine.
 
 ## The verification gate
 
