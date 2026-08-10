@@ -2093,13 +2093,30 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
     // note. Menu-bar word click below is still live (it fires
     // when NO menu is open yet).
 
-    // Menu-bar overflow chip (`»`) — click opens the first HIDDEN
-    // menu. From there Alt+<letter> reaches the rest per the
-    // v0.2.10 clipped-menu-open fix. R9 vscode-mouse SEV-2.
+    // Menu-bar overflow chip (`»`) — click cycles through the
+    // hidden menus. First click opens the first hidden; subsequent
+    // clicks advance to the next hidden one, wrapping when past
+    // the last. R9 vscode-mouse SEV-2 + R10 follow-up (was: click
+    // always opened the SAME first-hidden menu, so 5 other menus
+    // stayed unreachable at 120-cell width).
     if let Some((rect, first_hidden_idx)) = app.rects.menu_bar_overflow
         && crate::app::dispatch::contains(rect, x, y)
     {
-        app.menu_open = Some(crate::menu_bar::MenuOpenState::new_mouse(first_hidden_idx));
+        let total_menus = crate::menu_bar::bar(app).len();
+        let next_idx = match app.menu_open.as_ref().map(|s| s.menu_idx) {
+            Some(cur) if cur + 1 < total_menus => {
+                // Advance to next menu, wrap to first-hidden if
+                // we walked off the last menu entirely.
+                let candidate = cur + 1;
+                if candidate < total_menus {
+                    candidate
+                } else {
+                    first_hidden_idx
+                }
+            }
+            _ => first_hidden_idx,
+        };
+        app.menu_open = Some(crate::menu_bar::MenuOpenState::new_mouse(next_idx));
         return;
     }
 
