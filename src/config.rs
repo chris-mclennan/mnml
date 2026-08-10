@@ -1252,7 +1252,13 @@ impl Default for Config {
                 auto_show_sessions_on_ai_activate: true,
                 git_section_default_expanded: false,
                 integrations_section_default_expanded: false,
-                hover_help: false,
+                // Info View v0.3 Phase 1 (2026-08-10) — default flipped
+                // `false → true` per the design doc §Defaults. The panel
+                // is now populated with 49 curated entries, so first-run
+                // users see rich hover copy immediately instead of a
+                // hidden feature. `view.toggle_hover_help` hides it if
+                // the reader dislikes the extra chrome (persists).
+                hover_help: true,
                 show_workspace_dots: true,
                 md_preview_engine: "builtin".to_string(),
             },

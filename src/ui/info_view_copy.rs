@@ -370,7 +370,29 @@ fn tree_row_copy(label: &str, is_dir: bool) -> Option<InfoViewCopy> {
     // Language-specific file rows — the copy dictionary can fan out
     // per extension. Seed with the ones most Rust / TS / Python devs
     // hover daily; the writer agent adds the rest.
-    let (lang, body): (&str, &str) = match label.rsplit('.').next()? {
+    // Case-insensitive extension match. `rsplit('.').next()` on a
+    // dot-less filename like `Dockerfile` returns the WHOLE filename
+    // capitalized — before we lowercased here, `"Dockerfile"` never
+    // hit the `"dockerfile"` arm. R10 multilang SEV-2.
+    let ext = label.rsplit('.').next()?.to_ascii_lowercase();
+    // R10 multilang SEV-3 — `.d.ts` declaration files got the plain
+    // TypeScript copy. Check the double-ext BEFORE falling to the
+    // last-segment match.
+    if label.to_ascii_lowercase().ends_with(".d.ts") {
+        return Some(InfoViewCopy {
+            title: format!("{label} — TypeScript declarations"),
+            body: "`.d.ts` — TypeScript type declarations. No runtime code; \
+                   describes the shape of a JS module for tsserver to consume. \
+                   Editing here changes types, not behavior."
+                .into(),
+            shortcuts: vec![
+                ShortcutHint::new("Enter", "Open in the active pane"),
+                ShortcutHint::new("Ctrl+Enter", "Open in a horizontal split"),
+            ],
+            ..Default::default()
+        });
+    }
+    let (lang, body): (&str, &str) = match ext.as_str() {
         "rs" => (
             "Rust source",
             "Compiled with cargo. Hover a symbol in the buffer for LSP info \
