@@ -300,7 +300,7 @@ fn go_menu() -> MenuDef {
             MenuItem::action("\u{F292}  Go to line…", "editor.goto_line"),
             // codicon-arrow-right — "jump-to" (distinct from Prev/Next
             // fa-arrow-* below which are wider single arrows).
-            MenuItem::action("\u{EAB5}  Go to definition", "lsp.peek_definition"),
+            MenuItem::action("\u{EAB5}  Go to definition", "lsp.goto_definition"),
             MenuItem::Separator,
             MenuItem::action("\u{F060}  Previous buffer", "buffer.prev"),
             MenuItem::action("\u{F061}  Next buffer", "buffer.next"),

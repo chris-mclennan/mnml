@@ -421,7 +421,12 @@ fn describe_active_pane(pane: &crate::pane::Pane) -> Option<(String, Option<Stri
             // pane title tells the user nothing. Pull the
             // currently-selected row and describe it: source /
             // workspace / state / model / last activity.
-            if let Some(row) = p.rows.get(p.selected) {
+            //
+            // R8 fix 2026-08-10 — go through `selected_row()` so a
+            // filtered / sorted list picks the ROW UNDER THE CURSOR,
+            // not `rows[i]` at the raw underlying index (which reads
+            // out of sync when either filter or sort is active).
+            if let Some(row) = p.selected_row() {
                 let source = match row.source {
                     crate::claude_agents::AgentSource::Claude => "Claude Code",
                     crate::claude_agents::AgentSource::Codex => "Codex",
