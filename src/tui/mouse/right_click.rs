@@ -1081,14 +1081,21 @@ pub(super) fn handle_right_click(app: &mut App, x: u16, y: u16) {
     if let Some(r) = app.rects.statusline_wrap_chip
         && crate::app::dispatch::contains(r, x, y)
     {
+        // R9 vscode-mouse SEV-3 — the previous menu was a bare
+        // one-item "Disable wrap" that hid the current state.
+        // Now: title reveals state, single toggle row shows the
+        // action that flips it, plus Settings jump for the
+        // fold-arrows / per-buffer preferences a right-click user
+        // would want next.
         use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
         let cur = app.config.ui.wrap;
-        let label = if cur { "Disable wrap" } else { "Enable wrap" };
-        let items = vec![MenuItem::new(
-            label,
-            MenuAction::Command("view.toggle_wrap"),
-        )];
-        app.context_menu = Some(ContextMenu::new(Some("Wrap".to_string()), (x, y), items));
+        let title = format!("Wrap · {}", if cur { "on" } else { "off" });
+        let toggle_label = if cur { "Disable wrap" } else { "Enable wrap" };
+        let items = vec![
+            MenuItem::new(toggle_label, MenuAction::Command("view.toggle_wrap")),
+            MenuItem::new("Editor settings…", MenuAction::Command("view.settings")),
+        ];
+        app.context_menu = Some(ContextMenu::new(Some(title), (x, y), items));
         return;
     }
     // Autosave chip — no menu; the existing left-click already
