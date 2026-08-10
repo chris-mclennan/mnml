@@ -1277,7 +1277,21 @@ impl App {
             // and exiting the app, masking any other in-flight UI.
             "q" | "quit" => {
                 if self.active.is_some() && self.active_pane().is_some_and(Pane::is_dirty) {
-                    self.toast("unsaved changes — use :q! to discard");
+                    // R9 nvchad SEV-3 — was "unsaved changes — use :q!
+                    // to discard", the same toast for every dirty
+                    // buffer with no hint about WHICH one. Add the
+                    // filename so the user can jump to it and save
+                    // instead of guessing which of N split panes has
+                    // the modification.
+                    let name = self
+                        .active_pane()
+                        .and_then(|p| p.as_editor())
+                        .and_then(|b| b.path.as_ref())
+                        .and_then(|p| p.file_name())
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "scratch buffer".to_string());
+                    self.toast(format!("unsaved changes in {name} — use :q! to discard"));
                 } else {
                     self.close_active_pane();
                     if self.panes.is_empty() {
