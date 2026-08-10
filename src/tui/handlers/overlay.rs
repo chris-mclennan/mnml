@@ -540,6 +540,20 @@ pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
 
 pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // R11 vscode-keyboard SEV-2 — Ctrl+Shift+P used to reopen the
+    // palette on top of itself instead of toggling it closed
+    // (VS Code convention: same chord opens AND dismisses).
+    // Catch it at the top of the picker handler and close the
+    // palette when it's the active picker.
+    if ctrl
+        && key.modifiers.contains(KeyModifiers::SHIFT)
+        && matches!(key.code, KeyCode::Char('P') | KeyCode::Char('p'))
+        && let Some(p) = app.picker.as_ref()
+        && matches!(p.kind, crate::picker::PickerKind::Commands)
+    {
+        app.close_picker();
+        return;
+    }
     let Some(picker) = app.picker.as_mut() else {
         return;
     };

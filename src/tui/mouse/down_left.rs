@@ -140,12 +140,23 @@ pub(super) fn handle_down_left(app: &mut App, m: MouseEvent, x: u16, y: u16) {
         //
         // If the click hit a different menu word (case 2), fall
         // through so the menu_bar_words handler below can switch.
-        if !app
+        // R11 vscode-mouse SEV-2 — the `»` overflow chip's own rect
+        // isn't in `menu_bar_words`, so before this exception a
+        // click on `»` matched the outside-click null path here,
+        // wiping `menu_open` BEFORE the overflow-chip handler
+        // below could read it to compute the next hidden menu.
+        // Result: every `»` click bounced back to first-hidden.
+        // Treat overflow-chip clicks as inside-the-menu-bar too.
+        let click_on_menu_word = app
             .rects
             .menu_bar_words
             .iter()
-            .any(|(r, _)| crate::app::dispatch::contains(*r, x, y))
-        {
+            .any(|(r, _)| crate::app::dispatch::contains(*r, x, y));
+        let click_on_overflow_chip = app
+            .rects
+            .menu_bar_overflow
+            .is_some_and(|(r, _)| crate::app::dispatch::contains(r, x, y));
+        if !click_on_menu_word && !click_on_overflow_chip {
             app.menu_open = None;
             return;
         }

@@ -957,9 +957,11 @@ pub struct UiConfig {
     /// cmdline) that shows a plain-English description of whatever
     /// the mouse is currently hovering over — chip, menu item, tab,
     /// tree row, etc. Zero-delay (fires as the mouse enters the
-    /// chip, unlike the popup tooltip which waits 500ms). Off by
-    /// default. Toggle at runtime via `view.toggle_hover_help` or
-    /// `:set hoverhelp`.
+    /// chip, unlike the popup tooltip which waits 500ms). Now ON by
+    /// default (Info View v0.3 Phase 1, 2026-08-10) since the panel
+    /// is populated with 49 curated entries — first-run users see
+    /// them immediately. Toggle at runtime via
+    /// `view.toggle_hover_help` or `:set nohoverhelp`.
     pub hover_help: bool,
 
     /// Paint the `● ` / `○ ` workspace dots (● / ○) on the left of
