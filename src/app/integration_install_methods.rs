@@ -34,6 +34,15 @@ impl App {
         // before the merge pass fills IntegrationIcon.glyph.
         self.discover_integration_glyphs();
         self.merge_integration_manifests();
+        // R9 api-workflow SEV-3 — users hitting the palette
+        // `integrations.refresh` reasonably expect ALL on-disk
+        // scanned state to be re-read, not just integration
+        // manifests. HTTP panel's MOCKS section reads
+        // `http_panel_mocks_cache` which was only rebuilt via the
+        // separate `http.refresh` command or a full restart, so a
+        // fresh `.mock.json` created by a sibling didn't appear.
+        // Piggyback on this palette-level refresh.
+        self.http_panel_refresh();
         self.toast(format!(
             "integrations: {} manifest(s) loaded ({} sibling glyph(s))",
             self.integration_manifests.len(),

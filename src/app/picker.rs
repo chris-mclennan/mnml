@@ -93,9 +93,14 @@ impl App {
             for component in path.components() {
                 if let std::path::Component::Normal(name) = component {
                     let s = name.to_string_lossy();
+                    // R9 vscode-keyboard SEV-3 — `.mnml/` is mnml's own
+                    // per-workspace state dir (session.json, undo/,
+                    // findings/, ipc/, cookies.json). Never useful in
+                    // Ctrl+P; drowns real files when a session's
+                    // accumulated hundreds of undo snapshots.
                     if matches!(
                         s.as_ref(),
-                        ".git" | "node_modules" | "target" | ".next" | "dist" | "build"
+                        ".git" | ".mnml" | "node_modules" | "target" | ".next" | "dist" | "build"
                     ) {
                         return true;
                     }
