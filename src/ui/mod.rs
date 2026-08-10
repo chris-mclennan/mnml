@@ -441,6 +441,35 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         // panel rects. See `PaneRects::clear_activity_panel_rects`
         // for the full list and the maintenance note.
         app.rects.clear_activity_panel_rects();
+        // R10 api-workflow SEV-2 — hover-help info box used to live
+        // only inside `tree_view::draw`, so switching from Explorer
+        // to Http / Git / Integrations / Agents / anything else made
+        // the info panel vanish. Reserve `INFO_BOX_HEIGHT` here
+        // (regardless of section), pass the reduced `panel_area` to
+        // every section-draw, then paint the info box below at the
+        // consistent bottom position. `tree_view` no longer
+        // reserves internally.
+        let (panel_area, hover_help_area): (Rect, Option<Rect>) =
+            if app.config.ui.hover_help && content_area.height >= hover_help::INFO_BOX_HEIGHT + 8 {
+                let box_h = hover_help::INFO_BOX_HEIGHT;
+                let body = Rect {
+                    x: content_area.x,
+                    y: content_area.y,
+                    width: content_area.width,
+                    height: content_area.height - box_h,
+                };
+                let boxed = Rect {
+                    x: content_area.x,
+                    y: content_area.y + content_area.height - box_h,
+                    width: content_area.width,
+                    height: box_h,
+                };
+                (body, Some(boxed))
+            } else {
+                app.rects.hover_help_strip = None;
+                (content_area, None)
+            };
+        let content_area = panel_area;
         match app.active_section {
             crate::app::ActivitySection::Explorer => {
                 tree_view::draw(frame, app, content_area);
@@ -521,6 +550,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 // never enters set_activity_section for
                 // LauncherIcon), but keep it exhaustive.
             }
+        }
+        // Info-View panel — paint once, below whichever section drew
+        // its body above. Reserved by the pre-match slicing so no
+        // panel needs to know about it.
+        if let Some(r) = hover_help_area {
+            hover_help::draw(frame, app, r);
         }
         // For non-Explorer sections the tree_view click rects aren't
         // populated; ensure they're at least cleared so a stale click

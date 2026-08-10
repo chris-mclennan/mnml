@@ -70,30 +70,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // 2026-08-09 — Ableton-style hover-help info box docked at the
-    // bottom of the left panel. Reserve `INFO_BOX_HEIGHT` rows off
-    // the bottom when the toggle's on AND the panel has room to
-    // spare (tree needs at least ~8 rows of its own to still be
-    // useful; below that we drop the box to keep the tree usable).
-    let (area, hover_help_area): (Rect, Option<Rect>) =
-        if app.config.ui.hover_help && area.height >= hover_help::INFO_BOX_HEIGHT + 8 {
-            let box_h = hover_help::INFO_BOX_HEIGHT;
-            let tree = Rect {
-                x: area.x,
-                y: area.y,
-                width: area.width,
-                height: area.height - box_h,
-            };
-            let boxed = Rect {
-                x: area.x,
-                y: area.y + area.height - box_h,
-                width: area.width,
-                height: box_h,
-            };
-            (tree, Some(boxed))
-        } else {
-            (area, None)
-        };
+    // 2026-08-09 — Ableton-style hover-help info box.
+    //
+    // R10 api-workflow SEV-2 (2026-08-10) — moved to a section-
+    // agnostic reservation in `ui/mod.rs` so the info box also
+    // renders when the user is on Http / Git / Integrations /
+    // Agents / etc. `area` here is ALREADY the pre-reserved body
+    // rect passed by the caller. Kept `hover_help_area = None` on
+    // this side so the existing `hover_help_finish` call sites
+    // (which used to draw the box) simply clear the strip rect;
+    // `ui/mod.rs` re-sets it via `hover_help::draw` immediately
+    // after the section-draw returns.
+    let hover_help_area: Option<Rect> = None;
 
     // qa-feature 2026-06-30 — INTEGRATIONS + GIT sections were
     // previously rendered at the bottom of the file browser as a
