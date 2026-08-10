@@ -2474,6 +2474,21 @@ pub(crate) fn handle_pane_key(app: &mut App, key: KeyEvent) {
 // T-2: dispatch_mouse moved to src/tui/mouse.rs (re-exported above).
 
 fn handle_md_preview_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize) -> bool {
+    // R9 nvchad SEV-2 (trap door) — the previous match had a `_ => {}`
+    // catch-all that returned `true`, so `:`, `<leader>` chains,
+    // `Ctrl+w h`, `:bd!`, and every other cmdline / chord / split
+    // key silently died here. Now: handle only the scroll + Esc
+    // vocabulary and return `false` for everything else so the
+    // upstream chord + cmdline dispatch can process it.
+    //
+    // Guard on Ctrl / Alt / Super at the top: any modified key is
+    // NOT a raw scroll gesture, punt to upstream immediately.
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return false;
+    }
     if let Some(Pane::MdPreview(p)) = app.panes.get_mut(i) {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => p.scroll = p.scroll.saturating_sub(1),
@@ -2483,7 +2498,7 @@ fn handle_md_preview_key(app: &mut App, key: KeyEvent, viewport: usize, i: usize
             KeyCode::Home | KeyCode::Char('g') => p.scroll = 0,
             KeyCode::End | KeyCode::Char('G') => p.scroll = usize::MAX, // clamped on draw
             KeyCode::Esc => app.focus_tree(),
-            _ => {}
+            _ => return false,
         }
         return true;
     }
