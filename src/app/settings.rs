@@ -72,7 +72,12 @@ impl SettingsOverlayState {
             text_edit: None,
             original_workspace_file,
             filter: String::new(),
-            filter_focused: false,
+            // R9 vscode-keyboard SEV-2 — the filter used to require a
+            // `/` first before typing did anything; typing straight in
+            // on overlay open silently dropped keystrokes. Focus by
+            // default; Esc leaves filter mode into row-nav (per
+            // `settings_filter_cancel`), and `/` still re-focuses.
+            filter_focused: true,
         }
     }
 }

@@ -3001,9 +3001,9 @@ impl PaneRects {
         check_vec!(context_menu_items);
         check_vec!(menu_bar_words);
         if let Some((r, _)) = self.menu_bar_overflow
-            && (r.width == 0 || r.height == 0)
+            && hit(r)
         {
-            return Err("menu_bar_overflow: rect is empty".into());
+            hits.push("menu_bar_overflow");
         }
         check_vec!(menu_bar_items);
         hits
