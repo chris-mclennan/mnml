@@ -293,6 +293,89 @@ them to `Layout::leaf_with_tabs`. 5 regression tests added
 `all_panes_includes_background_tabs_across_splits`,
 `split_preserves_background_tabs_in_source_leaf`, +2).
 
+**v0.2.10 + long polish + Info View v0.3 Phase 1 (2026-08-09/10).**
+A ~21-commit session covering release repair, a persist sweep, a
+dead-code sweep, two file-split extracts, an R9 tester round + its
+fixes, and the first shipped slice of the Info View flagship.
+
+Release repair: v0.2.9 tagged but shipped zero binaries because
+GitHub Actions scrubbed the cargo-dist plan output as a suspected
+secret — the CHANGELOG had a phrase that matched a stored repo
+secret's value. Sanitized the phrase, tagged v0.2.10, all 22
+release assets uploaded, Homebrew tap auto-updated.
+
+Persist sweep (`0f47e49a`): every runtime UI/editor toggle
+(workspace dots, wrap, whitespace, rainbow, scrollbar,
+todo highlight, render markdown, sticky context, breadcrumb,
+auto-pair, highlight_trailing_ws, highlight_word, relative
+numbers, color column, vim ↔ standard input style) now writes
+to user config via new `persist_config_scalar` helper + a
+`persist_ui_bool` / `persist_ui_int` / `persist_editor_bool` /
+`persist_editor_string` surface. Was: interactive toggles
+reverted on restart because setters only mutated in-memory.
+Post-round follow-up (`996c0478`) caught `view.toggle_hover_help`
+and `clock.hide` which the initial sweep missed.
+
+Dead-code sweep (`ee229891`, `e99bc792`): -730 lines net across
+15 files. 12 pub App fields with 0 reads/writes, 25 pub methods
+with 0 callers (verified by alternation-regex grep — first-pass
+audit had false positives from fn-pointer references, so I
+re-verified every candidate). Extracted `src/app/toggles.rs`
+(all 14 setter+toggle pairs from the persist sweep) and
+`src/app/harpoon.rs` from `app/mod.rs`'s midsection.
+
+R9 tester round + fixes (2 SEV-1 items verified fixed pre-round):
+- Menu-bar `»` overflow chip when narrow terminals clip menus
+  (mouse users couldn't reach View / Go / Run / Terminal /
+  Window / Help without Alt+letter).
+- `handle_md_preview_key` used to `_ => {}` swallow every key
+  it didn't recognize — trap door for vim users landing in a
+  preview pane (`:` never opened cmdline, `<leader>` chords
+  bounced off). Now returns `false` from the catch-all so
+  chord/cmdline dispatch runs.
+- Settings-filter auto-focused on overlay open (was dropping
+  keystrokes until the user hit `/` first).
+- Settings overlay grew rows for `hover_help` /
+  `show_workspace_dots` / `highlight_todo_keywords`.
+- Menu ↔ palette label alignment ("word wrap" → "line wrap"
+  to match the palette title).
+- `:q` on dirty buffer names the file in the toast.
+- `<leader>ff` bound to `picker.files` (NvChad muscle memory).
+- `.mnml/` excluded from Ctrl+P picker (surface state files
+  drowning real files).
+- `integrations.refresh` also rebuilds HTTP MOCKS cache
+  (was `http.refresh`-only).
+- Ctrl+Shift+P dismisses any open prompt before opening the
+  palette (was a race where palette keystrokes leaked into
+  the underneath prompt on Esc).
+- WRAP chip right-click menu shows current state + Settings
+  jump (was a bare 1-item toggle).
+
+Also: R8-round hover-help `selected_row()` fix for Claude Agents
+dashboard when filter/sort is active; Go-menu "Go to definition"
+now fires `lsp.goto_definition` (was `lsp.peek_definition`).
+
+Info View v0.3 Phase 1 + 1.5 (design doc `docs/design/info-view-v0.3.md`):
+- Framework (`src/ui/info_view.rs`): `InfoViewCopy` /
+  `InfoViewTarget` / `describe_info_view` + `empty_state_copy`
+  + `to_flat_pair` interim adaptor.
+- 49 curated copy entries (`src/ui/info_view_copy.rs`): 27 chip
+  variants (Statusline*, Bufferline*, Palette*, MenuBarWord,
+  Activity*, Agents*, Http*, Git*, Fold), 10 menu items,
+  8 tree-row languages (rs / ts / py / md / go / sh / yaml /
+  html / css / sql / dockerfile).
+- Phase 1.5 wiring (`d3ab4bb5`): `hover_help.rs` now consumes
+  InfoViewCopy via `to_flat_pair` for chip + tree-row targets
+  — the 49 entries actually appear in the info panel.
+- Rich renderer (Phase 1.6) still TODO — shortcuts / try_it /
+  chord glyphs / `:cmd.id` inline hyperlinks are populated in
+  data but compressed by `to_flat_pair` in the display.
+
+Related PR merged: `chris-mclennan/mnml-integrations#1` swapped
+`mnml-msg-slack`'s slack glyph from U+F07D2 (rendered as a
+house on current Nerd Font builds) to U+F03EF (matches
+`src/icon_catalog.rs` — the Slack logo).
+
 **For prior history** (the 7-month arc that built tmnl + the
 blit protocol + mixr-host + chrome chips integration) see
 `git log` before the cleanup commits. Those entries used to live
