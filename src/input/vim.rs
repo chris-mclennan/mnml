@@ -3651,6 +3651,9 @@ impl VimInputHandler {
 }
 
 impl InputHandler for VimInputHandler {
+    fn is_cmdline_open(&self) -> bool {
+        self.cmdline.is_some()
+    }
     fn handle_key(&mut self, key: KeyEvent, ctx: &EditCtx) -> InputResult {
         if let Some(line) = self.cmdline.take() {
             return self.handle_cmdline(key, line);

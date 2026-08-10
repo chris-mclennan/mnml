@@ -249,6 +249,15 @@ pub trait InputHandler: Send {
     fn pending_display(&self) -> Option<String> {
         None
     }
+    /// True when the handler owns the entire keystroke stream because
+    /// a vim-style `:` cmdline is open. Callers use this to bypass
+    /// global chord-chain / leader dispatch so a `space` in
+    /// `:set nowrap` reaches the cmdline instead of firing whichkey.
+    /// Default false — non-vim handlers have no cmdline. R10 nvchad
+    /// SEV-2 2026-08-10.
+    fn is_cmdline_open(&self) -> bool {
+        false
+    }
     /// Handler name, for config / "which handler is active" UI. `"vim"` | `"standard"`.
     fn name(&self) -> &'static str;
     /// Focus left this buffer — let a modal handler drop to its base mode and clear chords.

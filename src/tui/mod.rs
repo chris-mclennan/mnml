@@ -2681,9 +2681,23 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         && key.modifiers.is_empty()
         && !matches!(app.focus, crate::focus::Focus::Tree)
         && app.pending_chord_seq.is_empty();
+    // R10 nvchad SEV-2 2026-08-10 — when vim's `:` cmdline is open,
+    // ALL keys belong to the cmdline. Was: space in `:set nowrap`
+    // got eaten by dispatch_chord_chain as a leader chord, and the
+    // cmdline saw `:setnowrap`. Every other char (`s`, `e`, `t`,
+    // `n`, ...) was fine because the chord-chain fell through for
+    // non-bound keys — but leader = space, so space specifically
+    // got trapped.
+    let vim_cmdline_open = app
+        .active
+        .and_then(|i| app.panes.get(i))
+        .and_then(|p| p.as_editor())
+        .map(|b| b.input.is_cmdline_open())
+        .unwrap_or(false);
     if !vim_reserves_key
         && !pty_reserves_key
         && !delete_owns_focus
+        && !vim_cmdline_open
         && dispatch_chord_chain(app, key)
     {
         return;
