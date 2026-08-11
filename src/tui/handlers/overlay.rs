@@ -549,9 +549,18 @@ pub(crate) fn handle_picker_key(app: &mut App, key: KeyEvent) {
         && key.modifiers.contains(KeyModifiers::SHIFT)
         && matches!(key.code, KeyCode::Char('P') | KeyCode::Char('p'))
         && let Some(p) = app.picker.as_ref()
-        && matches!(p.kind, crate::picker::PickerKind::Commands)
     {
-        app.close_picker();
+        // R11: Commands picker → toggle closed (VS Code convention).
+        // R12 nvchad SEV-2: any OTHER picker (Files/Recent/Grep/…) →
+        // close the current picker AND open the palette, so the
+        // chord always reaches the palette regardless of what's
+        // already open.
+        if matches!(p.kind, crate::picker::PickerKind::Commands) {
+            app.close_picker();
+        } else {
+            app.close_picker();
+            crate::command::run("palette", app);
+        }
         return;
     }
     let Some(picker) = app.picker.as_mut() else {

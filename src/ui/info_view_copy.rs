@@ -299,22 +299,33 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             )],
             ..Default::default()
         }),
-        // src: src/ui/http_panel.rs — top toolbar row of the HTTP
-        // activity panel. R11 api-workflow SEV-3 correction: was
-        // vague about being toolbar-wide vs per-index; now describes
-        // the ROW (which is the visible cluster).
-        HttpToolbarChip(_) => Some(InfoViewCopy {
-            title: "HTTP-panel toolbar".into(),
-            body: "Panel-wide toolbar for the HTTP activity section — search, \
-                   new-request, collapse-all, refresh. Same actions live in the \
-                   palette (`http.refresh`, `http.new_request`)."
+        // src: src/ui/http_panel.rs L75-86 — top toolbar row has
+        // exactly 2 chips: refresh + collapse-all. R12 api-workflow
+        // SEV-3 correction: R11's rewrite overclaimed 4 actions
+        // (search / new-request / collapse-all / refresh) and
+        // pointed try_it at `http.new_request`, which has no button
+        // in this cluster. Now index-aware.
+        HttpToolbarChip(0) => Some(InfoViewCopy {
+            title: "HTTP: refresh list".into(),
+            body: "Rescan collections / files / envs / captured / mocks and rebuild \
+                   the HTTP-panel caches. Same as the palette command."
                 .into(),
-            try_it: vec![
-                PaletteLink::new("http.refresh", "Refresh HTTP list"),
-                PaletteLink::new("http.new_request", "New request"),
-            ],
+            try_it: vec![PaletteLink::new("http.refresh", "Refresh HTTP list")],
             ..Default::default()
         }),
+        HttpToolbarChip(1) => Some(InfoViewCopy {
+            title: "HTTP: collapse / expand all sections".into(),
+            body: "Fold every HTTP-panel section (FILES / RECENT / CAPTURED / ENVS / \
+                   CHAINS / MOCKS / COLLECTIONS) closed, or expand them all when \
+                   collapsed. Individual section headers still toggle one at a time."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "http.toggle_collapse_all",
+                "Toggle collapse-all",
+            )],
+            ..Default::default()
+        }),
+        HttpToolbarChip(_) => None,
         // src: src/ui/http_panel.rs — per-section mini icon-button
         // row (Filter / Refresh / Clear / New, one row per FILES /
         // RECENT / CAPTURED / etc. section). NOT the header row —

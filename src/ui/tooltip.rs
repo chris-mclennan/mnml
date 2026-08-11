@@ -189,7 +189,11 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
         )),
         HoverChip::StatuslineWrap => Some((
             app.rects.statusline_wrap_chip?,
-            "click: toggle word wrap".into(),
+            // R12 vscode-mouse SEV-3 — tooltip used to say "toggle
+            // word wrap" while the menu + palette + InfoView all
+            // agreed on "line wrap". Aligned to the menu/palette
+            // wording so search + muscle memory hit the same term.
+            "click: toggle line wrap".into(),
             None,
         )),
         HoverChip::StatuslineAiClaude => {
@@ -1051,7 +1055,7 @@ fn describe(chip: HoverChip, app: &App) -> Option<(Rect, String, Option<String>)
                 crate::DiffToolbarAction::ViewInline => "view: inline (whole file)",
                 crate::DiffToolbarAction::ViewHunk => "view: hunks (focused)",
                 crate::DiffToolbarAction::ViewSplit => "view: split (side-by-side)",
-                crate::DiffToolbarAction::ToggleWrap => "toggle word wrap",
+                crate::DiffToolbarAction::ToggleWrap => "toggle line wrap",
                 crate::DiffToolbarAction::Close => "close diff",
             };
             Some((rect, label.into(), None))
