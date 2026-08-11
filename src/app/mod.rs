@@ -7062,6 +7062,27 @@ impl App {
     /// log (plugin-registered). Returns true if the id matched.
     /// (Called by `command::run` after the builtin lookup.)
     pub fn run_dynamic_command(&mut self, id: &str) -> bool {
+        // Phase 2D — first-hit auth guard. If this dynamic command
+        // belongs to an integration whose manifest declares any
+        // required auth field, AND that field has no stored value
+        // AND no env_fallback env var is set, intercept: open the
+        // per-integration Settings pane instead of dispatching. The
+        // Save closes the pane; the user re-fires the command
+        // manually. Avoids surprising the user with a silent broken
+        // action ("clicked Slack, nothing happened").
+        if let Some(integration_id) = self
+            .integration_manifests
+            .iter()
+            .find(|m| m.commands.iter().any(|c| c.id == id))
+            .map(|m| m.id.clone())
+            && self.integration_has_missing_required_auth(&integration_id)
+        {
+            self.toast(format!(
+                "`{integration_id}` needs setup — opening Configure…"
+            ));
+            self.open_integration_settings(&integration_id);
+            return true;
+        }
         // Manifest-registered commands carry an ex-command line.
         // Dispatch locally so the sibling doesn't need to be
         // running to answer the invocation.

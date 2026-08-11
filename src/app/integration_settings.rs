@@ -105,6 +105,49 @@ impl App {
         self.integration_settings = None;
     }
 
+    /// True when the integration has at least one `required = true`
+    /// auth field with no stored `[auth_values]` value AND no env
+    /// var declared by its `env_fallback` (or that env var is unset).
+    /// Used by `run_dynamic_command` to short-circuit on first action
+    /// dispatch and open the Settings pane instead of silently
+    /// failing (Phase 2D).
+    pub fn integration_has_missing_required_auth(&self, integration_id: &str) -> bool {
+        let Some(manifest) = self
+            .integration_manifests
+            .iter()
+            .find(|m| m.id == integration_id)
+        else {
+            return false;
+        };
+        let required: Vec<&crate::integration_manifest::AuthField> =
+            manifest.auth.iter().filter(|f| f.required).collect();
+        if required.is_empty() {
+            return false;
+        }
+        let stored: Option<toml::Value> = std::fs::read_to_string(&manifest.source_path)
+            .ok()
+            .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+            .and_then(|v| v.get("auth_values").cloned());
+        required.iter().any(|field| {
+            let has_stored = stored
+                .as_ref()
+                .and_then(|t| t.get(&field.key))
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if has_stored {
+                return false;
+            }
+            let has_env = field
+                .env_fallback
+                .as_ref()
+                .and_then(|n| std::env::var(n).ok())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            !has_env
+        })
+    }
+
     /// Palette-command entry: enumerate all installed integrations
     /// that declare `[[auth]]` fields. If exactly one, open it
     /// directly; if none, toast; if several, toast + point at
