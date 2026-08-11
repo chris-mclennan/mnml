@@ -105,6 +105,51 @@ impl App {
         self.integration_settings = None;
     }
 
+    /// Build the env-var injection map for an integration's Pty
+    /// spawn: for each `[[auth]]` field whose `env_fallback` names an
+    /// env var AND whose stored `[auth_values]` value is non-empty,
+    /// pair `env_fallback → stored value`. Fields with no
+    /// env_fallback are skipped — those are pane-only values the
+    /// sibling would have to read from the manifest directly.
+    ///
+    /// Skipping empty values means a user who cleared a field in
+    /// the pane falls back to their shell's export (if any) rather
+    /// than getting the env var wiped by an empty injection.
+    ///
+    /// Called by `open_pty_dir` right before spawn; result is
+    /// merged into `BinaryProfile.env`. Phase 2E (2026-08-11).
+    pub fn integration_auth_env(&self, integration_id: &str) -> Vec<(String, String)> {
+        let Some(manifest) = self
+            .integration_manifests
+            .iter()
+            .find(|m| m.id == integration_id)
+        else {
+            return Vec::new();
+        };
+        if manifest.auth.is_empty() {
+            return Vec::new();
+        }
+        let stored: toml::value::Table = std::fs::read_to_string(&manifest.source_path)
+            .ok()
+            .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+            .and_then(|v| v.get("auth_values").cloned())
+            .and_then(|v| v.as_table().cloned())
+            .unwrap_or_default();
+        manifest
+            .auth
+            .iter()
+            .filter_map(|field| {
+                let env_name = field.env_fallback.as_ref()?;
+                let stored_val = stored.get(&field.key).and_then(|x| x.as_str())?;
+                if stored_val.is_empty() {
+                    None
+                } else {
+                    Some((env_name.clone(), stored_val.to_string()))
+                }
+            })
+            .collect()
+    }
+
     /// True when the integration has at least one `required = true`
     /// auth field with no stored `[auth_values]` value AND no env
     /// var declared by its `env_fallback` (or that env var is unset).

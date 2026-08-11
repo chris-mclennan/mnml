@@ -9194,6 +9194,26 @@ impl App {
                 profile.env.push((k, v));
             }
         }
+        // Phase 2E — inject per-integration auth values as env vars,
+        // using the manifest's [[auth]].env_fallback names. This lets
+        // a user save `bot_token = "xoxb-..."` in the Settings pane
+        // and have the sibling see it as `$SLACK_BOT_TOKEN` at spawn
+        // time WITHOUT the sibling reading from mnml's [auth_values]
+        // itself. Existing users with the env var already set: their
+        // shell-level export wins over the profile injection because
+        // Rust's Command::envs replaces vars, not merges. Actually
+        // no — Command::envs OVERRIDES the inherited env by key. So
+        // our injection here takes precedence over the user's shell
+        // env. Skip the injection when the value is empty so a saved-
+        // but-cleared field doesn't nuke the user's shell export.
+        if let Some(integ_id) = profile.integration_id.clone() {
+            let auth_env = self.integration_auth_env(&integ_id);
+            for (k, v) in auth_env {
+                if !profile.env.iter().any(|(pk, _)| pk == &k) {
+                    profile.env.push((k, v));
+                }
+            }
+        }
         // The initial size is a guess — `ui/pty_view` resizes the session to its
         // rendered area on the first frame.
         match crate::pty_pane::PtySession::spawn(profile, 24, 80) {
