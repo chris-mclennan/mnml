@@ -354,11 +354,47 @@ pub(crate) fn handle_settings_overlay_key(app: &mut App, key: KeyEvent) {
         // Enter / Esc first — commit / cancel.
         match key.code {
             KeyCode::Esc => {
-                app.settings_filter_cancel();
+                // 2026-08-10 e2e-fix — Esc on an EMPTY filter should
+                // close the overlay outright; only clear+unfocus the
+                // filter when it has query text. Matches VS Code +
+                // the settings-overlay contract "Esc dismisses".
+                // Without this, R9's filter-focused-by-default made
+                // Esc need two presses to close an untouched overlay.
+                let is_empty = app
+                    .settings_overlay
+                    .as_ref()
+                    .is_some_and(|s| s.filter.is_empty());
+                if is_empty {
+                    app.close_settings_overlay_cancel();
+                } else {
+                    app.settings_filter_cancel();
+                }
                 return;
             }
             KeyCode::Enter => {
                 app.settings_filter_commit();
+                return;
+            }
+            // 2026-08-10 e2e-fix — nav keys (arrows / hjkl) always
+            // route to row nav + value adjust even when filter is
+            // focused. Filter has no visible cursor to move so
+            // trapping arrows there was just a keystroke sink;
+            // pairs with R9's auto-focus-on-open so `→` still
+            // adjusts row 0 without a `/` detour.
+            KeyCode::Up => {
+                app.settings_move_row(-1);
+                return;
+            }
+            KeyCode::Down => {
+                app.settings_move_row(1);
+                return;
+            }
+            KeyCode::Left => {
+                app.settings_adjust_value(-1);
+                return;
+            }
+            KeyCode::Right => {
+                app.settings_adjust_value(1);
                 return;
             }
             _ => {}

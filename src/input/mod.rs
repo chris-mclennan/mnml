@@ -258,6 +258,16 @@ pub trait InputHandler: Send {
     fn is_cmdline_open(&self) -> bool {
         false
     }
+    /// True when the handler is mid-chord and needs the next
+    /// keystroke verbatim — e.g. vim's `f`/`t`/`F`/`T` waiting on a
+    /// target char, or `d`/`c`/`y`/`>`/`<` waiting on a motion, or
+    /// any `Prefix::*` state. Callers use this to bypass global
+    /// leader dispatch so bare Space can serve as a motion target
+    /// (`dt<space>` = delete up to next space). Default false. Vim
+    /// overrides. e2e-fix 2026-08-10.
+    fn is_op_pending(&self) -> bool {
+        false
+    }
     /// Handler name, for config / "which handler is active" UI. `"vim"` | `"standard"`.
     fn name(&self) -> &'static str;
     /// Focus left this buffer — let a modal handler drop to its base mode and clear chords.

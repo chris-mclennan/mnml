@@ -3654,6 +3654,13 @@ impl InputHandler for VimInputHandler {
     fn is_cmdline_open(&self) -> bool {
         self.cmdline.is_some()
     }
+    fn is_op_pending(&self) -> bool {
+        // Operator (d/y/c/>/<) awaiting motion, OR any prefix state
+        // where the next key must reach the vim handler raw (Z/g/
+        // MarkSet/CharSearch/text-object/…). Both need to bypass
+        // leader dispatch so bare space works as `dt<space>` etc.
+        self.op.is_some() || !matches!(self.prefix, Prefix::None)
+    }
     fn handle_key(&mut self, key: KeyEvent, ctx: &EditCtx) -> InputResult {
         if let Some(line) = self.cmdline.take() {
             return self.handle_cmdline(key, line);
