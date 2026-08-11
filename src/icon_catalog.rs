@@ -93,7 +93,7 @@ pub const ICON_CATALOG: &[IconEntry] = &[
     IconEntry { codepoint: "F1A4F", name: "todo", category: "pm" },
 
     // ── messaging ──
-    IconEntry { codepoint: "F03EF", name: "slack", category: "msg" },
+    IconEntry { codepoint: "F04B1", name: "slack", category: "msg" },
     IconEntry { codepoint: "F0FA1", name: "microsoft-teams", category: "msg" },
     IconEntry { codepoint: "F03BC", name: "gmail", category: "msg" },
     IconEntry { codepoint: "F01EF", name: "email-check", category: "msg" },

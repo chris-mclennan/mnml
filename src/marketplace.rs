@@ -443,12 +443,13 @@ pub fn catalog_lookup(id: &str) -> (Option<String>, Option<String>) {
         "mnml-scm-bitbucket" | "mnml-forge-bitbucket" | "bitbucket" => ("\u{F00A8}", "blue"),
         "mnml-scm-github" | "mnml-forge-github" | "github" => ("\u{E709}", "fg"),
 
-        // Messaging — Font Awesome BMP (F000-F2E0). Pure white
-        // (not theme fg which is off-white/grey-tinted for
-        // readability). User preferred white over both the
-        // aubergine purple (collided with the mnml-db family) and
-        // the yellow star accent.
-        "mnml-msg-slack" | "slack" => ("\u{F198}", "white"),
+        // Messaging — mdi-slack (F04B1, the nf-md-slack codepoint on
+        // nerdfonts.com). Matches icon_catalog.rs + the installed
+        // slack_channels/slack_canvases manifests. F198 is the older
+        // nf-fa-slack (pre-2019 wave logo); F03EF is not a slack glyph
+        // at all — both were prior bakes that left the marketplace
+        // card visually inconsistent (or plain wrong).
+        "mnml-msg-slack" | "slack" => ("\u{F04B1}", "white"),
 
         // Jira tracker app (3 chips on install) — same F0303 as
         // the launcher so preview matches the installed chip.
