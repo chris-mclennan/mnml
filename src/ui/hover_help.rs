@@ -369,6 +369,14 @@ fn describe_focus_target(app: &App) -> Option<(String, Option<String>)> {
     match app.focus {
         crate::focus::Focus::Pane => None,
         crate::focus::Focus::Tree => {
+            // At rest on the auto-selected row 0, the panel used to
+            // narrate `.cargo/` (or whatever the first workspace child
+            // was) — clutter, not signal. Fall through to the Sidebar
+            // empty-state hint until the user actually navigates.
+            // Mouse hover keeps working through the chip path. 2026-08-11.
+            if app.tree.cursor() == 0 {
+                return None;
+            }
             let row = app.tree.selected_row()?;
             let name = row
                 .path
