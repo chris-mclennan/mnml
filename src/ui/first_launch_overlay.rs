@@ -45,6 +45,15 @@ pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
         width: outer_w,
         height: outer_h,
     };
+    // Full-screen dim backdrop so tree / editor content stops
+    // bleeding through past the wizard's right edge — matches the
+    // modal convention (About / Settings overlays). One flat pass;
+    // theme's bg is layered over via Clear on `outer` next.
+    frame.render_widget(Clear, screen);
+    frame.render_widget(
+        Paragraph::new("").style(Style::default().bg(t.bg_darker)),
+        screen,
+    );
     frame.render_widget(Clear, outer);
     let panel_bg = Style::default().bg(t.bg_dark);
     frame.render_widget(Paragraph::new("").style(panel_bg), outer);

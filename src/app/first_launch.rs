@@ -212,7 +212,7 @@ impl App {
         }
         self.config.ui.first_launch_complete = true;
         let _ = persist_ui_bool("first_launch_complete", true);
-        self.toast("First-launch setup saved. Reopen anytime via `first_launch.show`.");
+        self.toast("Setup saved. Reopen anytime via `first_launch.show`.");
     }
 
     // ── Per-section update methods ───────────────────────────────

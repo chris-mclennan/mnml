@@ -150,6 +150,12 @@ pub enum PickerKind {
     /// inline-suggestion backend (`[ai] suggest_backend`). Opened the
     /// first time the user enables ghost-text.
     SuggestBackend,
+    /// `id` = integration id. Accept ⇒ open the per-integration
+    /// Settings pane for that integration (auth-form modal). Opened
+    /// by `integrations.configure_picker` when 2+ installed
+    /// integrations declare [[auth]] fields. Phase 3 polish for
+    /// task #892 (2026-08-11).
+    IntegrationConfigure,
     /// `id` = the row index (as a string) into
     /// [`crate::app::App::pending_captured_rows`]. Accept ⇒ open
     /// the row as a `.curl` text in a new editor pane (formatted

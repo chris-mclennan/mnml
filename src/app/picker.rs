@@ -965,6 +965,10 @@ impl App {
                 let id = item.id.clone();
                 self.accept_suggest_backend(&id);
             }
+            PickerKind::IntegrationConfigure => {
+                let id = item.id.clone();
+                self.accept_integration_configure(&id);
+            }
             PickerKind::CapturedRows => {
                 if let Ok(idx) = item.id.parse::<usize>()
                     && let Some(row) = self.pending_captured_rows.get(idx).cloned()

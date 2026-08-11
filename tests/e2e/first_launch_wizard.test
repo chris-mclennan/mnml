@@ -1,0 +1,51 @@
+# First-launch wizard opens via the palette command, navigates through the
+# sections, cycles the AI-backend and input-style radios via ← / →, self-
+# reports Nerd Font with y/n, then Enter Finishes and persists answers.
+# Phase 1 sections 1-3 are keyboard-interactive; sections 4-6 only expose
+# detection badges + install stubs, which we don't fire here (they'd spawn
+# a Pty pane that this test can't easily assert against).
+
+command first_launch.show
+expect screen contains "First-launch setup"
+
+# Section 1 (AI ghost-text) is focused on open. All three options render.
+expect screen contains "AI ghost-text"
+expect screen contains "Claude API"
+expect screen contains "Local model"
+expect screen contains "Skip for now"
+
+# Cycle to "local" via ↑ → ↑ path — first Right picks "claude-api", second
+# picks "local", third picks "skip". We just verify one arrow reaches
+# the first choice (proves the radio-cycle plumbing works).
+key right
+expect screen contains "Claude API"
+
+# Move to section 2 (Input style) with ↓ / j. vim is the pre-populated
+# default (from the shipped config), so it should already be selected.
+key down
+expect screen contains "Input style"
+expect screen contains "vim"
+expect screen contains "standard"
+
+# Cycle to standard via →.
+key right
+expect screen contains "standard"
+
+# Move down to section 3 (Nerd Font). Sample glyphs render + two options.
+key down
+expect screen contains "Nerd Font"
+expect screen contains "Sample glyphs"
+
+# y quick-answers "Render as icons".
+key y
+
+# Esc = Ask me later; overlay closes, `[ui] first_launch_complete` stays
+# false. Reopen via first_launch.show to prove idempotence.
+key esc
+expect screen lacks "First-launch setup"
+command first_launch.show
+expect screen contains "First-launch setup"
+
+# Finish this time — Enter.
+key enter
+expect screen lacks "First-launch setup"

@@ -149,28 +149,47 @@ impl App {
     }
 
     /// Palette-command entry: enumerate all installed integrations
-    /// that declare `[[auth]]` fields. If exactly one, open it
-    /// directly; if none, toast; if several, toast + point at
-    /// right-click chip → "Configure…" for now. A dedicated
-    /// PickerKind::IntegrationConfigure is a Phase-3 follow-up.
+    /// that declare `[[auth]]` fields. If none, toast; if exactly
+    /// one, open the pane directly; if several, open the picker
+    /// overlay so the user picks by id.
     pub fn open_integration_configure_picker(&mut self) {
-        let matches: Vec<String> = self
+        use crate::picker::{Picker, PickerItem, PickerKind};
+        let matches: Vec<(String, String, String)> = self
             .integration_manifests
             .iter()
             .filter(|m| !m.auth.is_empty())
-            .map(|m| m.id.clone())
+            .map(|m| {
+                let subtitle = m
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| format!("{} fields", m.auth.len()));
+                (m.id.clone(), m.label.clone(), subtitle)
+            })
             .collect();
         match matches.len() {
             0 => self.toast(
                 "No installed integration declares auth fields yet. \
                  Right-click a chip → \"Configure…\" once one does.",
             ),
-            1 => self.open_integration_settings(&matches[0]),
-            n => self.toast(format!(
-                "{n} integrations have auth fields. Right-click the chip you \
-                 want and pick \"Configure…\" (picker overlay lands in Phase 3)."
-            )),
+            1 => self.open_integration_settings(&matches[0].0),
+            _ => {
+                let items: Vec<PickerItem> = matches
+                    .into_iter()
+                    .map(|(id, label, subtitle)| PickerItem::new(&id, label, subtitle))
+                    .collect();
+                self.open_picker(Picker::new(
+                    PickerKind::IntegrationConfigure,
+                    "Configure integration auth — pick one",
+                    items,
+                ));
+            }
         }
+    }
+
+    /// Picker-accept handler for `PickerKind::IntegrationConfigure`.
+    /// `id` is the integration manifest id.
+    pub fn accept_integration_configure(&mut self, id: &str) {
+        self.open_integration_settings(id);
     }
 
     /// Persist the current values to the manifest's TOML under
