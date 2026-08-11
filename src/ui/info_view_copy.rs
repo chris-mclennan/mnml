@@ -66,7 +66,9 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                  active pane's file."
                     .into(),
             ),
-            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+B", "Focus branch picker")],
+            // Drift fix (2026-08-11): `Ctrl+Shift+B` is bound to
+            // `view.toggle_right_panel`, not the branch picker.
+            // `git.branch_menu` has no chord — click-only for now.
             try_it: vec![PaletteLink::new("git.branch_menu", "Switch branch")],
             ..Default::default()
         }),
@@ -175,14 +177,167 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
                 .into(),
             ..Default::default()
         }),
-        // src: src/ui/bufferline.rs::draw_new_tab
-        BufferlineNewTab => Some(InfoViewCopy {
-            title: "New tab".into(),
-            body: "Opens a new empty editor buffer in a fresh tab. Same effect as \
-                   `Ctrl+T` or the palette's `tab.new`."
+        // ── Statusline (fill batch 2026-08-11) ──────────────────────
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineFile,
+        //      src/app/dispatch.rs (hit-test), src/tui/mouse/down_left.rs
+        StatuslineFile => Some(InfoViewCopy {
+            title: "Active file chip".into(),
+            body: "Shows the active buffer's file name with a dirty dot when there \
+                   are unsaved edits. Click to reveal it in the file tree; right- \
+                   click for the buffer context menu."
                 .into(),
-            shortcuts: vec![ShortcutHint::new("Ctrl+T", "New tab")],
-            try_it: vec![PaletteLink::new("tab.new", "New tab")],
+            try_it: vec![PaletteLink::new("view.reveal_active", "Reveal in tree")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineDiagnostics
+        StatuslineDiagnostics => Some(InfoViewCopy {
+            title: "Diagnostics summary".into(),
+            body: "Rolls the active buffer's LSP errors and warnings into one \
+                   chip. Click to open the diagnostics panel and step through \
+                   each one."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+M", "Open diagnostics")],
+            try_it: vec![PaletteLink::new("lsp.diagnostics", "Open diagnostics")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineLanguage
+        StatuslineLanguage => Some(InfoViewCopy {
+            title: "Detected language".into(),
+            body: "Names the language mnml picked for the active buffer, inferred \
+                   from the file extension. This drives which syntax grammar and \
+                   LSP server get attached — click for a toast confirming the \
+                   source."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineSymbol
+        StatuslineSymbol => Some(InfoViewCopy {
+            title: "Enclosing-symbol crumb".into(),
+            body: "Names the function, struct, or class that contains the \
+                   cursor's current line — computed from a lightweight regex \
+                   outline, not full LSP. Click to open the outline pane."
+                .into(),
+            try_it: vec![PaletteLink::new("outline.show", "Open outline")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslinePr
+        StatuslinePr => Some(InfoViewCopy {
+            title: "Pull request badge".into(),
+            body: "Shows the open PR for the branch checked out in the active \
+                   repo — host tag plus PR number. Click opens it in your \
+                   browser."
+                .into(),
+            aside: Some("Only visible when the active branch has an open PR.".into()),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineMacroRec
+        StatuslineMacroRec => Some(InfoViewCopy {
+            title: "Macro-recording indicator".into(),
+            body: "Appears while a vim macro is recording, naming the register \
+                   it's recording into. Click stops the recording — the same \
+                   effect as pressing `q`."
+                .into(),
+            try_it: vec![PaletteLink::new("vim.macro_toggle", "Stop recording")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineFind
+        StatuslineFind => Some(InfoViewCopy {
+            title: "Active find query".into(),
+            body: "Shows the current in-buffer search term plus match position \
+                   (N/M). Click reopens the find prompt so you can change the \
+                   query."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("n / N", "Next / previous match")],
+            try_it: vec![PaletteLink::new("find.find", "Reopen find")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineSel
+        StatuslineSel => Some(InfoViewCopy {
+            title: "Selection size".into(),
+            body: "Live char / byte / line count of the active selection. \
+                   Updates as you extend or shrink it — a quick way to confirm \
+                   exactly what a visual-mode yank or delete will touch."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineProgress
+        StatuslineProgress => Some(InfoViewCopy {
+            title: "LSP progress indicator".into(),
+            body: "Surfaces the active language server's `$/progress` \
+                   notifications — indexing, building, analyzing. Disappears \
+                   once the server reports the task complete."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineBgTasks
+        StatuslineBgTasks => Some(InfoViewCopy {
+            title: "Background tasks".into(),
+            body: "Count of tasks mnml is running off the main thread right now \
+                   — LSP indexing, git fetches, HTTP sends, and similar async \
+                   work. The spinner keeps it visibly alive so a busy workspace \
+                   doesn't look frozen."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineAi
+        StatuslineAi => Some(InfoViewCopy {
+            title: "Inline suggestion pending".into(),
+            body: "Shows while an AI inline-completion request is in flight for \
+                   the active buffer. Clears automatically the moment the \
+                   suggestion — or a timeout — lands."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineNowPlaying
+        StatuslineNowPlaying => Some(InfoViewCopy {
+            title: "Now-playing chip".into(),
+            body: "Names the current track from mixr, Apple Music, or Spotify — \
+                   whichever source is active. Click brings that source forward \
+                   (or opens mixr when idle); right-click for a source menu."
+                .into(),
+            try_it: vec![PaletteLink::new("mixr.show", "Open mixr")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineMixrPlay
+        StatuslineMixrPlay => Some(InfoViewCopy {
+            title: "Play / pause chip".into(),
+            body: "Toggles playback for whichever source is currently active — \
+                   pauses mixr over IPC, or sends an AppleScript playpause to \
+                   Music / Spotify. Hidden entirely when nothing is playing."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineMixrFfwd
+        StatuslineMixrFfwd => Some(InfoViewCopy {
+            title: "Skip chip".into(),
+            body: "Advances playback — teleports to just before the next \
+                   mix-out in mixr, or fires the next-track AppleScript command \
+                   for Music / Spotify."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::StatuslineTestChip
+        StatuslineTestChip => Some(InfoViewCopy {
+            title: "Test-run status".into(),
+            body: "Appears once you've launched a test run this session — \
+                   cargo / npm / pytest / go / Playwright — and stays until that \
+                   pane closes. Click to jump straight to the test-output pane."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/bufferline.rs::draw_new_tab
+        // Drift fix (2026-08-11): `tab.new` opens a new TAB PAGE (a
+        // vim-style workspace of splits), not a new empty buffer —
+        // and its chord is `Ctrl+K n`, not `Ctrl+T` (reserved to
+        // avoid colliding with VS Code's Ctrl+T workspace-symbols).
+        BufferlineNewTab => Some(InfoViewCopy {
+            title: "New tab page".into(),
+            body: "Opens a fresh tab page — a new vim-style workspace of splits, \
+                   separate from the buffers open on the current one. Switch \
+                   between tab pages with `gt` / `gT`."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K n", "New tab page")],
+            try_it: vec![PaletteLink::new("tab.new", "New tab page")],
             ..Default::default()
         }),
         // src: src/ui/bufferline.rs::draw_theme_toggle
@@ -261,6 +416,63 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("view.toggle_right_panel", "Toggle now")],
             ..Default::default()
         }),
+        // src: src/tui/mouse/down_left.rs — palette-bar back arrow
+        PaletteBackButton => Some(InfoViewCopy {
+            title: "Back (previous buffer)".into(),
+            body: "Jumps to the previous buffer in MRU order — same as \
+                   `Ctrl+PageUp`. Mirrors browser back/forward muscle memory \
+                   for the bufferline."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+PageUp", "Previous buffer")],
+            try_it: vec![PaletteLink::new("buffer.prev", "Go back")],
+            ..Default::default()
+        }),
+        // src: src/tui/mouse/down_left.rs — palette-bar forward arrow
+        PaletteForwardButton => Some(InfoViewCopy {
+            title: "Forward (next buffer)".into(),
+            body: "Jumps to the next buffer in MRU order — same as \
+                   `Ctrl+PageDown`. Only does something once Back has moved you \
+                   backward."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+PageDown", "Next buffer")],
+            try_it: vec![PaletteLink::new("buffer.next", "Go forward")],
+            ..Default::default()
+        }),
+        // src: src/tui/mouse/down_left.rs — palette-bar dropdown chevron
+        PaletteDropdownButton => Some(InfoViewCopy {
+            title: "Recent files dropdown".into(),
+            body: "Opens the recent-files picker — every buffer touched this \
+                   session, most-recent first. Same list as `Ctrl+R`, reachable \
+                   by mouse."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+R", "Recent files")],
+            try_it: vec![PaletteLink::new("picker.recent", "Open recent files")],
+            ..Default::default()
+        }),
+        // src: src/tui/mouse/down_left.rs — palette-bar `+` chip
+        PaletteAddIntegration => Some(InfoViewCopy {
+            title: "Add integration".into(),
+            body: "Opens the integrations Marketplace so you can enable a \
+                   sibling tool (browser, Slack, AWS, …) as a chip in this bar. \
+                   Right-click any installed chip later to disable or remove it."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "integrations.show_marketplace",
+                "Open Marketplace",
+            )],
+            ..Default::default()
+        }),
+        // src: src/app/mod.rs::set_pending_undo / commit_pending_undo (#20)
+        PendingUndoChip => Some(InfoViewCopy {
+            title: "Pending-undo chip".into(),
+            body: "Appears for 10 seconds after a destructive action mnml can \
+                   reverse — closing a dirty tab, deleting a file, restoring an \
+                   overwritten request. Click it (or the chord) to undo before \
+                   it expires; the label names exactly what will be restored."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+Z", "Commit the pending undo")],
+            ..Default::default()
+        }),
         // src: src/ui/menu_bar.rs::draw_word — File/Edit/View/…/Help
         MenuBarWord(_) => Some(InfoViewCopy {
             title: "Menu bar word".into(),
@@ -293,10 +505,10 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             body: "Filters the agents dashboard by source, workspace, or state. \
                    Click to toggle; the currently-active filters render bold."
                 .into(),
-            try_it: vec![PaletteLink::new(
-                "ai.agents_dashboard",
-                "Open the dashboard",
-            )],
+            // Drift fix (2026-08-11): "ai.agents_dashboard" doesn't
+            // resolve — the real id is "ai.dashboard" (matches the
+            // StatuslineAiCodex entry above).
+            try_it: vec![PaletteLink::new("ai.dashboard", "Open the dashboard")],
             ..Default::default()
         }),
         // src: src/ui/http_panel.rs L75-86 — top toolbar row has
@@ -416,6 +628,14 @@ fn tree_row_copy(label: &str, is_dir: bool) -> Option<InfoViewCopy> {
             ..Default::default()
         });
     }
+    // Filename-keyed rows — checked BEFORE the extension fall-through
+    // so a file mnml's tree renderer icons by whole filename
+    // (`src/ui/icons.rs::filename_icon`) gets copy that matches, not
+    // the generic extension blurb (`package.json` deserves npm-manifest
+    // copy, not generic "JSON data"). 2026-08-11 fill batch.
+    if let Some(copy) = filename_row_copy(label) {
+        return Some(copy);
+    }
     let (lang, body): (&str, &str) = match ext.as_str() {
         "rs" => (
             "Rust source",
@@ -484,6 +704,141 @@ fn tree_row_copy(label: &str, is_dir: bool) -> Option<InfoViewCopy> {
             "Dockerfile. Syntax-only highlighting. `:!docker build .` from the \
              cmdline works if docker is on PATH.",
         ),
+        // ── Top-20 tree-row languages (fill batch 2026-08-11) ────────
+        // src: src/ui/icons.rs::extension_icon — grouped to match the
+        // renderer's icon groupings so copy and icon stay 1:1.
+        "vue" => (
+            "Vue single-file component",
+            "Vue 3 SFC — `<template>` / `<script>` / `<style>` blocks in one \
+             file. Syntax-only highlighting; no dedicated LSP yet.",
+        ),
+        "svelte" => (
+            "Svelte component",
+            "Svelte single-file component — markup, script, and scoped styles \
+             together. Syntax-only highlighting; no LSP.",
+        ),
+        "c" => (
+            "C source",
+            "C source file. Syntax-only highlighting; no LSP wired in yet.",
+        ),
+        "cpp" => (
+            "C++ source",
+            "C++ source file. Syntax-only highlighting; no LSP wired in yet.",
+        ),
+        "h" | "hpp" => (
+            "C/C++ header",
+            "Declarations only, no implementation. Syntax-only highlighting; \
+             no LSP.",
+        ),
+        "java" => (
+            "Java source",
+            "Java source file. Syntax-only highlighting; no LSP (jdtls isn't \
+             wired in yet).",
+        ),
+        "kt" => (
+            "Kotlin source",
+            "Kotlin source file. Syntax-only highlighting; no LSP.",
+        ),
+        "swift" => (
+            "Swift source",
+            "Swift source file. Syntax-only highlighting; no LSP.",
+        ),
+        "cs" => (
+            "C# source",
+            "C# source file. Syntax-only highlighting; no LSP wired in yet.",
+        ),
+        "csproj" => (
+            "MSBuild project file",
+            "References, target framework, and package refs for a .NET \
+             project. XML under the hood; syntax-only highlighting.",
+        ),
+        "sln" => (
+            "Visual Studio solution",
+            "Groups one or more `.csproj` projects for Visual Studio or \
+             `dotnet build`. Plain-text format; syntax-only highlighting.",
+        ),
+        "cshtml" => (
+            "Razor page",
+            "ASP.NET Razor page — HTML markup with embedded C# `@` blocks. \
+             Syntax-only highlighting.",
+        ),
+        "razor" => (
+            "Razor component",
+            "Blazor Razor component — HTML markup with embedded C#. \
+             Syntax-only highlighting.",
+        ),
+        "fs" => (
+            "F# source",
+            "F# source file. Syntax-only highlighting; no LSP.",
+        ),
+        "xml" => (
+            "XML data",
+            "XML markup. Syntax-only highlighting; no schema validation.",
+        ),
+        "svg" => (
+            "SVG image",
+            "Scalable vector graphic — technically XML, but mnml treats it as \
+             an image. No inline preview; open it in a browser to see it \
+             rendered.",
+        ),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" => (
+            "Image",
+            "Raster image. mnml doesn't render pixels inline here — open it \
+             in a browser or image viewer to see it.",
+        ),
+        "http" | "curl" | "rest" | "request" => (
+            "HTTP request file",
+            "mnml's own request format — method, URL, headers, and body in \
+             one file. Opening it launches the Request pane UI instead of a \
+             plain-text editor.",
+        ),
+        _ => return None,
+    };
+    Some(InfoViewCopy {
+        title: format!("{label} — {lang}"),
+        body: body.into(),
+        shortcuts: vec![
+            ShortcutHint::new("Enter", "Open in the active pane"),
+            ShortcutHint::new("Ctrl+Enter", "Open in a horizontal split"),
+        ],
+        ..Default::default()
+    })
+}
+
+/// Copy for tree rows keyed by their WHOLE filename rather than
+/// extension — mirrors `src/ui/icons.rs::filename_icon`'s match set.
+/// Checked before the extension fall-through in `tree_row_copy` so
+/// `package.json` reads as an npm manifest, not generic "JSON data".
+/// Case-insensitive on the filename (matches the icon lookup).
+fn filename_row_copy(label: &str) -> Option<InfoViewCopy> {
+    let (lang, body): (&str, &str) = match label.to_ascii_lowercase().as_str() {
+        "package.json" => (
+            "npm manifest",
+            "Declares this package's dependencies, scripts, and metadata for \
+             npm / pnpm / yarn. Syntax-only highlighting; no schema \
+             validation. `npm run <script>` from a terminal pane runs \
+             anything listed under `scripts`.",
+        ),
+        "dockerfile" => (
+            "Dockerfile",
+            "Defines how `docker build` assembles an image — base layer, \
+             copied files, entrypoint. Syntax-only highlighting. \
+             `:!docker build .` from the cmdline works if docker is on PATH.",
+        ),
+        ".env" => (
+            "Environment variables",
+            "Untracked key=value pairs the process reads at startup. This is \
+             separate from mnml's own `{{VAR}}` substitution, which reads \
+             `.mnml/env/<name>.env` in Request panes. Treat this file as \
+             secrets — keep it out of git.",
+        ),
+        "makefile" => (
+            "Build recipes",
+            "Defines named targets (`make build`, `make test`, …) as shell \
+             recipes. Tab-indentation is significant — a space where a tab \
+             is expected is the #1 Makefile syntax error. No LSP; \
+             syntax-only highlighting.",
+        ),
         _ => return None,
     };
     Some(InfoViewCopy {
@@ -541,17 +896,20 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("picker.files", "Open picker")],
             ..Default::default()
         }),
-        ("File", i) if i == "Save" || i.contains("Save ") && !i.contains("all") => {
-            Some(InfoViewCopy {
-                title: "File → Save".into(),
-                body: "Writes the active buffer to disk. Untitled buffers prompt \
+        // Drift fix (2026-08-11): menu labels carry a glyph prefix
+        // (`"\u{F0193}  Save"`), so `i == "Save"` never matched and
+        // `i.contains("Save ")` only matched "Save all" (which the
+        // old guard then excluded) — this arm was dead code. Anchor
+        // on the leading space instead so it survives the glyph.
+        ("File", i) if i.contains(" Save") && !i.contains("all") => Some(InfoViewCopy {
+            title: "File → Save".into(),
+            body: "Writes the active buffer to disk. Untitled buffers prompt \
                        for a path first."
-                    .into(),
-                shortcuts: vec![ShortcutHint::new("Ctrl+S", "Save")],
-                try_it: vec![PaletteLink::new("file.save", "Save now")],
-                ..Default::default()
-            })
-        }
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+S", "Save")],
+            try_it: vec![PaletteLink::new("file.save", "Save now")],
+            ..Default::default()
+        }),
         ("File", i) if i.contains("Save all") => Some(InfoViewCopy {
             title: "File → Save all".into(),
             body: "Writes every dirty buffer to disk in one pass. Untitled \
@@ -587,14 +945,10 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
             shortcuts: vec![ShortcutHint::new("Ctrl+H", "Replace")],
             ..Default::default()
         }),
-        ("Edit", "Undo") => Some(InfoViewCopy {
-            title: "Edit → Undo".into(),
-            body: "Reverts the last edit in the active buffer. Vim's `u`. \
-                   `:earlier 5m` walks the history back by wall-clock time."
-                .into(),
-            shortcuts: vec![ShortcutHint::new("Ctrl+Z", "Undo")],
-            ..Default::default()
-        }),
+        // Drift fix (2026-08-11): removed the `("Edit", "Undo")` arm
+        // — the Edit menu has no Undo item (src/menu_bar.rs:207-224,
+        // only Find/Replace variants). `editor.undo` exists as a
+        // command but isn't on this menu; the arm never fired.
         // src: src/menu_bar.rs — View menu
         ("View", i) if i.contains("left panel") || i.contains("file tree") => Some(InfoViewCopy {
             title: "View → Toggle left panel".into(),
@@ -623,6 +977,184 @@ fn menu_item_copy(menu: &str, item: &str) -> Option<InfoViewCopy> {
                 "view.toggle_hover_help",
                 "Hide this panel",
             )],
+            ..Default::default()
+        }),
+        // src: src/menu_bar.rs — Window menu (fill batch 2026-08-11)
+        ("Window", i) if i.contains("Reopen closed tab") => Some(InfoViewCopy {
+            title: "Window → Reopen closed tab".into(),
+            body: "Restores the most-recently-closed buffer, exactly where you \
+                   left it. Repeatable — keep firing it to walk back further."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+T", "Reopen closed tab")],
+            try_it: vec![PaletteLink::new("buffer.reopen", "Reopen")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Close other tabs") => Some(InfoViewCopy {
+            title: "Window → Close other tabs".into(),
+            body: "Closes every pane except the active one. Unsaved-changes \
+                   guards still apply per-buffer, so a dirty tab prompts before \
+                   it's discarded."
+                .into(),
+            try_it: vec![PaletteLink::new("view.close_others", "Close others")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Pin / unpin tab") => Some(InfoViewCopy {
+            title: "Window → Pin / unpin tab".into(),
+            body: "Pins the active tab so it sticks to the front of the \
+                   bufferline instead of scrolling out of view. Pinned tabs \
+                   also survive `Close other tabs`."
+                .into(),
+            try_it: vec![PaletteLink::new("buffer.pin_toggle", "Toggle pin")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Split right") => Some(InfoViewCopy {
+            title: "Window → Split right".into(),
+            body: "Splits the active pane side by side, opening the same \
+                   buffer in both halves so you can scroll them independently."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+\\", "Split right")],
+            try_it: vec![PaletteLink::new("view.split_right", "Split right")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Split down") => Some(InfoViewCopy {
+            title: "Window → Split down".into(),
+            body: "Splits the active pane top and bottom, opening the same \
+                   buffer in both halves so you can scroll them independently."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+Shift+\\", "Split down")],
+            try_it: vec![PaletteLink::new("view.split_down", "Split down")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Close split") => Some(InfoViewCopy {
+            title: "Window → Close split".into(),
+            body: "Closes the active split (or the active buffer, if there's \
+                   only one split left) and hands its space to the remaining \
+                   panes."
+                .into(),
+            try_it: vec![PaletteLink::new("view.close_split", "Close split")],
+            ..Default::default()
+        }),
+        // "Equalize splits" — must not also catch "Auto-equalize on
+        // split / close (toggle)" below; that item's label doesn't
+        // contain this exact phrase.
+        ("Window", i) if i.contains("Equalize splits") => Some(InfoViewCopy {
+            title: "Window → Equalize splits".into(),
+            body: "Resizes every split in the current tab page back to equal \
+                   size in one shot. Same as vim's `Ctrl+W =`."
+                .into(),
+            try_it: vec![PaletteLink::new("view.equalize_splits", "Equalize")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Auto-equalize") => Some(InfoViewCopy {
+            title: "Window → Auto-equalize splits (toggle)".into(),
+            body: "When on, mnml automatically re-equalizes every split's size \
+                   each time you split or close a pane, instead of leaving the \
+                   ratio wherever it landed."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "view.toggle_auto_equalize_splits",
+                "Toggle",
+            )],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Merge splits into tabs") => Some(InfoViewCopy {
+            title: "Window → Merge splits into tabs".into(),
+            body: "Collapses the whole split tree in the current tab page into \
+                   one leaf, keeping every pane as a tab there instead. \
+                   Reversible with Spread tabs into splits."
+                .into(),
+            try_it: vec![PaletteLink::new("layout.merge_to_tabs", "Merge to tabs")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Spread tabs into splits") => Some(InfoViewCopy {
+            title: "Window → Spread tabs into splits".into(),
+            body: "Lays every tab in the active leaf out into its own split, \
+                   using the same auto-tile heuristic as AI grid layout. \
+                   Reversible with Merge splits into tabs."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "layout.spread_to_splits",
+                "Spread to splits",
+            )],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Grow split width") => Some(InfoViewCopy {
+            title: "Window → Grow split width".into(),
+            body: "Widens the active split at its neighbors' expense. Same as \
+                   vim's `Ctrl+W >`; repeatable."
+                .into(),
+            try_it: vec![PaletteLink::new("view.split_grow_width", "Grow width")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Grow split height") => Some(InfoViewCopy {
+            title: "Window → Grow split height".into(),
+            body: "Grows the active split's height at its neighbors' expense. \
+                   Same as vim's `Ctrl+W +`; repeatable."
+                .into(),
+            try_it: vec![PaletteLink::new("view.split_grow_height", "Grow height")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Focus split left") => Some(InfoViewCopy {
+            title: "Window → Focus split left".into(),
+            body: "Moves keyboard focus to the split immediately to the left \
+                   of the active one, without touching the layout."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K Ctrl+Left", "Focus left")],
+            try_it: vec![PaletteLink::new("view.focus_left", "Focus left")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Focus split right") => Some(InfoViewCopy {
+            title: "Window → Focus split right".into(),
+            body: "Moves keyboard focus to the split immediately to the right \
+                   of the active one, without touching the layout."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K Ctrl+Right", "Focus right")],
+            try_it: vec![PaletteLink::new("view.focus_right", "Focus right")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Focus split up") => Some(InfoViewCopy {
+            title: "Window → Focus split up".into(),
+            body: "Moves keyboard focus to the split immediately above the \
+                   active one, without touching the layout."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K Ctrl+Up", "Focus up")],
+            try_it: vec![PaletteLink::new("view.focus_up", "Focus up")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Focus split down") => Some(InfoViewCopy {
+            title: "Window → Focus split down".into(),
+            body: "Moves keyboard focus to the split immediately below the \
+                   active one, without touching the layout."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("Ctrl+K Ctrl+Down", "Focus down")],
+            try_it: vec![PaletteLink::new("view.focus_down", "Focus down")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("AI layout: Grid") => Some(InfoViewCopy {
+            title: "Window → AI layout: Grid".into(),
+            body: "Switches open Claude / Codex sessions to an auto-tiled grid \
+                   of splits (up to 8) instead of stacking them as tabs in one \
+                   leaf."
+                .into(),
+            try_it: vec![PaletteLink::new("view.ai_layout_grid", "Switch to grid")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("AI layout: Tabs") => Some(InfoViewCopy {
+            title: "Window → AI layout: Tabs".into(),
+            body: "Switches open Claude / Codex sessions to append as tabs in \
+                   the active leaf instead of tiling each one into its own \
+                   split."
+                .into(),
+            try_it: vec![PaletteLink::new("view.ai_layout_tabs", "Switch to tabs")],
+            ..Default::default()
+        }),
+        ("Window", i) if i.contains("Restart mnml") => Some(InfoViewCopy {
+            title: "Window → Restart mnml".into(),
+            body: "Rebuilds and relaunches mnml via `run.sh`'s restart loop, \
+                   re-reading source + config from disk. Prompts first if any \
+                   buffer is dirty."
+                .into(),
+            try_it: vec![PaletteLink::new("app.restart", "Restart now")],
             ..Default::default()
         }),
         _ => None,

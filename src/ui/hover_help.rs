@@ -36,112 +36,157 @@ pub const INFO_BOX_HEIGHT: u16 = 8;
 /// Paint the info box over `area`. Caller reserves the rows only when
 /// `app.config.ui.hover_help` is on AND the left panel is tall enough
 /// to spare `INFO_BOX_HEIGHT`.
+///
+/// Layout (Info View v0.3 Phase 1.6, matches `docs/design/info-view-v0.3.md`):
+///
+/// ```text
+///   ─────────────────────────  ← row 0: divider from tree rail
+///    Slack Boards              ← row 1: TITLE bar (distinct bg, bold)
+///                              ← row 2: spacer
+///    Slack Canvases share the  ← row 3+: body (word-wrapped, regular)
+///    same OAuth token…
+///    [Ctrl+K b] Toggle bufferline  ← shortcuts (bracket accent + label)
+///                              ← trailing blank (cushion for statusbar)
+/// ```
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
     }
     app.rects.hover_help_strip = Some(area);
     let t = theme::cur();
-    // Slightly darker bg than the tree rail so the box reads as a
-    // distinct pane, not accidental tree overflow.
-    let bg = t.bg_darker;
-    frame.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
+    // Body bg is slightly darker than the tree rail so the box reads
+    // as its own pane; title bar uses the window bg (lighter) so the
+    // topic name pops out as a distinct band. Ableton uses the same
+    // idiom.
+    let body_bg = t.bg_darker;
+    let title_bg = t.bg_dark;
+    frame.render_widget(Paragraph::new("").style(Style::default().bg(body_bg)), area);
 
-    let (primary, secondary) = pick_help_text(app);
+    let copy = pick_help_copy(app);
 
-    // Row 0 — separator rule. Dim `─` across the full width in the
-    // `comment` color so the info box is visually distinct from the
-    // tree rail directly above (both share bg_darker; without a
-    // separator they blend into one gray block).
+    // Row 0 — divider between tree rail and info box.
     let sep_line = "─".repeat(area.width as usize);
-    let sep_rect = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             sep_line,
             Style::default()
                 .fg(t.comment)
-                .bg(bg)
+                .bg(body_bg)
                 .add_modifier(Modifier::DIM),
         ))),
-        sep_rect,
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: area.width,
+            height: 1,
+        },
     );
     if area.height <= 1 {
         return;
     }
 
-    // Row 1 — header: `? Info` marker so users learn what the box is.
-    let header = Line::from(vec![
-        Span::styled(" ", Style::default().bg(bg)),
-        Span::styled(
-            "?",
+    // Row 1 — TITLE bar (topic name, distinct bg, bold).
+    let title_row = pad_line(&format!(" {}", copy.title), area.width as usize);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            title_row,
             Style::default()
-                .fg(t.cyan)
-                .bg(bg)
+                .fg(t.fg)
+                .bg(title_bg)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("  Info", Style::default().fg(t.comment).bg(bg)),
-    ]);
-    let header_rect = Rect {
-        x: area.x,
-        y: area.y + 1,
-        width: area.width,
-        height: 1,
-    };
-    frame.render_widget(Paragraph::new(header), header_rect);
+        ))),
+        Rect {
+            x: area.x,
+            y: area.y + 1,
+            width: area.width,
+            height: 1,
+        },
+    );
     if area.height <= 2 {
         return;
     }
 
-    // Rows 2..N — wrapped primary + optional secondary text.
-    // Content width leaves a 1-cell gutter on each side.
+    // Rows 2..N — spacer + body + optional aside + optional shortcuts.
+    // 1-cell gutter left + right; trailing row stays blank as cushion
+    // before the statusbar directly below.
     let content_w = area.width.saturating_sub(2) as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
-    for line in wrap_words(&primary, content_w) {
+    // Spacer row between title bar and body.
+    lines.push(spacer(body_bg));
+    // Body — regular weight, comment-color (softer than fg-bold so the
+    // TITLE bar owns the visual weight).
+    for line in wrap_words(&copy.body, content_w) {
         lines.push(Line::from(vec![
-            Span::styled(" ", Style::default().bg(bg)),
-            Span::styled(
-                line,
-                Style::default()
-                    .fg(t.fg)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Span::styled(" ", Style::default().bg(body_bg)),
+            Span::styled(line, Style::default().fg(t.fg).bg(body_bg)),
         ]));
     }
-    if let Some(sub) = secondary {
-        // Blank spacer row between primary + secondary if there's
-        // room — a rest for the eye.
-        if lines.len() as u16 + 1 < area.height.saturating_sub(1) {
-            lines.push(Line::from(Span::styled(" ", Style::default().bg(bg))));
-        }
-        for line in wrap_words(&sub, content_w) {
+    // Aside — italic caveat.
+    if let Some(aside) = &copy.aside {
+        for line in wrap_words(aside, content_w) {
             lines.push(Line::from(vec![
-                Span::styled(" ", Style::default().bg(bg)),
-                Span::styled(line, Style::default().fg(t.comment).bg(bg)),
+                Span::styled(" ", Style::default().bg(body_bg)),
+                Span::styled(
+                    line,
+                    Style::default()
+                        .fg(t.comment)
+                        .bg(body_bg)
+                        .add_modifier(Modifier::ITALIC),
+                ),
             ]));
         }
     }
-    // Body starts at row 2 (after separator + header). Trailing row
-    // stays blank — leaves a 1-row cushion between last text line
-    // and the statusbar directly below.
+    // Shortcut hints — `[Chord] Label` per row. Only if there's room
+    // after the body; otherwise skip (body reads first).
+    let max_body_rows = area.height.saturating_sub(3) as usize;
+    let rows_left = max_body_rows.saturating_sub(lines.len());
+    if rows_left > 0 && !copy.shortcuts.is_empty() {
+        // Blank spacer between prose and shortcuts.
+        lines.push(spacer(body_bg));
+        for hint in copy.shortcuts.iter().take(rows_left.saturating_sub(1)) {
+            lines.push(Line::from(vec![
+                Span::styled(" ", Style::default().bg(body_bg)),
+                Span::styled(
+                    format!("[{}]", hint.chord),
+                    Style::default()
+                        .fg(t.cyan)
+                        .bg(body_bg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" {}", hint.label),
+                    Style::default().fg(t.fg).bg(body_bg),
+                ),
+            ]));
+        }
+    }
+
+    // Body starts at row 2 (after divider + title). Height reserves
+    // 1 trailing row as cushion.
     let body_rect = Rect {
         x: area.x,
         y: area.y + 2,
         width: area.width,
         height: area.height.saturating_sub(3),
     };
-    // Truncate to available rows — no scrollbar needed; the box is
-    // ephemeral information, not a document.
     let cap = body_rect.height as usize;
     if lines.len() > cap {
         lines.truncate(cap);
     }
     frame.render_widget(Paragraph::new(lines), body_rect);
+}
+
+fn spacer<'a>(bg: ratatui::style::Color) -> Line<'a> {
+    Line::from(Span::styled(" ", Style::default().bg(bg)))
+}
+
+fn pad_line(s: &str, width: usize) -> String {
+    let w = s.chars().count();
+    if w >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(width - w))
+    }
 }
 
 /// Minimal word-wrap into lines of at most `width` chars. Preserves
@@ -213,48 +258,77 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
 ///   2. Active pane summary (file / URL / kind) — for `Focus::Pane`
 ///      or when the focus target had nothing useful to show.
 ///   3. Focus hint pointing at the palette (last resort).
-fn pick_help_text(app: &App) -> (String, Option<String>) {
-    // Info View v0.3 Phase 1.5 — InfoViewCopy takes precedence when a
-    // curated entry exists. Falls through to the legacy tooltip
-    // describe_text for chips we haven't written copy for yet.
-    // Both branches use to_flat_pair for now; the rich renderer
-    // (shortcuts / try_it / chord glyphs) is Phase 1.6+.
+fn pick_help_copy(app: &App) -> crate::ui::info_view::InfoViewCopy {
+    use crate::ui::info_view::InfoViewCopy;
+    // Info View v0.3 Phase 1.6 — InfoViewCopy is now the primary shape.
+    // Curated `info_view_copy::lookup` entries render richly (title +
+    // body + shortcuts). Legacy tooltip callers get their
+    // (primary, secondary) pair mapped onto title + body so nothing
+    // regresses while the copy dictionary catches up.
     if let Some((chip, _)) = app.hover_chip {
         let target = crate::ui::info_view::InfoViewTarget::Chip(chip);
         if let Some(copy) = crate::ui::info_view_copy::lookup(app, &target) {
-            return copy.to_flat_pair();
+            return copy;
         }
         if let Some((primary, secondary)) = crate::ui::tooltip::describe_text(chip, app) {
-            return (primary, secondary);
+            return InfoViewCopy {
+                title: primary,
+                body: secondary.unwrap_or_default(),
+                ..Default::default()
+            };
         }
     }
-    // Focus-target description takes precedence over the active
-    // pane whenever focus isn't on a pane. Otherwise a keyboard
-    // walk through the tree kept showing the same editor pane info.
-    if let Some(pair) = describe_focus_target(app) {
-        return pair;
+    if let Some(copy) = describe_focus_target_copy(app) {
+        return copy;
     }
     if let Some(cur) = app.active
         && let Some(pane) = app.panes.get(cur)
-        && let Some(pair) = describe_active_pane(pane)
+        && let Some((primary, secondary)) = describe_active_pane(pane)
     {
-        return pair;
+        return InfoViewCopy {
+            title: primary,
+            body: secondary.unwrap_or_default(),
+            ..Default::default()
+        };
     }
-    let hint = match app.focus {
-        crate::focus::Focus::Tree => {
-            "Sidebar focus. Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette."
-        }
-        crate::focus::Focus::Pane => {
-            "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette."
-        }
-        crate::focus::Focus::RightPanel => {
-            "Right-panel focus. Arrows walk rows. Enter jumps to the source. Ctrl+E cycles focus."
-        }
-        crate::focus::Focus::BottomPanel => {
-            "Bottom-panel focus. Arrows walk rows. Ctrl+Shift+J hides. Ctrl+E cycles focus."
-        }
+    // Empty state — one-liner per focus surface. Title names the
+    // surface; body gives the essential action.
+    let (title, body) = match app.focus {
+        crate::focus::Focus::Tree => (
+            "Sidebar",
+            "Arrows or j/k walk rows. Enter opens the selection. Ctrl+Shift+P opens the palette.",
+        ),
+        crate::focus::Focus::Pane => (
+            "Editor",
+            "Hover a chip, tab, or tree row for help. Ctrl+Shift+P opens the palette.",
+        ),
+        crate::focus::Focus::RightPanel => (
+            "Right panel",
+            "Arrows walk rows. Enter jumps to the source. Ctrl+E cycles focus.",
+        ),
+        crate::focus::Focus::BottomPanel => (
+            "Bottom panel",
+            "Arrows walk rows. Ctrl+Shift+J hides. Ctrl+E cycles focus.",
+        ),
     };
-    (hint.to_string(), None)
+    InfoViewCopy {
+        title: title.to_string(),
+        body: body.to_string(),
+        ..Default::default()
+    }
+}
+
+/// InfoViewCopy shape of describe_focus_target. When the focus target
+/// has a curated tree-row entry, prefer that; else synthesize from
+/// the ad-hoc friendly-lang strings.
+fn describe_focus_target_copy(app: &App) -> Option<crate::ui::info_view::InfoViewCopy> {
+    use crate::ui::info_view::InfoViewCopy;
+    let (primary, secondary) = describe_focus_target(app)?;
+    Some(InfoViewCopy {
+        title: primary,
+        body: secondary.unwrap_or_default(),
+        ..Default::default()
+    })
 }
 
 /// Describe whatever is under keyboard focus when it's NOT a pane —
