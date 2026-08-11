@@ -119,35 +119,77 @@ impl App {
     /// Called by `open_pty_dir` right before spawn; result is
     /// merged into `BinaryProfile.env`. Phase 2E (2026-08-11).
     pub fn integration_auth_env(&self, integration_id: &str) -> Vec<(String, String)> {
-        let Some(manifest) = self
+        // 2026-08-11 — extended from "just this integration's auth"
+        // to "this integration's auth PLUS every OTHER installed
+        // integration's auth-values that name an env_fallback".
+        // Rationale: many integrations share env conventions
+        // (jira's Fix Versions view reads $BITBUCKET_ACCESS_TOKEN
+        // that the bitbucket sibling configures; git tools read
+        // $GITHUB_TOKEN that the github sibling configures). Without
+        // cross-integration sharing, each sibling that consumes a
+        // "foreign" env var had to redeclare it in its own [[auth]]
+        // (bad UX — user re-enters the same token twice).
+        //
+        // Precedence when the same env-var name appears in multiple
+        // integrations' [auth_values]: the CURRENT integration wins,
+        // then in load order for the rest. Rare — usually only one
+        // integration owns a given env var.
+        let mut env_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        // Pass 1 — every OTHER integration's auth-values, lowest
+        // priority. Skipped for integrations with no [[auth]].
+        for manifest in self
+            .integration_manifests
+            .iter()
+            .filter(|m| m.id != integration_id && !m.auth.is_empty())
+        {
+            let stored: toml::value::Table = std::fs::read_to_string(&manifest.source_path)
+                .ok()
+                .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+                .and_then(|v| v.get("auth_values").cloned())
+                .and_then(|v| v.as_table().cloned())
+                .unwrap_or_default();
+            for field in &manifest.auth {
+                let Some(env_name) = field.env_fallback.as_ref() else {
+                    continue;
+                };
+                let Some(stored_val) = stored.get(&field.key).and_then(|x| x.as_str()) else {
+                    continue;
+                };
+                if !stored_val.is_empty() {
+                    env_map
+                        .entry(env_name.clone())
+                        .or_insert_with(|| stored_val.to_string());
+                }
+            }
+        }
+        // Pass 2 — the CURRENT integration's auth-values overwrite
+        // any conflicting keys from pass 1.
+        if let Some(manifest) = self
             .integration_manifests
             .iter()
             .find(|m| m.id == integration_id)
-        else {
-            return Vec::new();
-        };
-        if manifest.auth.is_empty() {
-            return Vec::new();
-        }
-        let stored: toml::value::Table = std::fs::read_to_string(&manifest.source_path)
-            .ok()
-            .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
-            .and_then(|v| v.get("auth_values").cloned())
-            .and_then(|v| v.as_table().cloned())
-            .unwrap_or_default();
-        manifest
-            .auth
-            .iter()
-            .filter_map(|field| {
-                let env_name = field.env_fallback.as_ref()?;
-                let stored_val = stored.get(&field.key).and_then(|x| x.as_str())?;
-                if stored_val.is_empty() {
-                    None
-                } else {
-                    Some((env_name.clone(), stored_val.to_string()))
+            && !manifest.auth.is_empty()
+        {
+            let stored: toml::value::Table = std::fs::read_to_string(&manifest.source_path)
+                .ok()
+                .and_then(|s| toml::from_str::<toml::Value>(&s).ok())
+                .and_then(|v| v.get("auth_values").cloned())
+                .and_then(|v| v.as_table().cloned())
+                .unwrap_or_default();
+            for field in &manifest.auth {
+                let Some(env_name) = field.env_fallback.as_ref() else {
+                    continue;
+                };
+                let Some(stored_val) = stored.get(&field.key).and_then(|x| x.as_str()) else {
+                    continue;
+                };
+                if !stored_val.is_empty() {
+                    env_map.insert(env_name.clone(), stored_val.to_string());
                 }
-            })
-            .collect()
+            }
+        }
+        env_map.into_iter().collect()
     }
 
     /// True when the integration has at least one `required = true`
