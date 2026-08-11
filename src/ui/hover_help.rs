@@ -85,16 +85,45 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    // Row 1 — TITLE bar (topic name, distinct bg, bold).
-    let title_row = pad_line(&format!(" {}", copy.title), area.width as usize);
+    // Row 1 — TITLE bar (topic name, distinct bg, bold) + kebab
+    // affordance at the right edge. `⋮` (U+22EE, vertical 3-dot)
+    // matches the widget kebab glyph in `src/ui/dock.rs`.
+    let kebab_glyph = "⋮";
+    // Reserve 2 cells at the right for the glyph + 1 padding cell
+    // (so it doesn't butt against the frame). Title text truncates
+    // to fit; area.width >= 3 is required for the kebab to appear.
+    let kebab_cells = 2u16;
+    let title_avail = area.width.saturating_sub(kebab_cells);
+    let title_text: String = copy
+        .title
+        .chars()
+        .take(title_avail.saturating_sub(1) as usize)
+        .collect();
+    let title_body = pad_line(&format!(" {title_text}"), title_avail as usize);
+    let mut title_spans = vec![Span::styled(
+        title_body,
+        Style::default()
+            .fg(t.fg)
+            .bg(title_bg)
+            .add_modifier(Modifier::BOLD),
+    )];
+    if area.width >= 3 {
+        title_spans.push(Span::styled(
+            kebab_glyph,
+            Style::default().fg(t.comment).bg(title_bg),
+        ));
+        title_spans.push(Span::styled(" ", Style::default().bg(title_bg)));
+        app.rects.hover_help_kebab = Some(Rect {
+            x: area.x + area.width - kebab_cells,
+            y: area.y + 1,
+            width: 1,
+            height: 1,
+        });
+    } else {
+        app.rects.hover_help_kebab = None;
+    }
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            title_row,
-            Style::default()
-                .fg(t.fg)
-                .bg(title_bg)
-                .add_modifier(Modifier::BOLD),
-        ))),
+        Paragraph::new(Line::from(title_spans)),
         Rect {
             x: area.x,
             y: area.y + 1,

@@ -58,11 +58,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, screen: Rect) {
         // still fire whatever's at `selected` (0 by default), so
         // the no-highlight state isn't inert.
         let selected = row == menu.selected && menu.interacted;
-        let style = if selected {
+        let mut style = if selected {
             crate::ui::design_tokens::row_highlight_menu()
         } else {
             crate::ui::design_tokens::row_plain_menu()
         };
+        // Destructive rows (Close / Delete) paint red when idle.
+        // Selection style still wins so the row isn't red-on-red-
+        // highlight — matches the widget-kebab convention in
+        // `src/ui/dock.rs`.
+        if item.destructive && !selected {
+            style = style.fg(crate::ui::theme::cur().red);
+        }
         // Pad the label so the highlight fills the row.
         let mut label = format!(" {} ", item.label);
         let want = inner.width as usize;

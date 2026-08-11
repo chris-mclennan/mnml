@@ -395,6 +395,11 @@ pub enum MenuAction {
 pub struct MenuItem {
     pub label: String,
     pub action: MenuAction,
+    /// Render the row's fg as `t.red` when idle (selection style still
+    /// wins) — matches the widget-kebab "Close" affordance. Used for
+    /// destructive actions (Close / Delete) so a mouse user can spot
+    /// them at a glance. 2026-08-11.
+    pub destructive: bool,
 }
 
 impl MenuItem {
@@ -402,6 +407,16 @@ impl MenuItem {
         MenuItem {
             label: label.into(),
             action,
+            destructive: false,
+        }
+    }
+    /// Same as [`Self::new`] but tags the item as destructive so the
+    /// renderer paints it red.
+    pub fn destructive(label: impl Into<String>, action: MenuAction) -> Self {
+        MenuItem {
+            label: label.into(),
+            action,
+            destructive: true,
         }
     }
 }

@@ -2830,9 +2830,16 @@ pub struct PaneRects {
     pub split_dividers: Vec<crate::layout::DividerHit>,
     pub statusline: Option<Rect>,
     /// 2026-07-07 — Ableton-style hover-help footer rect (when the
-    /// strip is visible). Left-click toggles the strip off; right-
-    /// click opens a mini context menu ("Hide strip").
+    /// strip is visible). Panel-body clicks are inert (2026-08-11 —
+    /// accidental body clicks used to close the panel; the close
+    /// affordance moved into `hover_help_kebab`).
     pub hover_help_strip: Option<Rect>,
+    /// 2026-08-11 — 1-cell `⋮` kebab at top-right of the hover-help
+    /// title bar. Left-click opens a small ContextMenu with `Close`
+    /// (destructive-red) as the sole entry today; more can join
+    /// (About the info box…, per-panel settings) without further
+    /// wiring. Matches the widget kebab pattern (`src/ui/dock.rs`).
+    pub hover_help_kebab: Option<Rect>,
     /// 2026-06-21 vscode SEV-2 — the floating peek_definition overlay's
     /// outer rect when shown. The mouse dispatcher uses this to consume
     /// inside-clicks (instead of bleeding through to the editor) and
@@ -9686,6 +9693,20 @@ impl App {
             ));
         }
         self.context_menu = Some(ContextMenu::new(title, anchor, items));
+    }
+
+    /// 2026-08-11 — kebab menu for the Ableton-style hover-help panel.
+    /// Anchored below the `⋮` glyph in the title bar. Sole item today
+    /// is a destructive-red `Close` that runs `view.toggle_hover_help`;
+    /// more items (`About the info box…`, panel-scoped settings) can
+    /// join without touching the click plumbing.
+    pub fn open_hover_help_kebab_menu(&mut self, anchor: (u16, u16)) {
+        use crate::context_menu::{ContextMenu, MenuAction, MenuItem};
+        let items = vec![MenuItem::destructive(
+            "Close",
+            MenuAction::Command("view.toggle_hover_help"),
+        )];
+        self.context_menu = Some(ContextMenu::new(None, anchor, items));
     }
 
     /// Spawn the `mnml-aws-cloudwatch-logs` sibling tool in a Pty
