@@ -87,6 +87,68 @@ pub struct IntegrationSpec {
     pub notifications: Option<NotificationsSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requires: Option<Requires>,
+    /// Auth fields the integration needs configured before its
+    /// commands can talk to their backend — tokens, base URLs, an
+    /// email, etc. mnml's per-integration Settings pane renders one
+    /// form control per entry (secrets are masked as `•••`) and
+    /// writes the user's answers back to the manifest TOML under
+    /// `[auth_values]`.
+    ///
+    /// When a command from this integration fires without a required
+    /// field set (and its `env_fallback` env var also unset), mnml
+    /// intercepts the dispatch and opens the Settings pane instead
+    /// of silently failing. Added in 0.7.0 (2026-08-11).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auth: Vec<AuthField>,
+}
+
+/// One user-configurable field the integration needs before it can
+/// operate. Declared in `IntegrationSpec::auth`; rendered by mnml's
+/// per-integration Settings pane; persisted to `[auth_values]` in
+/// the same manifest TOML. Added in 0.7.0 (2026-08-11).
+///
+/// Example:
+///
+/// ```
+/// use mnml_bridge::AuthField;
+/// let f = AuthField {
+///     key: "bot_token".into(),
+///     label: "Slack bot token".into(),
+///     kind: "secret".into(),
+///     env_fallback: Some("SLACK_BOT_TOKEN".into()),
+///     help_url: Some("https://api.slack.com/apps".into()),
+///     help: Some("Create a Slack app + install to workspace + copy the token.".into()),
+///     required: true,
+/// };
+/// # let _ = f;
+/// ```
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AuthField {
+    /// Key the user's answer is written under in `[auth_values]`.
+    /// e.g. `"bot_token"`.
+    pub key: String,
+    /// Human label rendered next to the input.
+    pub label: String,
+    /// One of `"secret"` (masked in UI, keychain-backed in a future
+    /// mnml phase), `"text"`, `"number"`, `"url"`, `"email"`.
+    pub kind: String,
+    /// Env-var name to fall back to when `[auth_values]` doesn't
+    /// have a stored value. Backward-compatibility hatch for
+    /// integrations whose users have already set `$SLACK_BOT_TOKEN`
+    /// etc. in their shell profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_fallback: Option<String>,
+    /// One-line link rendered as "Get one: <url>" under the input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub help_url: Option<String>,
+    /// Short inline help sentence under the label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+    /// When true, an integration action fired without a value here
+    /// AND no env_fallback env var set triggers mnml's first-hit
+    /// auth prompt: the Settings pane opens instead of the action.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
 }
 
 /// Visual + interaction settings for the sibling's chip. Display

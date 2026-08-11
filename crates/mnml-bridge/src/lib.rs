@@ -51,8 +51,8 @@ pub use client::Mount;
 pub mod install;
 pub mod ipc;
 pub use install::{
-    ChipSpec, CommandSpec, ContextMenuEntry, IntegrationSpec, MenuBarEntry, NotificationsSpec,
-    OsNotifyPolicy, Requires, SettingsPage, StatuslineSpec, install_integration,
+    AuthField, ChipSpec, CommandSpec, ContextMenuEntry, IntegrationSpec, MenuBarEntry,
+    NotificationsSpec, OsNotifyPolicy, Requires, SettingsPage, StatuslineSpec, install_integration,
     integration_manifest_path, list_installed_integrations, pending_glyphs_dir,
     uninstall_integration,
 };
