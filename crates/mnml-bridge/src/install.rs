@@ -122,7 +122,7 @@ pub struct IntegrationSpec {
 /// };
 /// # let _ = f;
 /// ```
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AuthField {
     /// Key the user's answer is written under in `[auth_values]`.
     /// e.g. `"bot_token"`.
@@ -131,6 +131,10 @@ pub struct AuthField {
     pub label: String,
     /// One of `"secret"` (masked in UI, keychain-backed in a future
     /// mnml phase), `"text"`, `"number"`, `"url"`, `"email"`.
+    ///
+    /// `Default::default()` returns `"text"` to match mnml core's
+    /// `default_kind()` deserialize fallback — an unset kind on both
+    /// sides means "plain text field".
     pub kind: String,
     /// Env-var name to fall back to when `[auth_values]` doesn't
     /// have a stored value. Backward-compatibility hatch for
@@ -149,6 +153,26 @@ pub struct AuthField {
     /// auth prompt: the Settings pane opens instead of the action.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
+}
+
+impl Default for AuthField {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            label: String::new(),
+            // Match mnml core's `default_kind()` — an unset kind
+            // means "plain text field", not the empty string. Without
+            // this, `..Default::default()` in a sibling would write
+            // `kind = ""` to the TOML, bypassing core's fallback and
+            // rendering as an empty-string kind in the Settings pane.
+            // Caught by code-reviewer 2026-08-11 pre-publish.
+            kind: "text".to_string(),
+            env_fallback: None,
+            help_url: None,
+            help: None,
+            required: false,
+        }
+    }
 }
 
 /// Visual + interaction settings for the sibling's chip. Display
@@ -514,6 +538,46 @@ mod tests {
         assert!(validate_id("a/b").is_err());
         assert!(validate_id("a\\b").is_err());
         assert!(validate_id("valid_id-123").is_ok());
+    }
+
+    #[test]
+    fn serializes_auth_fields_as_array_of_tables() {
+        let spec = IntegrationSpec {
+            id: "slack".into(),
+            label: "Slack".into(),
+            binary: "mnml-msg-slack".into(),
+            auth: vec![
+                AuthField {
+                    key: "bot_token".into(),
+                    label: "Slack bot token".into(),
+                    kind: "secret".into(),
+                    env_fallback: Some("SLACK_BOT_TOKEN".into()),
+                    help_url: Some("https://api.slack.com/apps".into()),
+                    required: true,
+                    ..Default::default()
+                },
+                AuthField {
+                    key: "team_id".into(),
+                    label: "Team ID".into(),
+                    // Default kind = "text" per AuthField's Default impl.
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let toml = toml_serialize(&spec).unwrap();
+        // Both fields serialize as [[auth]] tables with all populated
+        // scalars intact.
+        assert!(toml.contains("[[auth]]"));
+        assert!(toml.contains("key = \"bot_token\""));
+        assert!(toml.contains("kind = \"secret\""));
+        assert!(toml.contains("env_fallback = \"SLACK_BOT_TOKEN\""));
+        assert!(toml.contains("required = true"));
+        // Second field: default kind is "text", NOT the empty string.
+        assert!(toml.contains("key = \"team_id\""));
+        assert!(toml.contains("kind = \"text\""));
+        // `required = false` is skipped via skip_serializing_if.
+        assert!(!toml.contains("required = false"));
     }
 
     #[test]
