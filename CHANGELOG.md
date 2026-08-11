@@ -10,6 +10,82 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-08-11
+
+Two flagship features landed end-to-end today: the **first-launch
+wizard** and the **per-integration auth SDK**. Also a foundational
+refactor (fim-engine → workspace member), CI-red fixes, and two
+new agents.
+
+### Added
+
+- **First-launch wizard** (`first_launch.show`) — modal that
+  auto-opens on first-ever mnml launch, walks new users through
+  6 setup questions: AI ghost-text backend (Claude API / Local /
+  Skip), input style (vim / standard), Nerd Font check, Claude
+  Code + Codex install, VSCode `code` shim, process monitors.
+  Install sections spawn a Pty pane running the actual command
+  (`npm install -g …`, `sudo ln -sf …`, `brew install …`).
+  Esc = "Ask me later"; Enter = "Finish" (persists + suppresses
+  future auto-open).
+- **Per-integration Settings pane + `[[auth]]` manifest schema.**
+  Integration authors declare auth fields (`kind` = secret / text
+  / url / email / number, `env_fallback`, `help_url`, `required`)
+  via `mnml-bridge 0.7.0`'s new `AuthField`. mnml core drives
+  three surfaces from those declarations:
+    - **Configure pane**: right-click chip → "Configure…"
+      renders a modal form (secrets masked). Ctrl+S writes to
+      `[auth_values]` in the same manifest TOML.
+    - **First-hit auth guard**: firing a command with a required
+      field unset (and no env fallback) opens the Configure pane
+      instead of silently spawning a broken Pty.
+    - **Pty env-injection**: at spawn time, `[auth_values]` flow
+      through as env vars using each field's `env_fallback` name
+      — cross-integration, so configuring bitbucket once gives
+      jira's Fix Versions view its `$BITBUCKET_ACCESS_TOKEN` for
+      free.
+- **Pilot siblings** shipped with `[[auth]]`: `mnml-msg-slack
+  0.1.3` (bot_token + team_id), `mnml-forge-bitbucket 0.3.3`
+  (app_password + username), `mnml-tracker-jira 0.2.3` (site_url
+  + email + api_token).
+- **`hover-help-writer` agent** (`.claude/agents/`) — audit/fill/
+  verify modes over `src/ui/info_view_copy.rs`; enumerates every
+  `HoverChip` variant + menu item + tree language, diffs
+  against the copy dictionary, reports gaps + drift.
+- **`pr-reviewer` agent** — fetches a GitHub PR into an isolated
+  worktree, runs cargo build/clippy/test on the branch, stages a
+  severity-ranked review at `.mnml/pr-reviews/<N>.md`. Never
+  posts to GitHub — user posts after reading.
+- **`crates/fim-engine/`** — the local FIM completion engine is
+  now a workspace member (was a sibling repo at `../fim-engine/`,
+  now vendored via `git subtree` with full history preserved).
+  Worktrees under the repo tree work again; no more cross-repo
+  coordination.
+- **Site manual**: 2 new pages under `site/src/content/docs/manual/`
+  — first-launch wizard walkthrough + integration auth deep-dive.
+
+### Fixed
+
+- **8 CI-red e2e tests** — space-eating in vim insert / DAP REPL
+  / any typed-text surface, plus settings-overlay Esc requiring
+  two presses to close and arrow keys not adjusting rows. Root
+  cause: R9's `<space>ff` binding made bare space a leader
+  prefix. Fix: new `InputHandler::is_op_pending()` trait method
+  + broader `pane_wants_bare_space` bypass. 223/223 e2e green.
+- **Slack glyph codepoint** — F03EF was NOT slack; the actual
+  `nf-md-slack` is U+F04B1. Fixed in `icon_catalog.rs`,
+  `marketplace.rs`, installed manifests, AND the msg-slack
+  sibling's `install.rs` so future installs write the correct
+  codepoint.
+- **Hover-help panel** got a 1-row bottom cushion so the last
+  content line isn't flush against the statusbar.
+
+### Merged
+
+- **PR #27 from ICodeGorilla** — Windows `zig` target detection
+  fix so `x86_64-pc-windows-gnu` builds don't silently ABI-
+  mismatch to msvc. Approved via the new `pr-reviewer` agent.
+
 ## [0.2.10] - 2026-08-09
 
 Re-release of v0.2.9 because the v0.2.9 release workflow scrubbed

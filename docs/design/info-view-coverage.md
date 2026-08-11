@@ -1,3 +1,92 @@
+# Fill pass — 2026-08-11
+
+`fill`-mode run against the gaps this report flagged on 2026-08-10.
+Scope was capped to 4 named gap groups + the 5 known drift items (see
+invocation); did not attempt the remaining gap families below (HTTP /
+Request pane, Integrations + Agents panels, Right panel + grips,
+Bufferline + tab strip, Edge/advanced, Selection/Go/Run/Terminal/Help/
+Brand/Edit/View menus) — those are still open, see the untouched audit
+body beneath this section.
+
+## What landed
+
+**28 new curated `InfoViewCopy` entries** in `src/ui/info_view_copy.rs`,
+all grounded in source (chord/command-id verified against
+`src/command.rs`, click behavior verified against
+`src/tui/mouse/down_left.rs` / `src/app/dispatch.rs`). `cargo build`,
+`cargo clippy --all-targets`, and the `hover_help` + tests pass clean
+after every batch.
+
+- **Statusline family — 15/15 filled** (all remaining gaps, not just
+  the 11 headlined): `StatuslineFile`, `StatuslineDiagnostics`,
+  `StatuslineLanguage`, `StatuslineSymbol`, `StatuslinePr`,
+  `StatuslineMacroRec`, `StatuslineFind`, `StatuslineSel`,
+  `StatuslineProgress`, `StatuslineBgTasks`, `StatuslineAi`,
+  `StatuslineNowPlaying`, `StatuslineMixrPlay`, `StatuslineMixrFfwd`,
+  `StatuslineTestChip`. HoverChip coverage moves from 32/90 (36%) to
+  ~52/90 (~58%).
+- **Palette-bar cluster — 5/5 filled**: `PaletteBackButton`,
+  `PaletteForwardButton`, `PaletteDropdownButton`,
+  `PaletteAddIntegration` (note: the live click handler calls a
+  non-existent `"integrations.add"` command id — that's a separate bug
+  in `src/tui/mouse/down_left.rs:1358`, out of scope here; the copy's
+  `try_it` points at the real `integrations.show_marketplace` instead
+  of repeating the orphan id), `PendingUndoChip`.
+- **Window menu — 19/19 filled**: every item in `src/menu_bar.rs::window_menu()`
+  now has a `("Window", …)` arm — splits, focus L/R/U/D, merge/spread,
+  grow width/height, equalize + auto-equalize, AI layout grid/tabs,
+  reopen/close-others/pin, restart. Menu-item coverage moves from
+  12/76 (~16%, 2 dead) toward ~32/76 (~42%) once the Save fix below is
+  counted.
+- **Top-20 tree-row languages — filled**: `vue`, `svelte`, `c`, `cpp`,
+  `h`/`hpp`, `java`, `kt`, `swift`, `cs`, `csproj`, `sln`, `cshtml`,
+  `razor`, `fs`, `xml`, `svg`, `png`/`jpg`/`jpeg`/`gif`/`webp`,
+  mnml's own `http`/`curl`/`rest`/`request`. Plus a new
+  `filename_row_copy()` pre-pass (checked before the extension
+  fall-through, mirrors `src/ui/icons.rs::filename_icon`) for
+  `package.json`, `Dockerfile`, `.env`, `Makefile` — the filename-keyed
+  rows the prior audit flagged as needing a dedicated dispatch path.
+  Extension coverage moves from 23/65 (~35%) to ~49/65 (~75%).
+
+## Drift fixes (5/5)
+
+1. **`File → Save` dead-code guard fixed.** Was `i == "Save" ||
+   i.contains("Save ") && !i.contains("all")` — glyph-prefixed labels
+   meant this never matched. Now `i.contains(" Save") &&
+   !i.contains("all")`.
+2. **Orphan `("Edit", "Undo")` arm removed.** The Edit menu has no
+   Undo item (confirmed against `src/menu_bar.rs:207-224`); the arm
+   never fired.
+3. **`AgentsPanelChip` `try_it` fixed** from the non-existent
+   `ai.agents_dashboard` to the real `ai.dashboard`.
+4. **`BufferlineNewTab` reworded + chord fixed.** Was claiming
+   `Ctrl+T` opens "a new empty editor buffer" — `tab.new`'s real chord
+   is `Ctrl+K n`, and it opens a new *tab page* (vim-style split
+   workspace), not a buffer. Title, body, and shortcut all rewritten.
+5. **`StatuslineBranch` stale `Ctrl+Shift+B` shortcut removed.** That
+   chord is `view.toggle_right_panel`; `git.branch_menu` has no bound
+   chord. Left a comment explaining why the shortcut was dropped
+   rather than replaced (nothing to replace it with).
+
+## Skipped (explicitly out of scope this run)
+
+- **Menu-item wiring gap** (found during grounding, not a drift item
+  in the original list): `InfoViewTarget::MenuItem` is only ever
+  *constructed* nowhere in the codebase today — `menu_item_copy()`'s
+  40 arms (21 pre-existing + 19 new Window ones) are reachable via
+  `info_view_copy::lookup()` but nothing in `src/ui/hover_help.rs`
+  builds an `InfoViewTarget::MenuItem` to feed it. Menu-bar hovers
+  currently fall through to the generic focus/pane description. This
+  is a wiring bug in the framework, not a copy gap — flagging for a
+  separate session since it's outside "author copy" scope.
+- HTTP / Request pane family (10 gaps), Integrations + Agents panels
+  (10 gaps), Right panel + resize grips (5 gaps), Bufferline + tab
+  strip (7 gaps), Selection/Go/Run/Terminal/Help/Brand/Edit/View menu
+  gaps, Edge/advanced HoverChips (7 gaps) — all still open, per the
+  original audit body below.
+
+---
+
 # Info View coverage — 2026-08-10
 
 Audit-mode sweep against `src/lib.rs::HoverChip`, `src/menu_bar.rs`,

@@ -2017,6 +2017,13 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
             app.active.and_then(|i| app.panes.get(i)),
             Some(Pane::Pty(_))
         )
+        // R10 keyboard SEV-1 (2026-08-11) — the Integration Configure
+        // overlay owns Ctrl+S itself (`save_integration_settings`).
+        // The interceptor used to fire global `save_active` first,
+        // and the pane's handler at overlay.rs:41 never ran. Footer
+        // said `[Ctrl+S] save` and did nothing. Skip the interceptor
+        // so the overlay handler sees the chord.
+        && app.integration_settings.is_none()
     {
         // Anything in flight that would have consumed the chord
         // (palette / prompt / settings) is still alive afterwards;
