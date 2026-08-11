@@ -297,7 +297,7 @@ fn badge_row<'a>(label: &str, installed: bool, t: &theme::Theme) -> Line<'a> {
     let (badge, color) = if installed {
         ("[✓ installed]", t.green)
     } else {
-        ("[ not installed — Phase 2 will install ]", t.orange)
+        ("[ not installed — Space to install ]", t.orange)
     };
     let text = format!("     {label}");
     let mut spans = vec![

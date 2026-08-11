@@ -78,20 +78,25 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Right | KeyCode::Char('l') => app.wizard_set_nerd_font_ok(false),
             _ => {}
         },
-        WizardSection::ClaudeCode | WizardSection::VscodeShim => {
-            // Phase 1 stub — install actions land in Phase 2.
+        WizardSection::ClaudeCode => {
+            // Space fires the install (npm install -g …) in a Pty
+            // pane. Wizard closes so the Pty is visible.
             if matches!(key.code, KeyCode::Char(' ')) {
-                app.wizard_action_stub("Install");
+                app.wizard_install_ai_clis();
+            }
+        }
+        WizardSection::VscodeShim => {
+            if matches!(key.code, KeyCode::Char(' ')) {
+                app.wizard_install_vscode_shim();
             }
         }
         WizardSection::Monitors => match key.code {
-            // Space cycles which monitor is checked; user has to
-            // press it multiple times for multi-select. Keep the
-            // interaction dead-simple in Phase 1.
-            KeyCode::Char(' ') => app.wizard_toggle_monitor("btop"),
+            // b / t / i toggle each checkbox. Space is reserved for
+            // the install-selected action (matches sections 4 + 5).
             KeyCode::Char('b') | KeyCode::Char('B') => app.wizard_toggle_monitor("btop"),
             KeyCode::Char('t') | KeyCode::Char('T') => app.wizard_toggle_monitor("htop"),
             KeyCode::Char('i') | KeyCode::Char('I') => app.wizard_toggle_monitor("iftop"),
+            KeyCode::Char(' ') => app.wizard_install_monitors(),
             _ => {}
         },
     }

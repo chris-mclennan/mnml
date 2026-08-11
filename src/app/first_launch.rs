@@ -252,12 +252,86 @@ impl App {
         }
     }
 
-    /// Phase 1 stub for tool install actions — toasts a "coming soon"
-    /// note. Phase 2 wires the actual Pty spawn.
-    pub fn wizard_action_stub(&mut self, action_name: &str) {
-        self.toast(format!(
-            "{action_name}: Phase 1 stub — install action lands in Phase 2. \
-             For now, install manually + re-open the wizard."
+    /// Phase 2 install-action dispatcher. Each action spawns a Pty
+    /// pane running the corresponding shell command so the user sees
+    /// the install output live + can respond to sudo prompts. The
+    /// wizard closes (as "Ask me later" — the flag stays false)
+    /// so the Pty pane is visible; user re-opens with
+    /// `first_launch.show` after install is done.
+    pub fn wizard_install_ai_clis(&mut self) {
+        let mut cmds: Vec<&str> = Vec::new();
+        let claude_missing = !crate::integration_detect::is_binary_installed("claude");
+        let codex_missing = !crate::integration_detect::is_binary_installed("codex");
+        if claude_missing {
+            cmds.push("npm install -g @anthropic-ai/claude-code");
+        }
+        if codex_missing {
+            cmds.push("npm install -g @openai/codex");
+        }
+        if cmds.is_empty() {
+            self.toast("Claude Code + Codex already installed.");
+            return;
+        }
+        let combined = cmds.join(" && ");
+        self.close_first_launch_defer();
+        self.open_pty(crate::pty_pane::BinaryProfile::task(
+            "install: ai clis",
+            &combined,
+            self.workspace.clone(),
+        ));
+    }
+
+    pub fn wizard_install_vscode_shim(&mut self) {
+        if crate::integration_detect::is_binary_installed("code") {
+            self.toast("`code` shim already on PATH.");
+            return;
+        }
+        // The .app bundle path — matches integration_detect's probe.
+        let bundle_shim = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
+        if !std::path::Path::new(bundle_shim).exists() {
+            self.toast(
+                "VS Code.app not found at /Applications/Visual Studio Code.app. \
+                 Install VS Code first, then re-open the wizard.",
+            );
+            return;
+        }
+        // sudo ln needs a real terminal — spawn the Pty so the user
+        // can enter their password interactively.
+        let cmd = format!("sudo ln -sf \"{bundle_shim}\" /usr/local/bin/code");
+        self.close_first_launch_defer();
+        self.open_pty(crate::pty_pane::BinaryProfile::task(
+            "install: code shim",
+            &cmd,
+            self.workspace.clone(),
+        ));
+    }
+
+    pub fn wizard_install_monitors(&mut self) {
+        let Some(state) = self.first_launch.as_ref() else {
+            return;
+        };
+        let mut tools: Vec<&str> = Vec::new();
+        if state.answers.install_btop {
+            tools.push("btop");
+        }
+        if state.answers.install_htop {
+            tools.push("htop");
+        }
+        if state.answers.install_iftop {
+            tools.push("iftop");
+        }
+        if tools.is_empty() {
+            self.toast(
+                "Check the tools you want first (b / t / i to toggle), then Space to install.",
+            );
+            return;
+        }
+        let cmd = format!("brew install {}", tools.join(" "));
+        self.close_first_launch_defer();
+        self.open_pty(crate::pty_pane::BinaryProfile::task(
+            "install: monitors",
+            &cmd,
+            self.workspace.clone(),
         ));
     }
 }
