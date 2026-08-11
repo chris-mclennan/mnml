@@ -114,6 +114,7 @@ export default defineConfig({
             { label: 'Hover-help', slug: 'manual/hover-help' },
             { label: 'Bridge & Mount (sibling integration)', slug: 'manual/bridge-mount' },
             { label: 'Startup picker', slug: 'manual/startup-picker' },
+            { label: 'First-launch wizard', slug: 'manual/first-launch' },
             { label: 'Platform support', slug: 'manual/platform-support' },
             { label: 'Editing', slug: 'manual/editing' },
             { label: 'Statusline, gutter & F1 help', slug: 'manual/statusline-chrome' },
@@ -157,6 +158,7 @@ export default defineConfig({
           items: [
             { label: 'Integrations overview', slug: 'manual/integrations/overview' },
             { label: 'Installing integrations', slug: 'manual/integrations/installing' },
+            { label: 'Integration auth', slug: 'manual/integrations/auth' },
             { label: 'Marketplace', slug: 'manual/integrations/marketplace' },
             { label: 'Launcher manifests', slug: 'manual/integrations/launcher-manifests' },
             { label: 'Building integrations', slug: 'manual/integrations/building' },

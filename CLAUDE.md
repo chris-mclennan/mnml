@@ -116,6 +116,66 @@ user might be mid-edit *inside mnml* on something untouched.
 ## Status
 
 
+**First-launch wizard + per-integration auth SDK shipped
+(2026-08-11).** Task #870 + #892 both landed end-to-end as a
+14-commit day (mnml core) + 4 crates.io publishes (mnml-bridge
+0.7.0, mnml-msg-slack 0.1.3, mnml-forge-bitbucket 0.3.3,
+mnml-tracker-jira 0.2.3).
+
+**First-launch wizard** (`first_launch.show`): centered modal that
+auto-opens on first-ever launch (gated by `[ui]
+first_launch_complete`). Six sections top-to-bottom, keyboard-
+driven, Esc = "Ask me later" (flag stays false), Enter = Finish
+(persists + flips true). Sections: (1) AI ghost-text backend
+(Claude API / Local / Skip → writes `[ai] suggest_backend` +
+`inline_suggestions`), (2) input style (vim / standard → writes
+`[editor] input_style`), (3) Nerd Font sample-glyph diagnostic,
+(4-6) tool installs (Claude Code + Codex npm install / VSCode
+`code` shim / btop+htop+iftop brew install), each Space-fires a
+Pty pane running the shell command. Files:
+`src/app/first_launch.rs`, `src/ui/first_launch_overlay.rs`. E2E:
+`tests/e2e/first_launch_wizard.test`.
+
+**Per-integration Settings pane + `[[auth]]` schema.** Integration
+authors declare their auth needs in the manifest via
+`mnml-bridge`'s new `AuthField` (0.7.0): `key`, `label`, `kind`
+(secret/text/url/email/number), `env_fallback`, `help_url`, `help`,
+`required`. mnml core reads them and drives three surfaces:
+
+- **Configure pane**: right-click chip → "Configure…" (only
+  surfaced when the manifest declares `[[auth]]`), or palette
+  `integrations.configure_picker` for the picker path when 2+
+  qualify. Modal form, secrets rendered as `•••`. Ctrl+S writes
+  values back to `[auth_values]` in the same manifest TOML.
+- **First-hit auth guard**: firing an integration command with a
+  required field unset (and no env_fallback env var set)
+  intercepts dispatch and opens the Configure pane instead of a
+  silent-fail Pty.
+- **Pty env-injection**: at spawn time, mnml injects
+  `[auth_values]` as env vars using each field's `env_fallback`
+  name. Cross-integration sharing — a token saved in ANY
+  installed integration flows to every subsequent Pty spawn, so
+  configuring bitbucket once gives jira's Fix Versions view its
+  `$BITBUCKET_ACCESS_TOKEN` for free. Current-firing integration
+  wins on env-var-name conflicts.
+
+Files: `src/integration_manifest.rs` (AuthField), `src/app/integration_settings.rs`, `src/ui/integration_settings_overlay.rs`, `src/app/mod.rs::open_pty_dir` (injection), `src/app/mod.rs::run_dynamic_command` (guard). Site manual: `site/src/content/docs/manual/first-launch.md` + `.../integrations/auth.md`.
+
+**Pilot siblings shipped end-to-end** (each declares `[[auth]]`
+via mnml-bridge 0.7): Slack (bot_token + team_id), Bitbucket
+(app_password + username), Jira (site_url + email + api_token).
+Existing env-var users unaffected — env_fallback preserves
+back-compat; skip-if-empty means clearing a pane field falls back
+to the shell export.
+
+**Other today** (Aug 11): approved + merged PR #27 (ICodeGorilla
+Windows zig-target fix); absorbed fim-engine into
+`crates/fim-engine/` as a workspace member (old repo now
+private); shipped 8 CI-red e2e-test fixes (space eater + settings
+Esc/arrows regressions); 2 new agents (`hover-help-writer`,
+`pr-reviewer`); Info View hover-help coverage audit
+(`docs/design/info-view-coverage.md`).
+
 **Tmnl integration removed (2026-06-22):** Mnml is now
 terminal-agnostic. The entire tmnl-protocol blit client, the
 mixr-host docked panel, and the chrome-chips protocol are gone
