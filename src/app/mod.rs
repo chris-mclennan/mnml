@@ -9195,17 +9195,16 @@ impl App {
             }
         }
         // Phase 2E — inject per-integration auth values as env vars,
-        // using the manifest's [[auth]].env_fallback names. This lets
-        // a user save `bot_token = "xoxb-..."` in the Settings pane
+        // using the manifest's [[auth]].env_fallback names. Lets a
+        // user save `bot_token = "xoxb-..."` in the Settings pane
         // and have the sibling see it as `$SLACK_BOT_TOKEN` at spawn
-        // time WITHOUT the sibling reading from mnml's [auth_values]
-        // itself. Existing users with the env var already set: their
-        // shell-level export wins over the profile injection because
-        // Rust's Command::envs replaces vars, not merges. Actually
-        // no — Command::envs OVERRIDES the inherited env by key. So
-        // our injection here takes precedence over the user's shell
-        // env. Skip the injection when the value is empty so a saved-
-        // but-cleared field doesn't nuke the user's shell export.
+        // time without reading mnml's [auth_values] itself.
+        //
+        // Precedence: `Command::envs` overrides inherited process env
+        // by key, so a set value here wins over the user's shell
+        // export. Empty stored values are skipped so a user who
+        // cleared a pane field falls back to their shell export
+        // rather than getting the env var wiped.
         if let Some(integ_id) = profile.integration_id.clone() {
             let auth_env = self.integration_auth_env(&integ_id);
             for (k, v) in auth_env {
