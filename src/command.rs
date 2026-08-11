@@ -327,6 +327,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.toggle_about(),
         },
         Command {
+            id: "first_launch.show",
+            title: "First-launch setup wizard (reopen)",
+            group: "view",
+            keys: &[],
+            run: |app| app.open_first_launch(),
+        },
+        Command {
             id: "view.help",
             title: "Keybindings & help — help overlay (auto-generated keymap reference)",
             group: "view",

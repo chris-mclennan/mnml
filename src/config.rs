@@ -964,6 +964,14 @@ pub struct UiConfig {
     /// `view.toggle_hover_help` or `:set nohoverhelp`.
     pub hover_help: bool,
 
+    /// True once the user has finished the first-launch wizard
+    /// (`first_launch.show`). Default false → wizard opens on next
+    /// mnml launch. Set true when the user hits Finish OR "Skip
+    /// forever". Esc = "Ask me later" leaves it false so it
+    /// prompts again next start. Palette command `first_launch.show`
+    /// re-opens the wizard anytime.
+    pub first_launch_complete: bool,
+
     /// Paint the `● ` / `○ ` workspace dots (● / ○) on the left of
     /// every workspace-root row in the tree. On by default —
     /// existing users see no change. Toggle at runtime via
@@ -1261,6 +1269,7 @@ impl Default for Config {
                 // hidden feature. `view.toggle_hover_help` hides it if
                 // the reader dislikes the extra chrome (persists).
                 hover_help: true,
+                first_launch_complete: false,
                 show_workspace_dots: true,
                 md_preview_engine: "builtin".to_string(),
             },
@@ -1658,6 +1667,10 @@ struct RawUi {
     /// default — palette command `view.toggle_hover_help`.
     #[serde(default)]
     hover_help: Option<bool>,
+    /// See [`UiConfig::first_launch_complete`]. Set by the wizard
+    /// on Finish; default false so a fresh install prompts.
+    #[serde(default)]
+    first_launch_complete: Option<bool>,
     /// See [`UiConfig::show_workspace_dots`]. Workspace-root row
     /// `● ` / `○ ` markers. On by default — palette command
     /// `view.toggle_workspace_dots` or `:set nowsdots`.
@@ -2172,6 +2185,9 @@ impl Config {
         }
         if let Some(b) = raw.ui.integrations_section_default_expanded {
             self.ui.integrations_section_default_expanded = b;
+        }
+        if let Some(b) = raw.ui.first_launch_complete {
+            self.ui.first_launch_complete = b;
         }
         if let Some(b) = raw.ui.show_workspace_dots {
             self.ui.show_workspace_dots = b;

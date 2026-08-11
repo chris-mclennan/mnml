@@ -62,6 +62,7 @@ pub mod diff_view;
 pub mod discovery;
 pub mod editor_view;
 pub mod fim_progress_overlay;
+pub mod first_launch_overlay;
 pub mod flaky_view;
 pub mod flash_overlay;
 pub mod ghost_overlay;
@@ -1505,6 +1506,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ai_usage_overlay::draw(frame, app, area);
     // Settings overlay — `:settings` / view.settings.
     settings_overlay::draw(frame, app, area);
+    // First-launch wizard — auto-opens if `[ui] first_launch_complete`
+    // is false (default). Manual reopen: `first_launch.show`.
+    first_launch_overlay::draw(frame, app, area);
     // Integration edit panel — freestanding overlay opened from
     // the chip right-click context menu (Edit / Add custom).
     // Reads `App::integration_edit`. Painted BEFORE the picker is

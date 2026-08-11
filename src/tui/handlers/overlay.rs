@@ -12,6 +12,115 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
 
+/// First-launch wizard key handler. Sections + widgets described in
+/// `src/app/first_launch.rs`. Keys:
+///   Esc          — Ask me later (does NOT set complete)
+///   Enter        — Finish (commits + sets complete)
+///   ↑ ↓ / j k    — Move focused section
+///   1-6          — Jump directly to section N
+///   ← → / h l    — For radio sections: cycle choice; for others: no-op
+///   Space        — For checkbox rows (Monitors section): toggle current
+///   y / n        — For Nerd Font section: quick yes/no
+pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
+    use crate::app::first_launch::WizardSection;
+    let Some(state) = app.first_launch.as_ref() else {
+        return;
+    };
+    let section = state.section();
+
+    // Global keys first.
+    match key.code {
+        KeyCode::Esc => {
+            app.close_first_launch_defer();
+            return;
+        }
+        KeyCode::Enter => {
+            app.close_first_launch_finish();
+            return;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(s) = app.first_launch.as_mut() {
+                s.move_focus(-1);
+            }
+            return;
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(s) = app.first_launch.as_mut() {
+                s.move_focus(1);
+            }
+            return;
+        }
+        KeyCode::Char(c @ '1'..='6') => {
+            if let Some(s) = app.first_launch.as_mut() {
+                s.focused_section = (c as u8 - b'1') as usize;
+            }
+            return;
+        }
+        _ => {}
+    }
+
+    // Section-specific handling.
+    match section {
+        WizardSection::AiBackend => match key.code {
+            KeyCode::Left | KeyCode::Char('h') => cycle_ai_backend(app, -1),
+            KeyCode::Right | KeyCode::Char('l') => cycle_ai_backend(app, 1),
+            _ => {}
+        },
+        WizardSection::InputStyle => match key.code {
+            KeyCode::Left | KeyCode::Char('h') => cycle_input_style(app, -1),
+            KeyCode::Right | KeyCode::Char('l') => cycle_input_style(app, 1),
+            _ => {}
+        },
+        WizardSection::NerdFont => match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => app.wizard_set_nerd_font_ok(true),
+            KeyCode::Char('n') | KeyCode::Char('N') => app.wizard_set_nerd_font_ok(false),
+            KeyCode::Left | KeyCode::Char('h') => app.wizard_set_nerd_font_ok(true),
+            KeyCode::Right | KeyCode::Char('l') => app.wizard_set_nerd_font_ok(false),
+            _ => {}
+        },
+        WizardSection::ClaudeCode | WizardSection::VscodeShim => {
+            // Phase 1 stub — install actions land in Phase 2.
+            if matches!(key.code, KeyCode::Char(' ')) {
+                app.wizard_action_stub("Install");
+            }
+        }
+        WizardSection::Monitors => match key.code {
+            // Space cycles which monitor is checked; user has to
+            // press it multiple times for multi-select. Keep the
+            // interaction dead-simple in Phase 1.
+            KeyCode::Char(' ') => app.wizard_toggle_monitor("btop"),
+            KeyCode::Char('b') | KeyCode::Char('B') => app.wizard_toggle_monitor("btop"),
+            KeyCode::Char('t') | KeyCode::Char('T') => app.wizard_toggle_monitor("htop"),
+            KeyCode::Char('i') | KeyCode::Char('I') => app.wizard_toggle_monitor("iftop"),
+            _ => {}
+        },
+    }
+}
+
+fn cycle_ai_backend(app: &mut App, delta: i32) {
+    const CHOICES: [&str; 3] = ["claude-api", "local", "skip"];
+    let cur = app
+        .first_launch
+        .as_ref()
+        .map(|s| s.answers.ai_backend.clone())
+        .unwrap_or_default();
+    let idx = CHOICES.iter().position(|c| *c == cur).unwrap_or(0) as i32;
+    let next = (idx + delta).rem_euclid(CHOICES.len() as i32) as usize;
+    app.wizard_set_ai_backend(CHOICES[next]);
+}
+
+fn cycle_input_style(app: &mut App, delta: i32) {
+    const CHOICES: [&str; 2] = ["vim", "standard"];
+    let cur = app
+        .first_launch
+        .as_ref()
+        .map(|s| s.answers.input_style.clone())
+        .unwrap_or_default();
+    let idx = CHOICES.iter().position(|c| *c == cur).unwrap_or(0) as i32;
+    let next = (idx + delta).rem_euclid(CHOICES.len() as i32) as usize;
+    app.wizard_set_input_style(CHOICES[next]);
+}
+
 pub(crate) fn handle_help_overlay_key(app: &mut App, key: KeyEvent) {
     // #polish 2026-07-06 — filter-input mode. `/` enters; typed
     // chars append; Backspace removes; Enter or Esc leaves the

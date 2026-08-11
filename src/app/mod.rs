@@ -51,6 +51,7 @@ mod reset;
 // pipeline_log removed after 2026-06 SCM split.
 pub(crate) mod cloud_agents_methods;
 pub(crate) mod cmdline_methods;
+pub(crate) mod first_launch;
 pub(crate) mod integration_audit;
 pub(crate) mod integration_glyphs;
 pub(crate) mod integration_install_methods;
@@ -4845,6 +4846,10 @@ pub struct App {
     /// otherwise. Carries the `original` Config snapshot for the
     /// Esc/cancel revert path. See `app/settings.rs` for the schema.
     pub settings_overlay: Option<settings::SettingsOverlayState>,
+    /// First-launch wizard state — `Some` while the wizard is open.
+    /// Fires once ever, gated by `[ui] first_launch_complete`. See
+    /// `app/first_launch.rs`.
+    pub first_launch: Option<first_launch::FirstLaunchState>,
     /// Active menu-bar dropdown state. `Some` while a menu is open;
     /// `None` otherwise. Driven by mouse click on a menu word, Alt+
     /// letter, or F10. See `src/menu_bar.rs` for the bar layout
@@ -5742,6 +5747,7 @@ impl App {
             dragging: None,
             close_prompt: None,
             settings_overlay: None,
+            first_launch: None,
             menu_open: None,
             integration_edit: None,
             glyph_builder: None,

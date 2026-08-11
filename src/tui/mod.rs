@@ -2143,6 +2143,14 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         handle_settings_overlay_key(app, key);
         return;
     }
+    // First-launch wizard — steals all keys until Finish (Enter) or
+    // Ask-me-later (Esc). Sits ABOVE the settings-overlay branch
+    // because we want the wizard to win when both are somehow open
+    // (shouldn't happen; belt-and-braces).
+    if app.first_launch.is_some() {
+        crate::tui::handlers::overlay::handle_first_launch_key(app, key);
+        return;
+    }
     // #20 Pattern B — a pending confirm modal wins over everything
     // else. Blocks all input until dismissed (Esc / N) or fired
     // (Enter / Y).

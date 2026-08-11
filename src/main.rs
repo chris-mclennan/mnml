@@ -488,6 +488,15 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // First-launch onboarding overlay. If the user has never dismissed it
     // in this workspace (no `.mnml/.welcomed` marker), open it.
     app.maybe_show_welcome_on_launch();
+    // Global first-launch wizard — one-time-ever setup (AI backend,
+    // input style, Nerd Font check, tool installs). Gated by
+    // `[ui] first_launch_complete`. Runs AFTER the per-workspace
+    // welcome so the welcome is the first thing users see when
+    // they open an unfamiliar workspace, but the wizard runs
+    // (once ever) BEFORE they've configured anything.
+    if !app.config.ui.first_launch_complete {
+        app.open_first_launch();
+    }
     // If we just came back from `app.reset_to_defaults`, the fresh
     // ~/.config/mnml/ has a `.last-reset-from` marker pointing at
     // the backup — surface it as a persistent toast with the restore

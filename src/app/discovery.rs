@@ -1048,6 +1048,19 @@ pub fn persist_editor_string(key: &'static str, value: &str) -> Result<std::path
     persist_config_scalar("editor", key, format!("\"{esc}\""))
 }
 
+/// `[ai] KEY = <bool>`. Used by the first-launch wizard so the
+/// user's inline-suggestion pick survives restart. 2026-08-11.
+pub fn persist_ai_bool(key: &'static str, value: bool) -> Result<std::path::PathBuf, String> {
+    persist_config_scalar("ai", key, value.to_string())
+}
+
+/// `[ai] KEY = "value"` (string). Used by the first-launch wizard
+/// for `suggest_backend`. 2026-08-11.
+pub fn persist_ai_string(key: &'static str, value: &str) -> Result<std::path::PathBuf, String> {
+    let esc = value.replace('\\', r"\\").replace('"', "\\\"");
+    persist_config_scalar("ai", key, format!("\"{esc}\""))
+}
+
 /// Shared writer for `[section] KEY = <toml-encoded-value>`. The
 /// caller pre-encodes the value (quoted string, bare bool, bare
 /// int) — this fn owns the section-header find / in-place replace
