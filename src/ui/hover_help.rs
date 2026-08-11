@@ -24,14 +24,14 @@ use crate::app::App;
 use crate::ui::theme;
 
 /// Number of rows the box occupies at the bottom of the left panel.
-/// One header row + one blank spacer + up to `INFO_BOX_HEIGHT - 2`
-/// wrapped content rows.
-/// 1 separator + 1 header + up to `INFO_BOX_HEIGHT - 2` wrapped
-/// content rows. R8 vscode-mouse feedback: without the separator
-/// the box shares tree_rail bg and reads as accidental tree
-/// overflow. Adding a dim `─` rule at row 0 draws the eye without
-/// bumping to a bordered card.
-pub const INFO_BOX_HEIGHT: u16 = 7;
+/// 1 separator + 1 header + up to `INFO_BOX_HEIGHT - 3` wrapped
+/// content rows + 1 blank trailer so the last text line isn't
+/// flush against the statusbar directly below (breathing room
+/// requested 2026-08-10). R8 vscode-mouse feedback: without the
+/// separator the box shares tree_rail bg and reads as accidental
+/// tree overflow. Adding a dim `─` rule at row 0 draws the eye
+/// without bumping to a bordered card.
+pub const INFO_BOX_HEIGHT: u16 = 8;
 
 /// Paint the info box over `area`. Caller reserves the rows only when
 /// `app.config.ui.hover_help` is on AND the left panel is tall enough
@@ -126,12 +126,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
             ]));
         }
     }
-    // Body starts at row 2 (after separator + header).
+    // Body starts at row 2 (after separator + header). Trailing row
+    // stays blank — leaves a 1-row cushion between last text line
+    // and the statusbar directly below.
     let body_rect = Rect {
         x: area.x,
         y: area.y + 2,
         width: area.width,
-        height: area.height.saturating_sub(2),
+        height: area.height.saturating_sub(3),
     };
     // Truncate to available rows — no scrollbar needed; the box is
     // ephemeral information, not a document.
