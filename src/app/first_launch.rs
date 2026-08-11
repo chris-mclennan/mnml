@@ -196,23 +196,48 @@ impl App {
         use crate::app::discovery::{
             persist_ai_bool, persist_ai_string, persist_editor_string, persist_ui_bool,
         };
+        // R8 keyboard-tester SEV-1 (2026-08-11): every persist call
+        // here used to be `let _ =`, so a write failure (missing
+        // $HOME, non-writable config dir, portable-mode path drift)
+        // silently left the file untouched and the wizard reopened
+        // every launch. Collect any errors and surface them via toast
+        // so the user sees WHY the setup didn't stick instead of a
+        // silent phantom reset.
+        let mut errs: Vec<String> = Vec::new();
         match state.answers.ai_backend.as_str() {
             "claude-api" | "local" => {
                 self.set_ai_suggest_backend(crate::ai::SuggestBackend::parse(
                     &state.answers.ai_backend,
                 ));
-                let _ = persist_ai_string("suggest_backend", &state.answers.ai_backend);
-                let _ = persist_ai_bool("inline_suggestions", true);
+                if let Err(e) = persist_ai_string("suggest_backend", &state.answers.ai_backend) {
+                    errs.push(format!("ai.suggest_backend: {e}"));
+                }
+                if let Err(e) = persist_ai_bool("inline_suggestions", true) {
+                    errs.push(format!("ai.inline_suggestions: {e}"));
+                }
             }
             _ => {}
         }
         if !state.answers.input_style.is_empty() {
             self.config.editor.input_style = state.answers.input_style.clone();
-            let _ = persist_editor_string("input_style", &state.answers.input_style);
+            if let Err(e) = persist_editor_string("input_style", &state.answers.input_style) {
+                errs.push(format!("editor.input_style: {e}"));
+            }
         }
         self.config.ui.first_launch_complete = true;
-        let _ = persist_ui_bool("first_launch_complete", true);
-        self.toast("Setup saved. Reopen anytime via `first_launch.show`.");
+        if let Err(e) = persist_ui_bool("first_launch_complete", true) {
+            errs.push(format!("ui.first_launch_complete: {e}"));
+        }
+        if errs.is_empty() {
+            self.toast("Setup saved. Reopen anytime via `first_launch.show`.");
+        } else {
+            // Show the first error verbatim; the rest are the same
+            // root cause 99% of the time (missing writable config dir).
+            self.toast(format!(
+                "Setup save failed — {} (wizard will reopen next launch)",
+                errs[0]
+            ));
+        }
     }
 
     // ── Per-section update methods ───────────────────────────────
