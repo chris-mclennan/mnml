@@ -227,7 +227,24 @@ fn source_build() {
     // need a way to find msvc libc/c++ headers" in their CI matrix —
     // the SUPPORTED Windows path is `x86_64-windows-gnu`. Reverted the
     // msvc-forcing; CI now builds Rust for the gnu target too.
-    if target != host {
+    // 2026-08-10: Windows can't use the auto-detect path at all. Zig resolves
+    // a native Windows target to the *msvc* ABI — the build log prints
+    // `-target native-native-msvc` — no matter which ABI the Rust target uses.
+    // Two consequences, both bad:
+    //
+    //   1. On a machine without Visual Studio, compiling ghostty's C++ deps
+    //      (simdutf, highway) dies with `failed to find libc installation:
+    //      WindowsSdkNotFound`. GitHub's windows runners ship MSVC, so CI is
+    //      green while a plain `cargo build` on a dev box fails.
+    //   2. Where it does succeed it produces an msvc-ABI static lib and hands
+    //      it to a `-gnu` Rust target.
+    //
+    // So on Windows always be explicit, and derive the ABI from the Rust
+    // target. Note this is NOT the reverted msvc-forcing described above:
+    // that pinned zig to msvc regardless of the Rust target, whereas this
+    // just stops zig from guessing an ABI that contradicts the one Rust is
+    // already building for.
+    if target != host || target.contains("windows") {
         let zig_target = zig_target(&target);
         build.arg(format!("-Dtarget={zig_target}"));
     }
