@@ -2151,6 +2151,11 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
         crate::tui::handlers::overlay::handle_first_launch_key(app, key);
         return;
     }
+    // Per-integration Settings pane — same modal-precedence idea.
+    if app.integration_settings.is_some() {
+        crate::tui::handlers::overlay::handle_integration_settings_key(app, key);
+        return;
+    }
     // #20 Pattern B — a pending confirm modal wins over everything
     // else. Blocks all input until dismissed (Esc / N) or fired
     // (Enter / Y).

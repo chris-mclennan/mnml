@@ -12,6 +12,42 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::App;
 
+/// Per-integration Settings pane key handler. Two modes:
+///   NAV — arrows move focus, Enter starts text edit on the focused
+///         field, Ctrl+S saves + closes, Esc closes without saving.
+///   EDIT — printable keys append, Backspace deletes, Enter commits
+///          (returns to NAV keeping the change), Esc cancels
+///          (returns to NAV, restoring the original value).
+pub(crate) fn handle_integration_settings_key(app: &mut App, key: KeyEvent) {
+    let Some(state) = app.integration_settings.as_ref() else {
+        return;
+    };
+    let editing = state.editing.is_some();
+    if editing {
+        match key.code {
+            KeyCode::Esc => app.integration_settings_edit_cancel(),
+            KeyCode::Enter => app.integration_settings_edit_commit(),
+            KeyCode::Backspace => app.integration_settings_edit_backspace(),
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.integration_settings_edit_push(c)
+            }
+            _ => {}
+        }
+        return;
+    }
+    // NAV mode.
+    match key.code {
+        KeyCode::Esc => app.close_integration_settings(),
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.save_integration_settings()
+        }
+        KeyCode::Enter => app.integration_settings_begin_edit(),
+        KeyCode::Up | KeyCode::Char('k') => app.integration_settings_move_focus(-1),
+        KeyCode::Down | KeyCode::Char('j') => app.integration_settings_move_focus(1),
+        _ => {}
+    }
+}
+
 /// First-launch wizard key handler. Sections + widgets described in
 /// `src/app/first_launch.rs`. Keys:
 ///   Esc          — Ask me later (does NOT set complete)

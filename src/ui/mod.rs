@@ -68,6 +68,7 @@ pub mod flash_overlay;
 pub mod ghost_overlay;
 pub mod git_graph_view;
 pub mod git_status_view;
+pub mod integration_settings_overlay;
 pub mod new_cloud_agent_wizard_view;
 pub mod new_cloud_run_wizard_view;
 // GitHub views moved to mnml-forge-github.
@@ -1509,6 +1510,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // First-launch wizard — auto-opens if `[ui] first_launch_complete`
     // is false (default). Manual reopen: `first_launch.show`.
     first_launch_overlay::draw(frame, app, area);
+    // Per-integration Settings pane — right-click chip → "Configure…"
+    // or `integration_settings.show <id>`.
+    integration_settings_overlay::draw(frame, app, area);
     // Integration edit panel — freestanding overlay opened from
     // the chip right-click context menu (Edit / Add custom).
     // Reads `App::integration_edit`. Painted BEFORE the picker is

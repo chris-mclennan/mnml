@@ -521,6 +521,19 @@ impl App {
             "Edit…",
             MenuAction::EditIntegration(id.clone()),
         ));
+        // Phase 2B (task #892) — surface "Configure…" only when the
+        // integration declares [[auth]] fields. Opens the per-
+        // integration Settings pane with a form of those fields.
+        let has_auth = self
+            .integration_manifests
+            .iter()
+            .any(|m| m.id == id && !m.auth.is_empty());
+        if has_auth {
+            items.push(MenuItem::new(
+                "Configure…",
+                MenuAction::ConfigureIntegration(id.clone()),
+            ));
+        }
         // v0.2.0 — per-workspace launcher-script override for
         // integrations that spawn a binary. Only surfaced on
         // built-ins where mnml chooses the exe (claude_code /
@@ -1688,6 +1701,9 @@ impl App {
             }
             EditIntegration(id) => {
                 self.open_integration_edit_by_id(&id);
+            }
+            ConfigureIntegration(id) => {
+                self.open_integration_settings(&id);
             }
             ShowIntegrationDetails(id) => {
                 self.open_integration_detail_pane(&id);

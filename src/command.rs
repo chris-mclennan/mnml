@@ -334,6 +334,13 @@ fn builtin_commands() -> Vec<Command> {
             run: |app| app.open_first_launch(),
         },
         Command {
+            id: "integrations.configure_picker",
+            title: "Configure integration auth… (pick from installed)",
+            group: "integrations",
+            keys: &[],
+            run: |app| app.open_integration_configure_picker(),
+        },
+        Command {
             id: "view.help",
             title: "Keybindings & help — help overlay (auto-generated keymap reference)",
             group: "view",

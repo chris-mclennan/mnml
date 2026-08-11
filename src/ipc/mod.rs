@@ -2161,6 +2161,7 @@ mod tests {
                 os_rate_limit_sec: 0,
             }),
             requires: None,
+            auth: vec![],
             source_path: std::path::PathBuf::new(),
             homepage: None,
             docs: None,

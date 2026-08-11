@@ -55,6 +55,7 @@ pub(crate) mod first_launch;
 pub(crate) mod integration_audit;
 pub(crate) mod integration_glyphs;
 pub(crate) mod integration_install_methods;
+pub(crate) mod integration_settings;
 mod playwright;
 mod scm;
 mod session;
@@ -4850,6 +4851,10 @@ pub struct App {
     /// Fires once ever, gated by `[ui] first_launch_complete`. See
     /// `app/first_launch.rs`.
     pub first_launch: Option<first_launch::FirstLaunchState>,
+    /// Per-integration Settings pane state — `Some` while the
+    /// pane is open on some integration. See
+    /// `app/integration_settings.rs`.
+    pub integration_settings: Option<integration_settings::IntegrationSettingsState>,
     /// Active menu-bar dropdown state. `Some` while a menu is open;
     /// `None` otherwise. Driven by mouse click on a menu word, Alt+
     /// letter, or F10. See `src/menu_bar.rs` for the bar layout
@@ -5748,6 +5753,7 @@ impl App {
             close_prompt: None,
             settings_overlay: None,
             first_launch: None,
+            integration_settings: None,
             menu_open: None,
             integration_edit: None,
             glyph_builder: None,

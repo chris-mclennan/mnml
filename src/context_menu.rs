@@ -75,6 +75,12 @@ pub enum MenuAction {
     /// integration in an editor pane so users can hand-edit
     /// without leaving mnml.
     ShowIntegrationManifest(String),
+    /// 2026-08-11 (Phase 2B) — open the per-integration Settings
+    /// pane for the integration id, letting the user edit its
+    /// declared `[[auth]]` fields (tokens, base URLs, etc.).
+    /// Surfaced by the chip right-click menu when the integration
+    /// declares at least one auth field.
+    ConfigureIntegration(String),
     /// v0.2.0 — set the per-workspace launcher script for an
     /// integration that spawns a binary (`claude_code`, `codex`).
     /// Opens a `PromptKind::IntegrationLauncher` prompt seeded with

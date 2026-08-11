@@ -160,9 +160,80 @@ pub struct IntegrationManifest {
     #[serde(default)]
     pub requires: Option<Requires>,
 
+    /// Auth fields the integration needs before its actions can
+    /// run. Rendered by the per-integration Settings pane
+    /// (`integration_settings.show`) as a form; save writes the
+    /// user's values back to the manifest TOML at the top level
+    /// under an `[auth]` table. Phase 2B / 2026-08-11.
+    #[serde(default)]
+    pub auth: Vec<AuthField>,
+
     // ── Source tracking ────────────────────────
     #[serde(skip)]
     pub source_path: PathBuf,
+}
+
+/// One field the user needs to configure before the integration
+/// can talk to its backend — a token, a base URL, an email, etc.
+/// Declared once in the integration's manifest at install time;
+/// the mnml Settings pane renders one form control per entry and
+/// writes the user's answer back to the TOML.
+///
+/// Storage: values are written to `[auth]` at the top level of the
+/// same TOML file:
+///
+/// ```toml
+/// # ~/.config/mnml/integrations/slack_channels.toml
+/// id = "slack_channels"
+/// ...
+///
+/// [[auth]]
+/// key = "bot_token"
+/// label = "Slack bot token"
+/// kind = "secret"
+/// env_fallback = "SLACK_BOT_TOKEN"
+/// help_url = "https://api.slack.com/apps"
+/// required = true
+///
+/// [auth_values]  # ← written by mnml when the user saves
+/// bot_token = "xoxb-..."
+/// ```
+///
+/// Phase 4 will move `secret`-kind values into the OS keychain
+/// (Keychain / libsecret / DPAPI) — same schema, different backend.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthField {
+    /// Key the user's answer is written under in `[auth_values]`.
+    pub key: String,
+    /// Human label rendered next to the input (e.g.
+    /// `"Slack bot token"`).
+    pub label: String,
+    /// `"secret"` (masked in the UI, keychain-backed in Phase 4)
+    /// / `"text"` / `"number"` / `"url"` / `"email"`.
+    #[serde(default = "default_kind")]
+    pub kind: String,
+    /// Env-var name to fall back to when `[auth_values]` doesn't
+    /// have a value. Lets existing env-var users skip re-entry
+    /// (Slack, Jira, GitHub CLI all have long-standing env-var
+    /// conventions).
+    #[serde(default)]
+    pub env_fallback: Option<String>,
+    /// One-line help URL rendered as a clickable "how to get one"
+    /// link under the field.
+    #[serde(default)]
+    pub help_url: Option<String>,
+    /// One-sentence inline help under the label.
+    #[serde(default)]
+    pub help: Option<String>,
+    /// When true, an integration action fired without a value here
+    /// (and no env_fallback set) triggers the first-hit auth prompt
+    /// (Phase 2D).
+    #[serde(default)]
+    pub required: bool,
+}
+
+fn default_kind() -> String {
+    "text".to_string()
 }
 
 /// The rail chip — what shows up in the INTEGRATIONS section (or
@@ -704,6 +775,7 @@ color = "nonsense-neon"
             settings: vec![],
             notifications: None,
             requires: None,
+            auth: vec![],
             source_path: PathBuf::new(),
             homepage: None,
             docs: None,
