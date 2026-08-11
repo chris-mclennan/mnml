@@ -26,7 +26,7 @@ If neither is provided, ask the invoker which mode; do not default.
 ## The review loop (single PR)
 
 1. **Fetch context** — `gh pr view <N> --json title,body,author,files,commits,url,baseRefName,headRefName,changedFiles,additions,deletions,labels`. Parse: what changed, why, how big, is the author human or bot.
-2. **Worktree** — placed at `../mnml-pr-review/pr-<N>` (a sibling directory to the repo, NOT `worktrees/pr-<N>/` inside the repo). Rationale: `mnml/Cargo.toml` has an unconditional `fim-engine = { path = "../fim-engine" }` dep, and Cargo's workspace-nesting detection breaks when a worktree lives inside the primary repo tree (the `../fim-engine` from `<repo>/worktrees/pr-<N>/` resolves to `<repo>/worktrees/fim-engine` which doesn't exist). Use `mkdir -p ../mnml-pr-review && git worktree add ../mnml-pr-review/pr-<N> refs/pull/<N>/head`. If it's a fork, `gh pr checkout <N>` inside that worktree instead. When this constraint is retired (fim-engine published to crates.io + path-dep dropped or moved behind `[patch.crates-io]`), the worktree location can move back to `worktrees/pr-<N>/`.
+2. **Worktree** — `git worktree add worktrees/pr-<N> refs/pull/<N>/head` (fetches + checks out in one step; needs the PR to be from a branch on the origin remote — if it's a fork, `gh pr checkout <N>` into the worktree instead).
 3. **Diff** — `git diff <baseRef>...HEAD --stat` (breadth), `git diff <baseRef>...HEAD` (full). If the diff is >2000 lines, skim `--stat` first and pick 3-5 hunks to read closely.
 4. **Understand the surface touched** — routing logic:
    - `src/input/`, `src/edit_op.rs`, `src/editor.rs` → route through the input-handler-reviewer discipline (read that agent's checklist as guidance).

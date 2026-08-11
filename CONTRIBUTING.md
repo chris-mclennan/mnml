@@ -7,14 +7,16 @@ and the bits of architecture worth knowing before you change code.
 
 ```bash
 git clone https://github.com/chris-mclennan/mnml
-git clone https://github.com/chris-mclennan/fim-engine   # sibling, not optional
 cd mnml
 cargo build
 cargo test
 ```
 
-`fim-engine` is a path dependency (`../fim-engine`), so it has to sit next to
-the mnml checkout on every platform — cargo can't resolve it from crates.io.
+`fim-engine` (the local FIM code-completion engine) is a workspace member at
+`crates/fim-engine/` — a single `cargo build` from the mnml root builds
+everything. There's no external sibling checkout to keep in sync; the crate
+lived in its own repo through 2026-08-10 and was vendored in with full
+git-subtree history preserved.
 
 mnml builds on stable Rust — MSRV **1.87**, edition 2024. A
 [Nerd Font](https://www.nerdfonts.com/) helps when running the UI, but isn't

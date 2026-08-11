@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/fim-engine",
     "crates/mnml-bridge",
     "crates/mnml-libghostty-vt-sys",
     "crates/mnml-libghostty-vt",
@@ -71,7 +72,7 @@ ratatui = { version = "0.30", features = ["crossterm"] }
 #
 # `default-features = false` keeps fim-engine's macOS-only `metal` feature
 # (Metal → objc2) off the Linux build; the macOS target below re-enables it.
-fim-engine = { path = "../fim-engine", version = "0.1.0", default-features = false }
+fim-engine = { path = "crates/fim-engine", version = "0.1.0", default-features = false }
 # File enumeration honoring .gitignore.
 ignore = "0.4"
 # Temp workspaces for the `.test` E2E runner (and unit tests).
@@ -190,7 +191,7 @@ resvg = { version = "0.47.0", default-features = false }
 # the Apple Metal stack (objc2 etc.), which doesn't build on Linux. Elsewhere
 # fim-engine falls back to CPU candle (see the `default-features = false` above).
 [target.'cfg(target_os = "macos")'.dependencies]
-fim-engine = { path = "../fim-engine", version = "0.1.0", default-features = false, features = ["metal"] }
+fim-engine = { path = "crates/fim-engine", version = "0.1.0", default-features = false, features = ["metal"] }
 
 # Windows AF_UNIX support (Win10 build 17063+) — Rust's std doesn't
 # expose `UnixStream`/`UnixListener` on Windows even though the OS
