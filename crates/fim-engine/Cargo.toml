@@ -1,0 +1,35 @@
+[package]
+name = "fim-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Embedded fill-in-the-middle code completion — quantized qwen2.5-coder via candle, in-process and offline."
+authors = ["Chris McLennan"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/chris-mclennan/fim-engine"
+homepage = "https://github.com/chris-mclennan/fim-engine"
+documentation = "https://docs.rs/fim-engine"
+readme = "README.md"
+keywords = ["completion", "llm", "candle", "inference", "fim"]
+categories = ["development-tools", "text-processing"]
+exclude = [".local/", ".claude/", ".github/"]
+
+[features]
+# GPU inference via Apple Metal — ~10x faster than CPU for the 1.5B
+# model. macOS-only; on Linux build with `--no-default-features`.
+default = ["metal"]
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+
+[dependencies]
+# Pure-Rust tensor + ML runtime. No C/C++ build deps, no external daemon.
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+# The qwen2 BPE tokenizer (loaded from a tokenizer.json).
+tokenizers = "0.20"
+# Model-file download from the HuggingFace CDN (blocking — the engine
+# loads on a worker thread anyway). rustls so there's no OpenSSL dep.
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "rustls-tls",
+] }
