@@ -1,0 +1,9 @@
+[
+  {"id": "1",  "name": "Backlog",      "statusCategory": {"key": "new",         "colorName": "blue-gray"}},
+  {"id": "2",  "name": "To Do",        "statusCategory": {"key": "new",         "colorName": "blue-gray"}},
+  {"id": "3",  "name": "In Progress",  "statusCategory": {"key": "indeterminate","colorName": "yellow"}},
+  {"id": "4",  "name": "In Review",    "statusCategory": {"key": "indeterminate","colorName": "yellow"}},
+  {"id": "5",  "name": "In QA",        "statusCategory": {"key": "indeterminate","colorName": "yellow"}},
+  {"id": "6",  "name": "Done",         "statusCategory": {"key": "done",        "colorName": "green"}},
+  {"id": "7",  "name": "Won't Do",     "statusCategory": {"key": "done",        "colorName": "green"}}
+]

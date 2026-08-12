@@ -1,0 +1,9 @@
+[
+  {"name": "main",                    "commit": {"sha": "a8c31d02"}, "protected": true},
+  {"name": "feat/http-body-cap",      "commit": {"sha": "d1e40f9b"}, "protected": false},
+  {"name": "feat/search-tombstones",  "commit": {"sha": "b2f11a8e"}, "protected": false},
+  {"name": "fix/sync-backoff",        "commit": {"sha": "c31240ee"}, "protected": false},
+  {"name": "chore/deps-2026-08",      "commit": {"sha": "e2fa30ab"}, "protected": false},
+  {"name": "feat/offline-indicator",  "commit": {"sha": "fa9c22bd"}, "protected": false},
+  {"name": "spike/collab-cursors",    "commit": {"sha": "1aab77c9"}, "protected": false}
+]

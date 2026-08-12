@@ -1,0 +1,69 @@
+{
+  "total_count": 8,
+  "workflow_runs": [
+    {
+      "id": 502105, "name": "ci", "display_title": "feat(server): body-size cap hook",
+      "status": "in_progress", "conclusion": null,
+      "head_branch": "feat/http-body-cap", "head_sha": "d1e40f9b",
+      "actor":       {"login": "rileyk"},
+      "created_at": "2026-08-11T15:22:00Z", "updated_at": "2026-08-11T15:22:00Z",
+      "run_number": 1105
+    },
+    {
+      "id": 502104, "name": "ci", "display_title": "chore: bump version to 0.4.13-rc.1",
+      "status": "completed", "conclusion": "success",
+      "head_branch": "main", "head_sha": "a8c31d02",
+      "actor":       {"login": "avachen"},
+      "created_at": "2026-08-11T09:12:00Z", "updated_at": "2026-08-11T09:15:07Z",
+      "run_number": 1104
+    },
+    {
+      "id": 502103, "name": "ci", "display_title": "wip(store): tombstone bloom filter",
+      "status": "completed", "conclusion": "failure",
+      "head_branch": "feat/search-tombstones", "head_sha": "b2f11a8e",
+      "actor":       {"login": "avachen"},
+      "created_at": "2026-08-10T09:05:00Z", "updated_at": "2026-08-10T09:09:04Z",
+      "run_number": 1103
+    },
+    {
+      "id": 502102, "name": "ci", "display_title": "fix(sync): cap exponential backoff at 60s",
+      "status": "completed", "conclusion": "success",
+      "head_branch": "fix/sync-backoff", "head_sha": "c31240ee",
+      "actor":       {"login": "diegor"},
+      "created_at": "2026-08-09T13:11:00Z", "updated_at": "2026-08-09T13:14:25Z",
+      "run_number": 1102
+    },
+    {
+      "id": 502101, "name": "ci", "display_title": "chore(deps): bun 1.2 + drop chalk (use ANSI)",
+      "status": "completed", "conclusion": "success",
+      "head_branch": "chore/deps-2026-08", "head_sha": "e2fa30ab",
+      "actor":       {"login": "jordanw"},
+      "created_at": "2026-08-07T11:00:00Z", "updated_at": "2026-08-07T11:02:58Z",
+      "run_number": 1101
+    },
+    {
+      "id": 502100, "name": "ci", "display_title": "chore(deps): bun 1.2 + drop chalk (use ANSI)",
+      "status": "completed", "conclusion": "failure",
+      "head_branch": "chore/deps-2026-08", "head_sha": "e2fa30a1",
+      "actor":       {"login": "jordanw"},
+      "created_at": "2026-08-07T10:40:00Z", "updated_at": "2026-08-07T10:41:28Z",
+      "run_number": 1100
+    },
+    {
+      "id": 502099, "name": "release", "display_title": "chore(release): v0.4.12",
+      "status": "completed", "conclusion": "success",
+      "head_branch": "main", "head_sha": "01aab882",
+      "actor":       {"login": "avachen"},
+      "created_at": "2026-07-21T18:00:00Z", "updated_at": "2026-07-21T18:06:12Z",
+      "run_number": 1099
+    },
+    {
+      "id": 502098, "name": "ci", "display_title": "spike(collab): shared-cursor prototype",
+      "status": "completed", "conclusion": "cancelled",
+      "head_branch": "spike/collab-cursors", "head_sha": "1aab77c9",
+      "actor":       {"login": "sampatel"},
+      "created_at": "2026-08-01T10:15:00Z", "updated_at": "2026-08-01T10:15:22Z",
+      "run_number": 1098
+    }
+  ]
+}

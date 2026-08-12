@@ -1,28 +1,91 @@
 {
+  "pagelen": 10,
+  "page": 1,
+  "size": 5,
   "values": [
     {
       "id": 87,
       "title": "feat(server): body-size cap hook",
       "state": "OPEN",
       "author": {"display_name": "Riley Kim", "nickname": "rileyk"},
-      "source": {"branch": {"name": "feat/http-body-cap"}},
+      "source":      {"branch": {"name": "feat/http-body-cap"}},
       "destination": {"branch": {"name": "main"}},
       "created_on": "2026-08-11T11:50:00Z",
       "updated_on": "2026-08-11T15:22:00Z",
       "comment_count": 3,
-      "task_count": 1
+      "task_count": 1,
+      "reviewers": [
+        {"display_name": "Ava Chen"},
+        {"display_name": "Diego Ramos"}
+      ],
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/87"}}
     },
     {
       "id": 84,
       "title": "wip(store): tombstone check hook",
       "state": "OPEN",
       "author": {"display_name": "Ava Chen", "nickname": "avachen"},
-      "source": {"branch": {"name": "feat/search-tombstones"}},
+      "source":      {"branch": {"name": "feat/search-tombstones"}},
       "destination": {"branch": {"name": "main"}},
       "created_on": "2026-08-09T15:10:00Z",
       "updated_on": "2026-08-10T09:05:00Z",
       "comment_count": 7,
-      "task_count": 2
+      "task_count": 2,
+      "reviewers": [
+        {"display_name": "Diego Ramos"},
+        {"display_name": "Sam Patel"}
+      ],
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/84"}}
+    },
+    {
+      "id": 82,
+      "title": "fix(sync): cap retry backoff at 60s",
+      "state": "OPEN",
+      "author": {"display_name": "Diego Ramos", "nickname": "diegor"},
+      "source":      {"branch": {"name": "fix/sync-backoff"}},
+      "destination": {"branch": {"name": "main"}},
+      "created_on": "2026-08-09T13:20:00Z",
+      "updated_on": "2026-08-11T09:00:00Z",
+      "comment_count": 2,
+      "task_count": 0,
+      "reviewers": [
+        {"display_name": "Ava Chen"}
+      ],
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/82"}}
+    },
+    {
+      "id": 79,
+      "title": "feat(ui): offline-first indicator on sidebar",
+      "state": "MERGED",
+      "author": {"display_name": "Riley Kim", "nickname": "rileyk"},
+      "source":      {"branch": {"name": "feat/offline-indicator"}},
+      "destination": {"branch": {"name": "main"}},
+      "created_on": "2026-07-30T14:00:00Z",
+      "updated_on": "2026-08-03T16:00:00Z",
+      "merge_commit": {"hash": "fa9c22bd"},
+      "comment_count": 4,
+      "task_count": 0,
+      "reviewers": [
+        {"display_name": "Ava Chen"},
+        {"display_name": "Jordan Wu"}
+      ],
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/79"}}
+    },
+    {
+      "id": 76,
+      "title": "spike(collab): shared cursor over websocket",
+      "state": "DECLINED",
+      "author": {"display_name": "Sam Patel", "nickname": "sampatel"},
+      "source":      {"branch": {"name": "spike/collab-cursors"}},
+      "destination": {"branch": {"name": "main"}},
+      "created_on": "2026-07-28T09:00:00Z",
+      "updated_on": "2026-08-01T10:15:00Z",
+      "comment_count": 6,
+      "task_count": 0,
+      "reviewers": [
+        {"display_name": "Ava Chen"}
+      ],
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/76"}}
     }
   ]
 }

@@ -1,0 +1,26 @@
+{
+  "id": "20143",
+  "key": "LOOP-143",
+  "fields": {
+    "summary": "Search returns soft-deleted notes (tombstones not checked)",
+    "status":    {"name": "In Review", "statusCategory": {"key": "indeterminate"}},
+    "priority":  {"name": "Highest"},
+    "issuetype": {"name": "Bug"},
+    "assignee":  {"accountId": "5ff1a", "displayName": "Ava Chen"},
+    "reporter":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
+    "labels":    ["search", "store", "R3-sev2"],
+    "customfield_10016": 3,
+    "customfield_10020": [{"id": 201, "name": "LOOP Sprint 12 — search + sync"}],
+    "created": "2026-08-05T08:12:00.000+0000",
+    "updated": "2026-08-10T09:05:00.000+0000",
+    "description": "R3 finding: search hits notes that were deleted 30+ minutes ago. `Store.list()` walks the filesystem before checking the deletion tombstone. Order needs to flip, and the tombstone check needs an index or search will get slow at scale.\n\n## Repro\n\n```sh\nloop delete note-a\nsleep 60\nloop search a  # <— note-a still in results\n```",
+    "comment": {
+      "total": 3,
+      "comments": [
+        {"id": "c1", "author": {"displayName": "Sam Patel"}, "created": "2026-08-05T08:15:00.000+0000", "body": "Filing as sev-2; user-facing data-visibility bug."},
+        {"id": "c2", "author": {"displayName": "Ava Chen"},  "created": "2026-08-08T14:00:00.000+0000", "body": "Fix draft: swap order in Store.list, add tombstone bloom filter for O(1) check. PR #84 (wip)."},
+        {"id": "c3", "author": {"displayName": "Ava Chen"},  "created": "2026-08-10T09:05:00.000+0000", "body": "Ready for review. Bloom filter false-positive rate 0.1% (acceptable, filter re-checks the tombstone on hit)."}
+      ]
+    }
+  }
+}

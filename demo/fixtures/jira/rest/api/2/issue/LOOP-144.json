@@ -1,0 +1,25 @@
+{
+  "id": "20144",
+  "key": "LOOP-144",
+  "fields": {
+    "summary": "Sync retry backoff crosses 10min after long offline session",
+    "status":    {"name": "To Do", "statusCategory": {"key": "new"}},
+    "priority":  {"name": "High"},
+    "issuetype": {"name": "Bug"},
+    "assignee":  {"accountId": "5ff2b", "displayName": "Diego Ramos"},
+    "reporter":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
+    "labels":    ["sync", "R3-sev2"],
+    "customfield_10016": 2,
+    "customfield_10020": [{"id": 201, "name": "LOOP Sprint 12 — search + sync"}],
+    "created": "2026-08-05T09:44:00.000+0000",
+    "updated": "2026-08-09T13:11:00.000+0000",
+    "description": "Exponential backoff has no ceiling. After a long offline session (>3h), the next-retry interval crosses 10 min and users think sync is broken. Cap the interval at 60s and add a Retry Now button in the sync-status sidebar.",
+    "comment": {
+      "total": 2,
+      "comments": [
+        {"id": "c1", "author": {"displayName": "Sam Patel"},   "created": "2026-08-05T09:44:00.000+0000", "body": "R3 tester feedback: two testers thought Loop was broken until they force-quit + restarted the app."},
+        {"id": "c2", "author": {"displayName": "Diego Ramos"}, "created": "2026-08-09T13:11:00.000+0000", "body": "Have branch fix/sync-backoff going. Cap at 60s, add explicit `syncing…` / `paused` states with a Retry Now button."}
+      ]
+    }
+  }
+}

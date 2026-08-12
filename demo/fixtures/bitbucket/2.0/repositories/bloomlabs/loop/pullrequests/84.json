@@ -1,0 +1,20 @@
+{
+  "id": 84,
+  "title": "wip(store): tombstone check hook",
+  "state": "OPEN",
+  "description": "R3 finding: search returns soft-deleted notes because `Store.list()` walks the fs before checking the tombstone. Swap order + add a per-note bloom filter for O(1) short-circuit on the deleted case.\n\nCloses LOOP-143.\n\n## Test plan\n- Unit: `src/store.test.ts` — `search-excludes-tombstones`\n- Bench: no regression on `bun bench store` (was 44ms, now 47ms — 7% is within variance)",
+  "author": {"display_name": "Ava Chen", "nickname": "avachen"},
+  "source":      {"branch": {"name": "feat/search-tombstones"}, "commit": {"hash": "b2f11a8e"}},
+  "destination": {"branch": {"name": "main"},                    "commit": {"hash": "a8c31d02"}},
+  "created_on": "2026-08-09T15:10:00Z",
+  "updated_on": "2026-08-10T09:05:00Z",
+  "comment_count": 7,
+  "task_count": 2,
+  "close_source_branch": true,
+  "participants": [
+    {"user": {"display_name": "Diego Ramos"}, "role": "REVIEWER",    "approved": true},
+    {"user": {"display_name": "Sam Patel"},   "role": "REVIEWER",    "approved": false},
+    {"user": {"display_name": "Ava Chen"},    "role": "PARTICIPANT", "approved": false}
+  ],
+  "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/84"}}
+}

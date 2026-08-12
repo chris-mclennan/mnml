@@ -1,0 +1,35 @@
+{
+  "maxResults": 50,
+  "startAt": 0,
+  "isLast": true,
+  "values": [
+    {
+      "id": 201,
+      "state": "active",
+      "name": "LOOP Sprint 12 — search + sync",
+      "startDate": "2026-08-04T00:00:00.000Z",
+      "endDate": "2026-08-18T00:00:00.000Z",
+      "originBoardId": 42,
+      "goal": "Ship search-tombstones, cap sync-backoff, land body-size middleware."
+    },
+    {
+      "id": 202,
+      "state": "future",
+      "name": "LOOP Sprint 13 — collaboration",
+      "startDate": "2026-08-18T00:00:00.000Z",
+      "endDate": "2026-09-01T00:00:00.000Z",
+      "originBoardId": 42,
+      "goal": "Real-time cursor presence, shared drafts, per-note ACLs."
+    },
+    {
+      "id": 200,
+      "state": "closed",
+      "name": "LOOP Sprint 11 — offline polish",
+      "startDate": "2026-07-21T00:00:00.000Z",
+      "endDate": "2026-08-04T00:00:00.000Z",
+      "completeDate": "2026-08-04T18:12:00.000Z",
+      "originBoardId": 42,
+      "goal": "Offline-first indicator, sync conflict resolver v1."
+    }
+  ]
+}

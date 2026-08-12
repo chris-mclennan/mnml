@@ -1,0 +1,12 @@
+{
+  "pagelen": 20,
+  "page": 1,
+  "size": 5,
+  "values": [
+    {"status": "added",    "type": "diffstat", "old": null,                                        "new": {"path": "src/server/middleware/body-cap.ts"},      "lines_added":  38, "lines_removed": 0},
+    {"status": "added",    "type": "diffstat", "old": null,                                        "new": {"path": "src/server/middleware/body-cap.test.ts"}, "lines_added":  92, "lines_removed": 0},
+    {"status": "modified", "type": "diffstat", "old": {"path": "src/server/config.ts"},            "new": {"path": "src/server/config.ts"},                    "lines_added":   4, "lines_removed": 1},
+    {"status": "modified", "type": "diffstat", "old": {"path": "src/server.ts"},                   "new": {"path": "src/server.ts"},                           "lines_added":   3, "lines_removed": 0},
+    {"status": "modified", "type": "diffstat", "old": {"path": "docs/api/errors.md"},              "new": {"path": "docs/api/errors.md"},                      "lines_added":  17, "lines_removed": 0}
+  ]
+}

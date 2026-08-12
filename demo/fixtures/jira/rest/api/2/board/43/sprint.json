@@ -1,0 +1,35 @@
+{
+  "maxResults": 50,
+  "startAt": 0,
+  "isLast": true,
+  "values": [
+    {
+      "id": 220,
+      "state": "active",
+      "name": "Release train 0.5 — cut prep",
+      "startDate": "2026-08-04T00:00:00.000Z",
+      "endDate": "2026-08-25T00:00:00.000Z",
+      "originBoardId": 43,
+      "goal": "Freeze features; land only fixes with test coverage."
+    },
+    {
+      "id": 221,
+      "state": "future",
+      "name": "Release train 0.6 — collaboration",
+      "startDate": "2026-08-25T00:00:00.000Z",
+      "endDate": "2026-09-15T00:00:00.000Z",
+      "originBoardId": 43,
+      "goal": "Ship real-time collaboration behind flag."
+    },
+    {
+      "id": 219,
+      "state": "closed",
+      "name": "Release train 0.4",
+      "startDate": "2026-07-14T00:00:00.000Z",
+      "endDate": "2026-08-04T00:00:00.000Z",
+      "completeDate": "2026-08-04T20:00:00.000Z",
+      "originBoardId": 43,
+      "goal": "Offline-first + faster cold start."
+    }
+  ]
+}

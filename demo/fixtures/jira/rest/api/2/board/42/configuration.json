@@ -1,0 +1,20 @@
+{
+  "id": 42,
+  "name": "LOOP — main",
+  "type": "kanban",
+  "self": "http://localhost:7071/jira/rest/agile/1.0/board/42/configuration",
+  "location": {"projectId": 10001, "projectKey": "LOOP", "name": "Loop"},
+  "filter": {"id": "10101", "self": "http://localhost:7071/jira/rest/api/2/filter/10101"},
+  "columnConfig": {
+    "columns": [
+      {"name": "Backlog",     "statuses": [{"id": "1"}]},
+      {"name": "To Do",       "statuses": [{"id": "2"}]},
+      {"name": "In Progress", "statuses": [{"id": "3"}]},
+      {"name": "In Review",   "statuses": [{"id": "4"}]},
+      {"name": "In QA",       "statuses": [{"id": "5"}]},
+      {"name": "Done",        "statuses": [{"id": "6"}]}
+    ],
+    "constraintType": "issueCount"
+  },
+  "estimation": {"type": "field", "field": {"fieldId": "customfield_10016", "displayName": "Story Points"}}
+}

@@ -1,0 +1,52 @@
+[
+  {
+    "id": 887001, "number": 87, "state": "open", "draft": false,
+    "title": "feat(server): body-size cap hook",
+    "user": {"login": "rileyk", "id": 51004},
+    "head": {"ref": "feat/http-body-cap",     "sha": "d1e40f9b"},
+    "base": {"ref": "main",                    "sha": "a8c31d02"},
+    "created_at": "2026-08-11T11:50:00Z", "updated_at": "2026-08-11T15:22:00Z",
+    "comments": 3, "review_comments": 2, "commits": 5, "additions": 154, "deletions": 1,
+    "html_url": "https://github.com/bloomlabs/loop/pull/87"
+  },
+  {
+    "id": 887002, "number": 84, "state": "open", "draft": true,
+    "title": "wip(store): tombstone check hook",
+    "user": {"login": "avachen", "id": 51001},
+    "head": {"ref": "feat/search-tombstones", "sha": "b2f11a8e"},
+    "base": {"ref": "main",                    "sha": "a8c31d02"},
+    "created_at": "2026-08-09T15:10:00Z", "updated_at": "2026-08-10T09:05:00Z",
+    "comments": 7, "review_comments": 4, "commits": 9, "additions": 202, "deletions": 44,
+    "html_url": "https://github.com/bloomlabs/loop/pull/84"
+  },
+  {
+    "id": 887003, "number": 82, "state": "open", "draft": false,
+    "title": "fix(sync): cap retry backoff at 60s",
+    "user": {"login": "diegor", "id": 51002},
+    "head": {"ref": "fix/sync-backoff",       "sha": "c31240ee"},
+    "base": {"ref": "main",                    "sha": "a8c31d02"},
+    "created_at": "2026-08-09T13:20:00Z", "updated_at": "2026-08-11T09:00:00Z",
+    "comments": 2, "review_comments": 1, "commits": 3, "additions": 48, "deletions": 12,
+    "html_url": "https://github.com/bloomlabs/loop/pull/82"
+  },
+  {
+    "id": 887004, "number": 79, "state": "closed", "merged_at": "2026-08-03T16:00:00Z",
+    "title": "feat(ui): offline-first indicator on sidebar",
+    "user": {"login": "rileyk", "id": 51004},
+    "head": {"ref": "feat/offline-indicator", "sha": "fa9c22bd"},
+    "base": {"ref": "main",                    "sha": "9ae12b3f"},
+    "created_at": "2026-07-30T14:00:00Z", "updated_at": "2026-08-03T16:00:00Z",
+    "comments": 4, "review_comments": 3, "commits": 6, "additions": 88, "deletions": 6,
+    "html_url": "https://github.com/bloomlabs/loop/pull/79"
+  },
+  {
+    "id": 887005, "number": 76, "state": "closed", "merged_at": null,
+    "title": "spike(collab): shared cursor over websocket",
+    "user": {"login": "sampatel", "id": 51003},
+    "head": {"ref": "spike/collab-cursors", "sha": "1aab77c9"},
+    "base": {"ref": "main",                 "sha": "88d4c020"},
+    "created_at": "2026-07-28T09:00:00Z", "updated_at": "2026-08-01T10:15:00Z",
+    "comments": 6, "review_comments": 5, "commits": 12, "additions": 411, "deletions": 8,
+    "html_url": "https://github.com/bloomlabs/loop/pull/76"
+  }
+]

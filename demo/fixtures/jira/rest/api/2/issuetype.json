@@ -1,0 +1,7 @@
+[
+  {"id": "10001", "name": "Task",     "description": "A small, self-contained piece of work.",  "iconUrl": "http://localhost:7071/icons/issuetype/task.svg",  "subtask": false},
+  {"id": "10002", "name": "Bug",      "description": "A defect in the product.",                "iconUrl": "http://localhost:7071/icons/issuetype/bug.svg",   "subtask": false},
+  {"id": "10003", "name": "Story",    "description": "A user-facing capability.",               "iconUrl": "http://localhost:7071/icons/issuetype/story.svg", "subtask": false},
+  {"id": "10004", "name": "Epic",     "description": "A rollup of related work.",               "iconUrl": "http://localhost:7071/icons/issuetype/epic.svg",  "subtask": false},
+  {"id": "10005", "name": "Sub-task", "description": "A step within a parent issue.",            "iconUrl": "http://localhost:7071/icons/issuetype/subtask.svg","subtask": true}
+]

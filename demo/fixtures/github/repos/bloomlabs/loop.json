@@ -1,0 +1,21 @@
+{
+  "id": 40001,
+  "name": "loop",
+  "full_name": "bloomlabs/loop",
+  "private": false,
+  "owner": {"login": "bloomlabs", "id": 41000},
+  "description": "Fast, keyboard-first team notes. Every note is a Markdown file; search is rg; sync is git.",
+  "language": "TypeScript",
+  "topics": ["notes", "markdown", "keyboard-first", "bun", "typescript"],
+  "default_branch": "main",
+  "stargazers_count": 214,
+  "watchers_count": 214,
+  "forks_count": 18,
+  "open_issues_count": 12,
+  "size": 2148,
+  "pushed_at": "2026-08-11T15:22:00Z",
+  "created_at": "2025-11-04T09:12:00Z",
+  "updated_at": "2026-08-11T15:22:00Z",
+  "html_url": "https://github.com/bloomlabs/loop",
+  "license": {"key": "mit", "name": "MIT License", "spdx_id": "MIT"}
+}

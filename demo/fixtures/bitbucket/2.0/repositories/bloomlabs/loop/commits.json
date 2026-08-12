@@ -1,0 +1,22 @@
+{
+  "pagelen": 20,
+  "page": 1,
+  "size": 15,
+  "values": [
+    {"hash": "a8c31d02", "message": "chore: bump version to 0.4.13-rc.1",              "author": {"user": {"display_name": "Ava Chen"}},    "date": "2026-08-11T15:22:00Z"},
+    {"hash": "d1e40f9b", "message": "feat(server): add MAX_NOTE_BYTES + body-cap mw",  "author": {"user": {"display_name": "Riley Kim"}},   "date": "2026-08-11T14:00:00Z"},
+    {"hash": "b2f11a8e", "message": "wip(store): tombstone bloom filter",              "author": {"user": {"display_name": "Ava Chen"}},    "date": "2026-08-10T09:05:00Z"},
+    {"hash": "c31240ee", "message": "fix(sync): cap exponential backoff at 60s",       "author": {"user": {"display_name": "Diego Ramos"}}, "date": "2026-08-09T13:11:00Z"},
+    {"hash": "e2fa30ab", "message": "chore(deps): bun 1.2 + drop chalk (use ANSI)",    "author": {"user": {"display_name": "Jordan Wu"}},   "date": "2026-08-07T11:00:00Z"},
+    {"hash": "fa9c22bd", "message": "feat(ui): offline-first indicator on sidebar",    "author": {"user": {"display_name": "Riley Kim"}},   "date": "2026-08-03T16:00:00Z"},
+    {"hash": "9ae12b3f", "message": "docs: add offline story to landing tagline",      "author": {"user": {"display_name": "Riley Kim"}},   "date": "2026-08-01T14:30:00Z"},
+    {"hash": "1aab77c9", "message": "spike(collab): shared-cursor prototype",          "author": {"user": {"display_name": "Sam Patel"}},   "date": "2026-08-01T09:00:00Z"},
+    {"hash": "88d4c020", "message": "fix(search): trim trailing whitespace on titles", "author": {"user": {"display_name": "Sam Patel"}},   "date": "2026-07-31T15:40:00Z"},
+    {"hash": "42be6a11", "message": "refactor(store): split .list from .search",       "author": {"user": {"display_name": "Ava Chen"}},    "date": "2026-07-30T10:15:00Z"},
+    {"hash": "77fc9d4a", "message": "test(sync): backoff overflow regression",         "author": {"user": {"display_name": "Diego Ramos"}}, "date": "2026-07-28T13:00:00Z"},
+    {"hash": "12ea3b90", "message": "chore: update README with Bun 1.2 note",          "author": {"user": {"display_name": "Jordan Wu"}},   "date": "2026-07-27T11:22:00Z"},
+    {"hash": "5a09b7c4", "message": "feat(api): PATCH /notes/:id (jsonpatch)",         "author": {"user": {"display_name": "Diego Ramos"}}, "date": "2026-07-26T09:33:00Z"},
+    {"hash": "33e00da8", "message": "docs: contributing guide + small-PR rule",        "author": {"user": {"display_name": "Ava Chen"}},    "date": "2026-07-24T14:00:00Z"},
+    {"hash": "01aab882", "message": "chore(release): v0.4.12",                          "author": {"user": {"display_name": "Ava Chen"}},    "date": "2026-07-21T18:00:00Z"}
+  ]
+}

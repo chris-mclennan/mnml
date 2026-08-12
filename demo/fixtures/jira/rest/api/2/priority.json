@@ -1,0 +1,7 @@
+[
+  {"id": "1", "name": "Highest", "iconUrl": "http://localhost:7071/icons/priority/highest.svg"},
+  {"id": "2", "name": "High",    "iconUrl": "http://localhost:7071/icons/priority/high.svg"},
+  {"id": "3", "name": "Medium",  "iconUrl": "http://localhost:7071/icons/priority/medium.svg"},
+  {"id": "4", "name": "Low",     "iconUrl": "http://localhost:7071/icons/priority/low.svg"},
+  {"id": "5", "name": "Lowest",  "iconUrl": "http://localhost:7071/icons/priority/lowest.svg"}
+]

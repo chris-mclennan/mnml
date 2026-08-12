@@ -1,0 +1,9 @@
+{
+  "type": "workspace",
+  "uuid": "{bl-workspace}",
+  "name": "Bloom Labs",
+  "slug": "bloomlabs",
+  "is_private": true,
+  "created_on": "2025-11-04T09:00:00Z",
+  "links": {"html": {"href": "https://bitbucket.org/bloomlabs/"}}
+}

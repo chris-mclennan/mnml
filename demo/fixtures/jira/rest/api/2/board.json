@@ -1,6 +1,29 @@
 {
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 3,
+  "isLast": true,
   "values": [
-    {"id": 42, "name": "LOOP — main", "type": "kanban", "projectId": 10001},
-    {"id": 43, "name": "LOOP — release train", "type": "scrum", "projectId": 10001}
+    {
+      "id": 42,
+      "self": "http://localhost:7071/jira/rest/agile/1.0/board/42",
+      "name": "LOOP — main",
+      "type": "kanban",
+      "location": {"projectId": 10001, "projectKey": "LOOP", "projectName": "Loop"}
+    },
+    {
+      "id": 43,
+      "self": "http://localhost:7071/jira/rest/agile/1.0/board/43",
+      "name": "LOOP — release train",
+      "type": "scrum",
+      "location": {"projectId": 10001, "projectKey": "LOOP", "projectName": "Loop"}
+    },
+    {
+      "id": 44,
+      "self": "http://localhost:7071/jira/rest/agile/1.0/board/44",
+      "name": "LOOP — bugs & polish",
+      "type": "kanban",
+      "location": {"projectId": 10001, "projectKey": "LOOP", "projectName": "Loop"}
+    }
   ]
 }

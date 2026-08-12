@@ -1,0 +1,17 @@
+{
+  "id": "20146",
+  "key": "LOOP-146",
+  "fields": {
+    "summary": "Empty q= returns everything instead of empty result set",
+    "status":    {"name": "To Do", "statusCategory": {"key": "new"}},
+    "priority":  {"name": "Medium"},
+    "issuetype": {"name": "Bug"},
+    "assignee":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
+    "reporter":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
+    "labels":    ["search", "R3-sev3"],
+    "customfield_10016": 1,
+    "created": "2026-08-06T15:00:00.000+0000",
+    "updated": "2026-08-08T10:00:00.000+0000",
+    "description": "`GET /search?q=` returns every note. Should return `{results: []}` — an empty query is a client bug, not a request for everything."
+  }
+}

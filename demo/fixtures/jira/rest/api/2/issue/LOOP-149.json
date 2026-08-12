@@ -1,0 +1,18 @@
+{
+  "id": "20149",
+  "key": "LOOP-149",
+  "fields": {
+    "summary": "Cold-start regression: 220ms → 640ms after chalk 5→6 bump",
+    "status":    {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+    "priority":  {"name": "High"},
+    "issuetype": {"name": "Bug"},
+    "assignee":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
+    "reporter":  {"accountId": "5ff5e", "displayName": "Jordan Wu"},
+    "labels":    ["perf", "deps"],
+    "customfield_10016": 2,
+    "customfield_10020": [{"id": 201, "name": "LOOP Sprint 12 — search + sync"}],
+    "created": "2026-08-10T09:20:00.000+0000",
+    "updated": "2026-08-11T13:00:00.000+0000",
+    "description": "Bench dashboard shows cold start 220ms → 640ms between v0.4.11 and v0.4.12. Bisect lands on `bun install` picking up chalk v5 → v6 (ESM init cost).\n\nOptions in `.mnml/findings/perf-cold-start.md`. Recommend: drop chalk entirely — we use it for 3 color codes."
+  }
+}

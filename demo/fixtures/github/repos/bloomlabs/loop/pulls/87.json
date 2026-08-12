@@ -1,0 +1,21 @@
+{
+  "id": 887001, "number": 87, "state": "open", "draft": false,
+  "title": "feat(server): body-size cap hook",
+  "body": "Adds middleware to reject POST /notes bodies > 64KB with 413. Client sees x-loop-note-too-large: true and renders a friendly toast. Closes LOOP-215. Depends on middleware pipeline in LOOP-142.",
+  "user": {"login": "rileyk", "id": 51004, "avatar_url": "http://localhost:7071/avatars/riley-64.png"},
+  "head": {"ref": "feat/http-body-cap", "sha": "d1e40f9b", "repo": {"full_name": "bloomlabs/loop"}},
+  "base": {"ref": "main",                "sha": "a8c31d02", "repo": {"full_name": "bloomlabs/loop"}},
+  "created_at": "2026-08-11T11:50:00Z", "updated_at": "2026-08-11T15:22:00Z",
+  "merged_at": null,
+  "mergeable": true, "mergeable_state": "clean",
+  "requested_reviewers": [
+    {"login": "avachen", "id": 51001},
+    {"login": "diegor",  "id": 51002}
+  ],
+  "labels": [
+    {"name": "server",    "color": "5aa0ff"},
+    {"name": "R3-sev2",   "color": "d94141"}
+  ],
+  "comments": 3, "review_comments": 2, "commits": 5, "additions": 154, "deletions": 1,
+  "html_url": "https://github.com/bloomlabs/loop/pull/87"
+}

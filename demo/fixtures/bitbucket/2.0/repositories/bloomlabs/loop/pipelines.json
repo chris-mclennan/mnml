@@ -1,0 +1,71 @@
+{
+  "pagelen": 10,
+  "page": 1,
+  "size": 8,
+  "values": [
+    {
+      "uuid": "{pl-1105}", "build_number": 1105,
+      "state":  {"name": "IN_PROGRESS", "stage": {"name": "test"}},
+      "target": {"ref_name": "feat/http-body-cap",     "commit": {"hash": "d1e40f9b"}},
+      "creator": {"display_name": "Riley Kim"},
+      "created_on":  "2026-08-11T15:22:00Z",
+      "duration_in_seconds": null
+    },
+    {
+      "uuid": "{pl-1104}", "build_number": 1104,
+      "state":  {"name": "COMPLETED", "result": {"name": "SUCCESSFUL"}},
+      "target": {"ref_name": "main",                    "commit": {"hash": "a8c31d02"}},
+      "creator": {"display_name": "Ava Chen"},
+      "created_on":  "2026-08-11T09:12:00Z",
+      "duration_in_seconds": 187
+    },
+    {
+      "uuid": "{pl-1103}", "build_number": 1103,
+      "state":  {"name": "COMPLETED", "result": {"name": "FAILED"}},
+      "target": {"ref_name": "feat/search-tombstones",  "commit": {"hash": "b2f11a8e"}},
+      "creator": {"display_name": "Ava Chen"},
+      "created_on":  "2026-08-10T09:05:00Z",
+      "duration_in_seconds": 244
+    },
+    {
+      "uuid": "{pl-1102}", "build_number": 1102,
+      "state":  {"name": "COMPLETED", "result": {"name": "SUCCESSFUL"}},
+      "target": {"ref_name": "fix/sync-backoff",        "commit": {"hash": "c31240ee"}},
+      "creator": {"display_name": "Diego Ramos"},
+      "created_on":  "2026-08-09T13:11:00Z",
+      "duration_in_seconds": 205
+    },
+    {
+      "uuid": "{pl-1101}", "build_number": 1101,
+      "state":  {"name": "COMPLETED", "result": {"name": "SUCCESSFUL"}},
+      "target": {"ref_name": "chore/deps-2026-08",      "commit": {"hash": "e2fa30ab"}},
+      "creator": {"display_name": "Jordan Wu"},
+      "created_on":  "2026-08-07T11:00:00Z",
+      "duration_in_seconds": 178
+    },
+    {
+      "uuid": "{pl-1100}", "build_number": 1100,
+      "state":  {"name": "COMPLETED", "result": {"name": "FAILED"}},
+      "target": {"ref_name": "chore/deps-2026-08",      "commit": {"hash": "e2fa30a1"}},
+      "creator": {"display_name": "Jordan Wu"},
+      "created_on":  "2026-08-07T10:40:00Z",
+      "duration_in_seconds": 88
+    },
+    {
+      "uuid": "{pl-1099}", "build_number": 1099,
+      "state":  {"name": "COMPLETED", "result": {"name": "SUCCESSFUL"}},
+      "target": {"ref_name": "main",                    "commit": {"hash": "fa9c22bd"}},
+      "creator": {"display_name": "Riley Kim"},
+      "created_on":  "2026-08-03T16:00:00Z",
+      "duration_in_seconds": 191
+    },
+    {
+      "uuid": "{pl-1098}", "build_number": 1098,
+      "state":  {"name": "COMPLETED", "result": {"name": "STOPPED"}},
+      "target": {"ref_name": "spike/collab-cursors",    "commit": {"hash": "1aab77c9"}},
+      "creator": {"display_name": "Sam Patel"},
+      "created_on":  "2026-08-01T10:15:00Z",
+      "duration_in_seconds": 22
+    }
+  ]
+}

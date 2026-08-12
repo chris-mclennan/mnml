@@ -1,0 +1,219 @@
+{
+  "startAt": 0,
+  "maxResults": 50,
+  "total": 15,
+  "issues": [
+    {
+      "id": "20142", "key": "LOOP-142",
+      "fields": {
+        "summary": "Server: middleware pipeline for POST /notes",
+        "status":    {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "priority":  {"name": "High"},
+        "issuetype": {"name": "Story"},
+        "assignee":  {"accountId": "5ff1a", "displayName": "Ava Chen"},
+        "labels":    ["server", "middleware"],
+        "customfield_10016": 5,
+        "created": "2026-07-15T10:30:00.000+0000",
+        "updated": "2026-08-10T14:22:00.000+0000"
+      }
+    },
+    {
+      "id": "20143", "key": "LOOP-143",
+      "fields": {
+        "summary": "Search returns soft-deleted notes (tombstones not checked)",
+        "status":    {"name": "In Review", "statusCategory": {"key": "indeterminate"}},
+        "priority":  {"name": "Highest"},
+        "issuetype": {"name": "Bug"},
+        "assignee":  {"accountId": "5ff1a", "displayName": "Ava Chen"},
+        "labels":    ["search", "store", "R3-sev2"],
+        "customfield_10016": 3,
+        "created": "2026-08-05T08:12:00.000+0000",
+        "updated": "2026-08-10T09:05:00.000+0000"
+      }
+    },
+    {
+      "id": "20144", "key": "LOOP-144",
+      "fields": {
+        "summary": "Sync retry backoff crosses 10min after long offline session",
+        "status":    {"name": "To Do", "statusCategory": {"key": "new"}},
+        "priority":  {"name": "High"},
+        "issuetype": {"name": "Bug"},
+        "assignee":  {"accountId": "5ff2b", "displayName": "Diego Ramos"},
+        "labels":    ["sync", "R3-sev2"],
+        "customfield_10016": 2,
+        "created": "2026-08-05T09:44:00.000+0000",
+        "updated": "2026-08-09T13:11:00.000+0000"
+      }
+    },
+    {
+      "id": "20145", "key": "LOOP-145",
+      "fields": {
+        "summary": "Sidebar renders trailing whitespace on note titles",
+        "status":    {"name": "Backlog", "statusCategory": {"key": "new"}},
+        "priority":  {"name": "Low"},
+        "issuetype": {"name": "Bug"},
+        "assignee":  null,
+        "labels":    ["ui", "R3-sev3"],
+        "customfield_10016": 1,
+        "created": "2026-08-06T14:22:00.000+0000",
+        "updated": "2026-08-06T14:22:00.000+0000"
+      }
+    },
+    {
+      "id": "20146", "key": "LOOP-146",
+      "fields": {
+        "summary": "Empty q= returns everything instead of empty result set",
+        "status":    {"name": "To Do", "statusCategory": {"key": "new"}},
+        "priority":  {"name": "Medium"},
+        "issuetype": {"name": "Bug"},
+        "assignee":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
+        "labels":    ["search", "R3-sev3"],
+        "customfield_10016": 1,
+        "created": "2026-08-06T15:00:00.000+0000",
+        "updated": "2026-08-08T10:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20147", "key": "LOOP-147",
+      "fields": {
+        "summary": "Landing tagline: mention offline explicitly",
+        "status":    {"name": "Done", "statusCategory": {"key": "done"}},
+        "priority":  {"name": "Low"},
+        "issuetype": {"name": "Task"},
+        "assignee":  {"accountId": "5ff4d", "displayName": "Riley Kim"},
+        "labels":    ["marketing", "copy"],
+        "customfield_10016": 1,
+        "created": "2026-08-06T16:30:00.000+0000",
+        "updated": "2026-08-09T18:00:00.000+0000",
+        "resolutiondate": "2026-08-09T18:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20148", "key": "LOOP-148",
+      "fields": {
+        "summary": "Store benchmark suite flaky on bun 1.2",
+        "status":    {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "priority":  {"name": "Medium"},
+        "issuetype": {"name": "Task"},
+        "assignee":  {"accountId": "5ff5e", "displayName": "Jordan Wu"},
+        "labels":    ["ci", "bench"],
+        "customfield_10016": 2,
+        "created": "2026-08-07T11:00:00.000+0000",
+        "updated": "2026-08-10T10:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20149", "key": "LOOP-149",
+      "fields": {
+        "summary": "Cold-start regression: 220ms → 640ms after chalk 5→6 bump",
+        "status":    {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "priority":  {"name": "High"},
+        "issuetype": {"name": "Bug"},
+        "assignee":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
+        "labels":    ["perf", "deps"],
+        "customfield_10016": 2,
+        "created": "2026-08-10T09:20:00.000+0000",
+        "updated": "2026-08-11T13:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20150", "key": "LOOP-150",
+      "fields": {
+        "summary": "Store race: concurrent writes drop one edit",
+        "status":    {"name": "To Do", "statusCategory": {"key": "new"}},
+        "priority":  {"name": "Highest"},
+        "issuetype": {"name": "Bug"},
+        "assignee":  {"accountId": "5ff1a", "displayName": "Ava Chen"},
+        "labels":    ["store", "data-loss"],
+        "customfield_10016": 3,
+        "created": "2026-08-08T15:22:00.000+0000",
+        "updated": "2026-08-11T09:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20151", "key": "LOOP-151",
+      "fields": {
+        "summary": "Real-time cursor presence (spike)",
+        "status":    {"name": "Backlog", "statusCategory": {"key": "new"}},
+        "priority":  {"name": "Medium"},
+        "issuetype": {"name": "Story"},
+        "assignee":  null,
+        "labels":    ["collaboration", "spike"],
+        "customfield_10016": 8,
+        "created": "2026-08-01T09:00:00.000+0000",
+        "updated": "2026-08-01T09:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20152", "key": "LOOP-152",
+      "fields": {
+        "summary": "Per-note ACL model (owner/editor/viewer)",
+        "status":    {"name": "Backlog", "statusCategory": {"key": "new"}},
+        "priority":  {"name": "Medium"},
+        "issuetype": {"name": "Story"},
+        "assignee":  null,
+        "labels":    ["collaboration", "auth"],
+        "customfield_10016": 5,
+        "created": "2026-08-01T09:15:00.000+0000",
+        "updated": "2026-08-02T14:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20153", "key": "LOOP-153",
+      "fields": {
+        "summary": "Import notes from Obsidian vault",
+        "status":    {"name": "Backlog", "statusCategory": {"key": "new"}},
+        "priority":  {"name": "Low"},
+        "issuetype": {"name": "Story"},
+        "assignee":  null,
+        "labels":    ["import", "onboarding"],
+        "customfield_10016": 3,
+        "created": "2026-07-28T10:00:00.000+0000",
+        "updated": "2026-07-28T10:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20154", "key": "LOOP-154",
+      "fields": {
+        "summary": "Add PATCH /notes/:id for partial edits",
+        "status":    {"name": "In QA", "statusCategory": {"key": "indeterminate"}},
+        "priority":  {"name": "Medium"},
+        "issuetype": {"name": "Story"},
+        "assignee":  {"accountId": "5ff2b", "displayName": "Diego Ramos"},
+        "labels":    ["server", "api"],
+        "customfield_10016": 3,
+        "created": "2026-07-22T09:00:00.000+0000",
+        "updated": "2026-08-11T15:30:00.000+0000"
+      }
+    },
+    {
+      "id": "20155", "key": "LOOP-155",
+      "fields": {
+        "summary": "Offline-first indicator on the sidebar",
+        "status":    {"name": "Done", "statusCategory": {"key": "done"}},
+        "priority":  {"name": "Medium"},
+        "issuetype": {"name": "Task"},
+        "assignee":  {"accountId": "5ff4d", "displayName": "Riley Kim"},
+        "labels":    ["ui", "offline"],
+        "customfield_10016": 2,
+        "created": "2026-07-25T13:00:00.000+0000",
+        "updated": "2026-08-03T16:00:00.000+0000",
+        "resolutiondate": "2026-08-03T16:00:00.000+0000"
+      }
+    },
+    {
+      "id": "20215", "key": "LOOP-215",
+      "fields": {
+        "summary": "Enforce 64KB body cap on POST /notes",
+        "status":    {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "priority":  {"name": "Medium"},
+        "issuetype": {"name": "Task"},
+        "assignee":  {"accountId": "5ff4d", "displayName": "Riley Kim"},
+        "labels":    ["server", "R3-sev2"],
+        "customfield_10016": 2,
+        "created": "2026-08-05T09:00:00.000+0000",
+        "updated": "2026-08-11T11:45:00.000+0000"
+      }
+    }
+  ]
+}
