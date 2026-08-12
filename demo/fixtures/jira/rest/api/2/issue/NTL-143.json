@@ -1,6 +1,6 @@
 {
   "id": "20143",
-  "key": "LOOP-143",
+  "key": "NTL-143",
   "fields": {
     "summary": "Search returns soft-deleted notes (tombstones not checked)",
     "status":    {"name": "In Review", "statusCategory": {"key": "indeterminate"}},

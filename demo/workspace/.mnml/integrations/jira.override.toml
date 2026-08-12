@@ -11,5 +11,5 @@ in_palette_bar = false
 [env]
 JIRA_BASE_URL = "http://localhost:7071/jira"
 JIRA_EMAIL = "ava@bloomlabs.dev"
-JIRA_API_TOKEN = "demo-token-loop"
-JIRA_PROJECT = "LOOP"
+JIRA_API_TOKEN = "demo-token-notely"
+JIRA_PROJECT = "NTL"

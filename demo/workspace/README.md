@@ -1,4 +1,4 @@
-# Loop
+# Notely
 
 Fast, keyboard-first team notes. Every note is a Markdown file;
 search is `rg`; sync is `git`.
@@ -6,8 +6,8 @@ search is `rg`; sync is `git`.
 ## Setup
 
 ```sh
-git clone https://bitbucket.org/bloomlabs/loop
-cd loop && bun install
+git clone https://bitbucket.org/bloomlabs/notely
+cd notely && bun install
 bun run dev
 ```
 

@@ -5,7 +5,7 @@ export class Server {
   get port() { return this.opts.port; }
 
   async listen(): Promise<void> {
-    // TODO: middleware pipeline (LOOP-142)
+    // TODO: middleware pipeline (NTL-142)
     Bun.serve({
       port: this.port,
       fetch: (req) => this.handle(req),

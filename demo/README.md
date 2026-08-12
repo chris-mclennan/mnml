@@ -13,7 +13,7 @@ Populated workspace + mock API server for screenshots, videos, and
 - `server/` — small local HTTP server (localhost:7071) serving the
   fixtures. Spawned on `mnml --demo` if not already running.
 
-All data uses the fictitious product **Loop** (by Bloom Labs).
+All data uses the fictitious product **Notely** (by Bloom Labs).
 Never any real ticket / PR / customer data.
 
 ## Regenerating `workspace-git.tar.gz`

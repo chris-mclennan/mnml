@@ -1,6 +1,6 @@
 {
   "id": "20150",
-  "key": "LOOP-150",
+  "key": "NTL-150",
   "fields": {
     "summary": "Store race: concurrent writes drop one edit",
     "status":    {"name": "To Do", "statusCategory": {"key": "new"}},

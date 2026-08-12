@@ -1,4 +1,4 @@
-# Loop R3 findings — 2026-08-05
+# Notely R3 findings — 2026-08-05
 
 3 SEV-2 · 4 SEV-3.
 

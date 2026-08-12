@@ -475,18 +475,18 @@ fn inject_demo_env() {
         std::env::set_var("JIRA_SITE_URL", "http://localhost:7071/jira");
         std::env::set_var("JIRA_BASE_URL", "http://localhost:7071/jira");
         std::env::set_var("JIRA_EMAIL", "ava@bloomlabs.dev");
-        std::env::set_var("JIRA_API_TOKEN", "demo-token-loop");
-        std::env::set_var("JIRA_PROJECT", "LOOP");
+        std::env::set_var("JIRA_API_TOKEN", "demo-token-notely");
+        std::env::set_var("JIRA_PROJECT", "NTL");
         std::env::set_var("BITBUCKET_BASE_URL", "http://localhost:7071/bitbucket");
         std::env::set_var("BITBUCKET_USER", "avachen");
-        std::env::set_var("BITBUCKET_ACCESS_TOKEN", "demo-token-loop");
+        std::env::set_var("BITBUCKET_ACCESS_TOKEN", "demo-token-notely");
         std::env::set_var("BITBUCKET_WORKSPACE", "bloomlabs");
-        std::env::set_var("BITBUCKET_REPO", "loop");
-        std::env::set_var("BITBUCKET_APP_PASSWORD", "demo-token-loop");
+        std::env::set_var("BITBUCKET_REPO", "notely");
+        std::env::set_var("BITBUCKET_APP_PASSWORD", "demo-token-notely");
         std::env::set_var("GITHUB_BASE_URL", "http://localhost:7071/github");
-        std::env::set_var("GITHUB_TOKEN", "demo-token-loop");
+        std::env::set_var("GITHUB_TOKEN", "demo-token-notely");
         std::env::set_var("GITHUB_OWNER", "bloomlabs");
-        std::env::set_var("GITHUB_REPO", "loop");
+        std::env::set_var("GITHUB_REPO", "notely");
     }
 }
 
@@ -551,7 +551,7 @@ struct TuiArgs {
     /// command id doesn't resolve.
     show_panel: Option<String>,
     /// Demo mode: point mnml at the bundled `demo/workspace/`
-    /// (populated Loop / Bloom Labs sample repo with fixtures for
+    /// (populated Notely / Bloom Labs sample repo with fixtures for
     /// jira / bitbucket / github). If a mock API server isn't
     /// already running on `localhost:7071`, spawn `demo/server/server.py`
     /// in the background so the integration panes render populated
@@ -859,7 +859,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     if args.demo && !args.headless {
         app.toast_persistent(
             "demo-mode",
-            "DEMO MODE — Loop (Bloom Labs) sample workspace. Integrations \
+            "DEMO MODE — Notely (Bloom Labs) sample workspace. Integrations \
              hit localhost:7071 (mock). Real config safe.",
             mnml::app::ToastLevel::Info,
         );

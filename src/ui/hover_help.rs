@@ -105,10 +105,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // to fit; area.width >= 3 is required for the kebab to appear.
     let kebab_cells = 2u16;
     let title_avail = area.width.saturating_sub(kebab_cells);
-    // Prefix with a dim `?` glyph so the band clearly reads as a
-    // help header, not another chrome label. 3 leading cells: `?` +
-    // space + text.
-    let prefix_cells = 3u16;
+    // Title starts flush-left with 1-cell inset. The `?` prefix
+    // (2026-08-11) got dropped 2026-08-12 — user feedback: the glyph
+    // read as accidental character in the corner, not a help sigil.
+    // The distinct title-bar bg (`bg2`) already differentiates the
+    // help header from the body without needing a leading icon.
+    let prefix_cells = 1u16;
     let title_body_avail = title_avail.saturating_sub(prefix_cells);
     let title_text: String = copy
         .title
@@ -117,7 +119,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     let title_body = pad_line(&title_text, title_body_avail as usize);
     let mut title_spans = vec![
-        Span::styled(" ? ", Style::default().fg(t.comment).bg(title_bg)),
+        Span::styled(" ", Style::default().bg(title_bg)),
         Span::styled(
             title_body,
             Style::default()

@@ -1,7 +1,7 @@
 {
   "id": 40001,
-  "name": "loop",
-  "full_name": "bloomlabs/loop",
+  "name": "notely",
+  "full_name": "bloomlabs/notely",
   "private": false,
   "owner": {"login": "bloomlabs", "id": 41000},
   "description": "Fast, keyboard-first team notes. Every note is a Markdown file; search is rg; sync is git.",
@@ -16,6 +16,6 @@
   "pushed_at": "2026-08-11T15:22:00Z",
   "created_at": "2025-11-04T09:12:00Z",
   "updated_at": "2026-08-11T15:22:00Z",
-  "html_url": "https://github.com/bloomlabs/loop",
+  "html_url": "https://github.com/bloomlabs/notely",
   "license": {"key": "mit", "name": "MIT License", "spdx_id": "MIT"}
 }

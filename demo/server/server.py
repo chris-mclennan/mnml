@@ -5,9 +5,9 @@ Serves canned JSON fixtures from ../fixtures/ over HTTP on
 localhost:7071. Routes are matched against the on-disk fixture tree:
 
     GET  /jira/rest/api/2/board                → fixtures/jira/boards.json
-    GET  /jira/rest/api/2/issue/LOOP-142       → fixtures/jira/issues/LOOP-142.json
+    GET  /jira/rest/api/2/issue/NTL-142       → fixtures/jira/issues/NTL-142.json
     GET  /bitbucket/2.0/repositories/bloomlabs → fixtures/bitbucket/repos.json
-    GET  /github/repos/bloomlabs/loop/pulls    → fixtures/github/pulls.json
+    GET  /github/repos/bloomlabs/notely/pulls    → fixtures/github/pulls.json
 
 Anything with a matching file → JSON body + 200.
 Anything without → 404 + a helpful error naming the expected path.

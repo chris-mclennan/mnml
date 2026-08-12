@@ -18,7 +18,7 @@
         {"display_name": "Ava Chen"},
         {"display_name": "Diego Ramos"}
       ],
-      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/87"}}
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/notely/pull-requests/87"}}
     },
     {
       "id": 84,
@@ -35,7 +35,7 @@
         {"display_name": "Diego Ramos"},
         {"display_name": "Sam Patel"}
       ],
-      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/84"}}
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/notely/pull-requests/84"}}
     },
     {
       "id": 82,
@@ -51,7 +51,7 @@
       "reviewers": [
         {"display_name": "Ava Chen"}
       ],
-      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/82"}}
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/notely/pull-requests/82"}}
     },
     {
       "id": 79,
@@ -69,7 +69,7 @@
         {"display_name": "Ava Chen"},
         {"display_name": "Jordan Wu"}
       ],
-      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/79"}}
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/notely/pull-requests/79"}}
     },
     {
       "id": 76,
@@ -85,7 +85,7 @@
       "reviewers": [
         {"display_name": "Ava Chen"}
       ],
-      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/loop/pull-requests/76"}}
+      "links": {"html": {"href": "https://bitbucket.org/bloomlabs/notely/pull-requests/76"}}
     }
   ]
 }

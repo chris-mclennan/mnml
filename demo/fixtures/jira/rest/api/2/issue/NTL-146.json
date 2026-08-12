@@ -1,6 +1,6 @@
 {
   "id": "20146",
-  "key": "LOOP-146",
+  "key": "NTL-146",
   "fields": {
     "summary": "Empty q= returns everything instead of empty result set",
     "status":    {"name": "To Do", "statusCategory": {"key": "new"}},

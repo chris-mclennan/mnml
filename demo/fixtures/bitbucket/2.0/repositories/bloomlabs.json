@@ -4,9 +4,9 @@
   "size": 4,
   "values": [
     {
-      "name": "loop",
-      "slug": "loop",
-      "full_name": "bloomlabs/loop",
+      "name": "notely",
+      "slug": "notely",
+      "full_name": "bloomlabs/notely",
       "description": "Fast, keyboard-first team notes. TypeScript on Bun.",
       "language": "typescript",
       "is_private": true,
@@ -18,8 +18,8 @@
     {
       "name": "loop-mobile",
       "slug": "loop-mobile",
-      "full_name": "bloomlabs/loop-mobile",
-      "description": "Loop for iOS + Android (React Native).",
+      "full_name": "bloomlabs/notely-mobile",
+      "description": "Notely for iOS + Android (React Native).",
       "language": "typescript",
       "is_private": true,
       "mainbranch": {"name": "main"},
@@ -30,7 +30,7 @@
     {
       "name": "loop-docs",
       "slug": "loop-docs",
-      "full_name": "bloomlabs/loop-docs",
+      "full_name": "bloomlabs/notely-docs",
       "description": "Public docs at docs.loop.dev. Astro + Starlight.",
       "language": "astro",
       "is_private": false,
@@ -42,7 +42,7 @@
     {
       "name": "loop-brand-assets",
       "slug": "loop-brand-assets",
-      "full_name": "bloomlabs/loop-brand-assets",
+      "full_name": "bloomlabs/notely-brand-assets",
       "description": "Logos, colors, marketing images.",
       "language": null,
       "is_private": true,

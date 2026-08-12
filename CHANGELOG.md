@@ -64,7 +64,7 @@ Two flagship features on 8/11 — the **first-launch wizard** and the
 - **Site manual**: 2 new pages under `site/src/content/docs/manual/`
   — first-launch wizard walkthrough + integration auth deep-dive.
 - **L2 demo mode** (`mnml --demo` / `./run.sh demo`). Boots against
-  a bundled Loop / Bloom Labs sample workspace (`demo/workspace/`)
+  a bundled Notely / Bloom Labs sample workspace (`demo/workspace/`)
   copied to a per-user cache dir + git history seeded from the
   shipped `demo/workspace-git.tar.gz` (fictional 10 commits, 4
   authors, 2 feature branches). Auto-spawns a Python HTTP mock

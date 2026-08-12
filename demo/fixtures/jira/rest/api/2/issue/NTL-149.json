@@ -1,6 +1,6 @@
 {
   "id": "20149",
-  "key": "LOOP-149",
+  "key": "NTL-149",
   "fields": {
     "summary": "Cold-start regression: 220ms → 640ms after chalk 5→6 bump",
     "status":    {"name": "In Progress", "statusCategory": {"key": "indeterminate"}},

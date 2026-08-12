@@ -9,6 +9,6 @@ in_palette_bar = false
 [env]
 BITBUCKET_BASE_URL = "http://localhost:7071/bitbucket"
 BITBUCKET_USER = "avachen"
-BITBUCKET_ACCESS_TOKEN = "demo-token-loop"
+BITBUCKET_ACCESS_TOKEN = "demo-token-notely"
 BITBUCKET_WORKSPACE = "bloomlabs"
 BITBUCKET_REPO = "loop"

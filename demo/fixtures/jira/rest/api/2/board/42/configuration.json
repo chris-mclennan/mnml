@@ -3,7 +3,7 @@
   "name": "LOOP — main",
   "type": "kanban",
   "self": "http://localhost:7071/jira/rest/agile/1.0/board/42/configuration",
-  "location": {"projectId": 10001, "projectKey": "LOOP", "name": "Loop"},
+  "location": {"projectId": 10001, "projectKey": "LOOP", "name": "Notely"},
   "filter": {"id": "10101", "self": "http://localhost:7071/jira/rest/api/2/filter/10101"},
   "columnConfig": {
     "columns": [
