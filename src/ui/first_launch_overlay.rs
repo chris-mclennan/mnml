@@ -156,8 +156,15 @@ fn render_lines<'a>(
 
     for (i, section) in WizardSection::ALL.iter().enumerate() {
         let focused = i == state.focused_section;
-        // Section header row.
-        out.push(section_header(*section, focused, t));
+        // A subtle rule above each section (skip the first) — turns
+        // the run-together wall of text into visually-parseable
+        // sections. The numbers connect with the [1-6] jump hint in
+        // the footer.
+        if i > 0 {
+            out.push(section_rule(t));
+        }
+        // Section header row with a leading number.
+        out.push(section_header(i + 1, *section, focused, t));
         // 1-2 wrapped body-description rows.
         for wrapped in wrap_body(section.description(), (INNER_W - PAD_X * 2) as usize) {
             out.push(body_line(&wrapped, t));
@@ -181,19 +188,37 @@ fn spacer<'a>(t: &theme::Theme) -> Line<'a> {
     ))
 }
 
-fn section_header<'a>(section: WizardSection, focused: bool, t: &theme::Theme) -> Line<'a> {
+fn section_header<'a>(
+    number: usize,
+    section: WizardSection,
+    focused: bool,
+    t: &theme::Theme,
+) -> Line<'a> {
+    // Focused = cyan + arrow prefix + bold. Unfocused = fg + bold
+    // still (headers always pop against the body's dim comment
+    // color) — otherwise the sections read as a single wall.
     let arrow = if focused { "▸ " } else { "  " };
-    let (fg, modifier) = if focused {
-        (t.cyan, Modifier::BOLD)
-    } else {
-        (t.fg, Modifier::empty())
-    };
-    let text = format!(" {}{}", arrow, section.title());
-    // Pad to INNER_W to keep the bg fill consistent.
+    let fg = if focused { t.cyan } else { t.fg };
+    let text = format!(" {}{}. {}", arrow, number, section.title());
     let padded = pad_to(&text, INNER_W as usize);
     Line::from(Span::styled(
         padded,
-        Style::default().fg(fg).bg(t.bg_dark).add_modifier(modifier),
+        Style::default()
+            .fg(fg)
+            .bg(t.bg_dark)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+/// Thin horizontal rule between sections — same background as the
+/// modal, dim comment-color glyph so it reads as a separator without
+/// competing with the section titles. Two-cell inset matches PAD_X.
+fn section_rule<'a>(t: &theme::Theme) -> Line<'a> {
+    let bar = "─".repeat((INNER_W - 4) as usize);
+    let text = format!("  {}  ", bar);
+    Line::from(Span::styled(
+        text,
+        Style::default().fg(t.comment).bg(t.bg_dark),
     ))
 }
 
