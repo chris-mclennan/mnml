@@ -11,3 +11,7 @@ workspace/.git/
 workspace/.mnml/session.json
 workspace/.mnml/last-session.json
 workspace/.mnml/ipc/
+# `mnml` auto-adds this file to newly-seen workspaces on first launch.
+# It's meant for the demo workspace's own git repo, not the outer mnml
+# repo — filter here so ./run.sh demo doesn't dirty git status.
+workspace/.gitignore
