@@ -109,16 +109,26 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
     // its wrapped body when content overflows the fixed height. Body
     // clamps `hover_help_scroll` to the current max at draw time, so
     // a stale value here is harmless.
+    //
+    // MUST call `take_scroll_batch_count()` even though we only need
+    // ±1 semantics — coalesce_scroll unconditionally stores the burst
+    // magnitude into a process-global atomic; leaving it undrained
+    // leaks the count to the NEXT unrelated scroll target (tree,
+    // editor, http panel), causing an unexpected large jump on the
+    // next gentle wheel tick. Reading it here consumes it and lets
+    // us scale for proportional fast-scroll at the same time.
     if let Some(rect) = app.rects.hover_help_strip
         && crate::app::dispatch::contains(rect, x, y)
     {
         match m.kind {
             MouseEventKind::ScrollUp => {
-                app.hover_help_scroll = app.hover_help_scroll.saturating_sub(1);
+                let n = take_scroll_batch_count() as u16;
+                app.hover_help_scroll = app.hover_help_scroll.saturating_sub(n.max(1));
                 return;
             }
             MouseEventKind::ScrollDown => {
-                app.hover_help_scroll = app.hover_help_scroll.saturating_add(1);
+                let n = take_scroll_batch_count() as u16;
+                app.hover_help_scroll = app.hover_help_scroll.saturating_add(n.max(1));
                 return;
             }
             _ => {}
