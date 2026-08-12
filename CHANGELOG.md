@@ -10,12 +10,12 @@ block); this file is the curated, user-facing summary.
 
 ## [Unreleased]
 
-## [0.2.11] - 2026-08-11
+## [0.2.11] - 2026-08-12
 
-Two flagship features landed end-to-end today: the **first-launch
-wizard** and the **per-integration auth SDK**. Also a foundational
-refactor (fim-engine → workspace member), CI-red fixes, and two
-new agents.
+Two flagship features on 8/11 — the **first-launch wizard** and the
+**per-integration auth SDK** — plus a big 8/12 add: **L2 demo mode**
+(`mnml --demo`), **ghost-text via Claude Code sub**, and a wizard
++ hover-help polish pass driven by user feedback.
 
 ### Added
 
@@ -63,6 +63,78 @@ new agents.
   coordination.
 - **Site manual**: 2 new pages under `site/src/content/docs/manual/`
   — first-launch wizard walkthrough + integration auth deep-dive.
+- **L2 demo mode** (`mnml --demo` / `./run.sh demo`). Boots against
+  a bundled Loop / Bloom Labs sample workspace (`demo/workspace/`)
+  copied to a per-user cache dir + git history seeded from the
+  shipped `demo/workspace-git.tar.gz` (fictional 10 commits, 4
+  authors, 2 feature branches). Auto-spawns a Python HTTP mock
+  server on localhost:7071 that serves 40 JSON fixtures under
+  `demo/fixtures/{jira,bitbucket,github}/` — populated Jira
+  boards + sprints + tickets, Bitbucket repos + PRs + pipelines,
+  GitHub PRs + Actions runs. Env-injects the sibling env vars
+  (`JIRA_BASE_URL` etc) so integration panes route through the
+  mock. Clears `[[workspaces]]` from the in-memory config so the
+  tree rail doesn't leak the user's real workspace favorites.
+  Screenshot-ready without exposing real work.
+- **AI ghost-text via Claude Code subscription** (`SuggestBackend::
+  ClaudeCode`) — reuses the OAuth access token Claude Code caches
+  (via `crate::ai_usage::read_claude_token`) so ghost-text calls
+  bill against Max/Pro plan quota instead of requiring a separate
+  `$ANTHROPIC_API_KEY`. Same `/v1/messages` endpoint; `x-api-key`
+  header carries the OAuth token (Anthropic 401s Bearer-carried
+  OAuth as of early-2026), + `anthropic-beta:
+  claude-code-20250219,oauth-2025-04-20` + Claude-Code identity
+  system-prompt fragment. Wizard's AI section gains a 4th radio
+  ("Claude Code sub — uses your Max/Pro plan") and auto-selects
+  it when `claude` CLI + `~/.claude/` are both present. Grey-area
+  vs. Anthropic TOS — flagged in the code + docs.
+- **`./run.sh demo`** subcommand + interactive-menu entry — mirrors
+  `./run.sh` shape (rebuild-on-exit-75 loop). Sets
+  `$MNML_DEMO_WORKSPACE` so `./run.sh restart|stop|status` from
+  another shell find the running instance's IPC dir at a stable
+  path.
+
+### Changed
+
+- **Wizard sections numbered** (1. AI ghost-text / 2. Input style
+  / …) with horizontal rules between them — fixes the wall-of-text
+  feel; connects with the existing `[1-6] jump section` hint.
+- **Wizard input-style row** pre-selects the persisted config value
+  but tags the persisted one with `(current)`. `Enter` no longer
+  silently overwrites `editor.input_style` — the row must be
+  actively cycled (via ←/→/h/l) for the wizard's Finish path to
+  persist. Prevents a returning vim user who reopens the wizard
+  for the Nerd Font check from losing their vim mode.
+- **`hover_tooltip` opt-out** — new `[ui] hover_tooltip` config,
+  `view.toggle_hover_tooltip` palette command, `:set
+  [no]hovertooltip` ex-command, Settings-overlay row. Info-View
+  hover-help covers most surfaces already; the popup was
+  annoying users. Off = popup silent, on = original behavior.
+- **Wizard AI ghost-text section**: install commands now use
+  Anthropic's + OpenAI's official `curl | sh` shell installers
+  (`curl -fsSL https://claude.ai/install.sh | bash` +
+  `curl -fsSL https://chatgpt.com/codex/install.sh | sh`)
+  instead of the outdated npm-global path.
+- **Wizard Nerd Font section**: press Space to auto-install
+  Symbols Nerd Font Mono (brew / winget / curl per OS) + shows a
+  terminal-specific config hint for ghostty / iTerm / Terminal.app
+  / WezTerm (font restart warning included).
+
+### Fixed
+
+- **Hover-help panel** 120ms debounce so dragging the mouse across
+  tree rows no longer flickers the info-box copy rapid-fire.
+  Rapid mouse motion resets a pending timer; content only swaps
+  after the fresh target has been stable for the debounce window.
+  First paint renders immediately (no lag opening the panel).
+- **Wizard headless SEV-1** — portable-choice prompt was covering
+  the wizard's first paint in `--headless` because interactive-only
+  callers can't dismiss it. Gated `maybe_show_portable_choice_on_launch`
+  behind `!args.headless`; headless callers can still choose portable
+  via `mnml.choose_data_layout` on the palette.
+- **Palette-from-prompt** — Ctrl+Shift+P was consumed by the prompt
+  handler when a prompt was open; now dispatches to
+  `open_command_palette` first.
 
 ### Fixed
 
