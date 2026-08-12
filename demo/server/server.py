@@ -27,6 +27,16 @@ PORT = 7071
 ROOT = Path(__file__).resolve().parent.parent / "fixtures"
 
 
+def _is_under(child: Path, parent: Path) -> bool:
+    """True iff `child` (already-resolved) sits under `parent`. Used
+    to reject `..`-traversal attempts before opening the file."""
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 class FixtureHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         self._handle("GET")
@@ -44,6 +54,13 @@ class FixtureHandler(BaseHTTPRequestHandler):
             ROOT / f"{path}.{method.lower()}.json",
             ROOT / path / "index.json",
         ]
+        # Guard against `..` traversal — a request like `../../etc/hosts`
+        # otherwise walks the fixture tree upward and could serve any
+        # `.json` file reachable from it. Localhost-only + demo-only,
+        # but leaving it unchecked is a footgun. `.resolve()` collapses
+        # `..` segments so we can compare against the fixture root.
+        root_resolved = ROOT.resolve()
+        candidates = [c for c in candidates if _is_under(c.resolve(strict=False), root_resolved)]
         hit = next((p for p in candidates if p.is_file()), None)
         if hit is None:
             self._write(404, {

@@ -278,10 +278,96 @@ fn test_subcommand(argv: Vec<String>) -> ExitCode {
     }
 }
 
-// ───────────────────────── Demo mock server ───────────────────────
+// ───────────────────────── Demo mode ─────────────────────────────
+
+/// The bundled demo workspace lives in the mnml source tree at
+/// `demo/workspace/`. Booting `--demo` directly against that path
+/// would let any autosave / tree operation / git command mutate the
+/// user's real mnml checkout (dirtying git status, or worse). So we
+/// mirror it into a stable per-user cache dir + boot from there. The
+/// cache is refreshed when the source tree is newer (see `stamp`),
+/// so iterating on fixtures still works: edit `demo/workspace/…`,
+/// rebuild, next `--demo` launch picks up the change.
+///
+/// `$MNML_DEMO_WORKSPACE` bypasses the copy — used when a developer
+/// wants to iterate on demo content directly. The env value is
+/// trusted as-is (they picked it).
+fn resolve_demo_workspace() -> Result<PathBuf, String> {
+    if let Some(over) = std::env::var_os("MNML_DEMO_WORKSPACE") {
+        let p = PathBuf::from(over);
+        if !p.is_dir() {
+            return Err(format!(
+                "$MNML_DEMO_WORKSPACE not a directory: {}",
+                p.display()
+            ));
+        }
+        return Ok(p);
+    }
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo/workspace");
+    if !src.is_dir() {
+        return Err(format!(
+            "demo workspace not found at {}. If mnml was built from a distributed \
+             tarball (no `demo/` shipped), set $MNML_DEMO_WORKSPACE to point at one.",
+            src.display()
+        ));
+    }
+    // Use the same data_root as the rest of mnml (respects portable
+    // mode + XDG). demo-workspace lives beside integrations/ + glyphs/.
+    let cache_root = mnml::data_root::data_root().join("demo-workspace");
+    let stamp = cache_root.join(".mnml-demo-stamp");
+    let source_stamp = src.join(".mnml/integrations/jira.override.toml");
+    let src_mtime = std::fs::metadata(&source_stamp)
+        .and_then(|m| m.modified())
+        .ok();
+    let cache_mtime = std::fs::metadata(&stamp).and_then(|m| m.modified()).ok();
+    let refresh = match (src_mtime, cache_mtime) {
+        (Some(s), Some(c)) => s > c,
+        _ => true,
+    };
+    if refresh {
+        // Wipe stale content — new files may have been removed on the
+        // source side and we don't want to leave zombies in the cache.
+        let _ = std::fs::remove_dir_all(&cache_root);
+        std::fs::create_dir_all(&cache_root)
+            .map_err(|e| format!("create {}: {e}", cache_root.display()))?;
+        copy_dir_recursive(&src, &cache_root).map_err(|e| format!("seed demo workspace: {e}"))?;
+        // Seed the fictional git history from the shipped tarball.
+        // See `demo/workspace-git.tar.gz`. Failure isn't fatal — the
+        // workspace still boots, git panels just show "not a repo".
+        let tarball = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo/workspace-git.tar.gz");
+        if tarball.is_file() {
+            let _ = std::process::Command::new("tar")
+                .arg("xzf")
+                .arg(&tarball)
+                .arg("-C")
+                .arg(&cache_root)
+                .status();
+        }
+        let _ = std::fs::write(&stamp, "");
+    }
+    Ok(cache_root)
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if ft.is_dir() {
+            std::fs::create_dir_all(&to)?;
+            copy_dir_recursive(&from, &to)?;
+        } else if ft.is_file() {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
 
 /// TCP-probe `localhost:7071` — the mock server's port. Cheap check
-/// before we try to spawn a duplicate.
+/// before we try to spawn a duplicate. Doesn't distinguish "our
+/// server" from "someone else on 7071" — best-effort; a wrong
+/// listener leaves integration panes hitting the wrong service.
 fn mock_server_reachable() -> bool {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
@@ -289,23 +375,33 @@ fn mock_server_reachable() -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok()
 }
 
-/// Spawn `demo/server/server.py` in the background. Silent success —
-/// mnml keeps running whether the server came up or not. On failure
-/// integration panes just say "connection refused" and the user sees
-/// what's wrong.
-fn spawn_mock_server_background() {
+/// Spawn `demo/server/server.py` in the background. Returns whether
+/// the spawn succeeded — the caller surfaces failure as a toast so
+/// the user isn't left staring at empty integration panes wondering
+/// why. Fire-and-forget after that: the child outlives mnml, which
+/// is fine because the next `--demo` launch reuses it via the port
+/// probe.
+fn spawn_mock_server_background() -> bool {
     let script = std::env::var_os("MNML_DEMO_SERVER")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo/server/server.py"));
     if !script.is_file() {
         eprintln!("mnml --demo: mock server not found at {}", script.display());
-        return;
+        return false;
     }
-    let _ = std::process::Command::new("python3")
-        .arg(&script)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    // `python3` on Unix, `python` on Windows (typical). Try each.
+    for interp in ["python3", "python"] {
+        if std::process::Command::new(interp)
+            .arg(&script)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 // ───────────────────────── TUI / headless ─────────────────────────
@@ -401,23 +497,15 @@ fn parse_tui_args(argv: Vec<String>) -> Result<TuiArgs, String> {
     }
 
     // `--demo` overrides workspace resolution — always boots against
-    // the bundled `demo/workspace/`. Any user-supplied workspace is
-    // ignored (they can bypass by running without `--demo`). The
-    // workspace is located via `$MNML_DEMO_WORKSPACE` env override,
-    // else compile-time `CARGO_MANIFEST_DIR/demo/workspace/`. Released
-    // binaries without either resolution path will error out clearly.
+    // a per-user cache copy of the bundled `demo/workspace/`, seeded
+    // + git-history-populated by `resolve_demo_workspace()`. Any
+    // user-supplied workspace is ignored (they can bypass with the
+    // `$MNML_DEMO_WORKSPACE` env override for fixture iteration).
+    // Booting from a cache copy — not the source tree — keeps the
+    // mnml checkout clean if the user autosaves or edits during a
+    // screenshot session.
     if demo {
-        let demo_ws = std::env::var_os("MNML_DEMO_WORKSPACE")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("demo/workspace"));
-        if !demo_ws.is_dir() {
-            return Err(format!(
-                "--demo: workspace not found at {}. Set $MNML_DEMO_WORKSPACE to point at a mnml \
-                 checkout's demo/workspace/ directory, or run from the source tree.",
-                demo_ws.display()
-            ));
-        }
-        workspace = Some(demo_ws);
+        workspace = Some(resolve_demo_workspace().map_err(|e| format!("--demo: {e}"))?);
     }
 
     // Workspace resolution order:
@@ -620,9 +708,10 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // never see demo data outside this workspace (per-workspace
     // manifest overrides in demo/workspace/.mnml/integrations/*.override.toml
     // point at localhost:7071; without --demo those files aren't in
-    // the resolution path). Spawning here (not at App::new) so the
-    // test suite + headless E2E don't accidentally launch a listener.
-    if args.demo {
+    // the resolution path). Gated on `!args.headless` so `.test` E2E
+    // scripts adding `--demo` don't accidentally bind a listener or
+    // fire persistent toasts.
+    if args.demo && !args.headless {
         app.toast_persistent(
             "demo-mode",
             "DEMO MODE — Loop (Bloom Labs) sample workspace. Integrations \
@@ -630,7 +719,18 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
             mnml::app::ToastLevel::Info,
         );
         if !mock_server_reachable() {
-            spawn_mock_server_background();
+            let spawned = spawn_mock_server_background();
+            if !spawned {
+                // Toast the failure so the user isn't left wondering why
+                // integration panes are stuck on "connection refused" —
+                // Windows without python installed is the common case.
+                app.toast_persistent(
+                    "demo-mock-failed",
+                    "Demo mode: could not spawn mock server. Install python3 \
+                     and re-run, or start `demo/server/server.py` by hand.",
+                    mnml::app::ToastLevel::Warn,
+                );
+            }
         }
     }
     // Background GitHub-releases probe. Skipped in headless (no
