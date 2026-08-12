@@ -42,6 +42,11 @@
 #                                 The third way to observe mnml: actual pixels
 #                                 (CoreText glyphs, icons, color) — not the
 #                                 text cell-grid that headless/screen.txt give.
+#   ./run.sh demo                 Launch mnml --demo against the bundled
+#                                 `demo/workspace/` (Loop / Bloom Labs sample
+#                                 product) and auto-spawn the mock API server
+#                                 on localhost:7071. For GitHub screenshots
+#                                 without exposing real work.
 #
 # Env:
 #   MNML_RELEASE=1   Build/run target/release/mnml (the release profile has LTO
@@ -191,6 +196,7 @@ case "${1:-start}" in
     COLUMNS=1
     options=(
         "mnml — standalone in this terminal"
+        "mnml — demo mode (Loop/Bloom Labs sample + mock server)"
         "mnml — headless (no window; scripted stdin → file IPC)"
         "watch — rebuild + relaunch on source save"
         "build — debug build"
@@ -202,13 +208,14 @@ case "${1:-start}" in
     select choice in "${options[@]}"; do
         case "$REPLY" in
             1) exec "$0" ;;
-            2) exec "$0" headless ;;
-            3) exec "$0" watch ;;
-            4) exec "$0" build ;;
-            5) exec "$0" release ;;
-            6) exec "$0" test ;;
-            7) exec "$0" check ;;
-            8) echo "bye"; exit 0 ;;
+            2) exec "$0" demo ;;
+            3) exec "$0" headless ;;
+            4) exec "$0" watch ;;
+            5) exec "$0" build ;;
+            6) exec "$0" release ;;
+            7) exec "$0" test ;;
+            8) exec "$0" check ;;
+            9) echo "bye"; exit 0 ;;
             *) printf '  %sunknown choice %q — try again%s\n' "$GREY" "$REPLY" "$RST" ;;
         esac
     done
@@ -281,6 +288,18 @@ EOF
       echo "no marker — no mnml tracked"
     fi
     exit 0 ;;
+  # ── Demo mode ───────────────────────────────────────────────────
+  # Boot mnml with the bundled Loop / Bloom Labs sample workspace +
+  # a mock API server on localhost:7071 so jira / bitbucket / github
+  # panes render populated data. Used for the GitHub README video +
+  # screenshots. Your real config at ~/.config/mnml/ is untouched.
+  # The workspace lives at demo/workspace/; the mock server at
+  # demo/server/server.py; both are checked into the repo.
+  #
+  # Sets HEADLESS off and passes --demo through to mnml. Falls into
+  # the main build+relaunch-on-exit-75 loop below (so demo mode also
+  # picks up `app.restart` for iteration).
+  demo) shift; DEMO=1 ;;
   # ── Misc ────────────────────────────────────────────────────────
   -h|--help|help) grep -E '^# ' "$0" | sed 's/^# \?//'; exit 0 ;;
   # ── Implicit default ────────────────────────────────────────────
@@ -310,14 +329,23 @@ fi
 # Default workspace = the dir you invoked run.sh from (not the repo). An explicit
 # first non-flag arg overrides it. Either way, make sure mnml gets a workspace arg
 # so it doesn't fall back to the repo (its cwd is the repo when we exec it).
-ws_dir="$INVOKE_DIR"
-has_ws=0
-for a in "$@"; do
-  case "$a" in -*) ;; *) ws_dir="$a"; has_ws=1; break ;; esac
-done
-ws_dir=$(cd "$ws_dir" 2>/dev/null && pwd || echo "$ws_dir")
-ARGS=("$@")
-[ "$has_ws" = 0 ] && ARGS=("$ws_dir" "${ARGS[@]}")
+#
+# `demo` mode skips this: mnml --demo overrides the workspace to
+# demo/workspace/ internally, and we want the marker + IPC to sit in
+# that workspace so ./run.sh restart works from a normal shell.
+if [ "${DEMO:-0}" = "1" ]; then
+  ws_dir="$REPO/demo/workspace"
+  ARGS=()
+else
+  ws_dir="$INVOKE_DIR"
+  has_ws=0
+  for a in "$@"; do
+    case "$a" in -*) ;; *) ws_dir="$a"; has_ws=1; break ;; esac
+  done
+  ws_dir=$(cd "$ws_dir" 2>/dev/null && pwd || echo "$ws_dir")
+  ARGS=("$@")
+  [ "$has_ws" = 0 ] && ARGS=("$ws_dir" "${ARGS[@]}")
+fi
 
 mkdir -p "$ws_dir/.mnml/ipc" 2>/dev/null || true
 printf '%s' "$ws_dir" > "$MARKER"
@@ -325,6 +353,7 @@ trap 'rm -f "$MARKER"' EXIT
 
 EXTRA=()
 [ "$HEADLESS" = "1" ] && EXTRA+=(--headless)
+[ "${DEMO:-0}" = "1" ] && EXTRA+=(--demo)
 
 while true; do
   if ! "${BUILD[@]}"; then echo "[run.sh] build failed; exiting" >&2; exit 1; fi
