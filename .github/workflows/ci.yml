@@ -21,17 +21,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      # mnml depends on the fim-engine sibling crate by path (../fim-engine),
-      # so check it out alongside this repo for the path dep to resolve.
+      # fim-engine used to be a sibling repo — vendored to `crates/fim-engine/`
+      # as a workspace member 2026-08-11, so no external checkout needed
+      # anymore. The `path: mnml` layout is preserved so downstream
+      # `working-directory: mnml` steps don't need to change.
       - name: Checkout mnml
         uses: actions/checkout@v5
         with:
           path: mnml
-      - name: Checkout fim-engine
-        uses: actions/checkout@v5
-        with:
-          repository: chris-mclennan/fim-engine
-          path: fim-engine
 
       # 2026-08-02 — pkg-config prebuilt path retired (stale against the
       # newer ghostty commit under `vendor/libghostty-vt/include/`). All
