@@ -96,6 +96,13 @@ pub struct WizardAnswers {
     pub ai_backend: String,
     /// One of "vim", "standard", or "" (unanswered).
     pub input_style: String,
+    /// True once the user has actively cycled the input_style row
+    /// (via ←/→/h/l). Gates persistence on Finish: unchanged =
+    /// don't rewrite `editor.input_style` even if the wizard's
+    /// pre-select differs from the persisted value. Prevents a
+    /// vim user who reopens the wizard for the Nerd Font check
+    /// from silently losing their vim mode by hitting Enter.
+    pub input_style_touched: bool,
     /// User self-reports whether Nerd glyphs render: `Some(true)` /
     /// `Some(false)` / `None` (unanswered).
     pub nerd_font_ok: Option<bool>,
@@ -165,16 +172,24 @@ impl App {
                     String::new()
                 }
             });
-        // Input style: always pre-select the app's recommended
-        // default ("standard") in the wizard so a returning user
-        // sees the same recommended layout a first-time user does.
-        // The vim row is marked (current) below when config differs,
-        // so switching is deliberate — user has to hit Enter to
-        // apply, Esc keeps the persisted choice.
-        let input_style = "standard".to_string();
+        // Input style: pre-select from the persisted config when set
+        // (returning users see their current ● selection), else fall
+        // back to the app default "standard". The "(current)" tag in
+        // the overlay marks the persisted value regardless of what
+        // the radio is on. `input_style_touched` starts false — the
+        // wizard's Finish path only rewrites `editor.input_style` if
+        // the user actively cycled the row (via ←/→/h/l). Prevents a
+        // vim user who reopens the wizard for the Nerd Font check
+        // from silently losing their vim mode by hitting Enter.
+        let input_style = if self.config.editor.input_style.is_empty() {
+            "standard".to_string()
+        } else {
+            self.config.editor.input_style.clone()
+        };
         WizardAnswers {
             ai_backend,
             input_style,
+            input_style_touched: false,
             nerd_font_ok: None,
             claude_code_installed: crate::integration_detect::is_binary_installed("claude"),
             codex_installed: crate::integration_detect::is_binary_installed("codex"),
@@ -237,7 +252,15 @@ impl App {
             }
             _ => {}
         }
-        if !state.answers.input_style.is_empty() {
+        // Gate persistence on `input_style_touched` — the wizard's
+        // pre-select is a display convenience, not user intent. A
+        // returning vim user reopening the wizard for the Nerd Font
+        // check must not have their input_style silently rewritten
+        // to standard just because they hit Enter without visiting
+        // the Input Style row. Only persist when the user actively
+        // cycled the row via ←/→/h/l (see `cycle_input_style` in
+        // `src/tui/handlers/overlay.rs`, which sets touched=true).
+        if state.answers.input_style_touched && !state.answers.input_style.is_empty() {
             self.config.editor.input_style = state.answers.input_style.clone();
             if let Err(e) = persist_editor_string("input_style", &state.answers.input_style) {
                 errs.push(format!("editor.input_style: {e}"));
@@ -270,6 +293,7 @@ impl App {
     pub fn wizard_set_input_style(&mut self, choice: &str) {
         if let Some(s) = self.first_launch.as_mut() {
             s.answers.input_style = choice.to_string();
+            s.answers.input_style_touched = true;
         }
     }
 

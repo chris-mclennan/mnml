@@ -453,6 +453,43 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
     Ok(())
 }
 
+/// Set the demo-mode sibling env vars on the current process. Child
+/// Pty spawns inherit these by default, so jira / bitbucket / github
+/// panes see mock URLs + demo tokens without a manifest-override
+/// extension (the current `IntegrationManifestOverride` shape doesn't
+/// support `[env]` / `[auth_values]` diffs).
+///
+/// Called from `run_tui` BEFORE `App::new` — which triggers
+/// `maybe_refresh_marketplace_on_startup` and other background threads
+/// that call `reqwest`, which reads proxy env vars concurrently.
+/// Setting env vars while those threads exist is UB. Doing the writes
+/// here — single-threaded, no snapshots taken yet — sidesteps the
+/// safety hazard.
+///
+/// SAFETY: `std::env::set_var` is unsafe iff another thread might be
+/// reading env vars concurrently. `main.rs` guarantees single-threaded
+/// state up to this call site (all background threads spawn from
+/// `App::new` and later).
+fn inject_demo_env() {
+    unsafe {
+        std::env::set_var("JIRA_SITE_URL", "http://localhost:7071/jira");
+        std::env::set_var("JIRA_BASE_URL", "http://localhost:7071/jira");
+        std::env::set_var("JIRA_EMAIL", "ava@bloomlabs.dev");
+        std::env::set_var("JIRA_API_TOKEN", "demo-token-loop");
+        std::env::set_var("JIRA_PROJECT", "LOOP");
+        std::env::set_var("BITBUCKET_BASE_URL", "http://localhost:7071/bitbucket");
+        std::env::set_var("BITBUCKET_USER", "avachen");
+        std::env::set_var("BITBUCKET_ACCESS_TOKEN", "demo-token-loop");
+        std::env::set_var("BITBUCKET_WORKSPACE", "bloomlabs");
+        std::env::set_var("BITBUCKET_REPO", "loop");
+        std::env::set_var("BITBUCKET_APP_PASSWORD", "demo-token-loop");
+        std::env::set_var("GITHUB_BASE_URL", "http://localhost:7071/github");
+        std::env::set_var("GITHUB_TOKEN", "demo-token-loop");
+        std::env::set_var("GITHUB_OWNER", "bloomlabs");
+        std::env::set_var("GITHUB_REPO", "loop");
+    }
+}
+
 /// TCP-probe `localhost:7071` — the mock server's port. Cheap check
 /// before we try to spawn a duplicate. Doesn't distinguish "our
 /// server" from "someone else on 7071" — best-effort; a wrong
@@ -672,6 +709,17 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // `mnml-*` integrations — can follow mnml's colours from one source of truth.
     mnml::ui::theme::write_current(&mnml::ui::theme::cur());
 
+    // Inject demo-mode sibling env vars BEFORE App::new (which triggers
+    // maybe_refresh_marketplace_on_startup + other background threads
+    // that call reqwest, which reads proxy env vars concurrently). Doing
+    // set_var here — single-threaded, no snapshots taken yet — sidesteps
+    // the UB the safety contract cares about. See the block's own SAFETY
+    // comment. Gated on !args.headless so `.test` E2E scripts don't
+    // accidentally set the vars in the test process.
+    if args.demo && !args.headless {
+        inject_demo_env();
+    }
+
     let mut app = match App::new(args.workspace, config) {
         Ok(a) => a,
         Err(e) => {
@@ -807,35 +855,7 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
              hit localhost:7071 (mock). Real config safe.",
             mnml::app::ToastLevel::Info,
         );
-        // Inject the sibling integration env vars directly into
-        // mnml's own process env — child Pty spawns inherit by default,
-        // so jira/bitbucket panes see mock URLs + tokens without
-        // needing a manifest-override extension (the current
-        // IntegrationManifestOverride shape only supports label /
-        // description / chip fields, not `[env]` or `[auth_values]`).
-        // Setting both `_SITE_URL` and `_BASE_URL` conventions since
-        // different sibling versions use different names.
-        //
-        // SAFETY: set_var is only unsafe wrt concurrent threads
-        // reading env. We're pre-any-Pty-spawn at startup here;
-        // nothing else has taken a snapshot yet.
-        unsafe {
-            std::env::set_var("JIRA_SITE_URL", "http://localhost:7071/jira");
-            std::env::set_var("JIRA_BASE_URL", "http://localhost:7071/jira");
-            std::env::set_var("JIRA_EMAIL", "ava@bloomlabs.dev");
-            std::env::set_var("JIRA_API_TOKEN", "demo-token-loop");
-            std::env::set_var("JIRA_PROJECT", "LOOP");
-            std::env::set_var("BITBUCKET_BASE_URL", "http://localhost:7071/bitbucket");
-            std::env::set_var("BITBUCKET_USER", "avachen");
-            std::env::set_var("BITBUCKET_ACCESS_TOKEN", "demo-token-loop");
-            std::env::set_var("BITBUCKET_WORKSPACE", "bloomlabs");
-            std::env::set_var("BITBUCKET_REPO", "loop");
-            std::env::set_var("BITBUCKET_APP_PASSWORD", "demo-token-loop");
-            std::env::set_var("GITHUB_BASE_URL", "http://localhost:7071/github");
-            std::env::set_var("GITHUB_TOKEN", "demo-token-loop");
-            std::env::set_var("GITHUB_OWNER", "bloomlabs");
-            std::env::set_var("GITHUB_REPO", "loop");
-        }
+        // Env injection has already happened above (before App::new).
         if !mock_server_reachable() {
             let spawned = spawn_mock_server_background();
             if !spawned {

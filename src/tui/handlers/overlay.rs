@@ -152,6 +152,9 @@ fn cycle_input_style(app: &mut App, delta: i32) {
         .unwrap_or_default();
     let idx = CHOICES.iter().position(|c| *c == cur).unwrap_or(0) as i32;
     let next = (idx + delta).rem_euclid(CHOICES.len() as i32) as usize;
+    // wizard_set_input_style also flips `input_style_touched = true`
+    // (see src/app/first_launch.rs) so persist-on-Finish knows the
+    // user actively picked rather than just accepting the pre-select.
     app.wizard_set_input_style(CHOICES[next]);
 }
 
