@@ -23,6 +23,14 @@ const INNER_W: u16 = 74;
 const PAD_X: u16 = 2;
 
 pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static FIRST_PAINT: AtomicBool = AtomicBool::new(true);
+    if FIRST_PAINT.swap(false, Ordering::SeqCst) {
+        eprintln!(
+            "[wizard-debug] first_launch_overlay::draw first-paint: first_launch.is_some={}",
+            app.first_launch.is_some()
+        );
+    }
     let Some(state) = app.first_launch.as_ref() else {
         return;
     };

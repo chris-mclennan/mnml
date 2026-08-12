@@ -2456,6 +2456,20 @@ pub fn dispatch_key(app: &mut App, key: KeyEvent) {
     }
     // The single-line text-input overlay (commit message, …) steals keys.
     if app.prompt.is_some() {
+        // R10 vscode-keyboard SEV-2 (2026-08-11) — Ctrl+Shift+P
+        // from within a prompt should dismiss the prompt and open
+        // the palette, matching VS Code + the earlier fix in
+        // `open_command_palette`. Without this guard the prompt
+        // handler ate the chord before palette-open ran, and Esc
+        // then leaked stray keys into the underneath prompt.
+        if key.code == KeyCode::Char('P')
+            && key
+                .modifiers
+                .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+        {
+            app.open_command_palette();
+            return;
+        }
         handle_prompt_key(app, key);
         return;
     }

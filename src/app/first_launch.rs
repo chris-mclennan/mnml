@@ -166,17 +166,23 @@ impl App {
 
     /// Open the wizard. Idempotent — if it's already open, no-op.
     pub fn open_first_launch(&mut self) {
+        eprintln!(
+            "[wizard-debug] open_first_launch called; was_some={}",
+            self.first_launch.is_some()
+        );
         if self.first_launch.is_some() {
             return;
         }
         let mut state = FirstLaunchState::new();
         state.answers = self.wizard_snapshot_current();
         self.first_launch = Some(state);
+        eprintln!("[wizard-debug] open_first_launch SET first_launch=Some");
     }
 
     /// Ask-me-later — close without setting the complete flag so
     /// the wizard reopens on next launch.
     pub fn close_first_launch_defer(&mut self) {
+        eprintln!("[wizard-debug] close_first_launch_defer called");
         self.first_launch = None;
         self.toast(
             "Wizard skipped — will ask again next launch. `first_launch.show` to reopen now.",
@@ -186,6 +192,7 @@ impl App {
     /// Finish — persist `first_launch_complete = true`, apply any
     /// pending answers that weren't already live-committed, close.
     pub fn close_first_launch_finish(&mut self) {
+        eprintln!("[wizard-debug] close_first_launch_finish called");
         let Some(state) = self.first_launch.take() else {
             return;
         };
