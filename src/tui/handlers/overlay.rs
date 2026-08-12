@@ -55,7 +55,6 @@ pub(crate) fn handle_integration_settings_key(app: &mut App, key: KeyEvent) {
 ///   ↑ ↓ / j k    — Move focused section
 ///   1-6          — Jump directly to section N
 ///   ← → / h l    — For radio sections: cycle choice; for others: no-op
-///   Space        — For checkbox rows (Monitors section): toggle current
 ///   y / n        — For Nerd Font section: quick yes/no
 pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
     use crate::app::first_launch::WizardSection;
@@ -126,15 +125,6 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
                 app.wizard_install_vscode_shim();
             }
         }
-        WizardSection::Monitors => match key.code {
-            // b / t / i toggle each checkbox. Space is reserved for
-            // the install-selected action (matches sections 4 + 5).
-            KeyCode::Char('b') | KeyCode::Char('B') => app.wizard_toggle_monitor("btop"),
-            KeyCode::Char('t') | KeyCode::Char('T') => app.wizard_toggle_monitor("htop"),
-            KeyCode::Char('i') | KeyCode::Char('I') => app.wizard_toggle_monitor("iftop"),
-            KeyCode::Char(' ') => app.wizard_install_monitors(),
-            _ => {}
-        },
     }
 }
 

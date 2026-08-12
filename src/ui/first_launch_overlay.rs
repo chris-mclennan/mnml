@@ -237,8 +237,8 @@ fn section_widgets<'a>(
         ),
         WizardSection::InputStyle => radio_rows(
             &[
-                ("vim", "vim — modal, hjkl / i / esc / :cmds"),
                 ("standard", "standard — modeless, VS Code / macOS shortcuts"),
+                ("vim", "vim — modal, hjkl / i / esc / :cmds"),
             ],
             &answers.input_style,
             t,
@@ -270,11 +270,6 @@ fn section_widgets<'a>(
             badge_row("Codex CLI (`codex`)", answers.codex_installed, t),
         ],
         WizardSection::VscodeShim => vec![badge_row("`code` on PATH", answers.vscode_shim_ok, t)],
-        WizardSection::Monitors => vec![
-            checkbox_row("btop", answers.install_btop, t),
-            checkbox_row("htop", answers.install_htop, t),
-            checkbox_row("iftop", answers.install_iftop, t),
-        ],
     }
 }
 
@@ -324,15 +319,6 @@ fn badge_row<'a>(label: &str, installed: bool, t: &theme::Theme) -> Line<'a> {
         ));
     }
     Line::from(spans)
-}
-
-fn checkbox_row<'a>(label: &str, checked: bool, t: &theme::Theme) -> Line<'a> {
-    let mark = if checked { "[✓]" } else { "[ ]" };
-    let text = format!("     {mark} {label}");
-    Line::from(Span::styled(
-        pad_to(&text, INNER_W as usize),
-        Style::default().fg(t.fg).bg(t.bg_dark),
-    ))
 }
 
 /// Simple word-wrap into `width` char columns.

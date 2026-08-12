@@ -10,14 +10,17 @@
 //!
 //! ## Design
 //!
-//! Single scrollable overlay, 6 sections top-to-bottom:
+//! Single scrollable overlay, 5 sections top-to-bottom:
 //! 1. AI ghost-text backend (Claude API / Local / Skip)
-//! 2. Input style (vim / standard)
+//! 2. Input style (standard / vim — standard is the default)
 //! 3. Nerd Font check (Yes / No — diagnostic only)
-//! 4. Claude Code + Codex CLI (detection badges; install stubbed in P1)
-//! 5. VSCode `code` shim (detection badge; install stubbed in P1)
-//! 6. Process monitors (btop / htop / iftop — detection badges;
-//!    install stubbed in P1)
+//! 4. Claude Code + Codex CLI (detection badges + shell-installer
+//!    action per `curl … | sh` docs, 2026-08-11 verified)
+//! 5. VSCode `code` shim (detection badge; symlink helper)
+//!
+//! (Process monitors section removed 2026-08-11 — was inline
+//! btop/htop/iftop checkboxes; discovered via the marketplace pane
+//! instead so the wizard stays under 5 sections.)
 //!
 //! Answers commit to config on change so a mid-wizard crash doesn't
 //! lose partial progress.
@@ -32,7 +35,6 @@ pub enum WizardSection {
     NerdFont,
     ClaudeCode,
     VscodeShim,
-    Monitors,
 }
 
 impl WizardSection {
@@ -42,7 +44,6 @@ impl WizardSection {
         Self::NerdFont,
         Self::ClaudeCode,
         Self::VscodeShim,
-        Self::Monitors,
     ];
 
     pub fn title(self) -> &'static str {
@@ -52,7 +53,6 @@ impl WizardSection {
             Self::NerdFont => "Nerd Font",
             Self::ClaudeCode => "Claude Code + Codex",
             Self::VscodeShim => "VSCode `code` shim",
-            Self::Monitors => "Process monitors",
         }
     }
 
@@ -82,10 +82,6 @@ impl WizardSection {
                  VSCode integration reports `code not installed`. mnml can \
                  symlink the shim for you."
             }
-            Self::Monitors => {
-                "Optional process/network monitors reachable from mnml's `tools.*` \
-                 palette. Nothing here is required to use mnml."
-            }
         }
     }
 }
@@ -105,11 +101,6 @@ pub struct WizardAnswers {
     pub claude_code_installed: bool,
     pub codex_installed: bool,
     pub vscode_shim_ok: bool,
-    /// Multi-select checkboxes for tools the user wants installed.
-    /// Populated with defaults from detection; user toggles per row.
-    pub install_btop: bool,
-    pub install_htop: bool,
-    pub install_iftop: bool,
 }
 
 /// Live state while the wizard overlay is open. `None` ⇒ closed.
@@ -158,9 +149,6 @@ impl App {
             claude_code_installed: crate::integration_detect::is_binary_installed("claude"),
             codex_installed: crate::integration_detect::is_binary_installed("codex"),
             vscode_shim_ok: crate::integration_detect::is_binary_installed("code"),
-            install_btop: false,
-            install_htop: false,
-            install_iftop: false,
         }
     }
 
@@ -266,32 +254,39 @@ impl App {
         }
     }
 
-    pub fn wizard_toggle_monitor(&mut self, tool: &str) {
-        if let Some(s) = self.first_launch.as_mut() {
-            match tool {
-                "btop" => s.answers.install_btop = !s.answers.install_btop,
-                "htop" => s.answers.install_htop = !s.answers.install_htop,
-                "iftop" => s.answers.install_iftop = !s.answers.install_iftop,
-                _ => {}
-            }
-        }
-    }
-
     /// Phase 2 install-action dispatcher. Each action spawns a Pty
     /// pane running the corresponding shell command so the user sees
     /// the install output live + can respond to sudo prompts. The
     /// wizard closes (as "Ask me later" — the flag stays false)
     /// so the Pty pane is visible; user re-opens with
     /// `first_launch.show` after install is done.
+    ///
+    /// Install commands verified 2026-08-11 against
+    /// https://code.claude.com/docs/en/setup and
+    /// https://developers.openai.com/codex. Both CLIs converged on
+    /// `curl … | sh` shell installers as the recommended path;
+    /// homebrew casks + npm are documented fallbacks. Windows PS
+    /// arm uses `irm | iex`.
     pub fn wizard_install_ai_clis(&mut self) {
-        let mut cmds: Vec<&str> = Vec::new();
+        let mut cmds: Vec<String> = Vec::new();
         let claude_missing = !crate::integration_detect::is_binary_installed("claude");
         let codex_missing = !crate::integration_detect::is_binary_installed("codex");
+        let is_windows = std::env::consts::OS == "windows";
         if claude_missing {
-            cmds.push("npm install -g @anthropic-ai/claude-code");
+            cmds.push(if is_windows {
+                "powershell -c \"irm https://claude.ai/install.ps1 | iex\"".to_string()
+            } else {
+                "curl -fsSL https://claude.ai/install.sh | bash".to_string()
+            });
         }
         if codex_missing {
-            cmds.push("npm install -g @openai/codex");
+            cmds.push(if is_windows {
+                "powershell -ExecutionPolicy ByPass -c \
+                 \"irm https://chatgpt.com/codex/install.ps1 | iex\""
+                    .to_string()
+            } else {
+                "curl -fsSL https://chatgpt.com/codex/install.sh | sh".to_string()
+            });
         }
         if cmds.is_empty() {
             self.toast("Claude Code + Codex already installed.");
@@ -326,35 +321,6 @@ impl App {
         self.close_first_launch_defer();
         self.open_pty(crate::pty_pane::BinaryProfile::task(
             "install: code shim",
-            &cmd,
-            self.workspace.clone(),
-        ));
-    }
-
-    pub fn wizard_install_monitors(&mut self) {
-        let Some(state) = self.first_launch.as_ref() else {
-            return;
-        };
-        let mut tools: Vec<&str> = Vec::new();
-        if state.answers.install_btop {
-            tools.push("btop");
-        }
-        if state.answers.install_htop {
-            tools.push("htop");
-        }
-        if state.answers.install_iftop {
-            tools.push("iftop");
-        }
-        if tools.is_empty() {
-            self.toast(
-                "Check the tools you want first (b / t / i to toggle), then Space to install.",
-            );
-            return;
-        }
-        let cmd = format!("brew install {}", tools.join(" "));
-        self.close_first_launch_defer();
-        self.open_pty(crate::pty_pane::BinaryProfile::task(
-            "install: monitors",
             &cmd,
             self.workspace.clone(),
         ));
