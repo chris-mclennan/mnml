@@ -37,8 +37,18 @@ pub(crate) fn split_http_verb(name: &str) -> Option<(String, String)> {
     None
 }
 
-/// Style-driven diagnostic chip for editor bufferline tabs. Returns
-/// `""` for non-editor panes or clean editors.
+/// Severity carried alongside the diag chip so the renderer can
+/// color it without string-sniffing (dot mode returns the same
+/// glyph for either severity — see `diag_chip_for`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DiagChipSeverity {
+    None,
+    Warning,
+    Error,
+}
+
+/// Style-driven diagnostic chip + severity for editor bufferline tabs.
+/// Returns `("", None)` for non-editor panes or clean editors.
 ///
 /// - `"count"` (default): `✗N` errors / `⚠N` warnings — neovim
 ///   ecosystem convention (bufferline.nvim / lualine), info-dense.
@@ -50,9 +60,9 @@ pub(crate) fn split_http_verb(name: &str) -> Option<(String, String)> {
 /// Reads style from `[ui] bufferline_diag_style`. No `EditingMode`
 /// branching — the pluggable-input spine keeps the render layer out
 /// of vim/standard bookkeeping.
-pub(crate) fn diag_chip_for(p: &Pane, style: &str) -> String {
+pub(crate) fn diag_chip_for(p: &Pane, style: &str) -> (String, DiagChipSeverity) {
     if style == "off" {
-        return String::new();
+        return (String::new(), DiagChipSeverity::None);
     }
     if let Pane::Editor(b) = p {
         let mut err = 0usize;
@@ -67,24 +77,24 @@ pub(crate) fn diag_chip_for(p: &Pane, style: &str) -> String {
         match style {
             "dot" => {
                 if err > 0 {
-                    return "\u{25CF}".to_string(); // ● — caller colors red
+                    return ("\u{25CF}".to_string(), DiagChipSeverity::Error);
                 }
                 if warn > 0 {
-                    return "\u{25CF}".to_string(); // ● — caller colors yellow
+                    return ("\u{25CF}".to_string(), DiagChipSeverity::Warning);
                 }
             }
             _ => {
                 // "count" and any unknown value → neovim-style count
                 if err > 0 {
-                    return format!("\u{2717}{err}");
+                    return (format!("\u{2717}{err}"), DiagChipSeverity::Error);
                 }
                 if warn > 0 {
-                    return format!("\u{26A0}{warn}");
+                    return (format!("\u{26A0}{warn}"), DiagChipSeverity::Warning);
                 }
             }
         }
     }
-    String::new()
+    (String::new(), DiagChipSeverity::None)
 }
 
 /// The shape of a single tab chip. Fed into `paint_tab_chip` by
@@ -124,6 +134,10 @@ pub struct TabChipInputs {
     /// short `"✗3"` (errors) or `"⚠2"` (warnings) chip that renders
     /// between the name and the badge.
     pub diag_chip: String,
+    /// Severity backing the chip. Renderer uses this for color
+    /// instead of string-sniffing (dot mode returns identical `●`
+    /// glyphs regardless of severity — must know via this field).
+    pub diag_severity: DiagChipSeverity,
     /// `Some((verb, rest))` for Request panes whose label starts
     /// with an HTTP verb — the painter renders the verb as a
     /// solid-color badge on `icon_color`, then `rest` in the tab's
@@ -310,10 +324,10 @@ pub fn tab_chip_spans(
         spans.push(Span::styled(format!("{name_clipped} "), name_style));
     }
     if !inputs.diag_chip.is_empty() {
-        let diag_fg = if inputs.diag_chip.starts_with('\u{2717}') {
-            t.red
-        } else {
-            t.yellow
+        let diag_fg = match inputs.diag_severity {
+            DiagChipSeverity::Error => t.red,
+            DiagChipSeverity::Warning => t.yellow,
+            DiagChipSeverity::None => t.yellow, // shouldn't happen — clean editor has empty chip
         };
         spans.push(Span::styled(
             format!("{} ", inputs.diag_chip),
@@ -1120,19 +1134,31 @@ mod tests {
             Pane::Editor(b)
         };
         // clean
-        assert_eq!(diag_chip_for(&mk(vec![]), "count"), "");
-        // 2 warnings → ⚠2
+        assert_eq!(
+            diag_chip_for(&mk(vec![]), "count"),
+            (String::new(), DiagChipSeverity::None)
+        );
+        // 2 warnings → ⚠2 count-mode
         let warn = || Diagnostic {
             range: r,
             severity: Severity::Warning,
             message: "w".into(),
             source: None,
         };
-        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()]), "count"), "\u{26A0}2");
-        // dot style flattens count
-        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()]), "dot"), "\u{25CF}");
+        assert_eq!(
+            diag_chip_for(&mk(vec![warn(), warn()]), "count"),
+            ("\u{26A0}2".to_string(), DiagChipSeverity::Warning)
+        );
+        // dot mode: warn-only → yellow ●
+        assert_eq!(
+            diag_chip_for(&mk(vec![warn(), warn()]), "dot"),
+            ("\u{25CF}".to_string(), DiagChipSeverity::Warning)
+        );
         // off style always empty
-        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()]), "off"), "");
+        assert_eq!(
+            diag_chip_for(&mk(vec![warn(), warn()]), "off"),
+            (String::new(), DiagChipSeverity::None)
+        );
         // mix → errors win
         let err = Diagnostic {
             range: r,
@@ -1140,7 +1166,15 @@ mod tests {
             message: "e".into(),
             source: None,
         };
-        assert_eq!(diag_chip_for(&mk(vec![warn(), warn(), err]), "count"), "\u{2717}1");
+        assert_eq!(
+            diag_chip_for(&mk(vec![warn(), warn(), err.clone()]), "count"),
+            ("\u{2717}1".to_string(), DiagChipSeverity::Error)
+        );
+        // dot mode with error present → red ● (severity distinguishes)
+        assert_eq!(
+            diag_chip_for(&mk(vec![warn(), err]), "dot"),
+            ("\u{25CF}".to_string(), DiagChipSeverity::Error)
+        );
     }
 
     // 2026-06-22 — full-or-hidden cluster-mode picker tests.
@@ -1209,6 +1243,7 @@ mod tests {
             is_preview: false,
             is_hovered: false,
             diag_chip: String::new(),
+            diag_severity: DiagChipSeverity::None,
             verb_split: None,
             name_cap: 32,
         }
@@ -1321,6 +1356,7 @@ mod tests {
     fn chip_diagnostic_error_renders_red_chip_between_name_and_badge() {
         let inputs = TabChipInputs {
             diag_chip: "\u{2717}3".to_string(),
+            diag_severity: DiagChipSeverity::Error,
             ..base_inputs()
         };
         let spans = tab_chip_spans(&inputs, theme::cur().bg_darker, 40, true)

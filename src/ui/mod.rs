@@ -4286,6 +4286,8 @@ fn paint_leaf_tab_strip_with_hidden(
         } else {
             None
         };
+        let (diag_chip, diag_severity) =
+            crate::ui::bufferline::diag_chip_for(pane, &app.config.ui.bufferline_diag_style);
         let inputs = crate::ui::bufferline::TabChipInputs {
             id,
             glyph,
@@ -4297,10 +4299,8 @@ fn paint_leaf_tab_strip_with_hidden(
             is_preview: matches!(pane, Pane::Editor(b) if b.is_preview)
                 || matches!(pane, Pane::Request(rp) if rp.is_preview),
             is_hovered: app.hovered_bufferline_tab == Some(id),
-            diag_chip: crate::ui::bufferline::diag_chip_for(
-                pane,
-                &app.config.ui.bufferline_diag_style,
-            ),
+            diag_chip,
+            diag_severity,
             verb_split,
             name_cap: chip_max_name_w,
         };
