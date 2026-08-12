@@ -716,8 +716,16 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // the UB the safety contract cares about. See the block's own SAFETY
     // comment. Gated on !args.headless so `.test` E2E scripts don't
     // accidentally set the vars in the test process.
+    //
+    // Also strips the user's `[[workspaces]]` from the loaded config
+    // so demo screenshots don't show real workspace favorites in the
+    // tree rail alongside the demo tree. Their actual config file on
+    // disk is untouched — this is just the in-memory copy for this
+    // process. Same rationale for `[[bitbucket.repos]]` and any other
+    // config that would surface real work.
     if args.demo && !args.headless {
         inject_demo_env();
+        config.workspaces.clear();
     }
 
     let mut app = match App::new(args.workspace, config) {
