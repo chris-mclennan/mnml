@@ -60,9 +60,14 @@ impl AiBackend {
 /// the user hasn't picked yet — enabling inline suggestions opens the
 /// setup picker.
 ///
-/// - `ClaudeCode` uses the user's Claude Max/Pro subscription via the
-///   OAuth token Claude Code already caches (keychain
-///   `Claude Code-credentials`, or `~/.claude/…`). Anthropic's TOS
+/// - `ClaudeCode` uses the user's Claude Max/Pro subscription via
+///   the OAuth token read from `~/.config/mnml/ai_token`. Users
+///   populate that file by clicking the AI-usage overlay chip's
+///   "Fetch from Keychain" (macOS) or by pasting the token by hand.
+///   The wizard's auto-select uses `claude` binary + `~/.claude/`
+///   presence as a proxy for "signed in", and the first ghost-text
+///   call surfaces a targeted "run `claude` to sign in" toast if the
+///   token isn't there yet. Anthropic's TOS
 ///   officially restricts OAuth-token use to Claude Code + claude.ai
 ///   — this path is grey-area but community-established (Zed, Continue,
 ///   avante.nvim, aider all ship it). Ghost-text is low-volume so

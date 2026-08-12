@@ -334,7 +334,12 @@ fn resolve_demo_workspace() -> Result<PathBuf, String> {
         // rename() over an existing dir works on Unix; on Windows we
         // fall back to remove+rename which loses atomicity but the
         // window is small.
-        let staging = cache_root.with_extension("staging");
+        // Per-PID suffix on both scratch paths — two concurrent
+        // `mnml --demo` launches would otherwise race on the same
+        // `.staging` / `.old` directories, remove_dir_all-ing each
+        // other's in-progress writes.
+        let pid = std::process::id();
+        let staging = cache_root.with_extension(format!("staging.{pid}"));
         let _ = std::fs::remove_dir_all(&staging);
         std::fs::create_dir_all(&staging)
             .map_err(|e| format!("create staging {}: {e}", staging.display()))?;
@@ -376,14 +381,17 @@ fn resolve_demo_workspace() -> Result<PathBuf, String> {
             }
         }
         // Swap-out-old pattern: evict the current cache_root to a
-        // sibling `.old` FIRST, then rename staging into place.
+        // sibling `.old.<pid>` FIRST, then rename staging into place.
         // POSIX rename(2) only replaces an *empty* directory — the
         // prior version pointed it at a populated cache_root and
         // ENOTEMPTY-failed on every refresh after the first (I'd
         // misread the rename semantics). Works uniformly on Unix +
         // Windows; a concurrent reader mid-swap still sees a
-        // consistent tree (either via `.old` briefly, or the new one).
-        let old = cache_root.with_extension("old");
+        // consistent tree (either via `.old.<pid>` briefly, or the
+        // new one). Narrow TOCTOU remains: two concurrent processes
+        // observing a stale cache can interleave their evict-renames
+        // — not worth a lockfile for a demo-mode tool.
+        let old = cache_root.with_extension(format!("old.{pid}"));
         let _ = std::fs::remove_dir_all(&old);
         if cache_root.exists() {
             std::fs::rename(&cache_root, &old).map_err(|e| format!("evict old demo cache: {e}"))?;

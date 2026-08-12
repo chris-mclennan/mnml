@@ -196,12 +196,25 @@ const COMPLETION_MODEL: &str = "claude-haiku-4-5";
 /// the "You are Claude Code…" system prompt fragment. Billed to the
 /// user's Claude Max/Pro subscription. See `SuggestBackend` for the
 /// TOS grey-area caveats.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Auth {
     ApiKey(String),
     /// OAuth access token (`sk-ant-oat01-…`) from Claude Code's
     /// keychain / on-disk cache. Refresh happens via `ai_usage`.
     ClaudeCodeOauth(String),
+}
+
+// Redact the secret in `{:?}` output so a stray toast or eprintln
+// can't leak a live token. Debug prints the variant + a fixed-length
+// placeholder — enough to distinguish "ApiKey vs Oauth" during
+// debugging without ever printing the raw value.
+impl std::fmt::Debug for Auth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Auth::ApiKey(_) => f.write_str("Auth::ApiKey(<redacted>)"),
+            Auth::ClaudeCodeOauth(_) => f.write_str("Auth::ClaudeCodeOauth(<redacted>)"),
+        }
+    }
 }
 
 /// Read the OAuth access token from Claude Code's cache (keychain

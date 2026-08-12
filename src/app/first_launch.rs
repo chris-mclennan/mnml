@@ -137,10 +137,16 @@ impl App {
     /// Populate initial answers from the current config + detected
     /// state so the wizard reflects what the user has already picked.
     fn wizard_snapshot_current(&self) -> WizardAnswers {
-        // Pre-select the ghost-text backend from config; fall back to
-        // "claude-code" when a Claude Code OAuth token is already
-        // present (keychain / on-disk) so the wizard reflects the
-        // recommended default without the user having to pick.
+        // Pre-select the ghost-text backend from config. When empty,
+        // default to "claude-code" if we have decent signal that
+        // Claude Code is set up on this machine — the `claude` binary
+        // is on PATH AND `~/.claude/` exists (created on first
+        // `claude` launch, so its presence is a good "user has been
+        // through Claude Code sign-in at least once" proxy). Neither
+        // proves a valid token exists, but a Keychain probe would
+        // risk a macOS auth-prompt modal that freezes the TUI —
+        // better to auto-select and let the first ghost-text call
+        // fail with the actionable "run `claude` to sign in" toast.
         let ai_backend = self
             .config
             .ai
@@ -149,7 +155,11 @@ impl App {
             .map(|s| s.to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| {
-                if crate::ai::api_client::read_claude_code_token().is_some() {
+                let has_claude_cli = crate::integration_detect::is_binary_installed("claude");
+                let has_claude_home = std::env::var_os("HOME")
+                    .map(|h| std::path::PathBuf::from(h).join(".claude").is_dir())
+                    .unwrap_or(false);
+                if has_claude_cli && has_claude_home {
                     "claude-code".to_string()
                 } else {
                     String::new()
