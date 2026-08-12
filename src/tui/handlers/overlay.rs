@@ -111,6 +111,9 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
             KeyCode::Char('n') | KeyCode::Char('N') => app.wizard_set_nerd_font_ok(false),
             KeyCode::Left | KeyCode::Char('h') => app.wizard_set_nerd_font_ok(true),
             KeyCode::Right | KeyCode::Char('l') => app.wizard_set_nerd_font_ok(false),
+            // Space fires the auto-install (brew / winget / curl per
+            // OS). Wizard closes so the install-Pty is visible.
+            KeyCode::Char(' ') => app.wizard_install_nerd_font(),
             _ => {}
         },
         WizardSection::ClaudeCode => {

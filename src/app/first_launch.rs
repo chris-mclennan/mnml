@@ -71,7 +71,9 @@ impl WizardSection {
             Self::NerdFont => {
                 "mnml uses Nerd Font glyphs for icons throughout the UI. If the \
                  sample below renders as boxes instead of icons, your terminal \
-                 font isn't a Nerd Font — install one from nerdfonts.com."
+                 font isn't a Nerd Font. Press Space to auto-install Symbols \
+                 Nerd Font Mono (brew / winget / curl per OS) — you'll still \
+                 need to point your terminal at the new font and restart it."
             }
             Self::ClaudeCode => {
                 "The two AI CLIs mnml integrates most deeply with. Not installed = \
@@ -247,11 +249,106 @@ impl App {
             s.answers.nerd_font_ok = Some(ok);
             if !ok {
                 self.toast(
-                    "Install a Nerd Font from https://www.nerdfonts.com/font-downloads then \
-                     set it as your terminal's font.",
+                    "Press Space to install Symbols Nerd Font, or install manually from \
+                     https://www.nerdfonts.com/font-downloads.",
                 );
             }
         }
+    }
+
+    /// Install a Nerd Font + surface the terminal-specific configure
+    /// step the user needs to do themselves. Font install is
+    /// automatable per OS (brew / winget / apt); pointing the
+    /// terminal at the new font mostly isn't (iTerm2 / Terminal.app
+    /// are GUI-only, ghostty / alacritty / kitty have config files
+    /// we could edit but the safer path is to instruct + let the
+    /// user restart the terminal).
+    ///
+    /// Font choice: `Symbols Nerd Font Mono` — the small (~2MB)
+    /// symbols-only variant, matches mnml's `font-codepoint-map`
+    /// routing (see CLAUDE.md ranges E5FA-E8FF / EA60-EC1E /
+    /// F0001-F1AFF). The full Nerd Font packs replace the entire
+    /// mono font which most users don't want.
+    ///
+    /// 2026-08-11 install-command verification:
+    /// - macOS: `brew install --cask font-symbols-only-nerd-font`
+    ///   (homebrew/cask-fonts) — verified brew.sh.
+    /// - Linux: falls back to a `curl | unzip` since distros'
+    ///   nerd-font packages vary wildly (arch has aur, debian has
+    ///   no upstream package, nix has one). Downloads
+    ///   NerdFontsSymbolsOnly.zip from the latest GH release
+    ///   into `~/.local/share/fonts/` and runs `fc-cache -f`.
+    /// - Windows: `winget install --id NerdFonts.SymbolsOnly`
+    ///   (or a curl fallback).
+    pub fn wizard_install_nerd_font(&mut self) {
+        let os = std::env::consts::OS;
+        let install_cmd: String = match os {
+            "macos" => "brew install --cask font-symbols-only-nerd-font".to_string(),
+            "linux" => {
+                // Download → unzip → fc-cache. `~/.local/share/fonts`
+                // is the user-scope XDG dir; fc-cache -f rebuilds
+                // the fontconfig index so the new font is visible
+                // to applications without a reboot.
+                let dl = "https://github.com/ryanoasis/nerd-fonts/releases/latest/\
+                          download/NerdFontsSymbolsOnly.zip";
+                format!(
+                    "set -e; \
+                     mkdir -p ~/.local/share/fonts/nerd-symbols; \
+                     cd ~/.local/share/fonts/nerd-symbols; \
+                     curl -fsSL '{dl}' -o pack.zip; \
+                     unzip -o pack.zip; \
+                     rm pack.zip; \
+                     fc-cache -f; \
+                     echo 'Symbols Nerd Font Mono installed to ~/.local/share/fonts/nerd-symbols'"
+                )
+            }
+            "windows" => "winget install --id NerdFonts.SymbolsOnly -e".to_string(),
+            other => {
+                self.toast(format!(
+                    "No auto-install for OS '{other}' — download from https://www.nerdfonts.com."
+                ));
+                return;
+            }
+        };
+        // Follow-up: what the user does after the font's on disk.
+        // `$TERM_PROGRAM` is macOS-canonical (`ghostty` / `iTerm.app` /
+        // `Apple_Terminal`), often set on Linux (ghostty / kitty
+        // export it), unreliable on Windows.
+        let term_hint = match std::env::var("TERM_PROGRAM").ok().as_deref() {
+            Some("ghostty") => {
+                "Then: add `font-family = Symbols Nerd Font Mono` (or `font-codepoint-map = ...` \
+                 for icon-glyph ranges — see CLAUDE.md) to `~/.config/ghostty/config`, restart \
+                 ghostty."
+            }
+            Some("iTerm.app") => {
+                "Then: iTerm2 → Preferences → Profiles → Text → Font → choose Symbols Nerd Font \
+                 Mono. Restart iTerm2."
+            }
+            Some("Apple_Terminal") => {
+                "Then: Terminal → Preferences → Profiles → Text → Font → choose Symbols Nerd \
+                 Font Mono. Restart Terminal.app."
+            }
+            Some("WezTerm") => {
+                "Then: add `Symbols Nerd Font Mono` to `font` fallback in \
+                 `~/.wezterm.lua`, restart WezTerm."
+            }
+            _ => {
+                if os == "windows" {
+                    "Then: Windows Terminal → Settings → your profile → Appearance → Font \
+                     face → Symbols Nerd Font Mono. Restart the terminal."
+                } else {
+                    "Then: point your terminal's font (or its fallback list) at 'Symbols \
+                     Nerd Font Mono'. Restart the terminal so it re-reads the font list."
+                }
+            }
+        };
+        self.close_first_launch_defer();
+        self.toast(term_hint);
+        self.open_pty(crate::pty_pane::BinaryProfile::task(
+            "install: nerd font",
+            &install_cmd,
+            self.workspace.clone(),
+        ));
     }
 
     /// Phase 2 install-action dispatcher. Each action spawns a Pty
