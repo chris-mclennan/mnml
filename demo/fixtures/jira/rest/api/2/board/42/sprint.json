@@ -6,7 +6,7 @@
     {
       "id": 201,
       "state": "active",
-      "name": "LOOP Sprint 12 — search + sync",
+      "name": "NTL Sprint 12 — search + sync",
       "startDate": "2026-08-04T00:00:00.000Z",
       "endDate": "2026-08-18T00:00:00.000Z",
       "originBoardId": 42,
@@ -15,7 +15,7 @@
     {
       "id": 202,
       "state": "future",
-      "name": "LOOP Sprint 13 — collaboration",
+      "name": "NTL Sprint 13 — collaboration",
       "startDate": "2026-08-18T00:00:00.000Z",
       "endDate": "2026-09-01T00:00:00.000Z",
       "originBoardId": 42,
@@ -24,7 +24,7 @@
     {
       "id": 200,
       "state": "closed",
-      "name": "LOOP Sprint 11 — offline polish",
+      "name": "NTL Sprint 11 — offline polish",
       "startDate": "2026-07-21T00:00:00.000Z",
       "endDate": "2026-08-04T00:00:00.000Z",
       "completeDate": "2026-08-04T18:12:00.000Z",

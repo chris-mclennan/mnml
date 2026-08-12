@@ -10,7 +10,7 @@
     "reporter":  {"accountId": "5ff3c", "displayName": "Sam Patel"},
     "labels":    ["search", "store", "R3-sev2"],
     "customfield_10016": 3,
-    "customfield_10020": [{"id": 201, "name": "LOOP Sprint 12 — search + sync"}],
+    "customfield_10020": [{"id": 201, "name": "NTL Sprint 12 — search + sync"}],
     "created": "2026-08-05T08:12:00.000+0000",
     "updated": "2026-08-10T09:05:00.000+0000",
     "description": "R3 finding: search hits notes that were deleted 30+ minutes ago. `Store.list()` walks the filesystem before checking the deletion tombstone. Order needs to flip, and the tombstone check needs an index or search will get slow at scale.\n\n## Repro\n\n```sh\nloop delete note-a\nsleep 60\nloop search a  # <— note-a still in results\n```",

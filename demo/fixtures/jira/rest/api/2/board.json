@@ -7,23 +7,23 @@
     {
       "id": 42,
       "self": "http://localhost:7071/jira/rest/agile/1.0/board/42",
-      "name": "LOOP — main",
+      "name": "NTL — main",
       "type": "kanban",
-      "location": {"projectId": 10001, "projectKey": "LOOP", "projectName": "Notely"}
+      "location": {"projectId": 10001, "projectKey": "NTL", "projectName": "Notely"}
     },
     {
       "id": 43,
       "self": "http://localhost:7071/jira/rest/agile/1.0/board/43",
-      "name": "LOOP — release train",
+      "name": "NTL — release train",
       "type": "scrum",
-      "location": {"projectId": 10001, "projectKey": "LOOP", "projectName": "Notely"}
+      "location": {"projectId": 10001, "projectKey": "NTL", "projectName": "Notely"}
     },
     {
       "id": 44,
       "self": "http://localhost:7071/jira/rest/agile/1.0/board/44",
-      "name": "LOOP — bugs & polish",
+      "name": "NTL — bugs & polish",
       "type": "kanban",
-      "location": {"projectId": 10001, "projectKey": "LOOP", "projectName": "Notely"}
+      "location": {"projectId": 10001, "projectKey": "NTL", "projectName": "Notely"}
     }
   ]
 }
