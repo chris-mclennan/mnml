@@ -583,7 +583,521 @@ fn chip_copy(chip: crate::HoverChip) -> Option<InfoViewCopy> {
             try_it: vec![PaletteLink::new("app.quit", "Quit mnml")],
             ..Default::default()
         }),
-        _ => None,
+
+        // ── Fill batch 2026-08-11 (v2) ──────────────────────────────
+        // Gap-closing pass: 32 previously-uncovered HoverChip variants,
+        // prioritized per user report — the file-tree action row
+        // (`TreeIcon`) was showing the raw echoed tooltip label
+        // ("add workspace folder") with no body copy. Grounded against
+        // `src/ui/tooltip.rs::describe` for behavior + `src/command.rs`
+        // for every cited command id / chord.
+
+        // src: src/ui/tree_view.rs::workspace_header_chips,
+        //      draw_add_repo_row, draw_empty_workspace_state;
+        //      src/ui/mod.rs (DAP debug-rail rows reuse the same rect
+        //      vec — `app.rects.tree_icon_buttons` — for a handful of
+        //      cmd_ids not listed here; those fall through to the
+        //      legacy tooltip via `_ => None` below).
+        TreeIcon(cmd_id) => {
+            let (title, body): (&str, &str) = match cmd_id {
+                "view.add_workspace" => (
+                    "Add workspace folder",
+                    "Opens a path prompt to add another folder as an extra \
+                     workspace root alongside the current one — the tree grows \
+                     a second top-level section instead of replacing what's \
+                     open. Type a path (`~` expands) or leave it to browse; \
+                     missing intermediate folders are NOT created here.",
+                ),
+                "file.new" => (
+                    "New file",
+                    "Creates an empty file in the workspace root and opens it \
+                     in a fresh tab, prompting for a name first.",
+                ),
+                "file.new_folder" => (
+                    "New folder",
+                    "Creates a new directory in the workspace root after \
+                     prompting for a name. The tree jumps to show it.",
+                ),
+                "tree.refresh" => (
+                    "Refresh tree",
+                    "Re-scans the workspace root from disk and repaints the \
+                     tree — use it after external changes mnml's file-watcher \
+                     might have missed (bulk git operations, another process \
+                     writing files).",
+                ),
+                "tree.toggle_collapse_all" => (
+                    "Collapse / expand all",
+                    "Folds every open directory in the tree closed, or opens \
+                     every directory when the tree is already fully collapsed. \
+                     One click toggles the whole rail.",
+                ),
+                "git.pull" => (
+                    "Pull (workspace header)",
+                    "Runs `git pull --ff-only` against the repo that owns this \
+                     workspace root, right from the tree header. Same action \
+                     as the `> GIT` rail header's Pull chip.",
+                ),
+                "picker.files" => (
+                    "Search files",
+                    "Opens the fuzzy file picker over the workspace — type to \
+                     match, Enter opens in the active pane.",
+                ),
+                "view.discovery" => (
+                    "Open file",
+                    "Opens the file picker so you can jump straight to a file \
+                     without adding a workspace root first.",
+                ),
+                "view.switch_workspace" => (
+                    "Switch workspace",
+                    "Opens the workspace picker — swap the tree to a different \
+                     root entirely (as opposed to adding one alongside it).",
+                ),
+                "view.manage_workspaces" => (
+                    "Manage workspaces",
+                    "Opens the overlay listing every configured workspace root \
+                     so you can rename, reorder, or remove entries.",
+                ),
+                "view.open_default_workspace" => (
+                    "Open default workspace",
+                    "Switches straight to the `default_workspace` configured in \
+                     your user config — a one-click way back to your usual \
+                     project from an empty or unrelated workspace.",
+                ),
+                _ => return None,
+            };
+            Some(InfoViewCopy {
+                title: title.into(),
+                body: body.into(),
+                try_it: vec![PaletteLink::new(cmd_id, "Run it")],
+                ..Default::default()
+            })
+        }
+        // src: src/ui/tooltip.rs::HoverChip::WorkspaceHeader,
+        //      src/app/dispatch.rs:652
+        WorkspaceHeader => Some(InfoViewCopy {
+            title: "Workspace root".into(),
+            body: "Names the folder the tree is rooted at — click to collapse \
+                   or expand the whole tree, or right-click for workspace \
+                   actions (add another root, switch, manage). Hovering shows \
+                   the absolute path so you can confirm which directory mnml \
+                   actually opened."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "view.switch_workspace",
+                "Switch workspace",
+            )],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::ExtraWorkspaceHeader,
+        //      src/app/dispatch.rs:660
+        ExtraWorkspaceHeader(_) => Some(InfoViewCopy {
+            title: "Extra workspace root".into(),
+            body: "A second (or third…) folder added via Add workspace folder \
+                   — its own collapsible section in the tree, independent of \
+                   the primary workspace root above it. Click to expand or \
+                   collapse just this section; right-click to remove it from \
+                   the tree without touching the primary root."
+                .into(),
+            aside: Some("Only appears once you've added at least one extra root.".into()),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::ToastBox
+        ToastBox(_) => Some(InfoViewCopy {
+            title: "Toast notification".into(),
+            body: "A transient status message stacked in the corner — success, \
+                   error, or progress info from whatever just ran. Hovering \
+                   pauses its countdown so you have time to read it; click to \
+                   dismiss early, or right-click for a small actions menu."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RailHeaderChip
+        RailHeaderChip(_) => Some(InfoViewCopy {
+            title: "Git rail header action".into(),
+            body: "One-click git action in the `> GIT` rail header — Fetch, \
+                   Pull, Push, Stage all, Commit, or Open graph. Mirrors the \
+                   equivalent chip in the top-right git toolbar cluster, just \
+                   scoped to whichever repo owns this rail section."
+                .into(),
+            try_it: vec![PaletteLink::new("git.graph", "Open commit graph")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitDivider
+        SplitDivider => Some(InfoViewCopy {
+            title: "Split divider".into(),
+            body: "The resize handle between two panes in a split. Drag it to \
+                   change the split ratio; double-click to reset both sides \
+                   back to equal size."
+                .into(),
+            try_it: vec![PaletteLink::new("view.equalize_splits", "Equalize splits")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::BufferlineTabsLabel
+        BufferlineTabsLabel => Some(InfoViewCopy {
+            title: "Tab pages count".into(),
+            body: "Shows how many tab pages are open — separate vim-style \
+                   workspaces of splits, distinct from the buffers inside any \
+                   one of them. Click to switch between tab pages; right-click \
+                   for the full menu."
+                .into(),
+            shortcuts: vec![ShortcutHint::new("gt / gT", "Next / previous tab page")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RightPanelTab
+        RightPanelTab(_) => Some(InfoViewCopy {
+            title: "Right-panel tab".into(),
+            body: "One tab in the right panel's own strip — outline, \
+                   diagnostics, or whatever else got routed there. Click to \
+                   switch to it; the `×` on the active tab closes it."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RightPanelClose
+        RightPanelClose => Some(InfoViewCopy {
+            title: "Close right-panel tab".into(),
+            body: "Closes the active tab hosted in the right panel — the panel \
+                   itself stays open (and empty) until something else routes \
+                   into it, or you hide it entirely with the sidebar toggle."
+                .into(),
+            shortcuts: vec![ShortcutHint::new(
+                "Ctrl+Alt+W",
+                "Close active right-panel tab",
+            )],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitTabChip
+        SplitTabChip(_) => Some(InfoViewCopy {
+            title: "Split tab strip tab".into(),
+            body: "A tab on one split leaf's own tab strip — separate from the \
+                   global bufferline. Click to focus, middle-click to close, \
+                   right-click for the tab menu."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitTabClose
+        SplitTabClose(_) => Some(InfoViewCopy {
+            title: "Close split-leaf tab".into(),
+            body: "Closes this one tab from its split leaf. Dirty buffers \
+                   prompt before discarding, same as closing from the main \
+                   bufferline."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitTabPlus
+        SplitTabPlus(_) => Some(InfoViewCopy {
+            title: "Add to this split leaf".into(),
+            body: "Opens a small Create… menu scoped to this leaf — new \
+                   scratch buffer, new terminal, or a further split — without \
+                   disturbing any other leaf in the layout."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitStripButton
+        SplitStripButton(_) => Some(InfoViewCopy {
+            title: "Split editor button".into(),
+            body: "Splits the active leaf — horizontal (side by side) or \
+                   vertical (stacked), depending on which of the pair you \
+                   click. Opens the same buffer in both halves so you can \
+                   scroll them independently."
+                .into(),
+            shortcuts: vec![
+                ShortcutHint::new("Ctrl+\\", "Split right"),
+                ShortcutHint::new("Ctrl+Shift+\\", "Split down"),
+            ],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitStripTermButton
+        SplitStripTermButton => Some(InfoViewCopy {
+            title: "Open shell in split".into(),
+            body: "Splits the active leaf and opens a new shell Pty pane in \
+                   the new half — a quick way to get a terminal beside the \
+                   file you're editing without leaving the layout."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SplitStripAiButton
+        SplitStripAiButton => Some(InfoViewCopy {
+            title: "Open AI session in split".into(),
+            body: "Spawns a new Claude Code or Codex session in a fresh split \
+                   next to the active leaf. Which agent(s) show here follows \
+                   `[ui] tab_bar_ai_icon` — right-click for a menu when both \
+                   are configured."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::ScrollbarThumb
+        ScrollbarThumb => Some(InfoViewCopy {
+            title: "Scrollbar".into(),
+            body: "Drag the thumb to scroll; click anywhere on the track to \
+                   jump straight to that position. Appears on any pane, \
+                   overlay, or panel whose content overflows its rect."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RightPanelGrip
+        RightPanelGrip => Some(InfoViewCopy {
+            title: "Right-panel resize grip".into(),
+            body: "Drag to resize the right panel's width; double-click resets \
+                   it to the default. Width persists to \
+                   `[ui] right_panel_width`."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::TreeRailGrip
+        TreeRailGrip => Some(InfoViewCopy {
+            title: "Tree rail resize grip".into(),
+            body: "Drag to resize the left panel's width; double-click resets \
+                   it to the default."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::DockKebab
+        DockKebab => Some(InfoViewCopy {
+            title: "Dock widget options".into(),
+            body: "Opens the per-widget menu for a docked bottom-panel widget \
+                   — resize, remove, or reconfigure just that one tile."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::DockEmptyChip
+        DockEmptyChip => Some(InfoViewCopy {
+            title: "Create first dock widget".into(),
+            body: "Shown when the dock has no widgets yet. Click to choose \
+                   what kind of widget to add — the dock stays empty (and \
+                   hidden) until you place one."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::TreeUpRow
+        TreeUpRow => Some(InfoViewCopy {
+            title: "Up-navigation row".into(),
+            body: "The `..` row above the file tree — click to re-root the \
+                   workspace one directory up. Hidden at the filesystem root, \
+                   since there's nowhere further up to go."
+                .into(),
+            try_it: vec![PaletteLink::new("view.workspace_up", "Go up one level")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::GutterMark
+        GutterMark { .. } => Some(InfoViewCopy {
+            title: "Gutter sign".into(),
+            body: "A mark in the editor's sign column — a breakpoint, a \
+                   paused-debugger arrow, a diagnostic dot, or a git change \
+                   bar, in that priority order when more than one applies to \
+                   a line. Click the gutter at this line to toggle a \
+                   breakpoint; hover a diagnostic dot for the message."
+                .into(),
+            shortcuts: vec![ShortcutHint::new(
+                "]c / [c",
+                "Jump to next / previous git hunk",
+            )],
+            try_it: vec![PaletteLink::new(
+                "dap.toggle_breakpoint",
+                "Toggle breakpoint at cursor",
+            )],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::CodeLensChip
+        CodeLensChip => Some(InfoViewCopy {
+            title: "Code lens".into(),
+            body: "An inline actionable hint from the LSP — usually \"N \
+                   references\" or a run/test link — rendered just above the \
+                   code it describes. Click to fire whatever action the \
+                   language server attached."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::DiffToolbar
+        DiffToolbar(_) => Some(InfoViewCopy {
+            title: "Diff view toolbar".into(),
+            body: "Switches how a Diff pane renders — Inline (whole file, \
+                   changes highlighted in place), Hunk (only the changed \
+                   regions, focused), or Split (side-by-side old/new). The \
+                   same row also has line-wrap and close chips."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::ClaudeAgentsTopbarChip
+        ClaudeAgentsTopbarChip(_) => Some(InfoViewCopy {
+            title: "Agents dashboard topbar chip".into(),
+            body: "Cycles one axis of the Agents dashboard's view — drill-down \
+                   depth, sort key, grouping, source filter, or workspace-only \
+                   filter, depending on which chip. Each has a keyboard \
+                   shortcut too, shown on hover."
+                .into(),
+            try_it: vec![PaletteLink::new("ai.dashboard", "Open agents dashboard")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::SessionsTab
+        SessionsTab(_) => Some(InfoViewCopy {
+            title: "Session tab".into(),
+            body: "One running Pty session in the Sessions panel — Claude \
+                   Code, Codex, or a plain shell. Hovering previews the last \
+                   few messages (Claude) or a summary of recent output; click \
+                   to focus that session's pane."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestTopBarChip
+        RequestTopBarChip(_) => Some(InfoViewCopy {
+            title: "Request pane top-bar chip".into(),
+            body: "One of the Request pane's primary actions — pick the HTTP \
+                   method, switch the active env, send (or abort) the \
+                   request, save it, clear the fields, or generate a code \
+                   snippet. Right-click most of them for a secondary-action \
+                   menu."
+                .into(),
+            try_it: vec![PaletteLink::new("http.send", "Send request")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestSplitToggle
+        RequestSplitToggle => Some(InfoViewCopy {
+            title: "Request/response orientation toggle".into(),
+            body: "Cycles how the Request pane lays out its request and \
+                   response halves — Auto (picks by pane width), stacked \
+                   (request above response), or side-by-side."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestEditSplitChip
+        RequestEditSplitChip => Some(InfoViewCopy {
+            title: "Edit-area split toggle".into(),
+            body: "Opens a side-by-side split of the Request pane's edit \
+                   content — e.g. Body on the left, Vars on the right — so \
+                   you can see two tabs at once instead of switching between \
+                   them."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "http.toggle_edit_split",
+                "Toggle edit split",
+            )],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestEditSplitDivider
+        RequestEditSplitDivider => Some(InfoViewCopy {
+            title: "Edit-split divider".into(),
+            body: "The 1-cell divider between the primary and secondary sides \
+                   of an edit split. Click cycles the ratio 30/50/70 — unlike \
+                   a pane split divider, it doesn't drag-resize yet."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestVarToken
+        RequestVarToken(_) => Some(InfoViewCopy {
+            title: "{{VAR}} token".into(),
+            body: "A `{{variable}}` reference inside the URL, body, params, or \
+                   headers. Cyan means it resolves in the active env; bold red \
+                   means it's undefined. Click jumps to its definition line in \
+                   the env file (or opens the file at EOF, ready to define it)."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestResponseCopy
+        RequestResponseCopy => Some(InfoViewCopy {
+            title: "Copy response body".into(),
+            body: "Copies the full response body to the clipboard, exactly as \
+                   received — no re-formatting."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestResponseWrap
+        RequestResponseWrap => Some(InfoViewCopy {
+            title: "Wrap response body".into(),
+            body: "Toggles line-wrapping for the response body view — handy \
+                   for long unformatted JSON or minified payloads."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestResponseAiPrompt
+        RequestResponseAiPrompt => Some(InfoViewCopy {
+            title: "Debug-with-AI prompt".into(),
+            body: "Copies a ready-made \"debug this failure\" prompt — status \
+                   code, headers, and body — to the clipboard, so you can \
+                   paste it straight into a Claude or Codex session. Only \
+                   shown when the response looks like a failure; headers are \
+                   redacted before copy."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::RequestResponseFormat
+        RequestResponseFormat => Some(InfoViewCopy {
+            title: "Format response body".into(),
+            body: "Pretty-prints the response body when it's JSON. Dims out \
+                   when the body isn't JSON, since there's nothing to format."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::HttpCollectionAddRequestChip
+        HttpCollectionAddRequestChip(_) => Some(InfoViewCopy {
+            title: "New request in collection".into(),
+            body: "Prompts for a name and creates a new `.http` file inside \
+                   this collection's folder — the fastest way to add a \
+                   request without leaving the HTTP panel."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::BufferlineNewRequest
+        BufferlineNewRequest => Some(InfoViewCopy {
+            title: "New HTTP request".into(),
+            body: "Opens a blank Request pane as a new tab. Shown on the \
+                   bufferline once at least one Request pane is already open; \
+                   distinct from the far-right `+` new-tab-page button."
+                .into(),
+            try_it: vec![PaletteLink::new("http.new_request", "New request")],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::CloudAgentsNewRunButton
+        CloudAgentsNewRunButton => Some(InfoViewCopy {
+            title: "New cloud run".into(),
+            body: "Opens the wizard for launching a managed cloud agent run — \
+                   Anthropic Managed Agents or the self-hosted ECS runner, \
+                   depending on what's configured."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "cloud_agents.new_run_wizard",
+                "New cloud run wizard",
+            )],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::CloudRunAutoRefresh
+        CloudRunAutoRefresh => Some(InfoViewCopy {
+            title: "Cloud run auto-refresh".into(),
+            body: "Cycles how often the run-detail pane re-polls for new logs \
+                   and status — off, 10s, 30s, 60s, or 5m."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::CloudRunRefresh
+        CloudRunRefresh => Some(InfoViewCopy {
+            title: "Cloud run refresh".into(),
+            body: "Manually re-fetches logs and artifacts for this run (or \
+                   restarts the SSE stream if it dropped)."
+                .into(),
+            try_it: vec![PaletteLink::new(
+                "cloud_agents.refresh_run_detail",
+                "Refresh run detail",
+            )],
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::GitGraphLane
+        GitGraphLane { .. } => Some(InfoViewCopy {
+            title: "Git graph lane".into(),
+            body: "One column of the commit graph — a lane represents a \
+                   branch's line of commits as it merges and diverges. \
+                   Hovering names the nearest branch ref in that lane, walking \
+                   upward from this commit until it finds one."
+                .into(),
+            ..Default::default()
+        }),
+        // src: src/ui/tooltip.rs::HoverChip::GitGraphCommitMsg
+        GitGraphCommitMsg { .. } => Some(InfoViewCopy {
+            title: "Commit subject".into(),
+            body: "The full, untruncated subject line of this commit, plus \
+                   author and short hash — useful when the graph column is too \
+                   narrow to show the whole message inline."
+                .into(),
+            ..Default::default()
+        }),
     }
 }
 
