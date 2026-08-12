@@ -55,11 +55,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     app.rects.hover_help_strip = Some(area);
     let t = theme::cur();
     // Body bg is slightly darker than the tree rail so the box reads
-    // as its own pane; title bar uses the window bg (lighter) so the
-    // topic name pops out as a distinct band. Ableton uses the same
-    // idiom.
+    // as its own pane. Title bar uses `bg2` (the menu / popup fill,
+    // usually noticeably lighter than the tree rail's bg_dark) so the
+    // topic band reads as a distinct "help header" — user 2026-08-11
+    // feedback: prior `bg_dark` was visually indistinguishable from
+    // the tree above it, so the title looked like accidental text
+    // rather than a titled help pane.
     let body_bg = t.bg_darker;
-    let title_bg = t.bg_dark;
+    let title_bg = t.bg2;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(body_bg)), area);
 
     let copy = pick_help_copy(app);
@@ -94,19 +97,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     // to fit; area.width >= 3 is required for the kebab to appear.
     let kebab_cells = 2u16;
     let title_avail = area.width.saturating_sub(kebab_cells);
+    // Prefix with a dim `?` glyph so the band clearly reads as a
+    // help header, not another chrome label. 3 leading cells: `?` +
+    // space + text.
+    let prefix_cells = 3u16;
+    let title_body_avail = title_avail.saturating_sub(prefix_cells);
     let title_text: String = copy
         .title
         .chars()
-        .take(title_avail.saturating_sub(1) as usize)
+        .take(title_body_avail.saturating_sub(1) as usize)
         .collect();
-    let title_body = pad_line(&format!(" {title_text}"), title_avail as usize);
-    let mut title_spans = vec![Span::styled(
-        title_body,
-        Style::default()
-            .fg(t.fg)
-            .bg(title_bg)
-            .add_modifier(Modifier::BOLD),
-    )];
+    let title_body = pad_line(&title_text, title_body_avail as usize);
+    let mut title_spans = vec![
+        Span::styled(" ? ", Style::default().fg(t.comment).bg(title_bg)),
+        Span::styled(
+            title_body,
+            Style::default()
+                .fg(t.fg)
+                .bg(title_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
     if area.width >= 3 {
         title_spans.push(Span::styled(
             kebab_glyph,

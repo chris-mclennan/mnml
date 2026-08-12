@@ -484,7 +484,17 @@ fn run_tui(argv: Vec<String>) -> ExitCode {
     // a restart so `data_root()`'s cached probe re-resolves against the
     // freshly-created `mnml-data/`. Ordering matters: this runs BEFORE
     // the workspace welcome overlay so we don't stack two prompts.
-    app.maybe_show_portable_choice_on_launch();
+    // R10 keyboard SEV-1 (2026-08-11) — headless auto-launch left the
+    // wizard hidden forever behind the portable-choice prompt, which
+    // fires ahead of the wizard and blocks its paint via the
+    // `app.prompt.is_some()` deferral in `first_launch_overlay::draw`.
+    // Interactive users dismiss the prompt with Enter/click; headless
+    // drivers can't, so the wizard sat blocked. Skip the interactive
+    // prompt in headless — a headless caller can still choose portable
+    // via `mnml.choose_data_layout` on the palette.
+    if !args.headless {
+        app.maybe_show_portable_choice_on_launch();
+    }
     // First-launch onboarding overlay. If the user has never dismissed it
     // in this workspace (no `.mnml/.welcomed` marker), open it.
     app.maybe_show_welcome_on_launch();
