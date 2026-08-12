@@ -132,7 +132,7 @@ pub(crate) fn handle_first_launch_key(app: &mut App, key: KeyEvent) {
 }
 
 fn cycle_ai_backend(app: &mut App, delta: i32) {
-    const CHOICES: [&str; 3] = ["claude-api", "local", "skip"];
+    const CHOICES: [&str; 4] = ["claude-code", "claude-api", "local", "skip"];
     let cur = app
         .first_launch
         .as_ref()

@@ -59,9 +59,10 @@ impl WizardSection {
     pub fn description(self) -> &'static str {
         match self {
             Self::AiBackend => {
-                "Inline completions as you type. Claude API is fastest but needs \
-                 $ANTHROPIC_API_KEY; Local runs a ~1GB quantized model on your \
-                 machine (downloaded on first use, cached forever)."
+                "Inline completions as you type. Claude Code sub reuses your Max/Pro \
+                 plan via the OAuth token Claude Code already caches — no separate \
+                 API key needed. Claude API bills to a pay-per-token console budget. \
+                 Local runs a ~1GB quantized model on your machine (offline)."
             }
             Self::InputStyle => {
                 "vim is modal (`i` to insert, `esc` to normal, `:` for ex-cmds); \
@@ -136,13 +137,24 @@ impl App {
     /// Populate initial answers from the current config + detected
     /// state so the wizard reflects what the user has already picked.
     fn wizard_snapshot_current(&self) -> WizardAnswers {
+        // Pre-select the ghost-text backend from config; fall back to
+        // "claude-code" when a Claude Code OAuth token is already
+        // present (keychain / on-disk) so the wizard reflects the
+        // recommended default without the user having to pick.
         let ai_backend = self
             .config
             .ai
             .get("suggest_backend")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if crate::ai::api_client::read_claude_code_token().is_some() {
+                    "claude-code".to_string()
+                } else {
+                    String::new()
+                }
+            });
         let input_style = self.config.editor.input_style.clone();
         WizardAnswers {
             ai_backend,
@@ -180,9 +192,10 @@ impl App {
             return;
         };
         // Commit each answer to config + persist to disk.
-        // AI backend: "claude-api" | "local" both enable inline
-        // suggestions + set the backend; "skip" leaves both defaulted
-        // (backend stays Unset, inline_suggestions stays false).
+        // AI backend: "claude-code" | "claude-api" | "local" all
+        // enable inline suggestions + set the backend; "skip" (or
+        // empty) leaves both defaulted (backend stays Unset,
+        // inline_suggestions stays false).
         use crate::app::discovery::{
             persist_ai_bool, persist_ai_string, persist_editor_string, persist_ui_bool,
         };
@@ -195,7 +208,7 @@ impl App {
         // silent phantom reset.
         let mut errs: Vec<String> = Vec::new();
         match state.answers.ai_backend.as_str() {
-            "claude-api" | "local" => {
+            "claude-code" | "claude-api" | "local" => {
                 self.set_ai_suggest_backend(crate::ai::SuggestBackend::parse(
                     &state.answers.ai_backend,
                 ));

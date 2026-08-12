@@ -250,7 +250,11 @@ fn section_widgets<'a>(
     match section {
         WizardSection::AiBackend => radio_rows(
             &[
-                ("claude-api", "Claude API — fast, needs $ANTHROPIC_API_KEY"),
+                (
+                    "claude-code",
+                    "Claude Code sub — uses your Max/Pro plan (recommended)",
+                ),
+                ("claude-api", "Claude API — needs $ANTHROPIC_API_KEY"),
                 ("local", "Local model — ~1GB download on first use"),
                 (
                     "skip",

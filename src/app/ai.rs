@@ -301,15 +301,26 @@ impl App {
                 let fim_tx = self.ensure_fim_worker();
                 let _ = fim_tx.send((id, prefix, suffix, max_tokens));
             }
-            // ClaudeApi (and Unset — shouldn't reach here since the
-            // setup picker gates first-enable, but be safe).
-            _ => {
+            // ClaudeCode (sub OAuth), ClaudeApi (env key), Unset
+            // (shouldn't reach here — setup picker gates first-enable,
+            // but resolve_suggest_auth returns a clean Err either
+            // way). Resolve auth up front so a missing token/key fails
+            // this call fast with a targeted message instead of the
+            // worker thread panicking or churning.
+            backend => {
                 let tx = self
                     .suggest_chan
                     .get_or_insert_with(std::sync::mpsc::channel)
                     .0
                     .clone();
                 let suggest_model = self.ai_suggest_model();
+                let auth = match crate::ai::api_client::resolve_suggest_auth(backend) {
+                    Ok(a) => a,
+                    Err(msg) => {
+                        let _ = tx.send((id, Err(msg)));
+                        return;
+                    }
+                };
                 std::thread::Builder::new()
                     .name("mnml-suggest".into())
                     .spawn(move || {
@@ -318,6 +329,7 @@ impl App {
                             &suffix,
                             &language,
                             suggest_model.as_deref(),
+                            auth,
                         );
                         let _ = tx.send((id, result));
                     })
@@ -1352,6 +1364,14 @@ impl App {
         };
         let items = vec![
             PickerItem::new(
+                "claude-code",
+                format!(
+                    "{}Claude Code sub",
+                    mark(crate::ai::SuggestBackend::ClaudeCode)
+                ),
+                "reuses your Max/Pro plan · no separate API key · ~1s",
+            ),
+            PickerItem::new(
                 "claude-api",
                 format!("{}Claude API", mark(crate::ai::SuggestBackend::ClaudeApi)),
                 "needs $ANTHROPIC_API_KEY · ~1s · works now",
@@ -1402,6 +1422,9 @@ impl App {
                     t.insert("inline_suggestions".to_string(), toml::Value::Boolean(true));
                 }
                 match backend {
+                    crate::ai::SuggestBackend::ClaudeCode => {
+                        self.toast("AI ghost-text: on · Claude Code sub");
+                    }
                     crate::ai::SuggestBackend::ClaudeApi => {
                         self.toast("AI ghost-text: on · Claude API");
                     }

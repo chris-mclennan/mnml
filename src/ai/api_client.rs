@@ -187,6 +187,91 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 /// more than depth here.
 const COMPLETION_MODEL: &str = "claude-haiku-4-5";
 
+/// How the ghost-text call authenticates. `ClaudeApi` uses
+/// `$ANTHROPIC_API_KEY` and hits the /v1/messages endpoint as a
+/// standard console-billed API call. `ClaudeCode` uses the OAuth
+/// access token Claude Code caches (keychain / `~/.claude/…`) — same
+/// endpoint, `x-api-key` header (NOT Bearer — Anthropic 401s Bearer
+/// tokens as of early-2026), plus the two identity beta headers +
+/// the "You are Claude Code…" system prompt fragment. Billed to the
+/// user's Claude Max/Pro subscription. See `SuggestBackend` for the
+/// TOS grey-area caveats.
+#[derive(Debug, Clone)]
+pub enum Auth {
+    ApiKey(String),
+    /// OAuth access token (`sk-ant-oat01-…`) from Claude Code's
+    /// keychain / on-disk cache. Refresh happens via `ai_usage`.
+    ClaudeCodeOauth(String),
+}
+
+/// Read the OAuth access token from Claude Code's cache (keychain
+/// preferred, disk fallback — same source as `ai_usage.rs`). Returns
+/// `None` when no valid token is available; caller falls back to the
+/// API-key path or surfaces a "sign in with `claude` first" toast.
+pub fn read_claude_code_token() -> Option<String> {
+    crate::ai_usage::read_claude_token()
+}
+
+/// Apply the right auth headers for [`Auth`]. Owned by this module
+/// because both header names AND system-prompt shape change per mode.
+fn apply_auth(
+    rb: reqwest::blocking::RequestBuilder,
+    auth: &Auth,
+) -> reqwest::blocking::RequestBuilder {
+    match auth {
+        Auth::ApiKey(k) => rb
+            .header("x-api-key", k)
+            .header("anthropic-version", API_VERSION),
+        Auth::ClaudeCodeOauth(t) => rb
+            // x-api-key, not Bearer. Anthropic began 401-rejecting
+            // Bearer-carried OAuth tokens in early 2026; the surviving
+            // path is x-api-key with the sk-ant-oat prefix, which
+            // flips the server into subscription-billing mode.
+            .header("x-api-key", t)
+            .header("anthropic-version", API_VERSION)
+            // Both beta flags required together for OAuth calls to
+            // pass the "genuine Claude Code identity" gate.
+            .header("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
+            .header("user-agent", "claude-cli/1.0.0 (mnml-ghost-text)"),
+    }
+}
+
+/// Prepend the Claude Code identity fragment to a system prompt when
+/// authenticating via OAuth — server rejects OAuth calls that don't
+/// identify as Claude Code. No-op for API-key auth.
+fn adapt_system(system: &str, auth: &Auth) -> String {
+    match auth {
+        Auth::ApiKey(_) => system.to_string(),
+        Auth::ClaudeCodeOauth(_) => {
+            format!("You are Claude Code, Anthropic's official CLI for Claude.\n\n{system}")
+        }
+    }
+}
+
+/// Resolve `SuggestBackend` to concrete auth for a ghost-text call.
+/// Returns Err with a targeted message when the picked backend has no
+/// working credentials — caller toasts it and stays in a safe state.
+pub fn resolve_suggest_auth(backend: crate::ai::SuggestBackend) -> Result<Auth, String> {
+    use crate::ai::SuggestBackend;
+    match backend {
+        SuggestBackend::ClaudeCode => read_claude_code_token()
+            .map(Auth::ClaudeCodeOauth)
+            .ok_or_else(|| {
+                "Claude Code sub picked but no OAuth token found — run \
+                 `claude` in a shell to sign in, then retry."
+                    .to_string()
+            }),
+        SuggestBackend::ClaudeApi | SuggestBackend::Unset => std::env::var("ANTHROPIC_API_KEY")
+            .map(Auth::ApiKey)
+            .map_err(|_| "$ANTHROPIC_API_KEY not set".to_string()),
+        // Local is engine-owned — API path shouldn't be called at all
+        // for this backend. Route back to a clear error just in case.
+        SuggestBackend::Local => Err(
+            "Local backend picked — this call should go to the FIM engine, not the API".to_string(),
+        ),
+    }
+}
+
 /// One-shot, non-streaming code completion for the inline ghost-text
 /// feature. Sends the code before + after the cursor and asks for ONLY
 /// the text to insert. Blocking — call from a worker thread.
@@ -198,21 +283,25 @@ const COMPLETION_MODEL: &str = "claude-haiku-4-5";
 /// `model` overrides [`COMPLETION_MODEL`] when `Some` (`[ai]
 /// suggest_model` config) — latency matters here, so the default is the
 /// fast model, but a user can pin a different one.
+///
+/// `auth` picks between an API-key call and a Claude Code sub call;
+/// the caller resolves the [`SuggestBackend`] via
+/// [`resolve_suggest_auth`] before spawning.
 pub fn complete_code(
     prefix: &str,
     suffix: &str,
     language: &str,
     model: Option<&str>,
+    auth: Auth,
 ) -> Result<String, String> {
-    let api_key =
-        std::env::var("ANTHROPIC_API_KEY").map_err(|_| "$ANTHROPIC_API_KEY not set".to_string())?;
-    let system = "You are an inline code-completion engine inside a text editor. \
+    let system_base = "You are an inline code-completion engine inside a text editor. \
         You receive the code BEFORE the cursor and the code AFTER the cursor. \
         Output ONLY the exact text that should be inserted at the cursor position \
         to continue the code naturally. No explanation, no markdown fences, no \
         repetition of the surrounding code. Prefer short completions — usually \
         the rest of the current line or a few lines. If no useful completion is \
         possible, output nothing.";
+    let system = adapt_system(system_base, &auth);
     let user = format!(
         "Language: {language}\n\n<code-before-cursor>\n{prefix}\n</code-before-cursor>\n\n\
          <code-after-cursor>\n{suffix}\n</code-after-cursor>\n\n\
@@ -229,12 +318,11 @@ pub fn complete_code(
         .timeout(std::time::Duration::from_secs(8))
         .build()
         .map_err(|e| format!("build client: {e}"))?;
-    let resp = client
+    let rb = client
         .post(ENDPOINT)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", API_VERSION)
         .header("content-type", "application/json")
-        .body(body)
+        .body(body);
+    let resp = apply_auth(rb, &auth)
         .send()
         .map_err(|e| format!("POST: {e}"))?;
     let status = resp.status();

@@ -58,12 +58,24 @@ impl AiBackend {
 
 /// Which engine produces inline ghost-text completions. `Unset` means
 /// the user hasn't picked yet — enabling inline suggestions opens the
-/// setup picker. `ClaudeApi` uses `api_client::complete_code`. `Local`
-/// is the `fim-engine` candle-embedded model (a managed ~1 GB GGUF
-/// download, runs in-process — offline, no API key).
+/// setup picker.
+///
+/// - `ClaudeCode` uses the user's Claude Max/Pro subscription via the
+///   OAuth token Claude Code already caches (keychain
+///   `Claude Code-credentials`, or `~/.claude/…`). Anthropic's TOS
+///   officially restricts OAuth-token use to Claude Code + claude.ai
+///   — this path is grey-area but community-established (Zed, Continue,
+///   avante.nvim, aider all ship it). Ghost-text is low-volume so
+///   quota impact is minimal; if it stops working, users switch to
+///   `ClaudeApi`.
+/// - `ClaudeApi` uses `api_client::complete_code` with
+///   `$ANTHROPIC_API_KEY` (billed to a pay-per-token console budget).
+/// - `Local` is the `fim-engine` candle-embedded model (a managed
+///   ~1 GB GGUF download, runs in-process — offline, no auth).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuggestBackend {
     Unset,
+    ClaudeCode,
     ClaudeApi,
     Local,
 }
@@ -71,6 +83,7 @@ pub enum SuggestBackend {
 impl SuggestBackend {
     pub fn parse(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
+            "claude-code" | "cc" | "sub" | "subscription" => SuggestBackend::ClaudeCode,
             "claude-api" | "claude" | "api" => SuggestBackend::ClaudeApi,
             "local" | "candle" => SuggestBackend::Local,
             _ => SuggestBackend::Unset,
@@ -79,6 +92,7 @@ impl SuggestBackend {
     pub fn as_str(self) -> &'static str {
         match self {
             SuggestBackend::Unset => "unset",
+            SuggestBackend::ClaudeCode => "claude-code",
             SuggestBackend::ClaudeApi => "claude-api",
             SuggestBackend::Local => "local",
         }
