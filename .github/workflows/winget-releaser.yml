@@ -57,9 +57,14 @@ jobs:
           # to `github.ref_name` — which resolves to `main` when triggered
           # by `workflow_run` (workflow_run's ref is the default branch,
           # NOT the parent workflow's ref). That made the action query
-          # `/releases/tags/main` → 404 → exit 1. Explicit release-tag
-          # tracks the same source as `version` above.
-          release-tag: ${{ inputs.version || github.event.release.tag_name || github.event.workflow_run.head_branch }}
+          # `/releases/tags/main` → 404 → exit 1.
+          #
+          # Unlike `version` above (which is UNPREFIXED for the winget
+          # identifier), `release-tag` MUST include the leading `v`
+          # because it's the actual git tag name used for the GitHub
+          # releases API lookup. On workflow_dispatch the user gives
+          # `0.2.11` (no `v`) — prefix it back with `format('v{0}', …)`.
+          release-tag: ${{ inputs.version && format('v{0}', inputs.version) || github.event.release.tag_name || github.event.workflow_run.head_branch }}
           # Pick the .msi artifacts off the GitHub release. cargo-dist
           # names them `mnml-rs-{target}.msi` — both x64 and arm64.
           installers-regex: '\.msi$'
