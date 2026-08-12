@@ -1,23 +1,13 @@
-# Injected by `dist` into every build job's `steps:` array, before
-# the actual build runs. Handles two things cargo-dist's default
-# workflow doesn't:
+# Injected by `dist` into every build-local-artifacts job's `steps:`
+# array, before the actual build runs. Handles the Linux system libs
+# that tree-sitter, fontconfig, and OpenSSL build-time depend on.
+# macOS + Windows runners have these bundled already; only Linux
+# needs the apt-get step.
 #
-#  (1) Clones mnml's sibling crates to the layout that mnml's
-#      `Cargo.toml` path-deps expect (`../fim-engine`). Anonymous
-#      clone (sibling repo is public).
-#
-#  (2) Installs the Linux system libs that tree-sitter, fontconfig,
-#      and OpenSSL build-time depend on. macOS + Windows runners have
-#      these bundled already; only Linux needs the apt-get step.
-
-- name: Clone sibling repos
-  shell: bash
-  run: |
-    set -euo pipefail
-    cd ..
-    if [ ! -d fim-engine ]; then
-      git clone --depth=1 https://github.com/chris-mclennan/fim-engine.git
-    fi
+# fim-engine used to be a sibling repo cloned here into `../fim-engine/`.
+# Vendored to `crates/fim-engine/` as a workspace member 2026-08-11 —
+# the external clone step went with it. Reintroduce it here if
+# fim-engine ever moves back out.
 
 - name: Install Linux build deps
   if: runner.os == 'Linux'
