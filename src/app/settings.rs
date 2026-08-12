@@ -393,6 +393,12 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         d.ui.hover_help,
     ));
     out.push(bool_row(
+        "ui.hover_tooltip",
+        "Hover tooltip popup (near the cursor)",
+        cfg.ui.hover_tooltip,
+        d.ui.hover_tooltip,
+    ));
+    out.push(bool_row(
         "ui.show_workspace_dots",
         "Workspace-root dots ( ● / ○ )",
         cfg.ui.show_workspace_dots,
@@ -796,6 +802,7 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
         "ui.sticky_context" => set_bool(&mut cfg.ui.sticky_context, opt_idx),
         "ui.render_markdown" => set_bool(&mut cfg.ui.render_markdown, opt_idx),
         "ui.hover_help" => set_bool(&mut cfg.ui.hover_help, opt_idx),
+        "ui.hover_tooltip" => set_bool(&mut cfg.ui.hover_tooltip, opt_idx),
         "ui.show_workspace_dots" => set_bool(&mut cfg.ui.show_workspace_dots, opt_idx),
         "ui.highlight_todo_keywords" => set_bool(&mut cfg.ui.highlight_todo_keywords, opt_idx),
         "ui.always_show_fold_arrows" => set_bool(&mut cfg.ui.always_show_fold_arrows, opt_idx),
@@ -1028,6 +1035,7 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
         "ui.sticky_context" => vec![("ui", "sticky_context", b(cfg.ui.sticky_context))],
         "ui.render_markdown" => vec![("ui", "render_markdown", b(cfg.ui.render_markdown))],
         "ui.hover_help" => vec![("ui", "hover_help", b(cfg.ui.hover_help))],
+        "ui.hover_tooltip" => vec![("ui", "hover_tooltip", b(cfg.ui.hover_tooltip))],
         "ui.show_workspace_dots" => {
             vec![("ui", "show_workspace_dots", b(cfg.ui.show_workspace_dots))]
         }

@@ -4469,10 +4469,20 @@ impl App {
             self.toast("right_panel: off");
         } else if matches!(opt, "hoverhelp" | "hover_help" | "hh") {
             self.config.ui.hover_help = true;
+            let _ = crate::app::discovery::persist_ui_bool("hover_help", true);
             self.toast("hover_help: on");
         } else if matches!(opt, "nohoverhelp" | "nohover_help" | "nohh") {
             self.config.ui.hover_help = false;
+            let _ = crate::app::discovery::persist_ui_bool("hover_help", false);
             self.toast("hover_help: off");
+        } else if matches!(opt, "hovertooltip" | "hover_tooltip" | "ht") {
+            self.config.ui.hover_tooltip = true;
+            let _ = crate::app::discovery::persist_ui_bool("hover_tooltip", true);
+            self.toast("hover_tooltip: on");
+        } else if matches!(opt, "nohovertooltip" | "nohover_tooltip" | "noht") {
+            self.config.ui.hover_tooltip = false;
+            let _ = crate::app::discovery::persist_ui_bool("hover_tooltip", false);
+            self.toast("hover_tooltip: off");
         } else if matches!(opt, "wsdots" | "workspacedots" | "workspace_dots") {
             self.set_workspace_dots(true);
         } else if matches!(opt, "nowsdots" | "noworkspacedots" | "noworkspace_dots") {

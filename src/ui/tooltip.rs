@@ -21,6 +21,14 @@ use crate::ui::theme;
 /// `HOVER_TOOLTIP_DELAY_MS`. Called after every other UI layer so the popup
 /// sits on top.
 pub fn draw(frame: &mut Frame, app: &App, screen: Rect) {
+    // User opt-out (`[ui] hover_tooltip = false` /
+    // `view.toggle_hover_tooltip`). The bottom-left hover-help panel
+    // covers the same targets in more detail, so users who dislike
+    // the popup-near-cursor affordance can turn it off entirely and
+    // rely on the panel. Default stays `true` for back-compat.
+    if !app.config.ui.hover_tooltip {
+        return;
+    }
     let Some((chip, since)) = app.hover_chip else {
         return;
     };

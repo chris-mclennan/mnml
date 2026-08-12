@@ -964,6 +964,15 @@ pub struct UiConfig {
     /// `view.toggle_hover_help` or `:set nohoverhelp`.
     pub hover_help: bool,
 
+    /// Small delayed popup that appears NEAR THE CURSOR after
+    /// `HOVER_TOOLTIP_DELAY_MS` — distinct from the bottom-left
+    /// hover-help panel (`hover_help` above). Default ON for
+    /// discoverability; a user annoyed by tooltips can turn this
+    /// off entirely — the hover-help panel still covers the same
+    /// targets in more detail. Toggle via
+    /// `view.toggle_hover_tooltip` or `:set nohovertooltip`.
+    pub hover_tooltip: bool,
+
     /// True once the user has finished the first-launch wizard
     /// (`first_launch.show`). Default false → wizard opens on next
     /// mnml launch. Set true when the user hits Finish OR "Skip
@@ -1269,6 +1278,7 @@ impl Default for Config {
                 // hidden feature. `view.toggle_hover_help` hides it if
                 // the reader dislikes the extra chrome (persists).
                 hover_help: true,
+                hover_tooltip: true,
                 first_launch_complete: false,
                 show_workspace_dots: true,
                 md_preview_engine: "builtin".to_string(),
@@ -1667,6 +1677,11 @@ struct RawUi {
     /// default — palette command `view.toggle_hover_help`.
     #[serde(default)]
     hover_help: Option<bool>,
+    /// See [`UiConfig::hover_tooltip`]. Small popup near the cursor
+    /// after a hover-hold delay. On by default; user can disable
+    /// via `view.toggle_hover_tooltip` or `:set nohovertooltip`.
+    #[serde(default)]
+    hover_tooltip: Option<bool>,
     /// See [`UiConfig::first_launch_complete`]. Set by the wizard
     /// on Finish; default false so a fresh install prompts.
     #[serde(default)]
@@ -2191,6 +2206,9 @@ impl Config {
         }
         if let Some(b) = raw.ui.show_workspace_dots {
             self.ui.show_workspace_dots = b;
+        }
+        if let Some(b) = raw.ui.hover_tooltip {
+            self.ui.hover_tooltip = b;
         }
         if let Some(b) = raw.ui.hover_help {
             self.ui.hover_help = b;

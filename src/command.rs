@@ -1762,6 +1762,18 @@ fn builtin_commands() -> Vec<Command> {
             },
         },
         Command {
+            id: "view.toggle_hover_tooltip",
+            title: "Toggle the popup hover tooltip (small popup near the cursor)",
+            group: "view",
+            keys: &[],
+            run: |app| {
+                let on = !app.config.ui.hover_tooltip;
+                app.config.ui.hover_tooltip = on;
+                let _ = crate::app::discovery::persist_ui_bool("hover_tooltip", on);
+                app.toast(format!("hover tooltip {}", if on { "on" } else { "off" }));
+            },
+        },
+        Command {
             id: "view.toggle_workspace_dots",
             title: "Toggle workspace dots (● / ○ dots on workspace-root rows)",
             group: "view",
