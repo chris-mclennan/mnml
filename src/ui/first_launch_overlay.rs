@@ -244,7 +244,7 @@ fn footer<'a>(t: &theme::Theme) -> Line<'a> {
 fn section_widgets<'a>(
     section: WizardSection,
     answers: &crate::app::first_launch::WizardAnswers,
-    _app: &App,
+    app: &App,
     t: &theme::Theme,
 ) -> Vec<Line<'a>> {
     match section {
@@ -264,14 +264,29 @@ fn section_widgets<'a>(
             &answers.ai_backend,
             t,
         ),
-        WizardSection::InputStyle => radio_rows(
-            &[
-                ("standard", "standard — modeless, VS Code / macOS shortcuts"),
-                ("vim", "vim — modal, hjkl / i / esc / :cmds"),
-            ],
-            &answers.input_style,
-            t,
-        ),
+        WizardSection::InputStyle => {
+            // Tag the row that matches the persisted config with
+            // "(current)" so a returning-user vim setting stays visible
+            // as a fact — the pre-selected radio (● standard) reflects
+            // the recommended default, and hitting Enter converts. Esc
+            // preserves the persisted choice.
+            let persisted = app.config.editor.input_style.as_str();
+            let std_label = if persisted == "standard" {
+                "standard — modeless, VS Code / macOS shortcuts (current)"
+            } else {
+                "standard — modeless, VS Code / macOS shortcuts"
+            };
+            let vim_label = if persisted == "vim" {
+                "vim — modal, hjkl / i / esc / :cmds (current)"
+            } else {
+                "vim — modal, hjkl / i / esc / :cmds"
+            };
+            radio_rows(
+                &[("standard", std_label), ("vim", vim_label)],
+                &answers.input_style,
+                t,
+            )
+        }
         WizardSection::NerdFont => {
             let sample = "Sample glyphs:   ▸   󰈙   󰅖   ●";
             let choice = match answers.nerd_font_ok {

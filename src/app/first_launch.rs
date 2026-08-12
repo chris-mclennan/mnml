@@ -165,7 +165,13 @@ impl App {
                     String::new()
                 }
             });
-        let input_style = self.config.editor.input_style.clone();
+        // Input style: always pre-select the app's recommended
+        // default ("standard") in the wizard so a returning user
+        // sees the same recommended layout a first-time user does.
+        // The vim row is marked (current) below when config differs,
+        // so switching is deliberate — user has to hit Enter to
+        // apply, Esc keeps the persisted choice.
+        let input_style = "standard".to_string();
         WizardAnswers {
             ai_backend,
             input_style,
