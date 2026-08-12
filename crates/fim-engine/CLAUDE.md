@@ -24,8 +24,11 @@ recompile it. Keep the dependency surface lean — that's the whole point.
 
 - `cargo fmt` + `cargo clippy --all-targets` clean before every commit — the
   repo is gated on both.
-- The `metal` feature is the default (Apple GPU); CPU-only builds use
-  `--no-default-features`. Both must build + test clean.
+- The `metal` feature is opt-in (Apple-only). Default is CPU. Consumers
+  enable metal via a `[target.'cfg(target_os = "macos")']` override.
+  This is the opposite of what CLAUDE.md said until 2026-08-12 —
+  changed because `default = ["metal"]` broke Linux/Windows workspace
+  builds after fim-engine was vendored into mnml.
 - Inference correctness is subtle — add a unit test when changing the sampling
   or trimming logic.
 - Commit messages end with the `Co-Authored-By: Claude …` trailer.

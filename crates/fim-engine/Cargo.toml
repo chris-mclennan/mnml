@@ -16,8 +16,13 @@ exclude = [".local/", ".claude/", ".github/"]
 
 [features]
 # GPU inference via Apple Metal — ~10x faster than CPU for the 1.5B
-# model. macOS-only; on Linux build with `--no-default-features`.
-default = ["metal"]
+# model. macOS-only. Consumers opt in explicitly via their own
+# `[target.'cfg(target_os = "macos")'.dependencies]` override (see
+# mnml's Cargo.toml). Formerly this was `default = ["metal"]`, which
+# broke Linux/Windows workspace builds after fim-engine was vendored
+# into mnml as a workspace member — cargo-dist resolved fim-engine's
+# defaults directly, pulling objc2 unconditionally.
+default = []
 metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 
 [dependencies]
