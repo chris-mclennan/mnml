@@ -37,10 +37,23 @@ pub(crate) fn split_http_verb(name: &str) -> Option<(String, String)> {
     None
 }
 
-/// `✗N` (errors) / `⚠N` (warnings) / `""` for editor panes; `""` for everything
-/// else. Surfaced in the bufferline so broken buffers are visible without
-/// switching to them.
-pub(crate) fn diag_chip_for(p: &Pane) -> String {
+/// Style-driven diagnostic chip for editor bufferline tabs. Returns
+/// `""` for non-editor panes or clean editors.
+///
+/// - `"count"` (default): `✗N` errors / `⚠N` warnings — neovim
+///   ecosystem convention (bufferline.nvim / lualine), info-dense.
+/// - `"dot"`: colored `●` (red for any error, yellow for warnings
+///   only) — VS Code-style, magnitude hidden.
+/// - `"off"`: always empty. User relies on the gutter + Problems
+///   panel + statusline diag chip instead.
+///
+/// Reads style from `[ui] bufferline_diag_style`. No `EditingMode`
+/// branching — the pluggable-input spine keeps the render layer out
+/// of vim/standard bookkeeping.
+pub(crate) fn diag_chip_for(p: &Pane, style: &str) -> String {
+    if style == "off" {
+        return String::new();
+    }
     if let Pane::Editor(b) = p {
         let mut err = 0usize;
         let mut warn = 0usize;
@@ -51,11 +64,24 @@ pub(crate) fn diag_chip_for(p: &Pane) -> String {
                 _ => {}
             }
         }
-        if err > 0 {
-            return format!("\u{2717}{err}");
-        }
-        if warn > 0 {
-            return format!("\u{26A0}{warn}");
+        match style {
+            "dot" => {
+                if err > 0 {
+                    return "\u{25CF}".to_string(); // ● — caller colors red
+                }
+                if warn > 0 {
+                    return "\u{25CF}".to_string(); // ● — caller colors yellow
+                }
+            }
+            _ => {
+                // "count" and any unknown value → neovim-style count
+                if err > 0 {
+                    return format!("\u{2717}{err}");
+                }
+                if warn > 0 {
+                    return format!("\u{26A0}{warn}");
+                }
+            }
         }
     }
     String::new()
@@ -1094,7 +1120,7 @@ mod tests {
             Pane::Editor(b)
         };
         // clean
-        assert_eq!(diag_chip_for(&mk(vec![])), "");
+        assert_eq!(diag_chip_for(&mk(vec![]), "count"), "");
         // 2 warnings → ⚠2
         let warn = || Diagnostic {
             range: r,
@@ -1102,7 +1128,11 @@ mod tests {
             message: "w".into(),
             source: None,
         };
-        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()])), "\u{26A0}2");
+        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()]), "count"), "\u{26A0}2");
+        // dot style flattens count
+        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()]), "dot"), "\u{25CF}");
+        // off style always empty
+        assert_eq!(diag_chip_for(&mk(vec![warn(), warn()]), "off"), "");
         // mix → errors win
         let err = Diagnostic {
             range: r,
@@ -1110,7 +1140,7 @@ mod tests {
             message: "e".into(),
             source: None,
         };
-        assert_eq!(diag_chip_for(&mk(vec![warn(), warn(), err])), "\u{2717}1");
+        assert_eq!(diag_chip_for(&mk(vec![warn(), warn(), err]), "count"), "\u{2717}1");
     }
 
     // 2026-06-22 — full-or-hidden cluster-mode picker tests.

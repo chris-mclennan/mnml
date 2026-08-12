@@ -4352,6 +4352,21 @@ impl App {
             ));
         } else if let Some(v) = rest.strip_prefix("input=") {
             self.set_input_style(v.trim());
+        } else if let Some(v) = rest
+            .strip_prefix("bufferline_diag_style=")
+            .or_else(|| rest.strip_prefix("buf_diag="))
+        {
+            let normalized = v.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "count" | "dot" | "off") {
+                self.config.ui.bufferline_diag_style = normalized.clone();
+                let _ =
+                    crate::app::discovery::persist_ui_string("bufferline_diag_style", &normalized);
+                self.toast(format!("bufferline_diag_style: {normalized}"));
+            } else {
+                self.toast(format!(
+                    "bufferline_diag_style: unknown value \"{v}\" — try count/dot/off"
+                ));
+            }
         } else if let Some(v) = rest.strip_prefix("theme=") {
             self.set_theme(v.trim());
         } else if let Some(v) = rest

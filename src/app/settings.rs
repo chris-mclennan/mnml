@@ -317,6 +317,25 @@ pub fn build_settings(cfg: &Config) -> Vec<SettingItem> {
         modified: menu_bar_idx != menu_bar_default_idx,
     }));
 
+    // Bufferline diag style — count (nvim) / dot (VS Code) / off.
+    let diag_style_idx = match cfg.ui.bufferline_diag_style.as_str() {
+        "dot" => 1,
+        "off" => 2,
+        _ => 0,
+    };
+    let diag_style_default_idx = match d.ui.bufferline_diag_style.as_str() {
+        "dot" => 1,
+        "off" => 2,
+        _ => 0,
+    };
+    out.push(SettingItem::Row(SettingRow {
+        key: "ui.bufferline_diag_style",
+        label: "Diag chip on tabs",
+        options: vec!["count".into(), "dot".into(), "off".into()],
+        current_idx: diag_style_idx,
+        modified: diag_style_idx != diag_style_default_idx,
+    }));
+
     out.push(bool_row(
         "ui.cursor_line",
         "Cursor line",
@@ -833,6 +852,16 @@ pub fn apply_setting(cfg: &mut Config, key: &str, opt_idx: usize) -> bool {
             cfg.ui.menu_bar = new.to_string();
             changed
         }
+        "ui.bufferline_diag_style" => {
+            let new = match opt_idx {
+                1 => "dot",
+                2 => "off",
+                _ => "count",
+            };
+            let changed = cfg.ui.bufferline_diag_style != new;
+            cfg.ui.bufferline_diag_style = new.to_string();
+            changed
+        }
         "ui.preferred_music_app" => {
             let new = match opt_idx {
                 1 => "music",
@@ -1059,6 +1088,11 @@ fn workspace_persist_lines(cfg: &Config, key: &str) -> Vec<(&'static str, &'stat
             vec![("ui", "preferred_music_app", q(&cfg.ui.preferred_music_app))]
         }
         "ui.menu_bar" => vec![("ui", "menu_bar", q(&cfg.ui.menu_bar))],
+        "ui.bufferline_diag_style" => vec![(
+            "ui",
+            "bufferline_diag_style",
+            q(&cfg.ui.bufferline_diag_style),
+        )],
         "ui.theme" => vec![("ui", "theme", q(&cfg.ui.theme))],
         "ui.cmdline_popup_border_color" => vec![(
             "ui",

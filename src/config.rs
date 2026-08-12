@@ -832,6 +832,19 @@ pub struct UiConfig {
     /// ```
     pub menu_bar: String,
 
+    /// How diagnostics render on editor bufferline tabs:
+    /// - `"count"` (default) — `✗N` errors / `⚠N` warnings; the mnml
+    ///   original + neovim ecosystem convention (bufferline.nvim +
+    ///   lualine both count-by-default). Loud but info-dense.
+    /// - `"dot"` — colored `●` (red for errors, yellow for warnings-
+    ///   only); VS Code-style. Cleaner but hides magnitude.
+    /// - `"off"` — no diagnostic chip on the tab. Rely on the
+    ///   editor gutter + Problems panel + statusline diag chip.
+    ///
+    /// Palette: `view.set_bufferline_diag_style` (opens picker).
+    /// Ex-command: `:set bufferline_diag_style=dot`.
+    pub bufferline_diag_style: String,
+
     /// Custom label for the generic terminal (bare `:term` with no
     /// binary — shell/zsh/bash/etc). Default `"terminal"` matches
     /// the profile label; set to your terminal-of-choice's name
@@ -1258,6 +1271,7 @@ impl Default for Config {
                 preferred_music_app: "mixr".to_string(),
                 projects_dir: String::new(),
                 menu_bar: "always".to_string(),
+                bufferline_diag_style: "count".to_string(),
                 terminal_label: "terminal".to_string(),
                 terminal_glyph_svg: String::new(),
                 top_bar_cluster_mode: "auto".to_string(),
@@ -1642,6 +1656,10 @@ struct RawUi {
     /// See [`UiConfig::menu_bar`].
     #[serde(default)]
     menu_bar: Option<String>,
+    /// Bufferline diagnostic-chip style: `"count"` / `"dot"` / `"off"`.
+    /// See [`UiConfig::bufferline_diag_style`].
+    #[serde(default)]
+    bufferline_diag_style: Option<String>,
     /// See [`UiConfig::terminal_label`].
     #[serde(default)]
     terminal_label: Option<String>,
@@ -2157,6 +2175,12 @@ impl Config {
             let normalized = s.trim().to_ascii_lowercase();
             if matches!(normalized.as_str(), "always" | "auto" | "hidden") {
                 self.ui.menu_bar = normalized;
+            }
+        }
+        if let Some(s) = raw.ui.bufferline_diag_style {
+            let normalized = s.trim().to_ascii_lowercase();
+            if matches!(normalized.as_str(), "count" | "dot" | "off") {
+                self.ui.bufferline_diag_style = normalized;
             }
         }
         if let Some(s) = raw.ui.terminal_label {
