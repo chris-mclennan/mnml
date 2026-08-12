@@ -135,9 +135,6 @@ Two flagship features on 8/11 — the **first-launch wizard** and the
 - **Palette-from-prompt** — Ctrl+Shift+P was consumed by the prompt
   handler when a prompt was open; now dispatches to
   `open_command_palette` first.
-
-### Fixed
-
 - **8 CI-red e2e tests** — space-eating in vim insert / DAP REPL
   / any typed-text surface, plus settings-overlay Esc requiring
   two presses to close and arrow keys not adjusting rows. Root
