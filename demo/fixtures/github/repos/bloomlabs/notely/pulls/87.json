@@ -1,7 +1,7 @@
 {
   "id": 887001, "number": 87, "state": "open", "draft": false,
   "title": "feat(server): body-size cap hook",
-  "body": "Adds middleware to reject POST /notes bodies > 64KB with 413. Client sees x-loop-note-too-large: true and renders a friendly toast. Closes NTL-215. Depends on middleware pipeline in NTL-142.",
+  "body": "Adds middleware to reject POST /notes bodies > 64KB with 413. Client sees x-notely-note-too-large: true and renders a friendly toast. Closes NTL-215. Depends on middleware pipeline in NTL-142.",
   "user": {"login": "rileyk", "id": 51004, "avatar_url": "http://localhost:7071/avatars/riley-64.png"},
   "head": {"ref": "feat/http-body-cap", "sha": "d1e40f9b", "repo": {"full_name": "bloomlabs/notely"}},
   "base": {"ref": "main",                "sha": "a8c31d02", "repo": {"full_name": "bloomlabs/notely"}},

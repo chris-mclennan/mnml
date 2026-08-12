@@ -16,8 +16,8 @@
       "updated_on": "2026-08-11T15:22:00Z"
     },
     {
-      "name": "loop-mobile",
-      "slug": "loop-mobile",
+      "name": "notely-mobile",
+      "slug": "notely-mobile",
       "full_name": "bloomlabs/notely-mobile",
       "description": "Notely for iOS + Android (React Native).",
       "language": "typescript",
@@ -28,10 +28,10 @@
       "updated_on": "2026-08-11T10:05:00Z"
     },
     {
-      "name": "loop-docs",
-      "slug": "loop-docs",
+      "name": "notely-docs",
+      "slug": "notely-docs",
       "full_name": "bloomlabs/notely-docs",
-      "description": "Public docs at docs.loop.dev. Astro + Starlight.",
+      "description": "Public docs at docs.notely.dev. Astro + Starlight.",
       "language": "astro",
       "is_private": false,
       "mainbranch": {"name": "main"},
@@ -40,8 +40,8 @@
       "updated_on": "2026-08-08T14:20:00Z"
     },
     {
-      "name": "loop-brand-assets",
-      "slug": "loop-brand-assets",
+      "name": "notely-brand-assets",
+      "slug": "notely-brand-assets",
       "full_name": "bloomlabs/notely-brand-assets",
       "description": "Logos, colors, marketing images.",
       "language": null,

@@ -19,7 +19,7 @@
       "total": 3,
       "comments": [
         {"id": "c1", "author": {"displayName": "Riley Kim"}, "created": "2026-08-06T10:00:00.000+0000", "body": "Middleware order matters — this has to run after body-parse or the check has nothing to measure. Coordinating with Ava on NTL-142."},
-        {"id": "c2", "author": {"displayName": "Ava Chen"},  "created": "2026-08-08T13:15:00.000+0000", "body": "Reserving `x-loop-note-too-large: true` for the 413 response so the client can render a nice error instead of a generic toast."},
+        {"id": "c2", "author": {"displayName": "Ava Chen"},  "created": "2026-08-08T13:15:00.000+0000", "body": "Reserving `x-notely-note-too-large: true` for the 413 response so the client can render a nice error instead of a generic toast."},
         {"id": "c3", "author": {"displayName": "Riley Kim"}, "created": "2026-08-11T11:45:00.000+0000", "body": "PR #87 up. Tests green. Waiting on middleware pipeline merge to unblock."}
       ]
     }

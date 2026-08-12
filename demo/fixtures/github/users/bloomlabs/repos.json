@@ -7,21 +7,21 @@
     "html_url": "https://github.com/bloomlabs/notely"
   },
   {
-    "id": 40002, "name": "loop-mobile",    "full_name": "bloomlabs/notely-mobile",       "private": false,
+    "id": 40002, "name": "notely-mobile",    "full_name": "bloomlabs/notely-mobile",       "private": false,
     "description": "Notely for iOS + Android.",           "language": "TypeScript",
     "default_branch": "main", "stargazers_count": 47,   "forks_count": 3,  "open_issues_count": 5,
     "pushed_at": "2026-08-11T10:05:00Z", "updated_at": "2026-08-11T10:05:00Z",
     "html_url": "https://github.com/bloomlabs/notely-mobile"
   },
   {
-    "id": 40003, "name": "loop-docs",      "full_name": "bloomlabs/notely-docs",         "private": false,
-    "description": "Public docs at docs.loop.dev.",      "language": "Astro",
+    "id": 40003, "name": "notely-docs",      "full_name": "bloomlabs/notely-docs",         "private": false,
+    "description": "Public docs at docs.notely.dev.",      "language": "Astro",
     "default_branch": "main", "stargazers_count": 22,   "forks_count": 6,  "open_issues_count": 2,
     "pushed_at": "2026-08-08T14:20:00Z", "updated_at": "2026-08-08T14:20:00Z",
     "html_url": "https://github.com/bloomlabs/notely-docs"
   },
   {
-    "id": 40004, "name": "loop-cli-shim",  "full_name": "bloomlabs/notely-cli-shim",     "private": false,
+    "id": 40004, "name": "notely-cli-shim",  "full_name": "bloomlabs/notely-cli-shim",     "private": false,
     "description": "One-liner install script.",          "language": "Shell",
     "default_branch": "main", "stargazers_count": 8,    "forks_count": 1,  "open_issues_count": 0,
     "pushed_at": "2026-07-30T11:00:00Z", "updated_at": "2026-07-30T11:00:00Z",

@@ -13,7 +13,7 @@
     {
       "id": 3102,
       "user": {"display_name": "Diego Ramos"},
-      "content": {"raw": "The `x-loop-note-too-large` custom header should probably be documented in `docs/api/errors.md`. Otherwise the mobile client folks are going to trip on it in a month."},
+      "content": {"raw": "The `x-notely-note-too-large` custom header should probably be documented in `docs/api/errors.md`. Otherwise the mobile client folks are going to trip on it in a month."},
       "created_on": "2026-08-11T14:10:00Z"
     },
     {

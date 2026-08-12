@@ -2,7 +2,7 @@
   "id": 87,
   "title": "feat(server): body-size cap hook",
   "state": "OPEN",
-  "description": "Adds middleware to reject `POST /notes` bodies > 64KB with 413. Client sees `x-loop-note-too-large: true` and renders a friendly toast (splits the note).\n\nCloses NTL-215. Depends on middleware pipeline in NTL-142.\n\n## Test plan\n- Unit: `src/server/middleware/body-cap.test.ts`\n- Integration: `tests/e2e/note-too-large.spec.ts` (drives the toast)",
+  "description": "Adds middleware to reject `POST /notes` bodies > 64KB with 413. Client sees `x-notely-note-too-large: true` and renders a friendly toast (splits the note).\n\nCloses NTL-215. Depends on middleware pipeline in NTL-142.\n\n## Test plan\n- Unit: `src/server/middleware/body-cap.test.ts`\n- Integration: `tests/e2e/note-too-large.spec.ts` (drives the toast)",
   "author": {"display_name": "Riley Kim", "nickname": "rileyk"},
   "source":      {"branch": {"name": "feat/http-body-cap"},   "commit": {"hash": "d1e40f9b"}},
   "destination": {"branch": {"name": "main"},                  "commit": {"hash": "a8c31d02"}},
