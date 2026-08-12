@@ -53,6 +53,13 @@ jobs:
           # winget identifiers are unprefixed; the action strips the
           # leading `v` automatically.
           version: ${{ inputs.version || github.event.release.tag_name || github.event.workflow_run.head_branch }}
+          # 2026-08-12 fix: without this the action defaults `release-tag`
+          # to `github.ref_name` — which resolves to `main` when triggered
+          # by `workflow_run` (workflow_run's ref is the default branch,
+          # NOT the parent workflow's ref). That made the action query
+          # `/releases/tags/main` → 404 → exit 1. Explicit release-tag
+          # tracks the same source as `version` above.
+          release-tag: ${{ inputs.version || github.event.release.tag_name || github.event.workflow_run.head_branch }}
           # Pick the .msi artifacts off the GitHub release. cargo-dist
           # names them `mnml-rs-{target}.msi` — both x64 and arm64.
           installers-regex: '\.msi$'
