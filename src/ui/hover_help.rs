@@ -220,10 +220,59 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
         height: area.height.saturating_sub(3),
     };
     let cap = body_rect.height as usize;
-    if lines.len() > cap {
-        lines.truncate(cap);
+    let total_lines = lines.len();
+    let overflow = total_lines > cap;
+    // Clamp scroll so we can always fill the visible window from the
+    // scroll offset. `hover_help_scroll` is user-controlled via wheel
+    // (see mouse handler); clamp here so a stale value on a shorter
+    // committed body doesn't paint blank rows.
+    let max_scroll = total_lines.saturating_sub(cap) as u16;
+    let scroll = app.hover_help_scroll.min(max_scroll);
+    // Persist the clamp so subsequent wheel events see the true value.
+    app.hover_help_scroll = scroll;
+    let visible: Vec<Line<'static>> = lines.into_iter().skip(scroll as usize).take(cap).collect();
+    if overflow {
+        // Reserve 1 col on the right for the scrollbar; render body in
+        // the remaining width.
+        let scrollbar_col = body_rect.x + body_rect.width.saturating_sub(1);
+        let content_rect = Rect {
+            width: body_rect.width.saturating_sub(1),
+            ..body_rect
+        };
+        frame.render_widget(Paragraph::new(visible), content_rect);
+        // Scrollbar: full track in comment color, thumb in cyan sized
+        // proportional to visible/total ratio, positioned per scroll
+        // offset. Min thumb = 1 row.
+        let track_h = body_rect.height as usize;
+        let thumb_h = ((cap * track_h) / total_lines).max(1);
+        let thumb_y_off = if max_scroll == 0 {
+            0
+        } else {
+            ((scroll as usize) * (track_h.saturating_sub(thumb_h))) / (max_scroll as usize)
+        };
+        for i in 0..track_h {
+            let is_thumb = i >= thumb_y_off && i < thumb_y_off + thumb_h;
+            let (glyph, color) = if is_thumb {
+                ("┃", t.cyan)
+            } else {
+                ("│", t.comment)
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    glyph,
+                    Style::default().fg(color).bg(body_bg),
+                ))),
+                Rect {
+                    x: scrollbar_col,
+                    y: body_rect.y + i as u16,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+    } else {
+        frame.render_widget(Paragraph::new(visible), body_rect);
     }
-    frame.render_widget(Paragraph::new(lines), body_rect);
 }
 
 fn spacer<'a>(bg: ratatui::style::Color) -> Line<'a> {
@@ -339,9 +388,11 @@ fn debounced_help_copy(app: &mut App) -> crate::ui::info_view::InfoViewCopy {
             if pending_copy.title == fresh.title
                 && first_seen.elapsed().as_millis() >= HOVER_HELP_DEBOUNCE_MS =>
         {
-            // Pending has settled long enough. Commit.
+            // Pending has settled long enough. Commit + reset scroll —
+            // a new target means back to the top of the fresh content.
             app.hover_help_committed = Some(fresh.clone());
             app.hover_help_pending = None;
+            app.hover_help_scroll = 0;
             fresh
         }
         Some((pending_copy, _)) if pending_copy.title == fresh.title => {

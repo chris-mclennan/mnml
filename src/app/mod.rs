@@ -4722,6 +4722,11 @@ pub struct App {
     /// `src/ui/hover_help.rs::draw` for the state machine.
     pub hover_help_committed: Option<crate::ui::info_view::InfoViewCopy>,
     pub hover_help_pending: Option<(crate::ui::info_view::InfoViewCopy, std::time::Instant)>,
+    /// Row offset into the wrapped body of the hover-help panel. When
+    /// the wrapped-line count exceeds available height, mouse-wheel
+    /// over the panel bumps this up/down. Auto-resets when the
+    /// committed target changes (fresh copy → back to top).
+    pub hover_help_scroll: u16,
     /// Last observed mouse position (col, row) from a `Moved` event.
     /// `None` until the mouse first moves (fresh session or after a
     /// keystroke that reset hover state). Consumed by hover-only
@@ -5729,6 +5734,7 @@ impl App {
             hover_chip: None,
             hover_help_committed: None,
             hover_help_pending: None,
+            hover_help_scroll: 0,
             mouse_pos: None,
             hovered_bufferline_tab: None,
             last_tab_close_at: None,

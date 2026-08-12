@@ -105,6 +105,25 @@ pub fn dispatch_mouse(app: &mut App, m: MouseEvent) {
             _ => {}
         }
     }
+    // Hover-help panel (bottom-left Info View strip) — wheel scrolls
+    // its wrapped body when content overflows the fixed height. Body
+    // clamps `hover_help_scroll` to the current max at draw time, so
+    // a stale value here is harmless.
+    if let Some(rect) = app.rects.hover_help_strip
+        && crate::app::dispatch::contains(rect, x, y)
+    {
+        match m.kind {
+            MouseEventKind::ScrollUp => {
+                app.hover_help_scroll = app.hover_help_scroll.saturating_sub(1);
+                return;
+            }
+            MouseEventKind::ScrollDown => {
+                app.hover_help_scroll = app.hover_help_scroll.saturating_add(1);
+                return;
+            }
+            _ => {}
+        }
+    }
 
     // 2026-07-03 — mouse-forwarding to Pty children. When the
     // child inside a Pty pane has enabled terminal-mouse
