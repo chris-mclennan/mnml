@@ -46,8 +46,9 @@ into it if needed, spawns the mock server if 7071 is free, and
 boots against the copy. The source tree is never mutated — safe
 to autosave / edit / commit inside a `--demo` session.
 
-Cache is refreshed when the source is newer (`.mnml/integrations/`
-mtime check), so iterating on fixtures still works.
+Cache is refreshed when any file under `demo/workspace/` is newer
+than the cache stamp (recursive max-mtime walk), so iterating on
+fixtures still works.
 
 Fixture iteration bypasses the copy: set `MNML_DEMO_WORKSPACE` to
 the source path (or any other workspace).

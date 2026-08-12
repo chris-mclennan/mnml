@@ -375,17 +375,21 @@ fn resolve_demo_workspace() -> Result<PathBuf, String> {
                 }
             }
         }
-        // Atomic swap. On Unix, rename() replaces cache_root
-        // atomically if it exists. On Windows we have to remove first.
-        #[cfg(unix)]
-        {
-            std::fs::rename(&staging, &cache_root).map_err(|e| format!("swap demo cache: {e}"))?;
+        // Swap-out-old pattern: evict the current cache_root to a
+        // sibling `.old` FIRST, then rename staging into place.
+        // POSIX rename(2) only replaces an *empty* directory — the
+        // prior version pointed it at a populated cache_root and
+        // ENOTEMPTY-failed on every refresh after the first (I'd
+        // misread the rename semantics). Works uniformly on Unix +
+        // Windows; a concurrent reader mid-swap still sees a
+        // consistent tree (either via `.old` briefly, or the new one).
+        let old = cache_root.with_extension("old");
+        let _ = std::fs::remove_dir_all(&old);
+        if cache_root.exists() {
+            std::fs::rename(&cache_root, &old).map_err(|e| format!("evict old demo cache: {e}"))?;
         }
-        #[cfg(not(unix))]
-        {
-            let _ = std::fs::remove_dir_all(&cache_root);
-            std::fs::rename(&staging, &cache_root).map_err(|e| format!("swap demo cache: {e}"))?;
-        }
+        std::fs::rename(&staging, &cache_root).map_err(|e| format!("swap demo cache: {e}"))?;
+        let _ = std::fs::remove_dir_all(&old);
         // Only stamp on full success — a broken tar shouldn't cache
         // as "done" and prevent the next launch from retrying.
         if tar_ok {
