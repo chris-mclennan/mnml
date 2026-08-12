@@ -4713,6 +4713,15 @@ pub struct App {
     /// After `HOVER_TOOLTIP_DELAY_MS` of stable hover, the tooltip renders
     /// next to the chip. Cleared on click / typing / mouse-leave.
     pub hover_chip: Option<(crate::HoverChip, std::time::Instant)>,
+    /// Debounce state for the Info View hover-help panel — text only
+    /// swaps after the hover target has been stable for
+    /// `HOVER_HELP_DEBOUNCE_MS`. Without this a mouse drag across
+    /// tree rows flashes the panel content rapid-fire (2026-08-12
+    /// user report). `committed` is what's currently rendered;
+    /// `pending` is the candidate awaiting settle. See
+    /// `src/ui/hover_help.rs::draw` for the state machine.
+    pub hover_help_committed: Option<crate::ui::info_view::InfoViewCopy>,
+    pub hover_help_pending: Option<(crate::ui::info_view::InfoViewCopy, std::time::Instant)>,
     /// Last observed mouse position (col, row) from a `Moved` event.
     /// `None` until the mouse first moves (fresh session or after a
     /// keystroke that reset hover state). Consumed by hover-only
@@ -5718,6 +5727,8 @@ impl App {
             debug_rects: false,
             no_pane_cmdline: None,
             hover_chip: None,
+            hover_help_committed: None,
+            hover_help_pending: None,
             mouse_pos: None,
             hovered_bufferline_tab: None,
             last_tab_close_at: None,

@@ -48,6 +48,14 @@ pub const INFO_BOX_HEIGHT: u16 = 8;
 ///    [Ctrl+K b] Toggle bufferline  ← shortcuts (bracket accent + label)
 ///                              ← trailing blank (cushion for statusbar)
 /// ```
+/// Delay between the mouse settling on a new hover target and the
+/// info-box swapping to its copy. Suppresses rapid text flashes when
+/// the user drags across tree rows or chips (2026-08-12 report). Set
+/// low enough that a purposeful hover feels instant — 120ms is right
+/// at the edge of "immediate" perception. First swap ever renders
+/// with no delay so opening the panel isn't laggy.
+const HOVER_HELP_DEBOUNCE_MS: u128 = 120;
+
 pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 0 || area.width == 0 {
         return;
@@ -65,7 +73,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let title_bg = t.bg2;
     frame.render_widget(Paragraph::new("").style(Style::default().bg(body_bg)), area);
 
-    let copy = pick_help_copy(app);
+    let copy = debounced_help_copy(app);
 
     // Row 0 — divider between tree rail and info box.
     let sep_line = "─".repeat(area.width as usize);
@@ -298,6 +306,54 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
 ///   2. Active pane summary (file / URL / kind) — for `Focus::Pane`
 ///      or when the focus target had nothing useful to show.
 ///   3. Focus hint pointing at the palette (last resort).
+/// Debounce wrapper around [`pick_help_copy`]. The panel only swaps
+/// to a new copy after that copy has been the "current" pick for
+/// [`HOVER_HELP_DEBOUNCE_MS`] straight. Rapid mouse drags across
+/// rows/chips keep resetting the pending timer, so the committed
+/// text stays stable. First paint (no committed yet) renders
+/// immediately so opening isn't perceived as laggy.
+///
+/// Debounce key = `InfoViewCopy.title`. Two distinct targets that
+/// produce identical titles will look like "same" for debounce
+/// purposes — acceptable trade-off vs. plumbing a proper target key
+/// or deriving PartialEq on the whole struct.
+fn debounced_help_copy(app: &mut App) -> crate::ui::info_view::InfoViewCopy {
+    let fresh = pick_help_copy(app);
+    // Never any committed → first paint, render immediately.
+    let Some(committed) = app.hover_help_committed.clone() else {
+        app.hover_help_committed = Some(fresh.clone());
+        app.hover_help_pending = None;
+        return fresh;
+    };
+    // Fresh already matches committed → nothing to swap. Drop pending.
+    if committed.title == fresh.title {
+        app.hover_help_pending = None;
+        return committed;
+    }
+    // Fresh differs. Check the pending slot.
+    let now = std::time::Instant::now();
+    match &app.hover_help_pending {
+        Some((pending_copy, first_seen))
+            if pending_copy.title == fresh.title
+                && first_seen.elapsed().as_millis() >= HOVER_HELP_DEBOUNCE_MS =>
+        {
+            // Pending has settled long enough. Commit.
+            app.hover_help_committed = Some(fresh.clone());
+            app.hover_help_pending = None;
+            fresh
+        }
+        Some((pending_copy, _)) if pending_copy.title == fresh.title => {
+            // Same pending target still settling. Keep old committed.
+            committed
+        }
+        _ => {
+            // New pending candidate (or first pending). Reset timer.
+            app.hover_help_pending = Some((fresh.clone(), now));
+            committed
+        }
+    }
+}
+
 fn pick_help_copy(app: &App) -> crate::ui::info_view::InfoViewCopy {
     use crate::ui::info_view::InfoViewCopy;
     // Info View v0.3 Phase 1.6 — InfoViewCopy is now the primary shape.
